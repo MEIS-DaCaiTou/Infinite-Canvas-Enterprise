@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="icon" href="/static/images/logo.png" type="image/png">
+  <title>登录 · 无限画布企业版</title>
+  <!-- 与上游一致：启动前注入主题类，避免闪烁 -->
+  <script>
+    (function(){
+      try {
+        var t = localStorage.getItem('studio_theme') || localStorage.getItem('canvas_theme') || 'light';
+        if (t === 'dark') {
+          document.documentElement.classList.add('studio-theme-dark');
+          document.documentElement.classList.add('theme-dark');
+        }
+      } catch(e) {}
+    })();
+  </script>
+  <style>
+    /* ── CSS 变量（与上游 api-settings.css 保持一致）── */
+    :root {
+      --bg:#f7f8fa; --panel:#fff; --soft:#f1f4f8;
+      --line:#e8ecf2; --line-strong:#dbe1ea;
+      --text:#0f172a; --muted:#64748b; --faint:#94a3b8; --accent:#0f172a;
+    }
+    html.studio-theme-dark, html.studio-theme-dark body,
+    body.studio-theme-dark, html.theme-dark, html.theme-dark body {
+      --bg:#0e1014; --panel:#1c1e26; --soft:#272a33;
+      --line:#323540; --line-strong:#3f424d;
+      --text:#e8e8ea; --muted:#a4adbf; --faint:#7a8497; --accent:#f5f6f8;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { min-height: 100%; }
+    body {
+      min-height: 100vh;
+      display: flex; align-items: center; justify-content: center;
+      background: var(--bg);
+      font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      color: var(--text);
+      -webkit-font-smoothing: antialiased;
+      transition: background .3s, color .3s;
+    }
+    /* ── 卡片 ── */
+    .card {
+      width: 360px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 36px 32px 32px;
+      box-shadow: 0 4px 24px rgba(15,23,42,.08);
+    }
+    /* ── Logo 区 ── */
+    .logo { text-align: center; margin-bottom: 28px; }
+    .logo img { width: 44px; height: 44px; border-radius: 12px; margin-bottom: 12px; }
+    .logo h1 { font-size: 18px; font-weight: 900; letter-spacing: -.015em; color: var(--text); }
+    .logo p { margin-top: 5px; font-size: 12px; font-weight: 700; color: var(--muted); }
+    /* ── 表单 ── */
+    .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+    .label { color: var(--muted); font-size: 11px; font-weight: 800; letter-spacing: .02em; }
+    /* 与上游 field-frame 样式完全一致 */
+    .field-frame {
+      display: flex; align-items: center; padding: 4px;
+      border: 1px solid var(--line); border-radius: 11px;
+      background: var(--panel); transition: border-color .15s ease;
+    }
+    .field-frame:focus-within { border-color: var(--text); }
+    html.studio-theme-dark .field-frame, html.theme-dark .field-frame {
+      background: var(--soft); border-color: var(--line-strong);
+    }
+    html.studio-theme-dark .field-frame:focus-within,
+    html.theme-dark .field-frame:focus-within { border-color: #f5f6f8; }
+    .field-frame input {
+      width: 100%; height: 36px; padding: 0 10px;
+      border: 0; background: transparent; color: var(--text);
+      outline: none; font-size: 13.5px; font-weight: 600;
+      font-family: inherit;
+    }
+    .field-frame input::placeholder { color: var(--faint); }
+    /* ── 提交按钮（与上游 action-btn 一致）── */
+    .btn-login {
+      width: 100%; margin-top: 4px; height: 42px;
+      border: 0; border-radius: 11px;
+      background: var(--text); color: var(--bg);
+      font-size: 13px; font-weight: 800; font-family: inherit;
+      cursor: pointer; transition: opacity .15s ease;
+    }
+    .btn-login:hover { opacity: .85; }
+    .btn-login:disabled { opacity: .45; cursor: not-allowed; }
+    /* ── 密码切换按钮 ── */
+    .pwd-toggle {
+      width: 36px; height: 36px; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      border: 0; background: transparent; color: var(--faint);
+      cursor: pointer; border-radius: 8px; transition: color .15s;
+    }
+    .pwd-toggle:hover { color: var(--muted); }
+    /* ── 错误提示 ── */
+    .error-msg {
+      margin-top: 12px; padding: 9px 12px;
+      background: rgba(239,68,68,.08); border: 1px solid rgba(239,68,68,.22);
+      border-radius: 10px; color: #ef4444;
+      font-size: 12.5px; font-weight: 700; display: none;
+    }
+    /* ── 页脚 ── */
+    .footer {
+      margin-top: 22px; text-align: center;
+      font-size: 11.5px; font-weight: 700; color: var(--faint);
+    }
+    /* ── 输入框 shake 动画（密码错误时）── */
+    @keyframes shake {
+      0%,100% { transform: translateX(0); }
+      20%,60% { transform: translateX(-5px); }
+      40%,80% { transform: translateX(5px); }
+    }
+    .shake { animation: shake .35s ease; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">
+      <img src="/static/images/logo.png" alt="Logo" onerror="this.style.display='none'">
+      <h1>无限画布</h1>
+      <p>企业版 · 请使用企业账号登录</p>
+    </div>
+
+    <form id="loginForm">
+      <div class="field">
+        <span class="label">用户名</span>
+        <div class="field-frame">
+          <input type="text" id="username" name="username" placeholder="请输入用户名"
+                 autocomplete="username" required />
+        </div>
+      </div>
+      <div class="field">
+        <span class="label">密码</span>
+        <div class="field-frame">
+          <input type="password" id="password" name="password" placeholder="请输入密码"
+                 autocomplete="current-password" required />
+          <button type="button" class="pwd-toggle" id="pwdToggle" onclick="togglePwd()" title="显示/隐藏密码" aria-label="显示/隐藏密码">
+            <!-- 眼睛图标（closed = 默认，密码隐藏时） -->
+            <svg id="eyeClosed" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
+                 fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
+              <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
+              <line x1="1" y1="1" x2="23" y2="23"/>
+            </svg>
+            <!-- 眼睛图标（open = 密码可见时） -->
+            <svg id="eyeOpen" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
+                 fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                 style="display:none;">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+              <circle cx="12" cy="12" r="3"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+      <button type="submit" class="btn-login" id="submitBtn">登录</button>
+      <div class="error-msg" id="errorMsg"></div>
+    </form>
+
+    <div class="footer">如忘记密码，请联系系统管理员</div>
+  </div>
+
+  <script>
+    const form = document.getElementById('loginForm');
+    const submitBtn = document.getElementById('submitBtn');
+    const errorMsg = document.getElementById('errorMsg');
+    const params = new URLSearchParams(location.search);
+    const nextUrl = params.get('next') || '/';
+
+    function togglePwd() {
+      const input = document.getElementById('password');
+      const eyeOpen = document.getElementById('eyeOpen');
+      const eyeClosed = document.getElementById('eyeClosed');
+      const isVisible = input.type === 'text';
+      input.type = isVisible ? 'password' : 'text';
+      eyeOpen.style.display = isVisible ? 'none' : '';
+      eyeClosed.style.display = isVisible ? '' : 'none';
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      errorMsg.style.display = 'none';
+      submitBtn.disabled = true;
+      submitBtn.textContent = '登录中…';
+      const username = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value;
+      try {
+        const res = await fetch('/enterprise/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password }),
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          location.href = nextUrl;
+        } else {
+          errorMsg.textContent = data.error || '登录失败，请检查账号密码';
+          errorMsg.style.display = 'block';
+          // 密码框抖动提示
+          const pwdFrame = document.getElementById('password').closest('.field-frame');
+          pwdFrame.classList.add('shake');
+          pwdFrame.addEventListener('animationend', () => pwdFrame.classList.remove('shake'), { once: true });
+        }
+      } catch {
+        errorMsg.textContent = '网络错误，请检查服务是否正常运行';
+        errorMsg.style.display = 'block';
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = '登录';
+      }
+    });
+
+    document.getElementById('username').focus();
+  </script>
+</body>
+</html>

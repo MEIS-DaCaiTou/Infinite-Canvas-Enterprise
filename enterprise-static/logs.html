@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="icon" href="/static/images/logo.png" type="image/png">
+  <title>操作日志 · 无限画布企业版</title>
+  <script>
+    (function(){
+      try {
+        var t = localStorage.getItem('studio_theme') || localStorage.getItem('canvas_theme') || 'light';
+        if (t === 'dark') {
+          document.documentElement.classList.add('studio-theme-dark');
+          document.documentElement.classList.add('theme-dark');
+        }
+      } catch(e) {}
+    })();
+  </script>
+  <style>
+    :root {
+      --bg:#f7f8fa; --panel:#fff; --soft:#f1f4f8;
+      --line:#e8ecf2; --line-strong:#dbe1ea;
+      --text:#0f172a; --muted:#64748b; --faint:#94a3b8; --accent:#0f172a;
+    }
+    html.studio-theme-dark body, html.theme-dark body {
+      --bg:#0e1014; --panel:#1c1e26; --soft:#272a33;
+      --line:#323540; --line-strong:#3f424d;
+      --text:#e8e8ea; --muted:#a4adbf; --faint:#7a8497; --accent:#f5f6f8;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { min-height: 100%; }
+    body {
+      min-height: 100vh;
+      background: var(--bg); color: var(--text);
+      font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      -webkit-font-smoothing: antialiased;
+      transition: background .3s, color .3s;
+    }
+    button { font-family: inherit; cursor: pointer; }
+    .page { padding: 40px 32px 80px; }
+    .wrap { max-width: 1000px; margin: 0 auto; }
+
+    /* 页头 */
+    .page-head {
+      padding: 0 4px 28px;
+      display: flex; justify-content: space-between; align-items: flex-end;
+      gap: 16px; flex-wrap: wrap;
+    }
+    .title { font-size: 24px; font-weight: 900; letter-spacing: -.015em; }
+    .sub { margin-top: 6px; color: var(--muted); font-size: 12.5px; font-weight: 600; }
+    .page-actions { display: flex; gap: 8px; align-items: center; }
+    .action-btn {
+      height: 36px; padding: 0 14px; border-radius: 10px;
+      font-size: 12.5px; font-weight: 800;
+      border: 1px solid var(--line); background: var(--panel); color: var(--text);
+      text-decoration: none; display: inline-flex; align-items: center;
+      transition: border-color .15s;
+    }
+    .action-btn:hover { border-color: var(--text); }
+
+    /* 过滤栏 */
+    .filter-bar {
+      display: flex; gap: 10px; flex-wrap: wrap;
+      margin-bottom: 16px; align-items: center;
+    }
+    .filter-bar select, .filter-bar input {
+      height: 34px; padding: 0 10px;
+      border: 1px solid var(--line); border-radius: 9px;
+      background: var(--panel); color: var(--text);
+      font-size: 12.5px; font-weight: 600; font-family: inherit;
+      outline: none; transition: border-color .15s;
+    }
+    .filter-bar select:focus, .filter-bar input:focus { border-color: var(--text); }
+    .filter-label { font-size: 11px; font-weight: 800; color: var(--muted); letter-spacing: .03em; }
+    .filter-btn {
+      height: 34px; padding: 0 14px; border-radius: 9px;
+      font-size: 12.5px; font-weight: 800;
+      border: 1px solid var(--line); background: var(--text); color: var(--bg);
+      cursor: pointer; transition: opacity .15s;
+    }
+    .filter-btn:hover { opacity: .85; }
+
+    /* 块 */
+    .block {
+      background: var(--panel); border: 1px solid var(--line);
+      border-radius: 16px; overflow: hidden;
+    }
+
+    /* 表格 */
+    table { width: 100%; border-collapse: collapse; }
+    thead th {
+      padding: 10px 14px;
+      text-align: left; font-size: 10.5px; font-weight: 900;
+      color: var(--muted); letter-spacing: .04em; text-transform: uppercase;
+      border-bottom: 1px solid var(--line);
+      background: var(--soft);
+    }
+    tbody tr { border-bottom: 1px solid var(--line); transition: background .1s; }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: var(--soft); }
+    td { padding: 11px 14px; font-size: 12.5px; vertical-align: middle; }
+    .td-time { white-space: nowrap; color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+    .td-user { font-weight: 700; }
+    .td-action { }
+    .td-detail { color: var(--muted); font-size: 11.5px; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* 操作类型徽章 */
+    .badge {
+      display: inline-block; padding: 2px 8px; border-radius: 6px;
+      font-size: 10.5px; font-weight: 800; letter-spacing: .02em;
+    }
+    .badge-login    { background: #dbeafe; color: #1d4ed8; }
+    .badge-logout   { background: #f1f5f9; color: #475569; }
+    .badge-canvas   { background: #dcfce7; color: #15803d; }
+    .badge-user     { background: #fef9c3; color: #854d0e; }
+    .badge-password { background: #fce7f3; color: #9d174d; }
+    .badge-default  { background: var(--soft); color: var(--muted); }
+    html.studio-theme-dark .badge-login, html.theme-dark .badge-login { background: #1e3a5f; color: #7dd3fc; }
+    html.studio-theme-dark .badge-canvas, html.theme-dark .badge-canvas { background: #14532d; color: #4ade80; }
+    html.studio-theme-dark .badge-user, html.theme-dark .badge-user { background: #422006; color: #fcd34d; }
+    html.studio-theme-dark .badge-password, html.theme-dark .badge-password { background: #4a0033; color: #f9a8d4; }
+
+    /* 分页 */
+    .pagination {
+      display: flex; align-items: center; gap: 8px;
+      padding: 12px 16px; justify-content: flex-end;
+      border-top: 1px solid var(--line);
+      font-size: 12px; color: var(--muted); font-weight: 600;
+    }
+    .pg-btn {
+      height: 30px; padding: 0 12px; border-radius: 8px;
+      font-size: 12px; font-weight: 800;
+      border: 1px solid var(--line); background: var(--panel); color: var(--text);
+      cursor: pointer; transition: border-color .15s;
+    }
+    .pg-btn:hover { border-color: var(--text); }
+    .pg-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+    /* 空/加载状态 */
+    .empty-row td { text-align: center; color: var(--faint); padding: 40px; font-size: 13px; }
+
+    /* Toast */
+    .toast {
+      position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+      padding: 10px 20px; border-radius: 10px;
+      font-size: 13px; font-weight: 700;
+      opacity: 0; pointer-events: none;
+      transition: opacity .2s;
+      z-index: 9999; white-space: nowrap;
+    }
+    .toast.show { opacity: 1; }
+    .toast.err { background: #fee2e2; color: #b91c1c; border: 1px solid #fecaca; }
+    html.studio-theme-dark .toast.err, html.theme-dark .toast.err {
+      background: #450a0a; color: #f87171; border-color: #7f1d1d;
+    }
+  </style>
+</head>
+<body>
+  <div id="toast" class="toast"></div>
+
+  <div class="page">
+    <div class="wrap">
+      <!-- 页头 -->
+      <header class="page-head">
+        <div>
+          <div class="title">操作日志</div>
+          <div class="sub">查看成员账号的操作审计记录</div>
+        </div>
+        <div class="page-actions">
+          <a href="/enterprise/admin" class="action-btn">← 返回管理后台</a>
+        </div>
+      </header>
+
+      <!-- 过滤栏 -->
+      <div class="filter-bar">
+        <span class="filter-label">用户</span>
+        <select id="filterUser" onchange="loadLogs()">
+          <option value="">全部用户</option>
+        </select>
+        <span class="filter-label">操作类型</span>
+        <select id="filterAction" onchange="loadLogs()">
+          <option value="">全部类型</option>
+          <option value="login">login</option>
+          <option value="login_failed">login_failed</option>
+          <option value="canvas_accessed">canvas_accessed</option>
+          <option value="canvas_created">canvas_created</option>
+          <option value="canvas_assigned">canvas_assigned</option>
+          <option value="user_created">user_created</option>
+          <option value="user_deleted">user_deleted</option>
+          <option value="role_changed">role_changed</option>
+          <option value="password_changed">password_changed</option>
+          <option value="admin_password_reset">admin_password_reset</option>
+        </select>
+        <button class="filter-btn" onclick="loadLogs()">刷新</button>
+      </div>
+
+      <!-- 日志表 -->
+      <div class="block">
+        <table>
+          <thead>
+            <tr>
+              <th>时间</th>
+              <th>用户</th>
+              <th>操作类型</th>
+              <th>详情</th>
+            </tr>
+          </thead>
+          <tbody id="logBody">
+            <tr class="empty-row"><td colspan="4">加载中…</td></tr>
+          </tbody>
+        </table>
+        <div class="pagination">
+          <button class="pg-btn" id="prevBtn" onclick="prevPage()" disabled>上一页</button>
+          <span id="pageInfo">—</span>
+          <button class="pg-btn" id="nextBtn" onclick="nextPage()" disabled>下一页</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const PAGE_SIZE = 50;
+    let _offset = 0;
+    let _total = 0;
+
+    // ── 操作类型徽章 ──────────────────────────────────────
+    function badgeClass(action) {
+      if (!action) return 'badge-default';
+      if (action === 'login') return 'badge-login';
+      if (action.startsWith('login')) return 'badge-logout';
+      if (action.startsWith('canvas')) return 'badge-canvas';
+      if (action.startsWith('user') || action === 'role_changed') return 'badge-user';
+      if (action.includes('password')) return 'badge-password';
+      return 'badge-default';
+    }
+
+    // ── 时间格式化 ────────────────────────────────────────
+    function fmtTime(ts) {
+      const d = new Date(ts);
+      const pad = n => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} `
+           + `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    }
+
+    // ── 加载用户列表（用于过滤下拉框）────────────────────
+    async function loadUsers() {
+      try {
+        const res = await fetch('/enterprise/api/users');
+        if (!res.ok) return;
+        const users = await res.json();
+        const sel = document.getElementById('filterUser');
+        users.forEach(u => {
+          const opt = document.createElement('option');
+          opt.value = u.id;
+          opt.textContent = u.display_name || u.username;
+          sel.appendChild(opt);
+        });
+      } catch(e) {}
+    }
+
+    // ── 加载日志 ─────────────────────────────────────────
+    async function loadLogs() {
+      _offset = 0;
+      await fetchLogs();
+    }
+
+    async function fetchLogs() {
+      const userId = document.getElementById('filterUser').value;
+      const action = document.getElementById('filterAction').value;
+      const params = new URLSearchParams({ limit: PAGE_SIZE, offset: _offset });
+      if (userId) params.set('user_id', userId);
+      if (action) params.set('action', action);
+
+      const tbody = document.getElementById('logBody');
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="4">加载中…</td></tr>';
+      try {
+        const res = await fetch('/enterprise/api/logs?' + params);
+        if (res.status === 401) { location.href = '/enterprise/login'; return; }
+        if (res.status === 403) {
+          tbody.innerHTML = '<tr class="empty-row"><td colspan="4">需要管理员权限</td></tr>';
+          return;
+        }
+        const data = await res.json();
+        _total = data.total;
+        renderLogs(data.items);
+        updatePagination();
+      } catch(e) {
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="4">加载失败，请刷新重试</td></tr>';
+        showToast('加载日志失败', 'err');
+      }
+    }
+
+    function renderLogs(items) {
+      const tbody = document.getElementById('logBody');
+      if (!items.length) {
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="4">暂无日志记录</td></tr>';
+        return;
+      }
+      tbody.innerHTML = items.map(row => {
+        const name = row.display_name || row.username || row.user_id.slice(0, 8);
+        const detail = row.detail ? escHtml(row.detail) : '<span style="color:var(--faint)">—</span>';
+        return `<tr>
+          <td class="td-time">${fmtTime(row.ts)}</td>
+          <td class="td-user">${escHtml(name)}</td>
+          <td class="td-action"><span class="badge ${badgeClass(row.action)}">${escHtml(row.action)}</span></td>
+          <td class="td-detail" title="${row.detail ? escHtml(row.detail) : ''}">${detail}</td>
+        </tr>`;
+      }).join('');
+    }
+
+    function updatePagination() {
+      const page = Math.floor(_offset / PAGE_SIZE) + 1;
+      const total = Math.ceil(_total / PAGE_SIZE) || 1;
+      document.getElementById('pageInfo').textContent = `第 ${page} / ${total} 页，共 ${_total} 条`;
+      document.getElementById('prevBtn').disabled = _offset <= 0;
+      document.getElementById('nextBtn').disabled = _offset + PAGE_SIZE >= _total;
+    }
+
+    function prevPage() { if (_offset > 0) { _offset -= PAGE_SIZE; fetchLogs(); } }
+    function nextPage() { if (_offset + PAGE_SIZE < _total) { _offset += PAGE_SIZE; fetchLogs(); } }
+
+    function escHtml(s) {
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    let _toastTimer;
+    function showToast(msg, type) {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.className = 'toast show ' + type;
+      clearTimeout(_toastTimer);
+      _toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
+    }
+
+    // 初始化
+    loadUsers();
+    loadLogs();
+  </script>
+</body>
+</html>

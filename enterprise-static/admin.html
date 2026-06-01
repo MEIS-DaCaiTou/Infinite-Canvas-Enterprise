@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="icon" href="/static/images/logo.png" type="image/png">
+  <title>管理后台 · 无限画布企业版</title>
+  <!-- 与上游一致：启动前注入主题类 -->
+  <script>
+    (function(){
+      try {
+        var t = localStorage.getItem('studio_theme') || localStorage.getItem('canvas_theme') || 'light';
+        if (t === 'dark') {
+          document.documentElement.classList.add('studio-theme-dark');
+          document.documentElement.classList.add('theme-dark');
+        }
+      } catch(e) {}
+    })();
+  </script>
+  <!-- 与上游完全一致的依赖 -->
+  <script src="/static/vendor/js/tailwindcss-cdn.js"></script>
+  <script src="/static/vendor/js/lucide.js"></script>
+  <link rel="stylesheet" href="/static/css/theme.css">
+  <style>
+    /* ── CSS 变量（复用上游 api-settings.css 规范）── */
+    :root {
+      --bg:#f7f8fa; --panel:#fff; --soft:#f1f4f8;
+      --line:#e8ecf2; --line-strong:#dbe1ea;
+      --text:#0f172a; --muted:#64748b; --faint:#94a3b8; --accent:#0f172a;
+    }
+    body.studio-theme-dark, html.studio-theme-dark body,
+    html.theme-dark body {
+      --bg:#0e1014; --panel:#1c1e26; --soft:#272a33;
+      --line:#323540; --line-strong:#3f424d;
+      --text:#e8e8ea; --muted:#a4adbf; --faint:#7a8497; --accent:#f5f6f8;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+    html { min-height: 100%; overflow-y: auto; overscroll-behavior: auto; }
+    body {
+      margin: 0; min-height: 100vh; overflow-y: auto;
+      background: var(--bg); color: var(--text);
+      font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      -webkit-font-smoothing: antialiased;
+      transition: background .3s, color .3s;
+    }
+    button { font-family: inherit; cursor: pointer; border: 0; background: transparent; color: inherit; }
+
+    /* ── 页面结构 ── */
+    .page { min-height: 100vh; padding: 40px 32px 80px; }
+    .wrap { max-width: 960px; margin: 0 auto; }
+
+    /* ── 页头 ── */
+    .page-head {
+      padding: 0 4px 28px;
+      display: flex; justify-content: space-between; align-items: flex-end;
+      gap: 24px; flex-wrap: wrap;
+    }
+    .page-head .title { font-size: 26px; line-height: 1.05; font-weight: 900; letter-spacing: -.015em; }
+    .page-head .sub { margin-top: 8px; color: var(--muted); font-size: 12.5px; line-height: 1.55; font-weight: 600; }
+
+    /* ── 顶部操作栏 ── */
+    .page-actions { display: flex; gap: 8px; align-items: center; }
+    .action-btn {
+      height: 36px; padding: 0 14px; border-radius: 10px;
+      font-size: 12.5px; font-weight: 800; display: inline-flex; align-items: center; gap: 6px;
+      border: 1px solid var(--line); background: var(--panel); color: var(--text);
+      transition: all .15s ease;
+    }
+    .action-btn:hover { border-color: var(--text); }
+    .action-btn.primary { background: var(--text); color: var(--bg); border-color: var(--text); }
+    .action-btn.primary:hover { opacity: .85; }
+    .action-btn.danger { color: #ef4444; border-color: rgba(239,68,68,.25); }
+    .action-btn.danger:hover { background: rgba(239,68,68,.06); border-color: rgba(239,68,68,.5); }
+
+    /* ── 内容块 ── */
+    .block {
+      background: var(--panel); border: 1px solid var(--line);
+      border-radius: 16px; overflow: hidden;
+    }
+    .block-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 18px 22px; border-bottom: 1px solid var(--line);
+    }
+    .block-title { font-size: 12px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
+
+    /* ── 表格 ── */
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { padding: 11px 22px; text-align: left; }
+    th {
+      color: var(--faint); font-size: 10.5px; font-weight: 900;
+      letter-spacing: .08em; text-transform: uppercase;
+      border-bottom: 1px solid var(--line); background: var(--soft);
+    }
+    td { border-bottom: 1px solid var(--line); }
+    tr:last-child td { border-bottom: none; }
+    tbody tr:hover td { background: var(--soft); }
+
+    .badge {
+      display: inline-flex; align-items: center;
+      height: 20px; padding: 0 8px; border-radius: 999px;
+      font-size: 10px; font-weight: 900; letter-spacing: .04em;
+    }
+    .badge-admin  { background: rgba(99,102,241,.1); color: #6366f1; border: 1px solid rgba(99,102,241,.2); }
+    .badge-user   { background: var(--soft); color: var(--muted); border: 1px solid var(--line); }
+    .badge-active { background: rgba(34,197,94,.1); color: #16a34a; border: 1px solid rgba(34,197,94,.2); }
+    .badge-disabled { background: rgba(239,68,68,.08); color: #ef4444; border: 1px solid rgba(239,68,68,.2); }
+
+    /* ── 行内操作按钮 ── */
+    .row-btn {
+      height: 28px; padding: 0 10px; border-radius: 8px;
+      font-size: 11.5px; font-weight: 800;
+      border: 1px solid var(--line); background: transparent; color: var(--muted);
+      transition: all .15s ease; cursor: pointer;
+    }
+    .row-btn:hover { color: var(--text); border-color: var(--text); }
+    .row-btn.danger:hover { color: #ef4444; border-color: rgba(239,68,68,.4); background: rgba(239,68,68,.05); }
+
+    /* ── 模态框 ── */
+    .modal-backdrop {
+      display: none; position: fixed; inset: 0;
+      background: rgba(15,23,42,.55); z-index: 100;
+      align-items: center; justify-content: center;
+    }
+    .modal-backdrop.show { display: flex; }
+    .modal {
+      background: var(--panel); border: 1px solid var(--line);
+      border-radius: 18px; padding: 28px; width: 400px;
+      box-shadow: 0 20px 60px rgba(15,23,42,.18);
+    }
+    .modal h3 { font-size: 15px; font-weight: 900; margin-bottom: 20px; }
+
+    /* ── 表单字段（完全复用上游 field-frame 规范）── */
+    .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 13px; }
+    .label { color: var(--muted); font-size: 11px; font-weight: 800; letter-spacing: .02em; }
+    .field-frame {
+      display: flex; align-items: center; padding: 4px;
+      border: 1px solid var(--line); border-radius: 11px;
+      background: var(--panel); transition: border-color .15s ease;
+    }
+    .field-frame:focus-within { border-color: var(--text); }
+    html.studio-theme-dark .field-frame, html.theme-dark .field-frame {
+      background: var(--soft); border-color: var(--line-strong);
+    }
+    html.studio-theme-dark .field-frame:focus-within,
+    html.theme-dark .field-frame:focus-within { border-color: #f5f6f8; }
+    .field-frame input {
+      width: 100%; height: 34px; padding: 0 10px;
+      border: 0; background: transparent; color: var(--text);
+      outline: none; font-size: 13px; font-weight: 600; font-family: inherit;
+    }
+    .field-frame input::placeholder { color: var(--faint); }
+    .checkbox-row { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); font-weight: 700; cursor: pointer; }
+    .checkbox-row input[type=checkbox] { width: 15px; height: 15px; cursor: pointer; accent-color: var(--text); }
+
+    .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; }
+    .error-inline { color: #ef4444; font-size: 12px; font-weight: 700; min-height: 16px; margin-top: 8px; }
+
+    /* ── Toast 通知 ── */
+    #toast {
+      position: fixed; bottom: 24px; right: 24px;
+      padding: 10px 18px; border-radius: 11px;
+      font-size: 13px; font-weight: 800;
+      opacity: 0; transition: opacity .25s; pointer-events: none; z-index: 200;
+    }
+    #toast.show { opacity: 1; }
+    #toast.success { background: var(--panel); border: 1px solid rgba(34,197,94,.35); color: #16a34a; box-shadow: 0 8px 24px rgba(15,23,42,.1); }
+    #toast.error   { background: var(--panel); border: 1px solid rgba(239,68,68,.3);  color: #ef4444; box-shadow: 0 8px 24px rgba(15,23,42,.1); }
+
+    /* ── Tab 导航 ── */
+    .tabs { display: flex; gap: 4px; margin-bottom: 24px; border-bottom: 1px solid var(--line); padding-bottom: 0; }
+    .tab-btn {
+      padding: 10px 18px; border-radius: 10px 10px 0 0; font-size: 12.5px; font-weight: 800;
+      border: 1px solid transparent; border-bottom: none; cursor: pointer;
+      color: var(--muted); background: transparent; transition: all .15s;
+      position: relative; top: 1px;
+    }
+    .tab-btn:hover { color: var(--text); }
+    .tab-btn.active { border-color: var(--line); border-bottom-color: var(--panel); background: var(--panel); color: var(--text); }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    /* ── 无主画布高亮 ── */
+    .badge-unowned { background: rgba(251,146,60,.1); color: #ea580c; border: 1px solid rgba(251,146,60,.25); }
+    .select-user {
+      height: 28px; padding: 0 8px; border-radius: 8px; font-size: 11.5px; font-weight: 700;
+      border: 1px solid var(--line); background: var(--panel); color: var(--text);
+      cursor: pointer; outline: none; max-width: 130px;
+    }
+    .select-user:focus { border-color: var(--text); }
+  </style>
+</head>
+<body>
+
+<div class="page">
+  <div class="wrap">
+
+    <!-- 页头 -->
+    <header class="page-head">
+      <div>
+        <div class="title">管理后台</div>
+        <div class="sub">管理企业成员账号与画布归属</div>
+      </div>
+      <div class="page-actions">
+        <a href="/" class="action-btn">返回画布</a>
+        <a href="/enterprise/logs" class="action-btn">操作日志</a>
+        <a href="/enterprise/profile" class="action-btn">个人中心</a>
+        <a href="/enterprise/logout" class="action-btn">退出登录</a>
+        <button class="action-btn primary" id="primaryActionBtn" onclick="openCreateModal()">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          新建用户
+        </button>
+      </div>
+    </header>
+
+    <!-- Tab 导航 -->
+    <nav class="tabs">
+      <button class="tab-btn active" onclick="switchTab('users', this)">成员管理</button>
+      <button class="tab-btn" onclick="switchTab('canvases', this)">画布归属</button>
+    </nav>
+
+    <!-- Tab：用户管理 -->
+    <div class="tab-panel active" id="tab-users">
+    <div class="block">
+      <div class="block-head">
+        <span class="block-title">成员列表</span>
+        <span id="userCount" style="color:var(--faint);font-size:11.5px;font-weight:700;">加载中…</span>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>用户名</th>
+            <th>显示名称</th>
+            <th>角色</th>
+            <th>状态</th>
+            <th>创建时间</th>
+            <th>最后登录</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="userTable">
+          <tr><td colspan="7" style="text-align:center;color:var(--faint);padding:48px 0;font-weight:700;">加载中…</td></tr>
+        </tbody>
+      </table>
+    </div>
+    </div><!-- /tab-users -->
+
+    <!-- Tab：画布归属 -->
+    <div class="tab-panel" id="tab-canvases">
+    <div class="block">
+      <div class="block-head">
+        <span class="block-title">画布归属管理</span>
+        <span id="canvasCount" style="color:var(--faint);font-size:11.5px;font-weight:700;">加载中…</span>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>画布名称</th>
+            <th>画布 ID</th>
+            <th>当前归属</th>
+            <th>分配用户</th>
+          </tr>
+        </thead>
+        <tbody id="canvasTable">
+          <tr><td colspan="4" style="text-align:center;color:var(--faint);padding:48px 0;font-weight:700;">加载中…</td></tr>
+        </tbody>
+      </table>
+    </div>
+    </div><!-- /tab-canvases -->
+
+  </div>
+</div>
+
+<!-- 新建用户模态框 -->
+<div class="modal-backdrop" id="createModal">
+  <div class="modal">
+    <h3>新建用户</h3>
+    <div class="field">
+      <span class="label">用户名</span>
+      <div class="field-frame"><input type="text" id="newUsername" placeholder="仅支持字母、数字、下划线" /></div>
+    </div>
+    <div class="field">
+      <span class="label">显示名称（可选）</span>
+      <div class="field-frame"><input type="text" id="newDisplayName" placeholder="用于界面展示" /></div>
+    </div>
+    <div class="field">
+      <span class="label">初始密码（至少6位）</span>
+      <div class="field-frame"><input type="password" id="newPassword" placeholder="请输入初始密码" /></div>
+    </div>
+    <div class="field">
+      <label class="checkbox-row">
+        <input type="checkbox" id="newIsAdmin" />
+        设为管理员
+      </label>
+    </div>
+    <div class="error-inline" id="createError"></div>
+    <div class="modal-actions">
+      <button class="action-btn" onclick="closeCreateModal()">取消</button>
+      <button class="action-btn primary" onclick="submitCreate()">创建</button>
+    </div>
+  </div>
+</div>
+
+<!-- 重置密码模态框 -->
+<div class="modal-backdrop" id="pwdModal">
+  <div class="modal">
+    <h3>重置密码</h3>
+    <p id="pwdSubtitle" style="color:var(--muted);font-size:12.5px;font-weight:700;margin-bottom:16px;"></p>
+    <div class="field">
+      <span class="label">新密码（至少6位）</span>
+      <div class="field-frame"><input type="password" id="newPwd" placeholder="请输入新密码" /></div>
+    </div>
+    <div class="error-inline" id="pwdError"></div>
+    <div class="modal-actions">
+      <button class="action-btn" onclick="closePwdModal()">取消</button>
+      <button class="action-btn primary" onclick="submitPwd()">确认重置</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast"></div>
+
+<script>
+  let _users = [];
+  let _pwdTargetId = null;
+
+  function showToast(msg, type = 'success') {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.className = `show ${type}`;
+    clearTimeout(el._t);
+    el._t = setTimeout(() => { el.className = ''; }, 3000);
+  }
+
+  function fmtDate(ts) {
+    if (!ts) return '—';
+    const d = new Date(ts);
+    return d.toLocaleDateString('zh-CN', { month:'2-digit', day:'2-digit', year:'numeric' })
+      + ' ' + d.toTimeString().slice(0,5);
+  }
+
+  async function apiFetch(url, opts = {}) {
+    const res = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...opts });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || data.error || '请求失败');
+    return data;
+  }
+
+  // ── 加载用户列表
+  async function loadUsers() {
+    try {
+      _users = await apiFetch('/enterprise/api/users');
+      renderUsers();
+    } catch (e) { showToast('加载失败: ' + e.message, 'error'); }
+  }
+
+  function renderUsers() {
+    const tbody = document.getElementById('userTable');
+    document.getElementById('userCount').textContent = `共 ${_users.length} 位成员`;
+    if (!_users.length) {
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--faint);padding:48px 0;font-weight:700;">暂无用户</td></tr>';
+      return;
+    }
+    tbody.innerHTML = _users.map(u => `
+      <tr>
+        <td style="font-weight:800;">${u.username}</td>
+        <td style="color:var(--muted);">${u.display_name || '—'}</td>
+        <td><span class="badge ${u.is_admin ? 'badge-admin' : 'badge-user'}">${u.is_admin ? '管理员' : '普通用户'}</span></td>
+        <td><span class="badge ${u.is_active ? 'badge-active' : 'badge-disabled'}">${u.is_active ? '正常' : '已禁用'}</span></td>
+        <td style="color:var(--muted);font-size:12px;">${fmtDate(u.created_at)}</td>
+        <td style="color:var(--muted);font-size:12px;">${fmtDate(u.last_login)}</td>
+        <td style="display:flex;gap:6px;padding-top:8px;padding-bottom:8px;">
+          <button class="row-btn" onclick="toggleRole('${u.id}','${u.username}',${u.is_admin})">${u.is_admin ? '撤销管理员' : '设为管理员'}</button>
+          <button class="row-btn" onclick="openPwdModal('${u.id}','${u.username}')">重置密码</button>
+          <button class="row-btn danger" onclick="deleteUser('${u.id}','${u.username}')">删除</button>
+        </td>
+      </tr>`).join('');
+  }
+
+  // ── 新建用户
+  function openCreateModal() {
+    ['newUsername','newDisplayName','newPassword'].forEach(id => document.getElementById(id).value = '');
+    document.getElementById('newIsAdmin').checked = false;
+    document.getElementById('createError').textContent = '';
+    document.getElementById('createModal').classList.add('show');
+    setTimeout(() => document.getElementById('newUsername').focus(), 50);
+  }
+  function closeCreateModal() { document.getElementById('createModal').classList.remove('show'); }
+  async function submitCreate() {
+    const username = document.getElementById('newUsername').value.trim();
+    const displayName = document.getElementById('newDisplayName').value.trim();
+    const password = document.getElementById('newPassword').value;
+    const isAdmin = document.getElementById('newIsAdmin').checked;
+    const errEl = document.getElementById('createError');
+    if (!username || !password) { errEl.textContent = '用户名和密码不能为空'; return; }
+    if (password.length < 6) { errEl.textContent = '密码至少6位'; return; }
+    try {
+      await apiFetch('/enterprise/api/users', {
+        method: 'POST',
+        body: JSON.stringify({ username, display_name: displayName, password, is_admin: isAdmin }),
+      });
+      closeCreateModal();
+      showToast(`用户 "${username}" 创建成功`);
+      await loadUsers();
+    } catch (e) { errEl.textContent = e.message; }
+  }
+
+  // ── 重置密码
+  function openPwdModal(userId, username) {
+    _pwdTargetId = userId;
+    document.getElementById('pwdSubtitle').textContent = `正在重置用户「${username}」的密码`;
+    document.getElementById('newPwd').value = '';
+    document.getElementById('pwdError').textContent = '';
+    document.getElementById('pwdModal').classList.add('show');
+    setTimeout(() => document.getElementById('newPwd').focus(), 50);
+  }
+  function closePwdModal() { document.getElementById('pwdModal').classList.remove('show'); _pwdTargetId = null; }
+  async function submitPwd() {
+    const pwd = document.getElementById('newPwd').value;
+    const errEl = document.getElementById('pwdError');
+    if (pwd.length < 6) { errEl.textContent = '密码至少6位'; return; }
+    try {
+      await apiFetch(`/enterprise/api/users/${_pwdTargetId}/password`, { method: 'PUT', body: JSON.stringify({ password: pwd }) });
+      closePwdModal();
+      showToast('密码重置成功');
+    } catch (e) { errEl.textContent = e.message; }
+  }
+
+  // ── 切换管理员权限
+  async function toggleRole(userId, username, currentIsAdmin) {
+    const newIsAdmin = !currentIsAdmin;
+    const action = newIsAdmin ? '设为管理员' : '撤销管理员权限';
+    if (!confirm(`确认将「${username}」${action}？`)) return;
+    try {
+      await apiFetch(`/enterprise/api/users/${userId}/role`, {
+        method: 'PUT',
+        body: JSON.stringify({ is_admin: newIsAdmin }),
+      });
+      showToast(`已${action}：${username}`);
+      await loadUsers();
+    } catch (e) { showToast(e.message, 'error'); }
+  }
+
+  // ── 删除用户
+  async function deleteUser(userId, username) {
+    if (!confirm(`确认删除用户「${username}」？\n该用户将无法登录，画布数据仍然保留。`)) return;
+    try {
+      await apiFetch(`/enterprise/api/users/${userId}`, { method: 'DELETE' });
+      showToast(`用户「${username}」已删除`);
+      await loadUsers();
+    } catch (e) { showToast(e.message, 'error'); }
+  }
+
+  // ── 点击 backdrop 关闭模态框
+  document.querySelectorAll('.modal-backdrop').forEach(el => {
+    el.addEventListener('click', e => { if (e.target === el) el.classList.remove('show'); });
+  });
+
+  // ── Tab 切换
+  function switchTab(name, btn) {
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById('tab-' + name).classList.add('active');
+    btn.classList.add('active');
+    const primaryBtn = document.getElementById('primaryActionBtn');
+    if (name === 'users') {
+      primaryBtn.style.display = '';
+      primaryBtn.textContent = '';
+      primaryBtn.insertAdjacentHTML('afterbegin', '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> 新建用户');
+      primaryBtn.onclick = openCreateModal;
+      loadUsers();
+    } else if (name === 'canvases') {
+      primaryBtn.style.display = 'none';
+      loadCanvases();
+    }
+  }
+
+  // ── 画布归属管理
+  let _canvases = [];
+  let _ownerMap = {};  // {canvas_id: {user_id, username}}
+
+  async function loadCanvases() {
+    document.getElementById('canvasCount').textContent = '加载中…';
+    document.getElementById('canvasTable').innerHTML =
+      '<tr><td colspan="4" style="text-align:center;color:var(--faint);padding:48px 0;font-weight:700;">加载中…</td></tr>';
+    try {
+      // 并发获取画布列表 + 归属映射 + 用户列表
+      const [canvasData, ownerMap, users] = await Promise.all([
+        apiFetch('/api/canvases'),
+        apiFetch('/enterprise/api/canvas-owners'),
+        _users.length ? Promise.resolve(_users) : apiFetch('/enterprise/api/users'),
+      ]);
+      _canvases = canvasData.canvases || [];
+      _ownerMap = ownerMap;
+      if (!_users.length) _users = users;
+      renderCanvases();
+    } catch (e) {
+      showToast('加载画布失败: ' + e.message, 'error');
+    }
+  }
+
+  function renderCanvases() {
+    const tbody = document.getElementById('canvasTable');
+    const unowned = _canvases.filter(c => !_ownerMap[c.id]);
+    document.getElementById('canvasCount').textContent =
+      `共 ${_canvases.length} 个画布，其中 ${unowned.length} 个未分配`;
+
+    if (!_canvases.length) {
+      tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--faint);padding:48px 0;font-weight:700;">暂无画布</td></tr>';
+      return;
+    }
+
+    const userOptions = _users
+      .filter(u => u.is_active)
+      .map(u => `<option value="${u.id}">${u.username}${u.display_name ? ' (' + u.display_name + ')' : ''}</option>`)
+      .join('');
+
+    // 无主画布排最前
+    const sorted = [..._canvases].sort((a, b) => {
+      const aOwned = !!_ownerMap[a.id];
+      const bOwned = !!_ownerMap[b.id];
+      return aOwned - bOwned;
+    });
+
+    tbody.innerHTML = sorted.map(c => {
+      const owner = _ownerMap[c.id];
+      const ownerBadge = owner
+        ? `<span class="badge badge-active">${owner.username}${owner.display_name ? ' · ' + owner.display_name : ''}</span>`
+        : `<span class="badge badge-unowned">未分配</span>`;
+      const shortId = c.id ? c.id.slice(0, 8) + '…' : '—';
+      return `
+      <tr>
+        <td style="font-weight:800;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${c.title || ''}">${c.title || '（无标题）'}</td>
+        <td style="color:var(--faint);font-size:11.5px;font-family:monospace;" title="${c.id || ''}">${shortId}</td>
+        <td>${ownerBadge}</td>
+        <td>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <select class="select-user" id="sel-${c.id}">
+              <option value="">— 选择用户 —</option>
+              ${userOptions}
+            </select>
+            <button class="row-btn" onclick="assignOwner('${c.id}')">分配</button>
+          </div>
+        </td>
+      </tr>`;
+    }).join('');
+  }
+
+  async function assignOwner(canvasId) {
+    const sel = document.getElementById('sel-' + canvasId);
+    const userId = sel ? sel.value : '';
+    if (!userId) { showToast('请先选择用户', 'error'); return; }
+    try {
+      await apiFetch(`/enterprise/api/canvases/${canvasId}/owner`, {
+        method: 'PUT',
+        body: JSON.stringify({ user_id: userId }),
+      });
+      showToast('画布归属已更新');
+      await loadCanvases();
+    } catch (e) { showToast(e.message, 'error'); }
+  }
+
+  // ── 初始化
+  loadUsers();
+</script>
+</body>
+</html>

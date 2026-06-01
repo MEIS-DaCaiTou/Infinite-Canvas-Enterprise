@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="icon" href="/static/images/logo.png" type="image/png">
+  <title>个人中心 · 无限画布企业版</title>
+  <script>
+    (function(){
+      try {
+        var t = localStorage.getItem('studio_theme') || localStorage.getItem('canvas_theme') || 'light';
+        if (t === 'dark') {
+          document.documentElement.classList.add('studio-theme-dark');
+          document.documentElement.classList.add('theme-dark');
+        }
+      } catch(e) {}
+    })();
+  </script>
+  <style>
+    :root {
+      --bg:#f7f8fa; --panel:#fff; --soft:#f1f4f8;
+      --line:#e8ecf2; --line-strong:#dbe1ea;
+      --text:#0f172a; --muted:#64748b; --faint:#94a3b8; --accent:#0f172a;
+      --green:#16a34a; --red:#dc2626;
+    }
+    html.studio-theme-dark, html.studio-theme-dark body,
+    body.studio-theme-dark, html.theme-dark, html.theme-dark body {
+      --bg:#0e1014; --panel:#1c1e26; --soft:#272a33;
+      --line:#323540; --line-strong:#3f424d;
+      --text:#e8e8ea; --muted:#a4adbf; --faint:#7a8497; --accent:#f5f6f8;
+      --green:#4ade80; --red:#f87171;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { min-height: 100%; }
+    body {
+      min-height: 100vh;
+      display: flex; align-items: center; justify-content: center;
+      background: var(--bg);
+      font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      color: var(--text);
+      -webkit-font-smoothing: antialiased;
+      transition: background .3s, color .3s;
+    }
+    .card {
+      width: 400px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 36px 32px 32px;
+      box-shadow: 0 4px 24px rgba(15,23,42,.08);
+    }
+    /* 顶部 */
+    .top-nav {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 28px;
+    }
+    .logo { display: flex; align-items: center; gap: 10px; }
+    .logo img { width: 32px; height: 32px; border-radius: 9px; }
+    .logo-text { font-size: 15px; font-weight: 900; letter-spacing: -.015em; }
+    .nav-links { display: flex; gap: 8px; }
+    .nav-link {
+      font-size: 12px; font-weight: 700; color: var(--muted);
+      text-decoration: none; padding: 5px 10px;
+      border-radius: 8px; border: 1px solid transparent;
+      transition: border-color .15s, color .15s;
+    }
+    .nav-link:hover { border-color: var(--line); color: var(--text); }
+    /* 用户信息 */
+    .user-info {
+      background: var(--soft);
+      border-radius: 12px;
+      padding: 16px 18px;
+      margin-bottom: 24px;
+    }
+    .user-name { font-size: 17px; font-weight: 900; letter-spacing: -.01em; }
+    .user-meta { margin-top: 4px; font-size: 12px; color: var(--muted); font-weight: 600; }
+    .badge-admin {
+      display: inline-block;
+      background: #0f172a; color: #fff;
+      font-size: 10px; font-weight: 800;
+      padding: 2px 7px; border-radius: 6px; margin-left: 6px;
+      letter-spacing: .03em;
+    }
+    html.studio-theme-dark .badge-admin, html.theme-dark .badge-admin {
+      background: #e8e8ea; color: #0e1014;
+    }
+    /* 分区标题 */
+    .section-title {
+      font-size: 11px; font-weight: 800; color: var(--muted);
+      letter-spacing: .04em; text-transform: uppercase;
+      margin-bottom: 12px;
+    }
+    /* 表单 */
+    .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+    .label { color: var(--muted); font-size: 11px; font-weight: 800; letter-spacing: .02em; }
+    .field-frame {
+      display: flex; align-items: center; padding: 4px;
+      border: 1px solid var(--line); border-radius: 11px;
+      background: var(--panel); transition: border-color .15s ease;
+    }
+    .field-frame:focus-within { border-color: var(--text); }
+    html.studio-theme-dark .field-frame, html.theme-dark .field-frame {
+      background: var(--soft); border-color: var(--line-strong);
+    }
+    html.studio-theme-dark .field-frame:focus-within,
+    html.theme-dark .field-frame:focus-within { border-color: #f5f6f8; }
+    .field-frame input {
+      width: 100%; height: 36px; padding: 0 10px;
+      border: 0; background: transparent; color: var(--text);
+      outline: none; font-size: 13.5px; font-weight: 600;
+      font-family: inherit;
+    }
+    .field-frame input::placeholder { color: var(--faint); }
+    /* 密码显示切换按钮 */
+    .pwd-toggle {
+      width: 36px; height: 36px; flex-shrink: 0;
+      border: none; background: transparent; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 8px; color: var(--faint);
+      transition: color .15s;
+    }
+    .pwd-toggle:hover { color: var(--muted); }
+    /* 提交按钮 */
+    .btn {
+      width: 100%; height: 44px;
+      background: var(--accent); color: var(--bg);
+      border: none; border-radius: 11px;
+      font-size: 14px; font-weight: 800;
+      cursor: pointer; transition: opacity .15s;
+      margin-top: 6px;
+    }
+    .btn:hover { opacity: .85; }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+    /* Toast */
+    .toast {
+      position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+      padding: 10px 20px; border-radius: 10px;
+      font-size: 13px; font-weight: 700;
+      opacity: 0; pointer-events: none;
+      transition: opacity .2s;
+      z-index: 9999;
+      white-space: nowrap;
+    }
+    .toast.show { opacity: 1; }
+    .toast.ok { background: #dcfce7; color: #15803d; border: 1px solid #bbf7d0; }
+    .toast.err { background: #fee2e2; color: #b91c1c; border: 1px solid #fecaca; }
+    html.studio-theme-dark .toast.ok, html.theme-dark .toast.ok {
+      background: #14532d; color: #4ade80; border-color: #166534;
+    }
+    html.studio-theme-dark .toast.err, html.theme-dark .toast.err {
+      background: #450a0a; color: #f87171; border-color: #7f1d1d;
+    }
+    /* 震动动画 */
+    @keyframes shake {
+      0%,100%{transform:translateX(0)} 20%,60%{transform:translateX(-5px)} 40%,80%{transform:translateX(5px)}
+    }
+    .shake { animation: shake .35s ease; }
+  </style>
+</head>
+<body>
+  <div id="toast" class="toast"></div>
+
+  <div class="card">
+    <!-- 顶部导航 -->
+    <div class="top-nav">
+      <div class="logo">
+        <img src="/static/images/logo.png" alt="logo" onerror="this.style.display='none'">
+        <span class="logo-text">无限画布企业版</span>
+      </div>
+      <div class="nav-links">
+        <a href="/" class="nav-link">← 返回画布</a>
+        <a href="/enterprise/logout" class="nav-link">退出登录</a>
+      </div>
+    </div>
+
+    <!-- 用户信息 -->
+    <div class="user-info">
+      <div class="user-name" id="displayName">加载中…</div>
+      <div class="user-meta">
+        用户名：<span id="username">—</span>
+        <span id="adminBadge" class="badge-admin" style="display:none">管理员</span>
+      </div>
+    </div>
+
+    <!-- 修改密码 -->
+    <div class="section-title">修改密码</div>
+
+    <div class="field">
+      <label class="label" for="oldPwd">当前密码</label>
+      <div class="field-frame" id="oldFrame">
+        <input type="password" id="oldPwd" placeholder="输入当前密码" autocomplete="current-password">
+        <button type="button" class="pwd-toggle" onclick="togglePwd('oldPwd','oldEyeClosed','oldEyeOpen')" tabindex="-1">
+          <svg id="oldEyeClosed" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+          <svg id="oldEyeOpen" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label class="label" for="newPwd">新密码</label>
+      <div class="field-frame" id="newFrame">
+        <input type="password" id="newPwd" placeholder="至少6位" autocomplete="new-password">
+        <button type="button" class="pwd-toggle" onclick="togglePwd('newPwd','newEyeClosed','newEyeOpen')" tabindex="-1">
+          <svg id="newEyeClosed" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+          <svg id="newEyeOpen" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label class="label" for="confirmPwd">确认新密码</label>
+      <div class="field-frame" id="confirmFrame">
+        <input type="password" id="confirmPwd" placeholder="再次输入新密码" autocomplete="new-password">
+        <button type="button" class="pwd-toggle" onclick="togglePwd('confirmPwd','confirmEyeClosed','confirmEyeOpen')" tabindex="-1">
+          <svg id="confirmEyeClosed" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+          <svg id="confirmEyeOpen" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <button class="btn" id="saveBtn" onclick="changePassword()">保存新密码</button>
+  </div>
+
+  <script>
+    // ── 加载当前用户信息 ────────────────────────────────────
+    async function loadMe() {
+      try {
+        const res = await fetch('/enterprise/api/me');
+        if (res.status === 401) { location.href = '/enterprise/login?next=/enterprise/profile'; return; }
+        const data = await res.json();
+        document.getElementById('displayName').textContent = data.display_name || data.username;
+        document.getElementById('username').textContent = data.username;
+        if (data.is_admin) document.getElementById('adminBadge').style.display = '';
+      } catch(e) {
+        showToast('加载用户信息失败', 'err');
+      }
+    }
+    loadMe();
+
+    // ── 密码显示切换 ────────────────────────────────────────
+    function togglePwd(inputId, closedId, openId) {
+      const inp = document.getElementById(inputId);
+      const closed = document.getElementById(closedId);
+      const open = document.getElementById(openId);
+      if (inp.type === 'password') {
+        inp.type = 'text';
+        closed.style.display = 'none';
+        open.style.display = '';
+      } else {
+        inp.type = 'password';
+        closed.style.display = '';
+        open.style.display = 'none';
+      }
+    }
+
+    // ── 修改密码 ─────────────────────────────────────────────
+    async function changePassword() {
+      const oldPwd = document.getElementById('oldPwd').value.trim();
+      const newPwd = document.getElementById('newPwd').value.trim();
+      const confirmPwd = document.getElementById('confirmPwd').value.trim();
+
+      if (!oldPwd || !newPwd || !confirmPwd) {
+        shake('oldFrame'); return showToast('请填写所有密码字段', 'err');
+      }
+      if (newPwd.length < 6) {
+        shake('newFrame'); return showToast('新密码至少6位', 'err');
+      }
+      if (newPwd !== confirmPwd) {
+        shake('confirmFrame'); return showToast('两次输入的新密码不一致', 'err');
+      }
+      if (newPwd === oldPwd) {
+        shake('newFrame'); return showToast('新密码不能与当前密码相同', 'err');
+      }
+
+      const btn = document.getElementById('saveBtn');
+      btn.disabled = true;
+      btn.textContent = '保存中…';
+      try {
+        const res = await fetch('/enterprise/api/me/password', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ old_password: oldPwd, new_password: newPwd })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          showToast('密码修改成功', 'ok');
+          document.getElementById('oldPwd').value = '';
+          document.getElementById('newPwd').value = '';
+          document.getElementById('confirmPwd').value = '';
+        } else {
+          shake('oldFrame');
+          showToast(data.detail || '修改失败', 'err');
+        }
+      } catch(e) {
+        showToast('网络错误，请重试', 'err');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '保存新密码';
+      }
+    }
+
+    // ── 震动 ─────────────────────────────────────────────────
+    function shake(id) {
+      const el = document.getElementById(id);
+      el.classList.remove('shake');
+      void el.offsetWidth;
+      el.classList.add('shake');
+      el.addEventListener('animationend', () => el.classList.remove('shake'), { once: true });
+    }
+
+    // ── Toast ─────────────────────────────────────────────────
+    let _toastTimer;
+    function showToast(msg, type) {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.className = 'toast show ' + type;
+      clearTimeout(_toastTimer);
+      _toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
+    }
+
+    // ── Enter 快捷键 ──────────────────────────────────────────
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Enter') changePassword();
+    });
+  </script>
+</body>
+</html>

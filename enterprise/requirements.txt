@@ -1,0 +1,4 @@
+# 企业层额外依赖（在上游 python/ 运行时基础上安装）
+# 上游已包含：fastapi, uvicorn, httpx, anyio, starlette, pydantic
+PyJWT==2.8.0
+websockets==12.0
