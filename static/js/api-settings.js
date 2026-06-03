@@ -19,6 +19,13 @@ const volcSkInput = document.getElementById('volcSkInput');
 const volcAssetKeyHint = document.getElementById('volcAssetKeyHint');
 const volcProjectInput = document.getElementById('volcProjectInput');
 const volcRegionInput = document.getElementById('volcRegionInput');
+const jimengCliPanel = document.getElementById('jimengCliPanel');
+const jimengCliStatus = document.getElementById('jimengCliStatus');
+const jimengCredit = document.getElementById('jimengCredit');
+const jimengLoginBox = document.getElementById('jimengLoginBox');
+const jimengHelpOverlay = document.getElementById('jimengHelpOverlay');
+const jimengHelpCommand = document.getElementById('jimengHelpCommand');
+const jimengHelpOutput = document.getElementById('jimengHelpOutput');
 const runninghubConfigBlock = document.getElementById('runninghubConfigBlock');
 const rhPasteInput = document.getElementById('rhPasteInput');
 const rhAppsList = document.getElementById('rhAppsList');
@@ -68,8 +75,10 @@ const MS_DEFAULT_BASE_URL = 'https://api-inference.modelscope.cn/v1';
 const RH_DEFAULT_BASE_URL = 'https://www.runninghub.cn';
 const EXAMPLE_BASE_URL = 'https://api.example.com/v1';
 const RH_DEFAULT_IMAGE_MODELS = ['/openapi/v2/text2image'];
-const JIMENG_DEFAULT_IMAGE_MODELS = ['jimeng-image-2k', 'jimeng-image-4k'];
-const JIMENG_DEFAULT_VIDEO_MODELS = ['jimeng-video-720p', 'jimeng-video-1080p', 'seedance2.0fast_vip', 'seedance2.0_vip'];
+const JIMENG_DEFAULT_IMAGE_MODELS = ['5.0', '4.6', '4.5', '4.1', '4.0', '3.1', '3.0'];
+const JIMENG_DEFAULT_VIDEO_MODELS = ['seedance2.0fast_vip', 'seedance2.0_vip'];
+const JIMENG_LEGACY_IMAGE_MODELS = new Set(['jimeng-image-2k', 'jimeng-image-4k']);
+const JIMENG_LEGACY_VIDEO_MODELS = new Set(['jimeng-video-720p', 'jimeng-video-1080p']);
 const ONBOARDING_GUIDES = {
     modelscope:{
         titleKey:'api.msOnboardingTitle',
@@ -214,16 +223,15 @@ function provider(){
     return visibleProviders().find(item => item.id === selectedId) || visibleProviders()[0] || providers[0];
 }
 function isProviderTemporarilyHidden(item){
-    if(!item || item.id === 'volcengine') return false;
-    const hasStandaloneVolcengine = (providers || []).some(provider => provider.id === 'volcengine');
-    return hasStandaloneVolcengine && String(item.protocol || '').toLowerCase() === 'volcengine';
+    return false;
 }
 function visibleProviders(){
     return (providers || []).filter(item => !isProviderTemporarilyHidden(item));
 }
 function isFixedProvider(itemOrId){
     const id = typeof itemOrId === 'string' ? itemOrId : itemOrId?.id;
-    return id === 'modelscope' || id === 'runninghub' || id === 'volcengine' || id === 'jimeng';
+    // 即梦 CLI 不再是固定平台：可删除、可排序，未添加则不存在。
+    return id === 'modelscope' || id === 'runninghub' || id === 'volcengine';
 }
 function unique(values){
     const seen = new Set();
@@ -542,8 +550,8 @@ function applyProviderOnboardingDefaults(id){
     } else if(id === 'jimeng'){
         item.base_url = '';
         item.protocol = 'jimeng';
-        item.image_models = unique([...(item.image_models || []), ...JIMENG_DEFAULT_IMAGE_MODELS]);
-        item.video_models = unique([...(item.video_models || []), ...JIMENG_DEFAULT_VIDEO_MODELS]);
+        item.image_models = unique([...(item.image_models || []).filter(model => !JIMENG_LEGACY_IMAGE_MODELS.has(String(model || '').trim())), ...JIMENG_DEFAULT_IMAGE_MODELS]);
+        item.video_models = unique([...(item.video_models || []).filter(model => !JIMENG_LEGACY_VIDEO_MODELS.has(String(model || '').trim())), ...JIMENG_DEFAULT_VIDEO_MODELS]);
     }
     selectedId = item.id;
     renderEditor();
@@ -597,10 +605,15 @@ function updateProtocolFromInput(){
     const item = provider();
     if(!item || !protocolInput || item.id === 'modelscope' || item.id === 'runninghub' || item.id === 'volcengine' || item.id === 'jimeng') return;
     const value = String(protocolInput.value || 'openai').toLowerCase();
-    item.protocol = ['openai', 'apimart', 'gemini', 'jimeng'].includes(value) ? value : 'openai';
+    item.protocol = ['openai', 'apimart', 'gemini', 'volcengine', 'jimeng'].includes(value) ? value : 'openai';
     if(item.protocol === 'jimeng') item.base_url = '';
     document.body.classList.toggle('show-jimeng', item.protocol === 'jimeng');
     clearVerifyResult();
+    // 协议会改变整个表单（如即梦 CLI 账户面板、默认模型、Key 占位）。renderEditor 是唯一切换这些的入口，
+    // 这里复跑一次让面板立即出现；保存并恢复 Key 输入框，避免推荐流程里先填的 Key 被 renderEditor 清空。
+    const savedKey = keyInput ? keyInput.value : '';
+    renderEditor();
+    if(keyInput) keyInput.value = savedKey;
 }
 function isVolcengineProvider(item){
     return String(item?.protocol || '').toLowerCase() === 'volcengine';
@@ -1983,7 +1996,7 @@ async function saveRecommendedApi(index){
     if(ok) setStatus(trf('api.recommendSaved', {name:api.name}));
 }
 function sortedProviders(){
-    const order = ['modelscope', 'runninghub', 'volcengine', 'jimeng'];
+    const order = ['modelscope', 'runninghub', 'volcengine'];
     return visibleProviders().sort((a, b) => {
         const ai = order.indexOf(a.id);
         const bi = order.indexOf(b.id);
@@ -2117,7 +2130,8 @@ function renderEditor(){
     keyHint.textContent = item.has_key ? `${tr('api.keySaved')}${item.key_env || 'API/.env'}` : tr('api.noKey');
     const isModelScope = item.id === 'modelscope';
     const isRunningHub = item.id === 'runninghub';
-    const isVolcengine = item.id === 'volcengine';
+    const isVolcengine = item.id === 'volcengine' || String(protocolInput?.value || item.protocol || '').toLowerCase() === 'volcengine';
+    const isStandaloneVolcengine = item.id === 'volcengine';
     const isJimeng = item.id === 'jimeng' || String(protocolInput?.value || item.protocol || '').toLowerCase() === 'jimeng';
     if(isRunningHub){
         ensureRunningHubLists(item);
@@ -2156,12 +2170,15 @@ function renderEditor(){
     if(isJimeng){
         item.base_url = '';
         item.protocol = 'jimeng';
+        item.image_models = unique([...(item.image_models || []).filter(model => !JIMENG_LEGACY_IMAGE_MODELS.has(String(model || '').trim())), ...JIMENG_DEFAULT_IMAGE_MODELS]);
+        item.video_models = unique([...(item.video_models || []).filter(model => !JIMENG_LEGACY_VIDEO_MODELS.has(String(model || '').trim())), ...JIMENG_DEFAULT_VIDEO_MODELS]);
         keyInput.placeholder = '即梦 CLI 使用本机 dreamina login，无需 API Key';
         keyHint.textContent = '请先在终端安装 dreamina CLI，并执行 dreamina login';
     }
     document.body.classList.toggle('show-ms', isModelScope);
     document.body.classList.toggle('show-runninghub', isRunningHub);
     document.body.classList.toggle('show-volcengine', isVolcengine);
+    document.body.classList.toggle('show-volcengine-standalone', isStandaloneVolcengine);
     document.body.classList.toggle('show-jimeng', isJimeng);
     renderProviderOnboarding(item);
     renderRecommendApi();
@@ -2177,6 +2194,11 @@ function renderEditor(){
         if(rhWorkflowsCount) rhWorkflowsCount.textContent = '0';
     }
     if(msLoraBlock) msLoraBlock.style.display = isModelScope ? 'flex' : 'none';
+    if(jimengCliPanel){
+        jimengCliPanel.hidden = !isJimeng;
+        jimengCliPanel.style.display = isJimeng ? 'flex' : 'none';
+        if(isJimeng) refreshJimengStatus(false);
+    }
     const deleteBtn = document.getElementById('deleteBtn');
     if(deleteBtn) deleteBtn.style.display = isFixedProvider(item) ? 'none' : 'inline-flex';
     renderModels('image');
@@ -2188,6 +2210,157 @@ function renderEditor(){
 }
 function showVerifyResult(html){ const el = document.getElementById('verifyResult'); if(el){ el.style.display = 'block'; el.innerHTML = html; } }
 function clearVerifyResult(){ const el = document.getElementById('verifyResult'); if(el){ el.style.display = 'none'; el.innerHTML = ''; } }
+function prettyJson(value){
+    try { return JSON.stringify(value, null, 2); } catch(_) { return String(value || ''); }
+}
+function jimengCreditText(raw){
+    if(!raw) return '';
+    const parts = [];
+    const seen = new Set();
+    const visit = value => {
+        if(!value || typeof value !== 'object') return;
+        Object.entries(value).forEach(([key, item]) => {
+            const low = key.toLowerCase();
+            if(/credit|balance|quota|point|coin|积分|余额/.test(low) && item !== null && typeof item !== 'object'){
+                const label = `${key}: ${item}`;
+                if(!seen.has(label)){ seen.add(label); parts.push(label); }
+            }
+            if(item && typeof item === 'object') visit(item);
+        });
+    };
+    visit(raw);
+    return parts.join(' · ') || prettyJson(raw);
+}
+function setJimengStatus(text, ok=null){
+    if(!jimengCliStatus) return;
+    jimengCliStatus.textContent = text || '未检测';
+    jimengCliStatus.classList.toggle('ok', ok === true);
+    jimengCliStatus.classList.toggle('bad', ok === false);
+}
+function renderJimengLoginBox(data){
+    if(!jimengLoginBox) return;
+    const text = data?.text || '';
+    const qrUrl = data?.qr_url || '';
+    const qrHtml = qrUrl && qrUrl.startsWith('http')
+        ? `<img class="jimeng-qr-img" src="${escapeHtml(qrUrl)}" alt="即梦登录二维码">`
+        : '';
+    jimengLoginBox.hidden = false;
+    jimengLoginBox.innerHTML = `${qrHtml}<pre>${escapeHtml(text || '等待 CLI 输出登录二维码...')}</pre>`;
+}
+let jimengLoginTimer = null;
+async function refreshJimengStatus(showCredit=true){
+    if(!jimengCliPanel || jimengCliPanel.hidden) return;
+    setJimengStatus('检测中...');
+    try {
+        const data = await fetch('/api/jimeng/status').then(r => r.json());
+        setJimengStatus(data.logged_in ? '已登录' : (data.installed ? '未登录' : '未安装'), data.logged_in === true);
+        if(data.installed && data.version_ok === false && jimengCredit){
+            jimengCredit.textContent = `⚠ 检测到 dreamina CLI 版本 ${data.cli_version || '未知'}，低于推荐的 ${data.min_version || '1.4.2'}。旧版本任务状态可能无法更新，请升级 CLI。`;
+        } else if(showCredit && data.raw && jimengCredit){
+            jimengCredit.textContent = jimengCreditText(data.raw);
+        }
+    } catch(e){
+        setJimengStatus('检测失败', false);
+        if(jimengCredit) jimengCredit.textContent = e.message || String(e);
+    }
+}
+async function startJimengLogin(){
+    setJimengStatus('等待扫码...');
+    if(jimengCredit) jimengCredit.textContent = '';
+    try {
+        const data = await fetch('/api/jimeng/login/start', {method:'POST'}).then(async r => {
+            const json = await r.json();
+            if(!r.ok) throw new Error(json.detail || '启动登录失败');
+            return json;
+        });
+        renderJimengLoginBox(data);
+        clearInterval(jimengLoginTimer);
+        jimengLoginTimer = setInterval(pollJimengLogin, 2500);
+        refreshIcons();
+    } catch(e){
+        setJimengStatus('登录失败', false);
+        if(jimengLoginBox){
+            jimengLoginBox.hidden = false;
+            jimengLoginBox.innerHTML = `<pre>${escapeHtml(e.message || String(e))}</pre>`;
+        }
+    }
+}
+async function pollJimengLogin(){
+    try {
+        const data = await fetch('/api/jimeng/login/status').then(r => r.json());
+        renderJimengLoginBox(data);
+        if(data.logged_in){
+            clearInterval(jimengLoginTimer);
+            setJimengStatus('已登录', true);
+            if(jimengCredit) jimengCredit.textContent = jimengCreditText(data.raw);
+        } else if(data.running){
+            setJimengStatus('等待扫码...');
+        } else {
+            setJimengStatus('未登录', false);
+        }
+    } catch(e){
+        clearInterval(jimengLoginTimer);
+        setJimengStatus('登录检测失败', false);
+    }
+}
+async function refreshJimengCredit(){
+    setJimengStatus('查询余额...');
+    try {
+        const data = await fetch('/api/jimeng/credit').then(async r => {
+            const json = await r.json();
+            if(!r.ok) throw new Error(json.detail || '查询余额失败');
+            return json;
+        });
+        setJimengStatus('已登录', true);
+        if(jimengCredit) jimengCredit.textContent = jimengCreditText(data.raw);
+    } catch(e){
+        setJimengStatus('未登录', false);
+        if(jimengCredit) jimengCredit.textContent = e.message || String(e);
+    }
+}
+async function logoutJimeng(){
+    if(!confirm('确认退出即梦 CLI 登录？')) return;
+    try {
+        const data = await fetch('/api/jimeng/logout', {method:'POST'}).then(async r => {
+            const json = await r.json();
+            if(!r.ok) throw new Error(json.detail || '退出登录失败');
+            return json;
+        });
+        setJimengStatus('已退出', false);
+        if(jimengCredit) jimengCredit.textContent = prettyJson(data.raw);
+        if(jimengLoginBox) jimengLoginBox.hidden = true;
+    } catch(e){
+        setJimengStatus('退出失败', false);
+        if(jimengCredit) jimengCredit.textContent = e.message || String(e);
+    }
+}
+function openJimengHelp(){
+    if(!jimengHelpOverlay) return;
+    jimengHelpOverlay.style.display = 'flex';
+    loadJimengHelp();
+}
+function closeJimengHelp(){
+    if(jimengHelpOverlay) jimengHelpOverlay.style.display = 'none';
+}
+async function loadJimengHelp(){
+    if(!jimengHelpOutput) return;
+    jimengHelpOutput.textContent = '加载中...';
+    try {
+        const command = jimengHelpCommand?.value || '';
+        const data = await fetch('/api/jimeng/help', {
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({command})
+        }).then(async r => {
+            const json = await r.json();
+            if(!r.ok) throw new Error(json.detail || '加载帮助失败');
+            return json;
+        });
+        jimengHelpOutput.textContent = data.text || prettyJson(data.raw);
+    } catch(e){
+        jimengHelpOutput.textContent = e.message || String(e);
+    }
+}
 function currentProviderApiKey(item){
     if(item?.id === 'runninghub'){
         return rhWalletKeyInput?.value.trim() || rhFreeKeyInput?.value.trim() || '';
@@ -2205,36 +2378,46 @@ async function probeAsync(){
     showVerifyResult(`<span style="color:var(--muted);font-size:11px;font-weight:700">正在检测协议类型...</span>`);
     try {
         const apiKey = currentProviderApiKey(item);
+        const currentProtocol = String(protocolInput?.value || item.protocol || 'openai').toLowerCase();
         const data = await fetch('/api/providers/probe-async', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ base_url: baseUrl, api_key: apiKey, provider_id: item.id })
+            body: JSON.stringify({ base_url: baseUrl, api_key: apiKey, provider_id: item.id, protocol: currentProtocol })
         }).then(async r => {
             if(!r.ok) throw new Error((await r.json()).detail || '请求失败');
             return r.json();
         });
-        const isAsync = data.ok === true;
-        // 自动设置协议下拉
-        if(protocolInput && protocolInput.value !== 'gemini'){
+        const detectedProtocol = String(data.protocol || '').toLowerCase();
+        const isAsync = data.ok === true && detectedProtocol === 'apimart';
+        const isOpenAiCompat = data.ok === true && detectedProtocol === 'openai';
+        const keepManualProtocol = ['gemini', 'volcengine', 'jimeng'].includes(currentProtocol);
+        if(protocolInput && !keepManualProtocol){
             protocolInput.value = isAsync ? 'apimart' : 'openai';
-            // 触发 change 以便其他地方同步
             protocolInput.dispatchEvent(new Event('change'));
         }
         const rawJson = JSON.stringify(data.raw, null, 2);
         const probeMessage = String(data.message || '');
         const hideTasksEndpointTip = probeMessage.includes('/v1/tasks/');
-        const color = isAsync ? '#15803d' : data.ok === null ? '#b45309' : '#64748b';
-        const icon = isAsync ? '✓' : '⚠';
-        const proto = isAsync ? 'APIMart 异步' : 'OpenAI 兼容';
+        const color = (isAsync || isOpenAiCompat || data.ok === true) ? '#15803d' : data.ok === null ? '#b45309' : '#64748b';
+        const icon = (isAsync || isOpenAiCompat || data.ok === true) ? '✓' : '⚠';
+        const proto = detectedProtocol === 'volcengine'
+            ? '方舟/Ark 任务协议'
+            : isAsync
+                ? 'APIMart 异步'
+                : detectedProtocol === 'openai'
+                    ? 'OpenAI 兼容'
+                    : keepManualProtocol
+                    ? (currentProtocol === 'gemini' ? 'Gemini' : currentProtocol.toUpperCase())
+                    : 'OpenAI 兼容';
         showVerifyResult(`
             ${hideTasksEndpointTip ? '' : `<div style="font-size:11px;font-weight:800;color:${color}">${icon} ${escapeHtml(probeMessage)}</div>`}
-            <div style="font-size:11px;color:var(--muted);font-weight:700;margin-top:2px">协议已自动设置为：<strong style="color:var(--text)">${proto}</strong></div>
+            <div style="font-size:11px;color:var(--muted);font-weight:700;margin-top:2px">${keepManualProtocol ? '协议已验证为' : '协议已自动设置为'}：<strong style="color:var(--text)">${proto}</strong></div>
             <details style="margin-top:6px">
                 <summary style="font-size:10.5px;color:var(--muted);cursor:pointer;font-weight:700;user-select:none">▸ 查看原始响应 (HTTP ${data.status_code})</summary>
                 <pre style="margin-top:6px;padding:10px 12px;border-radius:10px;background:var(--soft);border:1px solid var(--line-2);font-size:10.5px;font-family:ui-monospace,Menlo,monospace;white-space:pre-wrap;word-break:break-all;color:var(--text);max-height:200px;overflow:auto">${escapeHtml(rawJson)}</pre>
             </details>`);
     } catch(e){
-        const keepManualProtocol = (protocolInput?.value || '') === 'gemini';
+        const keepManualProtocol = ['gemini', 'volcengine', 'jimeng'].includes(String(protocolInput?.value || item.protocol || '').toLowerCase());
         if(protocolInput && !keepManualProtocol){ protocolInput.value = 'openai'; protocolInput.dispatchEvent(new Event('change')); }
         const suffix = keepManualProtocol ? '，已保留当前手动选择的协议' : '，协议已设为 OpenAI 兼容';
         showVerifyResult(`<div style="font-size:11px;font-weight:800;color:#b45309">⚠ ${escapeHtml(e.message || String(e))}${suffix}</div>`);
@@ -2663,8 +2846,9 @@ async function saveProviders(){
             ? 'volcengine'
             : item.id === 'jimeng'
             ? 'jimeng'
-            : ['openai', 'apimart', 'gemini', 'jimeng'].includes(String(item.protocol || '').toLowerCase()) ? String(item.protocol).toLowerCase() : 'openai';
+            : ['openai', 'apimart', 'gemini', 'volcengine', 'jimeng'].includes(String(item.protocol || '').toLowerCase()) ? String(item.protocol).toLowerCase() : 'openai';
         if(item.id === 'jimeng') item.base_url = '';
+        if(item.id === 'jimeng') item.video_models = unique([...(item.video_models || []).filter(model => !JIMENG_LEGACY_VIDEO_MODELS.has(String(model || '').trim())), ...JIMENG_DEFAULT_VIDEO_MODELS]);
         item.image_generation_endpoint = '';
         item.image_edit_endpoint = '';
         item.image_models = unique(item.image_models || []);

@@ -260,11 +260,11 @@ body.show-ms .ms-hint { display:block; }
 body.show-runninghub .runninghub-hint { display:block; }
 .runninghub-hint a { color:var(--text); font-weight:800; text-decoration:underline; text-underline-offset:3px; }
 .volcengine-hint { display:none; margin-top:8px; color:var(--muted); font-size:11.5px; line-height:1.65; font-weight:600; }
-body.show-volcengine .volcengine-hint { display:block; }
+body.show-volcengine-standalone .volcengine-hint { display:block; }
 .rh-key-stack { display:none; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
 body.show-runninghub .rh-key-stack { display:grid; }
 .volcengine-key-stack { display:none; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
-body.show-volcengine .volcengine-key-stack:not([hidden]) { display:grid; }
+body.show-volcengine-standalone .volcengine-key-stack:not([hidden]) { display:grid; }
 .volcengine-key-stack .rh-key-item:first-child,
 .volcengine-key-stack .volcengine-project-card { grid-column:1/-1; }
 .volcengine-project-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
@@ -283,6 +283,22 @@ body.show-runninghub .api-key-label,
 body.show-runninghub #keyHint { display:none !important; }
 body.show-jimeng .api-base-url-field,
 body.show-jimeng .api-key-field { display:none !important; }
+.jimeng-cli-panel { grid-column:1/-1; display:none; flex-direction:column; gap:12px; margin-top:2px; padding:14px; border:1px solid var(--line); border-radius:14px; background:var(--soft); }
+body.show-jimeng .jimeng-cli-panel:not([hidden]) { display:flex; }
+.jimeng-cli-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+.jimeng-status-pill { height:26px; padding:0 10px; border-radius:8px; border:1px solid var(--line-strong); display:inline-flex; align-items:center; color:var(--muted); background:var(--panel); font-size:11px; font-weight:900; white-space:nowrap; }
+.jimeng-status-pill.ok { color:#15803d; border-color:#86efac; background:#f0fdf4; }
+.jimeng-status-pill.bad { color:#b45309; border-color:#fcd34d; background:#fffbeb; }
+.jimeng-actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.jimeng-credit { min-height:20px; color:var(--text); font-size:12px; line-height:1.55; font-weight:800; white-space:pre-wrap; word-break:break-word; }
+.jimeng-output { display:grid; grid-template-columns:auto minmax(0,1fr); gap:12px; align-items:start; padding:10px; border:1px solid var(--line); border-radius:12px; background:var(--panel); }
+.jimeng-output[hidden] { display:none !important; }
+.jimeng-output pre { margin:0; max-height:260px; overflow:auto; color:var(--text); font:11px/1.45 ui-monospace,Menlo,Consolas,monospace; white-space:pre-wrap; word-break:break-word; }
+.jimeng-qr-img { width:180px; height:180px; object-fit:contain; border-radius:10px; border:1px solid var(--line); background:#fff; }
+.jimeng-help-modal { max-width:860px; }
+.jimeng-help-toolbar { display:flex; gap:10px; align-items:center; padding:14px 20px; border-bottom:1px solid var(--line); }
+.jimeng-help-toolbar select { height:38px; min-width:180px; border:1px solid var(--line); border-radius:10px; background:var(--panel); color:var(--text); padding:0 10px; font-weight:800; outline:none; }
+.jimeng-help-output { margin:0; padding:18px 20px; min-height:420px; max-height:62vh; overflow:auto; background:var(--soft); color:var(--text); font:12px/1.55 ui-monospace,Menlo,Consolas,monospace; white-space:pre-wrap; word-break:break-word; }
 body.show-volcengine .api-key-label { display:inline-flex !important; }
 .runninghub-config-block[hidden] { display:none !important; }
 .runninghub-config-block { display:none; gap:14px; }
@@ -494,8 +510,8 @@ body.show-runninghub .model-grid,
 body.show-runninghub #probeAsyncBtn,
 body.show-runninghub .advanced-endpoints,
 body.show-runninghub .protocol-selector-wrap,
-body.show-volcengine #probeAsyncBtn,
-body.show-volcengine .protocol-selector-wrap,
+body.show-volcengine-standalone #probeAsyncBtn,
+body.show-volcengine-standalone .protocol-selector-wrap,
 body.show-jimeng #probeAsyncBtn,
 body.show-jimeng .advanced-endpoints { display:none !important; }
 .protocol-selector-wrap { height:36px; padding:0 4px; flex-shrink:0; background:var(--panel); }

@@ -144,6 +144,7 @@
         "smart.videoCameraFixed": { zh: "镜头固定", en: "Camera Fixed" },
         "smart.videoWatermark": { zh: "水印", en: "Watermark" },
         "smart.videoUseFrameRoles": { zh: "首尾帧", en: "First/Last Frames" },
+        "smart.videoTrustedAsset": { zh: "可信素材模式", en: "Trusted Asset Mode" },
         "smart.videoAspectKeep": { zh: "原图比例", en: "Keep" },
         "smart.videoAspectAdaptive": { zh: "自适应", en: "Adaptive" },
         "smart.videoResAuto": { zh: "自动", en: "Auto" },

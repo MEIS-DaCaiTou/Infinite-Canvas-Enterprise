@@ -234,6 +234,23 @@ button { border:0; cursor:pointer; }
 .param-row { border:1px solid var(--line); border-radius:11px; background:var(--card); padding:9px; }
 .param-row strong { display:block; color:var(--text); font-size:11px; line-height:1.2; font-weight:900; margin-bottom:5px; }
 .param-row span { display:block; color:var(--muted); font-size:11px; line-height:1.45; font-weight:650; overflow-wrap:anywhere; }
+.avatar-section { margin-top:12px; border:1px solid var(--line); border-radius:13px; background:var(--card); padding:12px; display:flex; flex-direction:column; gap:9px; }
+.avatar-card { border:1px solid var(--line); border-radius:11px; background:var(--bg); padding:10px; display:flex; flex-direction:column; gap:8px; }
+.avatar-card.registered { border-color:rgba(34,197,94,.45); background:rgba(34,197,94,.08); }
+.avatar-card.processing { border-color:rgba(59,130,246,.45); background:rgba(59,130,246,.08); }
+.avatar-card.failed { border-color:rgba(239,68,68,.45); background:rgba(239,68,68,.08); }
+.avatar-head { display:flex; align-items:center; gap:7px; color:var(--text); font-size:12px; font-weight:900; }
+.avatar-head i { width:15px; height:15px; }
+.avatar-platform-tag { margin-left:auto; font-size:10px; font-weight:800; padding:2px 8px; border-radius:999px; background:var(--line); color:var(--text); }
+.avatar-card.registered .avatar-head { color:#16a34a; }
+.avatar-card.processing .avatar-head { color:#2563eb; }
+.avatar-card.processing .avatar-head i { animation:avatar-spin 1.1s linear infinite; }
+.avatar-card.failed .avatar-head { color:#dc2626; }
+@keyframes avatar-spin { to { transform:rotate(360deg); } }
+.avatar-hint { color:var(--muted); font-size:11px; line-height:1.5; font-weight:650; }
+.avatar-hint.warn { color:#d97706; }
+.avatar-uri { font-family:ui-monospace, monospace; font-size:11px; color:var(--text); background:var(--bg); border:1px solid var(--line); border-radius:9px; padding:7px 9px; overflow-wrap:anywhere; }
+.avatar-provider-select { width:100%; border:1px solid var(--line); border-radius:9px; background:var(--bg); color:var(--text); padding:7px 9px; font-size:12px; font-weight:700; }
 .empty-state { min-height:240px; border:1px dashed var(--line-2); border-radius:14px; background:var(--card); color:var(--muted); display:flex; align-items:center; justify-content:center; text-align:center; padding:20px; font-size:12px; line-height:1.45; font-weight:800; }
 .asset-grid .empty-state { grid-column:1 / -1; min-height:160px; }
 @media (max-width: 1180px) {

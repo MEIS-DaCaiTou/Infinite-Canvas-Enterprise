@@ -289,6 +289,8 @@ let settings = {
     videoGenerateAudio:false,
     videoMultimodal:false,
     videoUseFrameRoles:false,
+    videoTrustedAsset:false,
+    videoTrustedSource:'library',
     videoTempShLinks:[],
     msgenModel:'zimage',
     msCustomModel:'',
@@ -368,10 +370,19 @@ function mediaItemForStorage(item){
     delete clean.tempCloudUrl;
     return clean;
 }
+function clearPersistedRunState(target){
+    if(!target || typeof target !== 'object') return target;
+    if(Object.prototype.hasOwnProperty.call(target, 'running')) target.running = false;
+    ['outputs', 'outputSlots'].forEach(key => {
+        if(Array.isArray(target[key])) target[key].forEach(clearPersistedRunState);
+    });
+    return target;
+}
 function canvasForStorage(){
     const clean = JSON.parse(JSON.stringify(canvas || {}));
     clean.settings = settingsForStorage(canvasDefaultSmartSettings || initialSmartSettings);
     (clean.nodes || []).forEach(node => {
+        clearPersistedRunState(node);
         if(Array.isArray(node.images)) node.images = node.images.map(mediaItemForStorage);
         if(node.runSettings) node.runSettings = settingsForStorage(node.runSettings);
     });
@@ -994,6 +1005,29 @@ function exitZoomPreview(point=null){
     scheduleSave();
     return true;
 }
+function exitZoomPreviewToNode(nodeId){
+    if(!zoomPreviewState) return false;
+    const node = nodes.find(n => n.id === nodeId);
+    if(!node) return exitZoomPreview();
+    const prev = zoomPreviewState;
+    const rect = nodeRect(node);
+    const cx = rect.x + rect.width / 2;
+    const cy = rect.y + rect.height / 2;
+    const fitScale = Math.min(
+        1.15,
+        (shell.clientWidth - 160) / Math.max(1, rect.width),
+        (shell.clientHeight - 160) / Math.max(1, rect.height)
+    );
+    const readableScale = Math.min(1.15, Math.max(0.72, fitScale));
+    zoomPreviewState = null;
+    shell.classList.remove('zoom-preview');
+    viewport.scale = Math.max(safeScale(prev.scale), readableScale);
+    viewport.x = shell.clientWidth / 2 - cx * viewport.scale;
+    viewport.y = shell.clientHeight / 2 - cy * viewport.scale;
+    applyViewport();
+    scheduleSave();
+    return true;
+}
 function toggleZoomPreview(){
     if(zoomPreviewState) exitZoomPreview();
     else enterZoomPreview();
@@ -1091,9 +1125,12 @@ function resolveChatProviderId(providerId=''){
     if(providers.some(p => p.id === providerId)) return providerId;
     return providers[0]?.id || 'comfly';
 }
+function isConcreteChatModel(model){
+    return Boolean(model) && !String(model).includes('*');
+}
 function providerChatModels(providerId){
     const provider = chatApiProviders().find(p => p.id === providerId);
-    return [...new Set(provider?.chat_models || [])];
+    return [...new Set(provider?.chat_models || [])].filter(isConcreteChatModel);
 }
 function resolveChatModel(model='', providerId=''){
     const models = providerChatModels(resolveChatProviderId(providerId));
@@ -1113,9 +1150,82 @@ function apiProviderById(providerId){
     if(providerId === 'volcengine') return volcengineProvider();
     return (apiProviders || []).find(p => p.id === providerId) || imageProviders()[0] || null;
 }
+// 认证素材 asset:// 是平台绑定的：返回某 provider 所属的认证平台键（与后端一致）
+function videoProviderPlatform(providerId){
+    const p = (apiProviders || []).find(x => x.id === providerId);
+    const proto = String(p?.protocol || '').toLowerCase();
+    const base = String(p?.base_url || '').toLowerCase();
+    if(proto === 'apimart' || base.includes('apimart.ai')) return 'apimart';
+    if(proto === 'volcengine' || providerId === 'volcengine') return 'volcengine';
+    return '';
+}
 function providerImageModels(providerId){
     if(providerId === 'volcengine') return volcengineProvider().image_models || [];
     return (apiProviders || []).find(p => p.id === providerId)?.image_models || [];
+}
+// 即梦图生图（挂了参考图）不支持 3.0/3.1，此时从模型下拉里隐藏它们。
+const JIMENG_IMAGE2IMAGE_UNSUPPORTED = ['3.0', '3.1'];
+function jimengImageEditMode(){
+    if(settings.provider_id !== 'jimeng') return false;
+    const node = activeComposerNode() || selectedNode();
+    const refs = node ? visibleReferenceImagesFor(node) : [];
+    return refs.length > 0;
+}
+function filterJimengImageModels(models){
+    if(settings.provider_id !== 'jimeng' || !jimengImageEditMode()) return models;
+    return (models || []).filter(m => !JIMENG_IMAGE2IMAGE_UNSUPPORTED.includes(String(m)));
+}
+let _jimengLastEditMode = null;
+let _jimengModelRefreshing = false;
+// 参考图增删导致即梦文生图/图生图切换时，重新渲染参数面板以更新模型下拉。
+function syncJimengModelPillForRefs(){
+    if(_jimengModelRefreshing) return;
+    if(settings.provider_id !== 'jimeng' || settings.engine !== 'api' || settings.apiKind === 'video'){
+        _jimengLastEditMode = null;
+        return;
+    }
+    const mode = jimengImageEditMode();
+    if(mode === _jimengLastEditMode) return;
+    _jimengLastEditMode = mode;
+    _jimengModelRefreshing = true;
+    try { renderDynamicParams(); } finally { _jimengModelRefreshing = false; }
+}
+// 即梦各视频指令支持的模型集合不同，按当前参考素材推断指令并过滤模型下拉。
+const JIMENG_SEEDANCE_VIDEO_MODELS = ['seedance2.0_vip', 'seedance2.0fast_vip', 'seedance2.0', 'seedance2.0fast'];
+const JIMENG_VIDEO_MODELS_BY_COMMAND = {
+    text2video: JIMENG_SEEDANCE_VIDEO_MODELS,
+    multimodal2video: JIMENG_SEEDANCE_VIDEO_MODELS,
+    image2video: ['3.0', '3.0fast', '3.0pro', '3.5pro', ...JIMENG_SEEDANCE_VIDEO_MODELS],
+    frames2video: ['3.0', '3.5pro', ...JIMENG_SEEDANCE_VIDEO_MODELS],
+};
+function jimengVideoCommand(){
+    const node = activeComposerNode() || selectedNode();
+    const refs = node ? visibleReferenceImagesFor(node) : [];
+    const imageRefs = imageRefsOnly(refs);
+    const hasVideoRef = videoRefsOnly(refs).length > 0 || Boolean(manualSmartVideoLink(settings));
+    if(settings.videoMultimodal || hasVideoRef) return 'multimodal2video';
+    if(imageRefs.length >= 2) return settings.videoUseFrameRoles ? 'frames2video' : 'multiframe2video';
+    if(imageRefs.length >= 1) return 'image2video';
+    return 'text2video';
+}
+function filterJimengVideoModels(models){
+    if(settings.videoProvider !== 'jimeng') return models;
+    const allowed = JIMENG_VIDEO_MODELS_BY_COMMAND[jimengVideoCommand()];
+    if(!allowed) return models; // multiframe2video 等：官方规格未知，不过滤
+    return (models || []).filter(m => allowed.includes(String(m)));
+}
+let _jimengLastVideoCommand = null;
+function syncJimengVideoModelPillForRefs(){
+    if(_jimengModelRefreshing) return;
+    if(settings.videoProvider !== 'jimeng' || settings.engine !== 'api' || settings.apiKind !== 'video'){
+        _jimengLastVideoCommand = null;
+        return;
+    }
+    const command = jimengVideoCommand();
+    if(command === _jimengLastVideoCommand) return;
+    _jimengLastVideoCommand = command;
+    _jimengModelRefreshing = true;
+    try { renderDynamicParams(); } finally { _jimengModelRefreshing = false; }
 }
 function sanitizeSmartApiSelection(target=settings){
     if(!target || typeof target !== 'object') return target;
@@ -1226,7 +1336,7 @@ function renderVideoAspectControl(){
     </div>`;
 }
 function renderVideoResolutionControl(){
-    const options = [['', tr('smart.videoResAuto')], ['480p','480P'], ['720p','720P'], ['1080p','1080P'], ['780P','780P']];
+    const options = [['', tr('smart.videoResAuto')], ['480p','480P'], ['720p','720P'], ['1080p','1080P']];
     const value = settings.videoResolution || '';
     const labelMap = Object.fromEntries(options);
     return `<div class="smart-control resolution-control">
@@ -1248,6 +1358,19 @@ function renderTempShUploadControl(){
 }
 function renderManualVideoUrlControl(){
     return `<button type="button" class="smart-pill manual-video-url-pill" data-manual-video-url title="手动输入媒体 URL"><i data-lucide="link"></i><span>输入网址</span></button>`;
+}
+// 可信素材模式：打开后可选择素材来源——素材库认证链接 / 自行上传云端 / 自行输入网址。
+function renderVideoTrustedAssetControl(){
+    const on = !!settings.videoTrustedAsset;
+    let html = renderVideoToggleControl('videoTrustedAsset', tr('smart.videoTrustedAsset'));
+    if(!on) return html;
+    const src = ['library','cloud','manual'].includes(settings.videoTrustedSource) ? settings.videoTrustedSource : 'library';
+    html += `<div class="trusted-source-row">
+        <button type="button" class="smart-pill trusted-src-pill ${src === 'library' ? 'active' : ''}" data-trusted-source="library" title="使用素材库中已注册的认证素材链接（asset://）"><i data-lucide="library"></i><span>素材库链接</span></button>
+        <button type="button" class="smart-pill trusted-src-pill ${src === 'cloud' ? 'active' : ''}" data-trusted-source="cloud" title="把当前输入图片/视频上传到云端直链"><i data-lucide="upload-cloud"></i><span>上传云端</span></button>
+        <button type="button" class="smart-pill trusted-src-pill ${src === 'manual' ? 'active' : ''}" data-trusted-source="manual" title="手动输入媒体 URL 或 asset:// 地址"><i data-lucide="link"></i><span>输入网址</span></button>
+    </div>`;
+    return html;
 }
 function optionHtml(value, label, selected){
     return `<option value="${escapeHtml(value)}" ${String(value) === String(selected) ? 'selected' : ''}>${escapeHtml(label ?? value)}</option>`;
@@ -1328,7 +1451,7 @@ function renderDynamicParams(){
 function renderApiParams(){
     const providers = imageProviders();
     if(!settings.provider_id || !providers.some(p => p.id === settings.provider_id)) settings.provider_id = providers[0]?.id || '';
-    const models = providerImageModels(settings.provider_id);
+    const models = filterJimengImageModels(providerImageModels(settings.provider_id));
     if(!settings.model || !models.includes(settings.model)) settings.model = models[0] || '';
     normalizeApiSizeSettings('');
     const outpaintLocked = settings.outpaintResolutionLocked === true;
@@ -1346,7 +1469,7 @@ function renderApiParams(){
 function renderApiVideoParams(){
     const providers = videoApiProviders();
     if(!settings.videoProvider || !providers.some(p => p.id === settings.videoProvider)) settings.videoProvider = providers[0]?.id || 'comfly';
-    const models = providerVideoModels(settings.videoProvider);
+    const models = filterJimengVideoModels(providerVideoModels(settings.videoProvider));
     if(!settings.videoModel || !models.includes(settings.videoModel)) settings.videoModel = models[0] || 'veo3-fast';
     dynamicParams.innerHTML = `
         ${renderVideoProviderControl(providers)}
@@ -1361,6 +1484,7 @@ function renderApiVideoParams(){
         ${renderVideoToggleControl('videoWatermark', tr('smart.videoWatermark'))}
         ${renderVideoToggleControl('videoMultimodal', tr('smart.videoMultimodal'))}
         ${renderVideoToggleControl('videoUseFrameRoles', tr('smart.videoUseFrameRoles'))}
+        ${settings.videoProvider === 'jimeng' ? '' : renderVideoTrustedAssetControl()}
     `;
 }
 function renderVolcengineParams(){
@@ -1401,6 +1525,7 @@ function renderVolcengineVideoParams(){
         ${renderVideoToggleControl('videoWatermark', tr('smart.videoWatermark'))}
         ${renderVideoToggleControl('videoMultimodal', tr('smart.videoMultimodal'))}
         ${renderVideoToggleControl('videoUseFrameRoles', tr('smart.videoUseFrameRoles'))}
+        ${renderVideoTrustedAssetControl()}
     `;
 }
 function renderRunningHubParams(){
@@ -2164,7 +2289,7 @@ async function uploadCurrentSmartVideosToCloud(){
         toast('当前输入图片或视频已是云端链接');
         return [];
     }
-    const btn = inputThumbsRow?.querySelector('[data-temp-sh-upload-video]');
+    const btn = dynamicParams?.querySelector('[data-trusted-source="cloud"]') || inputThumbsRow?.querySelector('[data-temp-sh-upload-video]');
     if(btn) btn.disabled = true;
     toast(`正在上传 ${localRefs.length} 个媒体文件到云端...`);
     try {
@@ -2423,6 +2548,23 @@ function bindDynamicParams(){
             scheduleSave();
         };
     });
+    dynamicParams.querySelectorAll('[data-trusted-source]').forEach(btn => {
+        btn.onclick = async event => {
+            event.preventDefault();
+            event.stopPropagation();
+            const src = btn.dataset.trustedSource;
+            settings.videoTrustedSource = ['library','cloud','manual'].includes(src) ? src : 'library';
+            persistActiveSmartSettings();
+            renderDynamicParams();
+            scheduleSave();
+            try {
+                if(src === 'cloud') await uploadCurrentSmartVideosToCloud();
+                else if(src === 'manual') await setCurrentSmartManualVideoUrl();
+            } catch(e) {
+                toast((e.message || '操作失败').slice(0, 180));
+            }
+        };
+    });
     dynamicParams.querySelectorAll('[data-comfy-bool]').forEach(btn => {
         btn.onclick = event => {
             event.preventDefault();
@@ -2549,6 +2691,9 @@ async function loadConfig(){
         const cfg = await fetch('/api/config').then(r => r.json());
         apiProviders = Array.isArray(cfg.api_providers) ? cfg.api_providers : [];
         comfyInstanceCount = Math.max(1, (Array.isArray(cfg.comfy_instances) ? cfg.comfy_instances : []).filter(Boolean).length || 1);
+        // 提供商配置已就绪即先渲染参数面板，避免等工作流/RunningHub 预取完成后参数才「突然刷新出来」。
+        sanitizeSmartApiSelection(settings);
+        updateProviderModels();
         const wf = await fetch('/api/workflows').then(r => r.json()).catch(() => ({workflows:[]}));
         comfyWorkflows = Array.isArray(wf.workflows) ? wf.workflows : [];
         runningHubWorkflowCache = {};
@@ -3220,12 +3365,133 @@ function handleAssetLibraryUpdatedMessage(data={}){
     if(remoteUpdatedAt && remoteUpdatedAt <= Number(assetLibraryUpdatedAt || 0)) return;
     refreshAssetLibrarySoon();
 }
+// 多人协作同步：一个稳定的客户端 id，既用于 WS 连接，也随 saveCanvas 上报，
+// 服务器广播 canvas_updated 时带回 client_id，自己发的就忽略，避免自我刷新。
+const smartClientId = `canvas_smart_${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36).slice(-4)}`;
+let canvasSyncInFlight = false;
+let canvasSyncTimer = null;
+let canvasMetaPollTimer = null;
+function mergeSmartImageLists(localImgs, remoteImgs){
+    const out = [];
+    const seen = new Set();
+    (localImgs || []).forEach(img => {
+        const u = img && img.url;
+        if(u && seen.has(u)) return;
+        if(u) seen.add(u);
+        out.push(img);
+    });
+    (remoteImgs || []).forEach(img => {
+        const u = img && img.url;
+        if(!u || seen.has(u)) return;
+        seen.add(u);
+        out.push(img);
+    });
+    return out;
+}
+function smartNodeInFlight(node){
+    return Boolean(node && (node.running || node.pending || node.queued || node.jimengPending || smartPendingTasks(node).length));
+}
+function mergeSmartNode(local, remote){
+    // 本地正在生成/排队的节点完全以本地为准，只把对方可能多出来的图并进来，绝不被对方旧状态冲掉
+    if(smartNodeInFlight(local)){
+        return {...local, images:mergeSmartImageLists(local.images, remote.images)};
+    }
+    // 否则以对方（最新保存方）的布局/标题/设置为基底，但图片取并集——双方生成结果都不丢
+    return {...remote, images:mergeSmartImageLists(local.images, remote.images)};
+}
+function mergeSmartNodeLists(localNodes, remoteNodes){
+    const localById = new Map((localNodes || []).map(n => [n.id, n]));
+    const remoteById = new Map((remoteNodes || []).map(n => [n.id, n]));
+    const order = [];
+    const seen = new Set();
+    (localNodes || []).forEach(n => { if(!seen.has(n.id)){ seen.add(n.id); order.push(n.id); } });
+    (remoteNodes || []).forEach(n => { if(!seen.has(n.id)){ seen.add(n.id); order.push(n.id); } });
+    return order.map(id => {
+        const local = localById.get(id);
+        const remote = remoteById.get(id);
+        if(local && !remote) return local;     // 仅本地存在：保留（我新建的节点；对方删了也宁可复活也不丢结果）
+        if(remote && !local) return remote;     // 仅对方存在：加入对方新建的节点
+        return mergeSmartNode(local, remote);
+    }).filter(Boolean);
+}
+function mergeSmartConnections(localConns, remoteConns, nodeIds){
+    const out = [];
+    const seen = new Set();
+    [...(localConns || []), ...(remoteConns || [])].forEach(c => {
+        if(!c || !nodeIds.has(c.from) || !nodeIds.has(c.to)) return;
+        const key = `${c.from}->${c.to}:${c.kind || 'flow'}`;
+        if(seen.has(key)) return;
+        seen.add(key);
+        out.push(c);
+    });
+    return out;
+}
+function applyMergedServerCanvas(serverCanvas){
+    if(!serverCanvas || !canvas) return false;
+    const remoteNodes = (Array.isArray(serverCanvas.nodes) ? serverCanvas.nodes : []).map(normalizeLegacySmartNode).filter(Boolean);
+    const mergedNodes = mergeSmartNodeLists(nodes, remoteNodes);
+    const nodeIds = new Set(mergedNodes.map(n => n.id));
+    nodes = mergedNodes;
+    canvas.connections = mergeSmartConnections(canvas.connections, serverCanvas.connections, nodeIds);
+    canvas.updated_at = Number(serverCanvas.updated_at || canvas.updated_at || 0);
+    if(canvas.title !== serverCanvas.title && serverCanvas.title){
+        canvas.title = serverCanvas.title;
+        const titleEl = document.getElementById('smartTitle');
+        if(titleEl) titleEl.textContent = canvas.title;
+    }
+    render();
+    if(typeof refreshConnectionLayer === 'function') refreshConnectionLayer();
+    resumeSmartPendingTasks();
+    resumeJimengPendingNodes();
+    return true;
+}
+async function mergeReloadCanvasNow(){
+    if(!canvasId) return;
+    if(dragState || selectionState){
+        // 用户正在拖拽/框选，稍后再合并，别打断操作
+        scheduleCanvasMergeReload(600);
+        return;
+    }
+    try {
+        const res = await fetch(`/api/canvases/${encodeURIComponent(canvasId)}`);
+        if(!res.ok) return;
+        const data = await res.json();
+        if(data && data.canvas) applyMergedServerCanvas(data.canvas);
+    } catch(e) {}
+}
+function scheduleCanvasMergeReload(delay=200){
+    clearTimeout(canvasSyncTimer);
+    canvasSyncTimer = setTimeout(() => { mergeReloadCanvasNow(); }, delay);
+}
+function handleCanvasUpdatedMessage(data={}){
+    if(!data || data.type !== 'canvas_updated') return;
+    if(!canvasId || data.canvas_id !== canvasId) return;
+    if(data.client_id && data.client_id === smartClientId) return; // 自己发的，忽略
+    if(canvasSyncInFlight) return; // 我正在保存，保存完成/409 合并会处理
+    const remoteUpdatedAt = Number(data.updated_at || 0);
+    if(remoteUpdatedAt && remoteUpdatedAt <= Number(canvas?.updated_at || 0)) return;
+    scheduleCanvasMergeReload(200);
+}
+function startCanvasMetaPoll(){
+    // WS / iframe 转发不可靠时的兜底：定期看服务器 updated_at 是否变新，变新就合并拉取
+    if(canvasMetaPollTimer) return;
+    canvasMetaPollTimer = setInterval(async () => {
+        if(!canvasId || !canvas) return;
+        if(canvasSyncInFlight || dragState || selectionState) return;
+        try {
+            const res = await fetch(`/api/canvases/${encodeURIComponent(canvasId)}/meta`);
+            if(!res.ok) return;
+            const meta = await res.json();
+            if(Number(meta.updated_at || 0) > Number(canvas.updated_at || 0)) mergeReloadCanvasNow();
+        } catch(e) {}
+    }, 8000);
+}
 function connectAssetLibrarySyncSocket(){
     if(window.parent && window.parent !== window) return;
     const host = window.location.host;
     if(!host) return;
     const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
-    const clientId = `canvas_asset_${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36).slice(-4)}`;
+    const clientId = smartClientId;
     let socket;
     let retryTimer = null;
     const connect = () => {
@@ -3239,6 +3505,7 @@ function connectAssetLibrarySyncSocket(){
             try {
                 const data = JSON.parse(event.data);
                 if(data?.type === 'asset_library_updated') handleAssetLibraryUpdatedMessage(data);
+                if(data?.type === 'canvas_updated') handleCanvasUpdatedMessage(data);
             } catch(e) {}
         };
         socket.onclose = () => {
@@ -3538,7 +3805,10 @@ async function loadCanvas(){
         canvas = data.canvas;
         document.title = canvas.title || tr('canvas.smartCanvas');
         document.getElementById('smartTitle').textContent = canvas.title || tr('canvas.smartCanvas');
-        nodes = (Array.isArray(canvas.nodes) ? canvas.nodes : []).map(normalizeLegacySmartNode).filter(Boolean);
+        nodes = (Array.isArray(canvas.nodes) ? canvas.nodes : [])
+            .map(normalizeLegacySmartNode)
+            .filter(Boolean)
+            .map(clearPersistedRunState);
         nodes.forEach(n => {
             const pendingTasks = smartPendingTasks(n);
             if(pendingTasks.length){
@@ -3560,6 +3830,8 @@ async function loadCanvas(){
         applyViewport();
         render();
         resumeSmartPendingTasks();
+        resumeJimengPendingNodes();
+        startCanvasMetaPoll();
     } catch(e) { toast(tr('smart.toastCanvasFail')); }
 }
 function scheduleSave(){
@@ -3577,6 +3849,7 @@ async function saveCanvas(){
     canvas.settings = settingsForStorage(canvasDefaultSmartSettings || initialSmartSettings);
     canvas.viewport = {...viewport};
     const storageCanvas = canvasForStorage();
+    canvasSyncInFlight = true;
     try {
         const res = await fetch(`/api/canvases/${encodeURIComponent(canvasId)}`, {
             method:'PUT',
@@ -3589,18 +3862,34 @@ async function saveCanvas(){
                 viewport:storageCanvas.viewport || {x:0,y:0,scale:1},
                 logs:storageCanvas.logs || [],
                 settings:storageCanvas.settings,
-                base_updated_at:storageCanvas.updated_at || canvas.updated_at || 0
+                base_updated_at:storageCanvas.updated_at || canvas.updated_at || 0,
+                client_id:smartClientId
             })
         });
         if(res.ok){
             const data = await res.json();
-            if(data.canvas) canvas = {...canvas, ...data.canvas};
+            if(data.canvas && data.canvas.updated_at) canvas.updated_at = data.canvas.updated_at;
         } else if(res.status === 409) {
+            // 冲突：别人先保存了。合并对方的状态（节点 id 合并、图片取并集，谁都不丢），
+            // 然后用对方最新的 updated_at 作为基底重存，把合并结果落盘——而不是直接覆盖对方。
             const data = await res.json().catch(() => ({}));
-            if(data.detail?.updated_at) canvas.updated_at = data.detail.updated_at;
+            const serverCanvas = data.detail?.canvas;
+            if(serverCanvas){
+                applyMergedServerCanvas(serverCanvas);
+                nodes.forEach(node => {
+                    node.images = (node.images || []).map(img => mediaItemForStorage(stripImageGenerationMeta(img)));
+                    if(node.runSettings) node.runSettings = settingsForStorage(node.runSettings);
+                });
+                canvas.nodes = nodes;
+            } else if(data.detail?.updated_at) {
+                canvas.updated_at = data.detail.updated_at;
+            }
+            clearTimeout(saveTimer);
             saveTimer = setTimeout(saveCanvas, 300);
         }
-    } catch(e) {}
+    } catch(e) {} finally {
+        canvasSyncInFlight = false;
+    }
 }
 function imageMetaFromNode(node){
     return {};
@@ -4548,6 +4837,9 @@ function nodeBodyHtml(node, layout){
     if(node.type === 'smart-prompt') return promptNodeBodyHtml(node);
     if(node.type === 'smart-loop') return smartLoopBodyHtml(node);
     const imgs = (node.images || []).map(imageForDisplay);
+    if(node.jimengPending && node.jimengPending.submitId && imgs.length === 0){
+        return jimengPendingBodyHtml(node, layout);
+    }
     if(node.queued && imgs.length === 0 && !node.pending){
         return `<div class="loading-cell single queued" style="width:${layout.width}px;height:${layout.height}px"></div>`;
     }
@@ -4566,6 +4858,19 @@ function nodeBodyHtml(node, layout){
         <span class="upload-node-sub">拖拽 / 粘贴 / 点击上传</span>
     </div>`;
 }
+function jimengPendingBodyHtml(node, layout){
+    const jp = node.jimengPending || {};
+    const querying = Boolean(jp.querying);
+    const queueText = jimengQueueText(jp.queueInfo);
+    return `<div class="jimeng-pending-cell loading-cell single" style="width:${layout.width}px;height:${layout.height}px">
+        <div class="jimeng-pending-overlay">
+            <div class="jimeng-pending-spinner"><i data-lucide="loader-2"></i></div>
+            <div class="jimeng-pending-text">${escapeHtml(queueText)}</div>
+            <div class="jimeng-pending-sub">任务未丢失，可继续等待或手动查询</div>
+            <button class="jimeng-pending-query" type="button" data-jimeng-query="${escapeAttr(node.id)}" ${querying ? 'disabled' : ''}><i data-lucide="${querying ? 'loader-2' : 'refresh-cw'}"></i><span>${querying ? '查询中…' : '查询结果'}</span></button>
+        </div>
+    </div>`;
+}
 function nowMs(){ return Date.now(); }
 function formatRunDuration(ms){
     const total = Math.max(0, Math.floor(Number(ms || 0) / 1000));
@@ -4581,19 +4886,19 @@ function nodeRunElapsedMs(node){
 }
 function runTimePillHtml(node){
     if(!node || node.runTimerHidden || node.type === 'smart-prompt') return '';
-    const running = Boolean(node.pending || node.running);
+    const running = Boolean(node.pending || node.running || node.jimengPending);
     if(!running && !node.runFinishedAt) return '';
     const cls = running ? '' : ' done';
     return `<span class="run-time-pill${cls}" data-run-timer="${escapeHtml(node.id)}">${formatRunDuration(nodeRunElapsedMs(node))}</span>`;
 }
 function hideRunTimerForNode(node){
-    if(!node || node.runTimerHidden || node.pending || node.running || !node.runFinishedAt) return false;
+    if(!node || node.runTimerHidden || node.pending || node.running || node.jimengPending || !node.runFinishedAt) return false;
     node.runTimerHidden = true;
     scheduleSave();
     return true;
 }
 function refreshRunTimerPills(){
-    const active = nodes.some(n => n.type !== 'smart-prompt' && !n.runTimerHidden && (n.pending || n.running || n.runFinishedAt));
+    const active = nodes.some(n => n.type !== 'smart-prompt' && !n.runTimerHidden && (n.pending || n.running || n.jimengPending || n.runFinishedAt));
     document.querySelectorAll('[data-run-timer]').forEach(el => {
         const node = nodes.find(n => n.id === el.dataset.runTimer);
         if(!node || node.runTimerHidden || node.type === 'smart-prompt') {
@@ -4601,7 +4906,7 @@ function refreshRunTimerPills(){
             return;
         }
         el.textContent = formatRunDuration(nodeRunElapsedMs(node));
-        el.classList.toggle('done', Boolean(!node.pending && !node.running && node.runFinishedAt));
+        el.classList.toggle('done', Boolean(!node.pending && !node.running && !node.jimengPending && node.runFinishedAt));
     });
     if(active && !runTimerInterval) runTimerInterval = setInterval(refreshRunTimerPills, 1000);
     if(!active && runTimerInterval){ clearInterval(runTimerInterval); runTimerInterval = null; }
@@ -4622,11 +4927,12 @@ function render(){
         const isPrompt = node.type === 'smart-prompt';
         const isLoop = node.type === 'smart-loop';
         const isImageNode = node.type === 'smart-image' || !node.type;
-        const isQueued = Boolean(node.queued && imgs.length === 0 && !node.pending);
-        const isEmpty = isImageNode && imgs.length === 0 && !node.pending && !isQueued;
+        const isJimengPending = Boolean(node.jimengPending && node.jimengPending.submitId && imgs.length === 0);
+        const isQueued = Boolean(node.queued && imgs.length === 0 && !node.pending && !isJimengPending);
+        const isEmpty = isImageNode && imgs.length === 0 && !node.pending && !isQueued && !isJimengPending;
         const isHistory = isHistoryGroupNode(node);
         const isGroup = isImageNode && imgs.length > 1;
-        const isPending = (node.pending || isQueued) && imgs.length === 0;
+        const isPending = ((node.pending || isQueued || isJimengPending) && imgs.length === 0);
         const body = nodeBodyHtml(node, layout);
         const deleteBtn = `<button class="mini-x node-delete" type="button" title="${escapeHtml(tr('smart.deleteNode'))}"><i data-lucide="trash-2"></i></button>`;
         const hint = isPending ? escapeHtml(tr('smart.hintPending')) : (imgs.length > 1 ? escapeHtml(tr('smart.hintMulti')) : imgs.length ? escapeHtml(tr('smart.hintSingle')) : escapeHtml(tr('smart.hintEmpty')));
@@ -4636,7 +4942,7 @@ function render(){
             ${runTimePillHtml(node)}
             <div class="node-body">${body}</div>
             <div class="node-hint">${hint}</div>
-            ${imgs.length || node.pending || isQueued || isPrompt || isLoop ? '<div class="node-resize-handle" data-resize="1"></div>' : ''}
+            ${imgs.length || node.pending || isQueued || isJimengPending || isPrompt || isLoop ? '<div class="node-resize-handle" data-resize="1"></div>' : ''}
             <div class="node-port port-in" data-port="in" title="input"></div>
             <div class="node-port port-out" data-port="out" title="output"></div>
         </div>`;
@@ -5179,6 +5485,13 @@ function bindNodeEvents(){
             btn.addEventListener('click', e => {
                 e.preventDefault(); e.stopPropagation();
                 deleteNodeFromButton(id);
+            });
+        });
+        el.querySelectorAll('[data-jimeng-query]').forEach(btn => {
+            btn.addEventListener('mousedown', e => { e.preventDefault(); e.stopPropagation(); }, true);
+            btn.addEventListener('click', e => {
+                e.preventDefault(); e.stopPropagation();
+                queryJimengNow(btn.dataset.jimengQuery);
             });
         });
         el.querySelectorAll('.image-delete').forEach(btn => {
@@ -7497,10 +7810,11 @@ function renderInputPromptPreview(node){
 }
 function renderInputThumbsRow(node){
     if(!inputThumbsRow) return;
+    syncJimengModelPillForRefs();
+    syncJimengVideoModelPillForRefs();
     const dedup = node ? visibleReferenceImagesFor(node) : [];
-    const showCloudUpload = isApiLikeEngine(settings.engine) && settings.apiKind === 'video';
-    inputThumbsRow.classList.toggle('has-items', dedup.length > 0 || showCloudUpload);
-    if(!dedup.length && !showCloudUpload){ inputThumbsRow.innerHTML = ''; return; }
+    inputThumbsRow.classList.toggle('has-items', dedup.length > 0);
+    if(!dedup.length){ inputThumbsRow.innerHTML = ''; return; }
     const thumbsHtml = dedup.map((img, i) => {
         const isVid = isVideoMediaItem(img);
         const isSelf = node ? isSelfReferenceForNode(node, img) : false;
@@ -7512,9 +7826,8 @@ function renderInputThumbsRow(node){
         const sourceUrl = img.originalLocalUrl || img.url || '';
         return `<div class="input-thumb ${isSelf ? 'input-self' : ''}" draggable="false" data-thumb-index="${i}" data-node-id="${escapeHtml(img.nodeId || '')}" data-image-index="${img.imageIndex ?? ''}" data-url="${escapeHtml(img.url || '')}" data-source-url="${escapeHtml(sourceUrl)}" title="${escapeHtml(`${img.name || tr('smart.inputNum').replace('{n}', String(i + 1))} · ${title}`)}">${inner}<span class="input-thumb-label">${escapeHtml(label)}</span></div>`;
     }).join('');
-    inputThumbsRow.innerHTML = `<div class="input-thumb-list">${thumbsHtml}${dedup.length > 1 ? `<span class="input-thumb-count">${escapeHtml(tr('smart.inputCount').replace('{n}', String(dedup.length)))}</span>` : ''}</div>${showCloudUpload ? `<div class="input-thumb-actions">${renderManualVideoUrlControl()}${renderTempShUploadControl()}</div>` : ''}`;
+    inputThumbsRow.innerHTML = `<div class="input-thumb-list">${thumbsHtml}${dedup.length > 1 ? `<span class="input-thumb-count">${escapeHtml(tr('smart.inputCount').replace('{n}', String(dedup.length)))}</span>` : ''}</div>`;
     bindInputThumbsDrag(node, dedup);
-    bindInputThumbVideoActions();
 }
 function bindInputThumbsDrag(node, items){
     if(!inputThumbsRow) return;
@@ -8367,6 +8680,16 @@ function inputMentionCandidateImages(node){
         alias:img.name || `图片${index + 1}`
     }));
 }
+// 一个素材可注册到多个平台：收集所有「已通过」的 asset:// 地址，按平台映射。
+function assetRegisteredUris(item){
+    const regs = (item && item.registrations && typeof item.registrations === 'object') ? item.registrations : {};
+    const out = {};
+    Object.keys(regs).forEach(platform => {
+        const reg = regs[platform];
+        if(reg && reg.status === 'Active' && reg.asset_uri) out[platform] = reg.asset_uri;
+    });
+    return out;
+}
 function assetMentionCandidateImages(categoryId=''){
     const cats = assetCategories('image');
     const cat = cats.find(c => c.id === categoryId) || assetCategoryForMention();
@@ -8385,6 +8708,7 @@ function assetMentionCandidateImages(categoryId=''){
         alias:item.name || `资产${index + 1}`,
         role:'asset',
         categoryName:item.categoryName || '',
+        asset_uris:assetRegisteredUris(item),
         mentionId:`asset_${index}_${Math.random().toString(36).slice(2, 7)}`
     }));
 }
@@ -8575,6 +8899,7 @@ function insertMentionToken(img){
     token.dataset.kind = mediaKindForItem(img);
     token.dataset.nodeId = img.nodeId || '';
     token.dataset.imageIndex = String(img.imageIndex ?? '');
+    token.dataset.assetUris = JSON.stringify(img.asset_uris || {});
     token.innerHTML = token.dataset.kind === 'video'
         ? `<video src="${escapeHtml(img.url)}" muted preload="metadata" playsinline disablepictureinpicture controlslist="nodownload noplaybackrate noremoteplayback"></video><span>${escapeHtml(token.dataset.name)}</span>`
         : `<img src="${escapeHtml(img.url)}" alt=""><span>${escapeHtml(token.dataset.name)}</span>`;
@@ -8598,7 +8923,9 @@ function collectPromptParts(){
         }
         if(node.nodeType !== Node.ELEMENT_NODE) return;
         if(node.classList?.contains('mention-image-token')){
-            parts.push({type:'image', url:node.dataset.url || '', name:node.dataset.name || '图片', nodeId:node.dataset.nodeId || '', imageIndex:Number(node.dataset.imageIndex || 0)});
+            let assetUris = {};
+            try { assetUris = JSON.parse(node.dataset.assetUris || '{}') || {}; } catch(e) { assetUris = {}; }
+            parts.push({type:'image', url:node.dataset.url || '', name:node.dataset.name || '图片', nodeId:node.dataset.nodeId || '', imageIndex:Number(node.dataset.imageIndex || 0), asset_uris:assetUris});
             return;
         }
         if(node.tagName === 'BR') parts.push({type:'text', text:'\n'});
@@ -9211,6 +9538,7 @@ function coolNodeRunningState(node, ms=2000){
         if(current){
             current.running = false;
             render();
+            scheduleSave();
         }
     }, ms);
     return token;
@@ -9654,9 +9982,13 @@ async function runCascadeStepIntoNode(sourceNode, targetNode, inputRefs, ctx=sma
         render();
         return additions;
     } catch(e) {
+        settings = previousSettings;
+        if(handleJimengPendingSignal(outputNode, e)){
+            render();
+            return [];
+        }
         outputNode.running = false;
         addSmartGenerationLog({run:runLog, outputs:[], runMs:nowMs() - runLogStart, error:e.message || String(e)});
-        settings = previousSettings;
         render();
         throw e;
     }
@@ -9725,6 +10057,10 @@ async function runLoopRoundIntoSlot(loopNode, rootNode, outputSlot, loopIndex, c
             scheduleSave();
             await saveCanvas();
             await resumeSmartPendingNode(outputSlot);
+            if(outputSlot.jimengPending){
+                outputSlot.queued = false;
+                return [];
+            }
             result = {urls:(outputSlot.images || []).map(img => img?.url ? img : null).filter(Boolean), kind:'image'};
         } else {
             result = await generateUrlsForCurrentSettings(outputSlot, prompt, request.refs || [], runSettings);
@@ -9749,6 +10085,10 @@ async function runLoopRoundIntoSlot(loopNode, rootNode, outputSlot, loopIndex, c
         addSmartGenerationLog({run:{...runLog, kind:result.kind || logKind}, outputs:result.urls, runMs:nowMs() - runLogStart});
         return additions;
     } catch(e) {
+        if(handleJimengPendingSignal(outputSlot, e)){
+            outputSlot.queued = false;
+            return [];
+        }
         outputSlot.queued = false;
         outputSlot.pending = 0;
         outputSlot.running = false;
@@ -10152,6 +10492,13 @@ async function runGeneration(){
             scheduleSave();
             await saveCanvas();
             await resumeSmartPendingNode(pendingNode);
+            if(pendingNode.jimengPending){
+                if(sourceVisualState) restoreSourceVisualState(node, sourceVisualState);
+                clearPromptInput({preserveDraft:true});
+                settings = previousSettings;
+                scheduleSave();
+                return;
+            }
             if(!(pendingNode.images || []).length) throw new Error(tr('smart.errNoOutImages'));
             if(outpaintSize) delete node.outpaintSize;
             if(sourceVisualState) restoreSourceVisualState(node, sourceVisualState);
@@ -10171,6 +10518,12 @@ async function runGeneration(){
         scheduleSave();
     } catch(e) {
         settings = previousSettings;
+        if(handleJimengPendingSignal(pendingNode, e)){
+            if(sourceVisualState) restoreSourceVisualState(node, sourceVisualState);
+            delete pendingNode._runMetaTargetId;
+            clearPromptInput({preserveDraft:true});
+            return;
+        }
         pendingNode.pending = 0;
         if(branchNode){
             nodes = nodes.filter(n => n.id !== branchNode.id);
@@ -10237,6 +10590,7 @@ async function runPromptLLMNode(nodeId){
     } finally {
         node.running = false;
         render();
+        scheduleSave();
     }
 }
 function comfyFieldKind(field){
@@ -10300,8 +10654,23 @@ async function runApiVideoGeneration(prompt, refs, runSettings=settings){
     if(!runSettings.videoModel) throw new Error(tr('smart.errNoVideoModel'));
     try {
         const uploadedRefs = applyUploadedUrlsToSmartRefs(refs, runSettings);
+        const trustedMode = Boolean(runSettings.videoTrustedAsset);
+        const trustedSource = trustedMode ? (['library','cloud','manual'].includes(runSettings.videoTrustedSource) ? runSettings.videoTrustedSource : 'library') : 'none';
+        // 仅「素材库链接」来源才走 asset:// 认证地址 + 后端可信素材路由；上传云端/手动网址走普通直链。
+        const useAssetUris = trustedSource === 'library';
+        const targetPlatform = videoProviderPlatform(runSettings.videoProvider || 'comfly');
+        let mismatchedAsset = false;
+        const effUrl = ref => {
+            const uris = (ref && ref.asset_uris && typeof ref.asset_uris === 'object') ? ref.asset_uris : null;
+            if(useAssetUris && uris && Object.keys(uris).length){
+                // asset:// 与平台绑定：取当前视频平台对应的认证地址；该素材没注册到这个平台就回退本地 url
+                if(targetPlatform && uris[targetPlatform]) return uris[targetPlatform];
+                mismatchedAsset = true;
+            }
+            return ref?.url;
+        };
         const refImages = imageRefsOnly(uploadedRefs).map((ref, i) => {
-            const item = {url:ref.url, name:ref.name || `图${i + 1}`};
+            const item = {url:effUrl(ref), name:ref.name || `图${i + 1}`};
             if(runSettings.videoUseFrameRoles){
                 if(i === 0) item.role = 'first_frame';
                 else if(i === 1) item.role = 'last_frame';
@@ -10309,7 +10678,9 @@ async function runApiVideoGeneration(prompt, refs, runSettings=settings){
             return item;
         });
         const manualVideo = manualSmartVideoLink(runSettings)?.url || '';
-        const refVideos = manualVideo ? manualSmartMediaLinks(runSettings).map(item => item.url).filter(Boolean) : videoRefsOnly(uploadedRefs).map(ref => ref.url);
+        const refVideos = manualVideo ? manualSmartMediaLinks(runSettings).map(item => item.url).filter(Boolean) : videoRefsOnly(uploadedRefs).map(ref => effUrl(ref)).filter(Boolean);
+        const refAudios = audioRefsOnly(uploadedRefs).map(ref => effUrl(ref)).filter(Boolean).slice(0, 3);
+        if(mismatchedAsset) toast('部分认证素材属于其它平台，已回退为普通素材。切换到对应平台的视频接口才能用 asset:// 认证地址。');
         const payload = {
             prompt,
             provider_id: runSettings.videoProvider || 'comfly',
@@ -10319,18 +10690,21 @@ async function runApiVideoGeneration(prompt, refs, runSettings=settings){
             resolution: runSettings.videoResolution || '',
             images: refImages,
             videos: refVideos,
+            audios: refAudios,
             enhance_prompt: Boolean(runSettings.videoEnhancePrompt),
             enable_upsample: Boolean(runSettings.videoEnableUpsample),
             watermark: Boolean(runSettings.videoWatermark),
             camerafixed: Boolean(runSettings.videoCameraFixed),
             generate_audio: Boolean(runSettings.videoGenerateAudio),
-            multimodal: Boolean(runSettings.videoMultimodal)
+            multimodal: Boolean(runSettings.videoMultimodal),
+            trusted_asset: useAssetUris
         };
         const result = await fetch('/api/canvas-video', {
             method:'POST',
             headers:{'Content-Type':'application/json'},
             body:JSON.stringify(payload)
         }).then(async r => { if(!r.ok) throw new Error(await smartResponseErrorMessage(r, tr('smart.errRunFailed'))); return r.json(); });
+        if(result && result.jimeng_pending) throw new JimengPendingSignal({submitId:result.submit_id, kind:result.kind || 'video', queueInfo:result.queue_info, message:result.message});
         return resultMediaUrls(result);
     } finally {
         transientSmartCloudLinks = [];
@@ -10516,6 +10890,158 @@ function smartPendingTasks(node){
     if(!node || !Array.isArray(node.pendingTasks)) return [];
     return node.pendingTasks.filter(task => task && task.taskId);
 }
+class JimengPendingSignal extends Error {
+    constructor(info){
+        const data = info || {};
+        super(data.message || '即梦任务排队中，可继续等待或手动查询');
+        this.jimengPending = true;
+        this.submitId = data.submitId || data.submit_id || '';
+        this.kind = data.kind || 'image';
+        this.queueInfo = data.queueInfo || data.queue_info || {};
+    }
+}
+const activeJimengPolls = new Set();
+const JIMENG_POLL_INTERVAL = 60000;
+const JIMENG_POLL_MAX = 1440;
+function jimengQueueText(queueInfo){
+    const qi = queueInfo || {};
+    const idx = qi.queue_idx;
+    const len = qi.queue_length;
+    if(idx != null && len != null) return `即梦云端排队中（第 ${idx}/${len} 位）`;
+    return '即梦云端生成中';
+}
+function setNodeJimengPending(node, signal){
+    if(!node || !signal || !signal.submitId) return;
+    const prev = node.jimengPending && node.jimengPending.submitId === signal.submitId ? node.jimengPending : null;
+    node.jimengPending = {
+        submitId:signal.submitId,
+        kind:signal.kind || (prev && prev.kind) || 'image',
+        queueInfo:signal.queueInfo || (prev && prev.queueInfo) || {},
+        message:signal.message || (prev && prev.message) || '',
+        startedAt:(prev && prev.startedAt) || nowMs(),
+        updatedAt:nowMs(),
+        querying:prev ? prev.querying : false
+    };
+    node.running = false;
+    node.pending = 0;
+    delete node.pendingTasks;
+    if(!node.runStartedAt) node.runStartedAt = node.jimengPending.startedAt;
+    delete node.runFinishedAt;
+    delete node.runElapsedMs;
+    node.runTimerHidden = false;
+    render();
+    scheduleSave();
+    startJimengPoll(node);
+}
+function handleJimengPendingSignal(node, e){
+    if(!(e && e.jimengPending && e.submitId)) return false;
+    setNodeJimengPending(node, e);
+    toast((e.message || jimengQueueText(e.queueInfo)).slice(0, 160));
+    return true;
+}
+function finalizeJimengPending(node, urls, kind='image'){
+    if(!node) return false;
+    const ext = kind === 'video' ? 'mp4' : kind === 'audio' ? 'mp3' : kind === 'text' ? 'txt' : 'png';
+    const additions = (urls || []).map((item, i) => {
+        const url = typeof item === 'string' ? item : item?.url || '';
+        const itemKind = (typeof item === 'object' && item.kind) || kind;
+        return stripImageGenerationMeta({url, name:(typeof item === 'object' && item.name) || `output-${i + 1}.${ext}`, kind:itemKind, generatedResult:true});
+    }).filter(item => item.url);
+    if(!additions.length) return false;
+    delete node.jimengPending;
+    replaceOutputsToNodeWithHistory(node, additions, kind, null, {skipShift:true});
+    node.running = false;
+    node.pending = 0;
+    node.runFinishedAt = nowMs();
+    if(!node.runStartedAt) node.runStartedAt = node.runFinishedAt;
+    node.runElapsedMs = Math.max(0, node.runFinishedAt - Number(node.runStartedAt || node.runFinishedAt));
+    node.runTimerHidden = false;
+    render();
+    scheduleSave();
+    return true;
+}
+function applyJimengQueryResult(node, data){
+    if(!node || !data) return false;
+    if(data.status === 'succeeded'){
+        const kind = data.kind || node.jimengPending?.kind || 'image';
+        return finalizeJimengPending(node, data.urls || [], kind);
+    }
+    if(data.status === 'failed'){
+        delete node.jimengPending;
+        node.running = false;
+        node.pending = 0;
+        toast((data.error || '即梦任务失败').slice(0, 160));
+        render();
+        scheduleSave();
+        return true;
+    }
+    if(node.jimengPending){
+        node.jimengPending.queueInfo = data.queue_info || node.jimengPending.queueInfo || {};
+        node.jimengPending.message = data.message || node.jimengPending.message || '';
+        node.jimengPending.updatedAt = nowMs();
+    }
+    render();
+    scheduleSave();
+    return false;
+}
+async function fetchJimengQuery(submitId, kind){
+    return fetch('/api/jimeng/query-media', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({submit_id:submitId, kind:kind || 'image'})
+    }).then(async r => { if(!r.ok) throw new Error(await r.text()); return r.json(); });
+}
+async function queryJimengNow(nodeId){
+    const node = nodes.find(n => n.id === nodeId);
+    if(!node || !node.jimengPending || !node.jimengPending.submitId) return;
+    if(node.jimengPending.querying) return;
+    const submitId = node.jimengPending.submitId;
+    const kind = node.jimengPending.kind || 'image';
+    node.jimengPending.querying = true;
+    render();
+    try {
+        const data = await fetchJimengQuery(submitId, kind);
+        applyJimengQueryResult(node, data);
+    } catch(e){
+        toast((e.message || '查询失败').slice(0, 160));
+    } finally {
+        if(node.jimengPending) node.jimengPending.querying = false;
+        render();
+    }
+}
+function startJimengPoll(node){
+    if(!node || !node.jimengPending || !node.jimengPending.submitId) return;
+    const submitId = node.jimengPending.submitId;
+    if(activeJimengPolls.has(submitId)) return;
+    activeJimengPolls.add(submitId);
+    const nodeId = node.id;
+    (async () => {
+        try {
+            for(let i = 0; i < JIMENG_POLL_MAX; i++){
+                await new Promise(resolve => setTimeout(resolve, JIMENG_POLL_INTERVAL));
+                const cur = nodes.find(n => n.id === nodeId);
+                if(!cur || !cur.jimengPending || cur.jimengPending.submitId !== submitId) return;
+                if(cur.jimengPending.querying) continue;
+                let data;
+                try {
+                    data = await fetchJimengQuery(submitId, cur.jimengPending.kind || 'image');
+                } catch(err){ continue; }
+                const done = applyJimengQueryResult(cur, data);
+                if(done) return;
+                const after = nodes.find(n => n.id === nodeId);
+                if(!after || !after.jimengPending || after.jimengPending.submitId !== submitId) return;
+            }
+        } finally {
+            activeJimengPolls.delete(submitId);
+        }
+    })();
+}
+function resumeJimengPendingNodes(){
+    nodes.filter(n => n && n.jimengPending && n.jimengPending.submitId).forEach(n => {
+        n.jimengPending.querying = false;
+        startJimengPoll(n);
+    });
+}
 async function pollSmartCanvasTask(taskId){
     if(!taskId) throw new Error(tr('smart.errRunFailed'));
     if(activeSmartTaskPolls.has(taskId)) return activeSmartTaskPolls.get(taskId);
@@ -10527,6 +11053,7 @@ async function pollSmartCanvasTask(taskId){
                 return r.json();
             });
             if(task.status === 'succeeded') return task.result || {};
+            if(task.status === 'jimeng_pending') throw new JimengPendingSignal({submitId:task.submit_id, kind:task.kind, queueInfo:task.queue_info, message:task.message});
             if(task.status === 'failed') throw new Error(task.error || tr('smart.errRunFailed'));
         }
         throw new Error(tr('smart.errRunTimeout'));
@@ -10577,6 +11104,13 @@ async function resumeSmartPendingNode(node){
             render();
             scheduleSave();
         } catch(e) {
+            if(e && e.jimengPending && e.submitId){
+                node.pendingTasks = smartPendingTasks(node).filter(item => item.taskId !== task.taskId);
+                setNodeJimengPending(node, e);
+                render();
+                scheduleSave();
+                return;
+            }
             node.pendingTasks = smartPendingTasks(node).filter(item => item.taskId !== task.taskId);
             node.pending = Math.max(0, Number(node.pending || 0) - 1);
             if(!node.pending && smartPendingTasks(node).length === 0){
@@ -10759,7 +11293,9 @@ shell.addEventListener('click', e => {
     if(e.target.closest('.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.smart-minimap')) return;
     e.preventDefault();
     e.stopPropagation();
-    exitZoomPreview(screenToWorld(e));
+    const nodeEl = e.target.closest('.image-node');
+    if(nodeEl?.dataset?.id) exitZoomPreviewToNode(nodeEl.dataset.id);
+    else exitZoomPreview(screenToWorld(e));
 }, true);
 shell.onmousedown = e => {
     if(zoomPreviewState && e.button === 0 && !e.target.closest('.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.smart-minimap')) return;
@@ -11821,6 +12357,7 @@ try {
             await refreshSmartConfigFromSettings();
         }
         if(event.data?.type === 'asset_library_updated') handleAssetLibraryUpdatedMessage(event.data);
+        if(event.data?.type === 'canvas_updated') handleCanvasUpdatedMessage(event.data);
     };
 } catch(e) {}
 window.addEventListener('focus', () => {
@@ -11831,6 +12368,7 @@ window.addEventListener('message', event => {
     if(event.data?.type === 'studio-theme') applyTheme(event.data.theme || 'light');
     if(event.data?.type === 'providers-changed' || event.data?.type === 'workflows-changed' || event.data?.type === 'comfy-instances-changed') refreshSmartConfigFromSettings();
     if(event.data?.type === 'asset_library_updated') handleAssetLibraryUpdatedMessage(event.data);
+    if(event.data?.type === 'canvas_updated') handleCanvasUpdatedMessage(event.data);
     if(event.data?.type === 'studio-lang' && window.StudioI18n) {
         window.StudioI18n.set(event.data.lang || 'zh');
     }
