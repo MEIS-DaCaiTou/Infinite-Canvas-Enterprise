@@ -1,6 +1,6 @@
 # 无限画布企业版 · Agent 当前上下文入口
 
-> 给后续 Codex / Agent 的第一阅读文件。上下文压缩、换线程、长期维护恢复时，先读本文，再读 `ENTERPRISE_DOCS.md` 和 `enterprise/tests/SMOKE_CHECKLIST.md`。
+> 给后续 Codex / Agent 的第一阅读文件。上下文压缩、换线程、长期维护恢复时，先按本文阅读顺序恢复项目方向，再执行当前 Issue。
 
 更新时间：2026-06-11
 
@@ -8,7 +8,7 @@
 
 ## 1. 项目一句话定位
 
-本项目是在上游开源项目 [hero8152/Infinite-Canvas](https://github.com/hero8152/Infinite-Canvas) 之上构建的企业多用户版本。
+本项目的唯一方向是在上游开源项目 [hero8152/Infinite-Canvas](https://github.com/hero8152/Infinite-Canvas) 之上构建企业多用户版本。不得将本项目扩展为与企业多用户版 Infinite Canvas 无关的方向。
 
 企业层本质是反向代理和权限隔离层：
 
@@ -21,11 +21,16 @@
 
 ## 2. 阅读顺序
 
-1. `AGENT_CONTEXT.md`：当前真实状态、风险、路线，防止上下文压缩后跑偏。
-2. `ENTERPRISE_DOCS.md`：企业层完整开发规范。
-3. `enterprise/tests/README.md`：测试脚本位置与用途。
-4. `enterprise/tests/SMOKE_CHECKLIST.md`：每次上游更新后的必跑检查。
-5. 必要时再读 `HANDOVER.md`：历史交接材料。该文件较长，部分终端可能显示乱码，不应作为唯一权威入口。
+1. `PROJECT_CHARTER.md`：最高层项目定位文档，确认唯一方向是企业多用户版 Infinite Canvas。
+2. `AGENT_CONTEXT.md`：当前真实状态、风险、路线，防止上下文压缩后跑偏。
+3. `ARCHITECTURE.md`：当前企业网关覆盖上游的架构说明。
+4. `CODE_BOUNDARIES.md`：代码修改边界，确认哪些文件可改、哪些默认不应改。
+5. `CODEX_WORKFLOW.md`：Codex 每次任务的标准工作流和 PR 交付规则。
+6. `DEVELOPMENT_PLAN.md`：长期维护路线。
+7. `ENTERPRISE_DOCS.md`：企业层完整开发规范。
+8. `enterprise/tests/README.md`：测试脚本位置与用途。
+9. `enterprise/tests/SMOKE_CHECKLIST.md`：每次上游更新后的必跑检查。
+10. 必要时再读 `HANDOVER.md`：历史交接材料。该文件较长，部分终端可能显示乱码，不应作为唯一权威入口。
 
 ---
 
@@ -112,6 +117,8 @@
 - 遇到上游 bug：最小复现、最小补丁、提交上游 PR，本地只保留临时热修。
 - 遇到企业需求：优先代理层、拦截层、企业前端实现。
 - 不要把测试脚本、临时诊断脚本散落到项目根目录；统一放入 `enterprise/tests/`。
+- 每次任务必须只处理当前 Issue，不扩大范围，不顺手重构无关代码。
+- 后续任务必须通过独立分支和 PR 交付，不直接推 `main`。
 
 ---
 
