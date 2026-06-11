@@ -26,11 +26,12 @@
 3. `ARCHITECTURE.md`：当前企业网关覆盖上游的架构说明。
 4. `CODE_BOUNDARIES.md`：代码修改边界，确认哪些文件可改、哪些默认不应改。
 5. `CODEX_WORKFLOW.md`：Codex 每次任务的标准工作流和 PR 交付规则。
-6. `DEVELOPMENT_PLAN.md`：长期维护路线。
-7. `ENTERPRISE_DOCS.md`：企业层完整开发规范。
-8. `enterprise/tests/README.md`：测试脚本位置与用途。
-9. `enterprise/tests/SMOKE_CHECKLIST.md`：每次上游更新后的必跑检查。
-10. 必要时再读 `HANDOVER.md`：历史交接材料。该文件较长，部分终端可能显示乱码，不应作为唯一权威入口。
+6. `SECURITY_BASELINE.md`：企业版安全配置、敏感文件和运行时配置治理基线。
+7. `DEVELOPMENT_PLAN.md`：长期维护路线。
+8. `ENTERPRISE_DOCS.md`：企业层完整开发规范。
+9. `enterprise/tests/README.md`：测试脚本位置与用途。
+10. `enterprise/tests/SMOKE_CHECKLIST.md`：每次上游更新后的必跑检查。
+11. 必要时再读 `HANDOVER.md`：历史交接材料。该文件较长，部分终端可能显示乱码，不应作为唯一权威入口。
 
 ---
 
@@ -46,8 +47,11 @@
 | 当前运行端口 | `8000` 企业网关，`3001` 内部上游 |
 | 当前健康检查 | `/enterprise/health` 返回 `gateway=ok`、`upstream=ok` |
 | 测试脚本目录 | 统一放在 `enterprise/tests/`，不要散落到根目录或上游目录 |
+| 安全基线 | 已新增 `enterprise.env.example`、`SECURITY_BASELINE.md`、`data/api_providers.example.json`；真实运行配置不应提交 |
 
 2026-06-11 维护中确认：12 个 `static/*.html` 改动均为资源版本参数从 `2026.06.02` 同步到 `2026.06.02.1`，用于让浏览器刷新缓存；这类改动属于上游静态资源版本归档，不是企业层功能开发方向。
+
+2026-06-11 安全基线治理确认：`data/api_providers.json` 属于本地运行时模型配置，已加入 `.gitignore` 并通过 `git rm --cached data/api_providers.json` 停止 Git 跟踪；该操作不删除用户本地真实配置。生产部署前必须从 `enterprise.env.example` 复制生成本地 `enterprise.env`，并修改 `JWT_SECRET` 与 `ADMIN_PASSWORD`。
 
 ---
 
@@ -103,9 +107,9 @@
 ## 6. 当前已知风险
 
 1. 上游更新会覆盖 `main.py` 和 `static/`，因此任何上游热修都可能在更新后丢失。
-2. 当前 `data/api_providers.json` 是运行时配置，可能包含不可用或占位模型名；模型可用性需要以实际接口测试为准。
+2. `data/api_providers.json` 是运行时配置，已按安全基线停止跟踪并忽略；模型可用性需要以实际接口测试为准。
 3. 内置 `python/` 运行时与 GitHub TLS 曾出现兼容问题；必要时用 PowerShell 下载上游文件绕过 Python SSL 问题。
-4. `enterprise.env`、`API/.env`、`data/` 是运行态/敏感数据，不应提交到 Git。
+4. `enterprise.env`、`API/.env`、`data/` 是运行态/敏感数据，不应提交到 Git；示例配置只能使用 `.example` 文件且不得包含真实密钥。
 5. 多用户局域网使用依赖防火墙、代理绕过和主机当前网络路由，不能硬编码固定 LAN 地址。
 
 ---
@@ -117,6 +121,7 @@
 - 遇到上游 bug：最小复现、最小补丁、提交上游 PR，本地只保留临时热修。
 - 遇到企业需求：优先代理层、拦截层、企业前端实现。
 - 不要把测试脚本、临时诊断脚本散落到项目根目录；统一放入 `enterprise/tests/`。
+- 安全治理任务不得提交真实 API Key、Token、Cookie、数据库或运行时配置；本地开发体验可以保留，但生产/严格模式必须阻断明显危险默认值。
 - 每次任务必须只处理当前 Issue，不扩大范围，不顺手重构无关代码。
 - 后续任务必须通过独立分支和 PR 交付，不直接推 `main`。
 
