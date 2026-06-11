@@ -2,11 +2,12 @@
 企业层管理员 API
 挂载到 /enterprise 路径下，仅管理员可访问
 """
+import json
+
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
 
 from enterprise import db as edb
-from enterprise.auth import create_token
 
 router = APIRouter()
 
@@ -17,6 +18,18 @@ def _require_admin(request: Request) -> dict:
     if not user or not user.get("is_admin"):
         raise HTTPException(status_code=403, detail="需要管理员权限")
     return user
+
+
+def _audit_user_action(actor: dict, action: str, target: dict, summary: str, extra: dict | None = None) -> None:
+    """记录管理员用户管理操作。"""
+    detail = {
+        "target_user_id": target.get("id"),
+        "target_username": target.get("username"),
+        "summary": summary,
+    }
+    if extra:
+        detail.update(extra)
+    edb.log_action(actor["user_id"], action, json.dumps(detail, ensure_ascii=False))
 
 
 # ── 用户管理 ──────────────────────────────────────────────
@@ -33,7 +46,7 @@ async def list_users(request: Request):
 
 @router.post("/api/users")
 async def create_user(request: Request):
-    _require_admin(request)
+    current = _require_admin(request)
     body = await request.json()
     username = (body.get("username") or "").strip()
     password = (body.get("password") or "").strip()
@@ -52,18 +65,30 @@ async def create_user(request: Request):
             raise HTTPException(status_code=409, detail="用户名已存在")
         raise HTTPException(status_code=500, detail=str(e))
 
+    target = edb.get_user_by_id_any_status(result["id"]) or result
+    _audit_user_action(
+        current,
+        "user_created",
+        target,
+        f"创建用户 {username}",
+        {"is_admin": is_admin},
+    )
     return JSONResponse({"success": True, "user": result}, status_code=201)
 
 
 @router.put("/api/users/{user_id}/password")
 async def reset_password(user_id: str, request: Request):
-    _require_admin(request)
+    current = _require_admin(request)
+    target = edb.get_user_by_id_any_status(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="用户不存在")
     body = await request.json()
     new_password = (body.get("password") or "").strip()
     if len(new_password) < 6:
         raise HTTPException(status_code=400, detail="密码至少6位")
     edb.update_user_password(user_id, new_password)
-    return {"success": True}
+    _audit_user_action(current, "user_password_reset", target, f"重置用户 {target['username']} 的密码")
+    return {"success": True, "user_id": user_id}
 
 
 @router.put("/api/users/{user_id}/role")
@@ -71,10 +96,65 @@ async def update_user_role(user_id: str, request: Request):
     current = _require_admin(request)
     if user_id == current["user_id"]:
         raise HTTPException(status_code=400, detail="不能修改自己的权限")
+    target = edb.get_user_by_id_any_status(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="用户不存在")
     body = await request.json()
     is_admin = bool(body.get("is_admin", False))
     edb.update_user_role(user_id, is_admin)
-    return {"success": True, "is_admin": is_admin}
+    _audit_user_action(
+        current,
+        "user_role_updated",
+        target,
+        f"{'授予' if is_admin else '撤销'}用户 {target['username']} 的管理员权限",
+        {"is_admin": is_admin},
+    )
+    return {"success": True, "user_id": user_id, "is_admin": is_admin}
+
+
+@router.put("/api/users/{user_id}/active")
+async def update_user_active(user_id: str, request: Request):
+    current = _require_admin(request)
+    target = edb.get_user_by_id_any_status(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    body = await request.json()
+    if "is_active" not in body or not isinstance(body.get("is_active"), bool):
+        raise HTTPException(status_code=400, detail="is_active 必须是布尔值")
+    is_active = body["is_active"]
+    if user_id == current["user_id"] and not is_active:
+        raise HTTPException(status_code=400, detail="不能禁用自己")
+
+    edb.set_user_active(user_id, is_active)
+    action = "user_enabled" if is_active else "user_disabled"
+    summary = f"{'启用' if is_active else '禁用'}用户 {target['username']}"
+    _audit_user_action(current, action, target, summary, {"is_active": is_active})
+    return {
+        "success": True,
+        "user_id": user_id,
+        "is_active": is_active,
+        "status": "enabled" if is_active else "disabled",
+    }
+
+
+@router.put("/api/users/{user_id}/profile")
+async def update_user_profile(user_id: str, request: Request):
+    current = _require_admin(request)
+    target = edb.get_user_by_id_any_status(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    body = await request.json()
+    display_name = (body.get("display_name") or "").strip() or target["username"]
+    edb.update_user_profile(user_id, display_name)
+    updated = {**target, "display_name": display_name}
+    _audit_user_action(
+        current,
+        "user_profile_updated",
+        updated,
+        f"修改用户 {target['username']} 的展示名",
+        {"display_name": display_name},
+    )
+    return {"success": True, "user_id": user_id, "display_name": display_name}
 
 
 @router.delete("/api/users/{user_id}")
@@ -82,8 +162,24 @@ async def delete_user(user_id: str, request: Request):
     current = _require_admin(request)
     if user_id == current["user_id"]:
         raise HTTPException(status_code=400, detail="不能删除自己")
-    edb.delete_user(user_id)
-    return {"success": True}
+    target = edb.get_user_by_id_any_status(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    edb.set_user_active(user_id, False)
+    _audit_user_action(
+        current,
+        "user_disabled",
+        target,
+        f"删除/软禁用用户 {target['username']}",
+        {"is_active": False, "soft_delete": True},
+    )
+    return {
+        "success": True,
+        "user_id": user_id,
+        "is_active": False,
+        "status": "disabled",
+        "soft_deleted": True,
+    }
 
 
 # ── 画布归属查询（管理员专用）────────────────────────────

@@ -318,12 +318,30 @@
   </div>
 </div>
 
+<!-- 编辑展示名模态框 -->
+<div class="modal-backdrop" id="profileModal">
+  <div class="modal">
+    <h3>编辑展示名</h3>
+    <p id="profileSubtitle" style="color:var(--muted);font-size:12.5px;font-weight:700;margin-bottom:16px;"></p>
+    <div class="field">
+      <span class="label">展示名（留空则回退为用户名）</span>
+      <div class="field-frame"><input type="text" id="profileDisplayName" placeholder="请输入展示名" /></div>
+    </div>
+    <div class="error-inline" id="profileError"></div>
+    <div class="modal-actions">
+      <button class="action-btn" onclick="closeProfileModal()">取消</button>
+      <button class="action-btn primary" onclick="submitProfile()">保存</button>
+    </div>
+  </div>
+</div>
+
 <!-- Toast -->
 <div id="toast"></div>
 
 <script>
   let _users = [];
   let _pwdTargetId = null;
+  let _profileTargetId = null;
 
   function showToast(msg, type = 'success') {
     const el = document.getElementById('toast');
@@ -338,6 +356,10 @@
     const d = new Date(ts);
     return d.toLocaleDateString('zh-CN', { month:'2-digit', day:'2-digit', year:'numeric' })
       + ' ' + d.toTimeString().slice(0,5);
+  }
+
+  function jsArg(value) {
+    return String(value ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\r?\n/g, ' ');
   }
 
   async function apiFetch(url, opts = {}) {
@@ -362,20 +384,28 @@
       tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--faint);padding:48px 0;font-weight:700;">暂无用户</td></tr>';
       return;
     }
-    tbody.innerHTML = _users.map(u => `
+    tbody.innerHTML = _users.map(u => {
+      const id = jsArg(u.id);
+      const username = jsArg(u.username);
+      const displayName = jsArg(u.display_name || '');
+      const isAdmin = !!u.is_admin;
+      const isActive = !!u.is_active;
+      return `
       <tr>
         <td style="font-weight:800;">${u.username}</td>
         <td style="color:var(--muted);">${u.display_name || '—'}</td>
-        <td><span class="badge ${u.is_admin ? 'badge-admin' : 'badge-user'}">${u.is_admin ? '管理员' : '普通用户'}</span></td>
-        <td><span class="badge ${u.is_active ? 'badge-active' : 'badge-disabled'}">${u.is_active ? '正常' : '已禁用'}</span></td>
+        <td><span class="badge ${isAdmin ? 'badge-admin' : 'badge-user'}">${isAdmin ? '管理员' : '普通用户'}</span></td>
+        <td><span class="badge ${isActive ? 'badge-active' : 'badge-disabled'}">${isActive ? '正常' : '已禁用'}</span></td>
         <td style="color:var(--muted);font-size:12px;">${fmtDate(u.created_at)}</td>
         <td style="color:var(--muted);font-size:12px;">${fmtDate(u.last_login)}</td>
         <td style="display:flex;gap:6px;padding-top:8px;padding-bottom:8px;">
-          <button class="row-btn" onclick="toggleRole('${u.id}','${u.username}',${u.is_admin})">${u.is_admin ? '撤销管理员' : '设为管理员'}</button>
-          <button class="row-btn" onclick="openPwdModal('${u.id}','${u.username}')">重置密码</button>
-          <button class="row-btn danger" onclick="deleteUser('${u.id}','${u.username}')">删除</button>
+          <button class="row-btn" onclick="openProfileModal('${id}','${username}','${displayName}')">编辑名称</button>
+          <button class="row-btn" onclick="toggleRole('${id}','${username}',${isAdmin})">${isAdmin ? '撤销管理员' : '设为管理员'}</button>
+          <button class="row-btn" onclick="openPwdModal('${id}','${username}')">重置密码</button>
+          <button class="row-btn ${isActive ? 'danger' : ''}" onclick="setUserActive('${id}','${username}',${!isActive})">${isActive ? '禁用' : '启用'}</button>
         </td>
-      </tr>`).join('');
+      </tr>`;
+    }).join('');
   }
 
   // ── 新建用户
@@ -427,6 +457,30 @@
     } catch (e) { errEl.textContent = e.message; }
   }
 
+  // ── 编辑展示名
+  function openProfileModal(userId, username, displayName) {
+    _profileTargetId = userId;
+    document.getElementById('profileSubtitle').textContent = `正在编辑用户「${username}」的展示名`;
+    document.getElementById('profileDisplayName').value = displayName || '';
+    document.getElementById('profileError').textContent = '';
+    document.getElementById('profileModal').classList.add('show');
+    setTimeout(() => document.getElementById('profileDisplayName').focus(), 50);
+  }
+  function closeProfileModal() { document.getElementById('profileModal').classList.remove('show'); _profileTargetId = null; }
+  async function submitProfile() {
+    const displayName = document.getElementById('profileDisplayName').value.trim();
+    const errEl = document.getElementById('profileError');
+    try {
+      await apiFetch(`/enterprise/api/users/${_profileTargetId}/profile`, {
+        method: 'PUT',
+        body: JSON.stringify({ display_name: displayName }),
+      });
+      closeProfileModal();
+      showToast('展示名已更新');
+      await loadUsers();
+    } catch (e) { errEl.textContent = e.message; }
+  }
+
   // ── 切换管理员权限
   async function toggleRole(userId, username, currentIsAdmin) {
     const newIsAdmin = !currentIsAdmin;
@@ -442,12 +496,17 @@
     } catch (e) { showToast(e.message, 'error'); }
   }
 
-  // ── 删除用户
-  async function deleteUser(userId, username) {
-    if (!confirm(`确认删除用户「${username}」？\n该用户将无法登录，画布数据仍然保留。`)) return;
+  // ── 启用 / 禁用用户
+  async function setUserActive(userId, username, isActive) {
+    const action = isActive ? '启用' : '禁用';
+    const hint = isActive ? '该用户将恢复登录权限。' : '该用户将无法登录，画布数据仍然保留。';
+    if (!confirm(`确认${action}用户「${username}」？\n${hint}`)) return;
     try {
-      await apiFetch(`/enterprise/api/users/${userId}`, { method: 'DELETE' });
-      showToast(`用户「${username}」已删除`);
+      await apiFetch(`/enterprise/api/users/${userId}/active`, {
+        method: 'PUT',
+        body: JSON.stringify({ is_active: isActive }),
+      });
+      showToast(`用户「${username}」已${action}`);
       await loadUsers();
     } catch (e) { showToast(e.message, 'error'); }
   }

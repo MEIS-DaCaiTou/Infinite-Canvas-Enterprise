@@ -125,6 +125,18 @@ def get_user_by_id(user_id: str) -> Optional[dict]:
         conn.close()
 
 
+def get_user_by_id_any_status(user_id: str) -> Optional[dict]:
+    """按 ID 查询用户，包含已禁用账号，供管理员操作使用。"""
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT * FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
 def list_users() -> list:
     conn = get_db()
     try:
@@ -153,39 +165,64 @@ def create_user(username: str, password: str, display_name: str = "", is_admin: 
         conn.close()
 
 
-def update_user_password(user_id: str, new_password: str) -> None:
+def update_user_password(user_id: str, new_password: str) -> bool:
     conn = get_db()
     try:
-        conn.execute(
+        cur = conn.execute(
             "UPDATE users SET password_hash = ? WHERE id = ?",
             (_hash_password(new_password), user_id)
         )
         conn.commit()
+        return cur.rowcount > 0
     finally:
         conn.close()
 
 
-def update_user_role(user_id: str, is_admin: bool) -> None:
+def update_user_role(user_id: str, is_admin: bool) -> bool:
     """修改用户管理员权限"""
     conn = get_db()
     try:
-        conn.execute(
+        cur = conn.execute(
             "UPDATE users SET is_admin = ? WHERE id = ?",
             (1 if is_admin else 0, user_id)
         )
         conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def update_user_profile(user_id: str, display_name: str) -> bool:
+    """更新用户展示名。空展示名由调用方决定是否回退。"""
+    conn = get_db()
+    try:
+        cur = conn.execute(
+            "UPDATE users SET display_name = ? WHERE id = ?",
+            (display_name, user_id)
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def set_user_active(user_id: str, is_active: bool) -> bool:
+    """启用或禁用账号。"""
+    conn = get_db()
+    try:
+        cur = conn.execute(
+            "UPDATE users SET is_active = ? WHERE id = ?",
+            (1 if is_active else 0, user_id)
+        )
+        conn.commit()
+        return cur.rowcount > 0
     finally:
         conn.close()
 
 
 def delete_user(user_id: str) -> None:
     """软删除（禁用）用户"""
-    conn = get_db()
-    try:
-        conn.execute("UPDATE users SET is_active = 0 WHERE id = ?", (user_id,))
-        conn.commit()
-    finally:
-        conn.close()
+    set_user_active(user_id, False)
 
 
 def update_last_login(user_id: str) -> None:
