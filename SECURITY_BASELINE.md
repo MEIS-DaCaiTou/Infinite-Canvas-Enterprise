@@ -100,6 +100,12 @@ python -c "import secrets; print(secrets.token_hex(32))"
 - 使用 `git rm --cached data/api_providers.json` 仅停止 Git 跟踪，不删除本地真实配置文件。
 - 本地真实配置继续保留在工作区，供当前部署使用。
 
+迁移注意事项：
+
+- 合并本 PR 前，如果当前部署环境依赖 `data/api_providers.json`，请先备份该文件。
+- 合并或拉取本 PR 后，如果 `data/api_providers.json` 从工作区消失，请从备份恢复，或复制 `data/api_providers.example.json` 为 `data/api_providers.json` 后重新配置。
+- 恢复后的 `data/api_providers.json` 会被 `.gitignore` 忽略，不应再次提交。
+
 ---
 
 ## 7. 仓库可见性建议
