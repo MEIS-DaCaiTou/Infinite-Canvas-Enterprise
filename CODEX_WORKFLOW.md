@@ -13,9 +13,10 @@ Codex 每次开始任务前，必须先阅读：
 3. `ARCHITECTURE.md`
 4. `CODE_BOUNDARIES.md`
 5. `CODEX_WORKFLOW.md`
-6. `DEVELOPMENT_PLAN.md`
-7. 必要时阅读 `ENTERPRISE_DOCS.md`
-8. 与当前任务相关的 Issue 正文
+6. `SECURITY_BASELINE.md`
+7. `DEVELOPMENT_PLAN.md`
+8. 必要时阅读 `ENTERPRISE_DOCS.md`
+9. 与当前任务相关的 Issue 正文
 
 阅读完成后，先确认当前任务边界，再开始修改文件。
 
@@ -29,6 +30,7 @@ Codex 每次开始任务前，必须先阅读：
 - 不移动无关文件。
 - 不修改与任务无关的上游区域。
 - 不引入与企业多用户版无关的项目语义。
+- 不提交真实密钥、真实 Token、真实 Cookie、真实数据库或真实运行时配置。
 - 不直接推送到 `main`。
 - 如发现额外问题，只记录为后续建议，不在当前任务中直接实现。
 
@@ -70,6 +72,7 @@ Codex 每次开始任务前，必须先阅读：
 - 风险说明
 - 回滚方案
 - 是否修改上游区域
+- 是否提交或停止跟踪运行时/敏感配置
 - 后续建议
 - 关联 Issue
 

@@ -12,6 +12,7 @@
 - `enterprise-static/`
 - `enterprise/tests/`
 - `enterprise.env.example`
+- `data/*.example.json`
 - `启动企业版.bat`
 - `停止企业版.bat`
 - 项目文档，例如：
@@ -22,6 +23,7 @@
   - `CODEX_WORKFLOW.md`
   - `DEVELOPMENT_PLAN.md`
   - `ENTERPRISE_DOCS.md`
+  - `SECURITY_BASELINE.md`
   - `docs/decisions/*.md`
 
 ---
@@ -33,10 +35,13 @@
 - `.gitignore`
 - README / 说明文档
 - 企业层依赖文件
+- 示例配置文件
 - 企业测试脚本
 - 企业启动/停止脚本
 
 修改这些文件时，必须确认没有影响上游同步能力、敏感文件保护或现有测试脚本。
+
+真实运行配置不属于示例配置。`enterprise.env`、`data/api_providers.json`、数据库、Token、Cookie、API Key 等只能保留在本地运行环境，不应提交到 Git。
 
 ---
 
@@ -82,6 +87,7 @@
 - 不移动无关文件
 - 不删除现有测试脚本
 - 不改动运行时数据
+- 不提交真实密钥、真实 Token、真实 Cookie、真实数据库或真实运行时配置
 - 不引入与企业多用户版无关的新方向
 
 如果发现额外问题，应记录在 PR 说明或后续 Issue 建议中，不在当前任务中直接实现。

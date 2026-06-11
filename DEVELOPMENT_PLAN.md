@@ -46,12 +46,21 @@
 
 目标：确保企业版账号、密钥、运行数据和仓库边界可控。
 
+已完成：
+
+- 新增 `enterprise.env.example`，明确 `GATEWAY_PORT`、`UPSTREAM_PORT`、`JWT_SECRET`、`JWT_EXPIRE_HOURS`、`ADMIN_USERNAME`、`ADMIN_PASSWORD`、`DB_PATH` 的示例配置。
+- 新增 `SECURITY_BASELINE.md`，记录生产部署前必须修改项、不得提交文件、运行时配置处理方式和安全检查清单。
+- 企业配置加载会对默认 `JWT_SECRET`、过短 `JWT_SECRET`、默认管理员密码输出清晰风险提示。
+- 当 `ENTERPRISE_ENV=production` 或 `ENTERPRISE_STRICT_SECURITY=1` 时，默认 `JWT_SECRET` 会阻断启动，避免生产环境误用开发默认值。
+- 新增 `data/api_providers.example.json` 作为模型配置模板，不包含真实密钥。
+- `data/api_providers.json` 已加入 `.gitignore`，并通过 `git rm --cached data/api_providers.json` 停止 Git 跟踪；用户本地真实配置保留。
+
 待办：
 
-- 复核 `enterprise.env`、`API/.env`、`data/` 是否持续被 Git 忽略。
-- 确认企业仓库可见性是否应为 Private。
-- 检查默认管理员密码和 JWT_SECRET 的生产环境修改要求。
-- 建立安全配置检查清单。
+- 持续复核 `enterprise.env`、`API/.env`、`data/` 是否被 Git 忽略，避免真实密钥、Token、Cookie、数据库或运行时数据进入仓库。
+- 确认企业仓库可见性是否应为 Private，并在部署前复核协作者权限。
+- 增加生产部署安全检查脚本，用于自动检查默认管理员密码、默认 JWT_SECRET 和运行时配置泄漏风险。
+- 继续审计其它运行态配置和模型供应商配置，不把本次安全基线写成一次性全部完成。
 
 ---
 

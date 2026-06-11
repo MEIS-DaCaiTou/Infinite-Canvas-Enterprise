@@ -22,6 +22,7 @@ python.zip
 # 本地历史和运行态数据
 history.json
 data/asset_library.json
+data/api_providers.json
 data/prompt_libraries.json
 data/canvases/
 data/conversations/

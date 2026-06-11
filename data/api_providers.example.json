@@ -1,0 +1,48 @@
+[
+  {
+    "id": "modelscope",
+    "name": "ModelScope",
+    "base_url": "https://api-inference.modelscope.cn/v1",
+    "protocol": "openai",
+    "image_generation_endpoint": "",
+    "image_edit_endpoint": "",
+    "enabled": true,
+    "primary": false,
+    "image_models": [
+      "Tongyi-MAI/Z-Image-Turbo"
+    ],
+    "chat_models": [
+      "Qwen/Qwen3-235B-A22B"
+    ],
+    "video_models": [],
+    "ms_loras": [],
+    "ms_defaults_version": 0,
+    "rh_apps": [],
+    "rh_workflows": [],
+    "volcengine_project_name": "",
+    "volcengine_region": ""
+  },
+  {
+    "id": "custom-api",
+    "name": "Example OpenAI-Compatible Provider",
+    "base_url": "https://example.com/v1",
+    "protocol": "openai",
+    "image_generation_endpoint": "",
+    "image_edit_endpoint": "",
+    "enabled": false,
+    "primary": false,
+    "image_models": [
+      "example-image-model"
+    ],
+    "chat_models": [
+      "example-chat-model"
+    ],
+    "video_models": [],
+    "ms_loras": [],
+    "ms_defaults_version": 0,
+    "rh_apps": [],
+    "rh_workflows": [],
+    "volcengine_project_name": "",
+    "volcengine_region": ""
+  }
+]
