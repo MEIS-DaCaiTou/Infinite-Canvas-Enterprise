@@ -1,6 +1,6 @@
 # 无限画布企业版 · 后续开发规划
 
-更新时间：2026-06-03
+更新时间：2026-06-11
 
 ---
 
@@ -25,6 +25,7 @@
 - `/enterprise/health` 可检查网关和内部上游可达性。
 - `enterprise/tests/test_start_stop.ps1` 验证启动/停止闭环。
 - `enterprise/tests/diagnose.ps1` 和 `enterprise/tests/smoke.ps1` 提供诊断与冒烟。
+- 2026-06-11 已启动当前项目并完成非破坏性诊断/冒烟验证。
 
 待办：
 
@@ -48,10 +49,11 @@
 
 待办：
 
-- PR #67 合并后，检查本地 `static/js/smart-canvas.js` 是否还存在临时差异；如上游已包含修复，移除本地热修偏差。
+- PR #67 当前与上游 main 冲突；需要单独 rebase 或基于上游最新 main 重提这个 LLM running-state 修复。
 - 建立 `enterprise/tests/SMOKE_CHECKLIST.md` 的实际执行记录格式。
 - 对 `.gitignore` 和仓库内容做一次安全复核，确保密钥、运行数据、内置运行时不进入 Git。
 - 给上游更新流程补一份标准操作步骤：更新前备份、更新后重启、跑清单、记录结果。
+- 确认企业仓库是否需要保持私有；2026-06-11 查询结果为 `PUBLIC`。
 
 ---
 
@@ -84,4 +86,3 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\enterprise\tests\test_star
 
 5. 手工跑 `enterprise/tests/SMOKE_CHECKLIST.md`。
 6. 如发现上游 bug，先提交上游 issue/PR，再决定是否保留本地临时热修。
-

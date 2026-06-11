@@ -2,7 +2,7 @@
 
 > 给后续 Codex / Agent 的第一阅读文件。上下文压缩、换线程、长期维护恢复时，先读本文，再读 `ENTERPRISE_DOCS.md` 和 `enterprise/tests/SMOKE_CHECKLIST.md`。
 
-更新时间：2026-06-03
+更新时间：2026-06-11
 
 ---
 
@@ -35,14 +35,14 @@
 |----|----------|
 | 本地上游版本 | `2026.06.02.1` |
 | 企业私有仓库 | `MEIS-DaCaiTou/Infinite-Canvas-Enterprise` |
-| 企业仓库最新提交 | `0a95a06 chore: prepare enterprise source repository` |
+| 企业仓库最新提交 | 以 `git log -1 --oneline` 为准；2026-06-11 维护前基线为 `03d0f1b chore: sync upstream and document enterprise maintenance` |
 | 上游源码仓库 | `hero8152/Infinite-Canvas` |
-| 上游 bugfix PR | [hero8152/Infinite-Canvas#67](https://github.com/hero8152/Infinite-Canvas/pull/67)，状态 OPEN，mergeable |
+| 上游 bugfix PR | [hero8152/Infinite-Canvas#67](https://github.com/hero8152/Infinite-Canvas/pull/67)，状态 OPEN；2026-06-11 查询为 `CONFLICTING` |
 | 当前运行端口 | `8000` 企业网关，`3001` 内部上游 |
 | 当前健康检查 | `/enterprise/health` 返回 `gateway=ok`、`upstream=ok` |
 | 测试脚本目录 | 统一放在 `enterprise/tests/`，不要散落到根目录或上游目录 |
 
-当前本地工作区有较多 `main.py`、`static/`、`VERSION` 等上游文件改动。这些主要来自上游更新按钮同步到 `2026.06.02.1`，以及一个临时上游 bugfix 热修。不要把这些改动误判为企业层常规开发方向。
+2026-06-11 维护中确认：12 个 `static/*.html` 改动均为资源版本参数从 `2026.06.02` 同步到 `2026.06.02.1`，用于让浏览器刷新缓存；这类改动属于上游静态资源版本归档，不是企业层功能开发方向。
 
 ---
 
@@ -116,6 +116,31 @@
 ---
 
 ## 8. 最近一次验证记录
+
+验证时间：2026-06-11
+
+已执行：
+
+- 启动 `enterprise/launcher.py`，拉起 `127.0.0.1:3001` 与 `0.0.0.0:8000`。
+- `enterprise/tests/diagnose.ps1`
+- `enterprise/tests/smoke.ps1`
+
+结果：
+
+- 本机健康检查 `http://127.0.0.1:8000/enterprise/health`：HTTP 200。
+- 内部上游 `http://127.0.0.1:3001/api/app-info`：HTTP 200，版本 `2026.06.02.1`。
+- 监听端口：`0.0.0.0:8000`、`127.0.0.1:3001`。
+- 当前推荐 LAN 地址：`11.0.1.98`。
+- Windows 代理开启：`127.0.0.1:7897`；普通请求访问 `11.0.1.98:8000` 会被代理影响而超时。
+- `curl --noproxy` 访问 `http://11.0.1.98:8000/enterprise/health`：HTTP 200。
+- 冒烟检查全部通过：健康检查、登录页、管理员页鉴权、根路径鉴权/跳转。
+- 企业仓库当前 GitHub 可见性查询为 `PUBLIC`；如需私有，需要在 GitHub 仓库设置中调整。
+
+本轮未执行 `test_start_stop.ps1 -StopExisting`，因为它会中断当前正在运行的服务。需要验证启动/停止闭环时，先告知当前页面会短暂不可用，再执行。
+
+---
+
+历史记录：
 
 验证时间：2026-06-03
 
