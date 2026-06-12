@@ -1,0 +1,22 @@
+{
+  "version": "2026.06.10.1",
+  "updated_at": "2026-06-11T18:50:36+08:00",
+  "items": [
+    {
+      "type": "feature",
+      "text": "优化资产库管理页面的本地素材，支持智能分类"
+    },
+    {
+      "type": "feature",
+      "text": "tools文件夹更新了chrome的图像/视频采集工具"
+    },
+    {
+      "type": "feature",
+      "text": "图像采集工具可以直接导入本地资产库，并且智能分类"
+    },
+    {
+      "type": "feature",
+      "text": "修复了runninghub的一些bug"
+    }
+  ]
+}
