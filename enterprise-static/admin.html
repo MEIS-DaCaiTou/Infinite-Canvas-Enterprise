@@ -362,6 +362,15 @@
     return String(value ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\r?\n/g, ' ');
   }
 
+  function escapeHtml(value) {
+    return String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
   async function apiFetch(url, opts = {}) {
     const res = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...opts });
     const data = await res.json().catch(() => ({}));
@@ -388,12 +397,14 @@
       const id = jsArg(u.id);
       const username = jsArg(u.username);
       const displayName = jsArg(u.display_name || '');
+      const usernameHtml = escapeHtml(u.username);
+      const displayNameHtml = u.display_name ? escapeHtml(u.display_name) : '—';
       const isAdmin = !!u.is_admin;
       const isActive = !!u.is_active;
       return `
       <tr>
-        <td style="font-weight:800;">${u.username}</td>
-        <td style="color:var(--muted);">${u.display_name || '—'}</td>
+        <td style="font-weight:800;">${usernameHtml}</td>
+        <td style="color:var(--muted);">${displayNameHtml}</td>
         <td><span class="badge ${isAdmin ? 'badge-admin' : 'badge-user'}">${isAdmin ? '管理员' : '普通用户'}</span></td>
         <td><span class="badge ${isActive ? 'badge-active' : 'badge-disabled'}">${isActive ? '正常' : '已禁用'}</span></td>
         <td style="color:var(--muted);font-size:12px;">${fmtDate(u.created_at)}</td>
@@ -572,7 +583,7 @@
 
     const userOptions = _users
       .filter(u => u.is_active)
-      .map(u => `<option value="${u.id}">${u.username}${u.display_name ? ' (' + u.display_name + ')' : ''}</option>`)
+      .map(u => `<option value="${escapeHtml(u.id)}">${escapeHtml(u.username)}${u.display_name ? ' (' + escapeHtml(u.display_name) + ')' : ''}</option>`)
       .join('');
 
     // 无主画布排最前
@@ -585,7 +596,7 @@
     tbody.innerHTML = sorted.map(c => {
       const owner = _ownerMap[c.id];
       const ownerBadge = owner
-        ? `<span class="badge badge-active">${owner.username}${owner.display_name ? ' · ' + owner.display_name : ''}</span>`
+        ? `<span class="badge badge-active">${escapeHtml(owner.username)}${owner.display_name ? ' · ' + escapeHtml(owner.display_name) : ''}</span>`
         : `<span class="badge badge-unowned">未分配</span>`;
       const shortId = c.id ? c.id.slice(0, 8) + '…' : '—';
       return `
