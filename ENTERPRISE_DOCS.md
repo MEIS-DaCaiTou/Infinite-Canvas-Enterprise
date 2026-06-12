@@ -236,10 +236,36 @@ headers["x-user-id"] = user["user_id"]   # 注入企业用户 ID
 | POST | `/enterprise/api/users` | 创建用户 |
 | PUT | `/enterprise/api/users/{id}/password` | 重置用户密码（管理员强制重置） |
 | PUT | `/enterprise/api/users/{id}/role` | 设置/撤销管理员权限 |
-| DELETE | `/enterprise/api/users/{id}` | 删除用户（软删除，is_active=0） |
+| PUT | `/enterprise/api/users/{id}/active` | 启用/禁用用户（管理员不能禁用自己） |
+| PUT | `/enterprise/api/users/{id}/profile` | 更新用户展示名；展示名为空时回退为用户名 |
+| DELETE | `/enterprise/api/users/{id}` | 删除用户（兼容软删除，内部禁用 `is_active=0`） |
 | GET | `/enterprise/api/canvas-owners` | 获取所有画布的归属信息 |
 | PUT | `/enterprise/api/canvases/{id}/owner` | 手动分配/变更画布归属用户 |
 | GET | `/enterprise/api/logs` | 查询操作审计日志（支持分页、用户/操作类型过滤） |
+
+用户管理 API 行为约束：
+
+- 目标用户不存在时返回 HTTP 404。
+- 管理员不能禁用或删除自己。
+- `PUT /enterprise/api/users/{id}/active` 成功返回 `success`、`user_id`、`is_active`、`status`。
+- `PUT /enterprise/api/users/{id}/profile` 成功返回 `success`、`user_id`、`display_name`。
+
+已进入审计日志的用户管理操作：
+
+- 创建用户：`user_created`
+- 重置用户密码：`user_password_reset`
+- 修改用户角色：`user_role_updated`
+- 禁用用户 / 软删除用户：`user_disabled`
+- 启用用户：`user_enabled`
+- 修改用户展示名：`user_profile_updated`
+
+审计日志中 `user_id` 记录执行操作的管理员 ID，`detail` 记录目标用户 ID、目标用户名和动作摘要。当前 `assign_canvas_owner` 的既有日志归属行为暂未调整，后续可单独评估。
+
+管理后台最小适配：
+
+- 成员列表继续展示启用/禁用状态。
+- 启用用户显示“禁用”操作，禁用用户显示“启用”操作。
+- 新增“编辑名称”操作，可更新展示名；留空时后端回退为用户名。
 
 ---
 

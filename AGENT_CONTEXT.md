@@ -48,10 +48,13 @@
 | 当前健康检查 | `/enterprise/health` 返回 `gateway=ok`、`upstream=ok` |
 | 测试脚本目录 | 统一放在 `enterprise/tests/`，不要散落到根目录或上游目录 |
 | 安全基线 | 已新增 `enterprise.env.example`、`SECURITY_BASELINE.md`、`data/api_providers.example.json`；真实运行配置不应提交 |
+| 用户管理审计 | 已增强启用/禁用、展示名更新、软删除兼容和关键用户管理审计日志 |
 
 2026-06-11 维护中确认：12 个 `static/*.html` 改动均为资源版本参数从 `2026.06.02` 同步到 `2026.06.02.1`，用于让浏览器刷新缓存；这类改动属于上游静态资源版本归档，不是企业层功能开发方向。
 
 2026-06-11 安全基线治理确认：`data/api_providers.json` 属于本地运行时模型配置，已加入 `.gitignore` 并通过 `git rm --cached data/api_providers.json` 停止 Git 跟踪；该操作不删除用户本地真实配置。生产部署前必须从 `enterprise.env.example` 复制生成本地 `enterprise.env`，并修改 `JWT_SECRET` 与 `ADMIN_PASSWORD`。
+
+2026-06-11 用户管理审计增强确认：管理员 API 已支持 `PUT /enterprise/api/users/{id}/active` 启用/禁用用户、`PUT /enterprise/api/users/{id}/profile` 更新展示名；`DELETE /enterprise/api/users/{id}` 保持软删除兼容并返回禁用状态。创建用户、重置密码、修改角色、禁用/启用、修改展示名均写入审计日志，日志执行者为管理员 ID，detail 记录目标用户和动作摘要。管理后台做了最小适配，可编辑展示名并对账号执行启用/禁用。
 
 ---
 
@@ -101,6 +104,7 @@
 - 明确局域网地址选择策略：不固定主机 IP；`11.*` 地址如果受浏览器代理影响，本机可能访问失败，关闭代理或配置绕过后可正常访问。
 - 发现 Smart Canvas LLM 节点“长时间运行”问题：本质是前端 `running` 临时状态被持久化或未及时保存清理，同时带 `*` 的通配模型名可被用户选中导致上游 503。
 - 已向上游提交 PR：`hero8152/Infinite-Canvas#67`。
+- 增强企业用户管理与审计闭环：启用/禁用、展示名更新、软删除兼容、关键用户管理操作审计日志，以及管理后台最小适配。
 
 ---
 

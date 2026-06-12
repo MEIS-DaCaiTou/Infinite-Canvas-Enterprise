@@ -78,6 +78,7 @@
       background: var(--panel); border: 1px solid var(--line);
       border-radius: 16px; overflow: hidden;
     }
+    .table-scroll { overflow-x: auto; }
     .block-head {
       display: flex; align-items: center; justify-content: space-between;
       padding: 18px 22px; border-bottom: 1px solid var(--line);
@@ -86,6 +87,14 @@
 
     /* ── 表格 ── */
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .user-table { min-width: 980px; table-layout: fixed; }
+    .user-table th:nth-child(1) { width: 120px; }
+    .user-table th:nth-child(2) { width: 140px; }
+    .user-table th:nth-child(3) { width: 90px; }
+    .user-table th:nth-child(4) { width: 86px; }
+    .user-table th:nth-child(5) { width: 132px; }
+    .user-table th:nth-child(6) { width: 132px; }
+    .user-table th:nth-child(7) { width: 330px; }
     th, td { padding: 11px 22px; text-align: left; }
     th {
       color: var(--faint); font-size: 10.5px; font-weight: 900;
@@ -111,10 +120,18 @@
       height: 28px; padding: 0 10px; border-radius: 8px;
       font-size: 11.5px; font-weight: 800;
       border: 1px solid var(--line); background: transparent; color: var(--muted);
-      transition: all .15s ease; cursor: pointer;
+      transition: all .15s ease; cursor: pointer; white-space: nowrap; flex: 0 0 auto;
     }
     .row-btn:hover { color: var(--text); border-color: var(--text); }
     .row-btn.danger:hover { color: #ef4444; border-color: rgba(239,68,68,.4); background: rgba(239,68,68,.05); }
+    .truncate-cell {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      word-break: normal;
+    }
+    .user-actions-cell { min-width: 330px; padding-top: 8px; padding-bottom: 8px; }
+    .row-actions { display: flex; gap: 6px; align-items: center; flex-wrap: nowrap; white-space: nowrap; }
 
     /* ── 模态框 ── */
     .modal-backdrop {
@@ -221,12 +238,12 @@
 
     <!-- Tab：用户管理 -->
     <div class="tab-panel active" id="tab-users">
-    <div class="block">
+    <div class="block table-scroll">
       <div class="block-head">
         <span class="block-title">成员列表</span>
         <span id="userCount" style="color:var(--faint);font-size:11.5px;font-weight:700;">加载中…</span>
       </div>
-      <table>
+      <table class="user-table">
         <thead>
           <tr>
             <th>用户名</th>
@@ -318,12 +335,30 @@
   </div>
 </div>
 
+<!-- 编辑展示名模态框 -->
+<div class="modal-backdrop" id="profileModal">
+  <div class="modal">
+    <h3>编辑展示名</h3>
+    <p id="profileSubtitle" style="color:var(--muted);font-size:12.5px;font-weight:700;margin-bottom:16px;"></p>
+    <div class="field">
+      <span class="label">展示名（留空则回退为用户名）</span>
+      <div class="field-frame"><input type="text" id="profileDisplayName" placeholder="请输入展示名" /></div>
+    </div>
+    <div class="error-inline" id="profileError"></div>
+    <div class="modal-actions">
+      <button class="action-btn" onclick="closeProfileModal()">取消</button>
+      <button class="action-btn primary" onclick="submitProfile()">保存</button>
+    </div>
+  </div>
+</div>
+
 <!-- Toast -->
 <div id="toast"></div>
 
 <script>
   let _users = [];
   let _pwdTargetId = null;
+  let _profileTargetId = null;
 
   function showToast(msg, type = 'success') {
     const el = document.getElementById('toast');
@@ -340,17 +375,59 @@
       + ' ' + d.toTimeString().slice(0,5);
   }
 
+  function jsArg(value) {
+    return String(value ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\r?\n/g, ' ');
+  }
+
+  function escapeHtml(value) {
+    return String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function formatApiError(res, payloadText, payloadData) {
+    let detail = '';
+    if (payloadData && typeof payloadData === 'object') {
+      detail = payloadData.detail || payloadData.error || payloadData.message || '';
+    }
+    if (!detail && payloadText) detail = payloadText.trim();
+    if (!detail && res.status === 404) detail = '接口不存在，请确认企业服务已重启';
+    if (!detail && res.status === 403) detail = '需要管理员权限';
+    if (!detail && res.status === 401) detail = '登录已失效，请重新登录';
+    const statusText = res.statusText ? `: ${res.statusText}` : '';
+    return `HTTP ${res.status}${statusText}${detail ? ` - ${detail}` : ''}`;
+  }
+
   async function apiFetch(url, opts = {}) {
     const res = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...opts });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.detail || data.error || '请求失败');
+    const text = await res.text().catch(() => '');
+    let data = {};
+    if (text) {
+      try {
+        data = JSON.parse(text);
+      } catch (_) {
+        data = text;
+      }
+    }
+    if (!res.ok) throw new Error(formatApiError(res, text, data));
     return data;
   }
 
+  function boolFlag(value) {
+    return value === true || value === 1 || value === '1';
+  }
+
   // ── 加载用户列表
+  async function fetchUsers() {
+    return await apiFetch('/enterprise/api/users');
+  }
+
   async function loadUsers() {
     try {
-      _users = await apiFetch('/enterprise/api/users');
+      _users = await fetchUsers();
       renderUsers();
     } catch (e) { showToast('加载失败: ' + e.message, 'error'); }
   }
@@ -362,20 +439,32 @@
       tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--faint);padding:48px 0;font-weight:700;">暂无用户</td></tr>';
       return;
     }
-    tbody.innerHTML = _users.map(u => `
+    tbody.innerHTML = _users.map(u => {
+      const id = jsArg(u.id);
+      const username = jsArg(u.username);
+      const displayName = jsArg(u.display_name || '');
+      const usernameHtml = escapeHtml(u.username);
+      const displayNameHtml = u.display_name ? escapeHtml(u.display_name) : '—';
+      const isAdmin = boolFlag(u.is_admin);
+      const isActive = boolFlag(u.is_active);
+      return `
       <tr>
-        <td style="font-weight:800;">${u.username}</td>
-        <td style="color:var(--muted);">${u.display_name || '—'}</td>
-        <td><span class="badge ${u.is_admin ? 'badge-admin' : 'badge-user'}">${u.is_admin ? '管理员' : '普通用户'}</span></td>
-        <td><span class="badge ${u.is_active ? 'badge-active' : 'badge-disabled'}">${u.is_active ? '正常' : '已禁用'}</span></td>
+        <td class="truncate-cell" style="font-weight:800;" title="${usernameHtml}">${usernameHtml}</td>
+        <td class="truncate-cell" style="color:var(--muted);" title="${displayNameHtml === '—' ? '' : displayNameHtml}">${displayNameHtml}</td>
+        <td><span class="badge ${isAdmin ? 'badge-admin' : 'badge-user'}">${isAdmin ? '管理员' : '普通用户'}</span></td>
+        <td><span class="badge ${isActive ? 'badge-active' : 'badge-disabled'}">${isActive ? '正常' : '已禁用'}</span></td>
         <td style="color:var(--muted);font-size:12px;">${fmtDate(u.created_at)}</td>
         <td style="color:var(--muted);font-size:12px;">${fmtDate(u.last_login)}</td>
-        <td style="display:flex;gap:6px;padding-top:8px;padding-bottom:8px;">
-          <button class="row-btn" onclick="toggleRole('${u.id}','${u.username}',${u.is_admin})">${u.is_admin ? '撤销管理员' : '设为管理员'}</button>
-          <button class="row-btn" onclick="openPwdModal('${u.id}','${u.username}')">重置密码</button>
-          <button class="row-btn danger" onclick="deleteUser('${u.id}','${u.username}')">删除</button>
+        <td class="user-actions-cell">
+          <div class="row-actions">
+            <button class="row-btn" onclick="openProfileModal('${id}','${username}','${displayName}')">编辑名称</button>
+            <button class="row-btn" onclick="toggleRole('${id}','${username}',${isAdmin})">${isAdmin ? '撤销管理员' : '设为管理员'}</button>
+            <button class="row-btn" onclick="openPwdModal('${id}','${username}')">重置密码</button>
+            <button class="row-btn ${isActive ? 'danger' : ''}" onclick="setUserActive('${id}','${username}',${!isActive})">${isActive ? '禁用' : '启用'}</button>
+          </div>
         </td>
-      </tr>`).join('');
+      </tr>`;
+    }).join('');
   }
 
   // ── 新建用户
@@ -427,6 +516,30 @@
     } catch (e) { errEl.textContent = e.message; }
   }
 
+  // ── 编辑展示名
+  function openProfileModal(userId, username, displayName) {
+    _profileTargetId = userId;
+    document.getElementById('profileSubtitle').textContent = `正在编辑用户「${username}」的展示名`;
+    document.getElementById('profileDisplayName').value = displayName || '';
+    document.getElementById('profileError').textContent = '';
+    document.getElementById('profileModal').classList.add('show');
+    setTimeout(() => document.getElementById('profileDisplayName').focus(), 50);
+  }
+  function closeProfileModal() { document.getElementById('profileModal').classList.remove('show'); _profileTargetId = null; }
+  async function submitProfile() {
+    const displayName = document.getElementById('profileDisplayName').value.trim();
+    const errEl = document.getElementById('profileError');
+    try {
+      await apiFetch(`/enterprise/api/users/${_profileTargetId}/profile`, {
+        method: 'PUT',
+        body: JSON.stringify({ display_name: displayName }),
+      });
+      closeProfileModal();
+      showToast('展示名已更新');
+      await loadUsers();
+    } catch (e) { errEl.textContent = e.message; }
+  }
+
   // ── 切换管理员权限
   async function toggleRole(userId, username, currentIsAdmin) {
     const newIsAdmin = !currentIsAdmin;
@@ -442,14 +555,30 @@
     } catch (e) { showToast(e.message, 'error'); }
   }
 
-  // ── 删除用户
-  async function deleteUser(userId, username) {
-    if (!confirm(`确认删除用户「${username}」？\n该用户将无法登录，画布数据仍然保留。`)) return;
+  // ── 启用 / 禁用用户
+  async function setUserActive(userId, username, isActive) {
+    const action = isActive ? '启用' : '禁用';
+    const hint = isActive ? '该用户将恢复登录权限。' : '该用户将无法登录，画布数据仍然保留。';
+    if (!confirm(`确认${action}用户「${username}」？\n${hint}`)) return;
     try {
-      await apiFetch(`/enterprise/api/users/${userId}`, { method: 'DELETE' });
-      showToast(`用户「${username}」已删除`);
-      await loadUsers();
-    } catch (e) { showToast(e.message, 'error'); }
+      const result = await apiFetch(`/enterprise/api/users/${userId}/active`, {
+        method: 'PUT',
+        body: JSON.stringify({ is_active: isActive }),
+      });
+      if (!result.success || boolFlag(result.is_active) !== isActive) {
+        throw new Error(result.detail || `${action}接口未返回预期状态`);
+      }
+      _users = _users.map(u => u.id === userId ? { ...u, is_active: isActive ? 1 : 0 } : u);
+      renderUsers();
+      _users = await fetchUsers();
+      const refreshed = _users.find(u => u.id === userId);
+      if (!refreshed || boolFlag(refreshed.is_active) !== isActive) {
+        renderUsers();
+        throw new Error(`${action}后成员列表状态未刷新，请重新打开管理后台确认`);
+      }
+      renderUsers();
+      showToast(`用户「${username}」已${action}`);
+    } catch (e) { showToast(`${action}失败: ${e.message}`, 'error'); }
   }
 
   // ── 点击 backdrop 关闭模态框
@@ -512,8 +641,8 @@
     }
 
     const userOptions = _users
-      .filter(u => u.is_active)
-      .map(u => `<option value="${u.id}">${u.username}${u.display_name ? ' (' + u.display_name + ')' : ''}</option>`)
+      .filter(u => boolFlag(u.is_active))
+      .map(u => `<option value="${escapeHtml(u.id)}">${escapeHtml(u.username)}${u.display_name ? ' (' + escapeHtml(u.display_name) + ')' : ''}</option>`)
       .join('');
 
     // 无主画布排最前
@@ -526,7 +655,7 @@
     tbody.innerHTML = sorted.map(c => {
       const owner = _ownerMap[c.id];
       const ownerBadge = owner
-        ? `<span class="badge badge-active">${owner.username}${owner.display_name ? ' · ' + owner.display_name : ''}</span>`
+        ? `<span class="badge badge-active">${escapeHtml(owner.username)}${owner.display_name ? ' · ' + escapeHtml(owner.display_name) : ''}</span>`
         : `<span class="badge badge-unowned">未分配</span>`;
       const shortId = c.id ? c.id.slice(0, 8) + '…' : '—';
       return `
