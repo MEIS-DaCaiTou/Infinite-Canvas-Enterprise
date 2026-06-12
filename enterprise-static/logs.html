@@ -187,9 +187,21 @@
           <option value="canvas_assigned">canvas_assigned</option>
           <option value="user_created">user_created</option>
           <option value="user_deleted">user_deleted</option>
+          <option value="user_disabled">user_disabled</option>
+          <option value="user_enabled">user_enabled</option>
+          <option value="user_profile_updated">user_profile_updated</option>
           <option value="role_changed">role_changed</option>
+          <option value="user_role_updated">user_role_updated</option>
+          <option value="user_password_reset">user_password_reset</option>
           <option value="password_changed">password_changed</option>
           <option value="admin_password_reset">admin_password_reset</option>
+        </select>
+        <span class="filter-label">每页</span>
+        <select id="pageSize" onchange="changePageSize()">
+          <option value="10">10 条</option>
+          <option value="20" selected>20 条</option>
+          <option value="50">50 条</option>
+          <option value="100">100 条</option>
         </select>
         <button class="filter-btn" onclick="loadLogs()">刷新</button>
       </div>
@@ -219,7 +231,7 @@
   </div>
 
   <script>
-    const PAGE_SIZE = 50;
+    let PAGE_SIZE = 20;
     let _offset = 0;
     let _total = 0;
 
@@ -267,7 +279,7 @@
     async function fetchLogs() {
       const userId = document.getElementById('filterUser').value;
       const action = document.getElementById('filterAction').value;
-      const params = new URLSearchParams({ limit: PAGE_SIZE, offset: _offset });
+      const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(_offset) });
       if (userId) params.set('user_id', userId);
       if (action) params.set('action', action);
 
@@ -316,8 +328,15 @@
       document.getElementById('nextBtn').disabled = _offset + PAGE_SIZE >= _total;
     }
 
-    function prevPage() { if (_offset > 0) { _offset -= PAGE_SIZE; fetchLogs(); } }
-    function nextPage() { if (_offset + PAGE_SIZE < _total) { _offset += PAGE_SIZE; fetchLogs(); } }
+    function prevPage() { if (_offset > 0) { _offset -= PAGE_SIZE; return fetchLogs(); } }
+    function nextPage() { if (_offset + PAGE_SIZE < _total) { _offset += PAGE_SIZE; return fetchLogs(); } }
+
+    function changePageSize() {
+      const nextSize = parseInt(document.getElementById('pageSize').value, 10);
+      PAGE_SIZE = [10, 20, 50, 100].includes(nextSize) ? nextSize : 20;
+      _offset = 0;
+      return fetchLogs();
+    }
 
     function escHtml(s) {
       return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');

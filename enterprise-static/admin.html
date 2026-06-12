@@ -78,6 +78,7 @@
       background: var(--panel); border: 1px solid var(--line);
       border-radius: 16px; overflow: hidden;
     }
+    .table-scroll { overflow-x: auto; }
     .block-head {
       display: flex; align-items: center; justify-content: space-between;
       padding: 18px 22px; border-bottom: 1px solid var(--line);
@@ -86,6 +87,14 @@
 
     /* ── 表格 ── */
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .user-table { min-width: 980px; table-layout: fixed; }
+    .user-table th:nth-child(1) { width: 120px; }
+    .user-table th:nth-child(2) { width: 140px; }
+    .user-table th:nth-child(3) { width: 90px; }
+    .user-table th:nth-child(4) { width: 86px; }
+    .user-table th:nth-child(5) { width: 132px; }
+    .user-table th:nth-child(6) { width: 132px; }
+    .user-table th:nth-child(7) { width: 330px; }
     th, td { padding: 11px 22px; text-align: left; }
     th {
       color: var(--faint); font-size: 10.5px; font-weight: 900;
@@ -111,10 +120,18 @@
       height: 28px; padding: 0 10px; border-radius: 8px;
       font-size: 11.5px; font-weight: 800;
       border: 1px solid var(--line); background: transparent; color: var(--muted);
-      transition: all .15s ease; cursor: pointer;
+      transition: all .15s ease; cursor: pointer; white-space: nowrap; flex: 0 0 auto;
     }
     .row-btn:hover { color: var(--text); border-color: var(--text); }
     .row-btn.danger:hover { color: #ef4444; border-color: rgba(239,68,68,.4); background: rgba(239,68,68,.05); }
+    .truncate-cell {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      word-break: normal;
+    }
+    .user-actions-cell { min-width: 330px; padding-top: 8px; padding-bottom: 8px; }
+    .row-actions { display: flex; gap: 6px; align-items: center; flex-wrap: nowrap; white-space: nowrap; }
 
     /* ── 模态框 ── */
     .modal-backdrop {
@@ -221,12 +238,12 @@
 
     <!-- Tab：用户管理 -->
     <div class="tab-panel active" id="tab-users">
-    <div class="block">
+    <div class="block table-scroll">
       <div class="block-head">
         <span class="block-title">成员列表</span>
         <span id="userCount" style="color:var(--faint);font-size:11.5px;font-weight:700;">加载中…</span>
       </div>
-      <table>
+      <table class="user-table">
         <thead>
           <tr>
             <th>用户名</th>
@@ -378,10 +395,18 @@
     return data;
   }
 
+  function boolFlag(value) {
+    return value === true || value === 1 || value === '1';
+  }
+
   // ── 加载用户列表
+  async function fetchUsers() {
+    return await apiFetch('/enterprise/api/users');
+  }
+
   async function loadUsers() {
     try {
-      _users = await apiFetch('/enterprise/api/users');
+      _users = await fetchUsers();
       renderUsers();
     } catch (e) { showToast('加载失败: ' + e.message, 'error'); }
   }
@@ -399,21 +424,23 @@
       const displayName = jsArg(u.display_name || '');
       const usernameHtml = escapeHtml(u.username);
       const displayNameHtml = u.display_name ? escapeHtml(u.display_name) : '—';
-      const isAdmin = !!u.is_admin;
-      const isActive = !!u.is_active;
+      const isAdmin = boolFlag(u.is_admin);
+      const isActive = boolFlag(u.is_active);
       return `
       <tr>
-        <td style="font-weight:800;">${usernameHtml}</td>
-        <td style="color:var(--muted);">${displayNameHtml}</td>
+        <td class="truncate-cell" style="font-weight:800;" title="${usernameHtml}">${usernameHtml}</td>
+        <td class="truncate-cell" style="color:var(--muted);" title="${displayNameHtml === '—' ? '' : displayNameHtml}">${displayNameHtml}</td>
         <td><span class="badge ${isAdmin ? 'badge-admin' : 'badge-user'}">${isAdmin ? '管理员' : '普通用户'}</span></td>
         <td><span class="badge ${isActive ? 'badge-active' : 'badge-disabled'}">${isActive ? '正常' : '已禁用'}</span></td>
         <td style="color:var(--muted);font-size:12px;">${fmtDate(u.created_at)}</td>
         <td style="color:var(--muted);font-size:12px;">${fmtDate(u.last_login)}</td>
-        <td style="display:flex;gap:6px;padding-top:8px;padding-bottom:8px;">
-          <button class="row-btn" onclick="openProfileModal('${id}','${username}','${displayName}')">编辑名称</button>
-          <button class="row-btn" onclick="toggleRole('${id}','${username}',${isAdmin})">${isAdmin ? '撤销管理员' : '设为管理员'}</button>
-          <button class="row-btn" onclick="openPwdModal('${id}','${username}')">重置密码</button>
-          <button class="row-btn ${isActive ? 'danger' : ''}" onclick="setUserActive('${id}','${username}',${!isActive})">${isActive ? '禁用' : '启用'}</button>
+        <td class="user-actions-cell">
+          <div class="row-actions">
+            <button class="row-btn" onclick="openProfileModal('${id}','${username}','${displayName}')">编辑名称</button>
+            <button class="row-btn" onclick="toggleRole('${id}','${username}',${isAdmin})">${isAdmin ? '撤销管理员' : '设为管理员'}</button>
+            <button class="row-btn" onclick="openPwdModal('${id}','${username}')">重置密码</button>
+            <button class="row-btn ${isActive ? 'danger' : ''}" onclick="setUserActive('${id}','${username}',${!isActive})">${isActive ? '禁用' : '启用'}</button>
+          </div>
         </td>
       </tr>`;
     }).join('');
@@ -513,13 +540,24 @@
     const hint = isActive ? '该用户将恢复登录权限。' : '该用户将无法登录，画布数据仍然保留。';
     if (!confirm(`确认${action}用户「${username}」？\n${hint}`)) return;
     try {
-      await apiFetch(`/enterprise/api/users/${userId}/active`, {
+      const result = await apiFetch(`/enterprise/api/users/${userId}/active`, {
         method: 'PUT',
         body: JSON.stringify({ is_active: isActive }),
       });
+      if (!result.success || boolFlag(result.is_active) !== isActive) {
+        throw new Error(result.detail || `${action}接口未返回预期状态`);
+      }
+      _users = _users.map(u => u.id === userId ? { ...u, is_active: isActive ? 1 : 0 } : u);
+      renderUsers();
+      _users = await fetchUsers();
+      const refreshed = _users.find(u => u.id === userId);
+      if (!refreshed || boolFlag(refreshed.is_active) !== isActive) {
+        renderUsers();
+        throw new Error(`${action}后成员列表状态未刷新，请重新打开管理后台确认`);
+      }
+      renderUsers();
       showToast(`用户「${username}」已${action}`);
-      await loadUsers();
-    } catch (e) { showToast(e.message, 'error'); }
+    } catch (e) { showToast(`${action}失败: ${e.message}`, 'error'); }
   }
 
   // ── 点击 backdrop 关闭模态框
@@ -582,7 +620,7 @@
     }
 
     const userOptions = _users
-      .filter(u => u.is_active)
+      .filter(u => boolFlag(u.is_active))
       .map(u => `<option value="${escapeHtml(u.id)}">${escapeHtml(u.username)}${u.display_name ? ' (' + escapeHtml(u.display_name) + ')' : ''}</option>`)
       .join('');
 
