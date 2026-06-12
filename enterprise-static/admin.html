@@ -388,10 +388,31 @@
       .replace(/'/g, '&#39;');
   }
 
+  function formatApiError(res, payloadText, payloadData) {
+    let detail = '';
+    if (payloadData && typeof payloadData === 'object') {
+      detail = payloadData.detail || payloadData.error || payloadData.message || '';
+    }
+    if (!detail && payloadText) detail = payloadText.trim();
+    if (!detail && res.status === 404) detail = '接口不存在，请确认企业服务已重启';
+    if (!detail && res.status === 403) detail = '需要管理员权限';
+    if (!detail && res.status === 401) detail = '登录已失效，请重新登录';
+    const statusText = res.statusText ? `: ${res.statusText}` : '';
+    return `HTTP ${res.status}${statusText}${detail ? ` - ${detail}` : ''}`;
+  }
+
   async function apiFetch(url, opts = {}) {
     const res = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...opts });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.detail || data.error || '请求失败');
+    const text = await res.text().catch(() => '');
+    let data = {};
+    if (text) {
+      try {
+        data = JSON.parse(text);
+      } catch (_) {
+        data = text;
+      }
+    }
+    if (!res.ok) throw new Error(formatApiError(res, text, data));
     return data;
   }
 
