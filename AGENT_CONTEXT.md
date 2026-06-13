@@ -60,6 +60,8 @@
 
 2026-06-13 PR #10 复核补同步确认：上游 `hero8152/Infinite-Canvas` 已前进到 `9fb9a908c78f6d9e23fcfc03b7cf5d8b77ff3e0e`，真实 `VERSION` 为 `2026.06.12`。本轮在当前 `chore/upstream-update-compatibility` 分支继续同步，不新建分支/PR；同步范围从 `main.py`、`VERSION`、`static/` 扩展到 `workflows/`、`tools/`、`packages/`、`requirements.txt`、`get-pip.py`、`run.bat`、上游安装/登录脚本、README、macOS 脚本、运行说明和相关上游资源。`python/` 不提交，原因是企业仓库 `.gitignore` 明确将 `python/`、`python.zip` 作为本地运行时处理；当前本机仍使用本地 `python\python.exe` 运行验证。企业层 `enterprise/`、`enterprise-static/`、`enterprise.env.example` 未被上游覆盖。
 
+2026-06-13 Issue #11 README 边界治理确认：根目录 `README.md` 必须是 Infinite Canvas Enterprise 企业版项目首页入口，不再由上游原版 README 占据。上游 README 如需保留，放在 `docs/upstream/README.upstream.md` 并标注仅供参考；上游同步策略记录在 `docs/upstream/SYNC_POLICY.md`。后续上游同步 PR 必须检查根目录 `README.md` 是否仍保持企业版定位。
+
 ---
 
 ## 4. 不可偏离的开发边界
@@ -110,6 +112,7 @@
 - 已向上游提交 PR：`hero8152/Infinite-Canvas#67`。
 - 增强企业用户管理与审计闭环：启用/禁用、展示名更新、软删除兼容、关键用户管理操作审计日志，以及管理后台最小适配。
 - 完成 Issue #9 / PR #10 上游版本更新兼容性演练并补同步：本地上游版本更新为 `2026.06.12`，诊断、冒烟、管理员用户管理、普通用户隔离、新建 Smart Canvas 归属和 Smart Canvas 打开验证均通过；`python/` 作为本地运行时不纳入 Git。
+- 完成 Issue #11 README 边界治理：根目录 `README.md` 恢复为企业版入口，上游 README 移至 `docs/upstream/README.upstream.md`，并新增 `docs/upstream/SYNC_POLICY.md` 防止后续上游同步再次覆盖企业首页。
 
 ---
 
@@ -122,6 +125,7 @@
 5. 多用户局域网使用依赖防火墙、代理绕过和主机当前网络路由，不能硬编码固定 LAN 地址。
 6. 现有内置更新 API 依赖 GitHub anonymous REST tree 请求，可能因 rate limit 返回 HTTP 403；后续应考虑配置 GitHub token 或提供 git-fetch fallback。
 7. 上游当前会跟踪 `python/` 运行时，但企业仓库目前将 `python/`、`python.zip` 视为本地运行时并忽略；后续如要改变该策略，必须单独评估仓库体积、平台兼容性和发布方式，不能在上游同步 PR 中顺手改变。
+8. 根目录 `README.md` 是企业版项目入口，不应在上游同步中被上游 README 覆盖；如需保留上游 README，只能同步到 `docs/upstream/README.upstream.md`。
 
 ---
 

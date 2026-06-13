@@ -1,71 +1,173 @@
-# Infinite-Canvas
-Supports comfyui/API calls/modelscope calls
+# Infinite Canvas Enterprise
 
+Infinite Canvas Enterprise is the enterprise multi-user edition built on top of the upstream open-source project [hero8152/Infinite-Canvas](https://github.com/hero8152/Infinite-Canvas).
 
-详细教程：[https://youtu.be/1y9ShTvgC_w](https://youtu.be/r_y_9ALr7fg)
+This repository is not a new standalone canvas product. Its only long-term direction is to make Infinite Canvas safe and maintainable for teams, LAN deployments, and server environments with enterprise authentication, authorization, ownership, and audit controls.
 
-由于最近很多API网址关停，我找到一个稳定的网址：
+## Core Capabilities
 
-https://apimart.ai/register?aff=1uyAbb  （包含所有生图模型/视频模型/LLM模型）
+- Enterprise login authentication with JWT Cookie sessions.
+- User management for administrators.
+- Permission isolation for normal users.
+- Canvas ownership through enterprise mapping.
+- Conversation ownership through enterprise mapping.
+- Audit logs for key enterprise operations.
+- Enterprise gateway in front of the upstream app.
+- LAN and server deployment flow.
+- Controlled upstream synchronization and compatibility validation.
 
-https://www.fhl.mom/register?aff=86L574B4T2N9  （包含codex和GPT image 2模型）
+## Runtime Architecture
 
-功能请求/功能更新/视频教程/联系我，都可以在B站评论或私信：https://space.bilibili.com/78652351
+```text
+LAN / server users
+        |
+        | HTTP + enterprise_token Cookie
+        v
+Enterprise Gateway
+enterprise/gateway.py
+0.0.0.0:8000
+        |
+        | reverse proxy + auth + user context + filtering
+        v
+Upstream Infinite Canvas
+main.py
+127.0.0.1:3001
+```
 
-----
+The enterprise gateway is the external entry point. The upstream app should stay bound to `127.0.0.1:3001` and should not be exposed directly to LAN users.
 
-【新增了version文件，我每次更新都会更新version的版本号，如果你下载version文件，打开项目后，导航栏的GitHub按键就会提示新版本，如果不想查看更新提示，就删除version文件】
+## Quick Start
 
-【A version file has been added. I update the version number with each update. If you download the version file, the GitHub button in the navigation bar will indicate the new version after opening the project. If you don't want to see update notifications, delete the version file.】
+Windows startup:
 
-----
+```powershell
+.\启动企业版.bat
+```
 
-支持的功能：
-1. 支持几乎所有OpenAI协议的API/异步协议/Gemini协议/方舟协议
-2. RunningHub的工作流/AI应用/收费模型调用
-3. 火山引擎调用（人脸认证还在修复bug）
-4. Modelscope免费LLM模型和图像模型调用
-5. 即梦CLI调用，可直接调用即梦高级会员的积分，支持文生图/图生图/文生视频/图生视频
-6. 支持调用本地局域网的ComfyUI
-7. 扩展图片/360全景图预览截图/视频帧抽取/循环节点等诸多功能
+Stop services:
 
---------
+```powershell
+.\停止企业版.bat
+```
 
-已经申请著作权，禁止商业用途
+Common paths:
 
-Commercial use is prohibited.
+- App entry: `http://127.0.0.1:8000/`
+- Admin console: `/enterprise/admin`
+- Health check: `/enterprise/health`
+- Login page: `/enterprise/login`
 
+The enterprise launcher starts both services:
 
-* 可以自己使用和公司使用，禁止用于任何形式的修改封装成商业产品，商用须取得授权。
+- Enterprise gateway: `0.0.0.0:8000`
+- Internal upstream: `127.0.0.1:3001`
 
-* 根据代码二次开发的软件必须保持开源并注明来源作者
+## Required Reading For Codex / Agents
 
-* This software is for personal and company use only, but is prohibited from being modified or packaged into commercial products in any way. Commercial use requires authorization.
+Before any development or maintenance task, read these documents first:
 
-* Software developed based on this code must remain open source and the original author must be credited.
+1. `PROJECT_CHARTER.md`
+2. `AGENT_CONTEXT.md`
+3. `ARCHITECTURE.md`
+4. `CODE_BOUNDARIES.md`
+5. `CODEX_WORKFLOW.md`
+6. `DEVELOPMENT_PLAN.md`
+7. `ENTERPRISE_DOCS.md`
+8. The current GitHub Issue text
 
---------
+This is mandatory because the enterprise layer and upstream layer have different ownership and update rules.
 
-<img width="930" height="1446" alt="4667c56659701b214eedb7c933487a7f" src="https://github.com/user-attachments/assets/7c9a5366-52ed-4f11-a3fd-52a501901c51" />
+## Development Boundaries
 
-<img width="2079" height="665" alt="image" src="https://github.com/user-attachments/assets/8469923b-f7a2-403c-9c37-e6e789211f28" />
+Enterprise features should be implemented first in:
 
-<img width="1865" height="1503" alt="image" src="https://github.com/user-attachments/assets/f4030201-67c6-4845-b08b-b6fdf304afaa" />
+- `enterprise/`
+- `enterprise-static/`
+- `enterprise/tests/`
+- enterprise documentation
 
+The following are upstream-covered areas and should not be used as normal enterprise feature entry points:
 
-<img width="1696" height="1350" alt="b68e144c5b04a322bfd035da4d89aba3" src="https://github.com/user-attachments/assets/0a6090fb-a8dd-4c3d-adee-b1f9233a2d91" />
+- `main.py`
+- `static/`
+- `workflows/`
+- `VERSION`
+- `tools/`
+- `packages/`
+- root upstream helper scripts and upstream reference docs
 
-   
-<img width="1525" height="1473" alt="image" src="https://github.com/user-attachments/assets/6f61fcf9-746c-425b-9e36-cfc8d252da7c" />
+Changes to upstream-covered files are allowed only for controlled upstream syncs or clearly documented minimal upstream bug fixes.
 
-   <img width="1261" height="864" alt="image" src="https://github.com/user-attachments/assets/57f3e230-3134-488f-8179-d97e7d15383a" />
-<img width="1530" height="858" alt="image" src="https://github.com/user-attachments/assets/9990e42d-22d5-4a10-a1e1-ad35a634edd2" />
+## Upstream Synchronization
 
-<img width="1735" height="1400" alt="image" src="https://github.com/user-attachments/assets/d8328ff8-bbe0-4f1c-9ffa-7b56e8a1a51d" />
-<img width="2258" height="969" alt="image" src="https://github.com/user-attachments/assets/4a752d99-885d-4ba9-8b86-91b495786b5c" />
+Current upstream baseline: `2026.06.12`
 
+Upstream source: [hero8152/Infinite-Canvas](https://github.com/hero8152/Infinite-Canvas)
 
-<img width="1531" height="1374" alt="image" src="https://github.com/user-attachments/assets/0af79e38-0955-4740-9e65-5c9bb057f58c" />
+Rules:
 
-<img width="2196" height="1040" alt="image" src="https://github.com/user-attachments/assets/6d823668-cde2-4836-8332-1858efe5f520" />
-<img width="2214" height="771" alt="image" src="https://github.com/user-attachments/assets/52e10958-753f-45ba-a50e-3bbec27be436" />
+- Upstream sync must be delivered through an independent branch and PR.
+- Upstream sync must run compatibility checks before merge.
+- Upstream sync PRs must clearly list synced files, intentionally skipped files, test results, risks, and rollback plan.
+- The root `README.md` must remain the Enterprise project entry point.
+- The upstream README must not directly overwrite this file again.
+- If the upstream README needs to be preserved, sync it to `docs/upstream/README.upstream.md`.
+
+More detail: `docs/upstream/SYNC_POLICY.md`.
+
+## Upstream README
+
+The upstream README is kept only as reference material:
+
+- `docs/upstream/README.upstream.md`
+
+That document is not the homepage for this enterprise repository.
+
+## Security Notes
+
+Before production deployment:
+
+- Create local `enterprise.env` from `enterprise.env.example`.
+- Change `JWT_SECRET`.
+- Change `ADMIN_PASSWORD`.
+- Review repository visibility and collaborator permissions.
+
+Never commit:
+
+- real API keys
+- real tokens
+- real cookies
+- `enterprise.env`
+- real databases
+- runtime data under `data/`
+- local media preview caches
+
+See `SECURITY_BASELINE.md` for the full baseline.
+
+## Testing
+
+Non-destructive diagnostics:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\enterprise\tests\diagnose.ps1
+```
+
+Smoke test:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\enterprise\tests\smoke.ps1
+```
+
+Manual checklist after upstream updates:
+
+- `enterprise/tests/SMOKE_CHECKLIST.md`
+
+Startup/stop lifecycle tests may interrupt the running service. Run them only when that interruption is acceptable.
+
+## Current Maintenance Status
+
+- Enterprise gateway: `0.0.0.0:8000`
+- Internal upstream: `127.0.0.1:3001`
+- Current upstream baseline: `2026.06.12`
+- Enterprise tests live in `enterprise/tests/`
+- Runtime data and secrets must stay out of Git
