@@ -34,11 +34,15 @@
 - `CODE_BOUNDARIES.md` 明确可改和默认不应改的文件。
 - `CODEX_WORKFLOW.md` 规定每次任务先读文档、只做当前 Issue、独立分支和 PR 交付。
 - `docs/decisions/ADR-0001-enterprise-gateway-over-upstream.md` 记录核心架构决策。
+- `README.md` 恢复为 Infinite Canvas Enterprise 企业版首页入口。
+- `docs/upstream/README.upstream.md` 保存上游原版 README，仅作参考。
+- `docs/upstream/SYNC_POLICY.md` 记录上游同步时 README 和上游文档边界。
 
 待办：
 
 - 随每次任务及时更新真实状态和测试记录。
 - 保持 Issue、分支、PR 的交付方式，不直接推 `main`。
+- 后续上游同步 PR 必须检查根目录 `README.md` 是否仍为企业版说明，不能被上游 README 覆盖。
 
 ---
 
@@ -173,6 +177,7 @@
 - 企业私有仓库已推送到 `MEIS-DaCaiTou/Infinite-Canvas-Enterprise`。
 - 上游 Smart Canvas LLM stale running bug 已提交 PR：`hero8152/Infinite-Canvas#67`。
 - Issue #9 / PR #10 已完成受控上游更新兼容性演练并补同步：从 `2026.06.02.1` 更新到当前上游真实版本 `2026.06.12`，上游 commit 为 `hero8152/Infinite-Canvas@9fb9a90`。同步范围包括 `main.py`、`VERSION`、`static/`、`workflows/`、`tools/`、`packages/`、`requirements.txt`、`get-pip.py`、`run.bat`、上游安装/登录脚本、README、macOS 脚本、运行说明和相关上游资源，并记录到 `enterprise/tests/UPDATE_TEST_LOG.md`。
+- Issue #11 已恢复企业版 README 首页边界：根目录 `README.md` 是企业仓库入口，上游 README 移至 `docs/upstream/README.upstream.md`，同步规则写入 `docs/upstream/SYNC_POLICY.md`。
 
 待办：
 
@@ -182,6 +187,7 @@
 - 给上游更新流程补一份标准操作步骤：更新前备份、更新后重启、跑清单、记录结果。
 - 为现有更新 API 增加 GitHub token 配置或 git-fetch fallback，避免 anonymous GitHub REST rate limit 导致 HTTP 403。
 - 单独评估 `python/` 运行时发布策略：上游当前跟踪 `python/`，但企业仓库仍按 `.gitignore` 将 `python/`、`python.zip` 作为本地运行时忽略，不应在上游同步 PR 中顺手改变。
+- 把 README 边界检查加入上游同步清单：根目录 `README.md` 必须保持企业版说明；上游 README 如需同步，只能进入 `docs/upstream/README.upstream.md`。
 - 确认企业仓库是否需要保持私有；2026-06-11 查询结果为 `PUBLIC`。
 
 ---

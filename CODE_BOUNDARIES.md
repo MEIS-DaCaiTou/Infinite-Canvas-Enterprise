@@ -24,6 +24,8 @@
   - `DEVELOPMENT_PLAN.md`
   - `ENTERPRISE_DOCS.md`
   - `SECURITY_BASELINE.md`
+  - `README.md`
+  - `docs/upstream/*.md`
   - `docs/decisions/*.md`
 
 ---
@@ -42,6 +44,8 @@
 修改这些文件时，必须确认没有影响上游同步能力、敏感文件保护或现有测试脚本。
 
 真实运行配置不属于示例配置。`enterprise.env`、`data/api_providers.json`、数据库、Token、Cookie、API Key 等只能保留在本地运行环境，不应提交到 Git。
+
+根目录 `README.md` 是企业版项目首页入口，应保持 Infinite Canvas Enterprise 的项目定位、启动方式、代码边界和上游同步说明。上游 README 不应直接覆盖根目录 `README.md`；如需保留上游 README，应同步到 `docs/upstream/README.upstream.md` 并标注仅供参考。
 
 ---
 
