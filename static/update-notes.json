@@ -1,0 +1,14 @@
+{
+  "version": "2026.06.12",
+  "updated_at": "2026-06-12T18:50:36+08:00",
+  "items": [
+    {
+      "type": "feature",
+      "text": "新增图像采集工具"
+    },
+    {
+      "type": "feature",
+      "text": "修复方舟协议bug"
+    }
+  ]
+}

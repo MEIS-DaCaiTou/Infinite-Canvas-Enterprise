@@ -2,7 +2,7 @@
 
 > 给后续 Codex / Agent 的第一阅读文件。上下文压缩、换线程、长期维护恢复时，先按本文阅读顺序恢复项目方向，再执行当前 Issue。
 
-更新时间：2026-06-11
+更新时间：2026-06-13
 
 ---
 
@@ -39,9 +39,9 @@
 
 | 项 | 当前状态 |
 |----|----------|
-| 本地上游版本 | `2026.06.02.1` |
+| 本地上游版本 | `2026.06.12` |
 | 企业私有仓库 | `MEIS-DaCaiTou/Infinite-Canvas-Enterprise` |
-| 企业仓库最新提交 | 以 `git log -1 --oneline` 为准；2026-06-11 维护前基线为 `03d0f1b chore: sync upstream and document enterprise maintenance` |
+| 企业仓库最新提交 | 以 `git log -1 --oneline` 为准；Issue #9 / PR #10 分支正在补同步上游 `hero8152/Infinite-Canvas@9fb9a90` |
 | 上游源码仓库 | `hero8152/Infinite-Canvas` |
 | 上游 bugfix PR | [hero8152/Infinite-Canvas#67](https://github.com/hero8152/Infinite-Canvas/pull/67)，状态 OPEN；2026-06-11 查询为 `CONFLICTING` |
 | 当前运行端口 | `8000` 企业网关，`3001` 内部上游 |
@@ -55,6 +55,10 @@
 2026-06-11 安全基线治理确认：`data/api_providers.json` 属于本地运行时模型配置，已加入 `.gitignore` 并通过 `git rm --cached data/api_providers.json` 停止 Git 跟踪；该操作不删除用户本地真实配置。生产部署前必须从 `enterprise.env.example` 复制生成本地 `enterprise.env`，并修改 `JWT_SECRET` 与 `ADMIN_PASSWORD`。
 
 2026-06-11 用户管理审计增强确认：管理员 API 已支持 `PUT /enterprise/api/users/{id}/active` 启用/禁用用户、`PUT /enterprise/api/users/{id}/profile` 更新展示名；`DELETE /enterprise/api/users/{id}` 保持软删除兼容并返回禁用状态。创建用户、重置密码、修改角色、禁用/启用、修改展示名均写入审计日志，日志执行者为管理员 ID，detail 记录目标用户和动作摘要。管理后台做了最小适配，可编辑展示名并对账号执行启用/禁用。
+
+2026-06-12 上游更新兼容性演练确认：Issue #9 在 `chore/upstream-update-compatibility` 分支将上游覆盖区域从 `2026.06.02.1` 更新到 `2026.06.11`。现有更新 API 因 GitHub anonymous REST tree rate limit 返回 HTTP 403，本轮改用受控手动同步：`git fetch upstream main` 后仅从 `hero8152/Infinite-Canvas@bc21b15` 替换 `main.py`、`VERSION`、`static/`。更新后 `enterprise/`、`enterprise-static/`、`enterprise.env.example`、`enterprise/tests/` 和企业文档未被上游覆盖。
+
+2026-06-13 PR #10 复核补同步确认：上游 `hero8152/Infinite-Canvas` 已前进到 `9fb9a908c78f6d9e23fcfc03b7cf5d8b77ff3e0e`，真实 `VERSION` 为 `2026.06.12`。本轮在当前 `chore/upstream-update-compatibility` 分支继续同步，不新建分支/PR；同步范围从 `main.py`、`VERSION`、`static/` 扩展到 `workflows/`、`tools/`、`packages/`、`requirements.txt`、`get-pip.py`、`run.bat`、上游安装/登录脚本、README、macOS 脚本、运行说明和相关上游资源。`python/` 不提交，原因是企业仓库 `.gitignore` 明确将 `python/`、`python.zip` 作为本地运行时处理；当前本机仍使用本地 `python\python.exe` 运行验证。企业层 `enterprise/`、`enterprise-static/`、`enterprise.env.example` 未被上游覆盖。
 
 ---
 
@@ -105,6 +109,7 @@
 - 发现 Smart Canvas LLM 节点“长时间运行”问题：本质是前端 `running` 临时状态被持久化或未及时保存清理，同时带 `*` 的通配模型名可被用户选中导致上游 503。
 - 已向上游提交 PR：`hero8152/Infinite-Canvas#67`。
 - 增强企业用户管理与审计闭环：启用/禁用、展示名更新、软删除兼容、关键用户管理操作审计日志，以及管理后台最小适配。
+- 完成 Issue #9 / PR #10 上游版本更新兼容性演练并补同步：本地上游版本更新为 `2026.06.12`，诊断、冒烟、管理员用户管理、普通用户隔离、新建 Smart Canvas 归属和 Smart Canvas 打开验证均通过；`python/` 作为本地运行时不纳入 Git。
 
 ---
 
@@ -115,6 +120,8 @@
 3. 内置 `python/` 运行时与 GitHub TLS 曾出现兼容问题；必要时用 PowerShell 下载上游文件绕过 Python SSL 问题。
 4. `enterprise.env`、`API/.env`、`data/` 是运行态/敏感数据，不应提交到 Git；示例配置只能使用 `.example` 文件且不得包含真实密钥。
 5. 多用户局域网使用依赖防火墙、代理绕过和主机当前网络路由，不能硬编码固定 LAN 地址。
+6. 现有内置更新 API 依赖 GitHub anonymous REST tree 请求，可能因 rate limit 返回 HTTP 403；后续应考虑配置 GitHub token 或提供 git-fetch fallback。
+7. 上游当前会跟踪 `python/` 运行时，但企业仓库目前将 `python/`、`python.zip` 视为本地运行时并忽略；后续如要改变该策略，必须单独评估仓库体积、平台兼容性和发布方式，不能在上游同步 PR 中顺手改变。
 
 ---
 
@@ -133,26 +140,31 @@
 
 ## 8. 最近一次验证记录
 
-验证时间：2026-06-11
+验证时间：2026-06-13
 
 已执行：
 
 - 启动 `enterprise/launcher.py`，拉起 `127.0.0.1:3001` 与 `0.0.0.0:8000`。
+- `enterprise/tests/test_start_stop.ps1 -StopExisting`（2026-06-12 已验证；本轮未重跑，避免中断当前服务）
 - `enterprise/tests/diagnose.ps1`
 - `enterprise/tests/smoke.ps1`
+- Playwright 浏览器验证 `/enterprise/logs` 分页与 Smart Canvas 打开。
 
 结果：
 
 - 本机健康检查 `http://127.0.0.1:8000/enterprise/health`：HTTP 200。
-- 内部上游 `http://127.0.0.1:3001/api/app-info`：HTTP 200，版本 `2026.06.02.1`。
+- 内部上游 `http://127.0.0.1:3001/api/app-info`：HTTP 200，版本 `2026.06.12`。
 - 监听端口：`0.0.0.0:8000`、`127.0.0.1:3001`。
-- 当前推荐 LAN 地址：`11.0.1.98`。
-- Windows 代理开启：`127.0.0.1:7897`；普通请求访问 `11.0.1.98:8000` 会被代理影响而超时。
-- `curl --noproxy` 访问 `http://11.0.1.98:8000/enterprise/health`：HTTP 200。
+- 本轮诊断选中的 LAN 地址：`11.0.1.98`；LAN 地址随部署主机网络环境变化，不应硬编码。
+- Windows 代理开启：`127.0.0.1:7897`；代理可能影响对局域网地址的普通浏览器访问，必要时配置绕过。
 - 冒烟检查全部通过：健康检查、登录页、管理员页鉴权、根路径鉴权/跳转。
-- 企业仓库当前 GitHub 可见性查询为 `PUBLIC`；如需私有，需要在 GitHub 仓库设置中调整。
+- 启动/停止闭环在 2026-06-12 已通过：`test_start_stop.ps1 -StopExisting` 能启动、等待健康、释放 `8000/3001`；2026-06-13 本轮未重跑该破坏性检查。
+- 管理员功能通过：登录、打开 `/enterprise/admin`、启用/禁用用户、编辑展示名、重置密码、审计日志出现 `user_disabled` / `user_enabled` / `user_profile_updated` / `user_password_reset`。
+- `/enterprise/logs` 浏览器验证通过：默认 20 条，10/20/50/100 切换、上一页/下一页、用户筛选、操作类型筛选均正常。
+- 普通用户功能通过：登录、只能看到授权画布、创建 Smart Canvas 后记录归属，更新/回滚相关 API 被管理员权限拦截。
+- Smart Canvas 打开验证通过：测试画布标题加载，浏览器 console 0 error，未观察到明显永久 running 异常。
 
-本轮未执行 `test_start_stop.ps1 -StopExisting`，因为它会中断当前正在运行的服务。需要验证启动/停止闭环时，先告知当前页面会短暂不可用，再执行。
+本轮手工验证创建了本地运行时测试画布、审计日志和 media preview cache；这些属于运行时数据，不得提交到 Git。
 
 ---
 

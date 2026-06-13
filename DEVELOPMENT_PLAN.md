@@ -1,6 +1,6 @@
 # 无限画布企业版 · 后续开发规划
 
-更新时间：2026-06-11
+更新时间：2026-06-13
 
 ---
 
@@ -153,6 +153,8 @@
 - `enterprise/tests/test_start_stop.ps1` 验证启动/停止闭环。
 - `enterprise/tests/diagnose.ps1` 和 `enterprise/tests/smoke.ps1` 提供诊断与冒烟。
 - 2026-06-11 已启动当前项目并完成非破坏性诊断/冒烟验证。
+- 2026-06-12 Issue #9 已在上游更新兼容性演练中验证 `test_start_stop.ps1 -StopExisting`、`diagnose.ps1`、`smoke.ps1` 均通过。
+- 2026-06-13 PR #10 复核补同步已验证 `diagnose.ps1`、`smoke.ps1`、企业健康检查、管理员用户管理、普通用户隔离、新建 Smart Canvas 归属和 Smart Canvas 浏览器打开；本轮未重跑 `test_start_stop.ps1 -StopExisting`，避免中断当前服务。
 
 待办：
 
@@ -170,13 +172,16 @@
 - 测试脚本统一放在 `enterprise/tests/`。
 - 企业私有仓库已推送到 `MEIS-DaCaiTou/Infinite-Canvas-Enterprise`。
 - 上游 Smart Canvas LLM stale running bug 已提交 PR：`hero8152/Infinite-Canvas#67`。
+- Issue #9 / PR #10 已完成受控上游更新兼容性演练并补同步：从 `2026.06.02.1` 更新到当前上游真实版本 `2026.06.12`，上游 commit 为 `hero8152/Infinite-Canvas@9fb9a90`。同步范围包括 `main.py`、`VERSION`、`static/`、`workflows/`、`tools/`、`packages/`、`requirements.txt`、`get-pip.py`、`run.bat`、上游安装/登录脚本、README、macOS 脚本、运行说明和相关上游资源，并记录到 `enterprise/tests/UPDATE_TEST_LOG.md`。
 
 待办：
 
 - PR #67 当前与上游 main 冲突；需要单独 rebase 或基于上游最新 main 重提这个 LLM running-state 修复。
-- 建立 `enterprise/tests/SMOKE_CHECKLIST.md` 的实际执行记录格式。
+- 将 `enterprise/tests/SMOKE_CHECKLIST.md` 的手工项进一步脚本化，减少上游更新后人工验证成本。
 - 对 `.gitignore` 和仓库内容做一次安全复核，确保密钥、运行数据、内置运行时不进入 Git。
 - 给上游更新流程补一份标准操作步骤：更新前备份、更新后重启、跑清单、记录结果。
+- 为现有更新 API 增加 GitHub token 配置或 git-fetch fallback，避免 anonymous GitHub REST rate limit 导致 HTTP 403。
+- 单独评估 `python/` 运行时发布策略：上游当前跟踪 `python/`，但企业仓库仍按 `.gitignore` 将 `python/`、`python.zip` 作为本地运行时忽略，不应在上游同步 PR 中顺手改变。
 - 确认企业仓库是否需要保持私有；2026-06-11 查询结果为 `PUBLIC`。
 
 ---
@@ -184,6 +189,11 @@
 ## 阶段十：浏览器级冒烟测试
 
 目标：补齐真实浏览器中的登录、管理员后台、普通用户隔离和画布创建验证。
+
+已完成：
+
+- Issue #9 使用 Playwright 浏览器验证 `/enterprise/logs` 默认 20 条、10/20/50/100 切换、上一页/下一页、用户筛选、操作类型筛选和组合筛选。
+- Issue #9 使用真实浏览器打开更新后的 Smart Canvas，确认页面标题加载、console 0 error，未观察到明显永久 running 异常。
 
 待办：
 
