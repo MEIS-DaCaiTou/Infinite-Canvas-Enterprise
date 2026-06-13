@@ -32,7 +32,10 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from enterprise.config import (
+    ENTERPRISE_HIDE_UPSTREAM_AUTHOR,
+    ENTERPRISE_REPO_URL,
     ENTERPRISE_STATIC_DIR,
+    ENTERPRISE_UPDATE_ENABLED,
     GATEWAY_PORT,
     UPSTREAM_URL,
 )
@@ -113,6 +116,218 @@ def _get_user(request: Request) -> Optional[dict]:
 def _is_html_accept(request: Request) -> bool:
     accept = request.headers.get("accept", "")
     return "text/html" in accept
+
+
+def _build_enterprise_shell_guard(user: dict) -> str:
+    """Inject enterprise project-entry and update-permission governance into upstream HTML."""
+    payload = {
+        "repoUrl": ENTERPRISE_REPO_URL,
+        "isAdmin": bool(user.get("is_admin")),
+        "updateEnabled": bool(ENTERPRISE_UPDATE_ENABLED and user.get("is_admin")),
+        "hideUpstreamAuthor": bool(ENTERPRISE_HIDE_UPSTREAM_AUTHOR or not user.get("is_admin")),
+    }
+    script = r'''
+<script id="__enterprise_shell_guard__">
+(function(){
+  const cfg = __ENTERPRISE_CONFIG__;
+  const normalUser = !cfg.isAdmin;
+  let installed = false;
+
+  function byId(id){ return document.getElementById(id); }
+  function setText(el, text){
+    if(!el) return;
+    if(el.textContent !== text) el.textContent = text;
+    if(el.hasAttribute('data-i18n')) el.removeAttribute('data-i18n');
+  }
+  function versionLabel(value){
+    const v = String(value || '').trim();
+    return v ? (v.startsWith('v') ? v : 'v' + v) : 'v-';
+  }
+  function setAppInfoRepo(){
+    try {
+      appInfo = Object.assign({}, appInfo || {}, {
+        repo_url: cfg.repoUrl,
+        enterprise: {
+          repo_url: cfg.repoUrl,
+          update_enabled: !!cfg.updateEnabled,
+          hide_upstream_author: !!cfg.hideUpstreamAuthor,
+          is_admin: !!cfg.isAdmin
+        }
+      });
+    } catch(e) {}
+  }
+  function setProjectEntry(){
+    setAppInfoRepo();
+    const btn = byId('github-entry-btn');
+    if(!btn) return;
+    btn.classList.remove('update-available');
+    btn.title = '企业版项目主页';
+    btn.setAttribute('aria-label', '企业版项目主页');
+    btn.onclick = function(){
+      window.open(cfg.repoUrl, '_blank', 'noopener');
+      return false;
+    };
+    setText(btn.querySelector('.side-pill-text'), '企业版项目主页');
+    try {
+      window.openProjectPage = openProjectPage = function(){
+        window.open(cfg.repoUrl, '_blank', 'noopener');
+      };
+    } catch(e) {
+      window.openProjectPage = function(){
+        window.open(cfg.repoUrl, '_blank', 'noopener');
+      };
+    }
+  }
+  function setVersionBadgeText(version){
+    const badge = byId('project-version-badge');
+    if(!badge) return;
+    const label = versionLabel(version || badge.dataset.currentVersion || badge.textContent.replace(/^v/, ''));
+    if(badge.textContent !== label) badge.textContent = label;
+    const currentVersion = label.replace(/^v/, '');
+    if(badge.dataset.currentVersion !== currentVersion) badge.dataset.currentVersion = currentVersion;
+    if(normalUser || !cfg.updateEnabled) {
+      badge.classList.remove('checking');
+      badge.removeAttribute('onclick');
+      badge.removeAttribute('onkeydown');
+      badge.setAttribute('role', 'status');
+      badge.setAttribute('tabindex', '-1');
+      badge.title = '当前企业版版本';
+    } else {
+      badge.title = '当前企业版版本，管理员可检查企业版受控更新';
+    }
+  }
+  async function enterpriseVersionOnly(){
+    try {
+      const info = await fetch('/api/app-info', { cache:'no-store' }).then(r => r.ok ? r.json() : {});
+      if(info && info.version) setVersionBadgeText(info.version);
+      setAppInfoRepo();
+    } catch(e) {}
+  }
+  function blockUpdateAction(){
+    return Promise.resolve(false);
+  }
+  function disableUpdateFunctions(){
+    try { window.checkForUpdates = checkForUpdates = enterpriseVersionOnly; } catch(e) { window.checkForUpdates = enterpriseVersionOnly; }
+    ['runProjectUpdate','confirmProjectUpdate','rollbackProjectUpdate','runUpdateConnectivityTest','openProjectUpdateModal'].forEach(function(name){
+      try { window[name] = eval(name + ' = blockUpdateAction'); } catch(e) { window[name] = blockUpdateAction; }
+    });
+  }
+  function hideUpdateUi(){
+    ['update-now-btn','project-update-modal','update-source-list','project-update-summary','project-update-notes'].forEach(function(id){
+      const el = byId(id);
+      if(el) {
+        if(!el.hidden) el.hidden = true;
+        if(el.style.display !== 'none') el.style.display = 'none';
+      }
+    });
+    const entry = byId('github-entry-btn');
+    if(entry) {
+      entry.classList.remove('update-available');
+      delete entry.dataset.remoteVersion;
+    }
+  }
+  function relabelAdminUpdate(){
+    if(!cfg.isAdmin) return;
+    const entry = byId('github-entry-btn');
+    const remote = entry?.dataset?.remoteVersion || '';
+    if(entry) entry.classList.remove('update-available');
+    const btn = byId('update-now-btn');
+    const text = byId('update-now-text');
+    if(btn) {
+      btn.title = remote ? ('企业版受控更新到 ' + versionLabel(remote)) : '企业版受控更新';
+      btn.setAttribute('aria-label', btn.title);
+    }
+    if(text) {
+      setText(text, remote ? ('企业版更新到 ' + versionLabel(remote)) : '企业版更新');
+    }
+    setText(byId('project-update-title'), '企业版受控更新');
+    const kicker = document.querySelector('#project-update-modal .studio-modal-kicker');
+    setText(kicker, '企业版更新');
+    const copy = byId('project-update-copy');
+    if(copy) {
+      const copyText = '企业版受控更新会同步上游覆盖区域，并由企业版启动脚本维护 3001/8000 双进程模型。更新前请确认已备份并完成兼容性验证。';
+      if(copy.textContent !== copyText) copy.textContent = copyText;
+    }
+  }
+  function wrapAdminUpdateText(){
+    ['refreshUpdateButtonText','updateProjectUpdateTitle','refreshProjectUpdateModalText','showUpdateNotice'].forEach(function(name){
+      try {
+        const original = eval(name);
+        if(typeof original !== 'function' || original.__enterpriseWrapped) return;
+        const wrapped = function(){
+          const result = original.apply(this, arguments);
+          setTimeout(applyGovernance, 0);
+          return result;
+        };
+        wrapped.__enterpriseWrapped = true;
+        window[name] = eval(name + ' = wrapped');
+      } catch(e) {}
+    });
+  }
+  function governAuthor(){
+    const box = document.querySelector('.author-box');
+    if(!box) return;
+    if(cfg.hideUpstreamAuthor) {
+      if(!box.hidden) box.hidden = true;
+      if(box.style.display !== 'none') box.style.display = 'none';
+      return;
+    }
+    box.title = '上游参考';
+    setText(box.querySelector('.author-name-lite'), '上游参考');
+  }
+  function applyGovernance(){
+    document.body?.classList.toggle('enterprise-normal-user', normalUser);
+    document.body?.classList.toggle('enterprise-hide-upstream-author', !!cfg.hideUpstreamAuthor);
+    setProjectEntry();
+    governAuthor();
+    if(normalUser || !cfg.updateEnabled) {
+      hideUpdateUi();
+      setVersionBadgeText();
+    } else {
+      relabelAdminUpdate();
+      setVersionBadgeText();
+    }
+  }
+  function installStyles(){
+    if(byId('__enterprise_shell_guard_style__')) return;
+    const style = document.createElement('style');
+    style.id = '__enterprise_shell_guard_style__';
+    style.textContent = [
+      'body.enterprise-normal-user #update-now-btn,',
+      'body.enterprise-normal-user #project-update-modal,',
+      'body.enterprise-normal-user #update-source-list{display:none!important;}',
+      'body.enterprise-hide-upstream-author .author-box{display:none!important;}',
+      'body.enterprise-normal-user #project-version-badge{cursor:default!important;}'
+    ].join('\n');
+    document.head.appendChild(style);
+  }
+  function install(){
+    if(installed) return;
+    installed = true;
+    installStyles();
+    if(normalUser || !cfg.updateEnabled) disableUpdateFunctions();
+    else wrapAdminUpdateText();
+    applyGovernance();
+    enterpriseVersionOnly();
+    const target = document.body || document.documentElement;
+    if(target) {
+      new MutationObserver(function(){ applyGovernance(); }).observe(target, {
+        subtree:true,
+        childList:true
+      });
+    }
+    window.setInterval(applyGovernance, 1500);
+  }
+  if(document.readyState === 'loading') {
+    install();
+    document.addEventListener('DOMContentLoaded', applyGovernance, { once:true });
+  } else {
+    install();
+  }
+})();
+</script>
+'''
+    return script.replace("__ENTERPRISE_CONFIG__", json.dumps(payload, ensure_ascii=False))
 
 
 # ── 企业专用路由 ──────────────────────────────────────────
@@ -347,18 +562,7 @@ def _build_user_bar(user: dict) -> str:
             'background:transparent;color:var(--muted,#64748b);text-decoration:none;'
             'font-size:12px;font-weight:600;white-space:nowrap;">管理后台</a>'
         )
-    update_guard = ""
-    if not user.get("is_admin"):
-        update_guard = (
-            '<script>(function(){'
-            'function hideUpdate(){'
-            'var btn=document.getElementById("update-now-btn");'
-            'if(btn) btn.style.display="none";'
-            '}'
-            'if(document.readyState==="loading"){document.addEventListener("DOMContentLoaded",hideUpdate);}'
-            'else{hideUpdate();}'
-            '})();</script>'
-        )
+    enterprise_shell_guard = _build_enterprise_shell_guard(user)
     return (
         '<div id="__ent_bar__" '
         'style="position:fixed;bottom:20px;right:20px;z-index:99999;'
@@ -377,7 +581,7 @@ def _build_user_bar(user: dict) -> str:
         'background:var(--text,#0f172a);color:var(--bg,#f7f8fa);text-decoration:none;'
         'font-size:12px;font-weight:600;white-space:nowrap;cursor:pointer;">退出</a>'
         '</div>'
-        f'{update_guard}'
+        f'{enterprise_shell_guard}'
     )
 
 

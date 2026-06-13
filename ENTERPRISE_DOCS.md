@@ -259,6 +259,29 @@ headers["x-user-id"] = user["user_id"]   # 注入企业用户 ID
 - 启用用户：`user_enabled`
 - 修改用户展示名：`user_profile_updated`
 
+### 6.4 企业项目入口与更新治理
+
+企业版首页中的“项目主页”必须指向企业仓库：
+
+- `https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise`
+
+上游项目来源说明保留在 `README.md`、`docs/upstream/README.upstream.md` 和 `docs/upstream/SYNC_POLICY.md` 中，但普通用户前端不应突出展示上游作者社交入口。
+
+更新相关能力属于管理员受控运维能力：
+
+- 普通用户不显示“一键更新”按钮。
+- 普通用户不显示“更新到 vX”的上游更新提示。
+- 普通用户不显示更新弹窗、连通性测试或回滚入口。
+- 普通用户绕过前端请求 `/api/update-*` 或 `/api/check-update` 时，企业网关必须返回 HTTP 403。
+- 管理员可看到企业版版本信息和企业版受控更新入口。
+- 管理员触发 `/api/update-from-github` 时，企业网关会关闭上游 `auto_restart`，避免破坏企业版 `3001/8000` 双进程模型。
+
+当前实现位于：
+
+- `enterprise/gateway.py`：向上游首页 HTML 注入企业入口和更新 UI 治理脚本。
+- `enterprise/interceptors.py`：拦截普通用户更新接口，并对 `/api/app-info` 做企业化响应。
+- `enterprise/config.py` / `enterprise.env.example`：提供 `ENTERPRISE_REPO_URL`、`ENTERPRISE_UPDATE_ENABLED`、`ENTERPRISE_HIDE_UPSTREAM_AUTHOR` 配置。
+
 审计日志中 `user_id` 记录执行操作的管理员 ID，`detail` 记录目标用户 ID、目标用户名和动作摘要。当前 `assign_canvas_owner` 的既有日志归属行为暂未调整，后续可单独评估。
 
 管理后台最小适配：

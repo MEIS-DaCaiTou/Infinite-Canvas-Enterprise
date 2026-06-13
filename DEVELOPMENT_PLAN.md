@@ -178,6 +178,7 @@
 - 上游 Smart Canvas LLM stale running bug 已提交 PR：`hero8152/Infinite-Canvas#67`。
 - Issue #9 / PR #10 已完成受控上游更新兼容性演练并补同步：从 `2026.06.02.1` 更新到当前上游真实版本 `2026.06.12`，上游 commit 为 `hero8152/Infinite-Canvas@9fb9a90`。同步范围包括 `main.py`、`VERSION`、`static/`、`workflows/`、`tools/`、`packages/`、`requirements.txt`、`get-pip.py`、`run.bat`、上游安装/登录脚本、README、macOS 脚本、运行说明和相关上游资源，并记录到 `enterprise/tests/UPDATE_TEST_LOG.md`。
 - Issue #11 已恢复企业版 README 首页边界：根目录 `README.md` 是企业仓库入口，上游 README 移至 `docs/upstream/README.upstream.md`，同步规则写入 `docs/upstream/SYNC_POLICY.md`。
+- Issue #13 已建立企业版项目入口与更新权限治理：前端项目主页指向企业仓库，普通用户隐藏更新提示、更新入口和上游作者社交区，更新相关接口继续由企业网关强制管理员权限；管理员更新文案定位为企业版受控运维能力。
 
 待办：
 
@@ -188,6 +189,7 @@
 - 为现有更新 API 增加 GitHub token 配置或 git-fetch fallback，避免 anonymous GitHub REST rate limit 导致 HTTP 403。
 - 单独评估 `python/` 运行时发布策略：上游当前跟踪 `python/`，但企业仓库仍按 `.gitignore` 将 `python/`、`python.zip` 作为本地运行时忽略，不应在上游同步 PR 中顺手改变。
 - 把 README 边界检查加入上游同步清单：根目录 `README.md` 必须保持企业版说明；上游 README 如需同步，只能进入 `docs/upstream/README.upstream.md`。
+- 把企业入口治理检查加入上游同步清单：每次上游更新后必须验证 `enterprise/gateway.py` 注入脚本仍能治理 `static/index.html` 的项目主页、版本更新按钮/提示和上游作者社交区；如上游 DOM 改动导致失效，应在同步 PR 中修复后再合并。
 - 确认企业仓库是否需要保持私有；2026-06-11 查询结果为 `PUBLIC`。
 
 ---
