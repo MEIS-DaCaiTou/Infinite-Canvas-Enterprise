@@ -2,6 +2,123 @@
 
 Record diagnostics and smoke-test results after upstream updates.
 
+## 2026-06-13 - Version 2026.06.12 corrected full upstream sync
+
+Issue: GitHub Issue #9, Task 3A continuation for PR #10 review feedback.
+
+Update window:
+
+- Update date: 2026-06-13.
+- Update branch: `chore/upstream-update-compatibility`.
+- Original update baseline: `2026.06.02.1`.
+- PR branch version before this correction: `2026.06.11`.
+- Current upstream version: `2026.06.12`.
+- Actual version after correction: `2026.06.12`.
+- Current upstream commit: `hero8152/Infinite-Canvas@9fb9a90` (`9fb9a908c78f6d9e23fcfc03b7cf5d8b77ff3e0e`, `Update README.md`).
+
+Problem found:
+
+- The first PR #10 pass synchronized `main.py`, `VERSION`, and `static/` to `2026.06.11`.
+- A later upstream check showed `hero8152/Infinite-Canvas` had moved to `2026.06.12` and included additional source/runtime helper files that were not yet present in the enterprise branch.
+
+Pre-correction records:
+
+- Enterprise PR branch `HEAD`: `4ee8a793bd9f67cf11face7e3a99393770aa049f`.
+- PR branch `VERSION` before correction: `2026.06.11`.
+- Upstream `main` after `git fetch upstream main`: `9fb9a908c78f6d9e23fcfc03b7cf5d8b77ff3e0e`.
+- Upstream `VERSION`: `2026.06.12`.
+- `/enterprise/health` before correction: HTTP 200, `gateway=ok`, `upstream=ok`.
+
+File-tree comparison and sync strategy:
+
+| Path | Strategy | Notes |
+| --- | --- | --- |
+| `VERSION` | Synced | Updated to upstream `2026.06.12`. |
+| `main.py` | Synced | Replaced from upstream `main`. |
+| `static/` | Synced | Replaced tracked static app files from upstream `main`. |
+| `workflows/` | Synced | Replaced upstream workflow changes, including `workflows/Z-Image.json` and `workflows/Z-Image-Enhance.json`. |
+| `tools/` | Synced | Added upstream Chrome local asset importer and Jimeng CLI helper scripts. |
+| `packages/` | Synced | Added upstream wheel packages used by the upstream local dependency flow. |
+| `requirements.txt` | Synced | Added upstream Python dependency manifest. |
+| `get-pip.py` | Synced | Added upstream bootstrap helper. |
+| `run.bat` | Synced | Added upstream Windows runtime entry. |
+| `安装依赖.bat` | Synced | Added upstream Windows dependency installer. |
+| `安装即梦CLI.bat` | Synced | Added upstream Jimeng CLI installer. |
+| `安装即梦CLI.command` | Synced | Added upstream macOS Jimeng CLI installer. |
+| `登录即梦CLI.bat` | Synced | Added upstream Jimeng CLI login helper. |
+| `登录即梦CLI.command` | Synced | Added upstream macOS Jimeng CLI login helper. |
+| `新手运行与使用教程.md` | Synced | Added upstream beginner guide. |
+| `运行说明.txt` | Synced | Updated to upstream current instructions. |
+| `README.md` | Synced | Added upstream README because upstream now tracks it. |
+| `MAC-使用说明.md` | Synced | Updated to upstream current macOS instructions. |
+| `mac-启动服务.command` | Synced | Updated to upstream current script. |
+| `mac-修复权限.command` | Synced | Updated to upstream current script. |
+| `mac-启动服务.sh` | Synced | Added upstream shell script. |
+| `mac-安装依赖.sh` | Synced | Added upstream shell script. |
+| `赞赏.png` | Synced | Added upstream image asset. |
+| `python/` | Not synced | Upstream tracks a bundled runtime, but this enterprise repo intentionally keeps `python/` and `python.zip` ignored as local runtime artifacts in `.gitignore`. The existing local `python/` is still used to run validation and must not be committed in this PR. |
+| `API/` | Not applicable | Current upstream `main` does not contain `API/`; there is no upstream file-tree target to sync. |
+| `启动企业版.bat`, `停止企业版.bat` | Enterprise equivalent retained | These are enterprise-specific wrappers for `enterprise/launcher.py` and stop handling, not upstream files. |
+
+Enterprise area overwrite check:
+
+- No enterprise backend code was overwritten by the upstream sync.
+- No enterprise frontend code was overwritten by the upstream sync.
+- `enterprise/`, `enterprise-static/`, `enterprise.env.example`, and `enterprise/tests/` remained enterprise-owned.
+- This log, `AGENT_CONTEXT.md`, and `DEVELOPMENT_PLAN.md` were updated only to record the corrected compatibility pass.
+
+Post-correction automated checks:
+
+```powershell
+git diff --name-only
+git diff --check
+python -m py_compile main.py enterprise\gateway.py enterprise\admin_api.py enterprise\db.py
+powershell -NoProfile -ExecutionPolicy Bypass -File .\enterprise\tests\diagnose.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\enterprise\tests\smoke.ps1
+```
+
+Results:
+
+- `git diff --name-only`: executed; tracked upstream changes include `VERSION`, `main.py`, `static/`, `workflows/Z-Image.json`, `workflows/Z-Image-Enhance.json`, `MAC-使用说明.md`, `mac-启动服务.command`, `mac-修复权限.command`, and `运行说明.txt`. New upstream additions are visible in `git status` and are staged explicitly for commit.
+- `git diff --check`: passed. Git reported line-ending warnings for upstream static files only.
+- `python -m py_compile main.py enterprise\gateway.py enterprise\admin_api.py enterprise\db.py`: passed.
+- Startup with system Python failed because the global environment lacked `jwt`; startup with the repo local runtime `.\python\python.exe enterprise\launcher.py --no-browser` succeeded. This confirms the local bundled runtime remains required for this workspace.
+- `enterprise/launcher.py`: started `127.0.0.1:3001` and `0.0.0.0:8000`.
+- `/enterprise/health`: HTTP 200, `gateway=ok`, `upstream=ok`.
+- `127.0.0.1:3001/api/app-info`: HTTP 200, version `2026.06.12`.
+- `diagnose.ps1`: passed for local health and upstream app-info. LAN health through normal proxy-aware request timed out on `11.0.1.98`, while `curl --noproxy` returned HTTP 200; this matches the known Windows proxy/LAN behavior.
+- `smoke.ps1`: passed for health, login page, admin auth guard, and root auth/redirect checks.
+
+Post-correction manual verification:
+
+- Unauthenticated root path redirects to enterprise login with HTTP 307.
+- Admin login succeeded.
+- `/enterprise/admin` opened for admin.
+- User management verified through the live gateway API:
+  - display name update succeeded and was restored;
+  - non-current user disable succeeded and `is_active` became false;
+  - re-enable succeeded and `is_active` became true;
+  - password reset succeeded;
+  - `user_disabled`, `user_enabled`, `user_profile_updated`, and `user_password_reset` audit entries appeared.
+- `/enterprise/logs` opened.
+- Normal user login succeeded after password reset.
+- Normal user update/rollback APIs were blocked with admin-required status.
+- Normal user canvas list was scoped to owned canvases.
+- Normal user created a Smart Canvas; ownership was recorded in `user_canvas_map`.
+- Smart Canvas opened in a real Playwright browser session at `/static/smart-canvas.html?id=54b5f5c43c374c8cb42cad02a4dc4b06`; title loaded, canvas UI was present, browser console reported 0 errors, and no obvious permanent running state was observed. The only matched `running` text was the normal `运行` button label.
+
+Issues found:
+
+- The previous sync target was stale because upstream moved from `2026.06.11` to `2026.06.12` before review completed.
+- The original sync scope was too narrow and omitted upstream helper/runtime source paths such as `tools/`, `packages/`, root scripts, and upstream docs.
+- The enterprise repo intentionally does not commit `python/` even though upstream tracks it, because this project treats it as a local runtime artifact.
+- Windows proxy settings can still affect normal browser/request access to selected LAN IPs; `curl --noproxy` verified the service itself is reachable.
+- Manual validation created runtime data (test canvas files, audit logs, media preview cache). These files are not part of the PR and must remain uncommitted.
+
+Recommendation:
+
+- Recommend merge after review if reviewers accept the documented `python/` runtime policy and the expanded upstream file sync scope.
+
 ## 2026-06-12 - Version 2026.06.11 compatibility drill
 
 Issue: GitHub Issue #9, Task 3A.

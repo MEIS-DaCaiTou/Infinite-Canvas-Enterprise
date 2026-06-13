@@ -1,4 +1,5 @@
-新视频教程：https://www.bilibili.com/video/BV1qvLj67Euh/
+无限画布教程：https://www.bilibili.com/video/BV1qvLj67Euh/
+智能画布教程：https://www.bilibili.com/video/BV1xAVT6hEBk
 
 
 1. API网站注册：
@@ -18,17 +19,20 @@ https://api.apimart.ai
 
 ===API/modelscope/comfyui，三种模式任意用一种都可以运行====
 
-注：如果运行还报错，可以搜索下载codex或者trae，跟他说解决运行报错问题，trae不需要魔法网络。
+注：如果运行还报错，可以搜索下载codex或者https://opencode.ai/zh/download，跟他说解决运行报错问题
 
 
 ===建议所有人安装codex=====
+
 https://openai.com/zh-Hans-CN/codex/
 GPT账号免费和plus都有额度可以用，如果要开发大型应用，可以使用性价比的中转站：https://www.fhl.mom/register?aff=86L574B4T2N9
 API使用教程：https://xcnk45dd0a92.feishu.cn/wiki/DRuEwOd8mi9d0sknkxPcCzTjn1b
 
 
 ===非网盘会员====
+
 无法保存python文件夹的，我上传了python.zip，可以下载压缩包解压到目录使用
 
 ---mac运行---
-新增了3个mac的使用说明/修复全选/启动服务，如果运行仍然失败，建议安装www.trae.cn，选中这个项目文件夹，让他运行程序
+
+新增了3个mac的使用说明/修复全选/启动服务，如果运行仍然失败，建议安装https://opencode.ai/zh/download，选中这个项目文件夹，让他运行程序

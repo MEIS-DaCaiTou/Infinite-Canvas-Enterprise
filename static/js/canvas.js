@@ -14,7 +14,7 @@ function canvasMediaPreviewUrl(url, size=512){
     const raw = String(url || '');
     if(!raw || raw.startsWith('data:') || raw.startsWith('blob:')) return raw;
     if(!raw.startsWith('/output/') && !raw.startsWith('/assets/')) return raw;
-    if(!/\.(png|jpe?g|webp|gif|bmp|avif|tiff?|mp4|webm|mov|m4v)(\?|#|$)/i.test(raw)) return raw;
+    if(!/\.(png|jpe?g|webp|gif|bmp|avif|tiff?|mp4|webm|mov|m4v|avi|mkv)(\?|#|$)/i.test(raw)) return raw;
     const width = Math.max(64, Math.min(2048, Math.round(Number(size) || 512)));
     return `/api/media-preview?w=${width}&url=${encodeURIComponent(raw)}`;
 }
@@ -22,6 +22,16 @@ function canvasPreviewImgHtml(url, size=512, attrs=''){
     const original = String(url || '');
     const preview = canvasMediaPreviewUrl(original, size);
     return `<img src="${escapeAttr(preview)}" data-preview-src="${escapeAttr(preview)}" data-original-src="${escapeAttr(original)}" data-url="${escapeAttr(original)}"${attrs ? ` ${attrs}` : ''}>`;
+}
+function loadCanvasOriginalImageDimensions(url){
+    const src = String(url || '');
+    if(!src || /^data:/i.test(src) || /^blob:/i.test(src)) return Promise.resolve(null);
+    return new Promise(resolve => {
+        const img = new Image();
+        img.onload = () => resolve(img.naturalWidth && img.naturalHeight ? {w:img.naturalWidth, h:img.naturalHeight} : null);
+        img.onerror = () => resolve(null);
+        img.src = src;
+    });
 }
 function canvasVideoPreviewHtml(url, size=512, attrs=''){
     const original = String(url || '');
@@ -495,7 +505,7 @@ function normalizeProviderId(value){
 }
 function imageApiProviders(){
     const providers = (apiProviders.length ? apiProviders : defaultApiProviders())
-        .filter(p => p.id !== 'modelscope' && !isRunningHubProvider(p) && p.enabled !== false && (p.image_models || []).length);
+        .filter(p => p.id !== 'modelscope' && p.enabled !== false && (p.image_models || []).length);
     return providers;
 }
 function providerById(id){
@@ -545,7 +555,7 @@ function sanitizeImageNodeProviderModel(node){
 }
 function videoApiProviders(){
     const providers = (apiProviders.length ? apiProviders : defaultApiProviders())
-        .filter(p => p.id !== 'modelscope' && !isRunningHubProvider(p) && p.enabled !== false && (p.video_models || []).length);
+        .filter(p => p.id !== 'modelscope' && p.enabled !== false && (p.video_models || []).length);
     return providers.length ? providers : defaultApiProviders();
 }
 function resolveVideoProviderId(id){
@@ -2365,7 +2375,7 @@ function renderMsGenBody(node){
     const msModel = MS_GEN_MODELS[modelKey] || MS_GEN_MODELS.zimage;
     const inputSources = generatorSources(node);
     const ordered = orderedSources(node, inputSources);
-    const imageInputs = ordered.filter(src => src.refs?.length);
+    const mediaInputs = ordered.filter(src => src.refs?.some(ref => ['image','video','audio'].includes(mediaKindForRef(ref))));
     const promptInputs = ordered.filter(src => src.prompt && !src.refs?.length);
     const referenceImages = ordered.flatMap(src => src.refs || []);
     const isCustomMs = modelKey === 'custom';
@@ -2690,7 +2700,7 @@ function renderMsGenBody(node){
     });
     if(msUsesImages){
         const list = wrap.querySelector('.ms-img-list');
-        renderImageInputList(list, node, imageInputs);
+        renderImageInputList(list, node, mediaInputs);
     }
     renderPromptPreview(wrap.querySelector('.prompt-list'), promptInputs);
     wrap.querySelector('.gen-btn').onclick = e => { e.stopPropagation(); runCanvasGenerate(node.id); };
@@ -5280,6 +5290,24 @@ function restoreMediaPlaybackStates(states){
         restoreMediaPlaybackState(media, states.get(`${tag}:${url}`));
     });
 }
+function measureCanvasOriginalImageNodes(root=nodesEl){
+    root.querySelectorAll?.('.image-node img[data-original-src]').forEach(imgEl => {
+        if(imgEl.dataset.previewKind === 'video') return;
+        const nodeEl = imgEl.closest('.image-node');
+        const node = nodes.find(n => n.id === nodeEl?.dataset.id);
+        if(!node || node.type !== 'image' || !node.url || node.natural_w || node.natural_h || node._naturalSizeLoading) return;
+        const original = imgEl.dataset.originalSrc || node.url;
+        if(!original) return;
+        node._naturalSizeLoading = true;
+        loadCanvasOriginalImageDimensions(original).then(size => {
+            node._naturalSizeLoading = false;
+            if(!size || node.natural_w || node.natural_h) return;
+            node.natural_w = size.w;
+            node.natural_h = size.h;
+            scheduleSave();
+        });
+    });
+}
 
 function render(){
     const outputScrolls = captureOutputScrolls();
@@ -5294,12 +5322,18 @@ function render(){
         if(!reusableMediaNodes.has(child.dataset?.id)) child.remove();
     });
     nodes.forEach(node => {
-        const fresh = renderNode(node);
-        const old = reusableMediaNodes.get(node.id);
-        nodesEl.appendChild(fresh);
-        if(old){
-            transplantNodeMediaElement(old, fresh);
-            if(old !== fresh) old.remove();
+        // 单个节点渲染异常不能中断整个循环，否则它后面的节点（含新建节点，通常排在末尾）都不会被
+        // 追加进 DOM，连带这些节点的连线也会因找不到 DOM 而画到 (0,0) 变成“消失”。
+        try {
+            const fresh = renderNode(node);
+            const old = reusableMediaNodes.get(node.id);
+            nodesEl.appendChild(fresh);
+            if(old){
+                transplantNodeMediaElement(old, fresh);
+                if(old !== fresh) old.remove();
+            }
+        } catch(err){
+            console.error('[canvas] renderNode 失败，已跳过该节点：', node?.id, node?.type, err);
         }
     });
     restoreMediaPlaybackStates(mediaStates);
@@ -5308,6 +5342,7 @@ function render(){
     refreshGeometryAfterLayout();
     refreshIcons();
     bindCanvasPreviewImageFallbacks(nodesEl);
+    measureCanvasOriginalImageNodes(nodesEl);
     refreshOutputTimer();
 }
 function refreshNodes(ids=[]){
@@ -5324,15 +5359,20 @@ function refreshNodes(ids=[]){
             render();
             return;
         }
-        const fresh = renderNode(node);
-        if(nodeHasLiveMedia(node)) transplantNodeMediaElement(current, fresh);
-        current.replaceWith(fresh);
+        try {
+            const fresh = renderNode(node);
+            if(nodeHasLiveMedia(node)) transplantNodeMediaElement(current, fresh);
+            current.replaceWith(fresh);
+        } catch(err){
+            console.error('[canvas] refreshNode 失败，已跳过该节点：', id, err);
+        }
     }
     restoreOutputScrolls(outputScrolls);
     refreshGeometry();
     refreshGeometryAfterLayout();
     refreshIcons();
     bindCanvasPreviewImageFallbacks(nodesEl);
+    measureCanvasOriginalImageNodes(nodesEl);
     refreshOutputTimer();
 }
 function refreshRunNodes(node, out=null){
@@ -5714,10 +5754,15 @@ function bindOutputWrap(wrap, node){
         img.onclick = e => {
             e.stopPropagation();
             if(img.dataset.dragging) return;
-            if(img.dataset.previewKind === 'video' && canvasActivateVideoPreview(img)) return;
             openOutputLightbox(img.dataset.url, node);
         };
     }
+    wrap.addEventListener('click', e => {
+        const fallbackVideo = e.target.closest?.('video[data-output-video-fallback]');
+        if(!fallbackVideo || !wrap.contains(fallbackVideo)) return;
+        e.stopPropagation();
+        openOutputLightbox(fallbackVideo.dataset.url, node);
+    });
     if(video){
         video.onclick = e => {
             e.stopPropagation();
@@ -7601,7 +7646,7 @@ function renderGeneratorBody(node){
     wrap.className = 'generator-body';
     const inputSources = generatorSources(node);
     const ordered = orderedSources(node, inputSources);
-    const imageInputs = ordered.filter(src => src.refs?.length);
+    const mediaInputs = ordered.filter(src => src.refs?.some(ref => ['image','video','audio'].includes(mediaKindForRef(ref))));
     const promptInputs = ordered.filter(src => src.prompt && !src.refs?.length);
     sanitizeImageNodeProviderModel(node);
     wrap.innerHTML = `
@@ -7887,7 +7932,7 @@ function renderGeneratorBody(node){
         };
     });
     const list = wrap.querySelector('.input-list');
-    renderImageInputList(list, node, imageInputs);
+    renderImageInputList(list, node, mediaInputs);
     renderPromptPreview(wrap.querySelector('.prompt-list'), promptInputs);
     wrap.querySelector('.gen-btn').onclick = e => { e.stopPropagation(); runCanvasGenerate(node.id); };
     bindCascadeButtons(wrap, node.id);
@@ -7898,14 +7943,14 @@ function renderVideoBody(node){
     wrap.className = 'generator-body';
     const inputSources = generatorSources(node);
     const ordered = orderedSources(node, inputSources);
-    const imageInputs = ordered.filter(src => src.refs?.length);
+    const mediaInputs = ordered.filter(src => src.refs?.some(ref => ['image','video','audio'].includes(mediaKindForRef(ref))));
     const promptInputs = ordered.filter(src => src.prompt && !src.refs?.length);
     sanitizeVideoNodeProviderModel(node);
     node.model = node.model || 'veo3-fast';
     wrap.innerHTML = `
         <div class="prompt-list mb-3"></div>
         <div class="video-input-head">
-            <div class="text-[10px] font-bold text-gray-400 uppercase tracking-widest">${tr('canvas.images') || 'Images'}</div>
+            <div class="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Media</div>
             <div class="video-input-actions">
                 <button type="button" class="tool-btn" data-video-manual-url title="手动输入视频 URL"><i data-lucide="link" class="w-4 h-4"></i><span>输入网址</span></button>
                 <button type="button" class="tool-btn" data-video-temp-sh ${node.tempShUploading ? 'disabled' : ''} title="上传当前输入视频到云端直链"><i data-lucide="upload-cloud" class="w-4 h-4"></i><span>${node.tempShUploading ? '上传中...' : '上传云端'}</span></button>
@@ -8024,7 +8069,7 @@ function renderVideoBody(node){
         };
     });
     const list = wrap.querySelector('.video-img-list');
-    renderVideoImageInputs(list, node, imageInputs);
+    renderVideoImageInputs(list, node, mediaInputs);
     renderPromptPreview(wrap.querySelector('.prompt-list'), promptInputs);
     wrap.querySelector('.gen-btn').onclick = e => { e.stopPropagation(); runCanvasGenerate(node.id); };
     bindCascadeButtons(wrap, node.id);
@@ -8070,13 +8115,21 @@ function renderVideoImageInputs(list, node, imageInputs){
         item.className = 'input-item video-input-item';
         item.draggable = true;
         item.dataset.sourceId = src.id;
-        const frameLabel = node.useFrameRoles && i === 0 ? tr('canvas.videoRoleFirstFrame') : node.useFrameRoles && i === 1 ? tr('canvas.videoRoleLastFrame') : '';
-        const previewHtml = src.preview && !isMissingAssetUrl(src.preview) ? canvasPreviewImgHtml(src.preview, 256) : (src.preview ? missingAssetHtml(src.preview, true) : '<i data-lucide="image" class="w-6 h-6 text-slate-400"></i>');
+        const kind = mediaKindForRef(src.refs?.[0] || {url:src.preview || ''});
+        const frameLabel = kind === 'image' && node.useFrameRoles && i === 0 ? tr('canvas.videoRoleFirstFrame') : kind === 'image' && node.useFrameRoles && i === 1 ? tr('canvas.videoRoleLastFrame') : '';
+        const previewHtml = kind === 'video'
+            ? canvasVideoPreviewHtml(src.preview || src.refs?.[0]?.url || '', 256)
+            : kind === 'audio'
+            ? `<div class="video-input-audio"><i data-lucide="file-audio" class="w-6 h-6"></i><span>${escapeHtml(src.label || 'Audio')}</span></div>`
+            : src.preview && !isMissingAssetUrl(src.preview)
+            ? canvasPreviewImgHtml(src.preview, 256)
+            : (src.preview ? missingAssetHtml(src.preview, true) : '<i data-lucide="image" class="w-6 h-6 text-slate-400"></i>');
+        const typeLabel = kind === 'audio' ? `音频${i + 1}` : kind === 'video' ? `视频${i + 1}` : `图${i + 1}`;
         item.innerHTML = `
             <div class="video-input-thumb">
                 <span class="input-index">${i + 1}</span>
                 ${previewHtml}
-                <span class="input-label">${escapeHtml(src.label)}</span>
+                <span class="input-label">${escapeHtml(typeLabel)}</span>
             </div>
             ${frameLabel ? `<div class="video-frame-label">${frameLabel}</div>` : ''}
         `;
@@ -9686,8 +9739,10 @@ async function runVideoNode(nodeId, opts={}){
     const sources = orderedSources(node, generatorSources(node));
     const prompt = sources.map(s => s.prompt).filter(Boolean).join('\n\n');
     const allRefs = sources.flatMap(s => s.refs || []);
-    const refs = applyUploadedUrlToRefs(imageRefsOnly(allRefs), node);
-    const videoRefs = applyUploadedUrlToRefs(videoRefsOnly(allRefs), node);
+    const mediaRefs = applyUploadedUrlToRefs((allRefs || []).filter(ref => ['image','video','audio'].includes(mediaKindForRef(ref))), node);
+    const refs = imageRefsOnly(mediaRefs);
+    const videoRefs = videoRefsOnly(mediaRefs);
+    const audioRefs = audioRefsOnly(mediaRefs);
     if(node.useFrameRoles && refs[0]) refs[0] = {...refs[0], role:'first_frame'};
     if(node.useFrameRoles && refs[1]) refs[1] = {...refs[1], role:'last_frame'};
     if(!prompt){ alert(tr('canvas.videoNeedsPrompt')); return; }
@@ -9712,6 +9767,7 @@ async function runVideoNode(nodeId, opts={}){
                 videos:manualVideoUrlForNode(node)
                     ? [manualVideoUrlForNode(node)]
                     : videoRefs.map(ref => tempShUploadedUrlForNode(node, ref.url)),
+                audios:audioRefs.map(ref => ref.url).filter(Boolean),
                 enhance_prompt:Boolean(node.enhancePrompt),
                 enable_upsample:Boolean(node.enableUpsample),
                 watermark:Boolean(node.watermark),
@@ -11129,7 +11185,7 @@ function outputDownloadName(url){
 }
 function isVideoUrl(url){
     const clean = (url || '').split('?')[0].toLowerCase();
-    return /\.(mp4|webm|mov|m4v)$/.test(clean);
+    return /\.(mp4|webm|mov|m4v|avi|mkv)$/.test(clean);
 }
 function mediaKindForOutputItem(item){
     const explicit = String(item?.kind || item?.mediaKind || '').toLowerCase();
@@ -11620,7 +11676,7 @@ function renderOutputMedia(item, useGridLayout=false){
         return `<div class="output-img-wrap" data-output-url="${safe}" data-missing-url="${safe}"${gridStyle}>${missingAssetHtml(url, true)}${timePill}<button class="output-del" title="${tr('common.delete')}">×</button></div>`;
     }
     if(kind === 'video'){
-        return `<div class="output-img-wrap" data-output-url="${safe}"${gridStyle}>${canvasVideoPreviewHtml(url, useGridLayout ? 512 : 768, 'alt="video output"')}${timePill}<button class="canvas-video-play output-video-play" type="button" title="播放"><i data-lucide="play"></i></button><div class="output-video-badge"><i data-lucide="play" class="w-3 h-3"></i>VIDEO</div><button class="output-del" title="${tr('common.delete')}">×</button></div>`;
+        return `<div class="output-img-wrap" data-output-url="${safe}"${gridStyle}>${canvasVideoPreviewHtml(url, useGridLayout ? 512 : 768, 'alt="video output" data-video-fallback-attrs="controls data-output-video-fallback=&quot;1&quot;"')}${timePill}<button class="canvas-video-play output-video-play" type="button" title="播放"><i data-lucide="play"></i></button><div class="output-video-badge"><i data-lucide="play" class="w-3 h-3"></i>VIDEO</div><button class="output-del" title="${tr('common.delete')}">×</button></div>`;
     }
     if(kind === 'audio'){
         return `<div class="output-img-wrap output-audio-wrap" data-output-url="${safe}"${gridStyle}><div class="output-audio-card"><i data-lucide="file-audio" class="w-7 h-7"></i><span>${escapeHtml(outputImageName(url))}</span><audio src="${safe}" data-url="${safe}" controls preload="metadata"></audio></div>${timePill}<button class="output-del" title="${tr('common.delete')}">×</button></div>`;
@@ -13197,20 +13253,30 @@ function updateGroupMembership(movedNodes){
 
 function portPoint(id, kind){
     const n = nodes.find(x => x.id === id);
-    const el = nodesEl.querySelector(`.node[data-id="${id}"]`);
-    if(!n || !el) return {x:0,y:0};
-    const port = el.querySelector(`.port.${kind}`);
+    if(!n) return {x:0,y:0};  // 真正的孤儿连线（节点已删除）：renderLinks 会跳过它
+    const el = nodesEl.querySelector(`.node[data-id="${CSS.escape(id)}"]`);
+    const port = el?.querySelector(`.port.${kind}`);
     if(port){
         const r = port.getBoundingClientRect();
         return screenToWorld(r.left + r.width / 2, r.top + r.height / 2);
     }
-    const w = el.offsetWidth || n.w || 260, h = el.offsetHeight || n.h || 160;
-    return kind === 'out' ? {x:n.x + w, y:n.y + h / 2} : {x:n.x, y:n.y + h / 2};
+    // 没有 DOM（节点渲染失败被跳过）或没找到端口时，用节点存储的几何坐标兜底，
+    // 让连线仍画在节点附近，而不是落到 (0,0) 或干脆消失。
+    const w = (el?.offsetWidth) || n.w || 260, h = (el?.offsetHeight) || n.h || 160;
+    const nx = Number(n.x) || 0, ny = Number(n.y) || 0;
+    return kind === 'out' ? {x:nx + w, y:ny + h / 2} : {x:nx, y:ny + h / 2};
+}
+function canResolvePort(id){
+    // 只跳过“真正的孤儿连线”（端点节点已不存在）；节点存在但暂时没 DOM 的，portPoint 会用几何坐标兜底。
+    return Boolean(nodes.find(x => x.id === id));
 }
 function renderLinks(){
     linksEl.innerHTML = '';
     linkControlsEl.innerHTML = '';
     connections.forEach(c => {
+        // 端点无法解析（节点已删除、或尚未渲染出 DOM）就跳过，否则连线会被画到 (0,0)，
+        // 看起来像很多连线都从同一个空白处中转。
+        if(!canResolvePort(c.from) || !canResolvePort(c.to)) return;
         const a = portPoint(c.from, 'out'), b = portPoint(c.to, 'in');
         linksEl.appendChild(pathEl(a.x, a.y, b.x, b.y, 'link'));
         const btn = linkDeleteButton(c, a, b);

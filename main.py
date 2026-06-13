@@ -186,6 +186,11 @@ async def startup_event():
         await asyncio.to_thread(migrate_asset_library_into_dirs)
     except Exception as exc:
         print(f"资产库分组整理失败: {exc}")
+    # 修复历史遗留的双重扩展名素材（foo.png.png → foo.png），否则这些卡片无法显示
+    try:
+        await asyncio.to_thread(migrate_double_extension_uploads)
+    except Exception as exc:
+        print(f"修复双重扩展名素材失败: {exc}")
 
 @app.websocket("/ws/stats")
 async def websocket_endpoint(websocket: WebSocket, client_id: str = None):
@@ -211,6 +216,7 @@ STATIC_DIR = os.path.join(BASE_DIR, "static")
 STATIC_RUNNINGHUB_DIR = os.path.join(STATIC_DIR, "runninghub")
 STATIC_RUNNINGHUB_THUMBNAIL_DIR = os.path.join(STATIC_RUNNINGHUB_DIR, "thumbnails")
 STATIC_RUNNINGHUB_API_PROVIDERS_FILE = os.path.join(STATIC_RUNNINGHUB_DIR, "api_providers.json")
+STATIC_RUNNINGHUB_MODEL_REGISTRY_FILE = os.path.join(STATIC_RUNNINGHUB_DIR, "models_registry.json")
 OUTPUT_DIR = os.path.join(BASE_DIR, "output")
 ASSETS_DIR = os.path.join(BASE_DIR, "assets")
 OUTPUT_INPUT_DIR = os.path.join(ASSETS_DIR, "input")
@@ -255,6 +261,19 @@ PROVIDER_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{2,40}$")
 SUPPORTED_PROVIDER_PROTOCOLS = {"openai", "apimart", "gemini", "volcengine", "runninghub", "jimeng"}
 SUPPORTED_IMAGE_REQUEST_MODES = {"openai", "openai-json"}
 RUNNINGHUB_DEFAULT_BASE_URL = "https://www.runninghub.cn"
+RUNNINGHUB_OPENAPI_BASE_URL = "https://www.runninghub.cn/openapi/v2"
+RUNNINGHUB_MODEL_REGISTRY_URL = "https://raw.githubusercontent.com/HM-RunningHub/ComfyUI_RH_OpenAPI/main/models_registry.json"
+RUNNINGHUB_LLM_BASE_URL = "https://llm.runninghub.cn/v1"
+RUNNINGHUB_LLM_MODELS_URLS = [
+    "https://llm.runninghub.cn/v1/models",
+    "https://llm.runninghub.ai/v1/models",
+]
+RUNNINGHUB_FALLBACK_CHAT_MODELS = [
+    "google/gemini-3.1-flash-lite-preview",
+    "qwen/qwen3-vl-235b-a22b-instruct",
+    "qwen/qwen-plus",
+    "openai/gpt-5.1",
+]
 JIMENG_DEFAULT_IMAGE_MODELS = [
     "5.0",
     "4.6",
@@ -299,8 +318,16 @@ VOLCENGINE_DEFAULT_VIDEO_MODELS = [
     "doubao-seedance-1-0-lite-i2v-250428",
 ]
 RUNNINGHUB_DEFAULT_IMAGE_MODELS = [
-    "seedream-v5-lite/text-to-image",
-    "seedream-v5-lite/image-to-image",
+    "gpt-image-2/text-to-image-official-stable",
+    "gpt-image-2/image-to-image-official-stable",
+    "nano-banana/text-to-image-official-stable",
+    "nano-banana/edit-official-stable",
+]
+RUNNINGHUB_DEFAULT_VIDEO_MODELS = [
+    "google/veo3.1-fast/text-to-video-channel-low-price",
+    "sora-2/text-to-video-official-stable",
+    "seedance-2.0-global/text-to-video",
+    "seedance-2.0-global/image-to-video",
 ]
 RUNNINGHUB_DEFAULT_APPS = [
     {
@@ -698,7 +725,7 @@ def default_api_providers():
             "image_edit_endpoint": "",
             "enabled": True,
             "primary": False,
-            "image_models": RUNNINGHUB_DEFAULT_IMAGE_MODELS,
+            "image_models": [],
             "chat_models": [],
             "video_models": [],
             "ms_loras": [],
@@ -756,7 +783,9 @@ def merge_default_api_providers(providers):
                 current["base_url"] = rh_default["base_url"]
             if not current.get("protocol") or current.get("protocol") == "openai":
                 current["protocol"] = "runninghub"
-            current["image_models"] = model_list_from_values([*(current.get("image_models") or []), *(rh_default.get("image_models") or [])])
+            current["image_models"] = model_list_from_values(current.get("image_models") or [])
+            current["chat_models"] = model_list_from_values(current.get("chat_models") or [])
+            current["video_models"] = model_list_from_values(current.get("video_models") or [])
             current["rh_apps"] = merge_runninghub_system_entries(rh_default.get("rh_apps") or [], current.get("rh_apps") or [], "app")
             current["rh_workflows"] = merge_runninghub_system_entries(rh_default.get("rh_workflows") or [], current.get("rh_workflows") or [], "workflow")
     volc_default = next((d for d in default_api_providers() if d["id"] == "volcengine"), None)
@@ -1005,7 +1034,9 @@ def merge_runninghub_provider_with_static(provider):
         return static_provider
     merged = {**static_provider, **provider}
     merged["protocol"] = "runninghub"
-    merged["image_models"] = model_list_from_values([*(provider.get("image_models") or []), *(static_provider.get("image_models") or [])])
+    merged["image_models"] = model_list_from_values(provider.get("image_models") or [])
+    merged["chat_models"] = model_list_from_values(provider.get("chat_models") or [])
+    merged["video_models"] = model_list_from_values(provider.get("video_models") or [])
     merged["rh_apps"] = merge_runninghub_system_entries(static_provider.get("rh_apps") or [], provider.get("rh_apps") or [], "app")
     merged["rh_workflows"] = merge_runninghub_system_entries(static_provider.get("rh_workflows") or [], provider.get("rh_workflows") or [], "workflow")
     return normalize_provider(merged)
@@ -1064,6 +1095,20 @@ def runninghub_endpoint_url(provider, path):
     base_url = str((provider or {}).get("base_url") or RUNNINGHUB_DEFAULT_BASE_URL).strip().rstrip("/")
     return f"{base_url}{path}"
 
+def runninghub_openapi_base_url(provider=None):
+    base_url = str((provider or {}).get("base_url") or RUNNINGHUB_DEFAULT_BASE_URL).strip().rstrip("/")
+    if base_url.endswith("/openapi/v2"):
+        return base_url
+    return f"{base_url}/openapi/v2"
+
+def runninghub_openapi_url(provider, path=""):
+    path = str(path or "").strip()
+    if path.startswith("http://") or path.startswith("https://"):
+        return path
+    path = path.lstrip("/")
+    base = runninghub_openapi_base_url(provider)
+    return f"{base}/{path}" if path else base
+
 def normalize_provider(item):
     provider_id = str(item.get("id") or "").strip().lower()
     if not PROVIDER_ID_RE.fullmatch(provider_id):
@@ -1088,6 +1133,9 @@ def normalize_provider(item):
     if provider_id == "jimeng":
         protocol = "jimeng"
         base_url = ""
+    if provider_id == "runninghub":
+        protocol = "runninghub"
+        base_url = base_url or RUNNINGHUB_DEFAULT_BASE_URL
     return {
         "id": provider_id,
         "name": name,
@@ -2528,6 +2576,8 @@ class LocalAssetClassifyRequest(BaseModel):
 class LocalAssetUrlImportItem(BaseModel):
     url: str = ""
     name: str = ""
+    data: str = ""          # 可选：base64 / dataURL，由插件在网页上下文里读取（blob: 等无法服务端下载的素材）
+    content_type: str = ""  # 配合 data 使用，用于推断扩展名
 
 class LocalAssetUrlImportRequest(BaseModel):
     items: List[LocalAssetUrlImportItem] = []
@@ -3240,6 +3290,8 @@ def resolve_chat_provider(provider: str, model: str, ms_model: str):
         base = base_root if base_root.endswith("/v1beta") else base_root + "/v1beta"
     elif protocol == "volcengine":
         base = base_root if base_root.endswith("/api/v3") else base_root + "/api/v3"
+    elif protocol == "runninghub":
+        base = RUNNINGHUB_LLM_BASE_URL
     else:
         base = base_root if base_root.endswith("/v1") else base_root + "/v1"
     hdrs = api_headers(provider=api_provider, model=mdl)
@@ -3901,7 +3953,7 @@ def jimeng_failure_reason(raw):
     return found[0] if found else ""
 
 def jimeng_collect_media_values(value, outputs):
-    media_ext = re.compile(r"\.(png|jpe?g|webp|gif|bmp|mp4|webm|mov|m4v)(\?|#|$)", re.I)
+    media_ext = re.compile(r"\.(png|jpe?g|webp|gif|bmp|mp4|webm|mov|m4v|avi|mkv)(\?|#|$)", re.I)
     if isinstance(value, str):
         text = value.strip()
         if not text:
@@ -4081,7 +4133,7 @@ def jimeng_local_output_url(path, kind="image"):
     except Exception:
         pass
     ext = os.path.splitext(path)[1].lower()
-    allowed = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".mp4", ".webm", ".mov", ".m4v"}
+    allowed = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".mp4", ".webm", ".mov", ".m4v", ".avi", ".mkv"}
     if ext not in allowed:
         ct = content_type_for_path(path)
         ext = ".mp4" if ct.startswith("video/") else ".png"
@@ -4453,7 +4505,7 @@ def media_preview_cache_paths(path: str, width: int):
     )
 
 def is_video_preview_file(path: str) -> bool:
-    return os.path.splitext(str(path or "").split("?", 1)[0])[1].lower() in {".mp4", ".webm", ".mov", ".m4v"}
+    return os.path.splitext(str(path or "").split("?", 1)[0])[1].lower() in {".mp4", ".webm", ".mov", ".m4v", ".avi", ".mkv"}
 
 def generate_video_preview_image(path: str, width: int) -> Image.Image:
     ffmpeg = shutil.which("ffmpeg")
@@ -4734,7 +4786,7 @@ def asset_library_media_kind(path: str, content_type: str = "") -> str:
     ct = (content_type or "").lower()
     if ext in {".json", ".zip"}:
         return "workflow"
-    if ext in {".mp4", ".webm", ".mov", ".m4v", ".mkv"} or ct.startswith("video/"):
+    if ext in {".mp4", ".webm", ".mov", ".m4v", ".avi", ".mkv"} or ct.startswith("video/"):
         return "video"
     if ext in {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"} or ct.startswith("audio/"):
         return "audio"
@@ -4744,7 +4796,7 @@ def asset_library_safe_extension(path: str, kind: str) -> str:
     ext = os.path.splitext(path or "")[1].lower()
     allowed = {
         "image": {".png", ".jpg", ".jpeg", ".webp", ".gif"},
-        "video": {".mp4", ".webm", ".mov", ".m4v", ".mkv"},
+        "video": {".mp4", ".webm", ".mov", ".m4v", ".avi", ".mkv"},
         "audio": {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"},
         "workflow": {".json", ".zip"},
     }
@@ -5423,6 +5475,10 @@ def content_type_for_path(path):
         return "video/webm"
     if ext == ".mov":
         return "video/quicktime"
+    if ext == ".avi":
+        return "video/x-msvideo"
+    if ext == ".mkv":
+        return "video/x-matroska"
     if ext == ".mp3":
         return "audio/mpeg"
     if ext == ".wav":
@@ -5468,7 +5524,7 @@ def is_image_reference_value(value):
         path = output_file_from_url(value)
         return bool(path and content_type_for_path(path).startswith("image/"))
     clean = value.split("?", 1)[0].lower()
-    if re.search(r"\.(mp4|webm|mov|m4v|mp3|wav|m4a|aac|ogg|flac)$", clean):
+    if re.search(r"\.(mp4|webm|mov|m4v|avi|mkv|mp3|wav|m4a|aac|ogg|flac)$", clean):
         return False
     return True
 
@@ -5666,6 +5722,33 @@ def volcengine_video_resolution(value: str) -> str:
 def is_volcengine_seedance2_model(model: str) -> bool:
     value = str(model or "").strip().lower().replace("_", "-").replace(".", "-")
     return "seedance-2-0" in value
+
+def probe_local_audio_duration_seconds(value: str) -> Optional[float]:
+    path = output_file_from_url(value)
+    if not path or not os.path.isfile(path):
+        return None
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        return None
+    try:
+        proc = subprocess.run(
+            [
+                ffprobe,
+                "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        if proc.returncode != 0:
+            return None
+        duration = float(str(proc.stdout or "").strip())
+        return duration if math.isfinite(duration) and duration > 0 else None
+    except Exception:
+        return None
 
 async def volcengine_video_reference_content_items(value, max_frames=4, max_size=768):
     text = str(value or "").strip()
@@ -6968,18 +7051,21 @@ async def generate_volcengine_provider_image(prompt, size, model, reference_imag
         return extract_image(raw), raw
 
 def runninghub_api_headers(provider):
-    api_key = runninghub_api_key(provider)
+    api_key = str((provider or {}).get("api_key") or "").strip() or runninghub_api_key(provider)
     if not api_key:
         raise HTTPException(status_code=400, detail="未配置 RunningHub API Key，请在 API 设置中填写。")
     return {"Authorization": bearer_auth_value(api_key), "Accept": "application/json", "Content-Type": "application/json"}
+
+def runninghub_json_headers(provider):
+    return runninghub_api_headers(provider)
 
 def runninghub_provider():
     return get_api_provider_exact("runninghub")
 
 def runninghub_api_key(provider=None, use_wallet=False, prefer_wallet=False):
     provider = provider or runninghub_provider()
-    free_key = os.getenv(provider_key_env(provider["id"]), "")
-    wallet_key = os.getenv(runninghub_wallet_key_env(), "")
+    free_key = str((provider or {}).get("api_key") or "").strip() or os.getenv(provider_key_env(provider["id"]), "")
+    wallet_key = str((provider or {}).get("wallet_api_key") or "").strip() or os.getenv(runninghub_wallet_key_env(), "")
     api_key = wallet_key if (use_wallet or prefer_wallet) and wallet_key else free_key
     if not api_key:
         raise HTTPException(status_code=400, detail="未配置 RunningHub API Key，请在 RH 设置中填写。")
@@ -7163,7 +7249,293 @@ def runninghub_task_endpoint(provider, model):
         return runninghub_endpoint_url(provider, model_path)
     if model_path.startswith("openapi/"):
         return runninghub_endpoint_url(provider, f"/{model_path}")
-    return runninghub_endpoint_url(provider, f"/openapi/v2/{model_path}")
+    return runninghub_openapi_url(provider, model_path)
+
+def runninghub_registry_fallback():
+    image = [
+        {"name_en": "gpt-image-2/text-to-image-official-stable", "endpoint": "rhart-image-g-2-official/text-to-image", "output_type": "image"},
+        {"name_en": "gpt-image-2/image-to-image-official-stable", "endpoint": "rhart-image-g-2-official/image-to-image", "output_type": "image"},
+        {"name_en": "nano-banana/text-to-image-official-stable", "endpoint": "rhart-image-v1-official/text-to-image", "output_type": "image"},
+        {"name_en": "nano-banana/edit-official-stable", "endpoint": "rhart-image-v1-official/edit", "output_type": "image"},
+    ]
+    video = [
+        {"name_en": "google/veo3.1-fast/text-to-video-channel-low-price", "endpoint": "rhart-video-v3.1-fast/text-to-video", "output_type": "video"},
+        {"name_en": "sora-2/text-to-video-official-stable", "endpoint": "rhart-video-s-official/text-to-video", "output_type": "video"},
+        {"name_en": "seedance-2.0-global/text-to-video", "endpoint": "bytedance/seedance-2.0-global/text-to-video", "output_type": "video"},
+        {"name_en": "seedance-2.0-global/image-to-video", "endpoint": "bytedance/seedance-2.0-global/image-to-video", "output_type": "video"},
+    ]
+    return image + video
+
+def runninghub_registry_items_from_raw(raw):
+    candidates = [raw]
+    if isinstance(raw, dict):
+        candidates.extend([
+            raw.get("data"),
+            raw.get("models"),
+            raw.get("list"),
+            raw.get("items"),
+            raw.get("records"),
+            raw.get("result"),
+        ])
+    for candidate in candidates:
+        if isinstance(candidate, list):
+            return [item for item in candidate if isinstance(item, dict)]
+        if isinstance(candidate, dict):
+            nested = (
+                candidate.get("models")
+                or candidate.get("list")
+                or candidate.get("items")
+                or candidate.get("records")
+                or candidate.get("data")
+            )
+            if isinstance(nested, list):
+                return [item for item in nested if isinstance(item, dict)]
+    return []
+
+def runninghub_registry_model_from_id(model_id, output_type=""):
+    model_id = str(model_id or "").strip()
+    if not model_id:
+        return None
+    output_type = str(output_type or "").strip().lower() or classify_upstream_model(model_id)
+    return {"name_en": model_id, "endpoint": model_id, "output_type": output_type}
+
+async def fetch_runninghub_llm_models(provider=None):
+    headers = runninghub_api_headers(provider)
+    errors = []
+    async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+        for url in RUNNINGHUB_LLM_MODELS_URLS:
+            try:
+                resp = await client.get(url, headers=headers)
+                if resp.status_code >= 400 or looks_like_html_response(resp.text):
+                    errors.append(f"{url}: HTTP {resp.status_code} {resp.text[:180]}")
+                    continue
+                raw = resp.json() if resp.text else {}
+                grouped, ids = parse_upstream_models(raw, "openai")
+                if ids:
+                    return [runninghub_registry_model_from_id(mid, "chat") for mid in ids], {"source": url, "count": len(ids)}
+                errors.append(f"{url}: empty")
+            except Exception as exc:
+                errors.append(f"{url}: {str(exc)[:180]}")
+    return [], {"source": "", "count": 0, "errors": errors[-3:]}
+
+async def fetch_runninghub_model_registry(provider=None, include_fallback=True, include_meta=False):
+    urls = [
+        ("openapi", runninghub_openapi_url(provider, "models")),
+        ("github", RUNNINGHUB_MODEL_REGISTRY_URL),
+    ]
+    if os.path.exists(STATIC_RUNNINGHUB_MODEL_REGISTRY_FILE):
+        urls.append(("local", STATIC_RUNNINGHUB_MODEL_REGISTRY_FILE))
+    headers = runninghub_api_headers(provider)
+    errors = []
+    source = ""
+    items = []
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+        for source_name, url in urls:
+            try:
+                if source_name == "local":
+                    with open(url, "r", encoding="utf-8") as f:
+                        raw = json.load(f)
+                else:
+                    req_headers = headers if source_name == "openapi" else {"Accept": "application/json"}
+                    resp = await client.get(url, headers=req_headers)
+                    if resp.status_code >= 400 or looks_like_html_response(resp.text):
+                        errors.append(f"{source_name}: HTTP {resp.status_code} {resp.text[:180]}")
+                        continue
+                    raw = resp.json() if resp.text else []
+                parsed = runninghub_registry_items_from_raw(raw)
+                if parsed:
+                    items = parsed
+                    source = source_name
+                    break
+                errors.append(f"{source_name}: empty")
+            except Exception as exc:
+                errors.append(f"{source_name}: {str(exc)[:180]}")
+                continue
+    llm_items, llm_meta = await fetch_runninghub_llm_models(provider)
+    combined = [*items]
+    seen = {runninghub_model_id(item) for item in combined if runninghub_model_id(item)}
+    for item in llm_items:
+        mid = runninghub_model_id(item)
+        if mid and mid not in seen:
+            combined.append(item)
+            seen.add(mid)
+    if combined:
+        meta = {
+            "source": source or "llm",
+            "openapi_count": len(items),
+            "llm_count": len(llm_items),
+            "llm_source": llm_meta.get("source") or "",
+            "errors": [*errors[-3:], *((llm_meta.get("errors") or [])[-3:])],
+        }
+        return (combined, meta) if include_meta else combined
+    if include_fallback:
+        fallback = runninghub_registry_fallback()
+        meta = {
+            "source": "fallback",
+            "openapi_count": 0,
+            "llm_count": 0,
+            "llm_source": "",
+            "errors": [*errors[-3:], *((llm_meta.get("errors") or [])[-3:])],
+        }
+        return (fallback, meta) if include_meta else fallback
+    raise HTTPException(status_code=502, detail=f"拉取 RunningHub 模型注册表失败：{'; '.join(errors[-4:]) or 'unknown error'}")
+
+def runninghub_model_id(item):
+    if not isinstance(item, dict):
+        return ""
+    return str(item.get("name_en") or item.get("id") or item.get("name") or item.get("endpoint") or "").strip()
+
+def runninghub_registry_payload(items):
+    grouped = {"image": [], "chat": RUNNINGHUB_FALLBACK_CHAT_MODELS[:], "video": []}
+    all_ids = []
+    for item in items or []:
+        mid = runninghub_model_id(item)
+        if not mid:
+            continue
+        output_type = str(item.get("output_type") or item.get("outputType") or "").strip().lower()
+        if output_type in ("image", "video"):
+            grouped[output_type].append(mid)
+            all_ids.append(mid)
+    for model in RUNNINGHUB_DEFAULT_IMAGE_MODELS:
+        if model not in grouped["image"]:
+            grouped["image"].append(model)
+            all_ids.append(model)
+    for model in RUNNINGHUB_DEFAULT_VIDEO_MODELS:
+        if model not in grouped["video"]:
+            grouped["video"].append(model)
+            all_ids.append(model)
+    for model in RUNNINGHUB_FALLBACK_CHAT_MODELS:
+        if model not in all_ids:
+            all_ids.append(model)
+    for key in grouped:
+        grouped[key] = sorted(set(grouped[key]))
+    return {
+        "total": len(set(all_ids)),
+        "image_models": grouped["image"],
+        "chat_models": grouped["chat"],
+        "video_models": grouped["video"],
+        "all": sorted(set(all_ids)),
+        "protocol": "runninghub",
+    }
+
+async def runninghub_models_payload(provider=None):
+    registry, meta = await fetch_runninghub_model_registry(provider, include_fallback=True, include_meta=True)
+    payload = runninghub_registry_payload(registry)
+    payload["raw"] = {"registry_count": len(registry), **meta}
+    if meta.get("source") == "fallback":
+        payload["message"] = "RunningHub 模型接口未返回完整列表，当前显示内置兜底模型。"
+    else:
+        payload["message"] = f"RunningHub 模型列表来自 {meta.get('source')}"
+    return payload
+
+async def runninghub_model_definition(provider, model):
+    requested = str(model or "").strip().strip("/")
+    registry = await fetch_runninghub_model_registry(provider, include_fallback=True)
+    for item in registry:
+        mid = runninghub_model_id(item)
+        endpoint = str(item.get("endpoint") or "").strip().strip("/")
+        if requested and requested in {mid, endpoint, f"/openapi/v2/{endpoint}", f"openapi/v2/{endpoint}"}:
+            return item
+    endpoint = requested
+    if endpoint.startswith("/openapi/v2/"):
+        endpoint = endpoint[len("/openapi/v2/"):]
+    elif endpoint.startswith("openapi/v2/"):
+        endpoint = endpoint[len("openapi/v2/"):]
+    return {"name_en": requested, "endpoint": endpoint or RUNNINGHUB_DEFAULT_IMAGE_MODELS[0], "output_type": classify_upstream_model(requested), "params": []}
+
+def runninghub_schema_options(field):
+    values = []
+    for item in (field or {}).get("options") or []:
+        if isinstance(item, dict):
+            value = item.get("value")
+        else:
+            value = item
+        if value is not None and str(value) != "":
+            values.append(str(value))
+    return values
+
+def runninghub_schema_value(field, preferred=None):
+    preferred = "" if preferred is None else str(preferred).strip()
+    options = runninghub_schema_options(field)
+    if preferred and (not options or preferred in options):
+        return preferred
+    default = (field or {}).get("defaultValue")
+    if default is not None and str(default) != "":
+        return default
+    return options[0] if options else preferred
+
+def runninghub_schema_field(params, *keys):
+    wanted = {str(k).lower() for k in keys if k}
+    for field in params or []:
+        if not isinstance(field, dict):
+            continue
+        names = {str(field.get("fieldKey") or "").lower(), str(field.get("label") or "").lower()}
+        if names & wanted:
+            return field
+    return None
+
+def runninghub_aspect_from_size(size, fallback="1:1"):
+    width, height = parse_size_pair(size)
+    if width and height:
+        divisor = math.gcd(width, height) or 1
+        return f"{width // divisor}:{height // divisor}"
+    raw = str(size or "").strip().lower()
+    if re.fullmatch(r"(auto|\d+\s*:\s*\d+)", raw):
+        return raw.replace(" ", "")
+    return fallback
+
+def runninghub_resolution_from_size(size, fallback="2k"):
+    width, height = parse_size_pair(size)
+    if width and height:
+        long_edge = max(width, height)
+        if long_edge >= 3200:
+            return "4k"
+        if long_edge >= 1400:
+            return "2k"
+        return "1k"
+    raw = str(size or "").strip().lower()
+    return raw if raw in {"1k", "2k", "4k", "480p", "720p", "1080p", "native1080p"} else fallback
+
+def runninghub_size_for_aspect(aspect_ratio, fallback="1280x720"):
+    ratio = str(aspect_ratio or "").strip()
+    return {
+        "9:16": "720x1280",
+        "16:9": "1280x720",
+        "1:1": "1024x1024",
+        "4:3": "1024x768",
+        "3:4": "768x1024",
+    }.get(ratio, fallback)
+
+def runninghub_apply_schema_defaults(body, params):
+    for field in params or []:
+        if not isinstance(field, dict):
+            continue
+        key = str(field.get("fieldKey") or "").strip()
+        if not key or key in body:
+            continue
+        default = field.get("defaultValue")
+        options = runninghub_schema_options(field)
+        if default is None or default == "":
+            if field.get("required") is True and options:
+                default = options[0]
+            else:
+                continue
+        ftype = str(field.get("type") or "").upper()
+        if ftype == "BOOLEAN":
+            body[key] = bool(default) if not isinstance(default, str) else default.lower() == "true"
+        elif ftype in {"INT", "INTEGER"}:
+            try:
+                body[key] = int(default)
+            except Exception:
+                body[key] = default
+        elif ftype == "FLOAT":
+            try:
+                body[key] = float(default)
+            except Exception:
+                body[key] = default
+        else:
+            body[key] = default
+    return body
 
 def runninghub_query_status(raw):
     if not isinstance(raw, dict):
@@ -7228,9 +7600,8 @@ async def runninghub_upload_reference(client, provider, ref):
     if not path:
         value = ref.get("url", "")
         return value if str(value).startswith(("http://", "https://")) else ""
-    upload_url = runninghub_endpoint_url(provider, "/openapi/v2/media/upload/binary")
-    api_key = os.getenv(provider_key_env(provider["id"]), "")
-    headers = {"Authorization": bearer_auth_value(api_key), "Accept": "application/json"}
+    upload_url = runninghub_openapi_url(provider, "media/upload/binary")
+    headers = {"Authorization": bearer_auth_value(runninghub_api_key(provider)), "Accept": "application/json"}
     with open(path, "rb") as fh:
         files = {"file": (os.path.basename(path), fh, content_type_for_path(path))}
         response = await client.post(upload_url, headers=headers, files=files, timeout=120)
@@ -7247,7 +7618,7 @@ async def runninghub_upload_reference(client, provider, ref):
     raise HTTPException(status_code=502, detail=f"RunningHub 上传图片未返回 download_url：{raw}")
 
 async def wait_for_runninghub_image_task(client, provider, task_id):
-    query_url = runninghub_endpoint_url(provider, "/openapi/v2/query")
+    query_url = runninghub_openapi_url(provider, "query")
     deadline = time.monotonic() + 1800
     last_payload = None
     while time.monotonic() < deadline:
@@ -7597,11 +7968,30 @@ async def generate_runninghub_provider_image(prompt, size, model, reference_imag
     entry = runninghub_entry_config_from_model(provider, model)
     if entry:
         return await generate_runninghub_entry_image(prompt, model, reference_images, provider, entry)
-    endpoint = runninghub_task_endpoint(provider, model)
-    width, height = parse_size_pair(size)
+    model_def = await runninghub_model_definition(provider, model)
+    endpoint = runninghub_task_endpoint(provider, model_def.get("endpoint") or model)
+    params = model_def.get("params") if isinstance(model_def.get("params"), list) else []
+    aspect = runninghub_aspect_from_size(size, "1:1")
+    resolution = runninghub_resolution_from_size(size, "2k")
     body = {"prompt": prompt}
+    if runninghub_schema_field(params, "aspectRatio"):
+        field = runninghub_schema_field(params, "aspectRatio")
+        body["aspectRatio"] = runninghub_schema_value(field, aspect)
+    elif runninghub_schema_field(params, "ratio"):
+        field = runninghub_schema_field(params, "ratio")
+        body["ratio"] = runninghub_schema_value(field, aspect)
+    if runninghub_schema_field(params, "resolution"):
+        field = runninghub_schema_field(params, "resolution")
+        body["resolution"] = runninghub_schema_value(field, resolution)
+    width, height = parse_size_pair(size)
     if width and height:
-        body.update({"width": width, "height": height})
+        if runninghub_schema_field(params, "width"):
+            body["width"] = width
+        if runninghub_schema_field(params, "height"):
+            body["height"] = height
+    quality_field = runninghub_schema_field(params, "quality")
+    if quality_field:
+        body["quality"] = runninghub_schema_value(quality_field, "medium")
     async with httpx.AsyncClient(timeout=httpx.Timeout(connect=20.0, read=1800.0, write=180.0, pool=20.0)) as client:
         image_urls = []
         for ref in (reference_images or [])[:10]:
@@ -7609,8 +7999,14 @@ async def generate_runninghub_provider_image(prompt, size, model, reference_imag
             if url:
                 image_urls.append(url)
         if image_urls:
-            body["imageUrls"] = image_urls
-        response = await client.post(endpoint, headers=runninghub_api_headers(provider), json=body)
+            image_field = runninghub_schema_field(params, "imageUrls", "imageUrl", "images", "image")
+            key = str((image_field or {}).get("fieldKey") or "imageUrls")
+            if key.endswith("s") or (image_field or {}).get("multipleInputs") is True:
+                body[key] = image_urls
+            else:
+                body[key] = image_urls[0]
+        runninghub_apply_schema_defaults(body, params)
+        response = await client.post(endpoint, headers=runninghub_json_headers(provider), json=body)
         response.raise_for_status()
         raw = response.json()
         try:
@@ -7621,6 +8017,87 @@ async def generate_runninghub_provider_image(prompt, size, model, reference_imag
                 raise HTTPException(status_code=502, detail=f"RunningHub 未返回 taskId 或图片结果：{raw}")
         result = await wait_for_runninghub_image_task(client, provider, task_id)
         return runninghub_extract_image(result), result
+
+async def wait_for_runninghub_openapi_task(client, provider, task_id, output_kind=""):
+    query_url = runninghub_openapi_url(provider, "query")
+    deadline = time.monotonic() + 1800
+    last_payload = None
+    while time.monotonic() < deadline:
+        await asyncio.sleep(3)
+        response = await client.post(query_url, headers=runninghub_json_headers(provider), json={"taskId": task_id})
+        response.raise_for_status()
+        raw = response.json()
+        last_payload = raw
+        status = runninghub_query_status(raw).upper()
+        if status in {"SUCCESS", "SUCCEEDED", "COMPLETED", "COMPLETE", "FINISHED", "DONE", "3"}:
+            return raw
+        if status in {"FAILED", "FAIL", "ERROR", "CANCEL", "CANCELED", "CANCELLED", "4"}:
+            raise HTTPException(status_code=502, detail=f"RunningHub 任务失败：{runninghub_fail_reason(raw) or raw}")
+        if output_kind == "video" and video_output_urls(raw):
+            return raw
+    raise HTTPException(status_code=504, detail=f"RunningHub 任务超时：{last_payload or task_id}")
+
+async def generate_runninghub_video(payload, provider):
+    model_def = await runninghub_model_definition(provider, payload.model)
+    endpoint = runninghub_task_endpoint(provider, model_def.get("endpoint") or payload.model)
+    params = model_def.get("params") if isinstance(model_def.get("params"), list) else []
+    body = {"prompt": str(payload.prompt or "")}
+    aspect = str(payload.aspect_ratio or "16:9").strip() or "16:9"
+    if runninghub_schema_field(params, "aspectRatio"):
+        field = runninghub_schema_field(params, "aspectRatio")
+        body["aspectRatio"] = runninghub_schema_value(field, aspect)
+    if runninghub_schema_field(params, "ratio"):
+        field = runninghub_schema_field(params, "ratio")
+        body["ratio"] = runninghub_schema_value(field, aspect)
+    if runninghub_schema_field(params, "size"):
+        field = runninghub_schema_field(params, "size")
+        body["size"] = runninghub_schema_value(field, runninghub_size_for_aspect(aspect))
+    if runninghub_schema_field(params, "duration"):
+        field = runninghub_schema_field(params, "duration")
+        body["duration"] = runninghub_schema_value(field, str(max(1, min(60, int(payload.duration or 5)))))
+    if runninghub_schema_field(params, "resolution"):
+        field = runninghub_schema_field(params, "resolution")
+        body["resolution"] = runninghub_schema_value(field, str(payload.resolution or "720p").lower())
+    if runninghub_schema_field(params, "generateAudio"):
+        body["generateAudio"] = bool(payload.generate_audio)
+    if runninghub_schema_field(params, "watermark"):
+        body["watermark"] = bool(payload.watermark)
+    async with httpx.AsyncClient(timeout=VIDEO_POLL_TIMEOUT) as client:
+        image_urls = []
+        for ref in (payload.images or [])[:10]:
+            ref_url = getattr(ref, "url", "") or ""
+            if ref_url:
+                up = await runninghub_upload_reference(client, provider, {"url": ref_url})
+                if up:
+                    image_urls.append(up)
+        if image_urls:
+            image_field = runninghub_schema_field(params, "imageUrls", "imageUrl", "firstFrameImage", "lastFrameImage", "referenceImages")
+            key = str((image_field or {}).get("fieldKey") or "imageUrls")
+            if key in {"firstFrameImage", "first_frame_image"}:
+                body[key] = image_urls[0]
+                last_field = runninghub_schema_field(params, "lastFrameImage", "last_frame_image")
+                if len(image_urls) > 1 and last_field:
+                    body[str(last_field.get("fieldKey"))] = image_urls[1]
+            elif key.endswith("s") or (image_field or {}).get("multipleInputs") is True:
+                body[key] = image_urls
+            else:
+                body[key] = image_urls[0]
+        runninghub_apply_schema_defaults(body, params)
+        response = await client.post(endpoint, headers=runninghub_json_headers(provider), json=body)
+        response.raise_for_status()
+        raw = response.json()
+        task_id = runninghub_extract_task_id(raw)
+        result = raw
+        if task_id and not video_output_urls(raw):
+            result = await wait_for_runninghub_openapi_task(client, provider, task_id, "video")
+        urls = video_output_urls(result)
+        if not urls:
+            outputs = runninghub_extract_outputs(result.get("data") if isinstance(result, dict) else result)
+            urls = [url for url in outputs if str(url).startswith(("http://", "https://", "/output/", "/assets/"))]
+        if not urls:
+            raise HTTPException(status_code=502, detail=f"RunningHub 视频生成成功但没有返回视频：{result}")
+        local_urls = [await save_remote_video_to_output(url, prefix="rh_video_") for url in urls]
+        return {"videos": local_urls, "task_id": task_id, "raw": result}
 
 async def generate_ai_image(prompt, size, quality, model, reference_images=None, provider_id="comfly"):
     provider = get_api_provider(provider_id)
@@ -8029,20 +8506,36 @@ def download_output(url: str, name: str = "", inline: bool = False):
     if path:
         filename = sanitize_export_filename(os.path.basename(name) if name else os.path.basename(path), os.path.basename(path))
         return FileResponse(path, media_type=content_type_for_path(path), filename=None if inline else filename)
+    # 远程文件：流式代理，绝不把整段视频/大文件读进内存（否则多个视频同时代理会撑爆内存、拖垮单进程服务）。
+    parsed = urllib.parse.urlparse(str(url or "").strip())
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise HTTPException(status_code=400, detail="无效的下载地址")
     try:
-        remote = fetch_remote_media_bytes(url)
-    except HTTPException:
-        raise
-    except Exception as exc:
+        upstream = requests.get(
+            url, stream=True, timeout=(10, 60),
+            headers={"User-Agent": "ComfyUI-API-Modelscope/1.0"},
+        )
+        upstream.raise_for_status()
+    except requests.RequestException as exc:
         raise HTTPException(status_code=502, detail=f"远程文件下载失败：{exc}")
-    if not remote:
-        raise HTTPException(status_code=404, detail="文件不存在")
-    content, content_type = remote
+    content_type = upstream.headers.get("content-type") or "application/octet-stream"
     fallback = filename_from_media_url(url, "download.bin")
     filename = sanitize_export_filename(os.path.basename(name) if name else fallback, fallback)
     disposition = "inline" if inline else "attachment"
     headers = {"Content-Disposition": f"{disposition}; filename*=UTF-8''{urllib.parse.quote(filename)}"}
-    return Response(content, media_type=content_type, headers=headers)
+    content_length = upstream.headers.get("content-length")
+    if content_length:
+        headers["Content-Length"] = content_length
+
+    def stream_remote():
+        try:
+            for chunk in upstream.iter_content(chunk_size=256 * 1024):
+                if chunk:
+                    yield chunk
+        finally:
+            upstream.close()
+
+    return StreamingResponse(stream_remote(), media_type=content_type, headers=headers)
 
 @app.post("/api/upload")
 async def upload_image(files: List[UploadFile] = File(...)):
@@ -8076,7 +8569,7 @@ async def upload_image(files: List[UploadFile] = File(...)):
 async def upload_ai_reference(files: List[UploadFile] = File(...)):
     uploaded = []
     image_exts = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
-    video_exts = {".mp4", ".webm", ".mov", ".m4v"}
+    video_exts = {".mp4", ".webm", ".mov", ".m4v", ".flv"}
     audio_exts = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}
     doc_exts = {".pdf", ".txt", ".md", ".markdown", ".doc", ".docx", ".xls", ".xlsx", ".csv", ".json", ".zip", ".yaml", ".yml", ".log"}
     max_upload_bytes = 50 * 1024 * 1024
@@ -8116,9 +8609,41 @@ async def upload_ai_reference(files: List[UploadFile] = File(...)):
         uploaded.append({"url": output_url_for(filename, "input"), "name": file.filename or filename, "kind": kind, "mime": content_type})
     return {"files": uploaded}
 
+class Base64UploadRequest(BaseModel):
+    data: str = ""            # 纯 base64 或 data:URL
+    name: str = ""
+    content_type: str = ""
+
+@app.post("/api/ai/upload-base64")
+async def upload_ai_base64(payload: Base64UploadRequest):
+    """以 base64 JSON 方式上传字节到 assets/input，返回 /assets 地址。
+    给不便用 multipart/FormData 的客户端（如 PS UXP 面板）用——UXP 的 fetch+FormData 经常发不出有效 multipart。"""
+    raw = (payload.data or "").strip()
+    ct = (payload.content_type or "").split(";", 1)[0].strip().lower()
+    if raw.startswith("data:"):
+        header, _, raw = raw.partition(",")
+        if not ct:
+            ct = header[5:].split(";", 1)[0].strip().lower()
+    try:
+        content = base64.b64decode(raw, validate=False)
+    except Exception:
+        raise HTTPException(status_code=400, detail="数据无法解码")
+    if not content:
+        raise HTTPException(status_code=400, detail="内容为空")
+    if len(content) > 50 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="超过 50MB")
+    kind, ext = _local_upload_kind_ext(payload.name or "", ct or "image/png")
+    if kind is None:
+        kind, ext = "image", ".png"
+    filename = f"ai_ref_{uuid.uuid4().hex[:12]}{ext}"
+    path = output_path_for(filename, "input")
+    with open(path, "wb") as f:
+        f.write(content)
+    return {"files": [{"url": output_url_for(filename, "input"), "name": payload.name or filename, "kind": kind}]}
+
 def _local_upload_kind_ext(filename, content_type):
     image_exts = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
-    video_exts = {".mp4", ".webm", ".mov", ".m4v"}
+    video_exts = {".mp4", ".webm", ".mov", ".m4v", ".flv"}
     audio_exts = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}
     ext = os.path.splitext(filename or "")[1].lower()
     ct = (content_type or "").lower()
@@ -8291,6 +8816,43 @@ def _local_upload_tree_and_items():
     items.sort(key=lambda it: it.get("created_at") or 0, reverse=True)
     return root_node, items
 
+_DOUBLE_EXT_RE = re.compile(r'(\.[A-Za-z0-9]{1,5})\1$', re.IGNORECASE)
+_DOUBLE_EXT_MEDIA = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".avif",
+                     ".mp4", ".webm", ".mov", ".m4v", ".flv"}
+
+def migrate_double_extension_uploads():
+    """修复历史遗留的双重扩展名（如 foo.png.png）：去掉重复的一层，并同步重命名 caption/classification 旁车文件。
+    旧版 URL 导入会把自带扩展名的 entry.name 又拼一次 ext，导致文件名重复后缀、URL 对不上而无法显示。"""
+    if not os.path.isdir(LOCAL_UPLOAD_DIR):
+        return
+    renamed = 0
+    for current, _dirs, files in os.walk(LOCAL_UPLOAD_DIR):
+        for name in files:
+            m = _DOUBLE_EXT_RE.search(name)
+            if not m or m.group(1).lower() not in _DOUBLE_EXT_MEDIA:
+                continue
+            old_path = os.path.join(current, name)
+            new_path = os.path.join(current, name[:-len(m.group(1))])  # 去掉末尾重复的一层扩展名
+            if os.path.exists(new_path):
+                continue
+            try:
+                os.rename(old_path, new_path)
+            except OSError:
+                continue
+            renamed += 1
+            # caption/classification 旁车以「去掉一层扩展名」为基名，需同步改名以保留标注
+            old_base = os.path.splitext(old_path)[0]
+            new_base = os.path.splitext(new_path)[0]
+            for suffix in (".classification.json", ".txt"):
+                src_side, dst_side = old_base + suffix, new_base + suffix
+                if os.path.exists(src_side) and not os.path.exists(dst_side):
+                    try:
+                        os.rename(src_side, dst_side)
+                    except OSError:
+                        pass
+    if renamed:
+        print(f"修复双重扩展名素材: {renamed} 个")
+
 @app.post("/api/local-assets/upload")
 async def upload_local_assets(files: List[UploadFile] = File(...), folder: str = Form("")):
     uploaded = []
@@ -8328,25 +8890,48 @@ async def import_local_assets_from_urls(payload: LocalAssetUrlImportRequest):
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, headers={"User-Agent": "Infinite-Canvas-Asset-Importer/1.0"}) as client:
         for entry in (payload.items or [])[:200]:
             src_url = str(entry.url or "").strip()
+            inline_data = str(entry.data or "").strip()
             result = {"url": src_url, "ok": False, "file": "", "error": ""}
-            if not src_url.startswith(("http://", "https://")):
+            if not inline_data and not src_url.startswith(("http://", "https://")):
                 result["error"] = "仅支持 http(s) 素材地址"
                 results.append(result)
                 continue
             try:
-                response = await client.get(src_url)
-                response.raise_for_status()
-                content_type = response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
-                kind, ext = _local_upload_kind_ext(urllib.parse.urlparse(src_url).path, content_type)
+                if inline_data:
+                    # 插件已在网页上下文里把字节读成 base64（dataURL 形如 data:<ct>;base64,<payload>）
+                    content_type = str(entry.content_type or "").split(";", 1)[0].strip().lower()
+                    b64 = inline_data
+                    if inline_data.startswith("data:"):
+                        header, _, b64 = inline_data.partition(",")
+                        if not content_type:
+                            content_type = header[5:].split(";", 1)[0].strip().lower()
+                    try:
+                        content = base64.b64decode(b64, validate=False)
+                    except Exception:
+                        raise HTTPException(status_code=400, detail="素材数据无法解码")
+                    name_path = urllib.parse.urlparse(src_url).path
+                else:
+                    response = await client.get(src_url)
+                    response.raise_for_status()
+                    content_type = response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+                    content = response.content
+                    name_path = urllib.parse.urlparse(src_url).path
+                kind, ext = _local_upload_kind_ext(name_path, content_type)
                 if kind not in ("image", "video"):
                     raise HTTPException(status_code=400, detail=f"不是图片或视频资源：{content_type or src_url}")
-                content = response.content
                 if not content:
                     raise HTTPException(status_code=400, detail="素材内容为空")
-                base = os.path.splitext(os.path.basename(urllib.parse.unquote(urllib.parse.urlparse(src_url).path)))[0]
-                base = entry.name or base or ("web-video" if kind == "video" else "web-image")
+                # entry.name 可能自带扩展名（采集器常传完整文件名），先 splitext 去掉，否则会和下面拼接的 ext 叠成 .png.png
+                if entry.name:
+                    base = os.path.splitext(entry.name)[0]
+                else:
+                    base = os.path.splitext(os.path.basename(urllib.parse.unquote(name_path)))[0]
+                base = base or ("web-video" if kind == "video" else "web-image")
                 base = re.sub(r"[^0-9A-Za-z一-鿿._-]+", "_", base).strip("_") or ("web-video" if kind == "video" else "web-image")
                 base = base[:60]
+                # 兜底：若 base 末尾已是同一扩展名，去掉一层再拼，杜绝重复后缀
+                if ext and base.lower().endswith(ext.lower()):
+                    base = base[:-len(ext)].rstrip(".") or ("web-video" if kind == "video" else "web-image")
                 filename = f"up_{uuid.uuid4().hex[:12]}_{base}{ext}"
                 rel_name = f"{folder_rel}/{filename}".lstrip("/")
                 path = os.path.join(folder_abs, filename)
@@ -8460,6 +9045,51 @@ async def delete_local_assets(payload: dict, request: Request):
             except OSError:
                 pass
     return {"deleted": deleted}
+
+@app.post("/api/local-assets/move")
+async def move_local_assets(payload: dict, request: Request):
+    """把选中的本地素材移动到目标文件夹（folder 为空表示根目录）；连同 .txt / .classification.json 兄弟文件一起搬。"""
+    ensure_same_origin_request(request)
+    names = payload.get("names") if isinstance(payload, dict) else None
+    if not isinstance(names, list) or not names:
+        raise HTTPException(status_code=400, detail="没有选择素材")
+    folder_value = str(payload.get("folder") or "").strip() if isinstance(payload, dict) else ""
+    target_rel, target_abs = _local_upload_safe_folder(folder_value)
+    if target_rel and not os.path.isdir(target_abs):
+        raise HTTPException(status_code=404, detail="目标文件夹不存在")
+    moved = 0
+    for name in names:
+        try:
+            rel, abs_path = _local_upload_safe_path(name)
+        except HTTPException:
+            continue
+        if not os.path.isfile(abs_path):
+            continue
+        base = os.path.basename(rel)
+        new_rel = f"{target_rel}/{base}".lstrip("/") if target_rel else base
+        if new_rel == rel:
+            continue  # 已在目标文件夹，跳过
+        _, new_abs = _local_upload_abs(new_rel)
+        if os.path.exists(new_abs):
+            # 同名冲突：加短随机后缀，避免覆盖已有文件
+            stem, ext = os.path.splitext(base)
+            base = f"{stem}_{uuid.uuid4().hex[:6]}{ext}"
+            new_rel = f"{target_rel}/{base}".lstrip("/") if target_rel else base
+            _, new_abs = _local_upload_abs(new_rel)
+        try:
+            os.makedirs(os.path.dirname(new_abs), exist_ok=True)
+            os.rename(abs_path, new_abs)
+            for src_sib, dst_sib in (
+                (_local_upload_caption_path(rel), _local_upload_caption_path(new_rel)),
+                (_local_upload_classification_path(rel), _local_upload_classification_path(new_rel)),
+            ):
+                if os.path.isfile(src_sib) and not os.path.exists(dst_sib):
+                    os.rename(src_sib, dst_sib)
+            moved += 1
+        except OSError:
+            continue
+    tree, items = _local_upload_tree_and_items()
+    return {"ok": True, "moved": moved, "items": items, "tree": tree}
 
 @app.post("/api/local-assets/caption")
 async def caption_local_assets(payload: LocalAssetCaptionRequest):
@@ -9147,6 +9777,9 @@ def protocol_from_payload(payload):
         return "runninghub"
     if provider_id == "jimeng":
         return "jimeng"
+    base_url = str(getattr(payload, "base_url", "") or "").strip().lower()
+    if "runninghub.cn" in base_url or "runninghub.ai" in base_url:
+        return "runninghub"
     protocol = str(getattr(payload, "protocol", "") or "openai").strip().lower()
     return protocol if protocol in SUPPORTED_PROVIDER_PROTOCOLS else "openai"
 
@@ -9174,14 +9807,14 @@ def upstream_models_url(base_url: str, protocol: str):
     if protocol == "volcengine":
         return f"{base_url}/models" if base_url.endswith("/api/v3") else f"{base_url}/api/v3/models"
     if protocol == "runninghub":
-        return f"{base_url}/openapi/v2/models"
+        return runninghub_openapi_url({"base_url": base_url}, "models")
     return f"{base_url}/models" if base_url.endswith("/v1") else f"{base_url}/v1/models"
 
 def upstream_model_headers(api_key: str, protocol: str):
     if protocol == "gemini":
         return {"x-goog-api-key": api_key, "Accept": "application/json"}
     if protocol == "runninghub":
-        return {"Authorization": strip_auth_scheme(api_key, "Bearer"), "Accept": "application/json"}
+        return {"Authorization": bearer_auth_value(api_key), "Accept": "application/json"}
     return {"Authorization": bearer_auth_value(api_key), "Accept": "application/json"}
 
 def volcengine_default_model_payload(status=200, message="", raw=None):
@@ -9373,6 +10006,21 @@ async def test_provider_connection(payload: TestConnectionPayload):
             "all": [*JIMENG_DEFAULT_IMAGE_MODELS, *JIMENG_DEFAULT_VIDEO_MODELS],
             "raw": status.get("raw"),
         }
+    if protocol == "runninghub":
+        provider = {"id": "runninghub", "name": "RunningHub", "base_url": (payload.base_url or RUNNINGHUB_DEFAULT_BASE_URL).strip().rstrip("/"), "protocol": "runninghub", "api_key": api_key_from_payload(payload, protocol)}
+        payload_models = await runninghub_models_payload(provider)
+        return {
+            "ok": True,
+            "status": 200,
+            "message": "RunningHub OpenAPI 可用，已拉取官方直连模型注册表。",
+            "model_count": payload_models["total"],
+            "image_models": payload_models["image_models"],
+            "chat_models": payload_models["chat_models"],
+            "video_models": payload_models["video_models"],
+            "all": payload_models["all"],
+            "protocol": "runninghub",
+            "raw": payload_models.get("raw"),
+        }
     base_url = (payload.base_url or "").strip().rstrip("/")
     if not base_url:
         raise HTTPException(status_code=400, detail="请先填写请求地址")
@@ -9556,6 +10204,9 @@ async def fetch_models_from_upstream(base_url: str, api_key: str, protocol: str 
             "video_models": JIMENG_DEFAULT_VIDEO_MODELS,
             "all": [*JIMENG_DEFAULT_IMAGE_MODELS, *JIMENG_DEFAULT_VIDEO_MODELS],
         }
+    if protocol == "runninghub":
+        provider = {"id": "runninghub", "name": "RunningHub", "base_url": base_url or RUNNINGHUB_DEFAULT_BASE_URL, "protocol": "runninghub", "api_key": api_key}
+        return await runninghub_models_payload(provider)
     base_url = (base_url or "").strip().rstrip("/")
     if not base_url:
         raise HTTPException(status_code=400, detail="请先填写请求地址")
@@ -10303,6 +10954,15 @@ async def canvas_video(payload: CanvasVideoRequest):
     provider = get_api_provider(payload.provider_id)
     if is_jimeng_provider(provider):
         return await generate_jimeng_video(payload, provider)
+    if is_runninghub_provider(provider):
+        try:
+            return await generate_runninghub_video(payload, provider)
+        except httpx.HTTPStatusError as exc:
+            text = exc.response.text
+            raise HTTPException(status_code=exc.response.status_code, detail=f"RunningHub 视频接口错误：{text}") from exc
+        except httpx.HTTPError as exc:
+            log_net_error(f"视频(RunningHub) 网络/TLS错误 model={payload.model}", exc)
+            raise HTTPException(status_code=502, detail=f"请求 RunningHub 视频接口失败：{exc}") from exc
     base_url = video_api_root(provider)
     if not base_url:
         raise HTTPException(status_code=400, detail=f"{provider.get('name') or provider['id']} 未配置 Base URL")
@@ -10490,21 +11150,37 @@ async def canvas_video(payload: CanvasVideoRequest):
                     if payload.camerafixed:
                         body["camerafixed"] = True
                     image_like_urls = set()
+                    frame_roles_used = {"first_frame": False, "last_frame": False}
                     volc_video_count = 0
+
+                    def append_volcengine_image(url: str, role: str):
+                        if role in {"first_frame", "last_frame"}:
+                            if frame_roles_used.get(role):
+                                return False
+                            frame_roles_used[role] = True
+                        elif role != "reference_image":
+                            return False
+                        body["content"].append({
+                            "type": "image_url",
+                            "image_url": {"url": url},
+                            "role": role,
+                        })
+                        image_like_urls.add(url)
+                        return True
+
                     for ref in payload.images[:9]:
                         url = volcengine_media_reference_url(ref.url, max_image_size=1536)
                         if not url:
                             continue
-                        item = {
-                            "type": "image_url",
-                            "image_url": {"url": url},
-                        }
-                        # 火山视频接口要求每个 image 内容项都必须带 role；图生视频缺省应按首帧处理。
-                        # reference_image 会被 seedance 后端推断成 r2v，导致 task_type 不支持。
-                        role = volcengine_content_role(ref.role, "image") or "first_frame"
-                        item["role"] = role
-                        body["content"].append(item)
-                        image_like_urls.add(url)
+                        role = volcengine_content_role(ref.role, "image")
+                        if role in {"first_frame", "last_frame"}:
+                            append_volcengine_image(url, role)
+                        elif payload.multimodal:
+                            # 智能多帧/多参模式：多张图作为参考图提交，不能全部伪装成首帧。
+                            append_volcengine_image(url, "reference_image")
+                        elif not frame_roles_used["first_frame"]:
+                            # 普通图生视频没有显式 role 时，只取第一张作为首帧。
+                            append_volcengine_image(url, "first_frame")
                     for url in (payload.videos or [])[:3]:
                         text_url = str(url or "").strip()
                         if not text_url:
@@ -10513,17 +11189,18 @@ async def canvas_video(payload: CanvasVideoRequest):
                         if not media_url:
                             continue
                         if media_url in image_like_urls or looks_like_image_media_url(media_url):
-                            body["content"].append({
-                                "type": "image_url",
-                                "image_url": {"url": media_url},
-                                "role": "first_frame",
-                            })
-                            image_like_urls.add(media_url)
+                            append_volcengine_image(media_url, "reference_image" if payload.multimodal else "first_frame")
                             continue
                         video_items = await volcengine_video_reference_content_items(media_url)
                         body["content"].extend(video_items)
                         volc_video_count += 1
                     for url in (payload.audios or [])[:3]:
+                        duration = probe_local_audio_duration_seconds(url)
+                        if duration is not None and (duration < 1.8 or duration > 15.2):
+                            raise HTTPException(
+                                status_code=400,
+                                detail=f"参考音频时长 {duration:.2f} 秒超出范围：方舟 Seedance 参考音频要求在 1.8 ~ 15.2 秒之间，请裁剪后再插入。"
+                            )
                         audio_url = volcengine_media_reference_url(url, max_image_size=None)
                         if not audio_url:
                             continue
@@ -10695,6 +11372,15 @@ async def canvas_video(payload: CanvasVideoRequest):
                 f"不同视频模型支持的时长不一样；如果选择了模型不支持的时长，上游可能报错，"
                 f"也可能自动按平台默认时长生成，例如 5 秒。\n\n"
                 f"请把视频时长切回该模型支持的值，或改用支持更长时长的视频模型。"
+            )
+            raise HTTPException(status_code=exc.response.status_code, detail=hint) from exc
+        if "audio duration" in text.lower():
+            too_long = "less than or equal" in text.lower() or "15.2" in text
+            bound_hint = "太长（超过 15.2 秒）" if too_long else "太短（不足 1.8 秒）"
+            hint = (
+                f"上游「{provider_name}」模型「{requested_model}」拒绝了参考音频：时长{bound_hint}。\n\n"
+                f"方舟 Seedance 的参考音频时长必须在 1.8 ~ 15.2 秒之间，"
+                f"请把音频裁剪到这个区间后再作为参考音频输入。"
             )
             raise HTTPException(status_code=exc.response.status_code, detail=hint) from exc
         if "inputimagesensitivecontentdetected" in text.lower() or "privacyinformation" in text.lower() or "may contain real person" in text.lower():
@@ -10876,7 +11562,9 @@ async def touch_canvas(canvas_id: str):
 
 @app.get("/api/canvas-assets")
 async def list_canvas_assets():
-    return canvas_assets_index()
+    # canvas_assets_index 会同步遍历并解析所有画布 JSON，放进线程池避免阻塞事件循环
+    # （否则画布多时一次请求就会卡住整个 asyncio loop，连 WebSocket 一起掉线）。
+    return await asyncio.to_thread(canvas_assets_index)
 
 @app.get("/api/smart-canvas/prompt-templates")
 async def smart_canvas_prompt_templates():
@@ -13150,7 +13838,7 @@ def sync_runninghub_workflow_to_provider(cfg):
             "image_edit_endpoint": "",
             "enabled": True,
             "primary": False,
-            "image_models": RUNNINGHUB_DEFAULT_IMAGE_MODELS,
+            "image_models": [],
             "chat_models": [],
             "video_models": [],
             "ms_loras": [],
@@ -13523,4 +14211,8 @@ def run_workflow(name: str, payload: WorkflowRunRequest):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=3000)
+    # 关闭服务端协议级 WebSocket ping：部分客户端（如 PS UXP 面板）不会自动回 pong，
+    # 默认 20s ping/20s 超时会把这些连接每隔一会儿就踢掉造成"频繁断连"。
+    # 客户端有自己的应用层心跳 + 断线重连兜底，这里禁用协议 ping 更稳。
+    uvicorn.run(app, host="0.0.0.0", port=3000,
+                ws_ping_interval=None, ws_ping_timeout=None)

@@ -4,14 +4,14 @@
 
 ### 方法一：双击运行（推荐）
 
-1. **首次使用**：右键点击 `启动服务.command` → 选择 "打开" → 点击 "打开"（绕过安全警告）
-2. **之后使用**：直接双击 `启动服务.command` 即可
+1. **首次使用**：右键点击 `mac-启动服务.command` → 选择 "打开" → 点击 "打开"（绕过安全警告）
+2. **之后使用**：直接双击 `mac-启动服务.command` 即可
 
 ### 方法二：终端运行
 
 ```bash
 cd 项目文件夹
-python3 启动服务.py
+python3 main.py
 ```
 
 ## 功能特点
@@ -33,16 +33,18 @@ python3 启动服务.py
 
 | 文件 | 说明 |
 |------|------|
-| `启动服务.command` | 双击运行的启动器 |
-| `启动服务.py` | 主程序，包含自动安装依赖逻辑 |
-| `main.py` | 服务主程序 |
+| `mac-启动服务.command` | 双击运行的启动器（自动修复权限、清理旧进程、启动服务） |
+| `mac-修复权限.command` | 单独修复 macOS 安全限制 |
+| `main.py` | 服务主程序（直接 `python3 main.py` 即可启动） |
+| `安装即梦CLI.command` | 安装/更新 dreamina CLI |
+| `登录即梦CLI.command` | 登录 dreamina CLI |
 
 ## 常见问题
 
 ### 1. 提示 "无法打开，因为无法验证开发者"
 
 **解决方法**：
-- 右键点击 `启动服务.command`
+- 右键点击 `mac-启动服务.command`
 - 选择 "打开"
 - 在弹出的对话框中点击 "打开"
 
@@ -64,12 +66,12 @@ pip3 install fastapi uvicorn httpx pillow requests pydantic python-dotenv websoc
 
 ### 安装依赖
 ```bash
-./mac-安装依赖.sh
+pip3 install fastapi uvicorn httpx pillow requests pydantic python-dotenv websockets watchfiles
 ```
 
 ### 启动服务
 ```bash
-./mac-启动服务.sh
+python3 main.py
 ```
 
 ## 访问服务

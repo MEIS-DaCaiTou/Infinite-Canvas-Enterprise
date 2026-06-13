@@ -93,6 +93,7 @@ let selectedLocalUploadId = '';
 let selectedLocalUploadIds = new Set();
 let localUploadQuery = '';
 let localUploadManageMode = false;
+let localUploadClipboard = null;
 let assetClassifyBusy = false;
 let localClassifyBusy = false;
 let lightboxPanState = null;
@@ -1278,7 +1279,9 @@ function selectedAssetImageItems(){
 function renderLocalManager(){
     normalizeLocalCaptionSettings();
     const items = localUploadItems();
-    if(selectedLocalUploadId && !items.some(item => item.id === selectedLocalUploadId)) selectedLocalUploadId = '';
+    // 只有当选中的素材"真的不存在了"(被删除)才清空；只是被分类/筛选挡住时仍保留预览，
+    // 这样切换分类时中间预览不会跳回第一张，方便对照着找相似图片。
+    if(selectedLocalUploadId && !findLocalUpload(selectedLocalUploadId)) selectedLocalUploadId = '';
     if(!selectedLocalUploadId && items.length) selectedLocalUploadId = items[0].id;
     const detail = findLocalUpload(selectedLocalUploadId);
     const total = (localAssets || []).length;
@@ -1320,6 +1323,9 @@ function renderLocalManager(){
                     <div class="asset-tools local-manage-actions">
                         <button class="asset-btn" type="button" data-localup-select-all ${items.length ? '' : 'disabled'}><i data-lucide="check-square"></i><span>全选</span></button>
                         <button class="asset-btn" type="button" data-localup-clear ${selectedLocalUploadIds.size ? '' : 'disabled'}><i data-lucide="square"></i><span>清空</span></button>
+                        <button class="asset-btn" type="button" data-localup-download-selected ${selectedLocalUploadIds.size ? '' : 'disabled'}><i data-lucide="download"></i><span>下载</span></button>
+                        <button class="asset-btn" type="button" data-localup-canvas-selected ${selectedLocalUploadIds.size ? '' : 'disabled'}><i data-lucide="clipboard-paste"></i><span>复制到画布</span></button>
+                        <button class="asset-btn" type="button" data-localup-cut-selected ${selectedLocalUploadIds.size ? '' : 'disabled'}><i data-lucide="scissors"></i><span>剪切/移动</span></button>
                         <button class="asset-btn danger" type="button" data-localup-delete-selected ${selectedLocalUploadIds.size ? '' : 'disabled'}><i data-lucide="trash-2"></i><span>删除</span></button>
                     </div>
                 </div>
@@ -1328,6 +1334,7 @@ function renderLocalManager(){
                     ${renderLocalCaptionTools(imageCount)}
                 </div>
             </div>
+            ${renderLocalUploadClipboardBar()}
             <div class="content-scroll">
                 <div class="asset-grid">
                     ${renderLocalUploadAddCard()}
@@ -1358,7 +1365,6 @@ function renderLocalUploadCard(item){
             <div class="asset-card-name" data-localup-rename="${escapeAttr(item.id)}" title="${escapeAttr(item.name || '')}">${escapeHtml(item.name || '本地素材')}</div>
             <div class="asset-card-meta">${escapeHtml(assetKindLabel(item))} · ${escapeHtml(formatFileSize(item.size))}${hasCaption ? ' · 有提示词' : ''}</div>
         </div>
-        <button class="asset-card-quick asset-card-rename" type="button" data-localup-rename="${escapeAttr(item.id)}" title="重命名"><i data-lucide="pencil"></i></button>
     </article>`;
 }
 function renderLocalUploadDetail(item){
@@ -1369,6 +1375,7 @@ function renderLocalUploadDetail(item){
             <div class="panel-title"><strong>素材预览</strong><span>${escapeHtml(assetKindLabel(item))}</span></div>
             <div class="panel-actions">
                 <button class="asset-icon-btn" type="button" data-localup-rename="${escapeAttr(item.id)}" title="重命名"><i data-lucide="pencil"></i></button>
+                <button class="asset-icon-btn" type="button" data-localup-download="${escapeAttr(item.id)}" title="下载"><i data-lucide="download"></i></button>
                 <button class="asset-icon-btn" type="button" data-localup-open="${escapeAttr(item.id)}" title="新窗口打开"><i data-lucide="external-link"></i></button>
                 <button class="asset-icon-btn" type="button" data-localup-copy="${escapeAttr(item.id)}" title="复制链接"><i data-lucide="link"></i></button>
                 <button class="asset-icon-btn danger" type="button" data-localup-delete-one="${escapeAttr(item.id)}" title="删除"><i data-lucide="trash-2"></i></button>
@@ -2274,6 +2281,89 @@ async function downloadSelectedAssets(){
         setStatus(err.message || '下载失败');
     }
 }
+function downloadLocalUpload(id){
+    const item = findLocalUpload(id);
+    if(!item || !item.url){ setStatus('没有可下载的素材'); return; }
+    const name = assetDownloadName(item);
+    downloadUrl(`/api/download-output?url=${encodeURIComponent(item.url)}&name=${encodeURIComponent(name)}`, name);
+    setStatus('已开始下载');
+}
+async function downloadSelectedLocalUploads(){
+    const items = [...selectedLocalUploadIds].map(id => findLocalUpload(id)).filter(it => it?.url);
+    if(!items.length){ setStatus('没有可下载的素材'); return; }
+    if(items.length === 1){ downloadLocalUpload(items[0].id); return; }
+    setStatus(`正在打包 ${items.length} 个素材...`);
+    try {
+        const res = await fetch('/api/canvas-assets/download', {
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({filename:'local-assets.zip', items:items.map(it => ({url:it.url, name:assetDownloadName(it)}))})
+        });
+        if(!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || '下载失败');
+        const blob = await res.blob();
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = 'local-assets.zip';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(link.href), 1200);
+        setStatus(`已下载 ${items.length} 个素材`);
+    } catch(err){
+        setStatus(err.message || '下载失败');
+    }
+}
+function copySelectedLocalUploadsToCanvas(){
+    const items = [...selectedLocalUploadIds].map(id => findLocalUpload(id)).filter(it => it?.url).map(canvasInboxAssetFromItem);
+    if(!items.length){ setStatus('没有可复制的素材'); return; }
+    try {
+        localStorage.setItem(SMART_CANVAS_ASSET_INBOX_KEY, JSON.stringify({items, ts: Date.now()}));
+    } catch(err){
+        setStatus('复制失败：' + (err?.message || err));
+        return;
+    }
+    setStatus(`已复制 ${items.length} 个素材，去智能画布按 Ctrl+V 粘贴`);
+}
+function renderLocalUploadClipboardBar(){
+    if(!localUploadClipboard?.ids?.length) return '';
+    const sameFolder = String(localUploadClipboard.sourceFolder || '') === String(activeLocalUploadFolder || '');
+    const hereLabel = activeLocalUploadFolder ? localUploadFolderTitle() : '根目录';
+    return `<div class="asset-clipboard-bar">
+        <div class="asset-clipboard-info"><i data-lucide="clipboard"></i><span>已剪切 ${localUploadClipboard.ids.length} 个素材</span></div>
+        <div class="asset-tools">
+            <button class="asset-btn primary" type="button" data-localup-paste-clipboard ${sameFolder ? 'disabled' : ''}><i data-lucide="clipboard-paste"></i><span>${sameFolder ? '切到其他文件夹后移动' : `移动到「${escapeHtml(hereLabel)}」`}</span></button>
+            <button class="asset-icon-btn" type="button" data-localup-clear-clipboard title="取消剪切"><i data-lucide="x"></i></button>
+        </div>
+    </div>`;
+}
+function setLocalUploadClipboard(){
+    const ids = [...selectedLocalUploadIds];
+    if(!ids.length){ setStatus('没有选中的素材'); return; }
+    localUploadClipboard = {ids, sourceFolder: activeLocalUploadFolder || ''};
+    selectedLocalUploadIds.clear();
+    render();
+    setStatus(`已剪切 ${ids.length} 个素材，切换到目标文件夹后点"移动到此文件夹"`);
+}
+async function pasteLocalUploadClipboard(){
+    if(!localUploadClipboard?.ids?.length) return;
+    const names = localUploadClipboard.ids.map(id => findLocalUpload(id)?.file).filter(Boolean);
+    if(!names.length){ localUploadClipboard = null; render(); return; }
+    setStatus('正在移动...');
+    try {
+        const data = await apiJson('/api/local-assets/move', {
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({names, folder: activeLocalUploadFolder || ''})
+        });
+        await loadLocalAssets();
+        localUploadClipboard = null;
+        selectedLocalUploadIds.clear();
+        render();
+        setStatus(`已移动 ${data?.moved ?? names.length} 个素材`);
+    } catch(err){
+        setStatus(err.message || '移动失败');
+    }
+}
 async function renameWorkflowItem(id){
     const item = findWorkflowItem(id);
     const name = window.prompt('工作流名称', item?.name || '');
@@ -2676,10 +2766,8 @@ async function handleClick(event){
     if(localUpClass){
         const nextFilter = localUpClass.dataset.localupClassFilter || '';
         activeLocalUploadClassFilter = activeLocalUploadClassFilter === nextFilter ? '' : nextFilter;
-        if(activeLocalUploadClassFilter) {
-            openLocalUploadClassGroup = assetClassificationGroupIdForFilter(activeLocalUploadClassFilter, localUploadClassEntries()) || openLocalUploadClassGroup;
-        }
-        selectedLocalUploadId = '';
+        // 不再联动展开左侧「智能分类」分组；也不再清空预览选中——切换分类时保持当前预览的那张图，
+        // 方便频繁切分类找相似图片。
         selectedLocalUploadIds.clear();
         pendingBatchDelete = '';
         render();
@@ -2693,6 +2781,13 @@ async function handleClick(event){
     }
     if(target.closest?.('[data-localup-select-all]')){ localUploadItems().forEach(item => selectedLocalUploadIds.add(item.id)); render(); return; }
     if(target.closest?.('[data-localup-clear]')){ selectedLocalUploadIds.clear(); render(); return; }
+    if(target.closest?.('[data-localup-download-selected]')){ await downloadSelectedLocalUploads(); return; }
+    if(target.closest?.('[data-localup-canvas-selected]')){ copySelectedLocalUploadsToCanvas(); return; }
+    if(target.closest?.('[data-localup-cut-selected]')){ setLocalUploadClipboard(); return; }
+    if(target.closest?.('[data-localup-paste-clipboard]')){ await pasteLocalUploadClipboard(); return; }
+    if(target.closest?.('[data-localup-clear-clipboard]')){ localUploadClipboard = null; render(); return; }
+    const localUpDownload = target.closest?.('[data-localup-download]');
+    if(localUpDownload){ downloadLocalUpload(localUpDownload.dataset.localupDownload || ''); return; }
     if(target.closest?.('[data-localup-delete-selected]')){ await deleteLocalAssets([...selectedLocalUploadIds]); return; }
     if(target.closest?.('[data-local-classify-toggle]')){ localClassifyPromptOpen = !localClassifyPromptOpen; render(); return; }
     if(target.closest?.('[data-local-classify-run]')){ await runLocalUploadClassifySelected(); return; }
@@ -3159,7 +3254,7 @@ function rectsIntersect(a, b){
 function marqueeTargetSelector(){
     if(activeTab === 'assets' && assetManageMode) return '[data-asset-card]';
     if(activeTab === 'prompts' && promptManageMode) return '[data-prompt-row]';
-    if(activeTab === 'local' && localManageMode) return '[data-local-card]';
+    if(activeTab === 'local' && localUploadManageMode) return '[data-localup-card]';
     if(activeTab === 'canvas-assets' && canvasAssetManageMode) return '[data-canvas-asset-card]';
     return '';
 }
@@ -3182,7 +3277,7 @@ function beginMarqueeSelection(event){
         selector,
         baseAsset:new Set(selectedAssetIds),
         basePrompt:new Set(selectedPromptIds),
-        baseLocal:new Set(selectedLocalIds),
+        baseLocal:new Set(selectedLocalUploadIds),
         baseCanvasAsset:new Set(selectedCanvasAssetIds)
     };
     updateMarqueeSelection(event);
@@ -3214,9 +3309,9 @@ function updateMarqueeSelection(event){
             if(rectsIntersect(rect, el.getBoundingClientRect())) selectedPromptIds.add(el.dataset.promptRow);
         });
     } else if(activeTab === 'local') {
-        selectedLocalIds = new Set(marqueeState.baseLocal);
+        selectedLocalUploadIds = new Set(marqueeState.baseLocal);
         document.querySelectorAll(marqueeState.selector).forEach(el => {
-            if(rectsIntersect(rect, el.getBoundingClientRect())) selectedLocalIds.add(el.dataset.localCard);
+            if(rectsIntersect(rect, el.getBoundingClientRect())) selectedLocalUploadIds.add(el.dataset.localupCard);
         });
     } else if(activeTab === 'canvas-assets') {
         selectedCanvasAssetIds = new Set(marqueeState.baseCanvasAsset);
@@ -3226,7 +3321,7 @@ function updateMarqueeSelection(event){
     }
     document.querySelectorAll('[data-asset-check]').forEach(input => { input.checked = selectedAssetIds.has(input.dataset.assetCheck); });
     document.querySelectorAll('[data-prompt-check]').forEach(input => { input.checked = selectedPromptIds.has(input.dataset.promptCheck); });
-    document.querySelectorAll('[data-local-check]').forEach(input => { input.checked = selectedLocalIds.has(input.dataset.localCheck); });
+    document.querySelectorAll('[data-localup-check]').forEach(input => { input.checked = selectedLocalUploadIds.has(input.dataset.localupCheck); });
     document.querySelectorAll('[data-canvas-asset-check]').forEach(input => { input.checked = selectedCanvasAssetIds.has(input.dataset.canvasAssetCheck); });
 }
 function endMarqueeSelection(){

@@ -375,7 +375,7 @@ function smartMediaPreviewUrl(itemOrUrl, size=512){
     const raw = String(url || '');
     if(!raw || raw.startsWith('data:') || raw.startsWith('blob:')) return displayUrl;
     if(!raw.startsWith('/output/') && !raw.startsWith('/assets/')) return displayUrl;
-    if(!/\.(png|jpe?g|webp|gif|bmp|avif|tiff?|mp4|webm|mov|m4v)(\?|#|$)/i.test(raw)) return displayUrl;
+    if(!/\.(png|jpe?g|webp|gif|bmp|avif|tiff?|mp4|webm|mov|m4v|avi|mkv)(\?|#|$)/i.test(raw)) return displayUrl;
     const width = Math.max(64, Math.min(2048, Math.round(Number(size) || 512)));
     return `/api/media-preview?w=${width}&url=${encodeURIComponent(raw)}`;
 }
@@ -383,6 +383,16 @@ function smartPreviewImgHtml(itemOrUrl, size=512, attrs=''){
     const original = typeof itemOrUrl === 'string' ? itemOrUrl : (itemOrUrl?.url || '');
     const preview = smartMediaPreviewUrl(itemOrUrl, size);
     return `<img src="${escapeHtml(preview)}" data-preview-src="${escapeAttr(preview)}" data-original-src="${escapeAttr(original)}"${attrs ? ` ${attrs}` : ''}>`;
+}
+function loadSmartOriginalImageDimensions(url){
+    const src = displayMediaUrl({url:url || ''});
+    if(!src || /^data:/i.test(src) || /^blob:/i.test(src)) return Promise.resolve(null);
+    return new Promise(resolve => {
+        const img = new Image();
+        img.onload = () => resolve(img.naturalWidth && img.naturalHeight ? {w:img.naturalWidth, h:img.naturalHeight} : null);
+        img.onerror = () => resolve(null);
+        img.src = src;
+    });
 }
 function smartVideoPreviewHtml(itemOrUrl, size=512, attrs=''){
     const original = typeof itemOrUrl === 'string' ? itemOrUrl : (itemOrUrl?.url || '');
@@ -1028,6 +1038,10 @@ function singleImageLayout(image, node, scale){
     if(Number.isFinite(explicitW) && explicitW > 24 && Number.isFinite(explicitH) && explicitH > 24){
         return {cols:1, rows:1, width:Math.round(explicitW), height:Math.round(explicitH), thumb:Math.round(96 * scale), single:true};
     }
+    // 音频没有自然宽高，否则会套用图片的 260x180 默认框，导致卡片四周大片空白。给一个贴合内容的紧凑尺寸。
+    if(isAudioMediaItem(image)){
+        return {cols:1, rows:1, width:Math.round(288 * scale), height:Math.round(150 * scale), thumb:Math.round(96 * scale), single:true};
+    }
     const layoutSize = mediaLayoutSize(image);
     const naturalW = layoutSize.width;
     const naturalH = layoutSize.height;
@@ -1369,7 +1383,7 @@ function toggleZoomPreview(){
     else enterZoomPreview();
 }
 function imageProviders(){
-    return (apiProviders || []).filter(p => p.enabled !== false && p.id !== 'modelscope' && p.id !== 'runninghub' && p.id !== 'volcengine' && (p.image_models || []).length);
+    return (apiProviders || []).filter(p => p.enabled !== false && p.id !== 'modelscope' && p.id !== 'volcengine' && (p.image_models || []).length);
 }
 function volcengineProvider(){
     return (apiProviders || []).find(p => p.id === 'volcengine' && p.enabled !== false) || {
@@ -1606,7 +1620,7 @@ function modelscopeImageModels(){
 }
 const DEFAULT_VIDEO_MODELS = ['veo3-fast','veo3','sora','runway','kling','pika','minimax-video','wan-v2','seedance-1.0-pro','jimeng-vide-3.0','jimeng-video-3.0-pro'];
 function videoApiProviders(){
-    const fromConfig = (apiProviders || []).filter(p => p.enabled !== false && p.id !== 'runninghub' && p.id !== 'volcengine' && (p.video_models || []).length);
+    const fromConfig = (apiProviders || []).filter(p => p.enabled !== false && p.id !== 'volcengine' && (p.video_models || []).length);
     if(fromConfig.length) return fromConfig;
     return [{id:'comfly', name:'Comfly', video_models:DEFAULT_VIDEO_MODELS, enabled:true}];
 }
@@ -4908,7 +4922,7 @@ function isVideoMediaItem(img){
     if(!img) return false;
     if(img.kind === 'video') return true;
     const url = String(img.url || '').toLowerCase();
-    return /\.(mp4|webm|mov|m4v)(\?|$)/.test(url);
+    return /\.(mp4|webm|mov|m4v|avi|mkv)(\?|$)/.test(url);
 }
 function isInlineVideoActive(img){
     return Boolean(img && img._inlineVideoActive);
@@ -5207,7 +5221,7 @@ function smartRunTaskLabel(run){
     return s.model || 'API Image';
 }
 function outputUrlLooksVideo(url){
-    return /\.(mp4|webm|mov|m4v)(\?|$)/.test(String(url || '').toLowerCase());
+    return /\.(mp4|webm|mov|m4v|avi|mkv)(\?|$)/.test(String(url || '').toLowerCase());
 }
 function proxiedMediaUrl(itemOrUrl, name=''){
     const url = typeof itemOrUrl === 'string' ? itemOrUrl : (itemOrUrl?.url || '');
@@ -5931,6 +5945,28 @@ function measureSmartNodeImages(){
         if(imgEl.tagName?.toLowerCase() === 'img' && image?.url) bindImageProxyFallback(imgEl, image);
         if(!node || !image || image.natural_w || image.natural_h) return;
         const isPreview = isSmartPreviewImage(imgEl);
+        const originalSrc = imgEl.dataset?.originalSrc || image.url || '';
+        if(isPreview && imgEl.dataset?.previewKind !== 'video' && originalSrc && !image._naturalSizeLoading){
+            image._naturalSizeLoading = true;
+            loadSmartOriginalImageDimensions(originalSrc).then(size => {
+                image._naturalSizeLoading = false;
+                if(!size || image.natural_w || image.natural_h) return;
+                image.natural_w = size.w;
+                image.natural_h = size.h;
+                delete image.layout_w;
+                delete image.layout_h;
+                applyThumbDisplaySizeToElement(itemEl, image, Math.max(itemEl?.clientWidth || 0, itemEl?.clientHeight || 0));
+                updateImageResolutionBadgeElement(itemEl, image);
+                if((node.images || []).length === 1 && !node.w && !node.h){
+                    const layout = singleImageLayout(image, node, mediaNodeDefaultScale(node));
+                    node.w = layout.width;
+                    node.h = layout.height;
+                }
+                updateNodeElementDuringResize(node);
+                if(isNodeSelected(node.id)) updateComposer();
+                scheduleSave();
+            });
+        }
         if(isPreview && image.layout_w && image.layout_h) return;
         const apply = () => {
             const w = imgEl.naturalWidth || imgEl.videoWidth || 0;
@@ -9224,14 +9260,21 @@ function renderInputThumbsRow(node){
     const dedup = node ? visibleReferenceImagesFor(node) : [];
     inputThumbsRow.classList.toggle('has-items', dedup.length > 0);
     if(!dedup.length){ inputThumbsRow.innerHTML = ''; return; }
+    const mediaCounters = {image:0, video:0, audio:0, text:0, file:0};
     const thumbsHtml = dedup.map((img, i) => {
         const isVid = isVideoMediaItem(img);
+        const kind = mediaKindForItem(img);
         const isSelf = node ? isSelfReferenceForNode(node, img) : false;
         const title = isSelf
             ? tr('smart.inputSelf')
             : (smartImageMode(node) === 'workflow' ? tr('smart.inputUpstreamWorkflow') : tr('smart.inputUpstream'));
-        const inner = isVid ? smartVideoPreviewHtml(img, 256, 'draggable="false" alt=""') : smartPreviewImgHtml(img, 256, 'draggable="false"');
-        const label = `图${i + 1}`;
+        const inner = kind === 'audio'
+            ? `<div class="input-thumb-audio"><i data-lucide="file-audio"></i></div>`
+            : isVid
+            ? smartVideoPreviewHtml(img, 256, 'draggable="false" alt=""')
+            : smartPreviewImgHtml(img, 256, 'draggable="false"');
+        const count = (mediaCounters[kind] = (mediaCounters[kind] || 0) + 1);
+        const label = kind === 'audio' ? `音频${count}` : kind === 'video' ? `视频${count}` : `图${count}`;
         const sourceUrl = img.originalLocalUrl || img.url || '';
         return `<div class="input-thumb ${isSelf ? 'input-self' : ''}" draggable="false" data-thumb-index="${i}" data-node-id="${escapeHtml(img.nodeId || '')}" data-image-index="${img.imageIndex ?? ''}" data-url="${escapeHtml(img.url || '')}" data-source-url="${escapeHtml(sourceUrl)}" title="${escapeHtml(`${img.name || tr('smart.inputNum').replace('{n}', String(i + 1))} · ${title}`)}">${inner}<span class="input-thumb-label">${escapeHtml(label)}</span></div>`;
     }).join('');
@@ -9783,12 +9826,26 @@ function pendingBoxSize(count, options={}){
 }
 function mentionTokenHtml(img){
     if(!img?.url) return '';
-    const name = img.alias || img.name || '图片';
     const kind = mediaKindForItem(img);
-    const media = kind === 'video'
-        ? smartVideoPreviewHtml(img, 256, 'alt=""')
-        : smartPreviewImgHtml(img, 256, 'alt=""');
+    const name = img.alias || img.name || (kind === 'audio' ? '音频' : kind === 'video' ? '视频' : '图片');
+    const media = mentionTokenMediaHtml(img, kind);
     return `<span class="mention-image-token" contenteditable="false" data-url="${escapeHtml(img.url)}" data-kind="${escapeHtml(kind)}" data-name="${escapeHtml(name)}" data-node-id="${escapeHtml(img.nodeId || '')}" data-image-index="${escapeHtml(img.imageIndex ?? '')}">${media}<span>${escapeHtml(name)}</span></span>`;
+}
+function mentionTokenMediaHtml(img, kind=mediaKindForItem(img)){
+    if(kind === 'audio'){
+        return `<div class="mention-audio-thumb"><i data-lucide="file-audio"></i></div>`;
+    }
+    if(kind === 'video'){
+        return smartVideoPreviewHtml(img, 256, 'alt=""');
+    }
+    return smartPreviewImgHtml(img, 256, 'alt=""');
+}
+function mentionOptionMediaHtml(img){
+    const kind = mediaKindForItem(img);
+    if(kind === 'audio'){
+        return `<div class="media-thumb audio-thumb mention-option-audio"><i data-lucide="file-audio"></i><span>${escapeHtml(img.alias || img.name || 'Audio')}</span></div>`;
+    }
+    return kind === 'video' ? smartVideoPreviewHtml(img, 256, 'alt=""') : smartPreviewImgHtml(img, 256, 'alt=""');
 }
 function promptHtmlWithMentionTokens(text, refs=[]){
     const value = String(text || '');
@@ -10320,7 +10377,7 @@ function renderMentionPicker(source){
     const candidates = (mentionSource === 'asset' ? assetItems : inputItems).slice(0, 36);
     const body = candidates.length ? `<div class="mention-option-grid">${candidates.map((img, i) => `
             <button class="mention-option" type="button" data-mention-index="${i}">
-                ${mediaKindForItem(img) === 'video' ? smartVideoPreviewHtml(img, 256, 'alt=""') : smartPreviewImgHtml(img, 256, 'alt=""')}
+                ${mentionOptionMediaHtml(img)}
                 <span>${escapeHtml(img.alias)}</span>
             </button>
         `).join('')}</div>` : `<div class="mention-empty">${escapeHtml(tr('smart.mentionEmpty'))}</div>`;
@@ -10456,14 +10513,12 @@ function insertMentionToken(img){
     token.className = 'mention-image-token';
     token.contentEditable = 'false';
     token.dataset.url = img.url;
-    token.dataset.name = img.alias || img.name || '图片';
     token.dataset.kind = mediaKindForItem(img);
+    token.dataset.name = img.alias || img.name || (token.dataset.kind === 'audio' ? '音频' : token.dataset.kind === 'video' ? '视频' : '图片');
     token.dataset.nodeId = img.nodeId || '';
     token.dataset.imageIndex = String(img.imageIndex ?? '');
     token.dataset.assetUris = JSON.stringify(img.asset_uris || {});
-    token.innerHTML = token.dataset.kind === 'video'
-        ? `${smartVideoPreviewHtml(img, 256, 'alt=""')}<span>${escapeHtml(token.dataset.name)}</span>`
-        : `${smartPreviewImgHtml(img, 256, 'alt=""')}<span>${escapeHtml(token.dataset.name)}</span>`;
+    token.innerHTML = `${mentionTokenMediaHtml(img, token.dataset.kind)}<span>${escapeHtml(token.dataset.name)}</span>`;
     range.insertNode(token);
     bindSmartPreviewImageFallbacks(token);
     const spacer = document.createTextNode(' ');
@@ -10487,7 +10542,8 @@ function collectPromptParts(){
         if(node.classList?.contains('mention-image-token')){
             let assetUris = {};
             try { assetUris = JSON.parse(node.dataset.assetUris || '{}') || {}; } catch(e) { assetUris = {}; }
-            parts.push({type:'image', url:node.dataset.url || '', name:node.dataset.name || '图片', nodeId:node.dataset.nodeId || '', imageIndex:Number(node.dataset.imageIndex || 0), asset_uris:assetUris});
+            const kind = node.dataset.kind || 'image';
+            parts.push({type:'image', kind, url:node.dataset.url || '', name:node.dataset.name || (kind === 'audio' ? '音频' : '图片'), nodeId:node.dataset.nodeId || '', imageIndex:Number(node.dataset.imageIndex || 0), asset_uris:assetUris});
             return;
         }
         if(node.tagName === 'BR') parts.push({type:'text', text:'\n'});
@@ -10535,7 +10591,7 @@ function buildPromptRequest(node, overrideDefaultImages=null, consumeDefault=fal
         }
         if(!refMap.has(part.url)){
             refMap.set(part.url, refs.length + 1);
-            refs.push({url:part.url, name:part.name || `图${refs.length + 1}`, nodeId:part.nodeId, imageIndex:part.imageIndex, role:`image_${refs.length + 1}`});
+            refs.push({url:part.url, name:part.name || `图${refs.length + 1}`, nodeId:part.nodeId, imageIndex:part.imageIndex, kind:part.kind || 'image', asset_uris:part.asset_uris || {}, role:`image_${refs.length + 1}`});
         }
         body += `图${refMap.get(part.url)}`;
     });
@@ -10551,14 +10607,14 @@ function buildPromptRequest(node, overrideDefaultImages=null, consumeDefault=fal
         return {
             prompt:`${tr('smart.refMapHeader')}\n${mapText}\n\n${tr('smart.refUserNeed')}\n${body}`,
             displayPrompt,
-            refs:refs.map((img, index) => ({url:img.url, name:img.name || `图${index + 1}`, role:`image_${index + 1}`})),
+            refs:refs.map((img, index) => ({url:img.url, name:img.name || `图${index + 1}`, kind:img.kind || mediaKindForItem(img), asset_uris:img.asset_uris || {}, role:`image_${index + 1}`})),
             mentioned:true
         };
     }
     return {
         prompt:body,
         displayPrompt,
-        refs:refs.map((img, index) => ({url:img.url, name:img.name || `图${index + 1}`, role:`image_${index + 1}`})),
+        refs:refs.map((img, index) => ({url:img.url, name:img.name || `图${index + 1}`, kind:img.kind || mediaKindForItem(img), asset_uris:img.asset_uris || {}, role:`image_${index + 1}`})),
         mentioned:false
     };
 }
@@ -13948,6 +14004,8 @@ promptInput.addEventListener('keydown', event => {
 promptInput.addEventListener('mouseover', event => {
     const token = event.target.closest?.('.mention-image-token');
     if(!token) return;
+    // 音频没有可预览的图像，不能把音频 URL 塞进 <img>（会显示破损图标），直接不弹悬浮预览。
+    if(token.dataset.kind === 'audio'){ mentionPreview.style.display = 'none'; return; }
     let media = mentionPreview.querySelector('img,video');
     const isVideo = token.dataset.kind === 'video' || isVideoMediaItem({url:token.dataset.url, kind:token.dataset.kind});
     if(isVideo && media?.tagName?.toLowerCase() !== 'video'){
