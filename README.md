@@ -115,6 +115,21 @@ Rules:
 
 More detail: `docs/upstream/SYNC_POLICY.md`.
 
+## Enterprise Entry And Updates
+
+The in-app project homepage entry must point to the Enterprise repository:
+
+- [MEIS-DaCaiTou/Infinite-Canvas-Enterprise](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise)
+
+The upstream project remains credited and referenced in repository documentation, but it should not be the default in-app project homepage for enterprise users.
+
+Update governance:
+
+- Normal users must not see or trigger one-click update, update-to-version prompts, rollback, or update connectivity checks.
+- Update-related upstream APIs are protected by the enterprise gateway and require administrator permission.
+- Administrators may use the update entry only as an Enterprise controlled maintenance capability.
+- The gateway keeps upstream auto-restart disabled for update requests so the Enterprise `3001/8000` process model remains controlled by the Enterprise launcher.
+
 ## Upstream README
 
 The upstream README is kept only as reference material:

@@ -47,6 +47,8 @@
 
 根目录 `README.md` 是企业版项目首页入口，应保持 Infinite Canvas Enterprise 的项目定位、启动方式、代码边界和上游同步说明。上游 README 不应直接覆盖根目录 `README.md`；如需保留上游 README，应同步到 `docs/upstream/README.upstream.md` 并标注仅供参考。
 
+上游首页 Shell 中的项目主页、版本提示、更新按钮和作者社交入口由企业网关注入层治理。默认实现位置是 `enterprise/gateway.py` 和 `enterprise/interceptors.py`；除非注入无法稳定覆盖，否则不应为企业入口治理直接重构 `static/index.html`。如确需最小修改 `static/index.html`，PR 必须说明这是企业版对上游首页 Shell 的兼容补丁。
+
 ---
 
 ## 3. 默认不应修改

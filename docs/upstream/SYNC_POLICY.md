@@ -18,6 +18,14 @@ It must always describe:
 
 The upstream README must not directly overwrite the root `README.md`.
 
+The in-app project homepage entry must also remain an Enterprise entry point:
+
+- default target: `https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise`
+- ordinary users must not see upstream one-click update prompts or upstream author/social links
+- upstream project links may be retained only as administrator-facing reference material or repository documentation
+
+After every upstream sync, verify that the Enterprise gateway injection still governs `static/index.html` project entry, version/update UI, and upstream author visibility. If upstream changes the homepage DOM IDs or update scripts, fix the Enterprise injection in the same sync PR before merge.
+
 ## Preserving Upstream README
 
 If the upstream README is useful during an upstream sync, preserve it at:
@@ -42,6 +50,7 @@ Every upstream sync PR must state:
 - manual verification results when applicable
 - risks
 - rollback plan
+- whether the Enterprise homepage/update governance was rechecked
 
 ## Current Upstream Baseline
 

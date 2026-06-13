@@ -62,6 +62,8 @@
 
 2026-06-13 Issue #11 README 边界治理确认：根目录 `README.md` 必须是 Infinite Canvas Enterprise 企业版项目首页入口，不再由上游原版 README 占据。上游 README 如需保留，放在 `docs/upstream/README.upstream.md` 并标注仅供参考；上游同步策略记录在 `docs/upstream/SYNC_POLICY.md`。后续上游同步 PR 必须检查根目录 `README.md` 是否仍保持企业版定位。
 
+2026-06-13 Issue #13 企业项目入口与更新权限治理：前端“项目主页”默认应指向企业仓库 `MEIS-DaCaiTou/Infinite-Canvas-Enterprise`，不再指向上游 `hero8152/Infinite-Canvas`。普通用户不应看到“一键更新”“更新到 vX”提示、更新弹窗、回滚/连通性测试入口或上游作者社交区；管理员看到的更新能力必须表述为企业版受控更新。当前实现优先放在 `enterprise/gateway.py` 的 HTML 注入脚本和 `enterprise/interceptors.py` 的响应/请求治理中，未直接修改 `static/index.html`。后续上游同步必须检查 `static/index.html` 的项目入口、版本更新 UI 和作者区 DOM 是否仍能被企业注入稳定治理。
+
 ---
 
 ## 4. 不可偏离的开发边界

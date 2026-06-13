@@ -49,6 +49,17 @@ def _truthy(value: str | None) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+# ── 企业项目信息与更新治理 ───────────────────────────────
+ENTERPRISE_REPO_URL: str = os.getenv(
+    "ENTERPRISE_REPO_URL",
+    "https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise",
+)
+ENTERPRISE_UPDATE_ENABLED: bool = _truthy(os.getenv("ENTERPRISE_UPDATE_ENABLED", "true"))
+ENTERPRISE_HIDE_UPSTREAM_AUTHOR: bool = _truthy(
+    os.getenv("ENTERPRISE_HIDE_UPSTREAM_AUTHOR", "true")
+)
+
+
 def _production_security_enabled() -> bool:
     env = os.getenv("ENTERPRISE_ENV", "").strip().lower()
     return env in {"prod", "production"} or _truthy(os.getenv("ENTERPRISE_STRICT_SECURITY"))

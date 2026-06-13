@@ -13,6 +13,11 @@ from typing import Optional, Tuple
 from fastapi.responses import JSONResponse
 
 from enterprise import db as edb
+from enterprise.config import (
+    ENTERPRISE_HIDE_UPSTREAM_AUTHOR,
+    ENTERPRISE_REPO_URL,
+    ENTERPRISE_UPDATE_ENABLED,
+)
 
 
 # ── 不需要过滤的静态资源后缀 ──────────────────────────────
@@ -54,22 +59,31 @@ async def pre_process(
     user_id = user["user_id"]
     is_admin = bool(user.get("is_admin"))
 
-    # 管理员直接放行所有请求
-    if is_admin:
-        return None
-
     # ── 上游更新接口：企业版只允许管理员操作 ─────────────────
     # 这些接口会写入 main.py / VERSION / static/，普通成员不能触发。
-    if path in {
+    update_paths = {
+        "api/check-update",
         "api/update-connectivity",
         "api/update-backups",
         "api/update-from-github",
         "api/update-rollback",
-    } or path.startswith("api/update-"):
+    }
+    if path in update_paths or path.startswith("api/update-"):
+        if not ENTERPRISE_UPDATE_ENABLED:
+            return JSONResponse(
+                {"error": "企业版更新入口已关闭", "code": 403},
+                status_code=403,
+            )
+        if is_admin:
+            return None
         return JSONResponse(
             {"error": "需要管理员权限才能执行项目更新", "code": 403},
             status_code=403,
         )
+
+    # 管理员直接放行其他请求
+    if is_admin:
+        return None
 
     # ── 单个画布的访问控制 ────────────────────────────────
     # 路径：api/canvases/{canvas_id}  且 canvas_id != 'trash'
@@ -137,6 +151,24 @@ async def post_process(
         return response_body, {}
 
     modified = False
+
+    # ── 企业首页项目信息治理 ───────────────────────────────
+    # 上游 app-info 的 repo_url 指向上游仓库；企业版首页应默认指向企业仓库。
+    # 普通用户不应获得上游更新源信息，避免前端兜底检测显示上游更新入口。
+    if path == "api/app-info" and isinstance(data, dict):
+        data["repo_url"] = ENTERPRISE_REPO_URL
+        data["enterprise"] = {
+            "repo_url": ENTERPRISE_REPO_URL,
+            "update_enabled": bool(ENTERPRISE_UPDATE_ENABLED and is_admin),
+            "hide_upstream_author": bool(ENTERPRISE_HIDE_UPSTREAM_AUTHOR or not is_admin),
+            "is_admin": is_admin,
+        }
+        if not is_admin:
+            data["version_url"] = ""
+            data["tree_url"] = ""
+            data["sources"] = {}
+            data["update_notes"] = {}
+        modified = True
 
     # ── 记录新画布的归属 ──────────────────────────────────
     # POST /api/canvases → {"canvas": {"id": "..."}}
