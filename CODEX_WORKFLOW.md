@@ -18,6 +18,11 @@ Codex 每次开始任务前，必须先阅读：
 8. 必要时阅读 `ENTERPRISE_DOCS.md`
 9. 与当前任务相关的 Issue 正文
 
+如果当前任务涉及浏览器行为、登录权限、企业入口治理、上游同步、画布/对话/素材访问或管理后台回归，还必须阅读：
+
+10. `enterprise/tests/BROWSER_REGRESSION_CHECKLIST.md`
+11. `enterprise/tests/browser-regression.md`
+
 阅读完成后，先确认当前任务边界，再开始修改文件。
 
 ---
@@ -96,6 +101,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\enterprise\tests\smoke.ps1
 ```
 
 不要执行会中断当前服务的测试，除非当前任务明确要求。
+
+涉及浏览器行为、企业入口治理、上游同步或权限边界的任务，必须按 `enterprise/tests/BROWSER_REGRESSION_CHECKLIST.md` 做浏览器级回归验收，并将结果摘要记录到 `enterprise/tests/UPDATE_TEST_LOG.md` 或 PR 描述中。若本轮只建立文档或无法运行浏览器，应在 PR 描述中明确说明未运行原因和后续执行入口。
 
 ---
 

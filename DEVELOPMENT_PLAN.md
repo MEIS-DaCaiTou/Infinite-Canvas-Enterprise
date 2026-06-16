@@ -1,6 +1,6 @@
 # 无限画布企业版 · 后续开发规划
 
-更新时间：2026-06-13
+更新时间：2026-06-16
 
 ---
 
@@ -202,11 +202,12 @@
 
 - Issue #9 使用 Playwright 浏览器验证 `/enterprise/logs` 默认 20 条、10/20/50/100 切换、上一页/下一页、用户筛选、操作类型筛选和组合筛选。
 - Issue #9 使用真实浏览器打开更新后的 Smart Canvas，确认页面标题加载、console 0 error，未观察到明显永久 running 异常。
+- Issue #7 建立浏览器级回归验收体系：新增 `enterprise/tests/BROWSER_REGRESSION_CHECKLIST.md` 覆盖启动健康、登录角色、管理后台、企业入口治理、画布、对话、素材输出资源、上游同步后验收和结果记录；新增 `enterprise/tests/browser-regression.md` 定义最小自动化分层方案。该任务只做验收体系，不执行 Issue #8，不处理第三方图片模型高规格失败问题。
 
 待办：
 
-- 建立不破坏数据的浏览器级 smoke 流程。
-- 验证登录页、管理员页、普通用户画布列表、创建画布归属。
+- 将 `BROWSER_REGRESSION_CHECKLIST.md` 中的 Tier 1 只读浏览器验收逐步脚本化。
+- 在具备一次性测试账号和明确清理策略后，再脚本化用户生命周期与画布创建归属验证。
 - 验证上游更新后 Smart Canvas LLM 节点不会永久卡在运行态。
 
 ---
@@ -225,4 +226,5 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\enterprise\tests\test_star
 ```
 
 5. 手工跑 `enterprise/tests/SMOKE_CHECKLIST.md`。
-6. 如发现上游 bug，先提交上游 issue/PR，再决定是否保留本地临时热修。
+6. 对涉及页面、权限、入口治理或上游同步的 PR，继续按 `enterprise/tests/BROWSER_REGRESSION_CHECKLIST.md` 做浏览器级回归，并把结果记录到 `enterprise/tests/UPDATE_TEST_LOG.md`。
+7. 如发现上游 bug，先提交上游 issue/PR，再决定是否保留本地临时热修。
