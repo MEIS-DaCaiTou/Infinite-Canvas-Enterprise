@@ -46,6 +46,7 @@ from enterprise.interceptors import (
     is_stream_path,
     post_process,
     pre_process,
+    upstream_conversation_user_id,
 )
 from enterprise.admin_api import router as admin_router
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -527,7 +528,9 @@ async def reverse_proxy(path: str, request: Request):
         return Response(status_code=404)
 
     # ── 2. 纯静态资源：不做鉴权直接透传 ──────────────────
-    if any(path.startswith(p) for p in _UPSTREAM_STATIC_PREFIXES) or is_static_asset(path):
+    if not is_stream_path(path) and (
+        any(path.startswith(p) for p in _UPSTREAM_STATIC_PREFIXES) or is_static_asset(path)
+    ):
         return await _forward(path, request, user=None, skip_intercept=True)
 
     # ── 3. 所有其他请求：需要登录 ─────────────────────────
@@ -537,17 +540,25 @@ async def reverse_proxy(path: str, request: Request):
             return RedirectResponse(f"/enterprise/login?next=/{path}")
         return JSONResponse({"error": "未授权，请先登录", "code": 401}, status_code=401)
 
+    body = await request.body()
+
     # ── 4. 前置拦截（访问控制） ───────────────────────────
-    err = await pre_process(path, request.method, user)
+    err = await pre_process(
+        path,
+        request.method,
+        user,
+        query_params=request.query_params,
+        body=body,
+    )
     if err:
         return err
 
     # ── 5. 流式路径：直接透传，不缓冲 ────────────────────
     if is_stream_path(path):
-        return await _forward(path, request, user=user, skip_intercept=True)
+        return await _forward(path, request, user=user, skip_intercept=True, body=body)
 
     # ── 6. 普通请求：代理 + 后置过滤 ─────────────────────
-    return await _forward(path, request, user=user, skip_intercept=False)
+    return await _forward(path, request, user=user, skip_intercept=False, body=body)
 
 
 def _build_user_bar(user: dict) -> str:
@@ -590,9 +601,11 @@ async def _forward(
     request: Request,
     user: Optional[dict],
     skip_intercept: bool = False,
+    body: Optional[bytes] = None,
 ) -> Response:
     """向上游转发请求，可选进行后置过滤"""
-    body = await request.body()
+    if body is None:
+        body = await request.body()
 
     # 企业版由启动脚本管理 3001/8000 双服务。上游自带更新接口的
     # auto_restart 会启动普通版 3000，因此经企业网关触发时强制改为手动重启。
@@ -619,12 +632,13 @@ async def _forward(
     # 企业用户信息注入（上游可选使用，不影响上游逻辑）
     if user:
         from urllib.parse import quote
+        upstream_user_id = upstream_conversation_user_id(path, body, user) or user["user_id"]
         headers["x-enterprise-user-id"] = user["user_id"]
         # URL 编码用户名，防止中文等非 ASCII 字符导致 HTTP 头编码失败
         headers["x-enterprise-username"] = quote(user["username"], safe="")
         headers["x-enterprise-is-admin"] = "true" if user.get("is_admin") else "false"
         # 注入上游已支持的 x-user-id，使对话数据在上游层原生按用户隔离
-        headers["x-user-id"] = user["user_id"]
+        headers["x-user-id"] = upstream_user_id
     # 移除企业 Cookie，避免上游看到
     if "cookie" in headers:
         cookies_str = headers["cookie"]
