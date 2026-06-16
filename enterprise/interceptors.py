@@ -563,10 +563,12 @@ async def post_process(
     返回 (处理后的 body bytes, 需要覆盖的响应头 dict)
     """
     is_admin = _is_admin(user)
+    is_success = 200 <= status_code < 300
 
     # SSE 响应不改体，但仍可记录新建对话归属。
     if "text/event-stream" in content_type:
-        record_event_stream_ownership(user, path, method, response_body)
+        if is_success:
+            record_event_stream_ownership(user, path, method, response_body)
         return response_body, {}
 
     # 非 JSON 响应直接透传
@@ -577,6 +579,9 @@ async def post_process(
     try:
         data = json.loads(response_body)
     except Exception:
+        return response_body, {}
+
+    if not is_success:
         return response_body, {}
 
     modified = False

@@ -133,6 +133,18 @@ async def _run_checks() -> None:
         assert interceptors.can_access_resource(actor_a, "/assets/input/upload-a.png")
         assert not interceptors.can_access_resource(actor_b, "/assets/input/upload-a.png")
 
+        error_payload = b'{"error":"upstream denied","canvases":[{"id":"canvas_a"}]}'
+        body, headers = await interceptors.post_process(
+            "api/canvases",
+            "GET",
+            404,
+            error_payload,
+            "application/json",
+            actor_a,
+        )
+        assert body == error_payload
+        assert headers == {}
+
 
 if __name__ == "__main__":
     asyncio.run(_run_checks())

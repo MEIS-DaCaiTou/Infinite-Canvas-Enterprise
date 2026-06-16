@@ -682,23 +682,27 @@
     });
 
     tbody.innerHTML = sorted.map(c => {
-      const owner = _ownerMap[c.id];
+      const canvasIdRaw = String(c.id || '');
+      const titleHtml = escapeHtml(c.title || '（无标题）');
+      const canvasIdHtml = escapeHtml(canvasIdRaw);
+      const canvasIdArg = jsArg(canvasIdRaw);
+      const owner = _ownerMap[canvasIdRaw];
       const ownerBadge = owner
         ? `<span class="badge badge-active">${escapeHtml(owner.username)}${owner.display_name ? ' · ' + escapeHtml(owner.display_name) : ''}</span>`
         : `<span class="badge badge-unowned">未分配</span>`;
-      const shortId = c.id ? c.id.slice(0, 8) + '…' : '—';
+      const shortId = canvasIdRaw ? escapeHtml(canvasIdRaw.slice(0, 8) + '…') : '—';
       return `
       <tr>
-        <td style="font-weight:800;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${c.title || ''}">${c.title || '（无标题）'}</td>
-        <td style="color:var(--faint);font-size:11.5px;font-family:monospace;" title="${c.id || ''}">${shortId}</td>
+        <td style="font-weight:800;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${titleHtml}">${titleHtml}</td>
+        <td style="color:var(--faint);font-size:11.5px;font-family:monospace;" title="${canvasIdHtml}">${shortId}</td>
         <td>${ownerBadge}</td>
         <td>
           <div style="display:flex;gap:6px;align-items:center;">
-            <select class="select-user" id="sel-${c.id}">
+            <select class="select-user" id="sel-${canvasIdHtml}">
               <option value="">— 选择用户 —</option>
               ${userOptions}
             </select>
-            <button class="row-btn" onclick="assignOwner('${c.id}')">分配</button>
+            <button class="row-btn" onclick="assignOwner('${canvasIdArg}')">分配</button>
           </div>
         </td>
       </tr>`;
