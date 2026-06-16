@@ -2,7 +2,7 @@
 
 > 给后续 Codex / Agent 的第一阅读文件。上下文压缩、换线程、长期维护恢复时，先按本文阅读顺序恢复项目方向，再执行当前 Issue。
 
-更新时间：2026-06-13
+更新时间：2026-06-16
 
 ---
 
@@ -31,7 +31,9 @@
 8. `ENTERPRISE_DOCS.md`：企业层完整开发规范。
 9. `enterprise/tests/README.md`：测试脚本位置与用途。
 10. `enterprise/tests/SMOKE_CHECKLIST.md`：每次上游更新后的必跑检查。
-11. 必要时再读 `HANDOVER.md`：历史交接材料。该文件较长，部分终端可能显示乱码，不应作为唯一权威入口。
+11. `enterprise/tests/BROWSER_REGRESSION_CHECKLIST.md`：浏览器级回归验收清单。
+12. `enterprise/tests/browser-regression.md`：浏览器级回归自动化方案。
+13. 必要时再读 `HANDOVER.md`：历史交接材料。该文件较长，部分终端可能显示乱码，不应作为唯一权威入口。
 
 ---
 
@@ -63,6 +65,8 @@
 2026-06-13 Issue #11 README 边界治理确认：根目录 `README.md` 必须是 Infinite Canvas Enterprise 企业版项目首页入口，不再由上游原版 README 占据。上游 README 如需保留，放在 `docs/upstream/README.upstream.md` 并标注仅供参考；上游同步策略记录在 `docs/upstream/SYNC_POLICY.md`。后续上游同步 PR 必须检查根目录 `README.md` 是否仍保持企业版定位。
 
 2026-06-13 Issue #13 企业项目入口与更新权限治理：前端“项目主页”默认应指向企业仓库 `MEIS-DaCaiTou/Infinite-Canvas-Enterprise`，不再指向上游 `hero8152/Infinite-Canvas`。普通用户不应看到“一键更新”“更新到 vX”提示、更新弹窗、回滚/连通性测试入口或上游作者社交区；管理员看到的更新能力必须表述为企业版受控更新。当前实现优先放在 `enterprise/gateway.py` 的 HTML 注入脚本和 `enterprise/interceptors.py` 的响应/请求治理中，未直接修改 `static/index.html`。后续上游同步必须检查 `static/index.html` 的项目入口、版本更新 UI 和作者区 DOM 是否仍能被企业注入稳定治理。
+
+2026-06-16 Issue #7 浏览器级回归验收体系：新增 `enterprise/tests/BROWSER_REGRESSION_CHECKLIST.md` 和 `enterprise/tests/browser-regression.md`，把启动健康、登录角色、管理后台、企业入口治理、画布、对话、素材输出资源、上游同步后验收和结果记录格式固化为长期维护清单。本任务只建立验收体系，不执行 Issue #8，不重新打开 Issue #15 / #16，不处理第三方图片模型高规格失败问题。
 
 ---
 
