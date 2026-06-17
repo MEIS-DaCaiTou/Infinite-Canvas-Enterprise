@@ -205,7 +205,7 @@ async def canvas_owners(request: Request):
 @router.put("/api/canvases/{canvas_id}/owner")
 async def assign_canvas_owner(canvas_id: str, request: Request):
     """管理员手动分配画布归属"""
-    _require_admin(request)
+    current = _require_admin(request)
     body = await request.json()
     user_id = (body.get("user_id") or "").strip()
     if not user_id:
@@ -215,8 +215,73 @@ async def assign_canvas_owner(canvas_id: str, request: Request):
     if not target:
         raise HTTPException(status_code=404, detail="用户不存在")
     edb.assign_canvas_owner(canvas_id, user_id)
-    edb.log_action(user_id, "canvas_assigned", canvas_id)
+    edb.log_action(
+        current["user_id"],
+        "canvas_assigned",
+        json.dumps({
+            "canvas_id": canvas_id,
+            "target_user_id": user_id,
+            "target_username": target.get("username"),
+        }, ensure_ascii=False),
+    )
     return {"success": True, "canvas_id": canvas_id, "user_id": user_id}
+
+
+# ── 对话归属查询（管理员专用）────────────────────────────
+
+@router.get("/api/conversation-owners")
+async def conversation_owners(request: Request):
+    """返回上游对话文件和企业归属状态，包含未归属历史对话。"""
+    _require_admin(request)
+    owner_map = edb.get_all_conversation_owner_map()
+    users = {u["id"]: u for u in edb.list_users()}
+
+    result = []
+    for record in edb.list_conversation_records():
+        owner_id = owner_map.get(record["id"])
+        owner = users.get(owner_id or "", {})
+        file_user = users.get(record.get("file_user_id") or "", {})
+        result.append({
+            "id": record["id"],
+            "title": record.get("title") or "新对话",
+            "created_at": record.get("created_at") or 0,
+            "updated_at": record.get("updated_at") or 0,
+            "message_count": record.get("message_count") or 0,
+            "file_user_id": record.get("file_user_id") or "",
+            "file_username": file_user.get("username", record.get("file_user_id") or ""),
+            "user_id": owner_id,
+            "username": owner.get("username", "未分配"),
+            "display_name": owner.get("display_name", ""),
+            "unowned": owner_id is None,
+        })
+    return {"conversations": result}
+
+
+@router.put("/api/conversations/{conversation_id}/owner")
+async def assign_conversation_owner(conversation_id: str, request: Request):
+    """管理员手动分配对话归属。"""
+    current = _require_admin(request)
+    body = await request.json()
+    user_id = (body.get("user_id") or "").strip()
+    if not user_id:
+        raise HTTPException(status_code=400, detail="user_id 不能为空")
+    target = edb.get_user_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    if not edb.get_conversation_file_owner(conversation_id):
+        raise HTTPException(status_code=404, detail="对话不存在")
+
+    edb.assign_conversation_owner(conversation_id, user_id)
+    edb.log_action(
+        current["user_id"],
+        "conversation_assigned",
+        json.dumps({
+            "conversation_id": conversation_id,
+            "target_user_id": user_id,
+            "target_username": target.get("username"),
+        }, ensure_ascii=False),
+    )
+    return {"success": True, "conversation_id": conversation_id, "user_id": user_id}
 
 
 # ── 自身信息 ──────────────────────────────────────────────

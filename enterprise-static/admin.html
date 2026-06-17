@@ -216,7 +216,7 @@
     <header class="page-head">
       <div>
         <div class="title">管理后台</div>
-        <div class="sub">管理企业成员账号与画布归属</div>
+        <div class="sub">管理企业成员账号、画布归属与对话归属</div>
       </div>
       <div class="page-actions">
         <a href="/" class="action-btn">返回画布</a>
@@ -234,6 +234,7 @@
     <nav class="tabs">
       <button class="tab-btn active" onclick="switchTab('users', this)">成员管理</button>
       <button class="tab-btn" onclick="switchTab('canvases', this)">画布归属</button>
+      <button class="tab-btn" onclick="switchTab('conversations', this)">对话归属</button>
     </nav>
 
     <!-- Tab：用户管理 -->
@@ -284,6 +285,31 @@
       </table>
     </div>
     </div><!-- /tab-canvases -->
+
+    <!-- Tab：对话归属 -->
+    <div class="tab-panel" id="tab-conversations">
+    <div class="block">
+      <div class="block-head">
+        <span class="block-title">对话归属管理</span>
+        <span id="conversationCount" style="color:var(--faint);font-size:11.5px;font-weight:700;">加载中…</span>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>对话标题</th>
+            <th>对话 ID</th>
+            <th>当前归属</th>
+            <th>文件目录</th>
+            <th>消息数</th>
+            <th>分配用户</th>
+          </tr>
+        </thead>
+        <tbody id="conversationTable">
+          <tr><td colspan="6" style="text-align:center;color:var(--faint);padding:48px 0;font-weight:700;">加载中…</td></tr>
+        </tbody>
+      </table>
+    </div>
+    </div><!-- /tab-conversations -->
 
   </div>
 </div>
@@ -602,6 +628,9 @@
     } else if (name === 'canvases') {
       primaryBtn.style.display = 'none';
       loadCanvases();
+    } else if (name === 'conversations') {
+      primaryBtn.style.display = 'none';
+      loadConversations();
     }
   }
 
@@ -653,23 +682,27 @@
     });
 
     tbody.innerHTML = sorted.map(c => {
-      const owner = _ownerMap[c.id];
+      const canvasIdRaw = String(c.id || '');
+      const titleHtml = escapeHtml(c.title || '（无标题）');
+      const canvasIdHtml = escapeHtml(canvasIdRaw);
+      const canvasIdArg = jsArg(canvasIdRaw);
+      const owner = _ownerMap[canvasIdRaw];
       const ownerBadge = owner
         ? `<span class="badge badge-active">${escapeHtml(owner.username)}${owner.display_name ? ' · ' + escapeHtml(owner.display_name) : ''}</span>`
         : `<span class="badge badge-unowned">未分配</span>`;
-      const shortId = c.id ? c.id.slice(0, 8) + '…' : '—';
+      const shortId = canvasIdRaw ? escapeHtml(canvasIdRaw.slice(0, 8) + '…') : '—';
       return `
       <tr>
-        <td style="font-weight:800;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${c.title || ''}">${c.title || '（无标题）'}</td>
-        <td style="color:var(--faint);font-size:11.5px;font-family:monospace;" title="${c.id || ''}">${shortId}</td>
+        <td style="font-weight:800;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${titleHtml}">${titleHtml}</td>
+        <td style="color:var(--faint);font-size:11.5px;font-family:monospace;" title="${canvasIdHtml}">${shortId}</td>
         <td>${ownerBadge}</td>
         <td>
           <div style="display:flex;gap:6px;align-items:center;">
-            <select class="select-user" id="sel-${c.id}">
+            <select class="select-user" id="sel-${canvasIdHtml}">
               <option value="">— 选择用户 —</option>
               ${userOptions}
             </select>
-            <button class="row-btn" onclick="assignOwner('${c.id}')">分配</button>
+            <button class="row-btn" onclick="assignOwner('${canvasIdArg}')">分配</button>
           </div>
         </td>
       </tr>`;
@@ -687,6 +720,85 @@
       });
       showToast('画布归属已更新');
       await loadCanvases();
+    } catch (e) { showToast(e.message, 'error'); }
+  }
+
+  // ── 对话归属管理
+  let _conversations = [];
+
+  async function loadConversations() {
+    document.getElementById('conversationCount').textContent = '加载中…';
+    document.getElementById('conversationTable').innerHTML =
+      '<tr><td colspan="6" style="text-align:center;color:var(--faint);padding:48px 0;font-weight:700;">加载中…</td></tr>';
+    try {
+      const [conversationData, users] = await Promise.all([
+        apiFetch('/enterprise/api/conversation-owners'),
+        _users.length ? Promise.resolve(_users) : apiFetch('/enterprise/api/users'),
+      ]);
+      _conversations = conversationData.conversations || [];
+      if (!_users.length) _users = users;
+      renderConversations();
+    } catch (e) {
+      showToast('加载对话失败: ' + e.message, 'error');
+    }
+  }
+
+  function renderConversations() {
+    const tbody = document.getElementById('conversationTable');
+    const unowned = _conversations.filter(c => c.unowned);
+    document.getElementById('conversationCount').textContent =
+      `共 ${_conversations.length} 个对话，其中 ${unowned.length} 个未分配；未分配对话仅管理员可见`;
+
+    if (!_conversations.length) {
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--faint);padding:48px 0;font-weight:700;">暂无对话</td></tr>';
+      return;
+    }
+
+    const userOptions = _users
+      .filter(u => boolFlag(u.is_active))
+      .map(u => `<option value="${escapeHtml(u.id)}">${escapeHtml(u.username)}${u.display_name ? ' (' + escapeHtml(u.display_name) + ')' : ''}</option>`)
+      .join('');
+
+    const sorted = [..._conversations].sort((a, b) => Number(b.unowned) - Number(a.unowned));
+    tbody.innerHTML = sorted.map(c => {
+      const id = jsArg(c.id);
+      const idHtml = escapeHtml(c.id);
+      const titleHtml = escapeHtml(c.title || '新对话');
+      const shortId = c.id ? escapeHtml(c.id.slice(0, 8) + '…') : '—';
+      const ownerBadge = c.unowned
+        ? `<span class="badge badge-unowned">未分配</span>`
+        : `<span class="badge badge-active">${escapeHtml(c.username)}${c.display_name ? ' · ' + escapeHtml(c.display_name) : ''}</span>`;
+      return `
+      <tr>
+        <td style="font-weight:800;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${titleHtml}">${titleHtml}</td>
+        <td style="color:var(--faint);font-size:11.5px;font-family:monospace;" title="${idHtml}">${shortId}</td>
+        <td>${ownerBadge}</td>
+        <td style="color:var(--muted);font-size:12px;">${escapeHtml(c.file_username || c.file_user_id || '—')}</td>
+        <td style="color:var(--muted);font-size:12px;">${Number(c.message_count || 0)}</td>
+        <td>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <select class="select-user" id="conv-sel-${idHtml}">
+              <option value="">— 选择用户 —</option>
+              ${userOptions}
+            </select>
+            <button class="row-btn" onclick="assignConversationOwner('${id}')">分配</button>
+          </div>
+        </td>
+      </tr>`;
+    }).join('');
+  }
+
+  async function assignConversationOwner(conversationId) {
+    const sel = document.getElementById('conv-sel-' + conversationId);
+    const userId = sel ? sel.value : '';
+    if (!userId) { showToast('请先选择用户', 'error'); return; }
+    try {
+      await apiFetch(`/enterprise/api/conversations/${conversationId}/owner`, {
+        method: 'PUT',
+        body: JSON.stringify({ user_id: userId }),
+      });
+      showToast('对话归属已更新');
+      await loadConversations();
     } catch (e) { showToast(e.message, 'error'); }
   }
 

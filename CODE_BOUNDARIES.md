@@ -49,6 +49,8 @@
 
 上游首页 Shell 中的项目主页、版本提示、更新按钮和作者社交入口由企业网关注入层治理。默认实现位置是 `enterprise/gateway.py` 和 `enterprise/interceptors.py`；除非注入无法稳定覆盖，否则不应为企业入口治理直接重构 `static/index.html`。如确需最小修改 `static/index.html`，PR 必须说明这是企业版对上游首页 Shell 的兼容补丁。
 
+画布、对话和受保护资源的多用户隔离必须优先集中在 `enterprise/interceptors.py`、`enterprise/db.py`、`enterprise/admin_api.py`、`enterprise-static/admin.html` 和 `enterprise/tests/` 中演进。普通用户对未归属或未知归属数据默认拒绝；管理员可查看并分配归属。不要为了隔离功能直接改 `main.py` 或 `static/`。
+
 ---
 
 ## 3. 默认不应修改

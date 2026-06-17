@@ -69,7 +69,7 @@ data/enterprise.db                         (企业层数据)
 │
 ├── enterprise-static/           ← 企业层前端（你的代码）
 │   ├── login.html               ← 登录页
-│   ├── admin.html               ← 管理后台（成员管理 + 画布归属）
+│   ├── admin.html               ← 管理后台（成员管理 + 画布归属 + 对话归属）
 │   ├── profile.html             ← 用户个人中心（修改自己的密码）
 │   └── logs.html                ← 操作审计日志查看页（管理员专用）
 │
@@ -119,7 +119,18 @@ data/enterprise.db                         (企业层数据)
 
 同上，对 `POST /api/conversations` 做同样处理。
 
-### 3.4 usage_logs 表（操作日志）
+### 3.4 user_resource_map 表（本地资源归属）
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| user_id | TEXT | 资源归属用户 ID |
+| resource_url | TEXT PK | 标准化后的本地资源 URL，如 `/assets/output/xxx.png` |
+| source | TEXT | 记录来源，如上游接口路径或派生来源 |
+| created_at | INTEGER | 毫秒时间戳 |
+
+**工作原理**：企业层对上传、生成、保存、SSE 响应以及画布/对话引用中的本地资源做最小归属记录。普通用户访问受保护资源时，优先检查此表；如没有记录，再尝试从自己拥有的画布或对话中派生归属。
+
+### 3.5 usage_logs 表（操作日志）
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
@@ -136,6 +147,16 @@ data/enterprise.db                         (企业层数据)
 ### 4.1 原理
 
 上游所有画布存在 `data/canvases/*.json`，文件名就是画布 ID。企业层**不移动、不重命名**这些文件，而是通过 `user_canvas_map` 表记录"哪个画布属于哪个用户"。
+
+当前隔离规则：
+
+- 管理员可以查看和访问全部画布、对话和受保护资源。
+- 普通用户只能查看和访问 `user_canvas_map` / `user_conversation_map` 中归属自己的画布和对话。
+- 未映射归属的历史画布、历史对话默认仅管理员可见；普通用户列表不可见，直接请求也会返回 404 风格的无权限响应，避免泄露资源是否存在。
+- 新建画布会在 `POST /api/canvases` 成功后自动记录 `canvas_id → 当前用户`；记录失败会在后端输出可诊断日志。
+- 新建对话会在 `POST /api/conversations`、`POST /api/chat`、`POST /api/chat/agent` 或流式响应中自动记录 `conversation_id → 当前用户`；记录失败会在后端输出可诊断日志。
+- 访问单个画布、回收站画布、恢复、删除、彻底删除等通过 `canvas_id` 操作的请求，都会先经过 `interceptors.pre_process()` 权限判断。
+- 访问单个对话、删除对话、对话消息读取以及带 `conversation_id` 的聊天请求，都会先经过 `interceptors.pre_process()` 权限判断。
 
 ### 4.2 请求拦截流程
 
@@ -175,6 +196,32 @@ headers["x-user-id"] = user["user_id"]   # 注入企业用户 ID
 ### 4.4 管理员特权
 
 `is_admin=True` 的用户在 `post_process` 中跳过过滤，可看到所有用户的数据。
+
+### 4.5 本地资源访问隔离
+
+企业网关会对以下本地资源路径进行登录和归属判断：
+
+- `/assets/input/`
+- `/assets/output/`
+- `/assets/uploads/`
+- `/assets/library/`
+- `/output/`
+- `/api/view`
+- `/api/download-output`
+- `/api/media-preview`
+
+判断顺序：
+
+1. 管理员直接允许。
+2. 公共前端资源（如 `/assets/images/`）直接允许。
+3. 已记录到 `user_resource_map` 的资源，只允许对应用户访问。
+4. 没有直接资源归属时，尝试扫描用户可访问的画布和对话引用；能从自有画布或自有对话派生出的资源允许访问，并补写资源归属。
+5. 无法可靠判断归属的受保护资源，普通用户默认拒绝。
+
+当前限制与后续加固点：
+
+- 通用素材库和本地资源集合接口的过滤以顶层 `items/assets/files/results/data` 列表为主，嵌套树形结构和复杂统计仍需后续浏览器级回归继续覆盖。
+- 对无法从 URL、请求参数、响应数据或画布/对话引用中可靠关联归属的历史资源，本轮选择不扩大访问面，由管理员统一访问和后续分配/清理。
 
 ---
 
@@ -230,7 +277,7 @@ headers["x-user-id"] = user["user_id"]   # 注入企业用户 ID
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/enterprise/admin` | 管理后台页面（成员管理 + 画布归属 Tab） |
+| GET | `/enterprise/admin` | 管理后台页面（成员管理 + 画布归属 + 对话归属 Tab） |
 | GET | `/enterprise/logs` | 操作审计日志查看页面 |
 | GET | `/enterprise/api/users` | 获取所有用户列表 |
 | POST | `/enterprise/api/users` | 创建用户 |
@@ -241,6 +288,8 @@ headers["x-user-id"] = user["user_id"]   # 注入企业用户 ID
 | DELETE | `/enterprise/api/users/{id}` | 删除用户（兼容软删除，内部禁用 `is_active=0`） |
 | GET | `/enterprise/api/canvas-owners` | 获取所有画布的归属信息 |
 | PUT | `/enterprise/api/canvases/{id}/owner` | 手动分配/变更画布归属用户 |
+| GET | `/enterprise/api/conversation-owners` | 获取所有对话文件的归属信息，包含未归属历史对话 |
+| PUT | `/enterprise/api/conversations/{id}/owner` | 手动分配/变更对话归属用户 |
 | GET | `/enterprise/api/logs` | 查询操作审计日志（支持分页、用户/操作类型过滤） |
 
 用户管理 API 行为约束：
@@ -282,13 +331,15 @@ headers["x-user-id"] = user["user_id"]   # 注入企业用户 ID
 - `enterprise/interceptors.py`：拦截普通用户更新接口，并对 `/api/app-info` 做企业化响应。
 - `enterprise/config.py` / `enterprise.env.example`：提供 `ENTERPRISE_REPO_URL`、`ENTERPRISE_UPDATE_ENABLED`、`ENTERPRISE_HIDE_UPSTREAM_AUTHOR` 配置。
 
-审计日志中 `user_id` 记录执行操作的管理员 ID，`detail` 记录目标用户 ID、目标用户名和动作摘要。当前 `assign_canvas_owner` 的既有日志归属行为暂未调整，后续可单独评估。
+审计日志中 `user_id` 记录执行操作的管理员 ID，`detail` 记录目标用户 ID、目标用户名和动作摘要。画布归属变更写入 `canvas_assigned`，对话归属变更写入 `conversation_assigned`。
 
 管理后台最小适配：
 
 - 成员列表继续展示启用/禁用状态。
 - 启用用户显示“禁用”操作，禁用用户显示“启用”操作。
 - 新增“编辑名称”操作，可更新展示名；留空时后端回退为用户名。
+- 画布归属 Tab 可查看未分配画布并分配给指定用户。
+- 对话归属 Tab 可查看未分配历史对话并分配给指定用户。
 
 ---
 
@@ -546,6 +597,12 @@ A：可以，但只能由管理员触发。普通用户页面会隐藏"一键更
 
 **Q：新用户登录后看不到任何画布，是正常的吗？**  
 A：是的。每个用户只能看到自己创建的画布。旧数据（企业版部署前已有的画布）没有归属记录，不会出现在任何用户的列表中。若需要迁移旧数据，登录管理后台 → 点击"画布归属"Tab → 找到"未分配"的画布 → 在下拉框中选择用户 → 点击"分配"即可。
+
+**Q：新用户登录后看不到旧对话，是正常的吗？**
+A：是的。每个用户只能看到归属自己的对话。旧数据没有 `user_conversation_map` 记录时，普通用户默认不可见、不可直接访问；管理员可在管理后台 → "对话归属"Tab 中查看并分配给目标用户。
+
+**Q：为什么某些图片或输出文件直接 URL 打不开？**
+A：企业网关会对 `/assets/input/`、`/assets/output/`、`/assets/uploads/`、`/assets/library/`、`/output/`、`/api/view`、`/api/download-output`、`/api/media-preview` 做归属判断。普通用户只能访问自己画布、对话或资源记录关联到的本地资源；无法判断归属的历史资源默认拒绝，避免绕过画布/对话隔离。
 
 **Q：怎么给用户设置/撤销管理员权限？**  
 A：登录管理后台 → 找到对应用户行 → 点击"设为管理员"或"撤销管理员"按钮，立即生效（下次该用户请求时生效，无需重新登录）。注意管理员无法修改自己的权限。

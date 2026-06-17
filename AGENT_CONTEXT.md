@@ -68,6 +68,8 @@
 
 2026-06-16 Issue #7 浏览器级回归验收体系：新增 `enterprise/tests/BROWSER_REGRESSION_CHECKLIST.md` 和 `enterprise/tests/browser-regression.md`，把启动健康、登录角色、管理后台、企业入口治理、画布、对话、素材输出资源、上游同步后验收和结果记录格式固化为长期维护清单。本任务只建立验收体系，不执行 Issue #8，不重新打开 Issue #15 / #16，不处理第三方图片模型高规格失败问题。
 
+2026-06-16 Issue #8 多用户归属隔离加固：企业网关已将画布、对话和受保护本地资源的访问控制集中到 `enterprise/interceptors.py`。普通用户只能访问 `user_canvas_map` / `user_conversation_map` 中归属自己的画布和对话；未归属历史数据默认仅管理员可见，普通用户列表不可见且直接请求被拒绝。新建画布/对话会自动记录归属，管理员可在管理后台分配画布和对话归属。受保护资源路径覆盖 `/assets/input/`、`/assets/output/`、`/assets/uploads/`、`/assets/library/`、`/output/`、`/api/view`、`/api/download-output`、`/api/media-preview`；无法可靠判断归属的历史资源默认拒绝普通用户访问。
+
 ---
 
 ## 4. 不可偏离的开发边界
@@ -119,6 +121,7 @@
 - 增强企业用户管理与审计闭环：启用/禁用、展示名更新、软删除兼容、关键用户管理操作审计日志，以及管理后台最小适配。
 - 完成 Issue #9 / PR #10 上游版本更新兼容性演练并补同步：本地上游版本更新为 `2026.06.12`，诊断、冒烟、管理员用户管理、普通用户隔离、新建 Smart Canvas 归属和 Smart Canvas 打开验证均通过；`python/` 作为本地运行时不纳入 Git。
 - 完成 Issue #11 README 边界治理：根目录 `README.md` 恢复为企业版入口，上游 README 移至 `docs/upstream/README.upstream.md`，并新增 `docs/upstream/SYNC_POLICY.md` 防止后续上游同步再次覆盖企业首页。
+- 完成 Issue #8 多用户归属隔离加固：画布、对话、受保护资源默认按企业归属判断；未归属历史数据普通用户不可见、不可直接访问；管理员可查看并分配画布/对话归属。
 
 ---
 
@@ -132,6 +135,7 @@
 6. 现有内置更新 API 依赖 GitHub anonymous REST tree 请求，可能因 rate limit 返回 HTTP 403；后续应考虑配置 GitHub token 或提供 git-fetch fallback。
 7. 上游当前会跟踪 `python/` 运行时，但企业仓库目前将 `python/`、`python.zip` 视为本地运行时并忽略；后续如要改变该策略，必须单独评估仓库体积、平台兼容性和发布方式，不能在上游同步 PR 中顺手改变。
 8. 根目录 `README.md` 是企业版项目入口，不应在上游同步中被上游 README 覆盖；如需保留上游 README，只能同步到 `docs/upstream/README.upstream.md`。
+9. 受保护资源隔离目前以可从 URL、请求参数、响应数据、画布/对话引用或 `user_resource_map` 判断的本地资源为主；复杂嵌套素材集合和无法可靠归属的历史资源需要后续继续通过浏览器级回归和迁移流程补强。
 
 ---
 
