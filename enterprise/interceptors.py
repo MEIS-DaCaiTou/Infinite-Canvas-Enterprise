@@ -14,6 +14,8 @@ import json
 import os
 import ipaddress
 import socket
+import re
+import subprocess
 from functools import lru_cache
 from pathlib import Path, PurePosixPath
 from typing import Any, Mapping, Optional, Tuple
@@ -172,6 +174,22 @@ def _local_resource_hosts() -> set[str]:
         if sock:
             sock.close()
 
+    if os.name == "nt":
+        try:
+            output = subprocess.run(
+                ["ipconfig"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="ignore",
+                timeout=2,
+                check=False,
+            ).stdout
+            for match in re.finditer(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])", output):
+                hosts.add(match.group(0).lower())
+        except Exception:
+            pass
+
     return {host.strip("[]").lower() for host in hosts if host}
 
 
@@ -298,6 +316,40 @@ def _conversation_ids_for_resource(resource_url: str) -> set[str]:
     return conversation_ids
 
 
+def _resource_in_user_canvas_scope(user_id: str, resource_url: str) -> bool:
+    for canvas_id in _canvas_ids_for_resource(resource_url):
+        if edb.get_canvas_owner(canvas_id) == user_id:
+            edb.record_resource_owner(user_id, resource_url, f"derived_from_canvas:{canvas_id}")
+            return True
+    return False
+
+
+def _resource_in_user_conversation_scope(user_id: str, resource_url: str) -> bool:
+    for conversation_id in _conversation_ids_for_resource(resource_url):
+        if edb.get_conversation_owner(conversation_id) == user_id:
+            edb.record_resource_owner(user_id, resource_url, f"derived_from_conversation:{conversation_id}")
+            return True
+    return False
+
+
+def _reconcile_canvas_resource_ownership(canvas_id: str, data: Any, source: str) -> None:
+    canvas_owner = edb.get_canvas_owner(canvas_id)
+    if not canvas_owner:
+        return
+    canvas = data.get("canvas") if isinstance(data, dict) and isinstance(data.get("canvas"), dict) else data
+    if not isinstance(canvas, dict):
+        return
+    for resource_url in _extract_local_resource_urls(canvas):
+        if not _is_protected_resource(resource_url):
+            continue
+        if edb.get_resource_owner(resource_url):
+            continue
+        try:
+            edb.record_resource_owner(canvas_owner, resource_url, source)
+        except Exception as exc:
+            print(f"[enterprise] reconcile canvas resource owner failed: canvas={canvas_id} resource={resource_url} error={exc}")
+
+
 def can_access_resource(user: dict, resource_url: str) -> bool:
     """判断本地资源是否属于当前用户可访问的画布/对话/资源归属。"""
     normalized = normalize_resource_url(resource_url)
@@ -308,18 +360,17 @@ def can_access_resource(user: dict, resource_url: str) -> bool:
 
     user_id = _user_id(user)
     owner = edb.get_resource_owner(normalized)
+    if owner == user_id:
+        return True
+
+    if _resource_in_user_canvas_scope(user_id, normalized):
+        return True
+
+    if _resource_in_user_conversation_scope(user_id, normalized):
+        return True
+
     if owner:
-        return owner == user_id
-
-    for canvas_id in _canvas_ids_for_resource(normalized):
-        if edb.get_canvas_owner(canvas_id) == user_id:
-            edb.record_resource_owner(user_id, normalized, "derived_from_canvas")
-            return True
-
-    for conversation_id in _conversation_ids_for_resource(normalized):
-        if edb.get_conversation_owner(conversation_id) == user_id:
-            edb.record_resource_owner(user_id, normalized, "derived_from_conversation")
-            return True
+        return False
 
     return False
 
@@ -722,6 +773,10 @@ async def post_process(
 
     if status_code in (200, 201):
         record_resources_from_data(user, path, method, data)
+
+    canvas_id_for_reconcile = _canvas_id_from_path(path)
+    if canvas_id_for_reconcile and path == f"api/canvases/{canvas_id_for_reconcile}" and method in {"GET", "PUT"}:
+        _reconcile_canvas_resource_ownership(canvas_id_for_reconcile, data, f"{path}:{method.lower()}")
 
     # ── 过滤画布列表 ──────────────────────────────────────
     # GET /api/canvases → {"canvases": [...]}

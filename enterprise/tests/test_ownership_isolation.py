@@ -56,6 +56,8 @@ async def _run_checks() -> None:
         actor_a = {"user_id": user_a["id"], "username": "user_a", "is_admin": False}
         actor_b = {"user_id": user_b["id"], "username": "user_b", "is_admin": False}
         actor_admin = {"user_id": admin["id"], "username": "admin", "is_admin": True}
+        legacy_output_url = "http://127.0.0.1:8000/assets/output/legacy-owned-absolute.png"
+        admin_output_url = "http://127.0.0.1:8000/assets/output/admin-in-user-canvas.png"
 
         _write_json(canvas_dir / "canvas_a.json", {
             "id": "canvas_a",
@@ -72,13 +74,29 @@ async def _run_checks() -> None:
             "title": "Legacy Canvas",
             "nodes": [{"image": "/assets/output/legacy.png"}],
         })
+        _write_json(canvas_dir / "legacy_owned_canvas.json", {
+            "id": "legacy_owned_canvas",
+            "title": "Legacy Owned Canvas",
+            "nodes": [{"images": [{"url": legacy_output_url}]}],
+            "logs": [{"outputs": [legacy_output_url]}],
+        })
+        _write_json(canvas_dir / "admin_resource_canvas.json", {
+            "id": "admin_resource_canvas",
+            "title": "Admin Resource In User Canvas",
+            "nodes": [{"images": [{"url": admin_output_url}]}],
+            "logs": [{"outputs": [admin_output_url]}],
+        })
 
         edb.set_canvas_owner("canvas_a", user_a["id"])
         edb.set_canvas_owner("canvas_b", user_b["id"])
+        edb.set_canvas_owner("legacy_owned_canvas", user_a["id"])
+        edb.set_canvas_owner("admin_resource_canvas", user_a["id"])
+        edb.record_resource_owner(admin["id"], "/assets/output/admin-in-user-canvas.png", "admin_task")
 
         assert interceptors.can_access_canvas(actor_a, "canvas_a")
         assert not interceptors.can_access_canvas(actor_a, "canvas_b")
         assert not interceptors.can_access_canvas(actor_a, "legacy_canvas")
+        assert interceptors.can_access_canvas(actor_a, "legacy_owned_canvas")
         assert interceptors.can_access_canvas(actor_admin, "legacy_canvas")
 
         canvas_payload = {
@@ -139,6 +157,46 @@ async def _run_checks() -> None:
         assert interceptors.normalize_resource_url("https://example.com/assets/output/a.png") == ""
         assert interceptors.can_access_resource(actor_a, "http://127.0.0.1:8000/assets/output/a.png")
         assert not interceptors.can_access_resource(actor_b, "http://127.0.0.1:8000/assets/output/a.png")
+        assert edb.get_resource_owner("/assets/output/legacy-owned-absolute.png") is None
+        legacy_payload = {
+            "canvas": {
+                "id": "legacy_owned_canvas",
+                "nodes": [{"images": [{"url": legacy_output_url}]}],
+                "logs": [{"outputs": [legacy_output_url]}],
+            }
+        }
+        await interceptors.post_process(
+            "api/canvases/legacy_owned_canvas",
+            "GET",
+            200,
+            json.dumps(legacy_payload).encode("utf-8"),
+            "application/json",
+            actor_a,
+        )
+        assert edb.get_resource_owner("/assets/output/legacy-owned-absolute.png") == user_a["id"]
+        assert interceptors.can_access_resource(actor_a, legacy_output_url)
+        assert interceptors.can_access_resource(actor_admin, legacy_output_url)
+        assert not interceptors.can_access_resource(actor_b, legacy_output_url)
+        err = await interceptors.pre_process("api/canvases/legacy_owned_canvas", "GET", actor_b)
+        assert err is not None and err.status_code == 404
+        legacy_save_body = json.dumps({
+            "title": "Legacy Owned Canvas",
+            "nodes": [{"images": [{"url": legacy_output_url}]}],
+            "logs": [{"outputs": [legacy_output_url]}],
+        }).encode("utf-8")
+        err = await interceptors.pre_process("api/canvases/legacy_owned_canvas", "PUT", actor_a, body=legacy_save_body)
+        assert err is None
+
+        assert edb.get_resource_owner("/assets/output/admin-in-user-canvas.png") == admin["id"]
+        assert interceptors.can_access_resource(actor_a, admin_output_url)
+        assert interceptors.can_access_resource(actor_admin, admin_output_url)
+        assert not interceptors.can_access_resource(actor_b, admin_output_url)
+        err = await interceptors.pre_process("api/canvases/admin_resource_canvas", "PUT", actor_a, body=json.dumps({
+            "title": "Admin Resource In User Canvas",
+            "nodes": [{"images": [{"url": admin_output_url}]}],
+            "logs": [{"outputs": [admin_output_url]}],
+        }).encode("utf-8"))
+        assert err is None
 
         edb.record_resource_owner(user_a["id"], "/assets/input/upload-a.png", "test")
         assert interceptors.can_access_resource(actor_a, "/assets/input/upload-a.png")
