@@ -12,6 +12,9 @@
 """
 import json
 import os
+import ipaddress
+import socket
+from functools import lru_cache
 from pathlib import Path, PurePosixPath
 from typing import Any, Mapping, Optional, Tuple
 from urllib.parse import parse_qs, unquote, urlparse
@@ -23,7 +26,9 @@ from enterprise.config import (
     ENTERPRISE_HIDE_UPSTREAM_AUTHOR,
     ENTERPRISE_REPO_URL,
     ENTERPRISE_UPDATE_ENABLED,
+    GATEWAY_PORT,
     ROOT_DIR,
+    UPSTREAM_PORT,
 )
 
 
@@ -141,6 +146,58 @@ def _clean_relative_path(value: str) -> str:
     return "/".join(parts)
 
 
+@lru_cache(maxsize=1)
+def _local_resource_hosts() -> set[str]:
+    hosts = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
+    try:
+        hostname = socket.gethostname()
+        if hostname:
+            hosts.add(hostname.lower())
+            for info in socket.getaddrinfo(hostname, None):
+                if info and info[4]:
+                    hosts.add(str(info[4][0]).lower())
+    except Exception:
+        pass
+
+    sock = None
+    try:
+        # UDP connect does not send traffic; it only asks the OS for the
+        # preferred local address used for outbound LAN access.
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.connect(("8.8.8.8", 80))
+        hosts.add(str(sock.getsockname()[0]).lower())
+    except Exception:
+        pass
+    finally:
+        if sock:
+            sock.close()
+
+    return {host.strip("[]").lower() for host in hosts if host}
+
+
+def _is_local_resource_host(hostname: str) -> bool:
+    host = str(hostname or "").strip("[]").lower()
+    if not host:
+        return False
+    if host in _local_resource_hosts():
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return ip.is_loopback or ip.is_private or ip.is_link_local
+
+
+def _is_local_absolute_resource(parsed) -> bool:
+    if parsed.scheme not in {"http", "https"} and not parsed.netloc:
+        return True
+    if not _is_local_resource_host(parsed.hostname or ""):
+        return False
+    if parsed.port is None:
+        return True
+    return parsed.port in {GATEWAY_PORT, UPSTREAM_PORT}
+
+
 def _resource_from_api_view(query: Mapping[str, Any] | dict[str, Any]) -> str:
     filename = os.path.basename(unquote(str(query.get("filename") or "")))
     media_type = str(query.get("type") or "input").strip().lower()
@@ -160,7 +217,7 @@ def normalize_resource_url(value: str) -> str:
     if text.startswith("api/"):
         text = "/" + text
     parsed = urlparse(text)
-    if parsed.scheme in {"http", "https"}:
+    if (parsed.scheme in {"http", "https"} or parsed.netloc) and not _is_local_absolute_resource(parsed):
         return ""
     path = unquote(parsed.path or text.split("?", 1)[0])
     query = parse_qs(parsed.query or "")

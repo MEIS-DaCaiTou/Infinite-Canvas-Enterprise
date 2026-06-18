@@ -132,6 +132,13 @@ async def _run_checks() -> None:
         assert not interceptors.can_access_resource(actor_b, "/api/download-output?url=/assets/output/a.png")
         assert interceptors.can_access_resource(actor_a, "/api/view?filename=a.png&type=output")
         assert not interceptors.can_access_resource(actor_b, "/api/view?filename=a.png&type=output")
+        assert interceptors.normalize_resource_url("http://127.0.0.1:8000/assets/output/a.png") == "/assets/output/a.png"
+        assert interceptors.normalize_resource_url("http://127.0.0.1:3001/assets/output/a.png") == "/assets/output/a.png"
+        lan_view_url = "http://192.168.140.80:8000/api/view?filename=a.png&type=output"
+        assert interceptors.normalize_resource_url(lan_view_url) == "/assets/output/a.png"
+        assert interceptors.normalize_resource_url("https://example.com/assets/output/a.png") == ""
+        assert interceptors.can_access_resource(actor_a, "http://127.0.0.1:8000/assets/output/a.png")
+        assert not interceptors.can_access_resource(actor_b, "http://127.0.0.1:8000/assets/output/a.png")
 
         edb.record_resource_owner(user_a["id"], "/assets/input/upload-a.png", "test")
         assert interceptors.can_access_resource(actor_a, "/assets/input/upload-a.png")
@@ -158,8 +165,19 @@ async def _run_checks() -> None:
             "id": "task_a",
             "status": "succeeded",
             "result": {
-                "images": ["/assets/output/task-a.png"],
-                "items": [{"url": "/api/download-output?url=/assets/output/task-a-download.png"}],
+                "images": [
+                    "/assets/output/task-a.png",
+                    "http://127.0.0.1:8000/assets/output/task-a-absolute.png",
+                ],
+                "items": [
+                    {"url": "/api/download-output?url=/assets/output/task-a-download.png"},
+                    {
+                        "url": (
+                            "http://127.0.0.1:8000/api/download-output?"
+                            "url=http%3A%2F%2F127.0.0.1%3A8000%2Fassets%2Foutput%2Ftask-a-download-absolute.png"
+                        )
+                    },
+                ],
             },
         }
         await interceptors.post_process(
@@ -171,11 +189,24 @@ async def _run_checks() -> None:
             actor_a,
         )
         assert edb.get_resource_owner("/assets/output/task-a.png") == user_a["id"]
+        assert edb.get_resource_owner("/assets/output/task-a-absolute.png") == user_a["id"]
         assert edb.get_resource_owner("/assets/output/task-a-download.png") == user_a["id"]
+        assert edb.get_resource_owner("/assets/output/task-a-download-absolute.png") == user_a["id"]
         assert interceptors.can_access_resource(actor_a, "/assets/output/task-a.png")
+        assert interceptors.can_access_resource(actor_a, "http://127.0.0.1:8000/assets/output/task-a-absolute.png")
         assert not interceptors.can_access_resource(actor_b, "/assets/output/task-a.png")
+        assert not interceptors.can_access_resource(actor_b, "http://127.0.0.1:8000/assets/output/task-a-absolute.png")
         assert interceptors.can_access_resource(actor_admin, "/assets/output/task-a.png")
         assert not interceptors.can_access_resource(actor_a, "/assets/output/unowned-task.png")
+
+        save_body = json.dumps({
+            "title": "Canvas A",
+            "nodes": [{"images": [{"url": "http://127.0.0.1:8000/assets/output/task-a-absolute.png"}]}],
+        }).encode("utf-8")
+        err = await interceptors.pre_process("api/canvases/canvas_a", "PUT", actor_a, body=save_body)
+        assert err is None
+        err = await interceptors.pre_process("api/canvases/canvas_b", "PUT", actor_b, body=save_body)
+        assert err is not None and err.status_code == 404
 
         error_payload = b'{"error":"upstream denied","canvases":[{"id":"canvas_a"}]}'
         body, headers = await interceptors.post_process(
