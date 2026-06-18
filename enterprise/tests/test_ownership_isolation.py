@@ -128,10 +128,54 @@ async def _run_checks() -> None:
         assert not interceptors.can_access_resource(actor_a, "/assets/output/b.png")
         assert not interceptors.can_access_resource(actor_a, "/assets/output/unknown.png")
         assert interceptors.can_access_resource(actor_admin, "/assets/output/unknown.png")
+        assert interceptors.can_access_resource(actor_a, "/api/download-output?url=/assets/output/a.png")
+        assert not interceptors.can_access_resource(actor_b, "/api/download-output?url=/assets/output/a.png")
+        assert interceptors.can_access_resource(actor_a, "/api/view?filename=a.png&type=output")
+        assert not interceptors.can_access_resource(actor_b, "/api/view?filename=a.png&type=output")
 
         edb.record_resource_owner(user_a["id"], "/assets/input/upload-a.png", "test")
         assert interceptors.can_access_resource(actor_a, "/assets/input/upload-a.png")
         assert not interceptors.can_access_resource(actor_b, "/assets/input/upload-a.png")
+
+        task_create_body, task_create_headers = await interceptors.post_process(
+            "api/canvas-image-tasks",
+            "POST",
+            200,
+            b'{"task_id":"task_a","status":"queued"}',
+            "application/json",
+            actor_a,
+        )
+        assert json.loads(task_create_body.decode("utf-8"))["task_id"] == "task_a"
+        assert task_create_headers == {}
+        assert edb.get_canvas_image_task_owner("task_a") == user_a["id"]
+
+        err = await interceptors.pre_process("api/canvas-image-tasks/task_a", "GET", actor_b)
+        assert err is not None and err.status_code == 404
+        err = await interceptors.pre_process("api/canvas-image-tasks/task_a", "GET", actor_a)
+        assert err is None
+
+        task_result = {
+            "id": "task_a",
+            "status": "succeeded",
+            "result": {
+                "images": ["/assets/output/task-a.png"],
+                "items": [{"url": "/api/download-output?url=/assets/output/task-a-download.png"}],
+            },
+        }
+        await interceptors.post_process(
+            "api/canvas-image-tasks/task_a",
+            "GET",
+            200,
+            json.dumps(task_result).encode("utf-8"),
+            "application/json",
+            actor_a,
+        )
+        assert edb.get_resource_owner("/assets/output/task-a.png") == user_a["id"]
+        assert edb.get_resource_owner("/assets/output/task-a-download.png") == user_a["id"]
+        assert interceptors.can_access_resource(actor_a, "/assets/output/task-a.png")
+        assert not interceptors.can_access_resource(actor_b, "/assets/output/task-a.png")
+        assert interceptors.can_access_resource(actor_admin, "/assets/output/task-a.png")
+        assert not interceptors.can_access_resource(actor_a, "/assets/output/unowned-task.png")
 
         error_payload = b'{"error":"upstream denied","canvases":[{"id":"canvas_a"}]}'
         body, headers = await interceptors.post_process(

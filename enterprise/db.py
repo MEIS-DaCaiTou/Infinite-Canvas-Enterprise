@@ -61,6 +61,13 @@ def init_db() -> None:
                 PRIMARY KEY (resource_url)
             );
 
+            CREATE TABLE IF NOT EXISTS user_canvas_task_map (
+                user_id    TEXT NOT NULL,
+                task_id    TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                PRIMARY KEY (task_id)
+            );
+
             CREATE TABLE IF NOT EXISTS usage_logs (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id     TEXT NOT NULL,
@@ -492,6 +499,35 @@ def get_user_resource_urls(user_id: str) -> set:
             (user_id,)
         ).fetchall()
         return {r["resource_url"] for r in rows}
+    finally:
+        conn.close()
+
+
+def record_canvas_image_task_owner(user_id: str, task_id: str) -> bool:
+    user_id = (user_id or "").strip()
+    task_id = (task_id or "").strip()
+    if not user_id or not task_id:
+        return False
+    conn = get_db()
+    try:
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO user_canvas_task_map (user_id, task_id, created_at) VALUES (?, ?, ?)",
+            (user_id, task_id, int(time.time() * 1000))
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def get_canvas_image_task_owner(task_id: str) -> Optional[str]:
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT user_id FROM user_canvas_task_map WHERE task_id = ?",
+            ((task_id or "").strip(),)
+        ).fetchone()
+        return row["user_id"] if row else None
     finally:
         conn.close()
 

@@ -267,6 +267,20 @@ def can_access_resource(user: dict, resource_url: str) -> bool:
     return False
 
 
+def _canvas_image_task_id_from_path(path: str) -> str:
+    parts = path.split("/")
+    if len(parts) >= 3 and parts[0] == "api" and parts[1] == "canvas-image-tasks" and parts[2]:
+        return parts[2]
+    return ""
+
+
+def can_access_canvas_image_task(user: dict, task_id: str) -> bool:
+    if _is_admin(user):
+        return True
+    owner = edb.get_canvas_image_task_owner(task_id)
+    return bool(owner and owner == _user_id(user))
+
+
 def _resource_urls_from_request(
     path: str,
     method: str,
@@ -377,6 +391,10 @@ async def pre_process(
     conversation_id = _conversation_id_from_path(path) or _conversation_id_from_body(path, body)
     if conversation_id and not can_access_conversation(user, conversation_id):
         return _deny_not_found("对话不存在或无权限访问")
+
+    canvas_task_id = _canvas_image_task_id_from_path(path)
+    if canvas_task_id and not can_access_canvas_image_task(user, canvas_task_id):
+        return _deny_not_found("生成任务不存在或无权限访问")
 
     for resource_url in _resource_urls_from_request(path, method, query_params, body):
         if not can_access_resource(user, resource_url):
@@ -516,11 +534,17 @@ def filter_resource_collections(user: dict, data: Any) -> bool:
 def record_resources_from_data(user: dict, path: str, method: str, data: Any) -> None:
     if method.upper() not in {"POST", "PUT", "PATCH"}:
         return
+    record_resource_urls_for_user(_user_id(user), path, data)
+
+
+def record_resource_urls_for_user(user_id: str, source: str, data: Any) -> None:
+    if not user_id:
+        return
     for resource_url in _extract_local_resource_urls(data):
         try:
-            edb.record_resource_owner(_user_id(user), resource_url, path)
+            edb.record_resource_owner(user_id, resource_url, source)
         except Exception as exc:
-            print(f"[企业版] 记录资源归属失败: user={_user_id(user)} resource={resource_url} error={exc}")
+            print(f"[企业版] 记录资源归属失败: user={user_id} resource={resource_url} error={exc}")
 
 
 def record_event_stream_ownership(user: dict, path: str, method: str, response_body: bytes) -> None:
@@ -624,6 +648,20 @@ async def post_process(
                 edb.record_conversation_owner(_user_id(user), conv_obj["id"])
             except Exception as exc:
                 print(f"[企业版] 记录对话归属失败: user={_user_id(user)} conversation={conv_obj.get('id')} error={exc}")
+
+    if path == "api/canvas-image-tasks" and method == "POST" and status_code in (200, 201):
+        task_id = str(data.get("task_id") or "") if isinstance(data, dict) else ""
+        if task_id:
+            try:
+                edb.record_canvas_image_task_owner(_user_id(user), task_id)
+            except Exception as exc:
+                print(f"[enterprise] record canvas image task owner failed: user={_user_id(user)} task={task_id} error={exc}")
+
+    canvas_task_id = _canvas_image_task_id_from_path(path)
+    if canvas_task_id and method == "GET" and status_code == 200:
+        task_owner = edb.get_canvas_image_task_owner(canvas_task_id)
+        if task_owner:
+            record_resource_urls_for_user(task_owner, path, data)
 
     if status_code in (200, 201):
         record_resources_from_data(user, path, method, data)
