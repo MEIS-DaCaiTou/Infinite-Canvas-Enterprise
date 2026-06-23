@@ -14,6 +14,7 @@ Before adding or changing scripts, read:
 - `smoke.ps1` runs non-destructive HTTP smoke checks against a running enterprise gateway.
 - `test_start_stop.ps1` verifies the launcher lifecycle: stop old listeners, start the enterprise launcher, wait for health, terminate the launcher, and confirm `3001/8000` are released.
 - `test_ownership_isolation.py` runs non-destructive ownership isolation checks with a temporary SQLite database and temporary canvas/conversation files.
+- `test_smart_canvas_logs.js` verifies Smart Canvas legacy log normalization, merge behavior, and async task completion logging hooks without calling a model provider.
 - `SMOKE_CHECKLIST.md` is the manual checklist to run after every upstream update.
 - `BROWSER_REGRESSION_CHECKLIST.md` is the browser-level enterprise regression checklist for login, roles, admin console, entry governance, canvas, conversations, assets, and upstream-sync review.
 - `browser-regression.md` describes the minimal automation plan for future browser-level regression scripts.

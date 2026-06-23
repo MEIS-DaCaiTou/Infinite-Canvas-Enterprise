@@ -487,9 +487,34 @@ function mediaItemForStorage(item){
     delete clean._inlineVideoActive;
     return clean;
 }
+function normalizeSmartGenerationLogs(value){
+    const source = Array.isArray(value)
+        ? value
+        : Array.isArray(value?.items)
+            ? value.items
+            : Array.isArray(value?.logs)
+                ? value.logs
+                : (value && typeof value === 'object' && (value.id || value.createdAt || value.created_at || value.outputs || value.status))
+                    ? [value]
+                    : [];
+    return source.filter(entry => entry && typeof entry === 'object').slice(0, 500);
+}
+function mergeSmartGenerationLogs(localLogs, remoteLogs){
+    const seen = new Set();
+    return [...normalizeSmartGenerationLogs(localLogs), ...normalizeSmartGenerationLogs(remoteLogs)]
+        .filter(entry => {
+            const key = entry.id || `${entry.createdAt || entry.created_at || ''}:${JSON.stringify(entry.outputs || [])}:${entry.prompt || ''}`;
+            if(seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        })
+        .sort((a, b) => Number(b.createdAt || b.created_at || 0) - Number(a.createdAt || a.created_at || 0))
+        .slice(0, 500);
+}
 function canvasForStorage(){
     const clean = JSON.parse(JSON.stringify(canvas || {}));
     clean.settings = settingsForStorage(canvasDefaultSmartSettings || initialSmartSettings);
+    clean.logs = normalizeSmartGenerationLogs(clean.logs);
     (clean.nodes || []).forEach(node => {
         if(Array.isArray(node.images)) node.images = node.images.map(mediaItemForStorage);
         if(node.runSettings) node.runSettings = settingsForStorage(node.runSettings);
@@ -3963,6 +3988,7 @@ function applyMergedServerCanvas(serverCanvas){
     const nodeIds = new Set(mergedNodes.map(n => n.id));
     nodes = mergedNodes;
     canvas.connections = mergeSmartConnections(canvas.connections, serverCanvas.connections, nodeIds);
+    canvas.logs = mergeSmartGenerationLogs(canvas.logs, serverCanvas.logs);
     canvas.updated_at = Number(serverCanvas.updated_at || canvas.updated_at || 0);
     if(canvas.title !== serverCanvas.title && serverCanvas.title){
         canvas.title = serverCanvas.title;
@@ -4508,6 +4534,7 @@ async function loadCanvas(){
         if(!res.ok) return;
         const data = await res.json();
         canvas = data.canvas;
+        canvas.logs = normalizeSmartGenerationLogs(canvas.logs);
         canvasUsesConnections = Object.prototype.hasOwnProperty.call(canvas || {}, 'connections');
         document.title = canvas.title || tr('canvas.smartCanvas');
         document.getElementById('smartTitle').textContent = canvas.title || tr('canvas.smartCanvas');
@@ -4569,7 +4596,7 @@ async function saveCanvas(){
                 nodes:storageCanvas.nodes || [],
                 connections:storageCanvas.connections || [],
                 viewport:storageCanvas.viewport || {x:0,y:0,scale:1},
-                logs:storageCanvas.logs || [],
+                logs:normalizeSmartGenerationLogs(storageCanvas.logs),
                 settings:storageCanvas.settings,
                 base_updated_at:storageCanvas.updated_at || canvas.updated_at || 0,
                 client_id:smartClientId
@@ -5368,7 +5395,7 @@ function smartRunSnapshot(node, prompt, refs=[], kind='image'){
 }
 function addSmartGenerationLog({run, outputs=[], runMs=0, error=''}) {
     if(!canvas) return;
-    canvas.logs = canvas.logs || [];
+    canvas.logs = normalizeSmartGenerationLogs(canvas.logs);
     const entry = {
         id:uid('log'),
         createdAt:Date.now(),
@@ -11701,12 +11728,13 @@ async function runLoopRoundIntoSlot(loopNode, rootNode, outputSlot, loopIndex, c
                 outputSlot.images = [];
             }
             outputSlot.pendingTasks = taskIds.map(taskId => ({taskId, kind:'image', providerId:taskResult.providerId, model:taskResult.model}));
+            startSmartPendingGenerationLog(outputSlot, runLog, runLogStart);
             outputSlot.pending = Math.max(taskIds.length, Number(outputSlot.pending || 0) || taskIds.length);
             outputSlot.running = false;
             render();
             scheduleSave();
             await saveCanvas();
-            await resumeSmartPendingNode(outputSlot);
+            await resumeSmartPendingNode(outputSlot, {recordLog:false});
             if(outputSlot.jimengPending || smartRecoverableImageTask(outputSlot)){
                 outputSlot.queued = false;
                 return [];
@@ -11733,6 +11761,7 @@ async function runLoopRoundIntoSlot(loopNode, rootNode, outputSlot, loopIndex, c
             refreshConnectionLayer();
         }
         addSmartGenerationLog({run:{...runLog, kind:result.kind || logKind}, outputs:result.urls, runMs:nowMs() - runLogStart});
+        clearSmartPendingGenerationLog(outputSlot);
         return rememberRoundOutputs(ctx, outputSlot, additions);
     } catch(e) {
         if(handleJimengPendingSignal(outputSlot, e)){
@@ -12142,6 +12171,7 @@ async function runGeneration(){
             const taskIds = Array.isArray(outImages?.taskIds) ? outImages.taskIds : [];
             if(!taskIds.length) throw new Error(tr('smart.errRunFailed'));
             pendingNode.pendingTasks = taskIds.map(taskId => ({taskId, kind:'image', providerId:outImages.providerId, model:outImages.model}));
+            startSmartPendingGenerationLog(pendingNode, runLog, runLogStart);
             pendingNode.pending = Math.max(taskIds.length, Number(pendingNode.pending || 0) || taskIds.length);
             pendingNode.runStartedAt = nowMs();
             pendingNode.runTimerHidden = false;
@@ -12149,7 +12179,7 @@ async function runGeneration(){
             render();
             scheduleSave();
             await saveCanvas();
-            await resumeSmartPendingNode(pendingNode);
+            await resumeSmartPendingNode(pendingNode, {recordLog:false});
             if(pendingNode.jimengPending || smartRecoverableImageTask(pendingNode)){
                 if(sourceVisualState) restoreSourceVisualState(node, sourceVisualState);
                 clearPromptInput({preserveDraft:true});
@@ -12161,6 +12191,7 @@ async function runGeneration(){
             if(outpaintSize) delete node.outpaintSize;
             if(sourceVisualState) restoreSourceVisualState(node, sourceVisualState);
             addSmartGenerationLog({run:runLog, outputs:(pendingNode.images || []).map(img => img.url).filter(Boolean), runMs:nowMs() - runLogStart});
+            clearSmartPendingGenerationLog(pendingNode);
             clearPromptInput({preserveDraft:true});
             settings = previousSettings;
             scheduleSave();
@@ -12628,6 +12659,7 @@ function finalizeJimengPending(node, urls, kind='image'){
     if(!node.runStartedAt) node.runStartedAt = node.runFinishedAt;
     node.runElapsedMs = Math.max(0, node.runFinishedAt - Number(node.runStartedAt || node.runFinishedAt));
     node.runTimerHidden = false;
+    recordSmartPendingGenerationLog(node, additions, kind);
     render();
     scheduleSave();
     return true;
@@ -12794,8 +12826,53 @@ async function pollSmartCanvasTask(taskId){
         activeSmartTaskPolls.delete(taskId);
     }
 }
-function finalizeSmartPendingTask(node, taskId, images, kind='image'){
-    if(!node || !taskId) return;
+function startSmartPendingGenerationLog(node, run, startedAt=nowMs()){
+    if(!node) return;
+    node.pendingGenerationLog = {
+        run:run && typeof run === 'object' ? run : {},
+        startedAt:Number(startedAt || nowMs()),
+        outputs:[]
+    };
+}
+function pendingSmartGenerationLog(node, kind='image'){
+    if(!node) return null;
+    if(node.pendingGenerationLog?.run && typeof node.pendingGenerationLog.run === 'object'){
+        if(!Array.isArray(node.pendingGenerationLog.outputs)) node.pendingGenerationLog.outputs = [];
+        return node.pendingGenerationLog;
+    }
+    const refs = Array.isArray(node.runInputRefs) ? node.runInputRefs : (Array.isArray(node.runPromptRefs) ? node.runPromptRefs : []);
+    const fallback = {
+        nodeId:node.id || '',
+        nodeType:node.type || 'smart-image',
+        kind:kind || 'image',
+        settings:cloneSmartSettings(node.runSettings || settings),
+        prompt:node.runPrompt || node.runModelPrompt || '',
+        refs:refs.map(ref => ({url:ref?.url || '', name:ref?.name || 'image', kind:ref?.kind || ''})).filter(ref => ref.url)
+    };
+    startSmartPendingGenerationLog(node, fallback, node.runStartedAt || nowMs());
+    return node.pendingGenerationLog;
+}
+function clearSmartPendingGenerationLog(node){
+    if(node) delete node.pendingGenerationLog;
+}
+function recordSmartPendingGenerationLog(node, additions, kind='image'){
+    const state = pendingSmartGenerationLog(node, kind);
+    if(!state) return false;
+    const urls = (additions || []).map(item => typeof item === 'string' ? item : item?.url || '').filter(Boolean);
+    state.outputs = [...new Set([...(state.outputs || []), ...urls])];
+    if(!state.outputs.length) return false;
+    addSmartGenerationLog({
+        run:{...state.run, kind:kind || state.run?.kind || 'image'},
+        outputs:state.outputs,
+        runMs:Math.max(0, nowMs() - Number(state.startedAt || nowMs()))
+    });
+    clearSmartPendingGenerationLog(node);
+    return true;
+}
+function finalizeSmartPendingTask(node, taskId, images, kind='image', options={}){
+    if(!node || !taskId) return false;
+    const pendingTask = smartPendingTasks(node).find(task => task.taskId === taskId);
+    if(!pendingTask) return false;
     node.pendingTasks = smartPendingTasks(node).filter(task => task.taskId !== taskId);
     node.pending = Math.max(0, Number(node.pending || 0) - 1);
     const ext = kind === 'video' ? 'mp4' : kind === 'audio' ? 'mp3' : kind === 'text' ? 'txt' : 'png';
@@ -12806,6 +12883,11 @@ function finalizeSmartPendingTask(node, taskId, images, kind='image'){
     }).filter(item => item.url);
     node.images = [...(node.images || []).map(img => stripImageGenerationMeta(img)), ...additions];
     if(additions.length) node.outputKind = kind;
+    const logState = pendingSmartGenerationLog(node, kind);
+    if(logState){
+        const urls = additions.map(item => item.url).filter(Boolean);
+        logState.outputs = [...new Set([...(logState.outputs || []), ...urls])];
+    }
     if(!node.pending && smartPendingTasks(node).length === 0){
         delete node.pendingTasks;
         node.runFinishedAt = nowMs();
@@ -12817,9 +12899,11 @@ function finalizeSmartPendingTask(node, taskId, images, kind='image'){
         node.scale = mediaNodeDefaultScale(node);
         delete node.w;
         delete node.h;
+        if(options.recordLog !== false) recordSmartPendingGenerationLog(node, [], kind);
     }
+    return additions.length > 0;
 }
-async function resumeSmartPendingNode(node){
+async function resumeSmartPendingNode(node, options={}){
     const tasks = smartPendingTasks(node);
     if(!node || !tasks.length) return;
     node.pending = Math.max(tasks.length, Number(node.pending || 0) || tasks.length);
@@ -12830,7 +12914,7 @@ async function resumeSmartPendingNode(node){
         if(task.failed && task.recoverTaskId) return;
         try {
             const result = await pollSmartCanvasTask(task.taskId);
-            finalizeSmartPendingTask(node, task.taskId, result?.images || [], task.kind || 'image');
+            finalizeSmartPendingTask(node, task.taskId, result?.images || [], task.kind || 'image', options);
             render();
             scheduleSave();
         } catch(e) {
