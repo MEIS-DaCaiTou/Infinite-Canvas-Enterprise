@@ -2,6 +2,58 @@
 
 Record diagnostics and smoke-test results after upstream updates.
 
+## 2026-06-23 - Task 3U controlled upstream sync
+
+Update window:
+
+- Branch: `chore/upstream-sync-2026-06-23`.
+- Enterprise version before sync: `2026.06.12`.
+- Enterprise main included PR #21 (`09f376d` / `87dae90`) before synchronization.
+- Upstream source: `hero8152/Infinite-Canvas@0da3ff9ae0477e6e18b7c241020c2ce8cb0d5c73`.
+- Upstream target version and synchronized version: `2026.06.23`.
+- Update method: `git fetch upstream main`, then a controlled replacement of changed upstream-covered files only.
+
+Sync scope and protection:
+
+- Synced: `VERSION`, `main.py`, changed files under `static/`, and changed files under `tools/`, including the upstream Photoshop asset connector.
+- Already equal to upstream and therefore unchanged: `workflows/`, `packages/`, `requirements.txt`, `get-pip.py`, `run.bat`, and upstream install/login/run helper scripts.
+- Not synced: root `README.md` (Enterprise entry point retained), `python/`, `python.zip`, `enterprise.env`, `API/.env`, runtime provider configuration, databases, canvases, conversations, histories, media previews, and generated assets.
+- Protected and retained: `enterprise/`, `enterprise-static/`, `enterprise/tests/`, Enterprise documentation, `enterprise.env.example`, and the Enterprise README boundary.
+
+PR #21 Smart Canvas compatibility review:
+
+- Upstream `static/js/smart-canvas.js` did not contain equivalent PR #21 hooks.
+- Retained as a minimal migration: legacy log normalization on load/save, log preservation during canvas conflict merge, and log recording after recovered/manual image-task or Jimeng completion.
+- `enterprise/tests/test_smart_canvas_logs.js` passed against the synchronized upstream file. The local compatibility patch cannot yet be removed.
+
+Automated checks:
+
+- `python -m py_compile main.py enterprise\\gateway.py enterprise\\interceptors.py enterprise\\db.py enterprise\\admin_api.py enterprise\\config.py`: passed.
+- `python .\\enterprise\\tests\\test_ownership_isolation.py`: passed.
+- `node --check .\\static\\js\\smart-canvas.js`: passed.
+- `node .\\enterprise\\tests\\test_smart_canvas_logs.js`: passed.
+- `enterprise\\tests\\diagnose.ps1`: passed; gateway `0.0.0.0:8000`, internal upstream `127.0.0.1:3001`, health and app-info both returned `2026.06.23`.
+- `enterprise\\tests\\smoke.ps1`: passed.
+- Existing Playwright ownership regression: passed with administrator plus disposable normal users A/B; it verified canvas, conversation, `/assets/output`, `/api/download-output`, `/api/view`, Enterprise project entry, and normal-user update API `403` behavior. It created only ignored runtime test users, canvas data, and a test image.
+
+Browser checks:
+
+- Administrator login and `/enterprise/admin` opened normally.
+- Administrator project-homepage button opened `https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise`; administrator update wording was `企业版更新到 v2026.06.23`.
+- Normal-user browser regression confirmed no upstream update UI, Enterprise project entry, and `POST /api/update-from-github` returned `403`.
+- Legacy Smart Canvas `Task3E2 Output Persistence` displayed its existing successful generation log and still displayed it after reload.
+- Existing new Smart Canvas log displayed after reload.
+- No provider generation was submitted during this synchronization. The recovered-task logging path is covered by the no-provider regression test; a real old-canvas generation/relogin check remains a Draft PR manual acceptance item.
+
+Risks and follow-up:
+
+- The browser recorded one non-blocking `MutationObserver.observe` initialization error from upstream vendor/startup code while Smart Canvas remained usable. It is recorded for upstream follow-up, not changed in this sync.
+- Upstream now includes `/api/projects`, `/api/image-jpeg`, and `/api/canvas-comfy-tasks`. Their isolation effect, plus online/history/material/WebSocket surfaces, is Task 3G design input only and is not implemented here.
+
+Recommendation:
+
+- Recommend merge after review, with the documented real-provider legacy-canvas log acceptance check performed before or immediately after deployment.
+
 ## 2026-06-13 - Version 2026.06.12 corrected full upstream sync
 
 Issue: GitHub Issue #9, Task 3A continuation for PR #10 review feedback.

@@ -55,8 +55,10 @@ Every upstream sync PR must state:
 ## Current Upstream Baseline
 
 - Upstream repository: `hero8152/Infinite-Canvas`
-- Current enterprise baseline: `2026.06.12`
-- Last recorded upstream commit: `9fb9a908c78f6d9e23fcfc03b7cf5d8b77ff3e0e`
+- Current enterprise baseline: `2026.06.23`
+- Last recorded upstream commit: `0da3ff9ae0477e6e18b7c241020c2ce8cb0d5c73`
+
+The 2026.06.23 sync found that upstream did not yet include the Enterprise PR #21 Smart Canvas log compatibility work. The sync therefore retains only the documented minimal compatibility hooks in `static/js/smart-canvas.js`; future upstream syncs must rerun `enterprise/tests/test_smart_canvas_logs.js` before deciding whether the local patch can be removed.
 
 ## Intentional Difference
 

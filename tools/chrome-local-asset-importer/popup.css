@@ -423,9 +423,10 @@ textarea:focus {
 }
 
 .scan-extra {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   align-items: stretch;
-  gap: 8px;
+  gap: 6px;
   margin-top: 6px;
 }
 
@@ -444,6 +445,14 @@ textarea:focus {
   color: color-mix(in srgb, var(--text) 82%, transparent);
   font-size: 11px;
   cursor: pointer;
+}
+
+.scan-opt span,
+.capture-btn span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .scan-opt {

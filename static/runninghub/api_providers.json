@@ -514,9 +514,9 @@
             "note": "",
             "options": [],
             "random_enabled": true,
-            "min": "1",
-            "max": "4294967295",
-            "step": "1",
+            "min": "",
+            "max": "",
+            "step": "",
             "imageOrder": 0,
             "required": false
           },
@@ -965,7 +965,7 @@
             "id": "158::noise_seed",
             "nodeId": "158",
             "fieldName": "noise_seed",
-            "fieldValue": "3124719930",
+            "fieldValue": "58977320647575",
             "fieldType": "NUMBER",
             "label": "noise_seed",
             "enabled": true,
@@ -974,9 +974,9 @@
             "note": "",
             "options": [],
             "random_enabled": true,
-            "min": "1",
-            "max": "4294967295",
-            "step": "1",
+            "min": "",
+            "max": "",
+            "step": "",
             "imageOrder": 0,
             "required": false
           },
@@ -1230,7 +1230,7 @@
           "158": {
             "class_type": "RandomNoise",
             "inputs": {
-              "noise_seed": 3124719930
+              "noise_seed": 58977320647575
             },
             "_meta": {
               "title": "随机噪波"
@@ -1540,7 +1540,7 @@
           "msg": "success",
           "errorMessages": null,
           "data": {
-            "prompt": "{\"340\":{\"class_type\":\"VAEDecode\",\"inputs\":{\"vae\":[\"351\",0],\"samples\":[\"336\",0]},\"_meta\":{\"title\":\"VAE解码\"}},\"351\":{\"class_type\":\"VAELoader\",\"inputs\":{\"vae_name\":\"flux2-vae.safetensors\"},\"_meta\":{\"title\":\"VAE加载器\"}},\"352\":{\"class_type\":\"CR Text\",\"inputs\":{\"text\":\"realistic，将画面变为真实的照片\"},\"_meta\":{\"title\":\"文本\"}},\"342\":{\"class_type\":\"PreviewImage\",\"inputs\":{\"images\":[\"340\",0]},\"_meta\":{\"title\":\"预览图像\"}},\"332\":{\"class_type\":\"ReferenceLatent\",\"inputs\":{\"latent\":[\"337\",0],\"conditioning\":[\"345\",0]},\"_meta\":{\"title\":\"ReferenceLatent\"}},\"343\":{\"class_type\":\"LoraLoaderModelOnly\",\"inputs\":{\"lora_name\":\"detail-new_000014500.safetensors\",\"strength_model\":1,\"model\":[\"356\",0]},\"_meta\":{\"title\":\"LoRA加载器(仅模型)\"}},\"278\":{\"class_type\":\"LoadImage\",\"inputs\":{\"image\":\"b63d0162b66d893452f50e6fb62b07a8bbfab9d5f65773f25bfce914e4bd012f.png\"},\"_meta\":{\"title\":\"加载图像\"}},\"333\":{\"class_type\":\"ConditioningZeroOut\",\"inputs\":{\"conditioning\":[\"345\",0]},\"_meta\":{\"title\":\"条件零化\"}},\"344\":{\"class_type\":\"Flux2Scheduler\",\"inputs\":{\"width\":[\"348\",1],\"steps\":8,\"height\":[\"348\",1]},\"_meta\":{\"title\":\"Flux2Scheduler\"}},\"158\":{\"class_type\":\"RandomNoise\",\"inputs\":{\"noise_seed\":3124719930},\"_meta\":{\"title\":\"随机噪波\"}},\"334\":{\"class_type\":\"ReferenceLatent\",\"inputs\":{\"latent\":[\"337\",0],\"conditioning\":[\"333\",0]},\"_meta\":{\"title\":\"ReferenceLatent\"}},\"345\":{\"class_type\":\"CLIPTextEncode\",\"inputs\":{\"text\":[\"352\",0],\"clip\":[\"357\",0]},\"_meta\":{\"title\":\"CLIP文本编码器\"}},\"356\":{\"class_type\":\"UNETLoader\",\"inputs\":{\"weight_dtype\":\"default\",\"unet_name\":\"flux-2-klein-9b-fp8.safetensors\"},\"_meta\":{\"title\":\"UNET加载器\"}},\"346\":{\"class_type\":\"ImageScaleToTotalPixels\",\"inputs\":{\"image\":[\"278\",0],\"megapixels\":4.000000000000001,\"resolution_steps\":1,\"upscale_method\":\"lanczos\"},\"_meta\":{\"title\":\"图像按像素缩放\"}},\"357\":{\"class_type\":\"CLIPLoader\",\"inputs\":{\"clip_name\":\"qwen_3_8b_fp8mixed.safetensors\",\"type\":\"flux2\",\"device\":\"default\"},\"_meta\":{\"title\":\"CLIP加载器\"}},\"336\":{\"class_type\":\"SamplerCustomAdvanced\",\"inputs\":{\"guider\":[\"338\",0],\"latent_image\":[\"347\",0],\"noise\":[\"158\",0],\"sigmas\":[\"344\",0],\"sampler\":[\"339\",0]},\"_meta\":{\"title\":\"自定义采样器(高级)\"}},\"347\":{\"class_type\":\"EmptyFlux2LatentImage\",\"inputs\":{\"batch_size\":1,\"width\":[\"348\",0],\"height\":[\"348\",1]},\"_meta\":{\"title\":\"Empty Flux 2 Latent\"}},\"337\":{\"class_type\":\"VAEEncode\",\"inputs\":{\"pixels\":[\"346\",0],\"vae\":[\"351\",0]},\"_meta\":{\"title\":\"VAE编码\"}},\"348\":{\"class_type\":\"GetImageSize\",\"inputs\":{\"image\":[\"346\",0]},\"_meta\":{\"title\":\"获取图像尺寸\"}},\"359\":{\"class_type\":\"SaveImage\",\"inputs\":{\"filename_prefix\":\"ComfyUI\",\"images\":[\"340\",0]},\"_meta\":{\"title\":\"保存图像\"}},\"338\":{\"class_type\":\"CFGGuider\",\"inputs\":{\"negative\":[\"334\",0],\"cfg\":1,\"model\":[\"343\",0],\"positive\":[\"332\",0]},\"_meta\":{\"title\":\"CFG引导\"}},\"339\":{\"class_type\":\"KSamplerSelect\",\"inputs\":{\"sampler_name\":\"euler\"},\"_meta\":{\"title\":\"K采样器选择\"}}}"
+            "prompt": "{\"340\":{\"class_type\":\"VAEDecode\",\"inputs\":{\"vae\":[\"351\",0],\"samples\":[\"336\",0]},\"_meta\":{\"title\":\"VAE解码\"}},\"351\":{\"class_type\":\"VAELoader\",\"inputs\":{\"vae_name\":\"flux2-vae.safetensors\"},\"_meta\":{\"title\":\"VAE加载器\"}},\"352\":{\"class_type\":\"CR Text\",\"inputs\":{\"text\":\"realistic，将画面变为真实的照片\"},\"_meta\":{\"title\":\"文本\"}},\"342\":{\"class_type\":\"PreviewImage\",\"inputs\":{\"images\":[\"340\",0]},\"_meta\":{\"title\":\"预览图像\"}},\"332\":{\"class_type\":\"ReferenceLatent\",\"inputs\":{\"latent\":[\"337\",0],\"conditioning\":[\"345\",0]},\"_meta\":{\"title\":\"ReferenceLatent\"}},\"343\":{\"class_type\":\"LoraLoaderModelOnly\",\"inputs\":{\"lora_name\":\"detail-new_000014500.safetensors\",\"strength_model\":1,\"model\":[\"356\",0]},\"_meta\":{\"title\":\"LoRA加载器(仅模型)\"}},\"278\":{\"class_type\":\"LoadImage\",\"inputs\":{\"image\":\"b63d0162b66d893452f50e6fb62b07a8bbfab9d5f65773f25bfce914e4bd012f.png\"},\"_meta\":{\"title\":\"加载图像\"}},\"333\":{\"class_type\":\"ConditioningZeroOut\",\"inputs\":{\"conditioning\":[\"345\",0]},\"_meta\":{\"title\":\"条件零化\"}},\"344\":{\"class_type\":\"Flux2Scheduler\",\"inputs\":{\"width\":[\"348\",1],\"steps\":8,\"height\":[\"348\",1]},\"_meta\":{\"title\":\"Flux2Scheduler\"}},\"158\":{\"class_type\":\"RandomNoise\",\"inputs\":{\"noise_seed\":58977320647575},\"_meta\":{\"title\":\"随机噪波\"}},\"334\":{\"class_type\":\"ReferenceLatent\",\"inputs\":{\"latent\":[\"337\",0],\"conditioning\":[\"333\",0]},\"_meta\":{\"title\":\"ReferenceLatent\"}},\"345\":{\"class_type\":\"CLIPTextEncode\",\"inputs\":{\"text\":[\"352\",0],\"clip\":[\"357\",0]},\"_meta\":{\"title\":\"CLIP文本编码器\"}},\"356\":{\"class_type\":\"UNETLoader\",\"inputs\":{\"weight_dtype\":\"default\",\"unet_name\":\"flux-2-klein-9b-fp8.safetensors\"},\"_meta\":{\"title\":\"UNET加载器\"}},\"346\":{\"class_type\":\"ImageScaleToTotalPixels\",\"inputs\":{\"image\":[\"278\",0],\"megapixels\":4.000000000000001,\"resolution_steps\":1,\"upscale_method\":\"lanczos\"},\"_meta\":{\"title\":\"图像按像素缩放\"}},\"357\":{\"class_type\":\"CLIPLoader\",\"inputs\":{\"clip_name\":\"qwen_3_8b_fp8mixed.safetensors\",\"type\":\"flux2\",\"device\":\"default\"},\"_meta\":{\"title\":\"CLIP加载器\"}},\"336\":{\"class_type\":\"SamplerCustomAdvanced\",\"inputs\":{\"guider\":[\"338\",0],\"latent_image\":[\"347\",0],\"noise\":[\"158\",0],\"sigmas\":[\"344\",0],\"sampler\":[\"339\",0]},\"_meta\":{\"title\":\"自定义采样器(高级)\"}},\"347\":{\"class_type\":\"EmptyFlux2LatentImage\",\"inputs\":{\"batch_size\":1,\"width\":[\"348\",0],\"height\":[\"348\",1]},\"_meta\":{\"title\":\"Empty Flux 2 Latent\"}},\"337\":{\"class_type\":\"VAEEncode\",\"inputs\":{\"pixels\":[\"346\",0],\"vae\":[\"351\",0]},\"_meta\":{\"title\":\"VAE编码\"}},\"348\":{\"class_type\":\"GetImageSize\",\"inputs\":{\"image\":[\"346\",0]},\"_meta\":{\"title\":\"获取图像尺寸\"}},\"359\":{\"class_type\":\"SaveImage\",\"inputs\":{\"filename_prefix\":\"ComfyUI\",\"images\":[\"340\",0]},\"_meta\":{\"title\":\"保存图像\"}},\"338\":{\"class_type\":\"CFGGuider\",\"inputs\":{\"negative\":[\"334\",0],\"cfg\":1,\"model\":[\"343\",0],\"positive\":[\"332\",0]},\"_meta\":{\"title\":\"CFG引导\"}},\"339\":{\"class_type\":\"KSamplerSelect\",\"inputs\":{\"sampler_name\":\"euler\"},\"_meta\":{\"title\":\"K采样器选择\"}}}"
           }
         },
         "updatedAt": 1781061517025,
@@ -1589,7 +1589,7 @@
             "max": "",
             "step": "",
             "imageOrder": 1,
-            "required": true
+            "required": false
           },
           {
             "id": "4::seed",
@@ -1885,7 +1885,7 @@
             "prompt": "{\"1\":{\"class_type\":\"SaveImage\",\"inputs\":{\"filename_prefix\":\"ComfyUI\",\"images\":[\"4\",0]},\"_meta\":{\"title\":\"Save Image\"}},\"3\":{\"class_type\":\"LoadImage\",\"inputs\":{\"image\":\"pasted/13839fc6bad36400c5fdb0e595b56a8518ca1dea00e552455bd23fe2e47f3f49.png\"},\"_meta\":{\"title\":\"Load Image\"}},\"4\":{\"class_type\":\"RH_RhartImageG2ImageToImage\",\"inputs\":{\"image5\":[\"8\",0],\"image3\":[\"6\",0],\"image4\":[\"7\",0],\"seed\":1420337323,\"skip_error\":false,\"aspectRatio\":\"9:16\",\"image1\":[\"3\",0],\"prompt\":\"图1的模特戴上图2的眼镜/图3的上衣/图4的裤子/图5的背包\",\"resolution\":\"1k\",\"image2\":[\"5\",0]},\"_meta\":{\"title\":\"RH GPT Image 2.0 Edit Channel Low Price\"}},\"5\":{\"class_type\":\"LoadImage\",\"inputs\":{\"image\":\"pasted/1aa2f479aade662c1820b780dbc397860ef133c1345ccce75bc4d2f089e71eb2.png\"},\"_meta\":{\"title\":\"Load Image\"}},\"6\":{\"class_type\":\"LoadImage\",\"inputs\":{\"image\":\"pasted/9f196a9affbce26eff7dcb65abb067a498e392e8d6f210b73521d126c09505fd.png\"},\"_meta\":{\"title\":\"Load Image\"}},\"7\":{\"class_type\":\"LoadImage\",\"inputs\":{\"image\":\"pasted/46948afdef9592cbf0ec98f2976eb8743c516a4eb4539474c4307044ae56fa88.png\"},\"_meta\":{\"title\":\"Load Image\"}},\"8\":{\"class_type\":\"LoadImage\",\"inputs\":{\"image\":\"pasted/be53aea7278c58fa7f48ab8eae1d772099e4900ceda7e88157ab97cf3f5e64aa.png\"},\"_meta\":{\"title\":\"Load Image\"}}}"
           }
         },
-        "updatedAt": 1779718476396,
+        "updatedAt": 1781590255714,
         "workflowId": "2058554058318897153"
       },
       {
@@ -2065,7 +2065,7 @@
             "max": "",
             "step": "",
             "imageOrder": 1,
-            "required": true
+            "required": false
           },
           {
             "id": "13::image",
@@ -2247,7 +2247,7 @@
             "prompt": "{\"1\":{\"class_type\":\"RH_Nano_Banana2_Gemini31Flash\",\"inputs\":{\"images\":[\"2\",0],\"image3\":[\"12\",0],\"image4\":[\"13\",0],\"seed\":1074325503,\"skip_error\":false,\"channel\":\"Third-party\",\"aspectRatio\":\"9:16\",\"image1\":[\"3\",0],\"prompt\":\"图1的模特戴上图2的眼镜/图3的上衣/图4的裤子/图5的背包\",\"resolution\":\"1k\",\"image2\":[\"4\",0]},\"_meta\":{\"title\":\"RH NanoBanana2 gemini-3.1-flash-image-preview 🆕\"}},\"12\":{\"class_type\":\"LoadImage\",\"inputs\":{\"image\":\"pasted/46948afdef9592cbf0ec98f2976eb8743c516a4eb4539474c4307044ae56fa88.png\"},\"_meta\":{\"title\":\"Load Image\"}},\"2\":{\"class_type\":\"LoadImage\",\"inputs\":{\"image\":\"pasted/13839fc6bad36400c5fdb0e595b56a8518ca1dea00e552455bd23fe2e47f3f49.png\"},\"_meta\":{\"title\":\"Load Image\"}},\"13\":{\"class_type\":\"LoadImage\",\"inputs\":{\"image\":\"pasted/be53aea7278c58fa7f48ab8eae1d772099e4900ceda7e88157ab97cf3f5e64aa.png\"},\"_meta\":{\"title\":\"Load Image\"}},\"3\":{\"class_type\":\"LoadImage\",\"inputs\":{\"image\":\"pasted/1aa2f479aade662c1820b780dbc397860ef133c1345ccce75bc4d2f089e71eb2.png\"},\"_meta\":{\"title\":\"Load Image\"}},\"4\":{\"class_type\":\"LoadImage\",\"inputs\":{\"image\":\"pasted/9f196a9affbce26eff7dcb65abb067a498e392e8d6f210b73521d126c09505fd.png\"},\"_meta\":{\"title\":\"Load Image\"}},\"5\":{\"class_type\":\"SaveImage\",\"inputs\":{\"filename_prefix\":\"ComfyUI\",\"images\":[\"1\",0]},\"_meta\":{\"title\":\"Save Image\"}}}"
           }
         },
-        "updatedAt": 1780752444205,
+        "updatedAt": 1781590260874,
         "workflowId": "2058541134623891458"
       },
       {
@@ -2261,7 +2261,7 @@
             "id": "392::noise_seed",
             "nodeId": "392",
             "fieldName": "noise_seed",
-            "fieldValue": "4139163931",
+            "fieldValue": "168792058890136",
             "fieldType": "NUMBER",
             "label": "noise_seed",
             "enabled": true,
@@ -2270,9 +2270,9 @@
             "note": "",
             "options": [],
             "random_enabled": true,
-            "min": "1",
-            "max": "4294967295",
-            "step": "1",
+            "min": "",
+            "max": "",
+            "step": "",
             "imageOrder": 0,
             "required": false
           },
@@ -2983,7 +2983,7 @@
           "392": {
             "class_type": "RandomNoise",
             "inputs": {
-              "noise_seed": 4139163931
+              "noise_seed": 168792058890136
             },
             "_meta": {
               "title": "随机噪波"
@@ -3159,7 +3159,7 @@
           "msg": "success",
           "errorMessages": null,
           "data": {
-            "prompt": "{\"392\":{\"class_type\":\"RandomNoise\",\"inputs\":{\"noise_seed\":4139163931},\"_meta\":{\"title\":\"随机噪波\"}},\"372\":{\"class_type\":\"ReferenceLatent\",\"inputs\":{\"latent\":[\"376\",0],\"conditioning\":[\"361\",0]},\"_meta\":{\"title\":\"ReferenceLatent\"}},\"394\":{\"class_type\":\"UNETLoader\",\"inputs\":{\"weight_dtype\":\"default\",\"unet_name\":\"Flux-2-Klein-9b-fp8.safetensors\"},\"_meta\":{\"title\":\"UNET加载器\"}},\"373\":{\"class_type\":\"ReferenceLatent\",\"inputs\":{\"latent\":[\"376\",0],\"conditioning\":[\"369\",0]},\"_meta\":{\"title\":\"ReferenceLatent\"}},\"395\":{\"class_type\":\"CLIPLoader\",\"inputs\":{\"clip_name\":\"qwen_3_8b_fp8mixed.safetensors\",\"type\":\"qwen_image\",\"device\":\"default\"},\"_meta\":{\"title\":\"CLIP加载器\"}},\"374\":{\"class_type\":\"CLIPTextEncode\",\"inputs\":{\"text\":[\"410\",0],\"clip\":[\"395\",0]},\"_meta\":{\"title\":\"CLIP文本编码器\"}},\"396\":{\"class_type\":\"Flux2Scheduler\",\"inputs\":{\"width\":[\"375\",1],\"steps\":4,\"height\":[\"375\",1]},\"_meta\":{\"title\":\"Flux2Scheduler\"}},\"375\":{\"class_type\":\"GetImageSize\",\"inputs\":{\"image\":[\"405\",0]},\"_meta\":{\"title\":\"获取图像尺寸\"}},\"376\":{\"class_type\":\"VAEEncode\",\"inputs\":{\"pixels\":[\"398\",0],\"vae\":[\"366\",0]},\"_meta\":{\"title\":\"VAE编码\"}},\"398\":{\"class_type\":\"ImageScaleToTotalPixels\",\"inputs\":{\"image\":[\"404\",0],\"megapixels\":1,\"resolution_steps\":1,\"upscale_method\":\"lanczos\"},\"_meta\":{\"title\":\"图像按像素缩放\"}},\"410\":{\"class_type\":\"CR Text\",\"inputs\":{\"text\":\"将图1角色的光线替换为图2的光线\"},\"_meta\":{\"title\":\"文本\"}},\"412\":{\"class_type\":\"SaveImage\",\"inputs\":{\"filename_prefix\":\"ComfyUI\",\"images\":[\"367\",0]},\"_meta\":{\"title\":\"保存图像\"}},\"359\":{\"class_type\":\"KSamplerSelect\",\"inputs\":{\"sampler_name\":\"euler\"},\"_meta\":{\"title\":\"K采样器选择\"}},\"360\":{\"class_type\":\"ConditioningZeroOut\",\"inputs\":{\"conditioning\":[\"374\",0]},\"_meta\":{\"title\":\"条件零化\"}},\"361\":{\"class_type\":\"ReferenceLatent\",\"inputs\":{\"latent\":[\"368\",0],\"conditioning\":[\"360\",0]},\"_meta\":{\"title\":\"ReferenceLatent\"}},\"362\":{\"class_type\":\"SamplerCustomAdvanced\",\"inputs\":{\"guider\":[\"365\",0],\"latent_image\":[\"364\",0],\"noise\":[\"392\",0],\"sigmas\":[\"396\",0],\"sampler\":[\"359\",0]},\"_meta\":{\"title\":\"自定义采样器(高级)\"}},\"363\":{\"class_type\":\"PreviewImage\",\"inputs\":{\"images\":[\"367\",0]},\"_meta\":{\"title\":\"预览图像\"}},\"364\":{\"class_type\":\"EmptyFlux2LatentImage\",\"inputs\":{\"batch_size\":1,\"width\":[\"375\",0],\"height\":[\"375\",1]},\"_meta\":{\"title\":\"Empty Flux 2 Latent\"}},\"365\":{\"class_type\":\"CFGGuider\",\"inputs\":{\"negative\":[\"372\",0],\"cfg\":1,\"model\":[\"408\",0],\"positive\":[\"373\",0]},\"_meta\":{\"title\":\"CFG引导\"}},\"366\":{\"class_type\":\"VAELoader\",\"inputs\":{\"vae_name\":\"flux2-vae.safetensors\"},\"_meta\":{\"title\":\"VAE加载器\"}},\"367\":{\"class_type\":\"VAEDecode\",\"inputs\":{\"vae\":[\"366\",0],\"samples\":[\"362\",0]},\"_meta\":{\"title\":\"VAE解码\"}},\"368\":{\"class_type\":\"VAEEncode\",\"inputs\":{\"pixels\":[\"405\",0],\"vae\":[\"366\",0]},\"_meta\":{\"title\":\"VAE编码\"}},\"401\":{\"class_type\":\"Image Comparer (rgthree)\",\"inputs\":{\"rgthree_comparer\":{\"images\":[{\"name\":\"A\",\"selected\":true,\"url\":\"/view?filename\\u003drgthree.compare._temp_rxvcu_00001_ypzed_1781060445.jpg\\u0026type\\u003dtemp\\u0026subfolder\\u003d\\u0026rand\\u003d0.5342300665338324\\u0026Rh-Comfy-Auth\\u003deyJ1c2VySWQiOiIyNDI4YjA1NDA0MTZjMWUyZTQ1MTdmZGY0MDBmNjYyNiIsInNpZ25FeHBpcmUiOjE3ODE2NjUyMjAwNTksInRzIjoxNzgxMDYwNDIwMDU5LCJzaWduIjoiYzM2ZmU0Yzg3YTY2ZWU0OWIxN2IxOThlYjdjNGZjODAifQ\\u003d\\u003d\\u0026Rh-Identify\\u003d2428b0540416c1e2e4517fdf400f6626\"},{\"name\":\"B\",\"selected\":true,\"url\":\"/view?filename\\u003drgthree.compare._temp_rxvcu_00002_nonpv_1781060447.jpg\\u0026type\\u003dtemp\\u0026subfolder\\u003d\\u0026rand\\u003d0.4756489753521683\\u0026Rh-Comfy-Auth\\u003deyJ1c2VySWQiOiIyNDI4YjA1NDA0MTZjMWUyZTQ1MTdmZGY0MDBmNjYyNiIsInNpZ25FeHBpcmUiOjE3ODE2NjUyMjAwNTksInRzIjoxNzgxMDYwNDIwMDU5LCJzaWduIjoiYzM2ZmU0Yzg3YTY2ZWU0OWIxN2IxOThlYjdjNGZjODAifQ\\u003d\\u003d\\u0026Rh-Identify\\u003d2428b0540416c1e2e4517fdf400f6626\"}]},\"image_a\":[\"367\",0],\"image_b\":[\"405\",0]},\"_meta\":{\"title\":\"图像对比\"}},\"369\":{\"class_type\":\"ReferenceLatent\",\"inputs\":{\"latent\":[\"368\",0],\"conditioning\":[\"374\",0]},\"_meta\":{\"title\":\"ReferenceLatent\"}},\"403\":{\"class_type\":\"LoadImage\",\"inputs\":{\"image\":\"pasted/98936f51b4c9f9dafa27eb420a69df5ad623a0895bf51322353f247b03634ce7.png\"},\"_meta\":{\"title\":\"加载图像\"}},\"404\":{\"class_type\":\"LoadImage\",\"inputs\":{\"image\":\"pasted/75b0c55decc025fabcdbeb8f4cba7441b7f5afe7e131250a8ac409b86b042387.png\"},\"_meta\":{\"title\":\"加载图像\"}},\"405\":{\"class_type\":\"ImageScaleToTotalPixels\",\"inputs\":{\"image\":[\"403\",0],\"megapixels\":[\"407\",0],\"resolution_steps\":1,\"upscale_method\":\"lanczos\"},\"_meta\":{\"title\":\"图像按像素缩放\"}},\"407\":{\"class_type\":\"PrimitiveFloat\",\"inputs\":{\"value\":1},\"_meta\":{\"title\":\"放大\"}},\"408\":{\"class_type\":\"LoraLoaderModelOnly\",\"inputs\":{\"lora_name\":\"Klein-万物迁移.safetensors\",\"strength_model\":0.8,\"model\":[\"394\",0]},\"_meta\":{\"title\":\"LoRA加载器(仅模型)\"}}}"
+            "prompt": "{\"392\":{\"class_type\":\"RandomNoise\",\"inputs\":{\"noise_seed\":168792058890136},\"_meta\":{\"title\":\"随机噪波\"}},\"372\":{\"class_type\":\"ReferenceLatent\",\"inputs\":{\"latent\":[\"376\",0],\"conditioning\":[\"361\",0]},\"_meta\":{\"title\":\"ReferenceLatent\"}},\"394\":{\"class_type\":\"UNETLoader\",\"inputs\":{\"weight_dtype\":\"default\",\"unet_name\":\"Flux-2-Klein-9b-fp8.safetensors\"},\"_meta\":{\"title\":\"UNET加载器\"}},\"373\":{\"class_type\":\"ReferenceLatent\",\"inputs\":{\"latent\":[\"376\",0],\"conditioning\":[\"369\",0]},\"_meta\":{\"title\":\"ReferenceLatent\"}},\"395\":{\"class_type\":\"CLIPLoader\",\"inputs\":{\"clip_name\":\"qwen_3_8b_fp8mixed.safetensors\",\"type\":\"qwen_image\",\"device\":\"default\"},\"_meta\":{\"title\":\"CLIP加载器\"}},\"374\":{\"class_type\":\"CLIPTextEncode\",\"inputs\":{\"text\":[\"410\",0],\"clip\":[\"395\",0]},\"_meta\":{\"title\":\"CLIP文本编码器\"}},\"396\":{\"class_type\":\"Flux2Scheduler\",\"inputs\":{\"width\":[\"375\",1],\"steps\":4,\"height\":[\"375\",1]},\"_meta\":{\"title\":\"Flux2Scheduler\"}},\"375\":{\"class_type\":\"GetImageSize\",\"inputs\":{\"image\":[\"405\",0]},\"_meta\":{\"title\":\"获取图像尺寸\"}},\"376\":{\"class_type\":\"VAEEncode\",\"inputs\":{\"pixels\":[\"398\",0],\"vae\":[\"366\",0]},\"_meta\":{\"title\":\"VAE编码\"}},\"398\":{\"class_type\":\"ImageScaleToTotalPixels\",\"inputs\":{\"image\":[\"404\",0],\"megapixels\":1,\"resolution_steps\":1,\"upscale_method\":\"lanczos\"},\"_meta\":{\"title\":\"图像按像素缩放\"}},\"410\":{\"class_type\":\"CR Text\",\"inputs\":{\"text\":\"将图1角色的光线替换为图2的光线\"},\"_meta\":{\"title\":\"文本\"}},\"412\":{\"class_type\":\"SaveImage\",\"inputs\":{\"filename_prefix\":\"ComfyUI\",\"images\":[\"367\",0]},\"_meta\":{\"title\":\"保存图像\"}},\"359\":{\"class_type\":\"KSamplerSelect\",\"inputs\":{\"sampler_name\":\"euler\"},\"_meta\":{\"title\":\"K采样器选择\"}},\"360\":{\"class_type\":\"ConditioningZeroOut\",\"inputs\":{\"conditioning\":[\"374\",0]},\"_meta\":{\"title\":\"条件零化\"}},\"361\":{\"class_type\":\"ReferenceLatent\",\"inputs\":{\"latent\":[\"368\",0],\"conditioning\":[\"360\",0]},\"_meta\":{\"title\":\"ReferenceLatent\"}},\"362\":{\"class_type\":\"SamplerCustomAdvanced\",\"inputs\":{\"guider\":[\"365\",0],\"latent_image\":[\"364\",0],\"noise\":[\"392\",0],\"sigmas\":[\"396\",0],\"sampler\":[\"359\",0]},\"_meta\":{\"title\":\"自定义采样器(高级)\"}},\"363\":{\"class_type\":\"PreviewImage\",\"inputs\":{\"images\":[\"367\",0]},\"_meta\":{\"title\":\"预览图像\"}},\"364\":{\"class_type\":\"EmptyFlux2LatentImage\",\"inputs\":{\"batch_size\":1,\"width\":[\"375\",0],\"height\":[\"375\",1]},\"_meta\":{\"title\":\"Empty Flux 2 Latent\"}},\"365\":{\"class_type\":\"CFGGuider\",\"inputs\":{\"negative\":[\"372\",0],\"cfg\":1,\"model\":[\"408\",0],\"positive\":[\"373\",0]},\"_meta\":{\"title\":\"CFG引导\"}},\"366\":{\"class_type\":\"VAELoader\",\"inputs\":{\"vae_name\":\"flux2-vae.safetensors\"},\"_meta\":{\"title\":\"VAE加载器\"}},\"367\":{\"class_type\":\"VAEDecode\",\"inputs\":{\"vae\":[\"366\",0],\"samples\":[\"362\",0]},\"_meta\":{\"title\":\"VAE解码\"}},\"368\":{\"class_type\":\"VAEEncode\",\"inputs\":{\"pixels\":[\"405\",0],\"vae\":[\"366\",0]},\"_meta\":{\"title\":\"VAE编码\"}},\"401\":{\"class_type\":\"Image Comparer (rgthree)\",\"inputs\":{\"rgthree_comparer\":{\"images\":[{\"name\":\"A\",\"selected\":true,\"url\":\"/view?filename\\u003drgthree.compare._temp_rxvcu_00001_ypzed_1781060445.jpg\\u0026type\\u003dtemp\\u0026subfolder\\u003d\\u0026rand\\u003d0.5342300665338324\\u0026Rh-Comfy-Auth\\u003deyJ1c2VySWQiOiIyNDI4YjA1NDA0MTZjMWUyZTQ1MTdmZGY0MDBmNjYyNiIsInNpZ25FeHBpcmUiOjE3ODE2NjUyMjAwNTksInRzIjoxNzgxMDYwNDIwMDU5LCJzaWduIjoiYzM2ZmU0Yzg3YTY2ZWU0OWIxN2IxOThlYjdjNGZjODAifQ\\u003d\\u003d\\u0026Rh-Identify\\u003d2428b0540416c1e2e4517fdf400f6626\"},{\"name\":\"B\",\"selected\":true,\"url\":\"/view?filename\\u003drgthree.compare._temp_rxvcu_00002_nonpv_1781060447.jpg\\u0026type\\u003dtemp\\u0026subfolder\\u003d\\u0026rand\\u003d0.4756489753521683\\u0026Rh-Comfy-Auth\\u003deyJ1c2VySWQiOiIyNDI4YjA1NDA0MTZjMWUyZTQ1MTdmZGY0MDBmNjYyNiIsInNpZ25FeHBpcmUiOjE3ODE2NjUyMjAwNTksInRzIjoxNzgxMDYwNDIwMDU5LCJzaWduIjoiYzM2ZmU0Yzg3YTY2ZWU0OWIxN2IxOThlYjdjNGZjODAifQ\\u003d\\u003d\\u0026Rh-Identify\\u003d2428b0540416c1e2e4517fdf400f6626\"}]},\"image_a\":[\"367\",0],\"image_b\":[\"405\",0]},\"_meta\":{\"title\":\"图像对比\"}},\"369\":{\"class_type\":\"ReferenceLatent\",\"inputs\":{\"latent\":[\"368\",0],\"conditioning\":[\"374\",0]},\"_meta\":{\"title\":\"ReferenceLatent\"}},\"403\":{\"class_type\":\"LoadImage\",\"inputs\":{\"image\":\"pasted/98936f51b4c9f9dafa27eb420a69df5ad623a0895bf51322353f247b03634ce7.png\"},\"_meta\":{\"title\":\"加载图像\"}},\"404\":{\"class_type\":\"LoadImage\",\"inputs\":{\"image\":\"pasted/75b0c55decc025fabcdbeb8f4cba7441b7f5afe7e131250a8ac409b86b042387.png\"},\"_meta\":{\"title\":\"加载图像\"}},\"405\":{\"class_type\":\"ImageScaleToTotalPixels\",\"inputs\":{\"image\":[\"403\",0],\"megapixels\":[\"407\",0],\"resolution_steps\":1,\"upscale_method\":\"lanczos\"},\"_meta\":{\"title\":\"图像按像素缩放\"}},\"407\":{\"class_type\":\"PrimitiveFloat\",\"inputs\":{\"value\":1},\"_meta\":{\"title\":\"放大\"}},\"408\":{\"class_type\":\"LoraLoaderModelOnly\",\"inputs\":{\"lora_name\":\"Klein-万物迁移.safetensors\",\"strength_model\":0.8,\"model\":[\"394\",0]},\"_meta\":{\"title\":\"LoRA加载器(仅模型)\"}}}"
           }
         },
         "updatedAt": 1781061494951,

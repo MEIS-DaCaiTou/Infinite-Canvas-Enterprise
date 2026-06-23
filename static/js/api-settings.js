@@ -58,14 +58,6 @@ const recommendApiList = document.getElementById('recommendApiList');
 const VOLCENGINE_DEFAULT_BASE_URL = 'https://ark.cn-beijing.volces.com/api/v3';
 const VOLCENGINE_DEFAULT_PROJECT_NAME = 'default';
 const VOLCENGINE_DEFAULT_REGION = 'cn-beijing';
-const VOLCENGINE_DEFAULT_VIDEO_MODELS = [
-    'doubao-seedance-2-0-260128',
-    'doubao-seedance-2-0-fast-260128',
-    'doubao-seedance-1-5-pro-251215',
-    'doubao-seedance-1-0-pro-250528',
-    'doubao-seedance-1-0-lite-t2v-250428',
-    'doubao-seedance-1-0-lite-i2v-250428'
-];
 const MS_BUILTIN_IMAGE_MODELS = [
     'Tongyi-MAI/Z-Image-Turbo',
     'Qwen/Qwen-Image-2512',
@@ -74,6 +66,8 @@ const MS_BUILTIN_IMAGE_MODELS = [
 ];
 const MS_DEFAULT_BASE_URL = 'https://api-inference.modelscope.cn/v1';
 const RH_DEFAULT_BASE_URL = 'https://www.runninghub.cn';
+const LINGJING_DEFAULT_BASE_URL = 'https://apistudio.vip';
+const LINGJING_REGISTER_URL = 'https://apistudio.vip/register?aff=g1CT';
 const EXAMPLE_BASE_URL = 'https://api.example.com/v1';
 const JIMENG_DEFAULT_IMAGE_MODELS = ['5.0', '4.6', '4.5', '4.1', '4.0', '3.1', '3.0'];
 const JIMENG_DEFAULT_VIDEO_MODELS = ['seedance2.0fast_vip', 'seedance2.0_vip'];
@@ -99,6 +93,12 @@ const ONBOARDING_GUIDES = {
         walletSecondaryLabelKey:'api.rhGetWalletKeyGlobal',
         walletPrimaryUrl:'https://www.runninghub.cn/enterprise-api/sharedApi?inviteCode=rh-v1331',
         walletSecondaryUrl:'https://www.runninghub.ai/enterprise-api/sharedApi?inviteCode=rh-v1331'
+    },
+    lingjing:{
+        titleKey:'api.lingjingOnboardingTitle',
+        descKey:'api.lingjingOnboardingDesc',
+        primaryLabelKey:'api.lingjingGetApi',
+        primaryUrl:LINGJING_REGISTER_URL
     }
 };
 let rhWorkflowEditorState = { open:false, index:-1, entry:null, config:null, expanded:{}, activeNodeId:'', graph:{ k:1, x:0, y:0, w:0, h:0 }, pan:null, bound:false, previewParams:{}, previewRunning:false, previewStatus:'', previewOutputs:[] };
@@ -106,6 +106,26 @@ let rhEditorMode = 'workflow';
 let recommendInlineOpen = false;
 let providerDragId = '';
 const RECOMMENDED_APIS = [
+    {
+        id:'lingjing',
+        name:'灵境API',
+        base_url:LINGJING_DEFAULT_BASE_URL,
+        protocol:'openai',
+        register_url:LINGJING_REGISTER_URL,
+        tagKeys:['api.tagImageModels','api.tagVideoModels','api.tagLlmModels'],
+        icons:['IMG','VID','LLM'],
+        summaryKey:'api.recommendLingjingSummary',
+        perks:[
+            {key:'api.recommendLingjingCheckin'},
+            {key:'api.recommendLingjingDiscount'}
+        ],
+        advantages:['签到送积分', '六折专属优惠', '图像/视频/LLM 全覆盖'],
+        // 添加平台时预填的默认模型列表（含逐模型协议覆盖）
+        image_models:['gpt-image-2', 'gemini-3.1-flash-image-preview', 'gemini-3-pro-image-preview'],
+        chat_models:['gpt-5.5'],
+        video_models:['veo3.1-fast'],
+        model_protocols:{'gemini-3.1-flash-image-preview':'gemini', 'gemini-3-pro-image-preview':'gemini'}
+    },
     {
         name:'APIMART',
         base_url:'https://api.apimart.ai',
@@ -115,22 +135,6 @@ const RECOMMENDED_APIS = [
         icons:['IMG','VID','LLM'],
         summaryKey:'api.recommendApimartSummary',
         advantages:['模型类型覆盖广', '适合多节点混合工作流', '异步协议适合长任务']
-    },
-    {
-        name:'玉玉API',
-        base_url:'https://yuli.host',
-        protocol:'openai',
-        register_url:'https://yuli.host/register?aff=95JQ',
-        tagKeys:['api.tagImageModels','api.tagVideoModels','api.tagLlmModels'],
-        icons:['IMG','VID','LLM'],
-        summaryKey:'api.recommendYuliSummary',
-        perkKey:'api.recommendYuliPerk',
-        advantages:['模型种类最全', '图像/视频/LLM 全覆盖', '支持签到送积分'],
-        // 添加平台时预填的默认模型列表（含逐模型协议覆盖）
-        image_models:['gpt-image-2', 'gemini-3.1-flash-image-preview', 'gemini-3-pro-image-preview'],
-        chat_models:['gpt-5.5'],
-        video_models:['veo3.1-fast'],
-        model_protocols:{'gemini-3.1-flash-image-preview':'gemini', 'gemini-3-pro-image-preview':'gemini'}
     },
     {
         name:'Agnes AI',
@@ -242,7 +246,7 @@ function deriveIdFromName(name, existingId){
 function updateIdPreview(){
     const item = provider();
     if(!item) return;
-    const isBuiltin = item.id === 'comfly' || item.id === 'modelscope' || item.id === 'runninghub' || item.id === 'volcengine' || item.id === 'jimeng';
+    const isBuiltin = item.id === 'comfly' || item.id === 'modelscope' || item.id === 'runninghub' || item.id === 'volcengine' || item.id === 'lingjing' || item.id === 'jimeng';
     const idPreview = document.getElementById('idPreview');
     if(!idPreview) return;
     if(isBuiltin){
@@ -263,7 +267,7 @@ function visibleProviders(){
 function isFixedProvider(itemOrId){
     const id = typeof itemOrId === 'string' ? itemOrId : itemOrId?.id;
     // 即梦 CLI 不再是固定平台：可删除、可排序，未添加则不存在。
-    return id === 'modelscope' || id === 'runninghub' || id === 'volcengine';
+    return id === 'modelscope' || id === 'runninghub' || id === 'volcengine' || id === 'lingjing';
 }
 function unique(values){
     const seen = new Set();
@@ -399,7 +403,7 @@ function normalizeRhWorkflowField(field){
     };
 }
 function normalizeFetchedRhWorkflowField(field){
-    return {...normalizeRhWorkflowField(field), enabled:false};
+    return {...normalizeRhWorkflowField(field), enabled:true};
 }
 function rhWorkflowGroupKey(field){
     return `${field?.nodeId || ''}::${field?.group || ''}`;
@@ -436,6 +440,7 @@ function isNewUserProvider(item){
     if(!item) return false;
     if(item.id === 'modelscope') return !item.has_key;
     if(item.id === 'runninghub') return !item.has_key && !item.has_wallet_key;
+    if(item.id === 'lingjing') return !item.has_key;
     return false;
 }
 function renderProviderOnboarding(item){
@@ -540,6 +545,58 @@ function renderProviderOnboarding(item){
             </div>
         `;
         refreshIcons();
+        return;
+    }
+    if(item.id === 'lingjing'){
+        providerOnboardingCard.innerHTML = `
+            <div class="onboarding-head">
+                <div>
+                    <div class="onboarding-title">${escapeHtml(tr(guide.titleKey))}</div>
+                    <div class="onboarding-desc">${escapeHtml(tr(guide.descKey))}</div>
+                </div>
+                <span class="onboarding-badge">${escapeHtml(tr('api.onboardingNew'))}</span>
+            </div>
+            <div class="onboarding-step-panel onboarding-rh-linear-panel onboarding-ms-linear-panel">
+                <div class="onboarding-rh-panel-head">
+                    <div>
+                        <div class="onboarding-step-title">${escapeHtml(tr('api.lingjingOnboardingStep'))}</div>
+                    </div>
+                    <i data-lucide="key-round" class="onboarding-rh-icon w-4 h-4"></i>
+                </div>
+                <div class="onboarding-rh-linear-rows">
+                    <div class="onboarding-rh-linear-row onboarding-ms-linear-row">
+                        <div class="onboarding-rh-source-group">
+                            <div class="onboarding-rh-source-label">${escapeHtml(tr('api.lingjingApiLabel'))}</div>
+                            <div class="onboarding-key-actions onboarding-rh-key-actions">
+                                <a class="onboarding-key-btn" href="${escapeAttr(guide.primaryUrl)}" target="_blank" rel="noopener noreferrer"><i data-lucide="key-round" class="w-3.5 h-3.5"></i><span>${escapeHtml(tr(guide.primaryLabelKey))}</span></a>
+                            </div>
+                        </div>
+                        <div class="recommend-flow-arrow onboarding-flow-arrow onboarding-rh-row-arrow" aria-hidden="true"><span></span><b></b></div>
+                        <label class="onboarding-key-field onboarding-rh-row-field">
+                            <span>API Key</span>
+                            <input type="password" value="${escapeAttr(keyInput?.value || '')}" placeholder="${escapeAttr(tr('api.lingjingKeyPlaceholder'))}" oninput="syncOnboardingKeyInput('standard', this.value)">
+                        </label>
+                    </div>
+                </div>
+                <div class="onboarding-rh-save-line lingjing-save-line">
+                    <div class="lingjing-onboarding-info">
+                        <div class="lingjing-model-tags">
+                            <span><i data-lucide="file-video" class="w-3 h-3"></i>${escapeHtml(tr('api.lingjingVideoModels'))}</span>
+                            <span><i data-lucide="image" class="w-3 h-3"></i>${escapeHtml(tr('api.lingjingImageModels'))}</span>
+                            <span><i data-lucide="message-square-text" class="w-3 h-3"></i>${escapeHtml(tr('api.lingjingLlmModels'))}</span>
+                        </div>
+                        <div class="lingjing-promo-tags">
+                            <span>${escapeHtml(tr('api.lingjingPromoDiscount'))}</span>
+                            <span>${escapeHtml(tr('api.lingjingPromoCheckin'))}</span>
+                            <span>${escapeHtml(tr('api.lingjingPromoInvoice'))}</span>
+                            <span>${escapeHtml(tr('api.lingjingPromoGptImage2'))}</span>
+                        </div>
+                    </div>
+                    <button class="onboarding-save-btn onboarding-rh-save-all" type="button" onclick="saveKeyOnly()"><i data-lucide="check" class="w-3.5 h-3.5"></i><span>${escapeHtml(tr('api.save'))}</span></button>
+                </div>
+            </div>
+        `;
+        refreshIcons();
     }
 }
 function syncOnboardingKeyInput(kind, value){
@@ -578,9 +635,13 @@ function applyProviderOnboardingDefaults(id){
     } else if(id === 'volcengine'){
         item.base_url = VOLCENGINE_DEFAULT_BASE_URL;
         item.protocol = 'volcengine';
-        item.video_models = unique([...(item.video_models || []), ...VOLCENGINE_DEFAULT_VIDEO_MODELS]);
+        item.video_models = unique(item.video_models || []);
         item.volcengine_project_name = item.volcengine_project_name || VOLCENGINE_DEFAULT_PROJECT_NAME;
         item.volcengine_region = item.volcengine_region || VOLCENGINE_DEFAULT_REGION;
+    } else if(id === 'lingjing'){
+        item.base_url = item.base_url || LINGJING_DEFAULT_BASE_URL;
+        item.protocol = item.protocol || 'openai';
+        item.image_request_mode = normalizeImageRequestMode(item.image_request_mode);
     } else if(id === 'jimeng'){
         item.base_url = '';
         item.protocol = 'jimeng';
@@ -599,7 +660,7 @@ function syncEditor(){
     const item = provider();
     if(!item) return;
     const oldId = item.id;
-    const isBuiltin = item.id === 'comfly' || item.id === 'modelscope' || item.id === 'runninghub' || item.id === 'volcengine' || item.id === 'jimeng';
+    const isBuiltin = item.id === 'comfly' || item.id === 'modelscope' || item.id === 'runninghub' || item.id === 'volcengine' || item.id === 'lingjing' || item.id === 'jimeng';
     // 内置和自定义平台的 ID 都保持稳定；新建时若没有 ID 才生成一次。
     const nextId = isBuiltin ? item.id : deriveIdFromName(nameInput.value, item.id);
     item.id = nextId;
@@ -1421,12 +1482,26 @@ async function rhPreviewUploadValueIfNeeded(value){
 async function buildRhPreviewNodeInfoList(){
     const config = rhWorkflowEditorState.config;
     const fields = rhEditorSortedFields((config?.fields || []).filter(field => field.enabled === true));
+    const imageFields = fields.filter(field => rhWorkflowFieldKind(field) === 'IMAGE');
+    const imageSlotPreview = {};
+    const imageIndexPreview = {};
+    imageFields.forEach((field, index) => {
+        const key = rhWorkflowFieldKey(field);
+        const slot = Number(field.imageOrder) || 1;
+        const preview = rhWorkflowEditorState.previewParams[key] || {};
+        if((preview.url || preview.value) && !imageSlotPreview[slot]) imageSlotPreview[slot] = preview;
+        if((preview.url || preview.value) && !imageIndexPreview[index]) imageIndexPreview[index] = preview;
+    });
     const result = [];
     for(const field of fields){
         const key = rhWorkflowFieldKey(field);
         const kind = rhWorkflowFieldKind(field);
         if(field.sourceFromUpstream === false && !['IMAGE','VIDEO','AUDIO'].includes(kind)) continue;
-        const preview = rhWorkflowEditorState.previewParams[key] || {};
+        const ownPreview = rhWorkflowEditorState.previewParams[key] || {};
+        const imageIndex = kind === 'IMAGE' ? imageFields.findIndex(item => rhWorkflowFieldKey(item) === key) : -1;
+        const preview = kind === 'IMAGE'
+            ? (ownPreview.url || ownPreview.value ? ownPreview : (imageSlotPreview[Number(field.imageOrder) || 1] || imageIndexPreview[imageIndex] || ownPreview))
+            : ownPreview;
         let value = preview.value ?? field.fieldValue ?? '';
         if(['IMAGE','VIDEO','AUDIO'].includes(kind)){
             if(rhEditorMode === 'workflow' && kind === 'IMAGE' && field.required !== true && !preview.url) continue;
@@ -1975,7 +2050,7 @@ function renderRecommendApi(){
                 </div>
                 <p class="recommend-platform-summary">${escapeHtml(tr(api.summaryKey))}</p>
                 <div class="recommend-tags">
-                    ${api.perkKey ? `<span class="recommend-tag recommend-perk-tag ${escapeAttr(api.perkClass || '')}"><i data-lucide="gift" class="w-3 h-3"></i><span>${escapeHtml(tr(api.perkKey))}</span></span>` : ''}
+                    ${(api.perks || (api.perkKey ? [{key:api.perkKey, className:api.perkClass || ''}] : [])).map(perk => `<span class="recommend-tag recommend-perk-tag ${escapeAttr(perk.className || '')}"><i data-lucide="gift" class="w-3 h-3"></i><span>${escapeHtml(tr(perk.key))}</span></span>`).join('')}
                     ${(api.tagKeys || []).map(tag => `<span class="recommend-tag">${escapeHtml(tag.startsWith('api.') ? tr(tag) : tag)}</span>`).join('')}
                 </div>
             </div>
@@ -2022,7 +2097,7 @@ function renderRecommendApi(){
 function recommendedProviderForApi(api){
     let item = providers.find(provider => String(provider.name || '').toLowerCase() === api.name.toLowerCase());
     if(item) return item;
-    const baseId = normalizeId(api.name) || 'custom-api';
+    const baseId = normalizeId(api.id || api.name) || 'custom-api';
     let id = baseId;
     let suffix = 2;
     while(providers.some(provider => provider.id === id)) id = `${baseId}-${suffix++}`;
@@ -2072,7 +2147,7 @@ async function saveRecommendedApi(index){
     if(ok) setStatus(trf('api.recommendSaved', {name:api.name}));
 }
 function sortedProviders(){
-    const order = ['modelscope', 'runninghub', 'volcengine'];
+    const order = ['modelscope', 'runninghub', 'volcengine', 'lingjing'];
     return visibleProviders().sort((a, b) => {
         const ai = order.indexOf(a.id);
         const bi = order.indexOf(b.id);
@@ -2130,6 +2205,20 @@ function renderProviderList(){
                             <span class="provider-logo-fallback">火山引擎</span>
                         </span>
                         <span class="provider-protocol-pill">Ark</span>
+                    </span>
+                </button>
+            `;
+        }
+        if(item.id === 'lingjing'){
+            return `
+                <button class="provider-card provider-card-banner ${active} ${stateClass}" type="button" onclick="selectProvider('${escapeHtml(item.id)}')">
+                    <span class="provider-banner-inner">
+                        <span class="provider-logo-wrap">
+                            <img src="/static/images/lingjing.png" alt="灵境API" class="lingjing-icon ms-icon-light">
+                            <img src="/static/images/lingjing-b.png" alt="灵境API" class="lingjing-icon ms-icon-dark">
+                            <span class="provider-logo-fallback">灵境API</span>
+                        </span>
+                        <span class="provider-protocol-pill">OpenAI</span>
                     </span>
                 </button>
             `;
@@ -2476,7 +2565,7 @@ function applyDetectedProtocol(protocol){
     item.protocol = detected;
     item.base_url = detected === 'jimeng' ? '' : (baseInput?.value.trim() || item.base_url || '');
     if(detected === 'volcengine'){
-        item.video_models = unique([...(item.video_models || []), ...VOLCENGINE_DEFAULT_VIDEO_MODELS]);
+        item.video_models = unique(item.video_models || []);
         item.volcengine_project_name = item.volcengine_project_name || VOLCENGINE_DEFAULT_PROJECT_NAME;
         item.volcengine_region = item.volcengine_region || VOLCENGINE_DEFAULT_REGION;
     }
@@ -3097,6 +3186,7 @@ async function loadProviders(){
         providers = data.providers || [];
         selectedId = sortedProviders()[0]?.id || '';
         renderEditor();
+        openRecommendApi();
         setStatus('');
     } catch(err) {
         setStatus(tr('api.loadFailed'));

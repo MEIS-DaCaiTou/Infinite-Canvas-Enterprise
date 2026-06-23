@@ -1929,6 +1929,68 @@ html.studio-theme-dark body .recommend-fill {
     max-width:130px;
 }
 
+.provider-card-banner .lingjing-icon {
+    height:24px;
+    max-width:132px;
+    object-fit:contain;
+}
+
+.lingjing-onboarding-info {
+    display:flex;
+    flex-direction:column;
+    gap:8px;
+    margin:0;
+    min-width:0;
+}
+
+.lingjing-model-tags,
+.lingjing-promo-tags {
+    display:flex;
+    flex-wrap:wrap;
+    gap:6px;
+}
+
+.lingjing-model-tags span,
+.lingjing-promo-tags span {
+    min-height:24px;
+    padding:0 9px;
+    border-radius:8px;
+    display:inline-flex;
+    align-items:center;
+    gap:5px;
+    font-size:10.5px;
+    line-height:1;
+    font-weight:850;
+    white-space:nowrap;
+    border:1px solid var(--line);
+}
+
+.lingjing-model-tags span {
+    background:var(--soft);
+    color:var(--text);
+}
+
+.lingjing-save-line {
+    display:grid;
+    grid-template-columns:minmax(220px, .95fr) 34px minmax(260px, 1.05fr);
+    align-items:end;
+    gap:12px;
+    justify-content:stretch;
+    margin-top:0;
+}
+
+.lingjing-save-line .lingjing-onboarding-info {
+    grid-column:1;
+    justify-self:start;
+}
+
+.lingjing-save-line .onboarding-save-btn {
+    grid-column:3;
+    align-self:end;
+    justify-self:end;
+    white-space:nowrap;
+}
+
 .provider-card-banner .provider-protocol-pill {
     margin:0 auto;
     height:16px;
@@ -4859,6 +4921,54 @@ html:not(.studio-theme-dark) body:not(.theme-dark) .recommend-badge {
     color:#5f6b7a !important;
 }
 
+/* 推荐平台卡片：收紧底部快速配置区高度 */
+.recommend-platform-card {
+    padding:12px !important;
+    gap:12px !important;
+}
+
+.recommend-platform-info {
+    gap:7px !important;
+}
+
+.recommend-platform-summary {
+    line-height:1.48 !important;
+}
+
+.recommend-platform-setup {
+    gap:6px !important;
+}
+
+.recommend-setup-flow {
+    gap:8px !important;
+}
+
+.recommend-guide-source,
+.recommend-guide-save {
+    min-height:52px !important;
+}
+
+.recommend-guide-save {
+    padding:7px 8px !important;
+    gap:8px !important;
+}
+
+.recommend-guide-save .onboarding-key-field span,
+.recommend-guide-source .onboarding-rh-source-label {
+    margin-bottom:4px !important;
+    font-size:10px !important;
+}
+
+.recommend-guide-save .onboarding-key-field input {
+    height:30px !important;
+}
+
+.recommend-guide-key-btn,
+.recommend-guide-save-btn {
+    height:32px !important;
+    min-height:32px !important;
+}
+
 body.studio-theme-dark .recommend-tag,
 body.studio-theme-dark .recommend-badge,
 html.studio-theme-dark body .recommend-tag,
@@ -5319,4 +5429,290 @@ html.studio-theme-dark body .recommend-tag.recommend-free-tag i,
 html.studio-theme-dark body .recommend-tag.recommend-free-tag svg {
     color:#34d399 !important;
     stroke:#34d399 !important;
+}
+
+@media (max-width:780px) {
+    .provider-onboarding-card,
+    .recommend-inline-card,
+    .recommend-content {
+        max-width:100%;
+        overflow-x:hidden;
+    }
+
+    .onboarding-rh-linear-panel {
+        min-height:0 !important;
+        padding:12px !important;
+        gap:12px !important;
+    }
+
+    .onboarding-rh-linear-rows {
+        gap:12px !important;
+    }
+
+    .onboarding-rh-linear-row,
+    .onboarding-ms-linear-row,
+    .lingjing-save-line {
+        grid-template-columns:1fr !important;
+        align-items:stretch !important;
+        gap:10px !important;
+    }
+
+    .lingjing-save-line .lingjing-onboarding-info,
+    .lingjing-save-line .onboarding-save-btn {
+        grid-column:1 !important;
+        justify-self:stretch !important;
+    }
+
+    .lingjing-save-line .onboarding-save-btn,
+    .onboarding-rh-save-all {
+        width:100% !important;
+    }
+
+    .lingjing-model-tags span,
+    .lingjing-promo-tags span {
+        max-width:100%;
+        min-height:26px;
+        white-space:normal;
+        line-height:1.2;
+    }
+
+    .recommend-api-body,
+    .recommend-inline-body {
+        grid-template-columns:1fr !important;
+        padding:12px !important;
+        gap:12px !important;
+    }
+
+    .recommend-platform-card {
+        grid-template-columns:1fr !important;
+        padding:10px !important;
+        gap:10px !important;
+        min-width:0 !important;
+    }
+
+    .recommend-platform-head {
+        align-items:flex-start !important;
+        gap:8px !important;
+    }
+
+    .recommend-setup-flow {
+        grid-template-columns:1fr !important;
+        gap:10px !important;
+    }
+
+    .recommend-guide-source,
+    .recommend-guide-save {
+        width:100% !important;
+        min-width:0 !important;
+        min-height:0 !important;
+    }
+
+    .recommend-guide-key-btn,
+    .recommend-guide-save-btn {
+        width:100% !important;
+    }
+
+    .recommend-guide-arrow,
+    .onboarding-rh-row-arrow {
+        justify-self:center !important;
+        align-self:center !important;
+        margin:0 !important;
+        transform:rotate(90deg) !important;
+    }
+}
+
+@media (max-width:480px) {
+    .lingjing-model-tags,
+    .lingjing-promo-tags,
+    .recommend-tags {
+        align-items:stretch;
+    }
+
+    .lingjing-model-tags span,
+    .lingjing-promo-tags span {
+        flex:1 1 100%;
+    }
+
+    .recommend-platform-head {
+        flex-direction:column !important;
+    }
+
+    .recommend-badge {
+        align-self:flex-start;
+    }
+}
+
+@media (max-width:1180px) {
+    .recommend-inline-card,
+    .recommend-inline-body,
+    .recommend-platform-card,
+    .recommend-platform-info,
+    .recommend-platform-setup,
+    .recommend-setup-flow,
+    .recommend-guide-source,
+    .recommend-guide-save {
+        min-width:0 !important;
+        max-width:100% !important;
+    }
+
+    .recommend-inline-body {
+        display:flex !important;
+        flex-direction:column !important;
+        align-items:stretch !important;
+    }
+
+    .recommend-platform-card {
+        display:flex !important;
+        flex-direction:column !important;
+        align-items:stretch !important;
+    }
+
+    .recommend-platform-head,
+    .recommend-tags {
+        min-width:0 !important;
+        width:100% !important;
+    }
+
+    .recommend-setup-flow {
+        display:flex !important;
+        flex-direction:column !important;
+        align-items:stretch !important;
+    }
+
+    .recommend-guide-source,
+    .recommend-guide-save {
+        width:100% !important;
+    }
+
+    .recommend-guide-key-btn,
+    .recommend-guide-save-btn,
+    .recommend-account-link {
+        width:100% !important;
+        min-width:0 !important;
+        max-width:100% !important;
+    }
+
+    .recommend-name,
+    .recommend-name span,
+    .recommend-badge,
+    .recommend-tag,
+    .recommend-tag span,
+    .recommend-guide-key-btn span,
+    .recommend-guide-save-btn span,
+    .recommend-account-link span {
+        writing-mode:horizontal-tb !important;
+        word-break:keep-all !important;
+        overflow-wrap:normal !important;
+        white-space:nowrap !important;
+    }
+
+    .recommend-platform-summary,
+    .recommend-account-title,
+    .recommend-account-desc {
+        writing-mode:horizontal-tb !important;
+        word-break:normal !important;
+        overflow-wrap:break-word !important;
+    }
+
+    .recommend-account-invite {
+        display:flex !important;
+        flex-direction:column !important;
+        align-items:stretch !important;
+        gap:10px !important;
+        min-width:0 !important;
+        max-width:100% !important;
+    }
+
+    .recommend-account-invite > div {
+        min-width:0 !important;
+        width:100% !important;
+    }
+
+    .recommend-account-title,
+    .recommend-account-title *,
+    .recommend-account-desc,
+    .recommend-account-desc *,
+    .recommend-account-link,
+    .recommend-account-link span {
+        writing-mode:horizontal-tb !important;
+        white-space:normal !important;
+        word-break:normal !important;
+        overflow-wrap:break-word !important;
+    }
+}
+
+@media (max-width:520px) {
+    .recommend-inline-body,
+    .recommend-api-body {
+        padding:10px !important;
+    }
+
+    .recommend-tags {
+        align-items:flex-start !important;
+    }
+
+    .recommend-tag {
+        max-width:100% !important;
+    }
+
+    .recommend-platform-summary {
+        font-size:11px !important;
+        line-height:1.5 !important;
+    }
+}
+
+.onboarding-rh-save-line.lingjing-save-line {
+    display:grid !important;
+    grid-template-columns:minmax(220px, .95fr) 34px minmax(260px, 1.05fr) !important;
+    align-items:end !important;
+    gap:12px !important;
+    justify-content:stretch !important;
+    margin-top:0 !important;
+}
+
+.onboarding-rh-save-line.lingjing-save-line .lingjing-onboarding-info {
+    grid-column:1 !important;
+    justify-self:start !important;
+    width:100% !important;
+    min-width:0 !important;
+}
+
+.onboarding-rh-save-line.lingjing-save-line .onboarding-save-btn {
+    grid-column:3 !important;
+    justify-self:end !important;
+    width:auto !important;
+    min-width:92px !important;
+}
+
+@media (max-width:780px) {
+    .provider-onboarding-card .onboarding-rh-source-group,
+    .provider-onboarding-card .onboarding-rh-row-field,
+    .provider-onboarding-card .onboarding-key-field,
+    .provider-onboarding-card .onboarding-key-field input {
+        min-width:0 !important;
+        max-width:100% !important;
+        box-sizing:border-box !important;
+    }
+
+    .provider-onboarding-card .onboarding-rh-row-field,
+    .provider-onboarding-card .onboarding-key-field,
+    .provider-onboarding-card .onboarding-key-field input {
+        width:100% !important;
+    }
+
+    .onboarding-rh-save-line.lingjing-save-line {
+        grid-template-columns:1fr !important;
+        align-items:stretch !important;
+        gap:10px !important;
+    }
+
+    .onboarding-rh-save-line.lingjing-save-line .lingjing-onboarding-info,
+    .onboarding-rh-save-line.lingjing-save-line .onboarding-save-btn {
+        grid-column:1 !important;
+        justify-self:stretch !important;
+    }
+
+    .onboarding-rh-save-line.lingjing-save-line .onboarding-save-btn {
+        width:100% !important;
+    }
 }

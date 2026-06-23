@@ -1,14 +1,10 @@
 {
-  "version": "2026.06.12",
-  "updated_at": "2026-06-12T18:50:36+08:00",
+  "version": "2026.06.23",
+  "updated_at": "2026-06-23T11:06:00+08:00",
   "items": [
     {
-      "type": "feature",
-      "text": "新增图像采集工具"
-    },
-    {
-      "type": "feature",
-      "text": "修复方舟协议bug"
+      "type": "improve",
+      "text": "修复循环节点bug，新增API支持"
     }
   ]
 }
