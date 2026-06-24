@@ -1,6 +1,6 @@
 # 无限画布企业版 · 后续开发规划
 
-更新时间：2026-06-23
+更新时间：2026-06-24
 
 ---
 
@@ -108,6 +108,16 @@
 - 检查新增上游 API 是否需要纳入拦截和过滤。
 - 继续加固复杂素材库树形结构、历史未归属资源迁移和更多资源路径的浏览器级回归。
 
+Task 3G 设计与实施路线：
+
+- 3G-1 已完成：`ENTERPRISE_ISOLATION_MATRIX.md` 与 `ENTERPRISE_PERMISSION_DESIGN.md` 定义数据域、API/入口权限矩阵、管理员开关、迁移原则及 A/B/admin 验收。
+- 3G-2 待办：项目、文件夹与画布列表隔离，建立 project owner 和每用户默认项目语义。
+- 3G-3 待办：在线/本地功能历史、任务、缩略图和生成日志的 owner 链。
+- 3G-4 待办：素材库、上传文件夹、提示词库、共享目录和批量管理隔离。
+- 3G-5 待办：WebSocket `new_image`、任务完成、队列和资源更新的按 owner 广播。
+- 3G-6 待办：企业后台权限开关与 API/工作流/平台入口治理。
+- 3G-7 待办：A/B/admin 浏览器级回归脚本化、上游同步门禁和长期记录。
+
 ---
 
 ## 阶段五：画布 / 对话归属
@@ -212,7 +222,7 @@
 - 把 README 边界检查加入上游同步清单：根目录 `README.md` 必须保持企业版说明；上游 README 如需同步，只能进入 `docs/upstream/README.upstream.md`。
 - 把企业入口治理检查加入上游同步清单：每次上游更新后必须验证 `enterprise/gateway.py` 注入脚本仍能治理 `static/index.html` 的项目主页、版本更新按钮/提示和上游作者社交区；如上游 DOM 改动导致失效，应在同步 PR 中修复后再合并。
 - 确认企业仓库是否需要保持私有；2026-06-11 查询结果为 `PUBLIC`。
-- 将上游 `2026.06.23` 引入的 `/api/projects`、`/api/image-jpeg`、`/api/canvas-comfy-tasks`，以及在线生图历史、ZImage/Klein/Angle/Enhance、本地功能历史、`history.json`、全局素材库、批量历史管理和 WebSocket `new_image` 的隔离影响整理为 Task 3G 的独立设计输入；不要在上游同步任务中顺手实现。
+- Task 3G-1 已将上游 `/api/projects`、`/api/image-jpeg`、`/api/canvas-comfy-tasks`，以及在线生图历史、ZImage/Klein/Angle/Enhance、本地功能历史、`history.json`、全局素材库、批量历史管理和 WebSocket `new_image` 整理为设计矩阵。不要在上游同步任务中顺手实现；按 3G-2 至 3G-7 拆分实施。
 
 ---
 

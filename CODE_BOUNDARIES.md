@@ -51,6 +51,8 @@
 
 画布、对话和受保护资源的多用户隔离必须优先集中在 `enterprise/interceptors.py`、`enterprise/db.py`、`enterprise/admin_api.py`、`enterprise-static/admin.html` 和 `enterprise/tests/` 中演进。普通用户对未归属或未知归属数据默认拒绝；管理员可查看并分配归属。不要为了隔离功能直接改 `main.py` 或 `static/`。
 
+Task 3G 的项目、文件夹、历史、素材、WebSocket 与功能入口隔离设计以 `ENTERPRISE_ISOLATION_MATRIX.md`、`ENTERPRISE_PERMISSION_DESIGN.md` 为准。后续实现必须先更新矩阵，再在企业层添加可测试的授权逻辑；不得用前端隐藏替代后端授权，也不得因上游新建全局 JSON/API 就默认向普通用户开放。
+
 ---
 
 ## 3. 默认不应修改
@@ -97,6 +99,8 @@
 - 不改动运行时数据
 - 不提交真实密钥、真实 Token、真实 Cookie、真实数据库或真实运行时配置
 - 不引入与企业多用户版无关的新方向
+
+Task 3G-1 是设计任务，只允许修改文档。项目、历史、素材、WebSocket 和权限开关的实现必须拆分为独立 Issue/分支/PR，不可在设计 PR 中顺手落地。
 
 如果发现额外问题，应记录在 PR 说明或后续 Issue 建议中，不在当前任务中直接实现。
 
