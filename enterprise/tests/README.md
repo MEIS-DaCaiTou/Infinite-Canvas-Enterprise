@@ -19,7 +19,11 @@ Before adding or changing scripts, read:
 - `BROWSER_REGRESSION_CHECKLIST.md` is the browser-level enterprise regression checklist for login, roles, admin console, entry governance, canvas, conversations, assets, and upstream-sync review.
 - `browser-regression.md` describes the minimal automation plan for future browser-level regression scripts.
 - `UPDATE_TEST_LOG.md` records the actual result after each upstream update test pass.
+- `../../ENTERPRISE_ISOLATION_MATRIX.md` is the data-domain and API permission source of truth for Task 3G follow-up isolation tests.
+- `../../ENTERPRISE_PERMISSION_DESIGN.md` defines page permissions, administrator switches, phased delivery, and the A/B/admin acceptance contract.
 
 Run scripts from the project root unless a script says otherwise.
 
 Do not place ad-hoc diagnostic or smoke-test scripts in the project root, `static/`, or other upstream-owned folders. Keep them here so upstream updates and Git reviews stay clean.
+
+For every Task 3G implementation PR, add or extend a focused test here before changing access behavior. Use temporary SQLite databases and temporary data files only. The minimum regression roles are normal user A, normal user B, and administrator; cover list filtering, direct-ID denial, resource URLs, refresh/re-login persistence, and WebSocket delivery where applicable.

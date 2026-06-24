@@ -2,7 +2,7 @@
 
 > 给后续 Codex / Agent 的第一阅读文件。上下文压缩、换线程、长期维护恢复时，先按本文阅读顺序恢复项目方向，再执行当前 Issue。
 
-更新时间：2026-06-23
+更新时间：2026-06-24
 
 ---
 
@@ -72,6 +72,8 @@
 
 2026-06-23 Task 3U 受控上游同步：上游覆盖区域同步到 `hero8152/Infinite-Canvas@0da3ff9ae0477e6e18b7c241020c2ce8cb0d5c73`，`VERSION=2026.06.23`。根目录企业 README、企业层目录、企业测试和运行时忽略规则未被覆盖。上游新版 `static/js/smart-canvas.js` 未吸收 PR #21 的旧画布日志兼容逻辑，因此以最小迁移方式保留日志初始化、冲突合并和恢复/手工查询任务成功后的日志补写，并由 `enterprise/tests/test_smart_canvas_logs.js` 约束。上游新增的项目、图片转换和 Comfy 任务接口只记录为后续 Task 3G 的设计输入，本轮未扩展隔离规则。
 
+2026-06-24 Task 3G-1 企业隔离设计基线：新增 `ENTERPRISE_ISOLATION_MATRIX.md` 与 `ENTERPRISE_PERMISSION_DESIGN.md`。已盘点项目/文件夹、画布、对话、资源、历史、素材、任务、WebSocket 和功能入口的存储与 API 面。当前画布、对话、受保护本地资源已有基础 owner 隔离；`/api/projects`、全局 `history.json`、素材库/批量管理、Comfy/video/图片转换任务、WebSocket 事件及 API/工作流权限开关尚未实现完整隔离。后续必须按 3G-2 至 3G-7 分阶段交付，普通用户对未知 owner 数据默认拒绝。
+
 ---
 
 ## 4. 不可偏离的开发边界
@@ -139,7 +141,7 @@
 7. 上游当前会跟踪 `python/` 运行时，但企业仓库目前将 `python/`、`python.zip` 视为本地运行时并忽略；后续如要改变该策略，必须单独评估仓库体积、平台兼容性和发布方式，不能在上游同步 PR 中顺手改变。
 8. 根目录 `README.md` 是企业版项目入口，不应在上游同步中被上游 README 覆盖；如需保留上游 README，只能同步到 `docs/upstream/README.upstream.md`。
 9. 受保护资源隔离目前以可从 URL、请求参数、响应数据、画布/对话引用或 `user_resource_map` 判断的本地资源为主；复杂嵌套素材集合和无法可靠归属的历史资源需要后续继续通过浏览器级回归和迁移流程补强。
-10. 上游 `2026.06.23` 新增 `/api/projects`、`/api/image-jpeg`、`/api/canvas-comfy-tasks` 等能力。本轮未扩大企业拦截面；这些路径及在线生图历史、全局素材、`history.json`、批量历史管理和 WebSocket `new_image` 的隔离影响应作为 Task 3G 的独立设计输入处理。
+10. Task 3G-1 已完成设计输入：`ENTERPRISE_ISOLATION_MATRIX.md` 与 `ENTERPRISE_PERMISSION_DESIGN.md` 是项目/文件夹、历史、素材、WebSocket 和入口权限的后续实施契约。它们尚未实现业务隔离；后续必须按 3G-2 至 3G-7 单独 PR 交付，不能以 UI 隐藏替代 API 授权。
 
 ---
 
