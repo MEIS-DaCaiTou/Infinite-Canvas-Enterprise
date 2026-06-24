@@ -3,6 +3,7 @@ const els = {
   folder: document.getElementById('folderInput'),
   classify: document.getElementById('classifyInput'),
   autoScroll: document.getElementById('autoScrollInput'),
+  filterLowRes: document.getElementById('filterLowResInput'),
   capture: document.getElementById('captureBtn'),
   provider: document.getElementById('providerSelect'),
   model: document.getElementById('modelSelect'),
@@ -77,6 +78,46 @@ function mediaKindFromUrl(url){
   const clean = decodeURIComponent(String(url || '').split(/[?#]/, 1)[0]).toLowerCase();
   if(/\.(mp4|webm|mov|m4v|flv)$/.test(clean)) return 'video';
   return 'image';
+}
+
+function inferImageSizeFromUrl(url){
+  let text = String(url || '');
+  try { text = decodeURIComponent(text); } catch {}
+  const dimensionMatch = text.match(/[?&#](?:s|size|dimensions|resolution)=([0-9]{2,5})x([0-9]{2,5})(?:[&#]|$)/i)
+    || text.match(/(?:^|[^\d])([0-9]{2,5})x([0-9]{2,5})(?:[^\d]|$)/i);
+  if(dimensionMatch){
+    return {width: Number(dimensionMatch[1]) || 0, height: Number(dimensionMatch[2]) || 0};
+  }
+  const behanceThumbMatch = text.match(/(?:mir-[^/]+\.behance\.net|behance\.net)\/(?:[^?#]*\/)?(?:projects|project_modules)\/(?:max_)?([0-9]{2,5})_(?:webp|jpe?g|png|opt)(?:[/?#_.-]|$)/i);
+  if(behanceThumbMatch){
+    const size = Number(behanceThumbMatch[1]) || 0;
+    return {width: size, height: size};
+  }
+  const widthMatch = text.match(/[?&#](?:w|width)=([0-9]{2,5})(?:[&#]|$)/i)
+    || text.match(/(?:^|[^a-z0-9])(?:w|width)[_-]?([0-9]{2,5})(?:[^\d]|$)/i)
+    || text.match(/(?:^|[^a-z0-9])([0-9]{2,5})_(?:webp|jpe?g|png)(?:[^a-z0-9]|$)/i);
+  if(widthMatch){
+    return {width: Number(widthMatch[1]) || 0, height: 0};
+  }
+  return {};
+}
+
+function isLowResolutionItem(item){
+  if(!item || (item.kind || mediaKindFromUrl(item.url)) !== 'image') return false;
+  if(/^data:/i.test(String(item.url || ''))) return false;
+  const inferred = inferImageSizeFromUrl(item.url);
+  const width = Number(item.width || 0) || Number(inferred.width || 0);
+  const height = Number(item.height || 0) || Number(inferred.height || 0);
+  return (width > 0 && width < 500) || (height > 0 && height < 500);
+}
+
+function visibleImages(){
+  return els.filterLowRes?.checked ? images.filter(item => !isLowResolutionItem(item)) : images;
+}
+
+function pruneHiddenSelection(){
+  const visible = new Set(visibleImages().map(item => item.url));
+  selected = new Set([...selected].filter(url => visible.has(url)));
 }
 
 function loadMediaSize(item){
@@ -164,6 +205,33 @@ function escapeHtml(value){
 
 function syncPreviewSelection(){
   return previewItem;
+}
+
+function updateSelectionUi(){
+  const visible = visibleImages();
+  if(els.filterLowRes?.checked) pruneHiddenSelection();
+  const hiddenCount = images.length - visible.length;
+  els.count.textContent = images.length
+    ? `${visible.length} 张图片${hiddenCount ? `（已过滤 ${hiddenCount} 张）` : ''} / 已选 ${selected.size}`
+    : '未扫描';
+  els.import.disabled = selected.size === 0;
+  els.download.disabled = selected.size === 0;
+}
+
+function updateCardSelection(card, item){
+  if(!card || !item) return;
+  const checked = selected.has(item.url);
+  card.classList.toggle('selected', checked);
+  const checkbox = card.querySelector('input[type="checkbox"]');
+  if(checkbox) checkbox.checked = checked;
+}
+
+function updateVisibleCardSelections(){
+  const visible = visibleImages();
+  els.grid.querySelectorAll('.card').forEach(card => {
+    updateCardSelection(card, visible[Number(card.dataset.index)]);
+  });
+  updateSelectionUi();
 }
 
 async function getActiveTabId(){
@@ -379,17 +447,20 @@ async function closeImagePreview(){
 }
 
 function renderGrid(){
-  els.count.textContent = images.length ? `${images.length} 张图片 / 已选 ${selected.size}` : '未扫描';
-  els.import.disabled = selected.size === 0;
-  els.download.disabled = selected.size === 0;
-  if(!images.length){
+  const previousScrollTop = els.grid.scrollTop || 0;
+  const visible = visibleImages();
+  if(els.filterLowRes?.checked) pruneHiddenSelection();
+  updateSelectionUi();
+  if(!visible.length){
     closeImagePreview();
     els.grid.className = 'grid empty';
-    els.grid.innerHTML = '<div class="empty-state">没有扫描到可用图片。</div>';
+    els.grid.innerHTML = images.length && hiddenCount
+      ? '<div class="empty-state">已过滤全部低分辨率图片。</div>'
+      : '<div class="empty-state">没有扫描到可用图片。</div>';
     return;
   }
   els.grid.className = 'grid';
-  els.grid.innerHTML = images.map((img, index) => {
+  els.grid.innerHTML = visible.map((img, index) => {
     const checked = selected.has(img.url);
     const title = `${img.width || '?'} x ${img.height || '?'} · ${img.url}`;
     const kind = img.kind || mediaKindFromUrl(img.url);
@@ -426,14 +497,15 @@ function renderGrid(){
     });
   });
   els.grid.querySelectorAll('.card').forEach(card => {
-    const item = images[Number(card.dataset.index)];
+    const item = visible[Number(card.dataset.index)];
     // 整个下方文字区域点击即可勾选/取消（比小复选框更好点）
     card.querySelector('.meta')?.addEventListener('click', event => {
       event.stopPropagation();
       if(!item) return;
       if(selected.has(item.url)) selected.delete(item.url);
       else selected.add(item.url);
-      renderGrid();
+      updateCardSelection(card, item);
+      updateSelectionUi();
       syncPreviewSelection();
     });
     // 缩略图区域点击打开预览
@@ -447,6 +519,7 @@ function renderGrid(){
         .catch(err => setStatus(err.message || '预览失败'));
     });
   });
+  els.grid.scrollTop = previousScrollTop;
   syncPreviewSelection();
 }
 
@@ -462,6 +535,7 @@ function getSettingsPayload(){
     folder: els.folder.value || '网页采集',
     classify: Boolean(els.classify.checked),
     autoScroll: Boolean(els.autoScroll.checked),
+    filterLowRes: Boolean(els.filterLowRes?.checked),
     provider: savedSettings.provider,
     model: savedSettings.model,
     prompt: els.prompt.value || '',
@@ -470,11 +544,12 @@ function getSettingsPayload(){
 }
 
 async function loadSettings(){
-  const data = await chrome.storage.local.get(['server', 'port', 'folder', 'classify', 'autoScroll', 'provider', 'model', 'prompt', 'settingsCollapsed']);
+  const data = await chrome.storage.local.get(['server', 'port', 'folder', 'classify', 'autoScroll', 'filterLowRes', 'provider', 'model', 'prompt', 'settingsCollapsed']);
   els.server.value = data.server || (data.port ? `127.0.0.1:${data.port}` : '127.0.0.1:8767');
   els.folder.value = data.folder || '网页采集';
   els.classify.checked = data.classify !== false;
   els.autoScroll.checked = Boolean(data.autoScroll);
+  if(els.filterLowRes) els.filterLowRes.checked = Boolean(data.filterLowRes);
   savedSettings.provider = data.provider || '';
   savedSettings.model = data.model || '';
   els.prompt.value = data.prompt || '';
@@ -526,11 +601,25 @@ function collectPageImages(){
   const videoUrlPattern = /\.(mp4|webm|mov|m4v|flv)(\?|#|$)/i;
   const mediaUrlPattern = /\.(avif|gif|jpe?g|png|webp|mp4|webm|mov|m4v|flv)(\?|#|$)/i;
   const inferSizeFromUrl = url => {
-    const text = String(url || '');
-    const match = text.match(/[?&#](?:s|size|dimensions|resolution)=([0-9]{2,5})x([0-9]{2,5})(?:[&#]|$)/i)
+    let text = String(url || '');
+    try { text = decodeURIComponent(text); } catch {}
+    const dimensionMatch = text.match(/[?&#](?:s|size|dimensions|resolution)=([0-9]{2,5})x([0-9]{2,5})(?:[&#]|$)/i)
       || text.match(/(?:^|[^\d])([0-9]{2,5})x([0-9]{2,5})(?:[^\d]|$)/i);
-    if(!match) return {};
-    return {width: Number(match[1]) || 0, height: Number(match[2]) || 0};
+    if(dimensionMatch){
+      return {width: Number(dimensionMatch[1]) || 0, height: Number(dimensionMatch[2]) || 0};
+    }
+    const behanceThumbMatch = text.match(/(?:mir-[^/]+\.behance\.net|behance\.net)\/(?:[^?#]*\/)?(?:projects|project_modules)\/(?:max_)?([0-9]{2,5})_(?:webp|jpe?g|png|opt)(?:[/?#_.-]|$)/i);
+    if(behanceThumbMatch){
+      const size = Number(behanceThumbMatch[1]) || 0;
+      return {width: size, height: size};
+    }
+    const widthMatch = text.match(/[?&#](?:w|width)=([0-9]{2,5})(?:[&#]|$)/i)
+      || text.match(/(?:^|[^a-z0-9])(?:w|width)[_-]?([0-9]{2,5})(?:[^\d]|$)/i)
+      || text.match(/(?:^|[^a-z0-9])([0-9]{2,5})_(?:webp|jpe?g|png)(?:[^a-z0-9]|$)/i);
+    if(widthMatch){
+      return {width: Number(widthMatch[1]) || 0, height: 0};
+    }
+    return {};
   };
   const add = (url, meta = {}) => {
     if(!url || typeof url !== 'string') return;
@@ -869,7 +958,11 @@ async function scanImages(){
   renderGrid();
   const streamCount = images.filter(item => item.streamType === 'stream').length;
   const tip = streamCount ? `（含 ${streamCount} 个流媒体清单，需用下载器处理）` : '';
-  setStatus(images.length ? `已扫描到 ${images.length} 个素材${tip}，请勾选需要导入的素材。` : '当前页面没有扫描到可用素材。');
+  const visibleCount = visibleImages().length;
+  const hiddenCount = images.length - visibleCount;
+  setStatus(images.length
+    ? `已扫描到 ${visibleCount} 个素材${hiddenCount ? `，已过滤 ${hiddenCount} 个低分辨率素材` : ''}${tip}，请勾选需要导入的素材。`
+    : '当前页面没有扫描到可用素材。');
 }
 
 // 向后台 service worker 取本标签页嗅探到的媒体请求（XHR/fetch 加载、DOM 里看不到的）。
@@ -951,7 +1044,7 @@ function fetchMediaAsBase64(urls){
 }
 
 async function importSelected(){
-  const picked = images.filter(item => selected.has(item.url));
+  const picked = visibleImages().filter(item => selected.has(item.url));
   if(!picked.length) return;
   await saveSettings();
   els.import.disabled = true;
@@ -1140,7 +1233,7 @@ function buildZipBlob(files){
 
 // 下载到浏览器下载目录，不经过后端——可当独立采集工具使用。单张下原文件，多张打包成一个 zip。
 async function downloadSelected(){
-  const picked = images.filter(item => selected.has(item.url));
+  const picked = visibleImages().filter(item => selected.has(item.url));
   if(!picked.length) return;
   await saveSettings();
   els.download.disabled = true;
@@ -1279,13 +1372,13 @@ els.import.addEventListener('click', () => importSelected().catch(err => {
   els.import.disabled = selected.size === 0;
 }));
 els.selectAll.addEventListener('click', () => {
-  selected = new Set(images.map(item => item.url));
-  renderGrid();
+  selected = new Set(visibleImages().map(item => item.url));
+  updateVisibleCardSelections();
   syncPreviewSelection();
 });
 els.clear.addEventListener('click', () => {
   selected.clear();
-  renderGrid();
+  updateVisibleCardSelections();
   syncPreviewSelection();
 });
 els.provider.addEventListener('change', () => {
@@ -1295,6 +1388,11 @@ els.provider.addEventListener('change', () => {
   saveSettings();
 });
 els.autoScroll.addEventListener('change', () => saveSettings());
+els.filterLowRes?.addEventListener('change', () => {
+  pruneHiddenSelection();
+  renderGrid();
+  saveSettings();
+});
 [els.server, els.folder, els.classify, els.model, els.prompt].forEach(el => {
   el.addEventListener('change', () => {
     if(el === els.model) savedSettings.model = els.model.value || '';

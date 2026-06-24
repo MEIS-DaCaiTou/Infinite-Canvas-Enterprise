@@ -54,6 +54,7 @@ let workflowManageMode = false;
 let promptManageMode = false;
 let assetMoveTarget = '';
 let assetClipboard = null;
+let managedSelectionPointerGuard = null;
 let assetEditMode = false;
 let promptEditMode = false;
 let promptCreateMode = false;
@@ -420,12 +421,27 @@ function assetKindLabel(item){
     if(kind === 'text') return '文本';
     return '图片';
 }
+// 缩略图走服务端缩放代理（/api/media-preview），把大原图降到 ~256px 再传给浏览器。素材多时滚动只解码小图，
+// 不再因为加载/解码整张原图而卡。仅对本地 /output、/assets 的图片/视频生效，其它地址原样返回。
+function assetPreviewUrl(url, w=256){
+    const raw = String(url || '');
+    if(!raw || raw.startsWith('data:') || raw.startsWith('blob:')) return raw;
+    let path = raw;
+    if(/^https?:\/\//i.test(raw)){
+        try { path = new URL(raw).pathname; } catch(e) { return raw; }
+    }
+    if(!(path.startsWith('/output/') || path.startsWith('/assets/'))) return raw;
+    if(!/\.(png|jpe?g|webp|gif|bmp|avif|tiff?|mp4|webm|mov|m4v|mkv)(\?|#|$)/i.test(path)) return raw;
+    const width = Math.max(64, Math.min(2048, Math.round(Number(w) || 256)));
+    return `/api/media-preview?w=${width}&url=${encodeURIComponent(path)}`;
+}
 function assetThumb(item){
     const kind = assetKind(item);
-    if(kind === 'video') return `<video src="${escapeAttr(item.url)}" muted preload="metadata" playsinline></video>`;
+    // 视频用 poster（服务端生成的一帧）+ preload=none：不再为每个视频加载元数据，素材多时滚动顺畅。
+    if(kind === 'video') return `<video src="${escapeAttr(item.url)}" poster="${escapeAttr(assetPreviewUrl(item.url, 256))}" muted preload="none" playsinline></video>`;
     if(kind === 'audio') return `<div class="asset-file-icon"><i data-lucide="file-audio"></i><span>音频</span></div>`;
     if(kind === 'text') return `<div class="asset-file-icon"><i data-lucide="file-text"></i><span>文本</span></div>`;
-    return `<img src="${escapeAttr(item.url)}" alt="${escapeAttr(item.name || 'asset')}" loading="lazy">`;
+    return `<img src="${escapeAttr(assetPreviewUrl(item.url, 256))}" alt="${escapeAttr(item.name || 'asset')}" loading="lazy" decoding="async">`;
 }
 function workflowThumb(item){
     return `<div class="asset-file-icon workflow-file-icon"><i data-lucide="workflow"></i><span>${escapeHtml(workflowKindLabel(item))}</span></div>`;
@@ -660,7 +676,7 @@ function activeCanvasAssetCategoryInfo(){
 }
 function defaultCanvasAssetCategory(){
     const cats = canvasAssetCategories();
-    return cats.find(cat => Number(cat.count || 0) > 0)?.id || cats[0]?.id || 'smart';
+    return cats.find(cat => Number(cat.canvas_count || 0) > 0)?.id || cats[0]?.id || 'smart';
 }
 function uniqueCanvasAssets(items){
     const seen = new Set();
@@ -680,6 +696,11 @@ function canvasAssetsForCategory(categoryId=activeCanvasAssetCategory){
     let list = Array.isArray(canvasAssetsData.canvases) ? canvasAssetsData.canvases.slice() : [];
     list = list.filter(canvas => (canvas.kind || 'classic') === categoryId);
     return list.sort((a, b) => String(a.title || '').localeCompare(String(b.title || ''), 'zh-Hans-CN', {numeric:true, sensitivity:'base'}));
+}
+function canvasAssetOpenUrl(canvas){
+    if(!canvas?.id) return '';
+    const id = encodeURIComponent(canvas.id);
+    return canvas.kind === 'smart' ? `/static/smart-canvas.html?id=${id}` : `/static/canvas.html?id=${id}`;
 }
 function activeCanvasAssetCanvas(){
     if(!activeCanvasAssetCanvasId) return null;
@@ -857,6 +878,86 @@ function selectedCanvasAsset(){
     const items = currentCanvasAssetItems();
     return items.find(item => item.id === selectedCanvasAssetId) || items[0] || null;
 }
+function toggleSelectionSet(set, id){
+    if(!id) return false;
+    if(set.has(id)){
+        set.delete(id);
+        return false;
+    }
+    set.add(id);
+    return true;
+}
+function managedSelectionTarget(target){
+    if(activeTab === 'assets' && assetManageMode){
+        const check = target.closest?.('[data-asset-check]');
+        const card = target.closest?.('[data-asset-card]');
+        const id = check?.dataset.assetCheck || card?.dataset.assetCard || '';
+        if(id) return {kind:'asset', id};
+    }
+    if(activeTab === 'local' && localUploadManageMode){
+        const check = target.closest?.('[data-localup-check]');
+        const card = target.closest?.('[data-localup-card]');
+        const id = check?.dataset.localupCheck || card?.dataset.localupCard || '';
+        if(id) return {kind:'localup', id};
+    }
+    if(activeTab === 'local' && localManageMode){
+        const check = target.closest?.('[data-local-check]');
+        const card = target.closest?.('[data-local-card]');
+        const id = check?.dataset.localCheck || card?.dataset.localCard || '';
+        if(id) return {kind:'local', id};
+    }
+    if(activeTab === 'workflows' && workflowManageMode){
+        const check = target.closest?.('[data-workflow-check]');
+        const card = target.closest?.('[data-workflow-card]');
+        const id = check?.dataset.workflowCheck || card?.dataset.workflowCard || '';
+        if(id) return {kind:'workflow', id};
+    }
+    if(activeTab === 'prompts' && promptManageMode){
+        const check = target.closest?.('[data-prompt-check]');
+        const row = target.closest?.('[data-prompt-row]');
+        const id = check?.dataset.promptCheck || row?.dataset.promptRow || '';
+        if(id) return {kind:'prompt', id};
+    }
+    if(activeTab === 'canvas-assets' && canvasAssetManageMode){
+        const check = target.closest?.('[data-canvas-asset-check]');
+        const card = target.closest?.('[data-canvas-asset-card]');
+        const id = check?.dataset.canvasAssetCheck || card?.dataset.canvasAssetCard || '';
+        if(id) return {kind:'canvasAsset', id};
+    }
+    return null;
+}
+function applyManagedSelection(kind, id){
+    if(kind === 'asset'){
+        const selected = toggleSelectionSet(selectedAssetIds, id);
+        selectedAssetId = selected ? id : (selectedAssetId === id ? '' : selectedAssetId);
+    } else if(kind === 'localup'){
+        const selected = toggleSelectionSet(selectedLocalUploadIds, id);
+        selectedLocalUploadId = selected ? id : (selectedLocalUploadId === id ? '' : selectedLocalUploadId);
+    } else if(kind === 'local'){
+        const selected = toggleSelectionSet(selectedLocalIds, id);
+        selectedLocalId = selected ? id : (selectedLocalId === id ? '' : selectedLocalId);
+    } else if(kind === 'workflow'){
+        const selected = toggleSelectionSet(selectedWorkflowIds, id);
+        selectedWorkflowId = selected ? id : (selectedWorkflowId === id ? '' : selectedWorkflowId);
+    } else if(kind === 'prompt'){
+        const selected = toggleSelectionSet(selectedPromptIds, id);
+        selectedPromptId = selected ? id : (selectedPromptId === id ? '' : selectedPromptId);
+        promptEditMode = false;
+        promptCreateMode = false;
+    } else if(kind === 'canvasAsset'){
+        const selected = toggleSelectionSet(selectedCanvasAssetIds, id);
+        selectedCanvasAssetId = selected ? id : (selectedCanvasAssetId === id ? '' : selectedCanvasAssetId);
+    }
+    pendingBatchDelete = '';
+}
+function guardMatchesManagedSelection(target){
+    const current = managedSelectionTarget(target);
+    return !!current
+        && !!managedSelectionPointerGuard
+        && current.kind === managedSelectionPointerGuard.kind
+        && current.id === managedSelectionPointerGuard.id
+        && Date.now() - managedSelectionPointerGuard.at < 600;
+}
 function normalizeAssetState(){
     const libs = assetLibraries();
     if(!activeAssetLibraryId || !libs.some(lib => lib.id === activeAssetLibraryId)) activeAssetLibraryId = assetLibrary.active_library_id || libs[0]?.id || '';
@@ -911,6 +1012,22 @@ function normalizeCanvasAssetState(){
     if(selectedCanvasAssetId && !items.some(item => item.id === selectedCanvasAssetId)) selectedCanvasAssetId = '';
     if(!selectedCanvasAssetId && items.length) selectedCanvasAssetId = items[0].id;
     selectedCanvasAssetIds = new Set([...selectedCanvasAssetIds].filter(id => findCanvasAssetItem(id)));
+}
+async function refreshCanvasAssets(){
+    try {
+        setStatus('正在刷新画布资产...');
+        const data = await apiJson('/api/canvas-assets');
+        canvasAssetsData = {
+            categories:Array.isArray(data.categories) ? data.categories : [],
+            canvases:Array.isArray(data.canvases) ? data.canvases : [],
+            items:Array.isArray(data.items) ? data.items : []
+        };
+        normalizeCanvasAssetState();
+        render();
+        setStatus('画布资产已刷新');
+    } catch(err) {
+        setStatus(err.message || '刷新画布资产失败');
+    }
 }
 async function loadAll(){
     setStatus('加载中...');
@@ -998,7 +1115,7 @@ function renderCanvasAssetsManager(){
     normalizeCanvasAssetState();
     const items = currentCanvasAssetItems();
     const groups = groupCanvasAssetItems(items);
-    const total = (canvasAssetsData.items || []).length;
+    const total = uniqueCanvasAssets(canvasAssetsData.items || []).length;
     const detail = selectedCanvasAsset();
     root.innerHTML = `
         <aside class="asset-panel asset-nav">
@@ -1017,6 +1134,7 @@ function renderCanvasAssetsManager(){
                     <span>${canvasAssetViewSubtitle(items)}</span>
                 </div>
                 <div class="asset-tools">
+                    <button class="asset-btn" type="button" data-canvas-asset-refresh title="重新读取画布中的图片、视频、音频资源"><i data-lucide="refresh-cw"></i><span>刷新资源</span></button>
                     <label class="asset-search-wrap"><i data-lucide="search"></i><input id="canvasAssetSearch" class="asset-search" type="search" value="${escapeAttr(canvasAssetQuery)}" placeholder="搜索画布资产"></label>
                     <select id="canvasAssetSort" class="manage-select canvas-sort-select" title="排序方法">
                         <option value="canvas_asc" ${canvasAssetSort === 'canvas_asc' ? 'selected' : ''}>画布名称</option>
@@ -1039,7 +1157,7 @@ function renderCanvasAssetsManager(){
             <div class="content-scroll">
                 <div class="asset-grid">
                     ${groups.map(group => renderCanvasAssetGroup(group)).join('')}
-                    ${items.length ? '' : '<div class="empty-state">当前分类没有可下载的画布资产。可以切换分类，或在画布中生成/导入图片、视频、音频后再查看。</div>'}
+                    ${items.length ? '' : '<div class="empty-state">当前分类没有可下载的画布资产。可以点击“刷新资源”，或在画布中生成/导入图片、视频、音频后再查看。</div>'}
                 </div>
             </div>
         </section>
@@ -1412,6 +1530,19 @@ function renderLocalUploadDetail(item){
             </div>
         </div>
     `;
+}
+function refreshLocalUploadSelectionOnly(){
+    document.querySelectorAll('[data-localup-card]').forEach(card => {
+        card.classList.toggle('active', card.dataset.localupCard === selectedLocalUploadId);
+    });
+    document.querySelectorAll('[data-localup-check]').forEach(input => {
+        input.checked = selectedLocalUploadIds.has(input.dataset.localupCheck);
+    });
+    const detail = root.querySelector('.asset-detail');
+    if(detail){
+        detail.innerHTML = renderLocalUploadDetail(findLocalUpload(selectedLocalUploadId));
+        refreshIcons();
+    }
 }
 function renderLocalFolderBranch(folder, depth=0){
     const active = folder.id === activeLocalFolderId;
@@ -2100,11 +2231,11 @@ function renderPromptDetail(item, readonly){
             </div>
             <section class="prompt-block">
                 <div class="prompt-block-head"><span>正向提示词</span><span>${String(item.positive || '').length} 字符</span></div>
-                <div class="prompt-block-body">${escapeHtml(item.positive || '未填写')}</div>
+                <textarea class="prompt-block-body" readonly spellcheck="false">${escapeHtml(item.positive || '未填写')}</textarea>
             </section>
             <section class="prompt-block">
                 <div class="prompt-block-head"><span>负向提示词</span><span>${String(item.negative || '').length} 字符</span></div>
-                <div class="prompt-block-body negative">${escapeHtml(item.negative || '未填写')}</div>
+                <textarea class="prompt-block-body negative" readonly spellcheck="false">${escapeHtml(item.negative || '未填写')}</textarea>
             </section>
             ${params.length ? `<div class="params-list">${params.map(([key, value]) => `<div class="param-row"><strong>${escapeHtml(key)}</strong><span>${escapeHtml(value)}</span></div>`).join('')}</div>` : ''}
         </div>
@@ -2727,6 +2858,96 @@ async function saveLocalUploadCaption(id){
 }
 async function handleClick(event){
     const target = event.target;
+    if(guardMatchesManagedSelection(target)){
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+    }
+    if(activeTab === 'assets' && assetManageMode){
+        const assetCheck = target.closest?.('[data-asset-check]');
+        const assetCard = target.closest?.('[data-asset-card]');
+        if(assetCheck || assetCard){
+            event.preventDefault();
+            event.stopPropagation();
+            const id = assetCheck?.dataset.assetCheck || assetCard?.dataset.assetCard || '';
+            const selected = toggleSelectionSet(selectedAssetIds, id);
+            selectedAssetId = selected ? id : (selectedAssetId === id ? '' : selectedAssetId);
+            pendingBatchDelete = '';
+            render();
+            return;
+        }
+    }
+    if(activeTab === 'local' && localUploadManageMode){
+        const localUpCheck = target.closest?.('[data-localup-check]');
+        const localUpCard = target.closest?.('[data-localup-card]');
+        if(localUpCheck || localUpCard){
+            event.preventDefault();
+            event.stopPropagation();
+            const id = localUpCheck?.dataset.localupCheck || localUpCard?.dataset.localupCard || '';
+            const selected = toggleSelectionSet(selectedLocalUploadIds, id);
+            selectedLocalUploadId = selected ? id : (selectedLocalUploadId === id ? '' : selectedLocalUploadId);
+            pendingBatchDelete = '';
+            render();
+            return;
+        }
+    }
+    if(activeTab === 'local' && localManageMode){
+        const localCheck = target.closest?.('[data-local-check]');
+        const localCard = target.closest?.('[data-local-card]');
+        if(localCheck || localCard){
+            event.preventDefault();
+            event.stopPropagation();
+            const id = localCheck?.dataset.localCheck || localCard?.dataset.localCard || '';
+            const selected = toggleSelectionSet(selectedLocalIds, id);
+            selectedLocalId = selected ? id : (selectedLocalId === id ? '' : selectedLocalId);
+            pendingBatchDelete = '';
+            render();
+            return;
+        }
+    }
+    if(activeTab === 'workflows' && workflowManageMode){
+        const workflowCheck = target.closest?.('[data-workflow-check]');
+        const workflowCard = target.closest?.('[data-workflow-card]');
+        if(workflowCheck || workflowCard){
+            event.preventDefault();
+            event.stopPropagation();
+            const id = workflowCheck?.dataset.workflowCheck || workflowCard?.dataset.workflowCard || '';
+            const selected = toggleSelectionSet(selectedWorkflowIds, id);
+            selectedWorkflowId = selected ? id : (selectedWorkflowId === id ? '' : selectedWorkflowId);
+            pendingBatchDelete = '';
+            render();
+            return;
+        }
+    }
+    if(activeTab === 'prompts' && promptManageMode){
+        const promptCheck = target.closest?.('[data-prompt-check]');
+        const promptRow = target.closest?.('[data-prompt-row]');
+        if(promptCheck || promptRow){
+            event.preventDefault();
+            event.stopPropagation();
+            const id = promptCheck?.dataset.promptCheck || promptRow?.dataset.promptRow || '';
+            const selected = toggleSelectionSet(selectedPromptIds, id);
+            selectedPromptId = selected ? id : (selectedPromptId === id ? '' : selectedPromptId);
+            promptEditMode = false;
+            promptCreateMode = false;
+            pendingBatchDelete = '';
+            render();
+            return;
+        }
+    }
+    if(activeTab === 'canvas-assets' && canvasAssetManageMode){
+        const canvasCheck = target.closest?.('[data-canvas-asset-check]');
+        const canvasCard = target.closest?.('[data-canvas-asset-card]');
+        if(canvasCheck || canvasCard){
+            event.preventDefault();
+            event.stopPropagation();
+            const id = canvasCheck?.dataset.canvasAssetCheck || canvasCard?.dataset.canvasAssetCard || '';
+            const selected = toggleSelectionSet(selectedCanvasAssetIds, id);
+            selectedCanvasAssetId = selected ? id : (selectedCanvasAssetId === id ? '' : selectedCanvasAssetId);
+            refreshCanvasAssetSelectionOnly();
+            return;
+        }
+    }
     const tabBtn = target.closest?.('[data-tab]');
     if(tabBtn){ activeTab = tabBtn.dataset.tab || 'assets'; selectedAssetIds.clear(); selectedWorkflowIds.clear(); selectedPromptIds.clear(); selectedLocalIds.clear(); selectedLocalUploadIds.clear(); selectedCanvasAssetIds.clear(); render(); return; }
     if(target.closest?.('#refreshBtn')){ await loadAll(); return; }
@@ -2805,7 +3026,9 @@ async function handleClick(event){
     const localUpCheck = target.closest?.('[data-localup-check]');
     if(localUpCheck){
         const id = localUpCheck.dataset.localupCheck || '';
-        if(selectedLocalUploadIds.has(id)) selectedLocalUploadIds.delete(id); else selectedLocalUploadIds.add(id);
+        const selected = toggleSelectionSet(selectedLocalUploadIds, id);
+        selectedLocalUploadId = selected ? id : (selectedLocalUploadId === id ? '' : selectedLocalUploadId);
+        pendingBatchDelete = '';
         render();
         return;
     }
@@ -2815,13 +3038,17 @@ async function handleClick(event){
     if(localUpCopy){ const it = findLocalUpload(localUpCopy.dataset.localupCopy || ''); const ok = await copyTextToClipboard(it?.url || ''); setStatus(ok ? '已复制链接' : '复制失败'); return; }
     const localUpCard = target.closest?.('[data-localup-card]');
     if(localUpCard){
+        const id = localUpCard.dataset.localupCard || '';
         if(localUploadManageMode){
-            const id = localUpCard.dataset.localupCard || '';
-            if(selectedLocalUploadIds.has(id)) selectedLocalUploadIds.delete(id); else selectedLocalUploadIds.add(id);
+            const selected = toggleSelectionSet(selectedLocalUploadIds, id);
+            selectedLocalUploadId = selected ? id : (selectedLocalUploadId === id ? '' : selectedLocalUploadId);
+            pendingBatchDelete = '';
+            render();
         } else {
-            selectedLocalUploadId = localUpCard.dataset.localupCard || '';
+            selectedLocalUploadId = id;
+            pendingBatchDelete = '';
+            refreshLocalUploadSelectionOnly();
         }
-        render();
         return;
     }
     if(target.closest?.('[data-local-pick-folder]')){ await registerSharedFolder(); return; }
@@ -2849,6 +3076,7 @@ async function handleClick(event){
         render();
         return;
     }
+    if(target.closest?.('[data-canvas-asset-refresh]')){ await refreshCanvasAssets(); return; }
     if(target.closest?.('[data-canvas-asset-select-all]')){ currentCanvasAssetItems().forEach(item => selectedCanvasAssetIds.add(item.id)); render(); return; }
     if(target.closest?.('[data-canvas-asset-clear-selection]')){ selectedCanvasAssetIds.clear(); render(); return; }
     if(target.closest?.('[data-canvas-asset-download-selected]')){ await downloadCanvasAssetItems([...selectedCanvasAssetIds]); return; }
@@ -2858,13 +3086,26 @@ async function handleClick(event){
     if(canvasAssetOpen){ const it = findCanvasAssetItem(canvasAssetOpen.dataset.canvasAssetOpen || ''); if(it?.url) window.open(it.url, '_blank', 'noopener'); return; }
     const canvasAssetCopy = target.closest?.('[data-canvas-asset-copy]');
     if(canvasAssetCopy){ const it = findCanvasAssetItem(canvasAssetCopy.dataset.canvasAssetCopy || ''); const ok = await copyTextToClipboard(it?.url || ''); setStatus(ok ? '已复制画布资产链接' : '复制失败'); return; }
-    if(target.closest?.('[data-canvas-asset-check]')) return;
+    const canvasAssetCheck = target.closest?.('[data-canvas-asset-check]');
+    if(canvasAssetCheck){
+        event.preventDefault();
+        event.stopPropagation();
+        if(canvasAssetManageMode){
+            const id = canvasAssetCheck.dataset.canvasAssetCheck || '';
+            const selected = toggleSelectionSet(selectedCanvasAssetIds, id);
+            selectedCanvasAssetId = selected ? id : (selectedCanvasAssetId === id ? '' : selectedCanvasAssetId);
+            refreshCanvasAssetSelectionOnly();
+        }
+        return;
+    }
     const canvasAssetCard = target.closest?.('[data-canvas-asset-card]');
     if(canvasAssetCard){
         const id = canvasAssetCard.dataset.canvasAssetCard || '';
-        selectedCanvasAssetId = id;
         if(canvasAssetManageMode){
-            if(selectedCanvasAssetIds.has(id)) selectedCanvasAssetIds.delete(id); else selectedCanvasAssetIds.add(id);
+            const selected = toggleSelectionSet(selectedCanvasAssetIds, id);
+            selectedCanvasAssetId = selected ? id : (selectedCanvasAssetId === id ? '' : selectedCanvasAssetId);
+        } else {
+            selectedCanvasAssetId = id;
         }
         refreshCanvasAssetSelectionOnly();
         return;
@@ -2891,14 +3132,29 @@ async function handleClick(event){
     if(localOpen){ openLocalItem(localOpen.dataset.localOpen || ''); return; }
     const localFolder = target.closest?.('[data-local-folder]');
     if(localFolder){ activeLocalFolderId = localFolder.dataset.localFolder || ''; selectedLocalId = ''; selectedLocalIds.clear(); pendingBatchDelete = ''; render(); return; }
-    if(target.closest?.('[data-local-check]')) return;
+    const localCheck = target.closest?.('[data-local-check]');
+    if(localCheck){
+        event.preventDefault();
+        event.stopPropagation();
+        if(localManageMode){
+            const id = localCheck.dataset.localCheck || '';
+            const selected = toggleSelectionSet(selectedLocalIds, id);
+            selectedLocalId = selected ? id : (selectedLocalId === id ? '' : selectedLocalId);
+            pendingBatchDelete = '';
+            render();
+        }
+        return;
+    }
     const localCard = target.closest?.('[data-local-card]');
     if(localCard){
         const id = localCard.dataset.localCard || '';
-        selectedLocalId = id;
         if(localManageMode){
-            if(selectedLocalIds.has(id)) selectedLocalIds.delete(id); else selectedLocalIds.add(id);
+            const selected = toggleSelectionSet(selectedLocalIds, id);
+            selectedLocalId = selected ? id : (selectedLocalId === id ? '' : selectedLocalId);
+        } else {
+            selectedLocalId = id;
         }
+        pendingBatchDelete = '';
         render();
         return;
     }
@@ -2948,9 +3204,11 @@ async function handleClick(event){
     const workflowCard = target.closest?.('[data-workflow-card]');
     if(workflowCard){
         const id = workflowCard.dataset.workflowCard || '';
-        selectedWorkflowId = id;
         if(workflowManageMode){
-            if(selectedWorkflowIds.has(id)) selectedWorkflowIds.delete(id); else selectedWorkflowIds.add(id);
+            const selected = toggleSelectionSet(selectedWorkflowIds, id);
+            selectedWorkflowId = selected ? id : (selectedWorkflowId === id ? '' : selectedWorkflowId);
+        } else {
+            selectedWorkflowId = id;
         }
         pendingDeleteAssetId = '';
         render();
@@ -3076,8 +3334,34 @@ async function handleClick(event){
     }
     const assetCat = target.closest?.('[data-asset-cat]');
     if(assetCat){ activeAssetLibraryId = assetCat.dataset.assetCatLib || activeAssetLibraryId; activeAssetCategoryId = assetCat.dataset.assetCat || ''; activeAssetClassFilter = ''; assetTreeFocus = 'category'; selectedAssetId = ''; selectedAssetIds.clear(); render(); return; }
+    const assetCheck = target.closest?.('[data-asset-check]');
+    if(assetCheck){
+        event.preventDefault();
+        event.stopPropagation();
+        if(assetManageMode){
+            const id = assetCheck.dataset.assetCheck || '';
+            const selected = toggleSelectionSet(selectedAssetIds, id);
+            selectedAssetId = selected ? id : (selectedAssetId === id ? '' : selectedAssetId);
+            pendingBatchDelete = '';
+            render();
+        }
+        return;
+    }
     const assetCard = target.closest?.('[data-asset-card]');
-    if(assetCard){ selectedAssetId = assetCard.dataset.assetCard || ''; assetEditMode = false; pendingDeleteAssetId = ''; render(); return; }
+    if(assetCard){
+        const id = assetCard.dataset.assetCard || '';
+        if(assetManageMode){
+            const selected = toggleSelectionSet(selectedAssetIds, id);
+            selectedAssetId = selected ? id : (selectedAssetId === id ? '' : selectedAssetId);
+        } else {
+            selectedAssetId = id;
+        }
+        assetEditMode = false;
+        pendingDeleteAssetId = '';
+        pendingBatchDelete = '';
+        render();
+        return;
+    }
 
     const promptEditSave = target.closest?.('[data-prompt-edit-save]');
     if(promptEditSave){ await savePromptEdit(promptEditSave.dataset.promptEditSave || ''); return; }
@@ -3143,7 +3427,21 @@ async function handleClick(event){
     const promptCat = target.closest?.('[data-prompt-cat]');
     if(promptCat){ activePromptLibraryId = promptCat.dataset.promptCatLib || activePromptLibraryId; activePromptCategory = promptCat.dataset.promptCat || 'all'; promptTreeFocus = 'category'; selectedPromptId = ''; promptCreateMode = false; promptEditMode = false; selectedPromptIds.clear(); render(); return; }
     const promptRow = target.closest?.('[data-prompt-row]');
-    if(promptRow){ selectedPromptId = promptRow.dataset.promptRow || ''; promptEditMode = false; promptCreateMode = false; pendingDeletePromptId = ''; render(); return; }
+    if(promptRow){
+        const id = promptRow.dataset.promptRow || '';
+        if(promptManageMode){
+            const selected = toggleSelectionSet(selectedPromptIds, id);
+            selectedPromptId = selected ? id : (selectedPromptId === id ? '' : selectedPromptId);
+        } else {
+            selectedPromptId = id;
+        }
+        promptEditMode = false;
+        promptCreateMode = false;
+        pendingDeletePromptId = '';
+        pendingBatchDelete = '';
+        render();
+        return;
+    }
 }
 function openAssetItem(id){
     const item = findAssetItem(id);
@@ -3940,6 +4238,16 @@ async function deleteSelectedPrompts(){
     pendingBatchDelete = '';
     render();
 }
+root.addEventListener('pointerdown', event => {
+    if(event.button !== 0) return;
+    const target = managedSelectionTarget(event.target);
+    if(!target) return;
+    event.preventDefault();
+    event.stopPropagation();
+    applyManagedSelection(target.kind, target.id);
+    managedSelectionPointerGuard = {...target, at:Date.now()};
+    render();
+}, true);
 root.addEventListener('click', event => {
     handleClick(event).catch(err => setStatus(err.message || '操作失败'));
 });
@@ -4024,51 +4332,6 @@ root.addEventListener('change', event => {
             setStatus('已保存工作流名称');
         }).catch(err => setStatus(err.message || '保存失败'));
         return;
-    }
-    const assetCheck = event.target.closest?.('[data-asset-check]');
-    if(assetCheck){
-        if(!assetManageMode) return;
-        if(assetCheck.checked) {
-            selectedAssetIds.add(assetCheck.dataset.assetCheck);
-            selectedAssetId = assetCheck.dataset.assetCheck;
-        } else selectedAssetIds.delete(assetCheck.dataset.assetCheck);
-        render();
-    }
-    const workflowCheck = event.target.closest?.('[data-workflow-check]');
-    if(workflowCheck){
-        if(!workflowManageMode) return;
-        if(workflowCheck.checked) {
-            selectedWorkflowIds.add(workflowCheck.dataset.workflowCheck);
-            selectedWorkflowId = workflowCheck.dataset.workflowCheck;
-        } else selectedWorkflowIds.delete(workflowCheck.dataset.workflowCheck);
-        render();
-    }
-    const promptCheck = event.target.closest?.('[data-prompt-check]');
-    if(promptCheck){
-        if(!promptManageMode) return;
-        if(promptCheck.checked) {
-            selectedPromptIds.add(promptCheck.dataset.promptCheck);
-            selectedPromptId = promptCheck.dataset.promptCheck;
-        } else selectedPromptIds.delete(promptCheck.dataset.promptCheck);
-        render();
-    }
-    const localCheck = event.target.closest?.('[data-local-check]');
-    if(localCheck){
-        if(!localManageMode) return;
-        if(localCheck.checked) {
-            selectedLocalIds.add(localCheck.dataset.localCheck);
-            selectedLocalId = localCheck.dataset.localCheck;
-        } else selectedLocalIds.delete(localCheck.dataset.localCheck);
-        render();
-    }
-    const canvasAssetCheck = event.target.closest?.('[data-canvas-asset-check]');
-    if(canvasAssetCheck){
-        if(!canvasAssetManageMode) return;
-        if(canvasAssetCheck.checked) {
-            selectedCanvasAssetIds.add(canvasAssetCheck.dataset.canvasAssetCheck);
-            selectedCanvasAssetId = canvasAssetCheck.dataset.canvasAssetCheck;
-        } else selectedCanvasAssetIds.delete(canvasAssetCheck.dataset.canvasAssetCheck);
-        refreshCanvasAssetSelectionOnly();
     }
     if(event.target?.id === 'canvasAssetSort'){
         canvasAssetSort = event.target.value || 'canvas_asc';

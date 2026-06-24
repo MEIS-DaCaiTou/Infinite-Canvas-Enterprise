@@ -24,6 +24,8 @@ history.json
 data/asset_library.json
 data/api_providers.json
 data/prompt_libraries.json
+data/projects.json
+data/media_previews/
 data/canvases/
 data/conversations/
 data/update_backups/

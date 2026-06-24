@@ -2,7 +2,7 @@
 
 > 给后续 Codex / Agent 的第一阅读文件。上下文压缩、换线程、长期维护恢复时，先按本文阅读顺序恢复项目方向，再执行当前 Issue。
 
-更新时间：2026-06-16
+更新时间：2026-06-23
 
 ---
 
@@ -41,9 +41,9 @@
 
 | 项 | 当前状态 |
 |----|----------|
-| 本地上游版本 | `2026.06.12` |
+| 本地上游版本 | `2026.06.23` |
 | 企业私有仓库 | `MEIS-DaCaiTou/Infinite-Canvas-Enterprise` |
-| 企业仓库最新提交 | 以 `git log -1 --oneline` 为准；Issue #9 / PR #10 分支正在补同步上游 `hero8152/Infinite-Canvas@9fb9a90` |
+| 企业仓库最新提交 | 以 `git log -1 --oneline` 为准；上游同步基线为 `hero8152/Infinite-Canvas@0da3ff9` |
 | 上游源码仓库 | `hero8152/Infinite-Canvas` |
 | 上游 bugfix PR | [hero8152/Infinite-Canvas#67](https://github.com/hero8152/Infinite-Canvas/pull/67)，状态 OPEN；2026-06-11 查询为 `CONFLICTING` |
 | 当前运行端口 | `8000` 企业网关，`3001` 内部上游 |
@@ -69,6 +69,8 @@
 2026-06-16 Issue #7 浏览器级回归验收体系：新增 `enterprise/tests/BROWSER_REGRESSION_CHECKLIST.md` 和 `enterprise/tests/browser-regression.md`，把启动健康、登录角色、管理后台、企业入口治理、画布、对话、素材输出资源、上游同步后验收和结果记录格式固化为长期维护清单。本任务只建立验收体系，不执行 Issue #8，不重新打开 Issue #15 / #16，不处理第三方图片模型高规格失败问题。
 
 2026-06-16 Issue #8 多用户归属隔离加固：企业网关已将画布、对话和受保护本地资源的访问控制集中到 `enterprise/interceptors.py`。普通用户只能访问 `user_canvas_map` / `user_conversation_map` 中归属自己的画布和对话；未归属历史数据默认仅管理员可见，普通用户列表不可见且直接请求被拒绝。新建画布/对话会自动记录归属，管理员可在管理后台分配画布和对话归属。受保护资源路径覆盖 `/assets/input/`、`/assets/output/`、`/assets/uploads/`、`/assets/library/`、`/output/`、`/api/view`、`/api/download-output`、`/api/media-preview`；无法可靠判断归属的历史资源默认拒绝普通用户访问。
+
+2026-06-23 Task 3U 受控上游同步：上游覆盖区域同步到 `hero8152/Infinite-Canvas@0da3ff9ae0477e6e18b7c241020c2ce8cb0d5c73`，`VERSION=2026.06.23`。根目录企业 README、企业层目录、企业测试和运行时忽略规则未被覆盖。上游新版 `static/js/smart-canvas.js` 未吸收 PR #21 的旧画布日志兼容逻辑，因此以最小迁移方式保留日志初始化、冲突合并和恢复/手工查询任务成功后的日志补写，并由 `enterprise/tests/test_smart_canvas_logs.js` 约束。上游新增的项目、图片转换和 Comfy 任务接口只记录为后续 Task 3G 的设计输入，本轮未扩展隔离规则。
 
 ---
 
@@ -122,6 +124,7 @@
 - 完成 Issue #9 / PR #10 上游版本更新兼容性演练并补同步：本地上游版本更新为 `2026.06.12`，诊断、冒烟、管理员用户管理、普通用户隔离、新建 Smart Canvas 归属和 Smart Canvas 打开验证均通过；`python/` 作为本地运行时不纳入 Git。
 - 完成 Issue #11 README 边界治理：根目录 `README.md` 恢复为企业版入口，上游 README 移至 `docs/upstream/README.upstream.md`，并新增 `docs/upstream/SYNC_POLICY.md` 防止后续上游同步再次覆盖企业首页。
 - 完成 Issue #8 多用户归属隔离加固：画布、对话、受保护资源默认按企业归属判断；未归属历史数据普通用户不可见、不可直接访问；管理员可查看并分配画布/对话归属。
+- 完成 Task 3U 受控同步：上游覆盖区域升级到 `2026.06.23`，企业入口治理、普通用户更新权限、归属隔离和 PR #21 Smart Canvas 日志兼容逻辑均完成回归；`python/` 继续作为本地运行时，不纳入 Git。
 
 ---
 
@@ -136,6 +139,7 @@
 7. 上游当前会跟踪 `python/` 运行时，但企业仓库目前将 `python/`、`python.zip` 视为本地运行时并忽略；后续如要改变该策略，必须单独评估仓库体积、平台兼容性和发布方式，不能在上游同步 PR 中顺手改变。
 8. 根目录 `README.md` 是企业版项目入口，不应在上游同步中被上游 README 覆盖；如需保留上游 README，只能同步到 `docs/upstream/README.upstream.md`。
 9. 受保护资源隔离目前以可从 URL、请求参数、响应数据、画布/对话引用或 `user_resource_map` 判断的本地资源为主；复杂嵌套素材集合和无法可靠归属的历史资源需要后续继续通过浏览器级回归和迁移流程补强。
+10. 上游 `2026.06.23` 新增 `/api/projects`、`/api/image-jpeg`、`/api/canvas-comfy-tasks` 等能力。本轮未扩大企业拦截面；这些路径及在线生图历史、全局素材、`history.json`、批量历史管理和 WebSocket `new_image` 的隔离影响应作为 Task 3G 的独立设计输入处理。
 
 ---
 

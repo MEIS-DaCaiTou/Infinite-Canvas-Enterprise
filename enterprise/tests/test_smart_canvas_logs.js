@@ -30,7 +30,7 @@ function extractFunction(name) {
 
 const sandbox = {};
 vm.createContext(sandbox);
-vm.runInContext(`${extractFunction('normalizeSmartGenerationLogs')}\n${extractFunction('mergeSmartGenerationLogs')}`, sandbox);
+vm.runInContext(`${extractFunction('smartGenerationLogKey')}\n${extractFunction('normalizeSmartGenerationLogs')}\n${extractFunction('mergeSmartGenerationLogs')}`, sandbox);
 
 assert.deepEqual(
   JSON.parse(JSON.stringify(sandbox.normalizeSmartGenerationLogs({ createdAt: 1, outputs: ['/assets/output/old.png'] }))),
@@ -44,6 +44,14 @@ assert.deepEqual(
   ['local', 'remote'],
   'conflict merge must preserve both distinct log entries without duplicates',
 );
+assert.equal(
+  sandbox.normalizeSmartGenerationLogs([
+    { id: 'normal-path', status: 'success', nodeId: 'node-1', prompt: 'same', outputs: ['/assets/output/same.png'] },
+    { id: 'recovery-path', status: 'success', nodeId: 'node-1', prompt: 'same', outputs: ['/assets/output/same.png'] },
+  ]).length,
+  1,
+  'normal and recovery completion paths must not duplicate the same successful output log',
+);
 
 const pendingSandbox = {
   Set,
@@ -52,9 +60,14 @@ const pendingSandbox = {
   settings: {},
   cloneSmartSettings: value => ({ ...(value || {}) }),
   smartPendingTasks: node => Array.isArray(node?.pendingTasks) ? node.pendingTasks.filter(task => task?.taskId) : [],
+  resultMediaUrls: value => Array.isArray(value) ? value : (value ? [value] : []),
+  nonPreviewOutputImages: value => Array.isArray(value) ? value : [],
   stripImageGenerationMeta: item => item,
   copyMediaSizeFields: (item, target) => ({ ...target, ...(item || {}) }),
   mediaNodeDefaultScale: () => 1,
+  MEDIA_NODE_DEFAULT_SCALE: 1,
+  MEDIA_GROUP_PREVIOUS_DEFAULT_SCALE: 1,
+  MEDIA_GROUP_DEFAULT_SCALE: 1,
   logged: [],
   addSmartGenerationLog: entry => pendingSandbox.logged.push(entry),
 };

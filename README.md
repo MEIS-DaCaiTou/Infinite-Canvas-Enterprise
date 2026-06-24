@@ -100,7 +100,7 @@ Changes to upstream-covered files are allowed only for controlled upstream syncs
 
 ## Upstream Synchronization
 
-Current upstream baseline: `2026.06.12`
+Current upstream baseline: `2026.06.23`
 
 Upstream source: [hero8152/Infinite-Canvas](https://github.com/hero8152/Infinite-Canvas)
 
@@ -183,6 +183,6 @@ Startup/stop lifecycle tests may interrupt the running service. Run them only wh
 
 - Enterprise gateway: `0.0.0.0:8000`
 - Internal upstream: `127.0.0.1:3001`
-- Current upstream baseline: `2026.06.12`
+- Current upstream baseline: `2026.06.23`
 - Enterprise tests live in `enterprise/tests/`
 - Runtime data and secrets must stay out of Git

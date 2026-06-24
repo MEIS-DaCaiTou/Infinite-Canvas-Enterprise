@@ -1,6 +1,6 @@
 # 无限画布企业版 · 后续开发规划
 
-更新时间：2026-06-16
+更新时间：2026-06-23
 
 ---
 
@@ -199,6 +199,7 @@
 - Issue #9 / PR #10 已完成受控上游更新兼容性演练并补同步：从 `2026.06.02.1` 更新到当前上游真实版本 `2026.06.12`，上游 commit 为 `hero8152/Infinite-Canvas@9fb9a90`。同步范围包括 `main.py`、`VERSION`、`static/`、`workflows/`、`tools/`、`packages/`、`requirements.txt`、`get-pip.py`、`run.bat`、上游安装/登录脚本、README、macOS 脚本、运行说明和相关上游资源，并记录到 `enterprise/tests/UPDATE_TEST_LOG.md`。
 - Issue #11 已恢复企业版 README 首页边界：根目录 `README.md` 是企业仓库入口，上游 README 移至 `docs/upstream/README.upstream.md`，同步规则写入 `docs/upstream/SYNC_POLICY.md`。
 - Issue #13 已建立企业版项目入口与更新权限治理：前端项目主页指向企业仓库，普通用户隐藏更新提示、更新入口和上游作者社交区，更新相关接口继续由企业网关强制管理员权限；管理员更新文案定位为企业版受控运维能力。
+- Task 3U 已完成受控上游同步：上游覆盖区域升级到 `hero8152/Infinite-Canvas@0da3ff9` / `2026.06.23`；根目录企业 README 与企业层目录未被覆盖。上游未吸收 PR #21 的 Smart Canvas 旧日志兼容修复，因此已将其最小迁移到新版 `static/js/smart-canvas.js`，并继续由 `enterprise/tests/test_smart_canvas_logs.js` 覆盖。
 
 待办：
 
@@ -211,6 +212,7 @@
 - 把 README 边界检查加入上游同步清单：根目录 `README.md` 必须保持企业版说明；上游 README 如需同步，只能进入 `docs/upstream/README.upstream.md`。
 - 把企业入口治理检查加入上游同步清单：每次上游更新后必须验证 `enterprise/gateway.py` 注入脚本仍能治理 `static/index.html` 的项目主页、版本更新按钮/提示和上游作者社交区；如上游 DOM 改动导致失效，应在同步 PR 中修复后再合并。
 - 确认企业仓库是否需要保持私有；2026-06-11 查询结果为 `PUBLIC`。
+- 将上游 `2026.06.23` 引入的 `/api/projects`、`/api/image-jpeg`、`/api/canvas-comfy-tasks`，以及在线生图历史、ZImage/Klein/Angle/Enhance、本地功能历史、`history.json`、全局素材库、批量历史管理和 WebSocket `new_image` 的隔离影响整理为 Task 3G 的独立设计输入；不要在上游同步任务中顺手实现。
 
 ---
 

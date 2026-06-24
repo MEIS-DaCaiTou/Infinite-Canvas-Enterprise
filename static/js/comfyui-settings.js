@@ -406,11 +406,11 @@ function updateField(fieldId, key, value){
     if(key === 'random_enabled'){
         delete previewRandomActive[fieldId];
     }
-    // 改名字 / 类型时不需要整页重渲染，浮窗自身刷新即可
+    // 文本/数字输入过程中不能重建浮窗，否则输入框会失焦，表现成每次只能输入 1 个字。
+    // 这些字段只影响预览或运行参数，直接同步数据即可；切换 type 才需要重建表单结构。
     if(key === 'name' || key === 'min' || key === 'max' || key === 'step' || key === 'default' || key === 'options' || key === 'random_enabled'){
         renderPreview();
         if(workspaceMode === 'canvas') renderMiniCanvasPreview(miniCanvasHost, true);
-        if(popupNodeId === f.node) refreshPopupBody();
         return;
     }
     renderEditor();
