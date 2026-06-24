@@ -111,7 +111,7 @@
 Task 3G 设计与实施路线：
 
 - 3G-1 已完成：`ENTERPRISE_ISOLATION_MATRIX.md` 与 `ENTERPRISE_PERMISSION_DESIGN.md` 定义数据域、API/入口权限矩阵、管理员开关、迁移原则及 A/B/admin 验收。
-- 3G-2 待办：项目、文件夹与画布列表隔离，建立 project owner 和每用户默认项目语义。
+- 3G-2 已完成：项目、画布列表隔离，建立 `user_project_map` 和每用户默认项目语义；覆盖项目 CRUD、项目计数、画布创建/移动、回收站和管理员项目归属分配。当前上游项目 API 为扁平节点，未来独立 folder/parent API 需复用该 owner 模型。
 - 3G-3 待办：在线/本地功能历史、任务、缩略图和生成日志的 owner 链。
 - 3G-4 待办：素材库、上传文件夹、提示词库、共享目录和批量管理隔离。
 - 3G-5 待办：WebSocket `new_image`、任务完成、队列和资源更新的按 owner 广播。

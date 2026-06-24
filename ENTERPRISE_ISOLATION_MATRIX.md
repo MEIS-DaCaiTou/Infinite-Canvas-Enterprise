@@ -21,8 +21,8 @@
 
 | 数据域 | 当前上游存储/接口 | 当前共享状态 | 当前企业 owner 映射 | 目标归属模型 | 当前风险与 3G 处理 |
 | --- | --- | --- | --- | --- | --- |
-| 项目 | `data/projects.json`，`/api/projects` | 全局单文件 | 无 | `project_id -> owner_user_id`；可选 `parent_project_id`、`visibility`、`archived_at` | 高。上游项目列表及数量对普通用户全局可见；3G-2 优先治理。 |
-| 默认项目 | `DEFAULT_PROJECT_ID`、`projects.json` | 全局默认记录 | 无 | 逻辑默认项目仅作为每位用户的虚拟根，不共享实体；或使用 owner-scoped 默认项目 | 高。不得把“默认”解释为所有人可见。 |
+| 项目 | `data/projects.json`，`/api/projects` | 全局单文件 | `user_project_map` | `project_id -> owner_user_id`；预留 `parent_project_id`、`visibility`、`archived_at` | 3G-2 已覆盖当前扁平项目节点的列表、CRUD 与画布移动校验。 |
+| 默认项目 | `DEFAULT_PROJECT_ID`、`projects.json` | 全局默认记录 | 不映射，作为每用户虚拟根 | 逻辑默认项目仅作为每位用户的虚拟根，不共享实体 | 3G-2 已按当前用户重算可见画布数量；不得分配给单一用户。 |
 | 画布 | `data/canvases/*.json`，`/api/canvases*` | 文件全局 | `user_canvas_map` | 保留 `canvas_id -> owner`，并补 `canvas -> project` 的 project-owner 一致性校验 | 已部分覆盖。项目移动、列表计数及未归属旧画布仍需 3G-2 复核。 |
 | 画布回收站 | 画布 JSON 的删除字段，`/api/canvases/trash` | 全局扫描 | `user_canvas_map` | 与画布 owner 相同；恢复、清空、移动均校验 owner | 已部分覆盖，纳入项目隔离回归。 |
 | 对话 | `data/conversations/<user>/<id>.json`，`/api/conversations*` | 上游按 header 目录，历史文件仍可全局扫描 | `user_conversation_map` | 保留 `conversation_id -> owner`；记录真实文件 owner 用于代理 | 已部分覆盖；历史/生成记录引用需 3G-3 补齐。 |
@@ -62,10 +62,10 @@
 
 | API | 方法 | 数据域 | 管理员 | 普通用户 | 未登录 | 过滤/校验目标 | 代管/审计 | 上游风险 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `/api/projects` | GET | 项目/项目计数 | 全部，可标识 owner/unowned | 仅 owner 项目和自己的虚拟默认项目 | 401 | `project_id` owner 过滤，计数仅统计可见画布 | 管理员查看不必逐项审计 | 高，2026.06.23 新增 |
-| `/api/projects` | POST | 项目 | 可创建并指定 owner 或自己 | 仅在开关允许时为自己创建 | 401 | 创建后写 `user_project_map` | 管理员代创建/转移审计 | 高 |
-| `/api/projects/{id}` | POST | 项目重命名/排序 | 可改任意 | 仅 owner 且开关允许 | 401 | `project_id` owner；禁止影响其他人排序 | 管理员代改审计 | 高 |
-| `/api/projects/{id}` | DELETE | 项目删除/画布迁移 | 可删除/迁移 | 仅 owner 且开关允许 | 401 | 项目 owner；只迁移同 owner 画布到该用户默认项目 | 管理员操作审计 | 高 |
+| `/api/projects` | GET | 项目/项目计数 | 全部，可标识 owner/unowned | 仅 owner 项目和自己的虚拟默认项目 | 401 | `project_id` owner 过滤，计数仅统计可见画布 | 管理员查看不必逐项审计 | 3G-2 已覆盖 |
+| `/api/projects` | POST | 项目 | 可创建并指定 owner 或自己 | 为自己创建 | 401 | 创建后写 `user_project_map` | 创建记录写审计 | 3G-2 已覆盖 |
+| `/api/projects/{id}` | POST | 项目重命名/排序 | 可改任意 | 仅 owner | 401 | `project_id` owner；禁止影响其他人排序 | 管理员代改待细化审计 | 3G-2 已覆盖 |
+| `/api/projects/{id}` | DELETE | 项目删除/画布迁移 | 可删除/迁移 | 仅 owner | 401 | 项目 owner；上游迁回虚拟默认项目 | 管理员操作审计待细化 | 3G-2 已覆盖 |
 | `/api/canvases` | GET | 画布列表 | 全部 | `user_canvas_map` 过滤 | 401 | 响应过滤；项目计数同步过滤 | 管理员可见 unowned | 已实现基础，需项目联动 |
 | `/api/canvases` | POST | 新建画布 | 可创建，默认归自己 | 创建后归当前用户，项目必须是自己的 | 401 | body.project 的 project owner；写 canvas owner | 创建诊断；管理员代建审计 | 中 |
 | `/api/canvases/trash` | GET | 回收站 | 全部 | 仅自己的删除画布 | 401 | canvas owner 过滤 | 管理员可恢复/分配 | 中 |
@@ -124,7 +124,7 @@
 | 画布、对话单对象 404 风格授权 | 已覆盖基础路径 | 在 3G-2 扩展到项目归属、移动和新列表页面。 |
 | 新建画布/对话 owner | 已覆盖 | 3G-2 校验 project owner，3G-3 关联 task/history。 |
 | 本地资源 URL 归一化和 scope 回填 | 已覆盖基础资源路径 | 3G-3/4 覆盖素材、历史、缩略图和新上游输出路径。 |
-| 项目/文件夹隔离 | 未覆盖 | 3G-2 先行，不可用 canvas 过滤替代。 |
+| 项目/文件夹隔离 | 3G-2 已覆盖当前上游扁平项目节点；项目 API 尚无独立 parent/folder 字段 | 后续上游增加真实层级 API 时，复用 `user_project_map` 的 parent/visibility 预留字段并补矩阵。 |
 | 历史、在线生成、批量历史 | 未覆盖 | 3G-3 定义稳定 ID 和 owner migration。 |
 | 素材库/上传文件夹/共享目录 | 未覆盖 | 3G-4 使用 item/path/library owner 与 ACL。 |
 | WebSocket 事件扇出 | 仅登录认证，未按事件 owner 过滤 | 3G-5 必须在网关做 connection/user 绑定与授权扇出。 |

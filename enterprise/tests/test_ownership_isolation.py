@@ -14,6 +14,7 @@ import os
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -30,6 +31,10 @@ def _prepare_env(tmp: Path) -> None:
 def _write_json(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+
+async def _async_value(value):
+    return value
 
 
 async def _run_checks() -> None:
@@ -62,12 +67,20 @@ async def _run_checks() -> None:
         _write_json(canvas_dir / "canvas_a.json", {
             "id": "canvas_a",
             "title": "Canvas A",
+            "project": "project_a",
             "nodes": [{"image": "/assets/output/a.png"}],
         })
         _write_json(canvas_dir / "canvas_b.json", {
             "id": "canvas_b",
             "title": "Canvas B",
+            "project": "project_b",
             "nodes": [{"image": "/assets/output/b.png"}],
+        })
+        _write_json(canvas_dir / "canvas_foreign.json", {
+            "id": "canvas_foreign",
+            "title": "Foreign Canvas In Project A",
+            "project": "project_a",
+            "nodes": [],
         })
         _write_json(canvas_dir / "legacy_canvas.json", {
             "id": "legacy_canvas",
@@ -89,9 +102,77 @@ async def _run_checks() -> None:
 
         edb.set_canvas_owner("canvas_a", user_a["id"])
         edb.set_canvas_owner("canvas_b", user_b["id"])
+        edb.set_canvas_owner("canvas_foreign", user_b["id"])
         edb.set_canvas_owner("legacy_owned_canvas", user_a["id"])
         edb.set_canvas_owner("admin_resource_canvas", user_a["id"])
+        edb.set_project_owner("project_a", user_a["id"])
+        edb.set_project_owner("project_b", user_b["id"])
         edb.record_resource_owner(admin["id"], "/assets/output/admin-in-user-canvas.png", "admin_task")
+
+        assert interceptors.can_access_project(actor_a, "default")
+        assert interceptors.can_access_project(actor_a, "project_a")
+        assert not interceptors.can_access_project(actor_a, "project_b")
+        assert not interceptors.can_access_project(actor_a, "legacy_project")
+        assert interceptors.can_access_project(actor_admin, "legacy_project")
+
+        project_payload = {
+            "projects": [
+                {"id": "default", "name": "默认项目", "canvas_count": 99},
+                {"id": "project_a", "name": "Project A", "canvas_count": 99},
+                {"id": "project_b", "name": "Project B", "canvas_count": 99},
+                {"id": "legacy_project", "name": "Legacy", "canvas_count": 99},
+            ]
+        }
+        interceptors.filter_project_list(actor_a, project_payload)
+        assert [item["id"] for item in project_payload["projects"]] == ["default", "project_a"]
+        assert project_payload["projects"][1]["canvas_count"] == 1
+
+        err = await interceptors.pre_process("api/projects/project_b", "POST", actor_a)
+        assert err is not None and err.status_code == 404
+        err = await interceptors.pre_process("api/projects/project_a", "POST", actor_a)
+        assert err is None
+        err = await interceptors.pre_process("api/projects/default", "POST", actor_a)
+        assert err is not None and err.status_code == 404
+        err = await interceptors.pre_process("api/projects/project_a", "DELETE", actor_a)
+        assert err is not None and err.status_code == 404
+        err = await interceptors.pre_process("api/projects/project_a", "DELETE", actor_admin)
+        assert err is None
+        err = await interceptors.pre_process(
+            "api/canvases", "POST", actor_a, body=b'{"project":"project_b"}'
+        )
+        assert err is not None and err.status_code == 404
+        err = await interceptors.pre_process(
+            "api/canvases", "POST", actor_a, body=b'{"project":"project_a"}'
+        )
+        assert err is None
+        err = await interceptors.pre_process(
+            "api/canvases/canvas_a/meta", "POST", actor_a, body=b'{"project":"project_b"}'
+        )
+        assert err is not None and err.status_code == 404
+        err = await interceptors.pre_process(
+            "api/canvases/canvas_a/meta", "POST", actor_a, body=b'{"project":"project_a"}'
+        )
+        assert err is None
+
+        project_create_body, _ = await interceptors.post_process(
+            "api/projects",
+            "POST",
+            201,
+            b'{"project":{"id":"project_created","name":"Created"}}',
+            "application/json",
+            actor_a,
+        )
+        assert json.loads(project_create_body.decode("utf-8"))["project"]["id"] == "project_created"
+        assert edb.get_project_owner("project_created") == user_a["id"]
+        await interceptors.post_process(
+            "api/projects/project_created",
+            "DELETE",
+            200,
+            b'{"ok":true}',
+            "application/json",
+            actor_a,
+        )
+        assert edb.get_project_owner("project_created") is None
 
         assert interceptors.can_access_canvas(actor_a, "canvas_a")
         assert not interceptors.can_access_canvas(actor_a, "canvas_b")
@@ -101,13 +182,32 @@ async def _run_checks() -> None:
 
         canvas_payload = {
             "canvases": [
-                {"id": "canvas_a", "title": "Canvas A"},
-                {"id": "canvas_b", "title": "Canvas B"},
-                {"id": "legacy_canvas", "title": "Legacy Canvas"},
+                {"id": "canvas_a", "title": "Canvas A", "project": "project_a"},
+                {"id": "canvas_b", "title": "Canvas B", "project": "project_b"},
+                {"id": "legacy_canvas", "title": "Legacy Canvas", "project": "legacy_project"},
             ]
         }
         interceptors.filter_canvas_list(actor_a, canvas_payload)
         assert [item["id"] for item in canvas_payload["canvases"]] == ["canvas_a"]
+        assert canvas_payload["canvases"][0]["project"] == "project_a"
+
+        legacy_project_response = {
+            "canvas": {"id": "legacy_owned_canvas", "project": "legacy_project"}
+        }
+        assert interceptors._normalize_canvas_project_for_user(actor_a, legacy_project_response)
+        assert legacy_project_response["canvas"]["project"] == "default"
+
+        from enterprise import admin_api
+
+        edb.project_exists = lambda project_id: project_id == "project_a"
+        admin_request = SimpleNamespace(
+            state=SimpleNamespace(user=actor_admin),
+            json=lambda: _async_value({"user_id": user_b["id"]}),
+        )
+        assigned = await admin_api.assign_project_owner("project_a", admin_request)
+        assert assigned["success"] and edb.get_project_owner("project_a") == user_b["id"]
+        owner_map = await admin_api.project_owners(SimpleNamespace(state=SimpleNamespace(user=actor_admin)))
+        assert owner_map["project_a"]["user_id"] == user_b["id"]
 
         _write_json(conversation_dir / user_a["id"] / "conv_a.json", {
             "id": "conv_a",

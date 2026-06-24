@@ -74,6 +74,8 @@
 
 2026-06-24 Task 3G-1 企业隔离设计基线：新增 `ENTERPRISE_ISOLATION_MATRIX.md` 与 `ENTERPRISE_PERMISSION_DESIGN.md`。已盘点项目/文件夹、画布、对话、资源、历史、素材、任务、WebSocket 和功能入口的存储与 API 面。当前画布、对话、受保护本地资源已有基础 owner 隔离；`/api/projects`、全局 `history.json`、素材库/批量管理、Comfy/video/图片转换任务、WebSocket 事件及 API/工作流权限开关尚未实现完整隔离。后续必须按 3G-2 至 3G-7 分阶段交付，普通用户对未知 owner 数据默认拒绝。
 
+2026-06-24 Task 3G-2 项目、文件夹与画布列表隔离：新增 `user_project_map` 企业映射。普通用户 `/api/projects` 响应仅返回自己拥有的项目和按本人画布重算数量的虚拟默认项目；项目创建自动归属当前用户，项目更新/删除、画布创建、画布 meta/保存中的项目移动均验证 project owner，跨用户项目返回 404 风格无权限响应。管理员可查看全局项目、未归属项目及画布，并可在管理后台“项目归属”最小页面分配常规项目 owner；全局 `default` 项目不分配给单一用户。当前上游项目 API 为扁平节点，尚无独立 parent/folder 字段。
+
 ---
 
 ## 4. 不可偏离的开发边界
@@ -141,7 +143,7 @@
 7. 上游当前会跟踪 `python/` 运行时，但企业仓库目前将 `python/`、`python.zip` 视为本地运行时并忽略；后续如要改变该策略，必须单独评估仓库体积、平台兼容性和发布方式，不能在上游同步 PR 中顺手改变。
 8. 根目录 `README.md` 是企业版项目入口，不应在上游同步中被上游 README 覆盖；如需保留上游 README，只能同步到 `docs/upstream/README.upstream.md`。
 9. 受保护资源隔离目前以可从 URL、请求参数、响应数据、画布/对话引用或 `user_resource_map` 判断的本地资源为主；复杂嵌套素材集合和无法可靠归属的历史资源需要后续继续通过浏览器级回归和迁移流程补强。
-10. Task 3G-1 已完成设计输入：`ENTERPRISE_ISOLATION_MATRIX.md` 与 `ENTERPRISE_PERMISSION_DESIGN.md` 是项目/文件夹、历史、素材、WebSocket 和入口权限的后续实施契约。它们尚未实现业务隔离；后续必须按 3G-2 至 3G-7 单独 PR 交付，不能以 UI 隐藏替代 API 授权。
+10. Task 3G-1 设计已落地；3G-2 已完成当前上游扁平项目节点、项目计数和画布项目移动隔离。全局 `history.json`、素材库/批量管理、Comfy/video/图片转换任务、WebSocket 事件及 API/工作流权限开关仍必须按 3G-3 至 3G-7 单独 PR 交付，不能以 UI 隐藏替代 API 授权。
 
 ---
 

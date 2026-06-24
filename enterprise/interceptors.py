@@ -64,6 +64,7 @@ _PROTECTED_LOCAL_RESOURCE_PREFIXES = (
 
 _CANVAS_DATA_DIR = Path(ROOT_DIR) / "data" / "canvases"
 _CONVERSATION_DATA_DIR = Path(ROOT_DIR) / "data" / "conversations"
+DEFAULT_PROJECT_ID = "default"
 
 
 def is_static_asset(path: str) -> bool:
@@ -118,6 +119,16 @@ def can_access_conversation(user: dict, conversation_id: str) -> bool:
         return True
     owner = edb.get_conversation_owner(conversation_id)
     return bool(owner and owner == _user_id(user))
+
+
+def can_access_project(user: dict, project_id: str) -> bool:
+    """普通用户可访问自己的项目以及每人独立呈现的默认项目视图。"""
+    project_id = str(project_id or "").strip()
+    if not project_id:
+        return False
+    if _is_admin(user) or project_id == DEFAULT_PROJECT_ID:
+        return True
+    return edb.get_project_owner(project_id) == _user_id(user)
 
 
 def _query_get(query_params: Optional[Mapping[str, Any]], key: str) -> str:
@@ -443,6 +454,37 @@ def _canvas_id_from_path(path: str) -> str:
     return ""
 
 
+def _project_id_from_path(path: str) -> str:
+    parts = path.split("/")
+    if len(parts) >= 3 and parts[0] == "api" and parts[1] == "projects" and parts[2]:
+        return parts[2]
+    return ""
+
+
+def _project_id_from_body(body: bytes | None) -> str:
+    data = _json_from_body(body)
+    if not isinstance(data, dict):
+        return ""
+    project_id = data.get("project")
+    if not project_id and isinstance(data.get("canvas"), dict):
+        project_id = data["canvas"].get("project")
+    return str(project_id or "").strip()
+
+
+def _project_contains_foreign_canvas(user_id: str, project_id: str) -> bool:
+    """阻止普通用户删除含其他 owner 或未归属画布的项目。"""
+    if not _CANVAS_DATA_DIR.is_dir():
+        return False
+    for path in _CANVAS_DATA_DIR.glob("*.json"):
+        data = _load_json_file(path)
+        if not isinstance(data, dict) or str(data.get("project") or DEFAULT_PROJECT_ID) != project_id:
+            continue
+        canvas_id = str(data.get("id") or path.stem)
+        if edb.get_canvas_owner(canvas_id) != user_id:
+            return True
+    return False
+
+
 def _conversation_id_from_body(path: str, body: bytes | None) -> str:
     if path not in {"api/chat", "api/chat/agent", "api/chat/stream"}:
         return ""
@@ -492,6 +534,19 @@ async def pre_process(
             return None
         return _deny_forbidden("需要管理员权限才能执行项目更新")
 
+    project_id = _project_id_from_path(path)
+    if project_id:
+        if project_id == DEFAULT_PROJECT_ID and not is_admin:
+            return _deny_not_found("项目不存在或无权限访问")
+        if not can_access_project(user, project_id):
+            return _deny_not_found("项目不存在或无权限访问")
+        if method.upper() == "DELETE" and not is_admin and _project_contains_foreign_canvas(_user_id(user), project_id):
+            return _deny_not_found("项目不存在或无权限访问")
+
+    requested_project_id = _project_id_from_body(body)
+    if requested_project_id and not can_access_project(user, requested_project_id):
+        return _deny_not_found("项目不存在或无权限访问")
+
     canvas_id = _canvas_id_from_path(path)
     if canvas_id and not can_access_canvas(user, canvas_id):
         return _deny_not_found("画布不存在或无权限访问")
@@ -518,10 +573,85 @@ def filter_canvas_list(user: dict, data: dict) -> bool:
     if not isinstance(canvas_list, list) or _is_admin(user):
         return False
     owned = edb.get_user_canvas_ids(_user_id(user))
-    filtered = [c for c in canvas_list if c.get("id") in owned]
-    if len(filtered) == len(canvas_list):
-        return False
+    filtered = []
+    for canvas in canvas_list:
+        if not isinstance(canvas, dict) or canvas.get("id") not in owned:
+            continue
+        item = dict(canvas)
+        project_id = str(item.get("project") or DEFAULT_PROJECT_ID)
+        if not can_access_project(user, project_id):
+            # 旧画布可能引用未归属的全局项目。把它安全地呈现为当前用户的默认项目，
+            # 直到管理员完成项目归属分配或用户下一次保存时迁回默认项目。
+            item["project"] = DEFAULT_PROJECT_ID
+        filtered.append(item)
     data["canvases"] = filtered
+    return len(filtered) != len(canvas_list) or filtered != canvas_list
+
+
+def _owned_canvas_counts_by_project(user_id: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    if not _CANVAS_DATA_DIR.is_dir():
+        return counts
+    for path in _CANVAS_DATA_DIR.glob("*.json"):
+        data = _load_json_file(path)
+        if not isinstance(data, dict):
+            continue
+        canvas_id = str(data.get("id") or path.stem)
+        if edb.get_canvas_owner(canvas_id) != user_id:
+            continue
+        project_id = str(data.get("project") or DEFAULT_PROJECT_ID)
+        if edb.get_project_owner(project_id) != user_id and project_id != DEFAULT_PROJECT_ID:
+            project_id = DEFAULT_PROJECT_ID
+        counts[project_id] = counts.get(project_id, 0) + 1
+    return counts
+
+
+def filter_project_list(user: dict, data: dict) -> bool:
+    """普通用户只看到自己的项目和按本人画布计数的虚拟默认项目。"""
+    projects = data.get("projects") if isinstance(data, dict) else None
+    if not isinstance(projects, list) or _is_admin(user):
+        return False
+    user_id = _user_id(user)
+    owned_projects = edb.get_user_project_ids(user_id)
+    counts = _owned_canvas_counts_by_project(user_id)
+    filtered: list[dict] = []
+    has_default = False
+    for project in projects:
+        if not isinstance(project, dict):
+            continue
+        project_id = str(project.get("id") or "")
+        if project_id == DEFAULT_PROJECT_ID:
+            item = dict(project)
+            item["canvas_count"] = counts.get(DEFAULT_PROJECT_ID, 0)
+            filtered.append(item)
+            has_default = True
+        elif project_id in owned_projects:
+            item = dict(project)
+            item["canvas_count"] = counts.get(project_id, 0)
+            filtered.append(item)
+    if not has_default:
+        filtered.insert(0, {
+            "id": DEFAULT_PROJECT_ID,
+            "name": "默认项目",
+            "order": 0,
+            "created_at": 0,
+            "updated_at": 0,
+            "canvas_count": counts.get(DEFAULT_PROJECT_ID, 0),
+        })
+    data["projects"] = filtered
+    return True
+
+
+def _normalize_canvas_project_for_user(user: dict, data: Any) -> bool:
+    if _is_admin(user) or not isinstance(data, dict):
+        return False
+    canvas = data.get("canvas") if isinstance(data.get("canvas"), dict) else None
+    if not canvas:
+        return False
+    project_id = str(canvas.get("project") or DEFAULT_PROJECT_ID)
+    if can_access_project(user, project_id):
+        return False
+    canvas["project"] = DEFAULT_PROJECT_ID
     return True
 
 
@@ -747,6 +877,19 @@ async def post_process(
             except Exception as exc:
                 print(f"[企业版] 记录画布归属失败: user={_user_id(user)} canvas={canvas_obj.get('id')} error={exc}")
 
+    if path == "api/projects" and method == "POST" and status_code in (200, 201):
+        project_obj = data.get("project") if isinstance(data, dict) else None
+        if isinstance(project_obj, dict) and project_obj.get("id"):
+            try:
+                edb.record_project_owner(_user_id(user), str(project_obj["id"]))
+                edb.log_action(_user_id(user), "project_created", str(project_obj["id"]))
+            except Exception as exc:
+                print(f"[enterprise] record project owner failed: user={_user_id(user)} project={project_obj.get('id')} error={exc}")
+
+    deleted_project_id = _project_id_from_path(path)
+    if deleted_project_id and method == "DELETE" and status_code in (200, 201, 204):
+        edb.remove_project_mapping(deleted_project_id)
+
     # ── 记录新对话的归属 ──────────────────────────────────
     # POST /api/conversations / api/chat* → {"conversation": {"id": "..."}}
     if path in {"api/conversations", "api/chat", "api/chat/agent"} and method == "POST" and status_code in (200, 201):
@@ -783,10 +926,17 @@ async def post_process(
     if path == "api/canvases" and method == "GET":
         modified = filter_canvas_list(user, data) or modified
 
+    # ── 过滤项目列表及项目下画布计数 ───────────────────────
+    elif path == "api/projects" and method == "GET":
+        modified = filter_project_list(user, data) or modified
+
     # ── 过滤回收站画布列表 ────────────────────────────────
     # GET /api/canvases/trash → {"canvases": [...], "retention_days": 30}
     elif path == "api/canvases/trash" and method == "GET":
         modified = filter_canvas_list(user, data) or modified
+
+    elif path.startswith("api/canvases/") and method in {"GET", "POST", "PUT"}:
+        modified = _normalize_canvas_project_for_user(user, data) or modified
 
     # ── 过滤画布资产索引 ──────────────────────────────────
     elif path == "api/canvas-assets" and method == "GET":
