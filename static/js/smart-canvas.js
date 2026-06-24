@@ -536,6 +536,17 @@ function mediaItemForStorage(item){
     delete clean._inlineVideoActive;
     return clean;
 }
+function smartGenerationLogKey(entry){
+    if(!entry || typeof entry !== 'object') return '';
+    const outputUrls = (Array.isArray(entry.outputs) ? entry.outputs : (entry.outputs ? [entry.outputs] : []))
+        .map(item => typeof item === 'string' ? item : item?.url || '')
+        .filter(Boolean)
+        .sort();
+    if(entry.status === 'success' && outputUrls.length){
+        return `success:${entry.nodeId || ''}:${entry.prompt || ''}:${outputUrls.join('|')}`;
+    }
+    return entry.id || `${entry.createdAt || entry.created_at || ''}:${entry.status || ''}:${entry.prompt || ''}:${outputUrls.join('|')}`;
+}
 function normalizeSmartGenerationLogs(value){
     const source = Array.isArray(value)
         ? value
@@ -546,13 +557,20 @@ function normalizeSmartGenerationLogs(value){
                 : (value && typeof value === 'object' && (value.id || value.createdAt || value.created_at || value.outputs || value.status))
                     ? [value]
                     : [];
-    return source.filter(entry => entry && typeof entry === 'object').slice(0, 500);
+    const seen = new Set();
+    return source.filter(entry => {
+        if(!entry || typeof entry !== 'object') return false;
+        const key = smartGenerationLogKey(entry);
+        if(key && seen.has(key)) return false;
+        if(key) seen.add(key);
+        return true;
+    }).slice(0, 500);
 }
 function mergeSmartGenerationLogs(localLogs, remoteLogs){
     const seen = new Set();
     return [...normalizeSmartGenerationLogs(localLogs), ...normalizeSmartGenerationLogs(remoteLogs)]
         .filter(entry => {
-            const key = entry.id || `${entry.createdAt || entry.created_at || ''}:${JSON.stringify(entry.outputs || [])}:${entry.prompt || ''}`;
+            const key = smartGenerationLogKey(entry);
             if(seen.has(key)) return false;
             seen.add(key);
             return true;
