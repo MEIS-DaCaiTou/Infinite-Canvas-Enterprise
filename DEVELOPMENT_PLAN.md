@@ -1,6 +1,6 @@
 # 无限画布企业版 · 后续开发规划
 
-更新时间：2026-06-24
+更新时间：2026-06-25
 
 ---
 
@@ -37,6 +37,7 @@
 - `README.md` 恢复为 Infinite Canvas Enterprise 企业版首页入口。
 - `docs/upstream/README.upstream.md` 保存上游原版 README，仅作参考。
 - `docs/upstream/SYNC_POLICY.md` 记录上游同步时 README 和上游文档边界。
+- `PROJECT_HANDOFF_FOR_NEW_AGENT.md` 新增为新 Codex 对话接手交接包，记录当前 main 状态、PR #18 至 #24 主线、后续 3G 任务顺序和标准接手提示词。
 
 待办：
 
@@ -111,7 +112,7 @@
 Task 3G 设计与实施路线：
 
 - 3G-1 已完成：`ENTERPRISE_ISOLATION_MATRIX.md` 与 `ENTERPRISE_PERMISSION_DESIGN.md` 定义数据域、API/入口权限矩阵、管理员开关、迁移原则及 A/B/admin 验收。
-- 3G-2 已完成：项目、画布列表隔离，建立 `user_project_map` 和每用户默认项目语义；覆盖项目 CRUD、项目计数、画布创建/移动、回收站和管理员项目归属分配。当前上游项目 API 为扁平节点，未来独立 folder/parent API 需复用该 owner 模型。
+- 3G-2 已完成：项目、画布列表隔离，建立 `user_project_map` 和每用户默认项目语义；覆盖项目 CRUD、项目计数、画布创建/移动、回收站、管理员项目归属分配、管理员跨用户移动画布后的 canvas owner 同步，以及管理员分配画布 owner 时的 project/default 一致性修正。当前上游项目 API 为扁平节点，未来独立 folder/parent API 需复用该 owner 模型。
 - 3G-3 待办：在线/本地功能历史、任务、缩略图和生成日志的 owner 链。
 - 3G-4 待办：素材库、上传文件夹、提示词库、共享目录和批量管理隔离。
 - 3G-5 待办：WebSocket `new_image`、任务完成、队列和资源更新的按 owner 广播。
