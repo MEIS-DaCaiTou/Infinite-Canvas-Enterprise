@@ -2,7 +2,7 @@
 
 > 给后续 Codex / Agent 的第一阅读文件。上下文压缩、换线程、长期维护恢复时，先按本文阅读顺序恢复项目方向，再执行当前 Issue。
 
-更新时间：2026-06-24
+更新时间：2026-06-25
 
 ---
 
@@ -21,19 +21,20 @@
 
 ## 2. 阅读顺序
 
-1. `PROJECT_CHARTER.md`：最高层项目定位文档，确认唯一方向是企业多用户版 Infinite Canvas。
-2. `AGENT_CONTEXT.md`：当前真实状态、风险、路线，防止上下文压缩后跑偏。
-3. `ARCHITECTURE.md`：当前企业网关覆盖上游的架构说明。
-4. `CODE_BOUNDARIES.md`：代码修改边界，确认哪些文件可改、哪些默认不应改。
-5. `CODEX_WORKFLOW.md`：Codex 每次任务的标准工作流和 PR 交付规则。
-6. `SECURITY_BASELINE.md`：企业版安全配置、敏感文件和运行时配置治理基线。
-7. `DEVELOPMENT_PLAN.md`：长期维护路线。
-8. `ENTERPRISE_DOCS.md`：企业层完整开发规范。
-9. `enterprise/tests/README.md`：测试脚本位置与用途。
-10. `enterprise/tests/SMOKE_CHECKLIST.md`：每次上游更新后的必跑检查。
-11. `enterprise/tests/BROWSER_REGRESSION_CHECKLIST.md`：浏览器级回归验收清单。
-12. `enterprise/tests/browser-regression.md`：浏览器级回归自动化方案。
-13. 必要时再读 `HANDOVER.md`：历史交接材料。该文件较长，部分终端可能显示乱码，不应作为唯一权威入口。
+1. `PROJECT_HANDOFF_FOR_NEW_AGENT.md`：新 Codex 对话接手交接包，包含当前 main 状态、PR 时间线、数据模型、后续任务顺序和可复制接手提示词。
+2. `PROJECT_CHARTER.md`：最高层项目定位文档，确认唯一方向是企业多用户版 Infinite Canvas。
+3. `AGENT_CONTEXT.md`：当前真实状态、风险、路线，防止上下文压缩后跑偏。
+4. `ARCHITECTURE.md`：当前企业网关覆盖上游的架构说明。
+5. `CODE_BOUNDARIES.md`：代码修改边界，确认哪些文件可改、哪些默认不应改。
+6. `CODEX_WORKFLOW.md`：Codex 每次任务的标准工作流和 PR 交付规则。
+7. `SECURITY_BASELINE.md`：企业版安全配置、敏感文件和运行时配置治理基线。
+8. `DEVELOPMENT_PLAN.md`：长期维护路线。
+9. `ENTERPRISE_DOCS.md`：企业层完整开发规范。
+10. `enterprise/tests/README.md`：测试脚本位置与用途。
+11. `enterprise/tests/SMOKE_CHECKLIST.md`：每次上游更新后的必跑检查。
+12. `enterprise/tests/BROWSER_REGRESSION_CHECKLIST.md`：浏览器级回归验收清单。
+13. `enterprise/tests/browser-regression.md`：浏览器级回归自动化方案。
+14. 必要时再读 `HANDOVER.md`：历史交接材料。该文件较长，部分终端可能显示乱码，不应作为唯一权威入口。
 
 ---
 
@@ -75,6 +76,8 @@
 2026-06-24 Task 3G-1 企业隔离设计基线：新增 `ENTERPRISE_ISOLATION_MATRIX.md` 与 `ENTERPRISE_PERMISSION_DESIGN.md`。已盘点项目/文件夹、画布、对话、资源、历史、素材、任务、WebSocket 和功能入口的存储与 API 面。当前画布、对话、受保护本地资源已有基础 owner 隔离；`/api/projects`、全局 `history.json`、素材库/批量管理、Comfy/video/图片转换任务、WebSocket 事件及 API/工作流权限开关尚未实现完整隔离。后续必须按 3G-2 至 3G-7 分阶段交付，普通用户对未知 owner 数据默认拒绝。
 
 2026-06-24 Task 3G-2 项目、文件夹与画布列表隔离：新增 `user_project_map` 企业映射。普通用户 `/api/projects` 响应仅返回自己拥有的项目和按本人画布重算数量的虚拟默认项目；项目创建自动归属当前用户，项目更新/删除、画布创建、画布 meta/保存中的项目移动均验证 project owner，跨用户项目返回 404 风格无权限响应。管理员可查看全局项目、未归属项目及画布，并可在管理后台“项目归属”最小页面分配常规项目 owner；全局 `default` 项目不分配给单一用户。当前上游项目 API 为扁平节点，尚无独立 parent/folder 字段。
+
+2026-06-25 PR #24 已合并到 `main`：最新合并提交为 `1f9ee81`。真实浏览器验收确认管理员将用户 A 的画布剪切/移动到用户 B 项目后，管理后台画布归属刷新为 B，A 重新登录不可见，B 重新登录可见且可生成 output，刷新/退出重登后 output 仍存在，管理员可见，其他普通用户不可见。新增 `PROJECT_HANDOFF_FOR_NEW_AGENT.md` 作为新 Codex 对话接手入口；后续推荐从 Task 3G-3 开始。
 
 ---
 

@@ -4,6 +4,7 @@ This folder is the only place for project diagnostic and smoke-test scripts.
 
 Before adding or changing scripts, read:
 
+- `../../PROJECT_HANDOFF_FOR_NEW_AGENT.md`
 - `../../AGENT_CONTEXT.md`
 - `../../ENTERPRISE_DOCS.md`
 - `SMOKE_CHECKLIST.md`
@@ -21,6 +22,7 @@ Before adding or changing scripts, read:
 - `UPDATE_TEST_LOG.md` records the actual result after each upstream update test pass.
 - `../../ENTERPRISE_ISOLATION_MATRIX.md` is the data-domain and API permission source of truth for Task 3G follow-up isolation tests.
 - `../../ENTERPRISE_PERMISSION_DESIGN.md` defines page permissions, administrator switches, phased delivery, and the A/B/admin acceptance contract.
+- `../../PROJECT_HANDOFF_FOR_NEW_AGENT.md` records the current main handoff state, PR #18-#24 timeline, and the next recommended Task 3G sequence for a new Codex conversation.
 
 Run scripts from the project root unless a script says otherwise.
 
