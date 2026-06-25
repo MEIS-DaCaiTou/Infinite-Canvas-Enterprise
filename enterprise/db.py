@@ -46,6 +46,15 @@ def init_db() -> None:
                 PRIMARY KEY (canvas_id)
             );
 
+            CREATE TABLE IF NOT EXISTS user_project_map (
+                user_id           TEXT NOT NULL,
+                project_id        TEXT NOT NULL,
+                parent_project_id TEXT,
+                visibility        TEXT NOT NULL DEFAULT 'private',
+                created_at        INTEGER NOT NULL,
+                PRIMARY KEY (project_id)
+            );
+
             CREATE TABLE IF NOT EXISTS user_conversation_map (
                 user_id         TEXT NOT NULL,
                 conversation_id TEXT NOT NULL,
@@ -328,6 +337,174 @@ def get_all_canvas_owner_map() -> dict:
 def assign_canvas_owner(canvas_id: str, user_id: str) -> None:
     """管理员手动分配画布归属（覆盖旧归属）"""
     set_canvas_owner(canvas_id, user_id)
+
+
+# ── 项目归属映射 ──────────────────────────────────────────
+
+DEFAULT_PROJECT_ID = "default"
+CANVAS_DATA_DIR = os.path.join(str(ROOT_DIR), "data", "canvases")
+
+
+def _canvas_json_path(canvas_id: str) -> Optional[str]:
+    canvas_id = str(canvas_id or "").strip()
+    if not canvas_id or os.path.basename(canvas_id) != canvas_id:
+        return None
+    return os.path.join(CANVAS_DATA_DIR, f"{canvas_id}.json")
+
+
+def read_canvas_json(canvas_id: str) -> Optional[dict]:
+    """读取上游画布 JSON；企业层只用于归属一致性治理。"""
+    path = _canvas_json_path(canvas_id)
+    if not path:
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def get_canvas_project(canvas_id: str) -> Optional[str]:
+    data = read_canvas_json(canvas_id)
+    if not data:
+        return None
+    return str(data.get("project") or DEFAULT_PROJECT_ID).strip() or DEFAULT_PROJECT_ID
+
+
+def set_canvas_project(canvas_id: str, project_id: str) -> tuple[bool, Optional[str]]:
+    """更新画布 JSON 的 project 字段，返回 (是否写入, 旧 project)。"""
+    data = read_canvas_json(canvas_id)
+    if not data:
+        return False, None
+    old_project = str(data.get("project") or DEFAULT_PROJECT_ID).strip() or DEFAULT_PROJECT_ID
+    new_project = str(project_id or DEFAULT_PROJECT_ID).strip() or DEFAULT_PROJECT_ID
+    if old_project == new_project:
+        return False, old_project
+    data["project"] = new_project
+    path = _canvas_json_path(canvas_id)
+    if not path:
+        return False, old_project
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    return True, old_project
+
+
+def get_canvas_ids_by_project(project_id: str) -> list[str]:
+    project_id = str(project_id or DEFAULT_PROJECT_ID).strip() or DEFAULT_PROJECT_ID
+    try:
+        filenames = os.listdir(CANVAS_DATA_DIR)
+    except Exception:
+        return []
+    canvas_ids: list[str] = []
+    for filename in filenames:
+        if not filename.endswith(".json"):
+            continue
+        canvas_id = filename[:-5]
+        data = read_canvas_json(canvas_id)
+        if not data:
+            continue
+        canvas_project = str(data.get("project") or DEFAULT_PROJECT_ID).strip() or DEFAULT_PROJECT_ID
+        if canvas_project == project_id:
+            canvas_ids.append(str(data.get("id") or canvas_id))
+    return canvas_ids
+
+
+def record_project_owner(user_id: str, project_id: str) -> bool:
+    """记录新项目归属。上游默认项目是每位用户的虚拟根，不写入全局映射。"""
+    project_id = str(project_id or "").strip()
+    if not user_id or not project_id or project_id == DEFAULT_PROJECT_ID:
+        return False
+    conn = get_db()
+    try:
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO user_project_map "
+            "(user_id, project_id, parent_project_id, visibility, created_at) VALUES (?, ?, NULL, 'private', ?)",
+            (user_id, project_id, int(time.time() * 1000)),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def get_project_owner(project_id: str) -> Optional[str]:
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT user_id FROM user_project_map WHERE project_id = ?", (str(project_id or "").strip(),)
+        ).fetchone()
+        return row["user_id"] if row else None
+    finally:
+        conn.close()
+
+
+def get_user_project_ids(user_id: str) -> set:
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT project_id FROM user_project_map WHERE user_id = ?", (user_id,)
+        ).fetchall()
+        return {row["project_id"] for row in rows}
+    finally:
+        conn.close()
+
+
+def set_project_owner(project_id: str, user_id: str) -> bool:
+    """管理员设置项目归属（覆盖旧归属）；全局默认项目不能被单独分配。"""
+    project_id = str(project_id or "").strip()
+    if not user_id or not project_id or project_id == DEFAULT_PROJECT_ID:
+        return False
+    conn = get_db()
+    try:
+        conn.execute("DELETE FROM user_project_map WHERE project_id = ?", (project_id,))
+        cur = conn.execute(
+            "INSERT INTO user_project_map "
+            "(user_id, project_id, parent_project_id, visibility, created_at) VALUES (?, ?, NULL, 'private', ?)",
+            (user_id, project_id, int(time.time() * 1000)),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def remove_project_mapping(project_id: str) -> None:
+    conn = get_db()
+    try:
+        conn.execute("DELETE FROM user_project_map WHERE project_id = ?", (str(project_id or "").strip(),))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_all_project_owner_map() -> dict:
+    """返回 {project_id: user_id} 的全量映射（供管理员使用）。"""
+    conn = get_db()
+    try:
+        rows = conn.execute("SELECT project_id, user_id FROM user_project_map").fetchall()
+        return {row["project_id"]: row["user_id"] for row in rows}
+    finally:
+        conn.close()
+
+
+def project_exists(project_id: str) -> bool:
+    """只读检查上游项目文件，避免管理员为不存在的项目创建幽灵映射。"""
+    project_id = str(project_id or "").strip()
+    if not project_id:
+        return False
+    if project_id == DEFAULT_PROJECT_ID:
+        return True
+    path = os.path.join(str(ROOT_DIR), "data", "projects.json")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return False
+    projects = data.get("projects") if isinstance(data, dict) else data
+    return isinstance(projects, list) and any(
+        isinstance(item, dict) and str(item.get("id") or "") == project_id for item in projects
+    )
 
 
 # ── 对话归属映射 ──────────────────────────────────────────

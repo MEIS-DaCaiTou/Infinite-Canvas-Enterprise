@@ -233,6 +233,7 @@
     <!-- Tab 导航 -->
     <nav class="tabs">
       <button class="tab-btn active" onclick="switchTab('users', this)">成员管理</button>
+      <button class="tab-btn" onclick="switchTab('projects', this)">项目归属</button>
       <button class="tab-btn" onclick="switchTab('canvases', this)">画布归属</button>
       <button class="tab-btn" onclick="switchTab('conversations', this)">对话归属</button>
     </nav>
@@ -262,6 +263,30 @@
       </table>
     </div>
     </div><!-- /tab-users -->
+
+    <!-- Tab：项目归属 -->
+    <div class="tab-panel" id="tab-projects">
+    <div class="block">
+      <div class="block-head">
+        <span class="block-title">项目归属管理</span>
+        <span id="projectCount" style="color:var(--faint);font-size:11.5px;font-weight:700;">加载中…</span>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>项目名称</th>
+            <th>项目 ID</th>
+            <th>画布数量</th>
+            <th>当前归属</th>
+            <th>分配用户</th>
+          </tr>
+        </thead>
+        <tbody id="projectTable">
+          <tr><td colspan="5" style="text-align:center;color:var(--faint);padding:48px 0;font-weight:700;">加载中…</td></tr>
+        </tbody>
+      </table>
+    </div>
+    </div><!-- /tab-projects -->
 
     <!-- Tab：画布归属 -->
     <div class="tab-panel" id="tab-canvases">
@@ -628,10 +653,99 @@
     } else if (name === 'canvases') {
       primaryBtn.style.display = 'none';
       loadCanvases();
+    } else if (name === 'projects') {
+      primaryBtn.style.display = 'none';
+      loadProjects();
     } else if (name === 'conversations') {
       primaryBtn.style.display = 'none';
       loadConversations();
     }
+  }
+
+  // ── 项目归属管理
+  let _projects = [];
+  let _projectOwnerMap = {};
+
+  async function loadProjects() {
+    document.getElementById('projectCount').textContent = '加载中…';
+    document.getElementById('projectTable').innerHTML =
+      '<tr><td colspan="5" style="text-align:center;color:var(--faint);padding:48px 0;font-weight:700;">加载中…</td></tr>';
+    try {
+      const [projectData, ownerMap, users] = await Promise.all([
+        apiFetch('/api/projects'),
+        apiFetch('/enterprise/api/project-owners'),
+        _users.length ? Promise.resolve(_users) : apiFetch('/enterprise/api/users'),
+      ]);
+      _projects = projectData.projects || [];
+      _projectOwnerMap = ownerMap || {};
+      if (!_users.length) _users = users;
+      renderProjects();
+    } catch (e) {
+      showToast('加载项目失败: ' + e.message, 'error');
+    }
+  }
+
+  function renderProjects() {
+    const tbody = document.getElementById('projectTable');
+    const unowned = _projects.filter(p => p.id !== 'default' && !_projectOwnerMap[p.id]);
+    document.getElementById('projectCount').textContent =
+      `共 ${_projects.length} 个项目，其中 ${unowned.length} 个未分配；默认项目按用户独立呈现`;
+    if (!_projects.length) {
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--faint);padding:48px 0;font-weight:700;">暂无项目</td></tr>';
+      return;
+    }
+    const userOptions = _users
+      .filter(u => boolFlag(u.is_active))
+      .map(u => `<option value="${escapeHtml(u.id)}">${escapeHtml(u.username)}${u.display_name ? ' (' + escapeHtml(u.display_name) + ')' : ''}</option>`)
+      .join('');
+    const sorted = [..._projects].sort((a, b) => {
+      const aUnowned = a.id !== 'default' && !_projectOwnerMap[a.id];
+      const bUnowned = b.id !== 'default' && !_projectOwnerMap[b.id];
+      return Number(bUnowned) - Number(aUnowned);
+    });
+    tbody.innerHTML = sorted.map(project => {
+      const projectIdRaw = String(project.id || '');
+      const projectIdHtml = escapeHtml(projectIdRaw);
+      const projectIdArg = jsArg(projectIdRaw);
+      const titleHtml = escapeHtml(project.name || '未命名项目');
+      const isDefault = projectIdRaw === 'default';
+      const owner = _projectOwnerMap[projectIdRaw];
+      const ownerBadge = isDefault
+        ? '<span class="badge badge-active">每用户默认项目</span>'
+        : (owner
+          ? `<span class="badge badge-active">${escapeHtml(owner.username)}${owner.display_name ? ' · ' + escapeHtml(owner.display_name) : ''}</span>`
+          : '<span class="badge badge-unowned">未分配</span>');
+      const action = isDefault
+        ? '<span style="color:var(--faint);font-size:12px;">系统虚拟根</span>'
+        : `<div style="display:flex;gap:6px;align-items:center;">
+            <select class="select-user" id="project-sel-${projectIdHtml}">
+              <option value="">— 选择用户 —</option>
+              ${userOptions}
+            </select>
+            <button class="row-btn" onclick="assignProjectOwner('${projectIdArg}')">分配</button>
+          </div>`;
+      return `<tr>
+        <td style="font-weight:800;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${titleHtml}">${titleHtml}</td>
+        <td style="color:var(--faint);font-size:11.5px;font-family:monospace;" title="${projectIdHtml}">${escapeHtml(projectIdRaw.slice(0, 8) + (projectIdRaw ? '…' : '')) || '—'}</td>
+        <td style="color:var(--muted);font-size:12px;">${Number(project.canvas_count || 0)}</td>
+        <td>${ownerBadge}</td>
+        <td>${action}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  async function assignProjectOwner(projectId) {
+    const sel = document.getElementById('project-sel-' + projectId);
+    const userId = sel ? sel.value : '';
+    if (!userId) { showToast('请先选择用户', 'error'); return; }
+    try {
+      await apiFetch(`/enterprise/api/projects/${encodeURIComponent(projectId)}/owner`, {
+        method: 'PUT',
+        body: JSON.stringify({ user_id: userId }),
+      });
+      showToast('项目归属已更新');
+      await loadProjects();
+    } catch (e) { showToast(e.message, 'error'); }
   }
 
   // ── 画布归属管理

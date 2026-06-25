@@ -208,23 +208,112 @@ async def assign_canvas_owner(canvas_id: str, request: Request):
     current = _require_admin(request)
     body = await request.json()
     user_id = (body.get("user_id") or "").strip()
+    target_project_id = (body.get("target_project_id") or "").strip()
     if not user_id:
         raise HTTPException(status_code=400, detail="user_id 不能为空")
     # 验证目标用户存在
     target = edb.get_user_by_id(user_id)
     if not target:
         raise HTTPException(status_code=404, detail="用户不存在")
+    old_owner = edb.get_canvas_owner(canvas_id)
+    old_project = edb.get_canvas_project(canvas_id)
+    new_project = old_project
+    project_changed = False
+    if target_project_id:
+        if target_project_id != edb.DEFAULT_PROJECT_ID:
+            if not edb.project_exists(target_project_id):
+                raise HTTPException(status_code=404, detail="目标项目不存在")
+            if edb.get_project_owner(target_project_id) != user_id:
+                raise HTTPException(status_code=400, detail="目标项目不属于目标用户")
+        project_changed, _ = edb.set_canvas_project(canvas_id, target_project_id)
+        new_project = target_project_id
+    elif old_project and old_project != edb.DEFAULT_PROJECT_ID:
+        project_owner = edb.get_project_owner(old_project)
+        if project_owner != user_id:
+            project_changed, _ = edb.set_canvas_project(canvas_id, edb.DEFAULT_PROJECT_ID)
+            new_project = edb.DEFAULT_PROJECT_ID
     edb.assign_canvas_owner(canvas_id, user_id)
     edb.log_action(
         current["user_id"],
         "canvas_assigned",
         json.dumps({
             "canvas_id": canvas_id,
+            "old_owner": old_owner,
             "target_user_id": user_id,
             "target_username": target.get("username"),
+            "old_project": old_project,
+            "new_project": new_project,
+            "project_normalized": bool(project_changed),
         }, ensure_ascii=False),
     )
-    return {"success": True, "canvas_id": canvas_id, "user_id": user_id}
+    return {"success": True, "canvas_id": canvas_id, "user_id": user_id, "project": new_project}
+
+
+# ── 项目归属查询（管理员专用）────────────────────────────
+
+@router.get("/api/project-owners")
+async def project_owners(request: Request):
+    """返回 {project_id: {user_id, username}} 的全量映射；默认项目是每用户虚拟根。"""
+    _require_admin(request)
+    owner_map = edb.get_all_project_owner_map()
+    users = {u["id"]: u for u in edb.list_users()}
+    result = {}
+    for project_id, uid in owner_map.items():
+        user = users.get(uid, {})
+        result[project_id] = {
+            "user_id": uid,
+            "username": user.get("username", "未知"),
+            "display_name": user.get("display_name", ""),
+        }
+    return result
+
+
+@router.put("/api/projects/{project_id}/owner")
+async def assign_project_owner(project_id: str, request: Request):
+    """管理员手动分配常规项目归属；全局默认项目不可分配给单一用户。"""
+    current = _require_admin(request)
+    if project_id == edb.DEFAULT_PROJECT_ID:
+        raise HTTPException(status_code=400, detail="默认项目是每位用户的虚拟根，不能分配给单一用户")
+    if not edb.project_exists(project_id):
+        raise HTTPException(status_code=404, detail="项目不存在")
+    body = await request.json()
+    user_id = (body.get("user_id") or "").strip()
+    if not user_id:
+        raise HTTPException(status_code=400, detail="user_id 不能为空")
+    target = edb.get_user_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    old_owner = edb.get_project_owner(project_id)
+    edb.set_project_owner(project_id, user_id)
+    synced_canvases = []
+    for canvas_id in edb.get_canvas_ids_by_project(project_id):
+        old_canvas_owner = edb.get_canvas_owner(canvas_id)
+        if old_canvas_owner == user_id:
+            continue
+        edb.set_canvas_owner(canvas_id, user_id)
+        synced_canvases.append({
+            "canvas_id": canvas_id,
+            "old_owner": old_canvas_owner,
+            "new_owner": user_id,
+        })
+    edb.log_action(
+        current["user_id"],
+        "project_assigned",
+        json.dumps({
+            "project_id": project_id,
+            "old_owner": old_owner,
+            "target_user_id": user_id,
+            "target_username": target.get("username"),
+            "synced_canvas_count": len(synced_canvases),
+            "synced_canvases": synced_canvases[:50],
+        }, ensure_ascii=False),
+    )
+    return {
+        "success": True,
+        "project_id": project_id,
+        "user_id": user_id,
+        "synced_canvas_count": len(synced_canvases),
+    }
 
 
 # ── 对话归属查询（管理员专用）────────────────────────────
