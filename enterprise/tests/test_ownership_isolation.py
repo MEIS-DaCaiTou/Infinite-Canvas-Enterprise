@@ -106,6 +106,12 @@ async def _run_checks() -> None:
             "project": "project_move_a",
             "nodes": [],
         })
+        _write_json(canvas_dir / "canvas_default_move.json", {
+            "id": "canvas_default_move",
+            "title": "Move Canvas To Default",
+            "project": "project_move_a",
+            "nodes": [],
+        })
         _write_json(canvas_dir / "canvas_assign.json", {
             "id": "canvas_assign",
             "title": "Assign Canvas",
@@ -125,6 +131,7 @@ async def _run_checks() -> None:
         edb.set_canvas_owner("legacy_owned_canvas", user_a["id"])
         edb.set_canvas_owner("admin_resource_canvas", user_a["id"])
         edb.set_canvas_owner("canvas_move", user_a["id"])
+        edb.set_canvas_owner("canvas_default_move", user_a["id"])
         edb.set_canvas_owner("canvas_assign", user_a["id"])
         edb.set_canvas_owner("project_reassign_canvas", user_a["id"])
         edb.set_project_owner("project_a", user_a["id"])
@@ -238,7 +245,6 @@ async def _run_checks() -> None:
             b'{"canvas":{"id":"canvas_move","project":"project_move_b"}}',
             "application/json",
             actor_admin,
-            request_body=b'{"project":"project_move_b"}',
         )
         assert edb.get_canvas_owner("canvas_move") == user_b["id"]
         assert not interceptors.can_access_canvas(actor_a, "canvas_move")
@@ -249,6 +255,26 @@ async def _run_checks() -> None:
         moved_payload_b = {"canvases": [{"id": "canvas_move", "title": "Move Canvas", "project": "project_move_b"}]}
         interceptors.filter_canvas_list(actor_b, moved_payload_b)
         assert moved_payload_b["canvases"][0]["id"] == "canvas_move"
+        owner_map = await admin_api.canvas_owners(SimpleNamespace(state=SimpleNamespace(user=actor_admin)))
+        assert owner_map["canvas_move"]["user_id"] == user_b["id"]
+
+        _write_json(canvas_dir / "canvas_default_move.json", {
+            "id": "canvas_default_move",
+            "title": "Move Canvas To Default",
+            "project": "default",
+            "nodes": [],
+        })
+        await interceptors.post_process(
+            "api/canvases/canvas_default_move/meta",
+            "POST",
+            200,
+            b'{"canvas":{"id":"canvas_default_move","project":"default"}}',
+            "application/json",
+            actor_admin,
+        )
+        assert edb.get_canvas_owner("canvas_default_move") == user_a["id"]
+        assert interceptors.can_access_canvas(actor_a, "canvas_default_move")
+        assert not interceptors.can_access_canvas(actor_b, "canvas_default_move")
 
         assign_canvas_request = SimpleNamespace(
             state=SimpleNamespace(user=actor_admin),

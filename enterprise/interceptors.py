@@ -655,14 +655,12 @@ def _normalize_canvas_project_for_user(user: dict, data: Any) -> bool:
     return True
 
 
-def _sync_admin_canvas_owner_to_project(
+def _sync_admin_canvas_owner_from_persisted_project(
     user: dict,
     path: str,
     method: str,
-    data: Any,
-    request_body: bytes | None,
 ) -> None:
-    """管理员把画布移动到有 owner 的项目时，同步 canvas owner。"""
+    """管理员成功操作单个画布后，以落盘 JSON 的最终 project 同步 canvas owner。"""
     if not _is_admin(user) or method not in {"POST", "PUT"}:
         return
     canvas_id = _canvas_id_from_path(path)
@@ -670,14 +668,10 @@ def _sync_admin_canvas_owner_to_project(
         return
     if path not in {f"api/canvases/{canvas_id}/meta", f"api/canvases/{canvas_id}"}:
         return
-    requested_project_id = _project_id_from_body(request_body)
-    if not requested_project_id:
+    persisted_project_id = edb.get_canvas_project(canvas_id) or DEFAULT_PROJECT_ID
+    if persisted_project_id == DEFAULT_PROJECT_ID:
         return
-    canvas = data.get("canvas") if isinstance(data, dict) and isinstance(data.get("canvas"), dict) else None
-    response_project_id = str((canvas or {}).get("project") or requested_project_id).strip() or DEFAULT_PROJECT_ID
-    if response_project_id == DEFAULT_PROJECT_ID:
-        return
-    target_owner = edb.get_project_owner(response_project_id)
+    target_owner = edb.get_project_owner(persisted_project_id)
     if not target_owner:
         return
     old_owner = edb.get_canvas_owner(canvas_id)
@@ -687,10 +681,10 @@ def _sync_admin_canvas_owner_to_project(
         edb.set_canvas_owner(canvas_id, target_owner)
         edb.log_action(
             _user_id(user),
-            "admin_canvas_moved_cross_owner",
+            "admin_canvas_owner_synced_from_project",
             json.dumps({
                 "canvas_id": canvas_id,
-                "project_id": response_project_id,
+                "project_id": persisted_project_id,
                 "old_owner": old_owner,
                 "new_owner": target_owner,
             }, ensure_ascii=False),
@@ -698,7 +692,7 @@ def _sync_admin_canvas_owner_to_project(
     except Exception as exc:
         print(
             "[enterprise] sync canvas owner to project failed: "
-            f"canvas={canvas_id} project={response_project_id} error={exc}"
+            f"canvas={canvas_id} project={persisted_project_id} error={exc}"
         )
 
 
@@ -965,7 +959,7 @@ async def post_process(
     if status_code in (200, 201):
         record_resources_from_data(user, path, method, data)
 
-    _sync_admin_canvas_owner_to_project(user, path, method, data, request_body)
+    _sync_admin_canvas_owner_from_persisted_project(user, path, method)
 
     canvas_id_for_reconcile = _canvas_id_from_path(path)
     if canvas_id_for_reconcile and path == f"api/canvases/{canvas_id_for_reconcile}" and method in {"GET", "PUT"}:
