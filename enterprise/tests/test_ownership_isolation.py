@@ -52,6 +52,7 @@ async def _run_checks() -> None:
         interceptors._CANVAS_DATA_DIR = canvas_dir
         interceptors._CONVERSATION_DATA_DIR = conversation_dir
         edb._conversation_root = lambda: str(conversation_dir)
+        edb.CANVAS_DATA_DIR = str(canvas_dir)
 
         edb.init_db()
         user_a = edb.create_user("user_a", "password-a", "User A", False)
@@ -99,14 +100,39 @@ async def _run_checks() -> None:
             "nodes": [{"images": [{"url": admin_output_url}]}],
             "logs": [{"outputs": [admin_output_url]}],
         })
+        _write_json(canvas_dir / "canvas_move.json", {
+            "id": "canvas_move",
+            "title": "Move Canvas",
+            "project": "project_move_a",
+            "nodes": [],
+        })
+        _write_json(canvas_dir / "canvas_assign.json", {
+            "id": "canvas_assign",
+            "title": "Assign Canvas",
+            "project": "project_assign_a",
+            "nodes": [],
+        })
+        _write_json(canvas_dir / "project_reassign_canvas.json", {
+            "id": "project_reassign_canvas",
+            "title": "Project Reassign Canvas",
+            "project": "project_reassign",
+            "nodes": [],
+        })
 
         edb.set_canvas_owner("canvas_a", user_a["id"])
         edb.set_canvas_owner("canvas_b", user_b["id"])
         edb.set_canvas_owner("canvas_foreign", user_b["id"])
         edb.set_canvas_owner("legacy_owned_canvas", user_a["id"])
         edb.set_canvas_owner("admin_resource_canvas", user_a["id"])
+        edb.set_canvas_owner("canvas_move", user_a["id"])
+        edb.set_canvas_owner("canvas_assign", user_a["id"])
+        edb.set_canvas_owner("project_reassign_canvas", user_a["id"])
         edb.set_project_owner("project_a", user_a["id"])
         edb.set_project_owner("project_b", user_b["id"])
+        edb.set_project_owner("project_move_a", user_a["id"])
+        edb.set_project_owner("project_move_b", user_b["id"])
+        edb.set_project_owner("project_assign_a", user_a["id"])
+        edb.set_project_owner("project_reassign", user_a["id"])
         edb.record_resource_owner(admin["id"], "/assets/output/admin-in-user-canvas.png", "admin_task")
 
         assert interceptors.can_access_project(actor_a, "default")
@@ -199,15 +225,58 @@ async def _run_checks() -> None:
 
         from enterprise import admin_api
 
-        edb.project_exists = lambda project_id: project_id == "project_a"
+        _write_json(canvas_dir / "canvas_move.json", {
+            "id": "canvas_move",
+            "title": "Move Canvas",
+            "project": "project_move_b",
+            "nodes": [],
+        })
+        await interceptors.post_process(
+            "api/canvases/canvas_move/meta",
+            "POST",
+            200,
+            b'{"canvas":{"id":"canvas_move","project":"project_move_b"}}',
+            "application/json",
+            actor_admin,
+            request_body=b'{"project":"project_move_b"}',
+        )
+        assert edb.get_canvas_owner("canvas_move") == user_b["id"]
+        assert not interceptors.can_access_canvas(actor_a, "canvas_move")
+        assert interceptors.can_access_canvas(actor_b, "canvas_move")
+        moved_payload_a = {"canvases": [{"id": "canvas_move", "title": "Move Canvas", "project": "project_move_b"}]}
+        interceptors.filter_canvas_list(actor_a, moved_payload_a)
+        assert moved_payload_a["canvases"] == []
+        moved_payload_b = {"canvases": [{"id": "canvas_move", "title": "Move Canvas", "project": "project_move_b"}]}
+        interceptors.filter_canvas_list(actor_b, moved_payload_b)
+        assert moved_payload_b["canvases"][0]["id"] == "canvas_move"
+
+        assign_canvas_request = SimpleNamespace(
+            state=SimpleNamespace(user=actor_admin),
+            json=lambda: _async_value({"user_id": user_b["id"]}),
+        )
+        assigned_canvas = await admin_api.assign_canvas_owner("canvas_assign", assign_canvas_request)
+        assert assigned_canvas["success"] and assigned_canvas["user_id"] == user_b["id"]
+        assert edb.get_canvas_owner("canvas_assign") == user_b["id"]
+        assert edb.get_canvas_project("canvas_assign") == "default"
+        assert not interceptors.can_access_canvas(actor_a, "canvas_assign")
+        assert interceptors.can_access_canvas(actor_b, "canvas_assign")
+        assigned_payload_b = {"canvases": [{"id": "canvas_assign", "title": "Assign Canvas", "project": "default"}]}
+        interceptors.filter_canvas_list(actor_b, assigned_payload_b)
+        assert assigned_payload_b["canvases"][0]["id"] == "canvas_assign"
+        owner_map = await admin_api.canvas_owners(SimpleNamespace(state=SimpleNamespace(user=actor_admin)))
+        assert owner_map["canvas_assign"]["user_id"] == user_b["id"]
+
+        edb.project_exists = lambda project_id: project_id == "project_reassign"
         admin_request = SimpleNamespace(
             state=SimpleNamespace(user=actor_admin),
             json=lambda: _async_value({"user_id": user_b["id"]}),
         )
-        assigned = await admin_api.assign_project_owner("project_a", admin_request)
-        assert assigned["success"] and edb.get_project_owner("project_a") == user_b["id"]
+        assigned = await admin_api.assign_project_owner("project_reassign", admin_request)
+        assert assigned["success"] and edb.get_project_owner("project_reassign") == user_b["id"]
+        assert assigned["synced_canvas_count"] == 1
+        assert edb.get_canvas_owner("project_reassign_canvas") == user_b["id"]
         owner_map = await admin_api.project_owners(SimpleNamespace(state=SimpleNamespace(user=actor_admin)))
-        assert owner_map["project_a"]["user_id"] == user_b["id"]
+        assert owner_map["project_reassign"]["user_id"] == user_b["id"]
 
         _write_json(conversation_dir / user_a["id"] / "conv_a.json", {
             "id": "conv_a",

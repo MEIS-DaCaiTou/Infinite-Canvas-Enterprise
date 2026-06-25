@@ -655,6 +655,53 @@ def _normalize_canvas_project_for_user(user: dict, data: Any) -> bool:
     return True
 
 
+def _sync_admin_canvas_owner_to_project(
+    user: dict,
+    path: str,
+    method: str,
+    data: Any,
+    request_body: bytes | None,
+) -> None:
+    """管理员把画布移动到有 owner 的项目时，同步 canvas owner。"""
+    if not _is_admin(user) or method not in {"POST", "PUT"}:
+        return
+    canvas_id = _canvas_id_from_path(path)
+    if not canvas_id:
+        return
+    if path not in {f"api/canvases/{canvas_id}/meta", f"api/canvases/{canvas_id}"}:
+        return
+    requested_project_id = _project_id_from_body(request_body)
+    if not requested_project_id:
+        return
+    canvas = data.get("canvas") if isinstance(data, dict) and isinstance(data.get("canvas"), dict) else None
+    response_project_id = str((canvas or {}).get("project") or requested_project_id).strip() or DEFAULT_PROJECT_ID
+    if response_project_id == DEFAULT_PROJECT_ID:
+        return
+    target_owner = edb.get_project_owner(response_project_id)
+    if not target_owner:
+        return
+    old_owner = edb.get_canvas_owner(canvas_id)
+    if old_owner == target_owner:
+        return
+    try:
+        edb.set_canvas_owner(canvas_id, target_owner)
+        edb.log_action(
+            _user_id(user),
+            "admin_canvas_moved_cross_owner",
+            json.dumps({
+                "canvas_id": canvas_id,
+                "project_id": response_project_id,
+                "old_owner": old_owner,
+                "new_owner": target_owner,
+            }, ensure_ascii=False),
+        )
+    except Exception as exc:
+        print(
+            "[enterprise] sync canvas owner to project failed: "
+            f"canvas={canvas_id} project={response_project_id} error={exc}"
+        )
+
+
 def _user_lookup() -> dict[str, dict]:
     return {u["id"]: u for u in edb.list_users()}
 
@@ -820,6 +867,7 @@ async def post_process(
     response_body: bytes,
     content_type: str,
     user: dict,
+    request_body: bytes | None = None,
 ) -> Tuple[bytes, dict]:
     """
     返回 (处理后的 body bytes, 需要覆盖的响应头 dict)
@@ -916,6 +964,8 @@ async def post_process(
 
     if status_code in (200, 201):
         record_resources_from_data(user, path, method, data)
+
+    _sync_admin_canvas_owner_to_project(user, path, method, data, request_body)
 
     canvas_id_for_reconcile = _canvas_id_from_path(path)
     if canvas_id_for_reconcile and path == f"api/canvases/{canvas_id_for_reconcile}" and method in {"GET", "PUT"}:

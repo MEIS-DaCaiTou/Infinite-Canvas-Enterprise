@@ -342,6 +342,72 @@ def assign_canvas_owner(canvas_id: str, user_id: str) -> None:
 # ── 项目归属映射 ──────────────────────────────────────────
 
 DEFAULT_PROJECT_ID = "default"
+CANVAS_DATA_DIR = os.path.join(str(ROOT_DIR), "data", "canvases")
+
+
+def _canvas_json_path(canvas_id: str) -> Optional[str]:
+    canvas_id = str(canvas_id or "").strip()
+    if not canvas_id or os.path.basename(canvas_id) != canvas_id:
+        return None
+    return os.path.join(CANVAS_DATA_DIR, f"{canvas_id}.json")
+
+
+def read_canvas_json(canvas_id: str) -> Optional[dict]:
+    """读取上游画布 JSON；企业层只用于归属一致性治理。"""
+    path = _canvas_json_path(canvas_id)
+    if not path:
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def get_canvas_project(canvas_id: str) -> Optional[str]:
+    data = read_canvas_json(canvas_id)
+    if not data:
+        return None
+    return str(data.get("project") or DEFAULT_PROJECT_ID).strip() or DEFAULT_PROJECT_ID
+
+
+def set_canvas_project(canvas_id: str, project_id: str) -> tuple[bool, Optional[str]]:
+    """更新画布 JSON 的 project 字段，返回 (是否写入, 旧 project)。"""
+    data = read_canvas_json(canvas_id)
+    if not data:
+        return False, None
+    old_project = str(data.get("project") or DEFAULT_PROJECT_ID).strip() or DEFAULT_PROJECT_ID
+    new_project = str(project_id or DEFAULT_PROJECT_ID).strip() or DEFAULT_PROJECT_ID
+    if old_project == new_project:
+        return False, old_project
+    data["project"] = new_project
+    path = _canvas_json_path(canvas_id)
+    if not path:
+        return False, old_project
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    return True, old_project
+
+
+def get_canvas_ids_by_project(project_id: str) -> list[str]:
+    project_id = str(project_id or DEFAULT_PROJECT_ID).strip() or DEFAULT_PROJECT_ID
+    try:
+        filenames = os.listdir(CANVAS_DATA_DIR)
+    except Exception:
+        return []
+    canvas_ids: list[str] = []
+    for filename in filenames:
+        if not filename.endswith(".json"):
+            continue
+        canvas_id = filename[:-5]
+        data = read_canvas_json(canvas_id)
+        if not data:
+            continue
+        canvas_project = str(data.get("project") or DEFAULT_PROJECT_ID).strip() or DEFAULT_PROJECT_ID
+        if canvas_project == project_id:
+            canvas_ids.append(str(data.get("id") or canvas_id))
+    return canvas_ids
 
 
 def record_project_owner(user_id: str, project_id: str) -> bool:
