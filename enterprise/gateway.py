@@ -46,6 +46,7 @@ from enterprise.interceptors import (
     is_stream_path,
     post_process,
     pre_process,
+    rewrite_managed_modelscope_token_body,
     upstream_conversation_user_id,
 )
 from enterprise.admin_api import router as admin_router
@@ -622,6 +623,9 @@ async def _forward(
                 body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         except Exception:
             pass
+
+    if user and body:
+        body = rewrite_managed_modelscope_token_body(path, body)
 
     # 构建转发 headers（移除 host、cookie 等，注入用户信息）
     exclude_headers = {"host", "content-length", "transfer-encoding"}

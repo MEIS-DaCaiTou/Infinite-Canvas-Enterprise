@@ -78,6 +78,50 @@ _HISTORY_GENERATION_PATHS = {
     "api/generate",
 }
 
+MANAGED_MODELSCOPE_TOKEN = "__enterprise_managed_modelscope_token__"
+
+_SENSITIVE_SETTINGS_KEY_PARTS = (
+    "api_key",
+    "apikey",
+    "access_key",
+    "secret",
+    "credential",
+    "wallet_key",
+    "password",
+    "cookie",
+)
+
+_SENSITIVE_SETTINGS_EXACT_KEYS = {
+    "token",
+    "api_token",
+    "access_token",
+    "refresh_token",
+    "auth_token",
+    "bearer_token",
+    "ms_token",
+    "modelscope_token",
+    "base_url",
+    "baseurl",
+    "api_base",
+    "api_base_url",
+    "endpoint_url",
+    "key_preview",
+    "key_env",
+    "wallet_key_preview",
+    "wallet_key_env",
+    "volcengine_access_key_preview",
+    "volcengine_access_key_env",
+    "volcengine_secret_key_preview",
+    "volcengine_secret_key_env",
+    "has_key",
+    "has_api_key",
+    "has_ms_key",
+    "has_wallet_key",
+    "has_volcengine_access_key",
+    "has_volcengine_secret_key",
+    "raw",
+}
+
 
 def is_static_asset(path: str) -> bool:
     suffix = PurePosixPath(path).suffix.lower()
@@ -159,6 +203,204 @@ def _json_from_body(body: bytes | None) -> Any:
         return json.loads(body.decode("utf-8"))
     except Exception:
         return None
+
+
+def rewrite_managed_modelscope_token_body(path: str, body: bytes | None) -> bytes | None:
+    """Let legacy pages keep working without exposing the real ModelScope token."""
+    if path not in {"generate", "api/angle/generate", "api/ms/generate"}:
+        return body
+    payload = _json_from_body(body)
+    if not isinstance(payload, dict):
+        return body
+    if str(payload.get("api_key") or "") != MANAGED_MODELSCOPE_TOKEN:
+        return body
+    payload["api_key"] = ""
+    return json.dumps(payload, ensure_ascii=False).encode("utf-8")
+
+
+def _normalized_key(key: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", str(key or "").strip().lower()).strip("_")
+
+
+def _is_sensitive_settings_key(key: Any) -> bool:
+    normalized = _normalized_key(key)
+    if not normalized:
+        return False
+    if normalized in _SENSITIVE_SETTINGS_EXACT_KEYS:
+        return True
+    return any(part in normalized for part in _SENSITIVE_SETTINGS_KEY_PARTS)
+
+
+def _sanitize_settings_data(value: Any) -> tuple[Any, bool]:
+    if isinstance(value, dict):
+        changed = False
+        sanitized: dict = {}
+        for key, item in value.items():
+            normalized = _normalized_key(key)
+            if normalized == "comfy_instances" and isinstance(item, list):
+                sanitized[key] = ["configured" for entry in item if str(entry or "").strip()]
+                changed = True
+                continue
+            if _is_sensitive_settings_key(key):
+                changed = True
+                continue
+            child, child_changed = _sanitize_settings_data(item)
+            sanitized[key] = child
+            changed = changed or child_changed
+        return sanitized, changed
+    if isinstance(value, list):
+        changed = False
+        sanitized_list = []
+        for item in value:
+            child, child_changed = _sanitize_settings_data(item)
+            sanitized_list.append(child)
+            changed = changed or child_changed
+        return sanitized_list, changed
+    return value, False
+
+
+def _is_runninghub_workflow_detail_get(path: str, method: str) -> bool:
+    return (
+        method.upper() == "GET"
+        and path.startswith("api/runninghub/workflows/")
+        and path != "api/runninghub/workflows/fetch"
+    )
+
+
+def _is_workflow_detail_get(path: str, method: str) -> bool:
+    return method.upper() == "GET" and path.startswith("api/workflows/")
+
+
+def _settings_response_should_be_sanitized(user: dict, path: str, method: str) -> bool:
+    if _is_admin(user):
+        return False
+    if path in {"api/config", "api/models"} and method.upper() == "GET":
+        return True
+    if path == "api/workflows" and method.upper() == "GET":
+        return True
+    if _is_workflow_detail_get(path, method):
+        return True
+    if _is_runninghub_workflow_detail_get(path, method):
+        return True
+    return False
+
+
+def sanitize_settings_response(user: dict, path: str, method: str, data: Any) -> tuple[Any, bool]:
+    if not _settings_response_should_be_sanitized(user, path, method):
+        return data, False
+    return _sanitize_settings_data(data)
+
+
+def _settings_denial_for_normal_user(path: str, method: str) -> bool:
+    method = method.upper()
+    if path == "api/providers" or path.startswith("api/providers/"):
+        return True
+    if path == "api/comfyui/instances":
+        return True
+    if path in {
+        "api/runninghub/app-info",
+        "api/runninghub/workflow-info",
+        "api/runninghub/workflows",
+        "api/runninghub/workflows/fetch",
+    }:
+        return True
+    if path.startswith("api/runninghub/workflows/") and method in {"POST", "PUT", "PATCH", "DELETE"}:
+        return True
+    if path == "api/workflows":
+        return method != "GET"
+    if path.startswith("api/workflows/"):
+        return method in {"POST", "PUT", "PATCH", "DELETE"}
+    if path.startswith("api/jimeng/") and path != "api/jimeng/query-media":
+        return True
+    return False
+
+
+def _settings_audit_action(path: str, method: str) -> str:
+    method = method.upper()
+    if path == "api/providers" and method in {"POST", "PUT", "PATCH", "DELETE"}:
+        return "settings_provider_saved"
+    if path == "api/providers/test-connection" and method == "POST":
+        return "settings_provider_tested"
+    if path == "api/providers/probe-async" and method == "POST":
+        return "settings_provider_probed"
+    if path == "api/providers/fetch-models" and method == "POST":
+        return "settings_provider_models_fetched"
+    if path.startswith("api/providers/") and path.endswith("/fetch-models") and method == "GET":
+        return "settings_provider_models_fetched"
+    if path.startswith("api/providers/") and method in {"POST", "PUT", "PATCH", "DELETE"}:
+        return "settings_provider_modified"
+    if path == "api/comfyui/instances" and method in {"POST", "PUT", "PATCH", "DELETE"}:
+        return "settings_comfy_instances_saved"
+    if path == "api/workflows" and method == "POST":
+        return "settings_workflow_uploaded"
+    if path.startswith("api/workflows/") and path.endswith("/config") and method in {"POST", "PUT", "PATCH"}:
+        return "settings_workflow_config_saved"
+    if path.startswith("api/workflows/") and method == "DELETE":
+        return "settings_workflow_deleted"
+    if path.startswith("api/workflows/") and method == "POST":
+        return "settings_workflow_tested"
+    if path == "api/runninghub/workflows/fetch" and method == "POST":
+        return "settings_runninghub_workflow_fetched"
+    if path.startswith("api/runninghub/workflows/") and method in {"POST", "PUT", "PATCH"}:
+        return "settings_runninghub_workflow_saved"
+    if path.startswith("api/runninghub/workflows/") and method == "DELETE":
+        return "settings_runninghub_workflow_deleted"
+    if path in {"api/runninghub/app-info", "api/runninghub/workflow-info"} and method == "GET":
+        return "settings_runninghub_metadata_fetched"
+    if path.startswith("api/jimeng/") and path != "api/jimeng/query-media":
+        return "settings_jimeng_accessed"
+    return ""
+
+
+def _settings_payload_summary(body: bytes | None) -> dict:
+    payload = _json_from_body(body)
+    if isinstance(payload, list):
+        provider_ids = [
+            str(item.get("id") or "")[:80]
+            for item in payload
+            if isinstance(item, dict) and item.get("id")
+        ]
+        return {
+            "payload_type": "list",
+            "item_count": len(payload),
+            "provider_ids": provider_ids[:20],
+            "contains_sensitive_fields": any(_payload_contains_sensitive_key(item) for item in payload),
+        }
+    if isinstance(payload, dict):
+        keys = sorted(str(key)[:80] for key in payload.keys())[:40]
+        return {
+            "payload_type": "dict",
+            "keys": keys,
+            "contains_sensitive_fields": _payload_contains_sensitive_key(payload),
+        }
+    if payload is None:
+        return {"payload_type": "empty"}
+    return {"payload_type": type(payload).__name__}
+
+
+def _payload_contains_sensitive_key(value: Any) -> bool:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if _is_sensitive_settings_key(key) or _payload_contains_sensitive_key(item):
+                return True
+    elif isinstance(value, list):
+        return any(_payload_contains_sensitive_key(item) for item in value)
+    return False
+
+
+def audit_settings_operation(user: dict, path: str, method: str, body: bytes | None = None) -> None:
+    action = _settings_audit_action(path, method)
+    if not action:
+        return
+    try:
+        detail = {
+            "path": path,
+            "method": method.upper(),
+            **_settings_payload_summary(body),
+        }
+        edb.log_action(_user_id(user), action, json.dumps(detail, ensure_ascii=False))
+    except Exception as exc:
+        print(f"[enterprise] audit settings operation failed: user={_user_id(user)} path={path} error={exc}")
 
 
 def _clean_relative_path(value: str) -> str:
@@ -797,6 +1039,20 @@ async def pre_process(
             return None
         return _deny_forbidden("需要管理员权限才能执行项目更新")
 
+    if path == "api/config/token" and method.upper() == "GET" and not is_admin:
+        return JSONResponse(
+            {
+                "token": MANAGED_MODELSCOPE_TOKEN,
+                "enterprise_managed": True,
+            },
+            status_code=200,
+        )
+
+    if _settings_denial_for_normal_user(path, method):
+        if not is_admin:
+            return _deny_forbidden("需要管理员权限才能访问企业高风险设置")
+        audit_settings_operation(user, path, method, body)
+
     if path == "api/history/delete" and method.upper() == "POST":
         return handle_history_delete(user, body)
 
@@ -1155,6 +1411,8 @@ async def post_process(
         return response_body, {}
 
     modified = False
+    data, sanitized_settings = sanitize_settings_response(user, path, method, data)
+    modified = sanitized_settings or modified
 
     # ── 企业首页项目信息治理 ───────────────────────────────
     # 上游 app-info 的 repo_url 指向上游仓库；企业版首页应默认指向企业仓库。
