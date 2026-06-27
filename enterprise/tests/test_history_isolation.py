@@ -122,6 +122,10 @@ async def _run_checks() -> None:
         history_id_unowned = interceptors.history_id_for_record(record_unowned)
         edb.record_history_owner(user_a["id"], history_id_a, "online", "/assets/output/history-a.png", "task-a", "seed")
         edb.record_history_owner(user_b["id"], history_id_b, "zimage", "/assets/output/history-b.png", "task-b", "seed")
+        interceptors.record_history_resources_for_user(user_a["id"], record_a, f"history:{history_id_a}:seed")
+        interceptors.record_history_resources_for_user(user_b["id"], record_b, f"history:{history_id_b}:seed")
+        assert interceptors.can_access_resource(actor_a, "/assets/output/history-a.png") is True
+        assert interceptors.can_access_resource(actor_b, "/assets/output/history-a.png") is False
 
         visible_a = await _post_json("api/history", "GET", 200, [record_a, record_b, record_unowned], actor_a)
         assert [item["prompt"] for item in visible_a] == ["A private prompt"]
@@ -173,6 +177,36 @@ async def _run_checks() -> None:
         assert edb.get_history_owner(angle_id) == user_b["id"]
         assert edb.get_resource_owner("/assets/output/generated-angle.png") == user_b["id"]
 
+        canvas_task_record = {
+            "timestamp": 600.0,
+            "type": "online",
+            "prompt": "A Smart Canvas image task",
+            "images": ["/assets/output/canvas-task-a.png"],
+            "task_id": "upstream-canvas-task-a",
+        }
+        _write_history(history_path, [canvas_task_record] + _read_history(history_path))
+        edb.record_canvas_image_task_owner(user_a["id"], "canvas_task_a")
+        await _post_json(
+            "api/canvas-image-tasks/canvas_task_a",
+            "GET",
+            200,
+            {
+                "id": "canvas_task_a",
+                "status": "succeeded",
+                "result": {
+                    "prompt": "A Smart Canvas image task",
+                    "images": ["/assets/output/canvas-task-a.png"],
+                    "timestamp": 600.0,
+                    "type": "online",
+                    "task_id": "upstream-canvas-task-a",
+                },
+            },
+            actor_admin,
+        )
+        canvas_history_id = interceptors.history_id_for_record(canvas_task_record)
+        assert edb.get_history_owner(canvas_history_id) == user_a["id"]
+        assert edb.get_resource_owner("/assets/output/canvas-task-a.png") == user_a["id"]
+
         denied = await interceptors.pre_process(
             "api/history/delete",
             "POST",
@@ -192,8 +226,10 @@ async def _run_checks() -> None:
         assert deleted is not None and deleted.status_code == 200
         assert _json_body(deleted)["success"] is True
         assert not any(item["prompt"] == "A private prompt" for item in _read_history(history_path))
-        assert not (output_dir / "history-a.png").exists()
+        assert (output_dir / "history-a.png").exists()
         assert edb.get_history_owner(history_id_a) is None
+        assert edb.get_resource_owner("/assets/output/history-a.png") == user_a["id"]
+        assert interceptors.can_access_resource(actor_b, "/assets/output/history-a.png") is False
 
         denied_unowned = await interceptors.pre_process(
             "api/history/delete",

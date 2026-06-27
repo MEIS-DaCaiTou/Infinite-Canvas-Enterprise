@@ -409,36 +409,6 @@ def _history_candidates_for_timestamp(records: list[dict], requested_ts: Any) ->
     ]
 
 
-def _history_local_output_path(value: str) -> Optional[Path]:
-    resource_url = normalize_resource_url(value)
-    if not _is_protected_resource(resource_url):
-        return None
-    if not (resource_url.startswith("/assets/output/") or resource_url.startswith("/output/")):
-        return None
-    try:
-        root = Path(ROOT_DIR).resolve()
-        target = (root / resource_url.lstrip("/")).resolve()
-        target.relative_to(root)
-        return target
-    except Exception:
-        return None
-
-
-def _delete_history_output_files(records: list[dict]) -> None:
-    for record in records:
-        images = record.get("images")
-        if not isinstance(images, list):
-            continue
-        for img_url in images:
-            path = _history_local_output_path(str(img_url or ""))
-            if not path or not path.is_file():
-                continue
-            try:
-                path.unlink()
-            except Exception as exc:
-                print(f"[enterprise] delete history output failed: path={path} error={exc}")
-
-
 def _annotate_history_record(record: dict, owner_map: dict, users: dict) -> dict:
     item = dict(record)
     history_id = history_id_for_record(item)
@@ -470,8 +440,8 @@ def filter_history_list(user: dict, data: Any) -> bool:
     return True
 
 
-def _history_records_from_generation_response(path: str, data: Any) -> list[dict]:
-    if path not in _HISTORY_GENERATION_PATHS or not isinstance(data, dict):
+def _history_records_from_generation_payload(data: Any) -> list[dict]:
+    if not isinstance(data, dict):
         return []
     if isinstance(data.get("images"), list) and data.get("timestamp"):
         return [data]
@@ -489,6 +459,37 @@ def _history_records_from_generation_response(path: str, data: Any) -> list[dict
     return matches
 
 
+def _history_records_from_generation_response(path: str, data: Any) -> list[dict]:
+    if path not in _HISTORY_GENERATION_PATHS:
+        return []
+    return _history_records_from_generation_payload(data)
+
+
+def _record_history_record_for_user_id(user_id: str, record: Mapping[str, Any], source: str) -> None:
+    history_id = history_id_for_record(record)
+    primary_resource = _history_record_primary_resource(record)
+    task_id = _history_record_task_id(record)
+    try:
+        edb.record_history_owner(
+            user_id,
+            history_id,
+            _history_record_type(record),
+            primary_resource,
+            task_id,
+            source,
+        )
+    except Exception as exc:
+        print(f"[enterprise] record history owner failed: user={user_id} history={history_id} error={exc}")
+    record_resource_urls_for_user(user_id, f"history:{history_id}", record)
+
+
+def record_history_payload_for_user_id(user_id: str, source: str, data: Any) -> None:
+    if not user_id:
+        return
+    for record in _history_records_from_generation_payload(data):
+        _record_history_record_for_user_id(user_id, record, source)
+
+
 def record_generated_history_for_user(user: dict, path: str, method: str, data: Any) -> None:
     if method.upper() != "POST" or path not in _HISTORY_GENERATION_PATHS:
         return
@@ -496,21 +497,7 @@ def record_generated_history_for_user(user: dict, path: str, method: str, data: 
     if not user_id:
         return
     for record in _history_records_from_generation_response(path, data):
-        history_id = history_id_for_record(record)
-        primary_resource = _history_record_primary_resource(record)
-        task_id = _history_record_task_id(record)
-        try:
-            edb.record_history_owner(
-                user_id,
-                history_id,
-                _history_record_type(record),
-                primary_resource,
-                task_id,
-                path,
-            )
-        except Exception as exc:
-            print(f"[enterprise] record history owner failed: user={user_id} history={history_id} error={exc}")
-        record_resource_urls_for_user(user_id, f"history:{history_id}", record)
+        _record_history_record_for_user_id(user_id, record, path)
 
 
 def record_history_resources_for_user(user_id: str, record: Mapping[str, Any], source: str) -> None:
@@ -551,11 +538,9 @@ def handle_history_delete(user: dict, body: bytes | None) -> JSONResponse:
             return _deny_not_found("历史记录不存在或无权限访问")
 
     remove_indexes = {idx for idx, _record in candidates}
-    deleted_records = [record for _idx, record in candidates]
     remaining = [record for idx, record in enumerate(records) if idx not in remove_indexes]
     try:
         _write_history_records(remaining)
-        _delete_history_output_files(deleted_records)
         for history_id in candidate_ids:
             edb.remove_history_mapping(history_id)
         edb.log_action(
@@ -1236,6 +1221,8 @@ async def post_process(
         task_owner = edb.get_canvas_image_task_owner(canvas_task_id)
         if task_owner:
             record_resource_urls_for_user(task_owner, path, data)
+            if isinstance(data, dict) and str(data.get("status") or "").lower() == "succeeded":
+                record_history_payload_for_user_id(task_owner, path, data)
 
     if status_code in (200, 201):
         record_resources_from_data(user, path, method, data)
