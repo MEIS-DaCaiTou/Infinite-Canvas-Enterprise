@@ -78,12 +78,13 @@ _HISTORY_GENERATION_PATHS = {
     "api/generate",
 }
 
+MANAGED_MODELSCOPE_TOKEN = "__enterprise_managed_modelscope_token__"
+
 _SENSITIVE_SETTINGS_KEY_PARTS = (
     "api_key",
     "apikey",
     "access_key",
     "secret",
-    "token",
     "credential",
     "wallet_key",
     "password",
@@ -91,6 +92,14 @@ _SENSITIVE_SETTINGS_KEY_PARTS = (
 )
 
 _SENSITIVE_SETTINGS_EXACT_KEYS = {
+    "token",
+    "api_token",
+    "access_token",
+    "refresh_token",
+    "auth_token",
+    "bearer_token",
+    "ms_token",
+    "modelscope_token",
     "base_url",
     "baseurl",
     "api_base",
@@ -196,6 +205,19 @@ def _json_from_body(body: bytes | None) -> Any:
         return None
 
 
+def rewrite_managed_modelscope_token_body(path: str, body: bytes | None) -> bytes | None:
+    """Let legacy pages keep working without exposing the real ModelScope token."""
+    if path not in {"generate", "api/angle/generate", "api/ms/generate"}:
+        return body
+    payload = _json_from_body(body)
+    if not isinstance(payload, dict):
+        return body
+    if str(payload.get("api_key") or "") != MANAGED_MODELSCOPE_TOKEN:
+        return body
+    payload["api_key"] = ""
+    return json.dumps(payload, ensure_ascii=False).encode("utf-8")
+
+
 def _normalized_key(key: Any) -> str:
     return re.sub(r"[^a-z0-9]+", "_", str(key or "").strip().lower()).strip("_")
 
@@ -271,8 +293,6 @@ def sanitize_settings_response(user: dict, path: str, method: str, data: Any) ->
 
 def _settings_denial_for_normal_user(path: str, method: str) -> bool:
     method = method.upper()
-    if path == "api/config/token":
-        return True
     if path == "api/providers" or path.startswith("api/providers/"):
         return True
     if path == "api/comfyui/instances":
@@ -1018,6 +1038,15 @@ async def pre_process(
         if is_admin:
             return None
         return _deny_forbidden("需要管理员权限才能执行项目更新")
+
+    if path == "api/config/token" and method.upper() == "GET" and not is_admin:
+        return JSONResponse(
+            {
+                "token": MANAGED_MODELSCOPE_TOKEN,
+                "enterprise_managed": True,
+            },
+            status_code=200,
+        )
 
     if _settings_denial_for_normal_user(path, method):
         if not is_admin:

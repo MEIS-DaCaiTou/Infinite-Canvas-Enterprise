@@ -71,7 +71,9 @@ def _assert_no_sensitive_config(data) -> None:
         "https://sensitive.example",
         "https://provider.example",
         "api_key",
-        "token",
+        "\"token\"",
+        "api_token",
+        "access_token",
         "secret",
         "credential",
         "base_url",
@@ -115,7 +117,18 @@ async def _run_checks() -> None:
             }
         ]
 
-        await _assert_forbidden("api/config/token", "GET", actor_a)
+        token_response = await interceptors.pre_process("api/config/token", "GET", actor_a)
+        assert token_response is not None and token_response.status_code == 200
+        token_body = _json_body(token_response)
+        assert token_body["enterprise_managed"] is True
+        assert token_body["token"] == interceptors.MANAGED_MODELSCOPE_TOKEN
+        assert "sk-" not in token_body["token"].lower()
+        rewritten = interceptors.rewrite_managed_modelscope_token_body(
+            "api/ms/generate",
+            json.dumps({"api_key": token_body["token"], "prompt": "hello"}, ensure_ascii=False).encode("utf-8"),
+        )
+        assert json.loads(rewritten.decode("utf-8"))["api_key"] == ""
+
         await _assert_forbidden("api/providers", "GET", actor_a)
         await _assert_forbidden("api/providers", "GET", actor_b)
         await _assert_forbidden("api/providers", "PUT", actor_a, provider_payload)
@@ -136,6 +149,11 @@ async def _run_checks() -> None:
             "has_api_key": True,
             "has_ms_key": True,
             "token": "ms-secret-token",
+            "api_token": "api-token-secret",
+            "access_token": "access-token-secret",
+            "max_tokens": 4096,
+            "tokens": {"input": 12, "output": 34},
+            "tokenizer": "cl100k_base",
             "api_providers": [
                 {
                     "id": "custom-api",
@@ -175,6 +193,9 @@ async def _run_checks() -> None:
         filtered_config = await _filtered_json("api/config", "GET", config_payload, actor_a)
         assert filtered_config["chat_models"] == ["gpt-5.5"]
         assert filtered_config["image_models"] == ["gpt-image-2"]
+        assert filtered_config["max_tokens"] == 4096
+        assert filtered_config["tokens"] == {"input": 12, "output": 34}
+        assert filtered_config["tokenizer"] == "cl100k_base"
         assert filtered_config["comfy_instances"] == ["configured"]
         assert filtered_config["api_providers"][0]["id"] == "custom-api"
         assert "127.0.0.1:8188" not in json.dumps(filtered_config, ensure_ascii=False)
@@ -213,6 +234,8 @@ async def _run_checks() -> None:
         await _assert_forbidden("api/workflows/custom/guarded.json/config", "PUT", actor_a, {"title": "Blocked"})
         await _assert_forbidden("api/workflows/custom/guarded.json", "DELETE", actor_a)
         await _assert_forbidden("api/workflows/custom/guarded.json/run", "POST", actor_a, {"fields": {}})
+        await _assert_allowed("api/generate", "POST", actor_a, {"workflow_json": "custom/guarded.json", "params": {}})
+        await _assert_allowed("api/canvas-comfy-tasks", "POST", actor_a, {"workflow_json": "custom/guarded.json"})
         await _assert_forbidden("api/comfyui/instances", "GET", actor_a)
         await _assert_forbidden("api/comfyui/instances", "PUT", actor_a, {"instances": ["127.0.0.1:8188"]})
 
