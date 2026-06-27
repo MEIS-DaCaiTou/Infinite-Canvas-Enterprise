@@ -77,6 +77,16 @@ def init_db() -> None:
                 PRIMARY KEY (task_id)
             );
 
+            CREATE TABLE IF NOT EXISTS user_history_map (
+                history_id   TEXT PRIMARY KEY,
+                user_id      TEXT NOT NULL,
+                type         TEXT,
+                resource_url TEXT,
+                task_id      TEXT,
+                created_at   INTEGER NOT NULL,
+                source       TEXT
+            );
+
             CREATE TABLE IF NOT EXISTS usage_logs (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id     TEXT NOT NULL,
@@ -705,6 +715,125 @@ def get_canvas_image_task_owner(task_id: str) -> Optional[str]:
             ((task_id or "").strip(),)
         ).fetchone()
         return row["user_id"] if row else None
+    finally:
+        conn.close()
+
+
+# ── 历史记录归属映射 ──────────────────────────────────────
+
+def record_history_owner(
+    user_id: str,
+    history_id: str,
+    history_type: str = "",
+    resource_url: str = "",
+    task_id: str = "",
+    source: str = "",
+) -> bool:
+    """记录生成历史归属。已有归属时不覆盖，返回是否写入。"""
+    user_id = (user_id or "").strip()
+    history_id = (history_id or "").strip()
+    if not user_id or not history_id:
+        return False
+    conn = get_db()
+    try:
+        cur = conn.execute(
+            """
+            INSERT OR IGNORE INTO user_history_map
+            (history_id, user_id, type, resource_url, task_id, created_at, source)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                history_id,
+                user_id,
+                (history_type or "").strip(),
+                (resource_url or "").strip(),
+                (task_id or "").strip(),
+                int(time.time() * 1000),
+                (source or "").strip(),
+            ),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def get_history_owner(history_id: str) -> Optional[str]:
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT user_id FROM user_history_map WHERE history_id = ?",
+            ((history_id or "").strip(),),
+        ).fetchone()
+        return row["user_id"] if row else None
+    finally:
+        conn.close()
+
+
+def set_history_owner(
+    history_id: str,
+    user_id: str,
+    history_type: str = "",
+    resource_url: str = "",
+    task_id: str = "",
+    source: str = "",
+) -> bool:
+    """管理员迁移历史记录归属（覆盖旧归属）。"""
+    history_id = (history_id or "").strip()
+    user_id = (user_id or "").strip()
+    if not history_id or not user_id:
+        return False
+    conn = get_db()
+    try:
+        conn.execute("DELETE FROM user_history_map WHERE history_id = ?", (history_id,))
+        cur = conn.execute(
+            """
+            INSERT INTO user_history_map
+            (history_id, user_id, type, resource_url, task_id, created_at, source)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                history_id,
+                user_id,
+                (history_type or "").strip(),
+                (resource_url or "").strip(),
+                (task_id or "").strip(),
+                int(time.time() * 1000),
+                (source or "").strip(),
+            ),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def remove_history_mapping(history_id: str) -> None:
+    conn = get_db()
+    try:
+        conn.execute("DELETE FROM user_history_map WHERE history_id = ?", ((history_id or "").strip(),))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_user_history_ids(user_id: str) -> set:
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT history_id FROM user_history_map WHERE user_id = ?",
+            ((user_id or "").strip(),),
+        ).fetchall()
+        return {row["history_id"] for row in rows}
+    finally:
+        conn.close()
+
+
+def get_all_history_owner_map() -> dict:
+    conn = get_db()
+    try:
+        rows = conn.execute("SELECT history_id, user_id FROM user_history_map").fetchall()
+        return {row["history_id"]: row["user_id"] for row in rows}
     finally:
         conn.close()
 

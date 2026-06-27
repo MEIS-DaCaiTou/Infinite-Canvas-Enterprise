@@ -13,6 +13,7 @@
 import json
 import os
 import ipaddress
+import hashlib
 import socket
 import re
 import subprocess
@@ -64,7 +65,18 @@ _PROTECTED_LOCAL_RESOURCE_PREFIXES = (
 
 _CANVAS_DATA_DIR = Path(ROOT_DIR) / "data" / "canvases"
 _CONVERSATION_DATA_DIR = Path(ROOT_DIR) / "data" / "conversations"
+_HISTORY_FILE = Path(ROOT_DIR) / "history.json"
 DEFAULT_PROJECT_ID = "default"
+
+_HISTORY_GENERATION_PATHS = {
+    "api/online-image",
+    "api/image-task-query",
+    "api/angle/generate",
+    "api/angle/poll_status",
+    "generate",
+    "api/ms/generate",
+    "api/generate",
+}
 
 
 def is_static_asset(path: str) -> bool:
@@ -295,6 +307,257 @@ def _load_json_file(path: Path) -> Any:
             return json.load(f)
     except Exception:
         return None
+
+
+def _load_history_records() -> list[dict]:
+    data = _load_json_file(_HISTORY_FILE)
+    if not isinstance(data, list):
+        return []
+    return [item for item in data if isinstance(item, dict)]
+
+
+def _write_history_records(records: list[dict]) -> None:
+    _HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(_HISTORY_FILE, "w", encoding="utf-8") as f:
+        json.dump(records[:5000], f, ensure_ascii=False, indent=4)
+
+
+def _history_timestamp_key(value: Any) -> str:
+    if isinstance(value, (int, float)):
+        return f"{float(value):.6f}"
+    text = str(value or "").strip()
+    try:
+        return f"{float(text):.6f}"
+    except Exception:
+        return text
+
+
+def _history_resource_urls(record: Any, found: Optional[list[str]] = None) -> list[str]:
+    found = found if found is not None else []
+    if isinstance(record, str):
+        resource_url = normalize_resource_url(record)
+        if _is_protected_resource(resource_url) and resource_url not in found:
+            found.append(resource_url)
+    elif isinstance(record, dict):
+        for child in record.values():
+            _history_resource_urls(child, found)
+    elif isinstance(record, list):
+        for child in record:
+            _history_resource_urls(child, found)
+    return found
+
+
+def history_id_for_record(record: Mapping[str, Any]) -> str:
+    """Return a stable enterprise history identifier without rewriting history.json."""
+    urls = _history_resource_urls(record)
+    identity = {
+        "type": str(record.get("type") or "zimage"),
+        "timestamp": _history_timestamp_key(record.get("timestamp")),
+        "resource_url": urls[0] if urls else "",
+        "task_id": str(record.get("task_id") or ""),
+        "request_id": str(record.get("request_id") or ""),
+        "prompt_id": str(record.get("prompt_id") or ""),
+        "prompt": str(record.get("prompt") or ""),
+        "model": str(record.get("model") or ""),
+    }
+    raw = json.dumps(identity, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return "hist_" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+
+
+def _history_record_type(record: Mapping[str, Any]) -> str:
+    return str(record.get("type") or "zimage")
+
+
+def _history_record_task_id(record: Mapping[str, Any]) -> str:
+    return str(record.get("task_id") or record.get("request_id") or record.get("prompt_id") or "").strip()
+
+
+def _history_record_primary_resource(record: Mapping[str, Any]) -> str:
+    urls = _history_resource_urls(record)
+    return urls[0] if urls else ""
+
+
+def _timestamp_as_float(value: Any) -> Optional[float]:
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return float(str(value).strip())
+    except Exception:
+        return None
+
+
+def _history_timestamp_matches(item_ts: Any, requested_ts: Any) -> bool:
+    item_float = _timestamp_as_float(item_ts)
+    requested_float = _timestamp_as_float(requested_ts)
+    if item_float is not None and requested_float is not None:
+        return abs(item_float - requested_float) < 0.001
+    return str(item_ts) == str(requested_ts)
+
+
+def _history_delete_timestamp_from_body(body: bytes | None) -> Any:
+    data = _json_from_body(body)
+    if not isinstance(data, dict):
+        return None
+    return data.get("timestamp")
+
+
+def _history_candidates_for_timestamp(records: list[dict], requested_ts: Any) -> list[tuple[int, dict]]:
+    return [
+        (idx, item)
+        for idx, item in enumerate(records)
+        if _history_timestamp_matches(item.get("timestamp", 0), requested_ts)
+    ]
+
+
+def _annotate_history_record(record: dict, owner_map: dict, users: dict) -> dict:
+    item = dict(record)
+    history_id = history_id_for_record(item)
+    owner_id = owner_map.get(history_id)
+    owner = users.get(owner_id or "", {})
+    item["enterprise_history_id"] = history_id
+    item["enterprise_owner_id"] = owner_id
+    item["enterprise_owner_username"] = owner.get("username", "")
+    item["enterprise_owner_display_name"] = owner.get("display_name", "")
+    item["enterprise_unowned"] = owner_id is None
+    return item
+
+
+def filter_history_list(user: dict, data: Any) -> bool:
+    if not isinstance(data, list):
+        return False
+    owner_map = edb.get_all_history_owner_map()
+    users = _user_lookup()
+    user_id = _user_id(user)
+    filtered = []
+    for record in data:
+        if not isinstance(record, dict):
+            continue
+        history_id = history_id_for_record(record)
+        owner_id = owner_map.get(history_id)
+        if _is_admin(user) or owner_id == user_id:
+            filtered.append(_annotate_history_record(record, owner_map, users))
+    data[:] = filtered
+    return True
+
+
+def _history_records_from_generation_payload(data: Any) -> list[dict]:
+    if not isinstance(data, dict):
+        return []
+    if isinstance(data.get("images"), list) and data.get("timestamp"):
+        return [data]
+
+    response_urls = set(_history_resource_urls(data))
+    response_task_id = str(data.get("task_id") or data.get("request_id") or data.get("prompt_id") or "").strip()
+    matches = []
+    for record in _load_history_records():
+        if response_task_id and _history_record_task_id(record) == response_task_id:
+            matches.append(record)
+            break
+        if response_urls and response_urls.intersection(_history_resource_urls(record)):
+            matches.append(record)
+            break
+    return matches
+
+
+def _history_records_from_generation_response(path: str, data: Any) -> list[dict]:
+    if path not in _HISTORY_GENERATION_PATHS:
+        return []
+    return _history_records_from_generation_payload(data)
+
+
+def _record_history_record_for_user_id(user_id: str, record: Mapping[str, Any], source: str) -> None:
+    history_id = history_id_for_record(record)
+    primary_resource = _history_record_primary_resource(record)
+    task_id = _history_record_task_id(record)
+    try:
+        edb.record_history_owner(
+            user_id,
+            history_id,
+            _history_record_type(record),
+            primary_resource,
+            task_id,
+            source,
+        )
+    except Exception as exc:
+        print(f"[enterprise] record history owner failed: user={user_id} history={history_id} error={exc}")
+    record_resource_urls_for_user(user_id, f"history:{history_id}", record)
+
+
+def record_history_payload_for_user_id(user_id: str, source: str, data: Any) -> None:
+    if not user_id:
+        return
+    for record in _history_records_from_generation_payload(data):
+        _record_history_record_for_user_id(user_id, record, source)
+
+
+def record_generated_history_for_user(user: dict, path: str, method: str, data: Any) -> None:
+    if method.upper() != "POST" or path not in _HISTORY_GENERATION_PATHS:
+        return
+    user_id = _user_id(user)
+    if not user_id:
+        return
+    for record in _history_records_from_generation_response(path, data):
+        _record_history_record_for_user_id(user_id, record, path)
+
+
+def record_history_resources_for_user(user_id: str, record: Mapping[str, Any], source: str) -> None:
+    record_resource_urls_for_user(user_id, source, record)
+
+
+def find_history_record_by_id(history_id: str) -> Optional[dict]:
+    wanted = str(history_id or "").strip()
+    if not wanted:
+        return None
+    for record in _load_history_records():
+        if history_id_for_record(record) == wanted:
+            return record
+    return None
+
+
+def handle_history_delete(user: dict, body: bytes | None) -> JSONResponse:
+    requested_ts = _history_delete_timestamp_from_body(body)
+    if requested_ts is None:
+        return JSONResponse({"error": "timestamp 不能为空", "code": 400}, status_code=400)
+    if not _HISTORY_FILE.exists():
+        return JSONResponse({"success": False, "message": "History file not found"})
+
+    records = _load_history_records()
+    candidates = _history_candidates_for_timestamp(records, requested_ts)
+    if not candidates:
+        return JSONResponse({"success": False, "message": "Record not found"})
+
+    is_admin = _is_admin(user)
+    user_id = _user_id(user)
+    candidate_ids = [history_id_for_record(record) for _idx, record in candidates]
+
+    if not is_admin:
+        if len(candidates) != 1:
+            return _deny_not_found("历史记录不存在或无权限访问")
+        owner = edb.get_history_owner(candidate_ids[0])
+        if owner != user_id:
+            return _deny_not_found("历史记录不存在或无权限访问")
+
+    remove_indexes = {idx for idx, _record in candidates}
+    remaining = [record for idx, record in enumerate(records) if idx not in remove_indexes]
+    try:
+        _write_history_records(remaining)
+        for history_id in candidate_ids:
+            edb.remove_history_mapping(history_id)
+        edb.log_action(
+            user_id,
+            "history_deleted",
+            json.dumps({
+                "timestamp": requested_ts,
+                "history_ids": candidate_ids,
+                "deleted_count": len(candidate_ids),
+                "is_admin": is_admin,
+            }, ensure_ascii=False),
+        )
+    except Exception as exc:
+        print(f"[enterprise] delete history failed: timestamp={requested_ts} error={exc}")
+        return JSONResponse({"success": False, "message": str(exc)}, status_code=500)
+
+    return JSONResponse({"success": True, "deleted_count": len(candidate_ids)})
 
 
 def _canvas_ids_for_resource(resource_url: str) -> set[str]:
@@ -533,6 +796,9 @@ async def pre_process(
         if is_admin:
             return None
         return _deny_forbidden("需要管理员权限才能执行项目更新")
+
+    if path == "api/history/delete" and method.upper() == "POST":
+        return handle_history_delete(user, body)
 
     project_id = _project_id_from_path(path)
     if project_id:
@@ -955,9 +1221,12 @@ async def post_process(
         task_owner = edb.get_canvas_image_task_owner(canvas_task_id)
         if task_owner:
             record_resource_urls_for_user(task_owner, path, data)
+            if isinstance(data, dict) and str(data.get("status") or "").lower() == "succeeded":
+                record_history_payload_for_user_id(task_owner, path, data)
 
     if status_code in (200, 201):
         record_resources_from_data(user, path, method, data)
+        record_generated_history_for_user(user, path, method, data)
 
     _sync_admin_canvas_owner_from_persisted_project(user, path, method)
 
@@ -989,6 +1258,10 @@ async def post_process(
     # ── 过滤对话列表 ──────────────────────────────────────
     elif path == "api/conversations" and method == "GET":
         modified = filter_conversation_list(user, data) or modified
+
+    # ── 过滤生成历史列表 ──────────────────────────────────
+    elif path == "api/history" and method == "GET":
+        modified = filter_history_list(user, data) or modified
 
     # ── 过滤通用素材/本地资源集合 ──────────────────────────
     elif path in {"api/asset-library", "api/local-assets"} and method == "GET":
