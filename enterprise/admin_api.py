@@ -373,6 +373,50 @@ async def assign_conversation_owner(conversation_id: str, request: Request):
     return {"success": True, "conversation_id": conversation_id, "user_id": user_id}
 
 
+# ── 历史记录归属迁移（管理员专用）──────────────────────────
+
+@router.put("/api/history/{history_id}/owner")
+async def assign_history_owner(history_id: str, request: Request):
+    """管理员手动迁移生成历史归属；不改写上游 history.json。"""
+    current = _require_admin(request)
+    body = await request.json()
+    user_id = (body.get("user_id") or "").strip()
+    if not user_id:
+        raise HTTPException(status_code=400, detail="user_id 不能为空")
+    target = edb.get_user_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    from enterprise import interceptors
+
+    record = interceptors.find_history_record_by_id(history_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="历史记录不存在")
+    old_owner = edb.get_history_owner(history_id)
+    edb.set_history_owner(
+        history_id,
+        user_id,
+        str(record.get("type") or ""),
+        interceptors._history_record_primary_resource(record),
+        interceptors._history_record_task_id(record),
+        "admin_assign",
+    )
+    interceptors.record_history_resources_for_user(user_id, record, f"history:{history_id}:admin_assign")
+    edb.log_action(
+        current["user_id"],
+        "history_assigned",
+        json.dumps({
+            "history_id": history_id,
+            "old_owner": old_owner,
+            "target_user_id": user_id,
+            "target_username": target.get("username"),
+            "history_type": record.get("type"),
+            "timestamp": record.get("timestamp"),
+        }, ensure_ascii=False),
+    )
+    return {"success": True, "history_id": history_id, "user_id": user_id}
+
+
 # ── 自身信息 ──────────────────────────────────────────────
 
 @router.get("/api/me")
