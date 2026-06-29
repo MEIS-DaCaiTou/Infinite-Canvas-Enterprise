@@ -466,12 +466,34 @@ def _build_enterprise_shell_guard(user: dict) -> str:
     blockSettingsFrames();
     installSettingsClickGuard();
   }
+  function sanitizeAdminSettingsFrames(){
+    if(normalUser) return;
+    settingsFrameIds.forEach(function(id){
+      const frame = byId(id);
+      if(!frame) return;
+      const expectedPath = id === 'frame-api-settings' ? '/static/api-settings.html' : '/static/comfyui-settings.html';
+      try {
+        const currentPath = frame.contentWindow?.location?.pathname || '';
+        if(currentPath && currentPath !== 'about:blank' && currentPath !== expectedPath) {
+          if(frame.dataset.src && frame.src !== frame.dataset.src) frame.src = frame.dataset.src;
+          else if(frame.dataset.src) frame.setAttribute('src', frame.dataset.src);
+          return;
+        }
+        const doc = frame.contentDocument;
+        if(!doc) return;
+        doc.querySelectorAll('#__ent_bar__,#__enterprise_shell_guard__,#__enterprise_shell_guard_style__,#__enterprise_settings_denied_notice__').forEach(function(el){
+          el.remove();
+        });
+      } catch(e) {}
+    });
+  }
   function applyGovernance(){
     document.body?.classList.toggle('enterprise-normal-user', normalUser);
     document.body?.classList.toggle('enterprise-hide-upstream-author', !!cfg.hideUpstreamAuthor);
     setProjectEntry();
     governAuthor();
     guardSettingsEntrypoints();
+    sanitizeAdminSettingsFrames();
     if(normalUser || !cfg.updateEnabled) {
       hideUpdateUi();
       setVersionBadgeText();
@@ -733,8 +755,14 @@ async def reverse_proxy(path: str, request: Request):
             return HTMLResponse(
                 _build_settings_access_denied_html(_settings_page_name(path)),
                 status_code=403,
+                headers={"Cache-Control": "no-store"},
             )
-        return await _forward(path, request, user=user, skip_intercept=True)
+        # The settings HTML is loaded inside the upstream shell iframe.  Once
+        # the admin gate passes, forward it as a plain static page so the
+        # enterprise user bar/shell guard is not injected inside the iframe.
+        response = await _forward(path, request, user=None, skip_intercept=True)
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
     # ── 3. 纯静态资源：不做鉴权直接透传 ──────────────────
     if not is_stream_path(path) and (

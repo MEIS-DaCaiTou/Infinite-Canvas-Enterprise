@@ -69,6 +69,17 @@ def _run_checks() -> None:
     guard_index = source.index("if _is_settings_management_page(path):")
     static_index = source.index("any(path.startswith(p) for p in _UPSTREAM_STATIC_PREFIXES)")
     assert guard_index < static_index, "settings-page guard must run before static passthrough"
+    management_page_branch = _between(
+        source,
+        "if _is_settings_management_page(path):",
+        "# ── 3. 纯静态资源",
+    )
+    assert "user=None" in management_page_branch, (
+        "admin settings pages must be forwarded as static HTML after the admin "
+        "gate, otherwise the enterprise shell/user bar is injected inside iframes"
+    )
+    assert 'headers={"Cache-Control": "no-store"}' in management_page_branch
+    assert 'response.headers["Cache-Control"] = "no-store"' in management_page_branch
 
     denied_block = _between(
         source,
@@ -105,6 +116,11 @@ def _run_checks() -> None:
     assert "frame-api-settings" in script
     assert "frame-comfyui-settings" in script
     assert "settingsDeniedSrcDoc" in script
+    assert "function sanitizeAdminSettingsFrames()" in script
+    assert "#__ent_bar__" in script
+    assert "#__enterprise_shell_guard__" in script
+    assert "/static/api-settings.html" in script
+    assert "/static/comfyui-settings.html" in script
     assert "需要管理员权限" in script
     assert "该页面仅管理员可访问。你仍可正常使用在线生图、GPT 对话和画布功能。" in script
     assert "studio_active_page" in script and "zimage" in script
