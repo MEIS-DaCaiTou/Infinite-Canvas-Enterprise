@@ -56,6 +56,11 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 app = FastAPI(title="Infinite Canvas Enterprise Gateway", docs_url=None, redoc_url=None)
 
+_SETTINGS_MANAGEMENT_PAGES = {
+    "static/api-settings.html": "API 设置",
+    "static/comfyui-settings.html": "工作流设置",
+}
+
 
 class AuthStateMiddleware(BaseHTTPMiddleware):
     """在所有路由处理前解析 Token，将用户信息挂载到 request.state.user"""
@@ -118,6 +123,94 @@ def _get_user(request: Request) -> Optional[dict]:
 def _is_html_accept(request: Request) -> bool:
     accept = request.headers.get("accept", "")
     return "text/html" in accept
+
+
+def _is_settings_management_page(path: str) -> bool:
+    clean_path = (path or "").split("?", 1)[0].lstrip("/")
+    return clean_path in _SETTINGS_MANAGEMENT_PAGES
+
+
+def _settings_page_name(path: str) -> str:
+    clean_path = (path or "").split("?", 1)[0].lstrip("/")
+    return _SETTINGS_MANAGEMENT_PAGES.get(clean_path, "设置页面")
+
+
+def _build_settings_access_denied_html(page_name: str = "设置页面") -> str:
+    from html import escape
+
+    escaped_page = escape(page_name)
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>需要管理员权限</title>
+  <style>
+    :root {{
+      color-scheme: light;
+      --bg:#f7f8fb;
+      --panel:#ffffff;
+      --text:#0f172a;
+      --muted:#64748b;
+      --line:#e2e8f0;
+      --accent:#2563eb;
+    }}
+    * {{ box-sizing:border-box; }}
+    body {{
+      margin:0;
+      min-height:100vh;
+      display:grid;
+      place-items:center;
+      background:var(--bg);
+      color:var(--text);
+      font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    }}
+    main {{
+      width:min(520px, calc(100vw - 40px));
+      background:var(--panel);
+      border:1px solid var(--line);
+      border-radius:8px;
+      padding:28px;
+      box-shadow:0 16px 42px rgba(15,23,42,.08);
+    }}
+    h1 {{
+      margin:0 0 12px;
+      font-size:22px;
+      line-height:1.25;
+      font-weight:700;
+    }}
+    p {{
+      margin:0 0 20px;
+      color:var(--muted);
+      line-height:1.7;
+      font-size:15px;
+    }}
+    a {{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      min-height:38px;
+      padding:0 14px;
+      border-radius:6px;
+      background:var(--accent);
+      color:#fff;
+      text-decoration:none;
+      font-size:14px;
+      font-weight:650;
+    }}
+  </style>
+</head>
+<body>
+  <main aria-labelledby="settings-denied-title">
+    <h1 id="settings-denied-title">需要管理员权限</h1>
+    <p>该页面仅管理员可访问。你仍可正常使用在线生图、GPT 对话和画布功能。</p>
+    <a href="/" aria-label="返回首页">返回首页</a>
+  </main>
+  <script>
+    window.__ENTERPRISE_SETTINGS_DENIED__ = {json.dumps({"page": escaped_page}, ensure_ascii=False)};
+  </script>
+</body>
+</html>"""
 
 
 def _build_enterprise_shell_guard(user: dict) -> str:
@@ -277,11 +370,108 @@ def _build_enterprise_shell_guard(user: dict) -> str:
     box.title = '上游参考';
     setText(box.querySelector('.author-name-lite'), '上游参考');
   }
+  const settingsPageIds = ['api-settings','comfyui-settings'];
+  const settingsFrameIds = ['frame-api-settings','frame-comfyui-settings'];
+  const settingsDeniedSrcDoc = '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f7f8fb;color:#0f172a;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.panel{width:min(520px,calc(100vw - 40px));background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:28px;box-shadow:0 16px 42px rgba(15,23,42,.08)}h1{margin:0 0 12px;font-size:22px;line-height:1.25}p{margin:0;color:#64748b;line-height:1.7;font-size:15px}</style></head><body><main class="panel"><h1>需要管理员权限</h1><p>该页面仅管理员可访问。你仍可正常使用在线生图、GPT 对话和画布功能。</p></main></body></html>';
+  function isSettingsPageId(id){
+    return settingsPageIds.indexOf(String(id || '')) >= 0;
+  }
+  function matchesSettingsTarget(el){
+    if(!el) return false;
+    const target = el.closest?.('button,a,[role="button"],[onclick],[href],.side-pill,.nav-item') || el;
+    const text = [
+      target.getAttribute?.('onclick') || '',
+      target.getAttribute?.('href') || '',
+      target.getAttribute?.('title') || '',
+      target.getAttribute?.('aria-label') || '',
+      target.textContent || ''
+    ].join(' ').toLowerCase();
+    return text.includes('api-settings') ||
+      text.includes('comfyui-settings') ||
+      text.includes('api 设置') ||
+      text.includes('工作流设置');
+  }
+  function hideSettingsEntrypoints(){
+    if(!normalUser) return;
+    document.querySelectorAll('[onclick*="api-settings"],[onclick*="comfyui-settings"],a[href*="api-settings.html"],a[href*="comfyui-settings.html"]').forEach(function(el){
+      const target = el.closest?.('.side-pill,.nav-item,button,a,[role="button"]') || el;
+      target.hidden = true;
+      target.setAttribute('aria-hidden', 'true');
+      target.setAttribute('tabindex', '-1');
+      target.dataset.enterpriseSettingsHidden = 'true';
+      if(target.style.display !== 'none') target.style.display = 'none';
+    });
+  }
+  function activateFallbackPage(){
+    const fallbackId = 'zimage';
+    const fallbackFrame = byId('frame-' + fallbackId);
+    if(!fallbackFrame) return;
+    document.querySelectorAll('.nav-item,.side-pill').forEach(function(n){ n.classList.remove('active'); });
+    document.querySelectorAll('iframe').forEach(function(f){ f.classList.remove('active'); });
+    const fallbackEntry = document.querySelector("[onclick*=\"'" + fallbackId + "'\"]");
+    if(fallbackEntry) fallbackEntry.classList.add('active');
+    fallbackFrame.classList.add('active');
+    if(!fallbackFrame.src && fallbackFrame.dataset.src) fallbackFrame.src = fallbackFrame.dataset.src;
+    try { localStorage.setItem('studio_active_page', fallbackId); } catch(e) {}
+  }
+  function blockSettingsFrames(){
+    if(!normalUser) return;
+    let blockedActive = false;
+    settingsFrameIds.forEach(function(id){
+      const frame = byId(id);
+      if(!frame) return;
+      if(frame.classList.contains('active')) blockedActive = true;
+      frame.removeAttribute('src');
+      frame.removeAttribute('data-src');
+      frame.srcdoc = settingsDeniedSrcDoc;
+      frame.dataset.enterpriseBlocked = 'true';
+      frame.hidden = true;
+      if(frame.style.display !== 'none') frame.style.display = 'none';
+      frame.classList.remove('active');
+    });
+    try {
+      if(isSettingsPageId(localStorage.getItem('studio_active_page'))) blockedActive = true;
+    } catch(e) {}
+    if(blockedActive) activateFallbackPage();
+  }
+  function showSettingsDeniedNotice(){
+    if(!normalUser) return;
+    let notice = byId('__enterprise_settings_denied_notice__');
+    if(!notice) {
+      notice = document.createElement('div');
+      notice.id = '__enterprise_settings_denied_notice__';
+      notice.setAttribute('role', 'status');
+      notice.style.cssText = 'position:fixed;right:24px;bottom:76px;z-index:100000;max-width:320px;padding:12px 14px;border-radius:8px;background:#0f172a;color:#fff;box-shadow:0 10px 30px rgba(15,23,42,.22);font:600 13px/1.5 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;';
+      document.body?.appendChild(notice);
+    }
+    notice.textContent = '需要管理员权限。该页面仅管理员可访问。';
+    notice.hidden = false;
+    clearTimeout(notice.__enterpriseTimer);
+    notice.__enterpriseTimer = setTimeout(function(){ notice.hidden = true; }, 2600);
+  }
+  function installSettingsClickGuard(){
+    if(!normalUser || window.__enterpriseSettingsClickGuardInstalled) return;
+    window.__enterpriseSettingsClickGuardInstalled = true;
+    document.addEventListener('click', function(event){
+      if(!matchesSettingsTarget(event.target)) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      showSettingsDeniedNotice();
+      activateFallbackPage();
+    }, true);
+  }
+  function guardSettingsEntrypoints(){
+    if(!normalUser) return;
+    hideSettingsEntrypoints();
+    blockSettingsFrames();
+    installSettingsClickGuard();
+  }
   function applyGovernance(){
     document.body?.classList.toggle('enterprise-normal-user', normalUser);
     document.body?.classList.toggle('enterprise-hide-upstream-author', !!cfg.hideUpstreamAuthor);
     setProjectEntry();
     governAuthor();
+    guardSettingsEntrypoints();
     if(normalUser || !cfg.updateEnabled) {
       hideUpdateUi();
       setVersionBadgeText();
@@ -299,7 +489,13 @@ def _build_enterprise_shell_guard(user: dict) -> str:
       'body.enterprise-normal-user #project-update-modal,',
       'body.enterprise-normal-user #update-source-list{display:none!important;}',
       'body.enterprise-hide-upstream-author .author-box{display:none!important;}',
-      'body.enterprise-normal-user #project-version-badge{cursor:default!important;}'
+      'body.enterprise-normal-user #project-version-badge{cursor:default!important;}',
+      'body.enterprise-normal-user [onclick*="api-settings"],',
+      'body.enterprise-normal-user [onclick*="comfyui-settings"],',
+      'body.enterprise-normal-user a[href*="api-settings.html"],',
+      'body.enterprise-normal-user a[href*="comfyui-settings.html"],',
+      'body.enterprise-normal-user #frame-api-settings,',
+      'body.enterprise-normal-user #frame-comfyui-settings{display:none!important;}'
     ].join('\n');
     document.head.appendChild(style);
   }
@@ -528,13 +724,25 @@ async def reverse_proxy(path: str, request: Request):
     if path.startswith("enterprise"):
         return Response(status_code=404)
 
-    # ── 2. 纯静态资源：不做鉴权直接透传 ──────────────────
+    # ── 2. 上游设置管理页：企业层先做角色门禁，再决定是否透传 ─────
+    if _is_settings_management_page(path):
+        user = getattr(request.state, "user", None)
+        if not user:
+            return RedirectResponse(f"/enterprise/login?next=/{path}")
+        if not user.get("is_admin"):
+            return HTMLResponse(
+                _build_settings_access_denied_html(_settings_page_name(path)),
+                status_code=403,
+            )
+        return await _forward(path, request, user=user, skip_intercept=True)
+
+    # ── 3. 纯静态资源：不做鉴权直接透传 ──────────────────
     if not is_stream_path(path) and (
         any(path.startswith(p) for p in _UPSTREAM_STATIC_PREFIXES) or is_static_asset(path)
     ):
         return await _forward(path, request, user=None, skip_intercept=True)
 
-    # ── 3. 所有其他请求：需要登录 ─────────────────────────
+    # ── 4. 所有其他请求：需要登录 ─────────────────────────
     user = getattr(request.state, "user", None)
     if not user:
         if _is_html_accept(request) or path in ("", "index.html"):
@@ -543,7 +751,7 @@ async def reverse_proxy(path: str, request: Request):
 
     body = await request.body()
 
-    # ── 4. 前置拦截（访问控制） ───────────────────────────
+    # ── 5. 前置拦截（访问控制） ───────────────────────────
     err = await pre_process(
         path,
         request.method,
@@ -554,11 +762,11 @@ async def reverse_proxy(path: str, request: Request):
     if err:
         return err
 
-    # ── 5. 流式路径：直接透传，不缓冲 ────────────────────
+    # ── 6. 流式路径：直接透传，不缓冲 ────────────────────
     if is_stream_path(path):
         return await _forward(path, request, user=user, skip_intercept=True, body=body)
 
-    # ── 6. 普通请求：代理 + 后置过滤 ─────────────────────
+    # ── 7. 普通请求：代理 + 后置过滤 ─────────────────────
     return await _forward(path, request, user=user, skip_intercept=False, body=body)
 
 
