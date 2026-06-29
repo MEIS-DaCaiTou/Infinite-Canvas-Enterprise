@@ -78,6 +78,65 @@ _HISTORY_GENERATION_PATHS = {
     "api/generate",
 }
 
+_INPUT_REUSE_PATHS = {
+    "api/online-image",
+    "api/chat",
+    "api/chat/stream",
+    "api/generate",
+    "api/canvas-image-tasks",
+    "api/canvas-comfy-tasks",
+    "api/runninghub/upload-asset",
+    "api/runninghub/submit",
+    "api/runninghub/workflow-submit",
+}
+
+_INPUT_REUSE_PREFIXES = (
+    "api/canvas-image-tasks/",
+    "api/canvas-comfy-tasks/",
+)
+
+_LOCAL_ASSET_MANAGE_PATHS = {
+    "api/local-assets/delete",
+    "api/local-assets/move",
+    "api/local-assets/items",
+    "api/local-assets/caption",
+    "api/local-assets/classify",
+}
+
+_LOCAL_ASSET_RESPONSE_PATHS = {
+    "api/local-assets/upload",
+    "api/local-assets/import-urls",
+    "api/local-assets/items",
+    "api/local-assets/move",
+}
+
+_COMFY_INPUT_RESPONSE_PATHS = {
+    "api/upload",
+    "api/comfyui/upload-base64",
+}
+
+_RUNTIME_MEDIA_KEY_PARTS = (
+    "image",
+    "images",
+    "image_url",
+    "image_urls",
+    "reference_image",
+    "reference_images",
+    "video",
+    "videos",
+    "audio",
+    "audios",
+    "mask",
+    "filename",
+    "file",
+    "url",
+)
+
+_RUNTIME_MEDIA_EXT_RE = re.compile(
+    r"\.(png|jpe?g|webp|gif|bmp|tiff?|mp4|webm|mov|m4v|avi|mkv|mp3|wav|m4a|aac|ogg|flac)(?:\?|$)",
+    re.I,
+)
+
 MANAGED_MODELSCOPE_TOKEN = "__enterprise_managed_modelscope_token__"
 
 _SENSITIVE_SETTINGS_KEY_PARTS = (
@@ -411,6 +470,120 @@ def _clean_relative_path(value: str) -> str:
             continue
         parts.append(os.path.basename(part))
     return "/".join(parts)
+
+
+def _local_upload_resource_url(value: Any) -> str:
+    rel = _clean_relative_path(str(value or ""))
+    return f"/assets/uploads/{rel}" if rel else ""
+
+
+def _input_resource_url_from_name(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    resource_url = normalize_resource_url(text)
+    if _is_protected_resource(resource_url):
+        return resource_url
+    if re.match(r"^[a-z][a-z0-9+.-]*:", text, re.I) or text.startswith("//"):
+        return ""
+    rel = _clean_relative_path(text)
+    if not rel or not _RUNTIME_MEDIA_EXT_RE.search(rel):
+        return ""
+    return f"/assets/input/{rel}"
+
+
+def _looks_like_runtime_media_key(key: Any) -> bool:
+    normalized = _normalized_key(key)
+    if not normalized:
+        return False
+    return any(part in normalized for part in _RUNTIME_MEDIA_KEY_PARTS)
+
+
+def _path_uses_runtime_inputs(path: str) -> bool:
+    return path in _INPUT_REUSE_PATHS or any(path.startswith(prefix) for prefix in _INPUT_REUSE_PREFIXES)
+
+
+def _extract_runtime_input_resource_urls(value: Any, parent_key: str = "", found: Optional[set[str]] = None) -> set[str]:
+    found = found if found is not None else set()
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if isinstance(child, str) and _looks_like_runtime_media_key(key):
+                resource_url = _input_resource_url_from_name(child)
+                if _is_protected_resource(resource_url):
+                    found.add(resource_url)
+            _extract_runtime_input_resource_urls(child, str(key), found)
+    elif isinstance(value, list):
+        for child in value:
+            _extract_runtime_input_resource_urls(child, parent_key, found)
+    elif isinstance(value, str) and _looks_like_runtime_media_key(parent_key):
+        resource_url = _input_resource_url_from_name(value)
+        if _is_protected_resource(resource_url):
+            found.add(resource_url)
+    return found
+
+
+def _local_asset_resource_urls_from_body(path: str, body: bytes | None) -> set[str]:
+    data = _json_from_body(body)
+    if not isinstance(data, dict):
+        return set()
+    urls: set[str] = set()
+
+    def add_name(value: Any) -> None:
+        resource_url = _local_upload_resource_url(value)
+        if resource_url:
+            urls.add(resource_url)
+
+    if path in {"api/local-assets/delete", "api/local-assets/move", "api/local-assets/classify"}:
+        names = data.get("names")
+        if isinstance(names, list):
+            for name in names:
+                add_name(name)
+    elif path == "api/local-assets/items":
+        add_name(data.get("path"))
+    elif path == "api/local-assets/caption":
+        names = data.get("names")
+        if isinstance(names, list):
+            for name in names:
+                add_name(name)
+        add_name(data.get("name"))
+    return urls
+
+
+def _can_manage_resource(user: dict, resource_url: str) -> bool:
+    normalized = normalize_resource_url(resource_url)
+    if not _is_protected_resource(normalized):
+        return False
+    if _is_admin(user):
+        return True
+    return edb.get_resource_owner(normalized) == _user_id(user)
+
+
+def _audit_local_asset_operation(user: dict, path: str, method: str, resources: set[str]) -> None:
+    if not _is_admin(user) or path not in _LOCAL_ASSET_MANAGE_PATHS:
+        return
+    action_map = {
+        "api/local-assets/delete": "local_asset_deleted",
+        "api/local-assets/move": "local_asset_moved",
+        "api/local-assets/items": "local_asset_renamed",
+        "api/local-assets/caption": "local_asset_captioned",
+        "api/local-assets/classify": "local_asset_classified",
+    }
+    action = action_map.get(path)
+    if not action:
+        return
+    try:
+        edb.log_action(
+            _user_id(user),
+            action,
+            json.dumps({
+                "path": path,
+                "method": method.upper(),
+                "resource_count": len(resources),
+                "resources": sorted(resources)[:50],
+            }, ensure_ascii=False),
+        )
+    except Exception as exc:
+        print(f"[enterprise] audit local asset operation failed: user={_user_id(user)} path={path} error={exc}")
 
 
 @lru_cache(maxsize=1)
@@ -918,7 +1091,7 @@ def _resource_urls_from_request(
         resource_url = normalize_resource_url(normalized_path)
         if _is_protected_resource(resource_url):
             urls.add(resource_url)
-    elif path == "api/download-output" or path == "api/media-preview":
+    elif path in {"api/download-output", "api/media-preview", "api/image-jpeg"}:
         resource_url = normalize_resource_url(_query_get(query_params, "url"))
         if _is_protected_resource(resource_url):
             urls.add(resource_url)
@@ -936,6 +1109,8 @@ def _resource_urls_from_request(
         data = _json_from_body(body)
         if data is not None:
             urls.update(_extract_local_resource_urls(data))
+            if _path_uses_runtime_inputs(path):
+                urls.update(_extract_runtime_input_resource_urls(data))
 
     return urls
 
@@ -1080,6 +1255,13 @@ async def pre_process(
     canvas_task_id = _canvas_image_task_id_from_path(path)
     if canvas_task_id and not can_access_canvas_image_task(user, canvas_task_id):
         return _deny_not_found("生成任务不存在或无权限访问")
+
+    local_asset_manage_urls = _local_asset_resource_urls_from_body(path, body)
+    for resource_url in local_asset_manage_urls:
+        if not _can_manage_resource(user, resource_url):
+            return _deny_not_found("资源不存在或无权限访问")
+    if local_asset_manage_urls:
+        _audit_local_asset_operation(user, path, method, local_asset_manage_urls)
 
     for resource_url in _resource_urls_from_request(path, method, query_params, body):
         if not can_access_resource(user, resource_url):
@@ -1276,6 +1458,69 @@ def _filter_resource_item_list(user: dict, items: list) -> tuple[list, bool]:
     return filtered, changed
 
 
+def _is_owned_local_asset_item(user: dict, item: Any) -> bool:
+    if _is_admin(user):
+        return True
+    if not isinstance(item, dict):
+        return True
+    url = item.get("url") or item.get("src") or item.get("path") or item.get("file")
+    resource_url = normalize_resource_url(str(url or ""))
+    if not resource_url:
+        resource_url = _local_upload_resource_url(item.get("file") or item.get("path") or "")
+    if not _is_protected_resource(resource_url):
+        return True
+    return edb.get_resource_owner(resource_url) == _user_id(user)
+
+
+def _filter_local_asset_tree(user: dict, node: Any, keep_root: bool = False) -> tuple[Any, bool, int]:
+    if not isinstance(node, dict):
+        return node, False, 0
+    changed = False
+    source_items = node.get("items") if isinstance(node.get("items"), list) else []
+    items = [item for item in source_items if _is_owned_local_asset_item(user, item)]
+    changed = changed or len(items) != len(source_items)
+
+    source_children = node.get("children") if isinstance(node.get("children"), list) else []
+    children = []
+    total = len(items)
+    for child in source_children:
+        filtered_child, child_changed, child_count = _filter_local_asset_tree(user, child, False)
+        changed = changed or child_changed
+        if child_count > 0:
+            children.append(filtered_child)
+            total += child_count
+        else:
+            changed = True
+
+    next_node = dict(node)
+    next_node["items"] = items
+    next_node["children"] = children
+    if next_node.get("count") != total:
+        changed = True
+    next_node["count"] = total
+    if keep_root or total > 0:
+        return next_node, changed, total
+    return None, True, 0
+
+
+def filter_local_assets(user: dict, data: Any) -> bool:
+    if _is_admin(user) or not isinstance(data, dict):
+        return False
+    changed = False
+    for key in ("items", "files", "assets", "results", "data"):
+        value = data.get(key)
+        if isinstance(value, list):
+            filtered = [item for item in value if _is_owned_local_asset_item(user, item)]
+            if len(filtered) != len(value):
+                data[key] = filtered
+                changed = True
+    if isinstance(data.get("tree"), dict):
+        filtered_tree, tree_changed, _count = _filter_local_asset_tree(user, data["tree"], True)
+        data["tree"] = filtered_tree
+        changed = changed or tree_changed
+    return changed
+
+
 def _recount_canvas_asset_categories(data: dict) -> None:
     items = data.get("items") if isinstance(data.get("items"), list) else []
     canvases = data.get("canvases") if isinstance(data.get("canvases"), list) else []
@@ -1332,12 +1577,6 @@ def filter_resource_collections(user: dict, data: Any) -> bool:
     return changed
 
 
-def record_resources_from_data(user: dict, path: str, method: str, data: Any) -> None:
-    if method.upper() not in {"POST", "PUT", "PATCH"}:
-        return
-    record_resource_urls_for_user(_user_id(user), path, data)
-
-
 def record_resource_urls_for_user(user_id: str, source: str, data: Any) -> None:
     if not user_id:
         return
@@ -1346,6 +1585,101 @@ def record_resource_urls_for_user(user_id: str, source: str, data: Any) -> None:
             edb.record_resource_owner(user_id, resource_url, source)
         except Exception as exc:
             print(f"[企业版] 记录资源归属失败: user={user_id} resource={resource_url} error={exc}")
+
+
+def _record_resource_owner_safe(user_id: str, resource_url: str, source: str) -> None:
+    if not user_id:
+        return
+    normalized = normalize_resource_url(resource_url)
+    if not _is_protected_resource(normalized):
+        return
+    try:
+        edb.record_resource_owner(user_id, normalized, source)
+    except Exception as exc:
+        print(f"[enterprise] record resource owner failed: user={user_id} resource={normalized} error={exc}")
+
+
+def _comfy_input_names_from_response(path: str, data: Any) -> set[str]:
+    names: set[str] = set()
+    if path == "api/upload" and isinstance(data, dict):
+        files = data.get("files")
+        if isinstance(files, list):
+            for item in files:
+                if isinstance(item, dict):
+                    name = str(item.get("comfy_name") or item.get("name") or "").strip()
+                    if name:
+                        names.add(name)
+    elif path == "api/comfyui/upload-base64" and isinstance(data, dict):
+        name = str(data.get("name") or data.get("comfy_name") or "").strip()
+        if name:
+            names.add(name)
+    return names
+
+
+def _record_comfy_input_response_resources(user_id: str, path: str, data: Any) -> bool:
+    if path not in _COMFY_INPUT_RESPONSE_PATHS:
+        return False
+    for name in _comfy_input_names_from_response(path, data):
+        resource_url = _input_resource_url_from_name(name)
+        _record_resource_owner_safe(user_id, resource_url, f"{path}:comfy_input")
+    return True
+
+
+def _owner_for_existing_resource(user: dict, resource_url: str) -> str:
+    owner = edb.get_resource_owner(normalize_resource_url(resource_url))
+    if owner:
+        return owner
+    return "" if _is_admin(user) else _user_id(user)
+
+
+def _record_local_asset_response_resources(user: dict, path: str, body: bytes | None, data: Any) -> bool:
+    if path not in _LOCAL_ASSET_RESPONSE_PATHS and not path.startswith("api/local-assets/"):
+        return False
+    user_id = _user_id(user)
+    if path in {"api/local-assets/upload", "api/local-assets/import-urls"}:
+        record_resource_urls_for_user(user_id, path, data)
+        return True
+
+    payload = _json_from_body(body)
+    if not isinstance(payload, dict):
+        return True
+
+    if path == "api/local-assets/items":
+        old_url = _local_upload_resource_url(payload.get("path"))
+        owner = _owner_for_existing_resource(user, old_url)
+        if owner and isinstance(data, dict):
+            item = data.get("item")
+            new_url = normalize_resource_url(str((item or {}).get("url") or "")) if isinstance(item, dict) else ""
+            _record_resource_owner_safe(owner, new_url, f"{path}:rename")
+        return True
+
+    if path == "api/local-assets/move":
+        names = payload.get("names")
+        folder = _clean_relative_path(str(payload.get("folder") or ""))
+        if isinstance(names, list):
+            for name in names:
+                old_url = _local_upload_resource_url(name)
+                owner = _owner_for_existing_resource(user, old_url)
+                if not owner:
+                    continue
+                base = os.path.basename(_clean_relative_path(str(name or "")))
+                if not base:
+                    continue
+                new_rel = f"{folder}/{base}".lstrip("/") if folder else base
+                _record_resource_owner_safe(owner, _local_upload_resource_url(new_rel), f"{path}:move")
+        return True
+
+    return True
+
+
+def record_resources_from_data(user: dict, path: str, method: str, data: Any, request_body: bytes | None = None) -> None:
+    if method.upper() not in {"POST", "PUT", "PATCH"}:
+        return
+    if _record_comfy_input_response_resources(_user_id(user), path, data):
+        return
+    if _record_local_asset_response_resources(user, path, request_body, data):
+        return
+    record_resource_urls_for_user(_user_id(user), path, data)
 
 
 def record_event_stream_ownership(user: dict, path: str, method: str, response_body: bytes) -> None:
@@ -1483,7 +1817,7 @@ async def post_process(
                 record_history_payload_for_user_id(task_owner, path, data)
 
     if status_code in (200, 201):
-        record_resources_from_data(user, path, method, data)
+        record_resources_from_data(user, path, method, data, request_body)
         record_generated_history_for_user(user, path, method, data)
 
     _sync_admin_canvas_owner_from_persisted_project(user, path, method)
@@ -1521,8 +1855,12 @@ async def post_process(
     elif path == "api/history" and method == "GET":
         modified = filter_history_list(user, data) or modified
 
-    # ── 过滤通用素材/本地资源集合 ──────────────────────────
-    elif path in {"api/asset-library", "api/local-assets"} and method == "GET":
+    # ── 过滤本地上传资源集合 ──────────────────────────────
+    elif path == "api/local-assets" or path.startswith("api/local-assets/"):
+        modified = filter_local_assets(user, data) or modified
+
+    # ── 过滤通用素材集合 ──────────────────────────────────
+    elif path == "api/asset-library" and method == "GET":
         modified = filter_resource_collections(user, data) or modified
 
     if modified:
