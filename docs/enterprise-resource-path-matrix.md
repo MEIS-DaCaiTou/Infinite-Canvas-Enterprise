@@ -11,9 +11,10 @@
 | `/assets/uploads/*` | 本地上传素材 | `/api/local-assets/upload`、`/api/local-assets/import-urls` | `user_resource_map` | 只在 `local-assets` 列表中显示真实 owner 的文件；canvas 引用可读/可运行 | 可见全局 | delete/move/rename/caption/classify 需要真实 owner；管理员写审计 | 3G-4A |
 | `/api/local-assets` | 本地上传素材列表和 tree | `assets/uploads` 扫描 | item URL 对应 `user_resource_map` | 过滤 `items/files/tree`，重算 count | 全量返回 | 不作为安全边界，后端逐项校验写操作 | 3G-4A |
 | `/api/view?filename=...&type=input` | 输入预览代理 | ComfyUI input 或本地 `assets/input` 回退 | 归一化为 `/assets/input/<filename>` | owner 或 canvas/conversation scope 可读 | 可读全局 | 只读 | 3G-4A |
+| `/api/view?filename=...&type=output` | ComfyUI output 预览代理 | ComfyUI output、画布 Comfy task result | 归一化为 `/assets/output/<subfolder>/<filename>` | owner 或 canvas/conversation scope 可读 | 可读全局 | 只读；`filename/type=output` 不当作 input | 3G-4A |
 | `/api/media-preview?url=...` | 缩略图代理 | 任意本地资源 URL | 原 URL 对应 owner | 先校验原 URL；cache 不单独授权 | 可读全局 | `data/media_previews` 只是派生缓存 | 3G-4A |
 | `/api/image-jpeg?url=...` | JPEG 转换代理 | 任意本地资源 URL | 原 URL 对应 owner | 先校验原 URL | 可读全局 | 只读转换，不作为任务历史 | 3G-4A |
-| `/assets/output/*` | 生成 output | 在线生图、Smart Canvas、Comfy、RunningHub | PR #19/#20/#24/#28 已记录 | owner 或 canvas/conversation/history scope 可读 | 可读全局 | 历史删除不物理删除 output | 回归 |
+| `/assets/output/*` | 生成 output | 在线生图、Smart Canvas、Comfy、RunningHub | 生成响应、history、canvas task GET 结果补记 | owner 或 canvas/conversation/history scope 可读 | 可读全局 | 历史删除不物理删除 output | 3G-4A 回归补强 |
 | `/output/*` | 旧 output 兼容路径 | 旧上游输出 | 归一化到 protected resource | 同 output 策略 | 可读全局 | 兼容保留 | 回归 |
 | `/assets/library/*` | 素材库文件 | 素材库、workflow library、shared folder import | 新建 item URL 记录到 `user_resource_map` | 只显示和管理真实 owner 的 item；unowned 隐藏；canvas/conversation 回溯不授予管理权 | 可见全局 | item delete/move/rename/batch/classify/crop/register 等先校验真实 owner；管理员写审计 | 3G-4A 最小兜底 |
 | `data/asset_library.json` | 素材库业务索引 | 素材库 UI、画布右侧素材库面板 | item URL 反查 `user_resource_map` | `/api/asset-library` 过滤嵌套 `libraries[].categories[].items[]` 和顶层 `categories[].items[]` | 可管理 | library/category 完整 owner、分组权限和批量业务治理仍归 3G-4B | 3G-4A 最小兜底 + 3G-4B 完整治理 |
@@ -38,6 +39,8 @@
 - `/api/media-preview`
 
 运行接口请求体中的 `/assets/*`、`/output/*`、`/api/view`、`/api/download-output` URL 由统一资源归一化处理。ComfyUI input 文件名按 `/assets/input/<name>` 校验。
+
+ComfyUI output payload 中如果只有 `filename/subfolder/type=output`，企业层按 `/assets/output/<subfolder>/<filename>` 记录和鉴权，不会误归一化为 `/assets/input/<filename>`。
 
 ## 上游同步检查
 

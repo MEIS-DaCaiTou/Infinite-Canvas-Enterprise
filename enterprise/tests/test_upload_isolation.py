@@ -381,6 +381,67 @@ async def _run_checks() -> None:
         assert "asset_library_deleted" in actions
         assert "asset_library_moved" in actions
 
+        # Canvas Comfy tasks return real outputs from the task-detail GET. Those
+        # outputs must be recorded as output resources for the task owner, not as
+        # Comfy input filenames.
+        await _post_json("api/canvas-comfy-tasks", "POST", 200, {"task_id": "comfy_task_a", "status": "queued"}, actor_a)
+        assert edb.get_canvas_image_task_owner("comfy_task_a") == user_a["id"]
+        denied_task = await interceptors.pre_process("api/canvas-comfy-tasks/comfy_task_a", "GET", actor_b)
+        assert denied_task is not None and denied_task.status_code == 404
+        allowed_task = await interceptors.pre_process("api/canvas-comfy-tasks/comfy_task_a", "GET", actor_a)
+        assert allowed_task is None
+
+        comfy_task_result = {
+            "id": "comfy_task_a",
+            "status": "succeeded",
+            "result": {
+                "images": ["/api/view?filename=comfy-out-a.png&type=output"],
+                "items": [
+                    {
+                        "filename": "nested-comfy-out-a.png",
+                        "subfolder": "nested",
+                        "type": "output",
+                    }
+                ],
+            },
+        }
+        await _post_json("api/canvas-comfy-tasks/comfy_task_a", "GET", 200, comfy_task_result, actor_a)
+        assert edb.get_resource_owner("/assets/output/comfy-out-a.png") == user_a["id"]
+        assert edb.get_resource_owner("/assets/output/nested/nested-comfy-out-a.png") == user_a["id"]
+        assert edb.get_resource_owner("/assets/input/nested-comfy-out-a.png") is None
+        assert interceptors.can_access_resource(actor_a, "/assets/output/comfy-out-a.png") is True
+        assert interceptors.can_access_resource(actor_b, "/assets/output/comfy-out-a.png") is False
+        assert interceptors.can_access_resource(actor_admin, "/assets/output/comfy-out-a.png") is True
+
+        view_output_a = await interceptors.pre_process(
+            "api/view",
+            "GET",
+            actor_a,
+            query_params={"filename": "comfy-out-a.png", "type": "output"},
+        )
+        view_output_b = await interceptors.pre_process(
+            "api/view",
+            "GET",
+            actor_b,
+            query_params={"filename": "comfy-out-a.png", "type": "output"},
+        )
+        assert view_output_a is None
+        assert view_output_b is not None and view_output_b.status_code == 404
+        output_field_input_a = await interceptors.pre_process(
+            "api/generate",
+            "POST",
+            actor_a,
+            body=_body({"params": {"42": {"filename": "comfy-out-a.png", "type": "output"}}}),
+        )
+        output_field_input_b = await interceptors.pre_process(
+            "api/generate",
+            "POST",
+            actor_b,
+            body=_body({"params": {"42": {"filename": "comfy-out-a.png", "type": "output"}}}),
+        )
+        assert output_field_input_a is None
+        assert output_field_input_b is not None and output_field_input_b.status_code == 404
+
         # Existing uploaded resources cannot be reused by another normal user as model inputs.
         for path, payload in [
             ("api/online-image", {"reference_images": [{"url": "/assets/input/ai-a.png"}]}),
@@ -414,6 +475,7 @@ async def _run_checks() -> None:
                 {"image": "/assets/input/ai-a.png"},
                 {"image": "/assets/input/comfy-a.png"},
                 {"image": "/assets/uploads/local-a.png"},
+                {"image": "/assets/output/comfy-out-a.png"},
             ],
         })
         edb.set_canvas_owner("transfer_canvas", user_a["id"])
@@ -424,6 +486,7 @@ async def _run_checks() -> None:
         assert interceptors.can_access_resource(actor_b, "/assets/input/ai-a.png") is True
         assert interceptors.can_access_resource(actor_b, "/assets/input/comfy-a.png") is True
         assert interceptors.can_access_resource(actor_b, "/assets/uploads/local-a.png") is True
+        assert interceptors.can_access_resource(actor_b, "/assets/output/comfy-out-a.png") is True
 
         transferred_generate = await interceptors.pre_process(
             "api/generate",

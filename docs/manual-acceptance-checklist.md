@@ -20,6 +20,7 @@
 - A 可在 Smart Canvas 上传图片节点并生成。
 - A 可在经典画布拖拽/粘贴图片并保存。
 - A 可在 ZImage / Angle / Enhance / Klein 路径上传输入图并运行。
+- A 在无限画布运行本地 ComfyUI 工作流成功后，Output 节点图片可显示，生成结果可保存到画布和日志。
 - A 可在本地上传素材面板上传、预览、移动、重命名、删除自己的文件。
 - A 保存图片到素材库后，素材库页面和画布右侧素材库面板中 A 自己可见、可用、可移动、可重命名、可删除。
 - A 上传后的 `/assets/input/*`、`/assets/uploads/*`、`/api/view?type=input`、`/api/media-preview`、`/api/image-jpeg` 可正常访问。
@@ -29,6 +30,7 @@
 - B 的本地上传素材列表不显示 A 的文件。
 - B 直链访问 A 的 `/assets/input/*`、`/assets/uploads/*` 返回无权限或 404 风格拒绝。
 - B 不能通过 `/api/view?filename=...&type=input` 预览 A 的 Comfy input。
+- B 不能通过 `/api/view?filename=...&type=output`、`/assets/output/*` 读取 A 的 ComfyUI output，除非 B 拥有引用该 output 的画布。
 - B 不能通过 `/api/media-preview` 或 `/api/image-jpeg` 读取 A 的上传文件。
 - B 不能删除、移动、重命名、caption、classify A 或 unowned 的 local-assets path/name。
 - B 的素材库页面和画布右侧素材库面板不显示 A、管理员或 unowned 的 `/assets/library/*` 图片。
@@ -54,6 +56,7 @@
 - PR #30 后端设置权限不回归；普通用户不能管理 API Provider / Key / Base URL / 工作流设置。
 - PR #32 设置入口体验不回归；普通用户隐藏 API 设置 / 工作流设置，管理员路径不嵌套。
 - 普通用户在线生图、GPT 对话、Smart Canvas、经典画布、ZImage / Angle / Enhance 仍可正常使用。
+- 普通用户本地 ComfyUI 工作流本身成功时，output owner 记录、显示、画布保存和日志保存不应被企业鉴权误伤。
 
 ## 不属于 3G-4A 的验收
 
@@ -61,3 +64,4 @@
 - WebSocket `new_image`、任务状态、素材库广播隔离：3G-5。
 - Comfy/video/图片转换/RunningHub 任务历史隔离：3G-6。
 - Provider token、ModelScope Key、中转站、2K/high、模型质量：非企业隔离任务。
+- ComfyUI `missing_node_type`、自定义节点缺失、模型缺失、工作流本身 400：非企业隔离任务。

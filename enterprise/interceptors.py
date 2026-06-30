@@ -517,7 +517,14 @@ def _path_uses_runtime_inputs(path: str) -> bool:
 def _extract_runtime_input_resource_urls(value: Any, parent_key: str = "", found: Optional[set[str]] = None) -> set[str]:
     found = found if found is not None else set()
     if isinstance(value, dict):
+        explicit_resource = _resource_from_comfy_file_fields(value)
+        explicit_keys = set()
+        if _is_protected_resource(explicit_resource):
+            found.add(explicit_resource)
+            explicit_keys = {"filename", "subfolder", "type", "file_type"}
         for key, child in value.items():
+            if key in explicit_keys:
+                continue
             if isinstance(child, str) and _looks_like_runtime_media_key(key):
                 resource_url = _input_resource_url_from_name(child)
                 if _is_protected_resource(resource_url):
@@ -824,6 +831,22 @@ def _resource_from_api_view(query: Mapping[str, Any] | dict[str, Any]) -> str:
     return f"/assets/{media_type}/{filename}"
 
 
+def _resource_from_comfy_file_fields(value: Any) -> str:
+    if not isinstance(value, dict):
+        return ""
+    media_type = str(value.get("type") or value.get("file_type") or "").strip().lower()
+    if media_type not in {"input", "output"}:
+        return ""
+    filename = str(value.get("filename") or "").strip()
+    if not filename:
+        return ""
+    return _resource_from_api_view({
+        "filename": filename,
+        "type": media_type,
+        "subfolder": value.get("subfolder") or "",
+    })
+
+
 def normalize_resource_url(value: str) -> str:
     """将本地资源 URL 规范化到 /assets/... 或 /output/...，远程 URL 返回空。"""
     text = str(value or "").strip()
@@ -867,6 +890,9 @@ def _extract_local_resource_urls(value: Any, found: Optional[set[str]] = None) -
         if _is_protected_resource(resource_url):
             found.add(resource_url)
     elif isinstance(value, dict):
+        resource_url = _resource_from_comfy_file_fields(value)
+        if _is_protected_resource(resource_url):
+            found.add(resource_url)
         for child in value.values():
             _extract_local_resource_urls(child, found)
     elif isinstance(value, list):
@@ -1223,9 +1249,14 @@ def can_access_resource(user: dict, resource_url: str) -> bool:
     return False
 
 
-def _canvas_image_task_id_from_path(path: str) -> str:
+def _canvas_task_id_from_path(path: str) -> str:
     parts = path.split("/")
-    if len(parts) >= 3 and parts[0] == "api" and parts[1] == "canvas-image-tasks" and parts[2]:
+    if (
+        len(parts) >= 3
+        and parts[0] == "api"
+        and parts[1] in {"canvas-image-tasks", "canvas-comfy-tasks"}
+        and parts[2]
+    ):
         return parts[2]
     return ""
 
@@ -1411,7 +1442,7 @@ async def pre_process(
     if conversation_id and not can_access_conversation(user, conversation_id):
         return _deny_not_found("对话不存在或无权限访问")
 
-    canvas_task_id = _canvas_image_task_id_from_path(path)
+    canvas_task_id = _canvas_task_id_from_path(path)
     if canvas_task_id and not can_access_canvas_image_task(user, canvas_task_id):
         return _deny_not_found("生成任务不存在或无权限访问")
 
@@ -2033,7 +2064,7 @@ async def post_process(
             except Exception as exc:
                 print(f"[企业版] 记录对话归属失败: user={_user_id(user)} conversation={conv_obj.get('id')} error={exc}")
 
-    if path == "api/canvas-image-tasks" and method == "POST" and status_code in (200, 201):
+    if path in {"api/canvas-image-tasks", "api/canvas-comfy-tasks"} and method == "POST" and status_code in (200, 201):
         task_id = str(data.get("task_id") or "") if isinstance(data, dict) else ""
         if task_id:
             try:
@@ -2041,7 +2072,7 @@ async def post_process(
             except Exception as exc:
                 print(f"[enterprise] record canvas image task owner failed: user={_user_id(user)} task={task_id} error={exc}")
 
-    canvas_task_id = _canvas_image_task_id_from_path(path)
+    canvas_task_id = _canvas_task_id_from_path(path)
     if canvas_task_id and method == "GET" and status_code == 200:
         task_owner = edb.get_canvas_image_task_owner(canvas_task_id)
         if task_owner:
