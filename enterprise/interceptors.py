@@ -66,6 +66,7 @@ _PROTECTED_LOCAL_RESOURCE_PREFIXES = (
 _CANVAS_DATA_DIR = Path(ROOT_DIR) / "data" / "canvases"
 _CONVERSATION_DATA_DIR = Path(ROOT_DIR) / "data" / "conversations"
 _HISTORY_FILE = Path(ROOT_DIR) / "history.json"
+_ASSET_LIBRARY_FILE = Path(ROOT_DIR) / "data" / "asset_library.json"
 DEFAULT_PROJECT_ID = "default"
 
 _HISTORY_GENERATION_PATHS = {
@@ -108,6 +109,16 @@ _LOCAL_ASSET_RESPONSE_PATHS = {
     "api/local-assets/import-urls",
     "api/local-assets/items",
     "api/local-assets/move",
+}
+
+_ASSET_LIBRARY_ITEM_ACTIONS = {"delete", "move", "classify", "crop"}
+_ASSET_LIBRARY_NEW_ITEM_PATHS = {
+    "api/asset-library/items",
+    "api/asset-library/items/batch",
+    "api/asset-library/items/crop",
+    "api/asset-library/workflows/upload",
+    "api/shared-folders/import",
+    "api/canvas-workflows/export-to-library",
 }
 
 _COMFY_INPUT_RESPONSE_PATHS = {
@@ -584,6 +595,154 @@ def _audit_local_asset_operation(user: dict, path: str, method: str, resources: 
         )
     except Exception as exc:
         print(f"[enterprise] audit local asset operation failed: user={_user_id(user)} path={path} error={exc}")
+
+
+def _asset_library_data() -> dict:
+    data = _load_json_file(_ASSET_LIBRARY_FILE)
+    return data if isinstance(data, dict) else {}
+
+
+def _asset_library_item_resource_url(item: Any) -> str:
+    if not isinstance(item, dict):
+        return ""
+    for key in ("url", "src", "path", "output"):
+        resource_url = normalize_resource_url(str(item.get(key) or ""))
+        if _is_protected_resource(resource_url):
+            return resource_url
+    return ""
+
+
+def _asset_library_item_id_from_path(path: str) -> str:
+    parts = path.split("/")
+    if len(parts) < 4 or parts[:3] != ["api", "asset-library", "items"]:
+        return ""
+    item_id = parts[3]
+    if not item_id or item_id in _ASSET_LIBRARY_ITEM_ACTIONS or item_id == "batch":
+        return ""
+    return item_id
+
+
+def _iter_asset_library_items(data: Any):
+    if not isinstance(data, dict):
+        return
+    for library in data.get("libraries") or []:
+        if not isinstance(library, dict):
+            continue
+        library_id = str(library.get("id") or "")
+        for category in library.get("categories") or []:
+            if not isinstance(category, dict):
+                continue
+            category_id = str(category.get("id") or "")
+            for item in category.get("items") or []:
+                if isinstance(item, dict):
+                    yield library_id, category_id, item
+
+
+def _asset_library_urls_for_item_ids(ids: set[str], library_id: str = "") -> set[str]:
+    if not ids:
+        return set()
+    urls: set[str] = set()
+    for lib_id, _cat_id, item in _iter_asset_library_items(_asset_library_data()):
+        if library_id and lib_id != library_id:
+            continue
+        if str(item.get("id") or "") in ids:
+            resource_url = _asset_library_item_resource_url(item)
+            if resource_url:
+                urls.add(resource_url)
+    return urls
+
+
+def _asset_library_urls_for_category(category_id: str, library_id: str = "") -> set[str]:
+    if not category_id:
+        return set()
+    urls: set[str] = set()
+    for lib_id, cat_id, item in _iter_asset_library_items(_asset_library_data()):
+        if library_id and lib_id != library_id:
+            continue
+        if cat_id == category_id:
+            resource_url = _asset_library_item_resource_url(item)
+            if resource_url:
+                urls.add(resource_url)
+    return urls
+
+
+def _asset_library_urls_for_library(library_id: str) -> set[str]:
+    if not library_id:
+        return set()
+    urls: set[str] = set()
+    for lib_id, _cat_id, item in _iter_asset_library_items(_asset_library_data()):
+        if lib_id == library_id:
+            resource_url = _asset_library_item_resource_url(item)
+            if resource_url:
+                urls.add(resource_url)
+    return urls
+
+
+def _asset_library_manage_urls_from_request(
+    path: str,
+    method: str,
+    query_params: Optional[Mapping[str, Any]],
+    body: bytes | None,
+) -> set[str]:
+    if not path.startswith("api/asset-library/"):
+        return set()
+    method = method.upper()
+    data = _json_from_body(body)
+    payload = data if isinstance(data, dict) else {}
+    library_id = str(payload.get("library_id") or _query_get(query_params, "library_id") or "").strip()
+
+    item_id = _asset_library_item_id_from_path(path)
+    if item_id and method in {"PATCH", "DELETE", "POST"}:
+        return _asset_library_urls_for_item_ids({item_id}, library_id)
+
+    if path in {
+        "api/asset-library/items/delete",
+        "api/asset-library/items/move",
+        "api/asset-library/items/classify",
+        "api/asset-library/items/crop",
+    } and method == "POST":
+        ids = {str(item) for item in (payload.get("ids") or []) if str(item)}
+        return _asset_library_urls_for_item_ids(ids, library_id)
+
+    parts = path.split("/")
+    if len(parts) >= 4 and parts[:3] == ["api", "asset-library", "categories"] and method == "DELETE":
+        return _asset_library_urls_for_category(parts[3], library_id)
+
+    if len(parts) >= 4 and parts[:3] == ["api", "asset-library", "libraries"] and method == "DELETE":
+        return _asset_library_urls_for_library(parts[3])
+
+    return set()
+
+
+def _audit_asset_library_operation(user: dict, path: str, method: str, resources: set[str]) -> None:
+    if not _is_admin(user) or not resources:
+        return
+    action = "asset_library_managed"
+    if path.endswith("/delete") or method.upper() == "DELETE":
+        action = "asset_library_deleted"
+    elif path.endswith("/move"):
+        action = "asset_library_moved"
+    elif path.endswith("/classify"):
+        action = "asset_library_classified"
+    elif path.endswith("/crop"):
+        action = "asset_library_cropped"
+    elif method.upper() == "PATCH":
+        action = "asset_library_renamed"
+    elif path.endswith("/register-avatar") or path.endswith("/avatar-status"):
+        action = "asset_library_avatar_updated"
+    try:
+        edb.log_action(
+            _user_id(user),
+            action,
+            json.dumps({
+                "path": path,
+                "method": method.upper(),
+                "resource_count": len(resources),
+                "resources": sorted(resources)[:50],
+            }, ensure_ascii=False),
+        )
+    except Exception as exc:
+        print(f"[enterprise] audit asset library operation failed: user={_user_id(user)} path={path} error={exc}")
 
 
 @lru_cache(maxsize=1)
@@ -1263,6 +1422,13 @@ async def pre_process(
     if local_asset_manage_urls:
         _audit_local_asset_operation(user, path, method, local_asset_manage_urls)
 
+    asset_library_manage_urls = _asset_library_manage_urls_from_request(path, method, query_params, body)
+    for resource_url in asset_library_manage_urls:
+        if not _can_manage_resource(user, resource_url):
+            return _deny_not_found("资源不存在或无权限访问")
+    if asset_library_manage_urls:
+        _audit_asset_library_operation(user, path, method, asset_library_manage_urls)
+
     for resource_url in _resource_urls_from_request(path, method, query_params, body):
         if not can_access_resource(user, resource_url):
             return _deny_not_found("资源不存在或无权限访问")
@@ -1577,6 +1743,48 @@ def filter_resource_collections(user: dict, data: Any) -> bool:
     return changed
 
 
+def _is_owned_asset_library_item(user: dict, item: Any) -> bool:
+    if _is_admin(user):
+        return True
+    resource_url = _asset_library_item_resource_url(item)
+    if not _is_protected_resource(resource_url):
+        return True
+    return edb.get_resource_owner(resource_url) == _user_id(user)
+
+
+def _filter_asset_library_categories(user: dict, categories: Any) -> bool:
+    if _is_admin(user) or not isinstance(categories, list):
+        return False
+    changed = False
+    for category in categories:
+        if not isinstance(category, dict):
+            continue
+        items = category.get("items")
+        if not isinstance(items, list):
+            continue
+        filtered = [item for item in items if _is_owned_asset_library_item(user, item)]
+        if len(filtered) != len(items):
+            category["items"] = filtered
+            changed = True
+    return changed
+
+
+def filter_asset_library(user: dict, data: Any) -> bool:
+    if _is_admin(user) or not isinstance(data, dict):
+        return False
+    root = data.get("library") if isinstance(data.get("library"), dict) else data
+    if not isinstance(root, dict):
+        return False
+    changed = False
+    libraries = root.get("libraries")
+    if isinstance(libraries, list):
+        for library in libraries:
+            if isinstance(library, dict):
+                changed = _filter_asset_library_categories(user, library.get("categories")) or changed
+    changed = _filter_asset_library_categories(user, root.get("categories")) or changed
+    return changed
+
+
 def record_resource_urls_for_user(user_id: str, source: str, data: Any) -> None:
     if not user_id:
         return
@@ -1672,12 +1880,37 @@ def _record_local_asset_response_resources(user: dict, path: str, body: bytes | 
     return True
 
 
+def _asset_library_new_items_from_response(path: str, data: Any) -> list[dict]:
+    if path not in _ASSET_LIBRARY_NEW_ITEM_PATHS or not isinstance(data, dict):
+        return []
+    if path in {"api/asset-library/items", "api/canvas-workflows/export-to-library"}:
+        item = data.get("item")
+        return [item] if isinstance(item, dict) else []
+    items = data.get("items")
+    return [item for item in items if isinstance(item, dict)] if isinstance(items, list) else []
+
+
+def _record_asset_library_response_resources(user: dict, path: str, data: Any) -> bool:
+    if not (
+        path.startswith("api/asset-library/")
+        or path in {"api/shared-folders/import", "api/canvas-workflows/export-to-library"}
+    ):
+        return False
+    user_id = _user_id(user)
+    for item in _asset_library_new_items_from_response(path, data):
+        resource_url = _asset_library_item_resource_url(item)
+        _record_resource_owner_safe(user_id, resource_url, f"{path}:asset_library")
+    return True
+
+
 def record_resources_from_data(user: dict, path: str, method: str, data: Any, request_body: bytes | None = None) -> None:
     if method.upper() not in {"POST", "PUT", "PATCH"}:
         return
     if _record_comfy_input_response_resources(_user_id(user), path, data):
         return
     if _record_local_asset_response_resources(user, path, request_body, data):
+        return
+    if _record_asset_library_response_resources(user, path, data):
         return
     record_resource_urls_for_user(_user_id(user), path, data)
 
@@ -1860,8 +2093,12 @@ async def post_process(
         modified = filter_local_assets(user, data) or modified
 
     # ── 过滤通用素材集合 ──────────────────────────────────
-    elif path == "api/asset-library" and method == "GET":
-        modified = filter_resource_collections(user, data) or modified
+    elif (
+        path == "api/asset-library"
+        or path.startswith("api/asset-library/")
+        or path in {"api/shared-folders/import", "api/canvas-workflows/export-to-library"}
+    ):
+        modified = filter_asset_library(user, data) or modified
 
     if modified:
         new_body = json.dumps(data, ensure_ascii=False).encode("utf-8")

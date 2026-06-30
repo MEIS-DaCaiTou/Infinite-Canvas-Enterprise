@@ -1,6 +1,6 @@
 # Enterprise Resource Path Matrix
 
-更新时间：2026-06-29
+更新时间：2026-06-30
 
 本文记录企业版本地资源路径、owner 来源、访问和删除策略。后续上游同步如新增上传目录、返回 URL 或资源代理接口，必须更新本文并补测试。
 
@@ -15,8 +15,8 @@
 | `/api/image-jpeg?url=...` | JPEG 转换代理 | 任意本地资源 URL | 原 URL 对应 owner | 先校验原 URL | 可读全局 | 只读转换，不作为任务历史 | 3G-4A |
 | `/assets/output/*` | 生成 output | 在线生图、Smart Canvas、Comfy、RunningHub | PR #19/#20/#24/#28 已记录 | owner 或 canvas/conversation/history scope 可读 | 可读全局 | 历史删除不物理删除 output | 回归 |
 | `/output/*` | 旧 output 兼容路径 | 旧上游输出 | 归一化到 protected resource | 同 output 策略 | 可读全局 | 兼容保留 | 回归 |
-| `/assets/library/*` | 素材库文件 | 素材库、workflow library、shared folder import | 路径受保护，但库/item owner 未完整治理 | 不应作为 3G-4A 完成项声明 | 可见全局 | 素材库分类、批量管理、删除归 3G-4B | 3G-4B |
-| `data/asset_library.json` | 素材库业务索引 | 素材库 UI | 未完整 owner 化 | 后续按 library/category/item owner 过滤 | 可管理 | 3G-4A 不处理 | 3G-4B |
+| `/assets/library/*` | 素材库文件 | 素材库、workflow library、shared folder import | 新建 item URL 记录到 `user_resource_map` | 只显示和管理真实 owner 的 item；unowned 隐藏；canvas/conversation 回溯不授予管理权 | 可见全局 | item delete/move/rename/batch/classify/crop/register 等先校验真实 owner；管理员写审计 | 3G-4A 最小兜底 |
+| `data/asset_library.json` | 素材库业务索引 | 素材库 UI、画布右侧素材库面板 | item URL 反查 `user_resource_map` | `/api/asset-library` 过滤嵌套 `libraries[].categories[].items[]` 和顶层 `categories[].items[]` | 可管理 | library/category 完整 owner、分组权限和批量业务治理仍归 3G-4B | 3G-4A 最小兜底 + 3G-4B 完整治理 |
 | `history.json` | 生成历史 | 在线/本地功能历史 | `user_history_map` | 只看自己的历史 | 可见全局 | 只删历史记录，不删 output 文件 | PR #28 |
 | `data/canvases/*.json` | 画布节点和日志 | 画布保存 | `user_canvas_map` | 只访问自己的画布；资源可从画布引用派生读取 | 可代管 | owner 迁移不改 resource owner | PR #24 + 3G-4A |
 | `data/conversations/*/*.json` | 对话和附件引用 | GPT 对话 | `user_conversation_map` | 只访问自己的对话；资源可从对话引用派生读取 | 可代管 | 对话迁移后资源真实 owner 不自动转移 | 既有 + 3G-4A |
@@ -55,3 +55,13 @@
 - `/api/*import*`
 
 新增路径必须加入本矩阵、`enterprise/interceptors.py` 归一化逻辑、自动化测试和 A/B/admin 浏览器验收。
+
+## 3G-4A asset-library 兜底说明
+
+素材库完整治理仍属于 3G-4B，但 3G-4A 已增加最小安全兜底：
+
+- 新保存到素材库的 `/assets/library/*` item 记录当前用户 owner。
+- 素材库列表和画布右侧素材库面板共用 `/api/asset-library`，因此同一后端过滤同时覆盖两处入口。
+- 普通用户不能看到或管理 owner 不是自己的 `/assets/library/*` item。
+- 管理员可以查看和管理 A/B/unowned item，关键操作写 `usage_logs`。
+- asset-library 写接口返回整份 `library` 快照时，企业层只记录新建 `item/items` 的 owner，不再扫描整份快照，避免把其他用户素材误补记给当前用户。

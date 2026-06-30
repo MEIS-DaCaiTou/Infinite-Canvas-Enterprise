@@ -65,6 +65,7 @@ async def _run_checks() -> None:
         conversation_dir.mkdir()
         interceptors._CANVAS_DATA_DIR = canvas_dir
         interceptors._CONVERSATION_DATA_DIR = conversation_dir
+        interceptors._ASSET_LIBRARY_FILE = tmp / "asset_library.json"
         edb._conversation_root = lambda: str(conversation_dir)
         edb.CANVAS_DATA_DIR = str(canvas_dir)
 
@@ -241,6 +242,144 @@ async def _run_checks() -> None:
             request_body={"names": ["local-a.png"], "folder": "moved"},
         )
         assert edb.get_resource_owner("/assets/uploads/moved/local-a.png") == user_a["id"]
+
+        # Asset-library is backed by data/asset_library.json and /assets/library/*.
+        # The full material-library business model remains a later task, but normal
+        # users must not see or manage another user's library files.
+        asset_a = {
+            "id": "asset_a",
+            "name": "Library A",
+            "url": "/assets/library/characters/lib-a.png",
+            "kind": "image",
+            "created_at": 1,
+        }
+        asset_b = {
+            "id": "asset_b",
+            "name": "Library B",
+            "url": "/assets/library/characters/lib-b.png",
+            "kind": "image",
+            "created_at": 2,
+        }
+        asset_admin = {
+            "id": "asset_admin",
+            "name": "Library Admin",
+            "url": "/assets/library/characters/lib-admin.png",
+            "kind": "image",
+            "created_at": 3,
+        }
+        asset_legacy = {
+            "id": "asset_legacy",
+            "name": "Library Legacy",
+            "url": "/assets/library/characters/lib-legacy.png",
+            "kind": "image",
+            "created_at": 4,
+        }
+
+        await _post_json("api/asset-library/items", "POST", 200, {"item": asset_a, "library": {"libraries": []}}, actor_a)
+        await _post_json("api/asset-library/items", "POST", 200, {"item": asset_admin, "library": {"libraries": []}}, actor_admin)
+        await _post_json(
+            "api/asset-library/items/batch",
+            "POST",
+            200,
+            {
+                "items": [asset_b],
+                "library": {
+                    "libraries": [
+                        {"id": "default", "categories": [{"id": "characters", "items": [asset_a, asset_admin, asset_b, asset_legacy]}]}
+                    ]
+                },
+            },
+            actor_b,
+        )
+        assert edb.get_resource_owner("/assets/library/characters/lib-a.png") == user_a["id"]
+        assert edb.get_resource_owner("/assets/library/characters/lib-b.png") == user_b["id"]
+        assert edb.get_resource_owner("/assets/library/characters/lib-admin.png") == admin["id"]
+        assert edb.get_resource_owner("/assets/library/characters/lib-legacy.png") is None
+
+        asset_library_data = {
+            "active_library_id": "default",
+            "categories": [
+                {"id": "characters", "name": "Characters", "type": "image", "items": [asset_a, asset_b, asset_admin, asset_legacy]},
+                {"id": "empty", "name": "Empty", "type": "image", "items": []},
+            ],
+            "libraries": [
+                {
+                    "id": "default",
+                    "name": "Default Library",
+                    "type": "asset",
+                    "categories": [
+                        {"id": "characters", "name": "Characters", "type": "image", "items": [asset_a, asset_b, asset_admin, asset_legacy]},
+                        {"id": "empty", "name": "Empty", "type": "image", "items": []},
+                    ],
+                }
+            ],
+            "updated_at": 10,
+        }
+        _write_json(interceptors._ASSET_LIBRARY_FILE, asset_library_data)
+
+        def library_urls(payload: dict) -> list[str]:
+            lib = payload.get("library") or payload
+            urls = []
+            for library in lib.get("libraries") or []:
+                for category in library.get("categories") or []:
+                    for item in category.get("items") or []:
+                        if isinstance(item, dict) and item.get("url"):
+                            urls.append(item["url"])
+            return urls
+
+        visible_a_assets = await _post_json("api/asset-library", "GET", 200, {"library": asset_library_data}, actor_a)
+        visible_b_assets = await _post_json("api/asset-library", "GET", 200, {"library": asset_library_data}, actor_b)
+        visible_admin_assets = await _post_json("api/asset-library", "GET", 200, {"library": asset_library_data}, actor_admin)
+        assert library_urls(visible_a_assets) == ["/assets/library/characters/lib-a.png"]
+        assert library_urls(visible_b_assets) == ["/assets/library/characters/lib-b.png"]
+        assert set(library_urls(visible_admin_assets)) == {
+            "/assets/library/characters/lib-a.png",
+            "/assets/library/characters/lib-b.png",
+            "/assets/library/characters/lib-admin.png",
+            "/assets/library/characters/lib-legacy.png",
+        }
+        assert [
+            item["url"]
+            for item in visible_b_assets["library"]["categories"][0]["items"]
+        ] == ["/assets/library/characters/lib-b.png"]
+
+        for path, method, payload in [
+            ("api/asset-library/items/asset_a", "PATCH", {"name": "rename"}),
+            ("api/asset-library/items/asset_a", "DELETE", None),
+            ("api/asset-library/items/delete", "POST", {"library_id": "default", "ids": ["asset_a"]}),
+            ("api/asset-library/items/move", "POST", {"library_id": "default", "target_category_id": "empty", "ids": ["asset_a"]}),
+            ("api/asset-library/items/classify", "POST", {"library_id": "default", "ids": ["asset_a"]}),
+            ("api/asset-library/items/asset_legacy", "PATCH", {"name": "rename"}),
+            ("api/asset-library/items/delete", "POST", {"library_id": "default", "ids": ["asset_legacy"]}),
+        ]:
+            denied = await interceptors.pre_process(path, method, actor_b, body=_body(payload) if payload is not None else None)
+            assert denied is not None and denied.status_code == 404, path
+
+        for path, method, payload in [
+            ("api/asset-library/items/asset_b", "PATCH", {"name": "rename"}),
+            ("api/asset-library/items/delete", "POST", {"library_id": "default", "ids": ["asset_b"]}),
+            ("api/asset-library/items/move", "POST", {"library_id": "default", "target_category_id": "empty", "ids": ["asset_b"]}),
+        ]:
+            allowed = await interceptors.pre_process(path, method, actor_b, body=_body(payload) if payload is not None else None)
+            assert allowed is None, path
+
+        admin_asset_delete = await interceptors.pre_process(
+            "api/asset-library/items/delete",
+            "POST",
+            actor_admin,
+            body=_body({"library_id": "default", "ids": ["asset_a"]}),
+        )
+        admin_asset_move = await interceptors.pre_process(
+            "api/asset-library/items/move",
+            "POST",
+            actor_admin,
+            body=_body({"library_id": "default", "target_category_id": "empty", "ids": ["asset_a"]}),
+        )
+        assert admin_asset_delete is None and admin_asset_move is None
+        logs, _total = edb.get_logs(limit=50)
+        actions = [row["action"] for row in logs]
+        assert "asset_library_deleted" in actions
+        assert "asset_library_moved" in actions
 
         # Existing uploaded resources cannot be reused by another normal user as model inputs.
         for path, payload in [
