@@ -25,6 +25,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from fastapi.responses import JSONResponse
 
 from enterprise import db as edb
+from enterprise import ws as enterprise_ws
 from enterprise.config import (
     ENTERPRISE_HIDE_UPSTREAM_AUTHOR,
     ENTERPRISE_REPO_URL,
@@ -2311,6 +2312,21 @@ def _asset_library_parent_for_item(data: Any, item_id: str) -> tuple[str, str]:
     return library_id, category_id
 
 
+def _asset_library_updated_at(data: Any) -> int:
+    if isinstance(data, dict):
+        for candidate in (
+            data.get("updated_at"),
+            (data.get("library") or {}).get("updated_at") if isinstance(data.get("library"), dict) else None,
+        ):
+            try:
+                value = int(float(candidate or 0))
+            except Exception:
+                value = 0
+            if value:
+                return value
+    return 0
+
+
 def _record_asset_library_category_owner_safe(
     user_id: str,
     category: Any,
@@ -2604,6 +2620,10 @@ async def post_process(
     if status_code in (200, 201):
         record_resources_from_data(user, path, method, data, request_body)
         record_generated_history_for_user(user, path, method, data)
+        if enterprise_ws.is_asset_library_write(path, method):
+            await enterprise_ws.broadcast_asset_library_updated(user, _asset_library_updated_at(data))
+        if enterprise_ws.is_generation_response(path, method, data):
+            await enterprise_ws.broadcast_new_image(user, data)
 
     _sync_admin_canvas_owner_from_persisted_project(user, path, method)
 
