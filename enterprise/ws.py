@@ -235,6 +235,19 @@ def connection_snapshot() -> list[dict[str, Any]]:
     ]
 
 
+def visible_online_count() -> int:
+    visible_client_ids = {
+        conn.client_id
+        for conn in active_connections()
+        if conn.client_id and not conn.client_id.startswith("canvas_")
+    }
+    return len(visible_client_ids)
+
+
+def stats_message() -> dict[str, Any]:
+    return {"type": "stats", "online_count": visible_online_count()}
+
+
 def reset_for_tests() -> None:
     _CONNECTIONS.clear()
     _CLIENT_USERS.clear()
@@ -295,21 +308,26 @@ def should_forward_ws_event(connection: EnterpriseWsConnection, message: Mapping
     if event_type in {"pong", "stats"}:
         return True
 
-    if connection.is_admin:
-        return True
-
     user_id = connection.user_id
     if not user_id:
         return False
 
     if event_type == "canvas_updated":
+        if connection.is_admin:
+            return True
         canvas_id = str(message.get("canvas_id") or "").strip()
         return bool(canvas_id and edb.get_canvas_owner(canvas_id) == user_id)
 
     if event_type == "asset_library_updated":
+        if connection.is_admin:
+            return True
         return str(message.get("enterprise_user_id") or "") == user_id
 
     if event_type == "new_image":
+        if not message.get("enterprise_synthetic"):
+            return False
+        if connection.is_admin:
+            return True
         if str(message.get("enterprise_user_id") or "") == user_id:
             return True
         payload = message.get("data")
@@ -322,10 +340,15 @@ def should_forward_ws_event(connection: EnterpriseWsConnection, message: Mapping
         return False
 
     if event_type == "cloud_status":
+        if connection.is_admin:
+            return True
         return _client_id_unique_to_user(connection.client_id, user_id)
 
     if event_type in _SENSITIVE_EVENT_TYPES:
-        return False
+        return bool(connection.is_admin)
+
+    if connection.is_admin:
+        return True
 
     return True
 
@@ -341,9 +364,17 @@ def _event_fingerprint(message: Mapping[str, Any]) -> str:
     event_type = str(message.get("type") or "").strip()
     if not event_type:
         return ""
+    if event_type in {"pong", "stats"}:
+        return ""
     if event_type == "new_image":
         data = message.get("data")
         if isinstance(data, Mapping):
+            urls = sorted(protected_resource_urls(data))
+            if urls:
+                return f"new_image:resource:{urls[0]}"
+            task_id = str(data.get("task_id") or data.get("request_id") or data.get("prompt_id") or "").strip()
+            if task_id:
+                return f"new_image:task:{task_id}"
             return f"new_image:{history_id_for_record(data)}"
     if event_type == "canvas_updated":
         return f"canvas_updated:{message.get('canvas_id') or ''}:{message.get('updated_at') or ''}"
@@ -388,6 +419,19 @@ async def send_to_connection(connection: EnterpriseWsConnection, message: Mappin
         print(f"[enterprise-ws] send failed user={connection.user_id} client={connection.client_id} error={exc}")
         forget_connection(connection)
         return False
+
+
+async def send_stats_to_connection(connection: EnterpriseWsConnection) -> bool:
+    return await send_to_connection(connection, stats_message())
+
+
+async def broadcast_stats() -> int:
+    message = stats_message()
+    sent = 0
+    for conn in active_connections():
+        if await send_to_connection(conn, message):
+            sent += 1
+    return sent
 
 
 async def send_to_user(

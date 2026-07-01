@@ -116,6 +116,12 @@ async def _run_checks() -> None:
 
         assert ews.should_forward_ws_event(conn_a, {"type": "pong"}) is True
         assert ews.should_forward_ws_event(conn_b, {"type": "stats", "online_count": 2}) is True
+        assert ews.visible_online_count() == 3
+
+        assert await ews.send_to_connection(conn_a, {"type": "stats", "online_count": 3}) is True
+        assert await ews.send_to_connection(conn_a, {"type": "stats", "online_count": 3}) is True
+        assert [msg["type"] for msg in ws_a.decoded()] == ["stats", "stats"]
+        ws_a.clear()
 
         edb.record_canvas_owner(user_a["id"], "canvas-a")
         canvas_msg = {"type": "canvas_updated", "canvas_id": "canvas-a", "updated_at": 123, "client_id": "client-a"}
@@ -184,7 +190,7 @@ async def _run_checks() -> None:
             },
         }
         assert ews.should_forward_ws_event(conn_a, ownerless_new_image) is False
-        assert ews.should_forward_ws_event(conn_admin, ownerless_new_image) is True
+        assert ews.should_forward_ws_event(conn_admin, ownerless_new_image) is False
 
         generated = {
             "timestamp": 2,
@@ -193,15 +199,35 @@ async def _run_checks() -> None:
             "images": ["/assets/output/a-result.png"],
             "task_id": "task-a",
         }
+        raw_generated_message = {"type": "new_image", "data": generated}
+        assert ews.should_forward_ws_event(conn_a, raw_generated_message) is False
+        assert ews.should_forward_ws_event(conn_b, raw_generated_message) is False
+        assert ews.should_forward_ws_event(conn_admin, raw_generated_message) is False
+
         await _post_process_json(interceptors, "api/online-image", "POST", actor_a, generated)
         assert edb.get_resource_owner("/assets/output/a-result.png") == user_a["id"]
         assert any(msg["type"] == "new_image" and msg["data"]["prompt"] == "A prompt" for msg in ws_a.decoded())
         assert not ws_b.messages
         assert any(msg["type"] == "new_image" and msg["data"]["prompt"] == "A prompt" for msg in ws_admin.decoded())
+
+        admin_count = len(ws_admin.messages)
+        duplicate_synthetic = {
+            "type": "new_image",
+            "data": dict(generated, timestamp=999),
+            "enterprise_synthetic": True,
+            "enterprise_user_id": user_a["id"],
+        }
+        assert await ews.send_to_connection(conn_admin, duplicate_synthetic) is False
+        assert len(ws_admin.messages) == admin_count
         ws_a.clear()
         ws_admin.clear()
 
-        owned_new_image = {"type": "new_image", "data": generated}
+        owned_new_image = {
+            "type": "new_image",
+            "data": generated,
+            "enterprise_synthetic": True,
+            "enterprise_user_id": user_a["id"],
+        }
         assert ews.should_forward_ws_event(conn_a, owned_new_image) is True
         assert ews.should_forward_ws_event(conn_b, owned_new_image) is False
         assert ews.should_forward_ws_event(conn_admin, owned_new_image) is True

@@ -691,6 +691,7 @@ async def ws_proxy(websocket: WebSocket, path: str):
     query_string = websocket.scope.get("query_string", b"").decode("utf-8", errors="ignore")
     client_id = str(websocket.query_params.get("client_id") or "").strip()
     connection = enterprise_ws.register_connection(websocket, user, path, client_id)
+    await enterprise_ws.broadcast_stats()
     upstream_ws_url = enterprise_ws.build_upstream_ws_url(UPSTREAM_URL, path, query_string)
 
     try:
@@ -726,6 +727,10 @@ async def ws_proxy(websocket: WebSocket, path: str):
             pass
     finally:
         enterprise_ws.forget_connection(connection)
+        try:
+            await enterprise_ws.broadcast_stats()
+        except Exception:
+            pass
 
 
 # ── HTTP 反向代理（核心路由） ─────────────────────────────
