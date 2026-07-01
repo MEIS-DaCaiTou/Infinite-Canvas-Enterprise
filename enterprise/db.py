@@ -87,6 +87,25 @@ def init_db() -> None:
                 source       TEXT
             );
 
+            CREATE TABLE IF NOT EXISTS user_asset_object_map (
+                object_type        TEXT NOT NULL,
+                object_id          TEXT NOT NULL,
+                user_id            TEXT NOT NULL,
+                parent_library_id  TEXT,
+                parent_category_id TEXT,
+                resource_url       TEXT,
+                source             TEXT,
+                created_at         INTEGER NOT NULL,
+                updated_at         INTEGER NOT NULL,
+                PRIMARY KEY (object_type, object_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_user_asset_object_owner
+                ON user_asset_object_map (user_id, object_type);
+
+            CREATE INDEX IF NOT EXISTS idx_user_asset_object_resource
+                ON user_asset_object_map (resource_url);
+
             CREATE TABLE IF NOT EXISTS usage_logs (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id     TEXT NOT NULL,
@@ -95,6 +114,11 @@ def init_db() -> None:
                 ts          INTEGER NOT NULL
             );
         """)
+        for column in ("parent_library_id", "parent_category_id"):
+            try:
+                conn.execute(f"ALTER TABLE user_asset_object_map ADD COLUMN {column} TEXT")
+            except sqlite3.OperationalError:
+                pass
         conn.commit()
 
         # 如果管理员不存在则创建
@@ -688,6 +712,227 @@ def get_user_resource_urls(user_id: str) -> set:
         return {r["resource_url"] for r in rows}
     finally:
         conn.close()
+
+
+# ── 素材库业务对象归属映射 ─────────────────────────────────
+
+def record_asset_object_owner(
+    user_id: str,
+    object_type: str,
+    object_id: str,
+    parent_library_id: str = "",
+    parent_category_id: str = "",
+    resource_url: str = "",
+    source: str = "",
+) -> bool:
+    """记录素材库 library/category/item 业务对象归属；已有归属时不覆盖 owner。"""
+    user_id = (user_id or "").strip()
+    object_type = (object_type or "").strip()
+    object_id = (object_id or "").strip()
+    if not user_id or not object_type or not object_id:
+        return False
+    now = int(time.time() * 1000)
+    conn = get_db()
+    try:
+        cur = conn.execute(
+            """
+            INSERT OR IGNORE INTO user_asset_object_map
+                (object_type, object_id, user_id, parent_library_id, parent_category_id,
+                 resource_url, source, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                object_type,
+                object_id,
+                user_id,
+                parent_library_id or "",
+                parent_category_id or "",
+                resource_url or "",
+                source or "",
+                now,
+                now,
+            ),
+        )
+        if cur.rowcount == 0 and (parent_library_id or parent_category_id or resource_url or source):
+            conn.execute(
+                """
+                UPDATE user_asset_object_map
+                   SET parent_library_id = COALESCE(NULLIF(?, ''), parent_library_id),
+                       parent_category_id = COALESCE(NULLIF(?, ''), parent_category_id),
+                       resource_url = COALESCE(NULLIF(?, ''), resource_url),
+                       source = COALESCE(NULLIF(?, ''), source),
+                       updated_at = ?
+                 WHERE object_type = ? AND object_id = ?
+                """,
+                (
+                    parent_library_id or "",
+                    parent_category_id or "",
+                    resource_url or "",
+                    source or "",
+                    now,
+                    object_type,
+                    object_id,
+                ),
+            )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def set_asset_object_owner(
+    user_id: str,
+    object_type: str,
+    object_id: str,
+    parent_library_id: str = "",
+    parent_category_id: str = "",
+    resource_url: str = "",
+    source: str = "",
+) -> bool:
+    return record_asset_object_owner(
+        user_id,
+        object_type,
+        object_id,
+        parent_library_id=parent_library_id,
+        parent_category_id=parent_category_id,
+        resource_url=resource_url,
+        source=source,
+    )
+
+
+def get_asset_object_owner(object_type: str, object_id: str) -> Optional[str]:
+    object_type = (object_type or "").strip()
+    object_id = (object_id or "").strip()
+    if not object_type or not object_id:
+        return None
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT user_id FROM user_asset_object_map WHERE object_type = ? AND object_id = ?",
+            (object_type, object_id),
+        ).fetchone()
+        return row["user_id"] if row else None
+    finally:
+        conn.close()
+
+
+def get_asset_object(object_type: str, object_id: str) -> Optional[dict]:
+    object_type = (object_type or "").strip()
+    object_id = (object_id or "").strip()
+    if not object_type or not object_id:
+        return None
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT * FROM user_asset_object_map WHERE object_type = ? AND object_id = ?",
+            (object_type, object_id),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def get_asset_item_owner_by_resource(resource_url: str) -> Optional[str]:
+    resource_url = (resource_url or "").strip()
+    if not resource_url:
+        return None
+    conn = get_db()
+    try:
+        row = conn.execute(
+            """
+            SELECT user_id
+              FROM user_asset_object_map
+             WHERE object_type = 'item' AND resource_url = ?
+             ORDER BY updated_at DESC
+             LIMIT 1
+            """,
+            (resource_url,),
+        ).fetchone()
+        return row["user_id"] if row else None
+    finally:
+        conn.close()
+
+
+def update_asset_object_parent(
+    object_type: str,
+    object_id: str,
+    parent_library_id: str = "",
+    parent_category_id: str = "",
+    resource_url: str = "",
+) -> bool:
+    object_type = (object_type or "").strip()
+    object_id = (object_id or "").strip()
+    if not object_type or not object_id:
+        return False
+    conn = get_db()
+    try:
+        cur = conn.execute(
+            """
+            UPDATE user_asset_object_map
+               SET parent_library_id = COALESCE(NULLIF(?, ''), parent_library_id),
+                   parent_category_id = COALESCE(NULLIF(?, ''), parent_category_id),
+                   resource_url = COALESCE(NULLIF(?, ''), resource_url),
+                   updated_at = ?
+             WHERE object_type = ? AND object_id = ?
+            """,
+            (
+                parent_library_id or "",
+                parent_category_id or "",
+                resource_url or "",
+                int(time.time() * 1000),
+                object_type,
+                object_id,
+            ),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def list_asset_object_owners(object_type: str = "", user_id: str = "") -> list[dict]:
+    conditions = []
+    params = []
+    if object_type:
+        conditions.append("object_type = ?")
+        params.append(object_type)
+    if user_id:
+        conditions.append("user_id = ?")
+        params.append(user_id)
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            f"SELECT * FROM user_asset_object_map {where} ORDER BY updated_at DESC",
+            params,
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def asset_object_belongs_to_user(object_type: str, object_id: str, user_id: str) -> bool:
+    return bool(user_id and get_asset_object_owner(object_type, object_id) == user_id)
+
+
+def remove_asset_object_mapping(object_type: str, object_id: str) -> None:
+    object_type = (object_type or "").strip()
+    object_id = (object_id or "").strip()
+    if not object_type or not object_id:
+        return
+    conn = get_db()
+    try:
+        conn.execute(
+            "DELETE FROM user_asset_object_map WHERE object_type = ? AND object_id = ?",
+            (object_type, object_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def delete_asset_object_owner(object_type: str, object_id: str) -> None:
+    remove_asset_object_mapping(object_type, object_id)
 
 
 def record_canvas_image_task_owner(user_id: str, task_id: str) -> bool:

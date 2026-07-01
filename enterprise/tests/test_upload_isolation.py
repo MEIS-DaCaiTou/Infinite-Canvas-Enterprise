@@ -295,6 +295,7 @@ async def _run_checks() -> None:
         assert edb.get_resource_owner("/assets/library/characters/lib-b.png") == user_b["id"]
         assert edb.get_resource_owner("/assets/library/characters/lib-admin.png") == admin["id"]
         assert edb.get_resource_owner("/assets/library/characters/lib-legacy.png") is None
+        edb.record_asset_object_owner(user_b["id"], "category", "empty", parent_library_id="default", source="test")
 
         asset_library_data = {
             "active_library_id": "default",

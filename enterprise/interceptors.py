@@ -120,6 +120,8 @@ _ASSET_LIBRARY_NEW_ITEM_PATHS = {
     "api/shared-folders/import",
     "api/canvas-workflows/export-to-library",
 }
+_ASSET_LIBRARY_SYSTEM_LIBRARY_IDS = {"default"}
+_ASSET_LIBRARY_SYSTEM_CATEGORY_IDS = {"characters", "scenes", "workflows"}
 
 _COMFY_INPUT_RESPONSE_PATHS = {
     "api/upload",
@@ -573,7 +575,10 @@ def _can_manage_resource(user: dict, resource_url: str) -> bool:
         return False
     if _is_admin(user):
         return True
-    return edb.get_resource_owner(normalized) == _user_id(user)
+    user_id = _user_id(user)
+    if edb.get_resource_owner(normalized) == user_id:
+        return True
+    return edb.get_asset_item_owner_by_resource(normalized) == user_id
 
 
 def _audit_local_asset_operation(user: dict, path: str, method: str, resources: set[str]) -> None:
@@ -643,6 +648,247 @@ def _iter_asset_library_items(data: Any):
             for item in category.get("items") or []:
                 if isinstance(item, dict):
                     yield library_id, category_id, item
+
+
+def _iter_asset_library_categories(data: Any):
+    if not isinstance(data, dict):
+        return
+    for library in data.get("libraries") or []:
+        if not isinstance(library, dict):
+            continue
+        library_id = str(library.get("id") or "")
+        for category in library.get("categories") or []:
+            if isinstance(category, dict):
+                yield library_id, category
+
+
+def _find_asset_library_library(data: Any, library_id: str) -> Optional[dict]:
+    library_id = str(library_id or "").strip()
+    if not library_id or not isinstance(data, dict):
+        return None
+    for library in data.get("libraries") or []:
+        if isinstance(library, dict) and str(library.get("id") or "") == library_id:
+            return library
+    return None
+
+
+def _find_asset_library_category(data: Any, category_id: str, library_id: str = "") -> tuple[str, Optional[dict]]:
+    category_id = str(category_id or "").strip()
+    library_id = str(library_id or "").strip()
+    if not category_id:
+        return "", None
+    for lib_id, category in _iter_asset_library_categories(data):
+        if library_id and lib_id != library_id:
+            continue
+        if str(category.get("id") or "") == category_id:
+            return lib_id, category
+    return "", None
+
+
+def _find_asset_library_item(data: Any, item_id: str, library_id: str = "") -> tuple[str, str, Optional[dict]]:
+    item_id = str(item_id or "").strip()
+    library_id = str(library_id or "").strip()
+    if not item_id:
+        return "", "", None
+    for lib_id, category_id, item in _iter_asset_library_items(data):
+        if library_id and lib_id != library_id:
+            continue
+        if str(item.get("id") or "") == item_id:
+            return lib_id, category_id, item
+    return "", "", None
+
+
+def _asset_library_item_owner(item: Any) -> Optional[str]:
+    if not isinstance(item, dict):
+        return None
+    item_id = str(item.get("id") or "").strip()
+    if item_id:
+        owner = edb.get_asset_object_owner("item", item_id)
+        if owner:
+            return owner
+    resource_url = _asset_library_item_resource_url(item)
+    if resource_url:
+        owner = edb.get_resource_owner(resource_url)
+        if owner:
+            return owner
+        owner = edb.get_asset_item_owner_by_resource(resource_url)
+        if owner:
+            return owner
+    return None
+
+
+def _asset_library_object_owned_by_user(object_type: str, object_id: str, user_id: str) -> bool:
+    owner = edb.get_asset_object_owner(object_type, object_id)
+    return bool(owner and owner == user_id)
+
+
+def _is_system_asset_library(library_id: str) -> bool:
+    return str(library_id or "") in _ASSET_LIBRARY_SYSTEM_LIBRARY_IDS
+
+
+def _is_system_asset_category(library_id: str, category_id: str) -> bool:
+    return (
+        _is_system_asset_library(library_id)
+        and str(category_id or "") in _ASSET_LIBRARY_SYSTEM_CATEGORY_IDS
+        and not edb.get_asset_object_owner("category", category_id)
+    )
+
+
+def _can_use_asset_library_target(user: dict, library_id: str = "", category_id: str = "") -> bool:
+    if _is_admin(user):
+        return True
+    data = _asset_library_data()
+    user_id = _user_id(user)
+    library_id = str(library_id or "").strip()
+    category_id = str(category_id or "").strip()
+
+    if not library_id and not category_id:
+        return True
+
+    if library_id:
+        if not _find_asset_library_library(data, library_id):
+            return False
+        if not (
+            _asset_library_object_owned_by_user("library", library_id, user_id)
+            or _is_system_asset_library(library_id)
+        ):
+            return False
+
+    if category_id:
+        cat_library_id, category = _find_asset_library_category(data, category_id, library_id)
+        if not category:
+            return False
+        if not (
+            _asset_library_object_owned_by_user("category", category_id, user_id)
+            or _is_system_asset_category(cat_library_id, category_id)
+        ):
+            return False
+
+    return True
+
+
+def _can_manage_asset_library_item(user: dict, item: Any) -> bool:
+    if _is_admin(user):
+        return True
+    return _asset_library_item_owner(item) == _user_id(user)
+
+
+def _asset_library_item_ids_from_payload(payload: Mapping[str, Any]) -> set[str]:
+    ids = payload.get("ids")
+    if isinstance(ids, list):
+        return {str(item).strip() for item in ids if str(item).strip()}
+    item_id = str(payload.get("id") or payload.get("item_id") or "").strip()
+    return {item_id} if item_id else set()
+
+
+def _asset_library_items_for_category(data: Any, category_id: str, library_id: str = "") -> list[dict]:
+    items = []
+    for lib_id, cat_id, item in _iter_asset_library_items(data):
+        if library_id and lib_id != library_id:
+            continue
+        if cat_id == category_id:
+            items.append(item)
+    return items
+
+
+def _asset_library_items_for_library(data: Any, library_id: str) -> list[dict]:
+    return [item for lib_id, _cat_id, item in _iter_asset_library_items(data) if lib_id == library_id]
+
+
+def _asset_library_denial_for_user(
+    user: dict,
+    path: str,
+    method: str,
+    query_params: Optional[Mapping[str, Any]],
+    body: bytes | None,
+) -> Optional[JSONResponse]:
+    method = method.upper()
+    payload = _json_from_body(body)
+    payload = payload if isinstance(payload, dict) else {}
+    if path.startswith("api/shared-folders"):
+        if not _is_admin(user):
+            return _deny_forbidden("需要管理员权限才能访问共享文件夹")
+        if method != "GET":
+            _audit_asset_library_business_operation(user, path, method, payload, set())
+        return None
+
+    if not (path.startswith("api/asset-library") or path == "api/canvas-workflows/export-to-library"):
+        return None
+    if path == "api/asset-library" and method == "GET":
+        return None
+
+    data = _asset_library_data()
+    library_id = str(payload.get("library_id") or _query_get(query_params, "library_id") or "").strip()
+    target_library_id = str(payload.get("target_library_id") or "").strip()
+    category_id = str(payload.get("category_id") or _query_get(query_params, "category_id") or "").strip()
+    target_category_id = str(payload.get("target_category_id") or "").strip()
+    is_admin = _is_admin(user)
+    touched_resources: set[str] = set()
+
+    def deny() -> JSONResponse:
+        return _deny_not_found("素材不存在或无权限访问")
+
+    def require_target(lib_id: str = "", cat_id: str = "") -> Optional[JSONResponse]:
+        if not _can_use_asset_library_target(user, lib_id, cat_id):
+            return deny()
+        return None
+
+    def require_items(ids: set[str], lib_id: str = "") -> Optional[JSONResponse]:
+        for item_id in ids:
+            _lib_id, _cat_id, item = _find_asset_library_item(data, item_id, lib_id)
+            if not item or not _can_manage_asset_library_item(user, item):
+                return deny()
+            resource_url = _asset_library_item_resource_url(item)
+            if resource_url:
+                touched_resources.add(resource_url)
+        return None
+
+    response: Optional[JSONResponse] = None
+    parts = path.split("/")
+
+    if path == "api/canvas-workflows/export-to-library" and method == "POST":
+        response = require_target(library_id, category_id)
+    elif path == "api/asset-library/libraries" and method == "POST":
+        response = None
+    elif len(parts) >= 4 and parts[:3] == ["api", "asset-library", "libraries"]:
+        object_id = parts[3]
+        if method in {"PATCH", "DELETE"}:
+            if not is_admin and not _asset_library_object_owned_by_user("library", object_id, _user_id(user)):
+                response = deny()
+            elif method == "DELETE":
+                response = require_items({str(item.get("id") or "") for item in _asset_library_items_for_library(data, object_id)}, object_id)
+    elif path == "api/asset-library/categories" and method == "POST":
+        response = require_target(library_id, "")
+    elif len(parts) >= 4 and parts[:3] == ["api", "asset-library", "categories"]:
+        object_id = parts[3]
+        cat_library_id, _category = _find_asset_library_category(data, object_id, library_id)
+        if method in {"PATCH", "DELETE"}:
+            if not is_admin and not _asset_library_object_owned_by_user("category", object_id, _user_id(user)):
+                response = deny()
+            elif method == "DELETE":
+                category_items = _asset_library_items_for_category(data, object_id, cat_library_id)
+                if category_items:
+                    response = deny()
+                else:
+                    response = require_items(set(), cat_library_id)
+    elif path in {"api/asset-library/items", "api/asset-library/items/batch"} and method == "POST":
+        response = require_target(library_id, category_id)
+    elif path == "api/asset-library/workflows/upload" and method == "POST":
+        response = require_target(library_id, category_id)
+    elif path in {"api/asset-library/items/delete", "api/asset-library/items/classify"} and method == "POST":
+        response = require_items(_asset_library_item_ids_from_payload(payload), library_id)
+    elif path in {"api/asset-library/items/move", "api/asset-library/items/crop"} and method == "POST":
+        response = require_items(_asset_library_item_ids_from_payload(payload), library_id)
+        if response is None:
+            response = require_target(target_library_id or library_id, target_category_id)
+    else:
+        item_id = _asset_library_item_id_from_path(path)
+        if item_id and method in {"PATCH", "DELETE", "POST"}:
+            response = require_items({item_id}, library_id)
+
+    if response is None and is_admin and method != "GET":
+        _audit_asset_library_business_operation(user, path, method, payload, touched_resources)
+    return response
 
 
 def _asset_library_urls_for_item_ids(ids: set[str], library_id: str = "") -> set[str]:
@@ -750,6 +996,64 @@ def _audit_asset_library_operation(user: dict, path: str, method: str, resources
         )
     except Exception as exc:
         print(f"[enterprise] audit asset library operation failed: user={_user_id(user)} path={path} error={exc}")
+
+
+def _asset_library_business_action(path: str, method: str) -> str:
+    method = method.upper()
+    if path.startswith("api/shared-folders"):
+        if method == "POST":
+            return "asset_library_shared_folder_saved"
+        if method == "DELETE":
+            return "asset_library_shared_folder_deleted"
+        return ""
+    if path.endswith("/register-avatar") or path.endswith("/avatar-status"):
+        return "asset_library_avatar_updated"
+    if path.endswith("/delete") or method == "DELETE":
+        return "asset_library_deleted"
+    if path.endswith("/move"):
+        return "asset_library_moved"
+    if path.endswith("/classify"):
+        return "asset_library_classified"
+    if path.endswith("/crop"):
+        return "asset_library_cropped"
+    if method == "PATCH":
+        return "asset_library_renamed"
+    if method == "POST":
+        return "asset_library_saved"
+    return ""
+
+
+def _audit_asset_library_business_operation(
+    user: dict,
+    path: str,
+    method: str,
+    payload: Mapping[str, Any],
+    resources: set[str],
+) -> None:
+    if not _is_admin(user):
+        return
+    action = _asset_library_business_action(path, method)
+    if not action:
+        return
+    try:
+        ids = payload.get("ids") if isinstance(payload.get("ids"), list) else []
+        edb.log_action(
+            _user_id(user),
+            action,
+            json.dumps({
+                "path": path,
+                "method": method.upper(),
+                "library_id": payload.get("library_id") or "",
+                "category_id": payload.get("category_id") or "",
+                "target_library_id": payload.get("target_library_id") or "",
+                "target_category_id": payload.get("target_category_id") or "",
+                "affected_count": len(ids) if ids else (len(resources) if resources else 1),
+                "ids": [str(item) for item in ids[:50]],
+                "resources": sorted(resources)[:50],
+            }, ensure_ascii=False),
+        )
+    except Exception as exc:
+        print(f"[enterprise] audit asset library business operation failed: user={_user_id(user)} path={path} error={exc}")
 
 
 @lru_cache(maxsize=1)
@@ -1237,6 +1541,9 @@ def can_access_resource(user: dict, resource_url: str) -> bool:
     if owner == user_id:
         return True
 
+    if edb.get_asset_item_owner_by_resource(normalized) == user_id:
+        return True
+
     if _resource_in_user_canvas_scope(user_id, normalized):
         return True
 
@@ -1452,6 +1759,10 @@ async def pre_process(
             return _deny_not_found("资源不存在或无权限访问")
     if local_asset_manage_urls:
         _audit_local_asset_operation(user, path, method, local_asset_manage_urls)
+
+    asset_library_denial = _asset_library_denial_for_user(user, path, method, query_params, body)
+    if asset_library_denial is not None:
+        return asset_library_denial
 
     asset_library_manage_urls = _asset_library_manage_urls_from_request(path, method, query_params, body)
     for resource_url in asset_library_manage_urls:
@@ -1777,27 +2088,87 @@ def filter_resource_collections(user: dict, data: Any) -> bool:
 def _is_owned_asset_library_item(user: dict, item: Any) -> bool:
     if _is_admin(user):
         return True
-    resource_url = _asset_library_item_resource_url(item)
-    if not _is_protected_resource(resource_url):
+    return _asset_library_item_owner(item) == _user_id(user)
+
+
+def _asset_library_category_visible(user: dict, library_id: str, library_owner: Optional[str], category: dict) -> bool:
+    if _is_admin(user):
         return True
-    return edb.get_resource_owner(resource_url) == _user_id(user)
+    category_id = str(category.get("id") or "")
+    user_id = _user_id(user)
+    category_owner = edb.get_asset_object_owner("category", category_id)
+    if category_owner == user_id:
+        return True
+    if library_owner == user_id and not category_owner:
+        return True
+    return _is_system_asset_category(library_id, category_id)
 
 
-def _filter_asset_library_categories(user: dict, categories: Any) -> bool:
-    if _is_admin(user) or not isinstance(categories, list):
-        return False
-    changed = False
-    for category in categories:
-        if not isinstance(category, dict):
-            continue
-        items = category.get("items")
-        if not isinstance(items, list):
-            continue
-        filtered = [item for item in items if _is_owned_asset_library_item(user, item)]
-        if len(filtered) != len(items):
-            category["items"] = filtered
-            changed = True
-    return changed
+def _filter_asset_library_category_for_user(
+    user: dict,
+    library_id: str,
+    library_owner: Optional[str],
+    category: Any,
+) -> Optional[dict]:
+    if not isinstance(category, dict):
+        return None
+    visible = _asset_library_category_visible(user, library_id, library_owner, category)
+    source_items = category.get("items") if isinstance(category.get("items"), list) else []
+    items = [item for item in source_items if _is_owned_asset_library_item(user, item)]
+    if not visible and not items:
+        return None
+    if not visible:
+        return None
+    next_category = dict(category)
+    next_category["items"] = items
+    return next_category
+
+
+def _default_asset_library_shell(root: dict, user: dict) -> dict:
+    default = _find_asset_library_library(root, "default")
+    categories = []
+    if isinstance(default, dict):
+        for category in default.get("categories") or []:
+            if not isinstance(category, dict):
+                continue
+            if not _is_system_asset_category("default", str(category.get("id") or "")):
+                continue
+            filtered = _filter_asset_library_category_for_user(user, "default", None, category)
+            if filtered:
+                categories.append(filtered)
+    if not categories:
+        categories = [
+            {"id": "characters", "name": "角色", "type": "image", "items": []},
+            {"id": "scenes", "name": "场景", "type": "image", "items": []},
+            {"id": "workflows", "name": "工作流", "type": "workflow", "items": []},
+        ]
+    return {
+        "id": "default",
+        "name": str((default or {}).get("name") or "默认资产库"),
+        "type": "asset",
+        "categories": categories,
+    }
+
+
+def _filter_asset_library_library_for_user(user: dict, library: Any) -> Optional[dict]:
+    if not isinstance(library, dict):
+        return None
+    library_id = str(library.get("id") or "")
+    user_id = _user_id(user)
+    library_owner = edb.get_asset_object_owner("library", library_id)
+    library_visible = library_owner == user_id or _is_system_asset_library(library_id)
+    categories = []
+    for category in library.get("categories") or []:
+        filtered = _filter_asset_library_category_for_user(user, library_id, library_owner, category)
+        if filtered is not None:
+            categories.append(filtered)
+    if not library_visible and not categories:
+        return None
+    if not library_visible:
+        return None
+    next_library = dict(library)
+    next_library["categories"] = categories
+    return next_library
 
 
 def filter_asset_library(user: dict, data: Any) -> bool:
@@ -1806,14 +2177,28 @@ def filter_asset_library(user: dict, data: Any) -> bool:
     root = data.get("library") if isinstance(data.get("library"), dict) else data
     if not isinstance(root, dict):
         return False
-    changed = False
     libraries = root.get("libraries")
     if isinstance(libraries, list):
+        filtered_libraries = []
         for library in libraries:
-            if isinstance(library, dict):
-                changed = _filter_asset_library_categories(user, library.get("categories")) or changed
-    changed = _filter_asset_library_categories(user, root.get("categories")) or changed
-    return changed
+            filtered = _filter_asset_library_library_for_user(user, library)
+            if filtered is not None:
+                filtered_libraries.append(filtered)
+        if not filtered_libraries:
+            filtered_libraries.append(_default_asset_library_shell(root, user))
+        active_library_id = str(root.get("active_library_id") or "")
+        if not any(str(lib.get("id") or "") == active_library_id for lib in filtered_libraries):
+            active_library_id = str(filtered_libraries[0].get("id") or "default")
+        root["libraries"] = filtered_libraries
+        root["active_library_id"] = active_library_id
+        active = next((lib for lib in filtered_libraries if str(lib.get("id") or "") == active_library_id), filtered_libraries[0])
+        root["categories"] = active.get("categories") if isinstance(active.get("categories"), list) else []
+        return True
+    if isinstance(root.get("categories"), list):
+        shell = _default_asset_library_shell({"libraries": [{"id": "default", "categories": root.get("categories")}]}, user)
+        root["categories"] = shell["categories"]
+        return True
+    return False
 
 
 def record_resource_urls_for_user(user_id: str, source: str, data: Any) -> None:
@@ -1921,27 +2306,163 @@ def _asset_library_new_items_from_response(path: str, data: Any) -> list[dict]:
     return [item for item in items if isinstance(item, dict)] if isinstance(items, list) else []
 
 
-def _record_asset_library_response_resources(user: dict, path: str, data: Any) -> bool:
+def _asset_library_parent_for_item(data: Any, item_id: str) -> tuple[str, str]:
+    library_id, category_id, _item = _find_asset_library_item(data, item_id)
+    return library_id, category_id
+
+
+def _record_asset_library_category_owner_safe(
+    user_id: str,
+    category: Any,
+    library_id: str,
+    source: str,
+) -> None:
+    if not isinstance(category, dict):
+        return
+    category_id = str(category.get("id") or "").strip()
+    if not category_id:
+        return
+    try:
+        edb.record_asset_object_owner(
+            user_id,
+            "category",
+            category_id,
+            parent_library_id=library_id,
+            source=source,
+        )
+    except Exception as exc:
+        print(f"[enterprise] record asset category owner failed: user={user_id} category={category_id} error={exc}")
+
+
+def _record_asset_library_item_owner_safe(
+    user_id: str,
+    item: Any,
+    library_id: str,
+    category_id: str,
+    source: str,
+) -> None:
+    if not isinstance(item, dict):
+        return
+    item_id = str(item.get("id") or "").strip()
+    if not item_id:
+        return
+    resource_url = _asset_library_item_resource_url(item)
+    try:
+        edb.record_asset_object_owner(
+            user_id,
+            "item",
+            item_id,
+            parent_library_id=library_id,
+            parent_category_id=category_id,
+            resource_url=resource_url,
+            source=source,
+        )
+    except Exception as exc:
+        print(f"[enterprise] record asset item owner failed: user={user_id} item={item_id} error={exc}")
+    _record_resource_owner_safe(user_id, resource_url, f"{source}:asset_library")
+
+
+def _record_asset_library_object_owners_from_response(
+    user: dict,
+    path: str,
+    method: str,
+    body: bytes | None,
+    data: Any,
+) -> None:
+    if not isinstance(data, dict):
+        return
+    user_id = _user_id(user)
+    payload = _json_from_body(body)
+    payload = payload if isinstance(payload, dict) else {}
+    library_data = data.get("library") if isinstance(data.get("library"), dict) else data
+    source = f"{path}:{method.lower()}"
+
+    if path == "api/asset-library/libraries" and method.upper() == "POST":
+        library = data.get("asset_library")
+        if isinstance(library, dict):
+            library_id = str(library.get("id") or "").strip()
+            if library_id:
+                edb.record_asset_object_owner(user_id, "library", library_id, source=source)
+                for category in library.get("categories") or []:
+                    _record_asset_library_category_owner_safe(user_id, category, library_id, source)
+        return
+
+    if path == "api/asset-library/categories" and method.upper() == "POST":
+        category = data.get("category")
+        library_id = str(payload.get("library_id") or "").strip()
+        if not library_id and isinstance(category, dict):
+            library_id, _category = _find_asset_library_category(library_data, str(category.get("id") or ""))
+        _record_asset_library_category_owner_safe(user_id, category, library_id, source)
+        return
+
+    if path == "api/asset-library/items/move" and method.upper() == "POST":
+        target_library_id = str(payload.get("target_library_id") or payload.get("library_id") or "").strip()
+        target_category_id = str(payload.get("target_category_id") or "").strip()
+        for item_id in _asset_library_item_ids_from_payload(payload):
+            library_id = target_library_id
+            category_id = target_category_id
+            if not library_id or not category_id:
+                found_library, found_category = _asset_library_parent_for_item(library_data, item_id)
+                library_id = library_id or found_library
+                category_id = category_id or found_category
+            edb.update_asset_object_parent(
+                "item",
+                item_id,
+                parent_library_id=library_id,
+                parent_category_id=category_id,
+            )
+        return
+
+    if path in {"api/asset-library/items/delete"} and method.upper() == "POST":
+        for item_id in _asset_library_item_ids_from_payload(payload):
+            edb.remove_asset_object_mapping("item", item_id)
+        return
+
+    item_id = _asset_library_item_id_from_path(path)
+    if item_id and method.upper() == "DELETE":
+        edb.remove_asset_object_mapping("item", item_id)
+        return
+
+    parts = path.split("/")
+    if len(parts) >= 4 and parts[:3] == ["api", "asset-library", "categories"] and method.upper() == "DELETE":
+        edb.remove_asset_object_mapping("category", parts[3])
+        return
+    if len(parts) >= 4 and parts[:3] == ["api", "asset-library", "libraries"] and method.upper() == "DELETE":
+        edb.remove_asset_object_mapping("library", parts[3])
+        return
+
+    for item in _asset_library_new_items_from_response(path, data):
+        item_id = str(item.get("id") or "").strip()
+        library_id = str(payload.get("library_id") or "").strip()
+        category_id = str(payload.get("category_id") or "").strip()
+        if item_id and (not library_id or not category_id):
+            found_library, found_category = _asset_library_parent_for_item(library_data, item_id)
+            library_id = library_id or found_library
+            category_id = category_id or found_category
+        _record_asset_library_item_owner_safe(user_id, item, library_id, category_id, source)
+
+
+def _record_asset_library_response_resources(user: dict, path: str, method: str, body: bytes | None, data: Any) -> bool:
     if not (
         path.startswith("api/asset-library/")
         or path in {"api/shared-folders/import", "api/canvas-workflows/export-to-library"}
     ):
         return False
-    user_id = _user_id(user)
-    for item in _asset_library_new_items_from_response(path, data):
-        resource_url = _asset_library_item_resource_url(item)
-        _record_resource_owner_safe(user_id, resource_url, f"{path}:asset_library")
+    _record_asset_library_object_owners_from_response(user, path, method, body, data)
     return True
 
 
 def record_resources_from_data(user: dict, path: str, method: str, data: Any, request_body: bytes | None = None) -> None:
+    if (
+        method.upper() in {"POST", "PUT", "PATCH", "DELETE"}
+        and _record_asset_library_response_resources(user, path, method, request_body, data)
+    ):
+        return
     if method.upper() not in {"POST", "PUT", "PATCH"}:
         return
     if _record_comfy_input_response_resources(_user_id(user), path, data):
         return
     if _record_local_asset_response_resources(user, path, request_body, data):
-        return
-    if _record_asset_library_response_resources(user, path, data):
         return
     record_resource_urls_for_user(_user_id(user), path, data)
 
