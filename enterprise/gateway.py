@@ -468,6 +468,54 @@ def _build_enterprise_shell_guard(user: dict) -> str:
     blockSettingsFrames();
     installSettingsClickGuard();
   }
+  function enterpriseClientId(){
+    try {
+      const existing = localStorage.getItem('client_id');
+      if(existing) return existing;
+      const generated = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : ('ent-' + Date.now() + '-' + Math.random().toString(16).slice(2));
+      localStorage.setItem('client_id', generated);
+      return generated;
+    } catch(e) {
+      return 'ent-' + Date.now() + '-' + Math.random().toString(16).slice(2);
+    }
+  }
+  function ensureStatsWebSocket(){
+    if(window.top !== window) return;
+    if(!window.WebSocket || window.__enterpriseStatsWsConnecting) return;
+    const current = window.__enterpriseStatsWs;
+    if(current && (current.readyState === WebSocket.OPEN || current.readyState === WebSocket.CONNECTING)) return;
+    window.__enterpriseStatsWsConnecting = true;
+    const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
+    const clientId = enterpriseClientId();
+    const wsUrl = protocol + '://' + location.host + '/ws/stats?client_id=' + encodeURIComponent(clientId);
+    try {
+      const ws = new WebSocket(wsUrl);
+      window.__enterpriseStatsWs = ws;
+      ws.onmessage = function(event){
+        let data = null;
+        try { data = JSON.parse(event.data); } catch(e) { return; }
+        if(!data || data.type !== 'stats') return;
+        const ov = byId('online-val');
+        if(ov) ov.innerText = data.online_count;
+      };
+      ws.onopen = function(){
+        window.__enterpriseStatsWsConnecting = false;
+        window.__enterpriseStatsWsRetryMs = 1000;
+      };
+      ws.onerror = function(){
+        window.__enterpriseStatsWsConnecting = false;
+      };
+      ws.onclose = function(){
+        window.__enterpriseStatsWsConnecting = false;
+        const delay = Math.min(window.__enterpriseStatsWsRetryMs || 1000, 10000);
+        window.__enterpriseStatsWsRetryMs = Math.min(delay * 2, 10000);
+        clearTimeout(window.__enterpriseStatsWsRetryTimer);
+        window.__enterpriseStatsWsRetryTimer = setTimeout(ensureStatsWebSocket, delay);
+      };
+    } catch(e) {
+      window.__enterpriseStatsWsConnecting = false;
+    }
+  }
   function sanitizeAdminSettingsFrames(){
     if(normalUser) return;
     settingsFrameIds.forEach(function(id){
@@ -531,6 +579,7 @@ def _build_enterprise_shell_guard(user: dict) -> str:
     else wrapAdminUpdateText();
     applyGovernance();
     enterpriseVersionOnly();
+    ensureStatsWebSocket();
     const target = document.body || document.documentElement;
     if(target) {
       new MutationObserver(function(){ applyGovernance(); }).observe(target, {
@@ -539,6 +588,7 @@ def _build_enterprise_shell_guard(user: dict) -> str:
       });
     }
     window.setInterval(applyGovernance, 1500);
+    window.setInterval(ensureStatsWebSocket, 5000);
   }
   if(document.readyState === 'loading') {
     install();
