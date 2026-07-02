@@ -86,6 +86,9 @@ class EnterpriseWsConnection:
     last_seen_at: int = field(default_factory=lambda: int(time.time() * 1000))
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     recent_event_ids: dict[str, int] = field(default_factory=dict)
+    closed_at: int = 0
+    close_reason: str = ""
+    send_failure_logged: bool = False
 
 
 _CONNECTIONS: dict[str, EnterpriseWsConnection] = {}
@@ -200,6 +203,10 @@ def register_connection(websocket: Any, user: Mapping[str, Any], path: str, clie
 def forget_connection(connection: EnterpriseWsConnection | str | None) -> None:
     connection_id = connection.connection_id if isinstance(connection, EnterpriseWsConnection) else str(connection or "")
     conn = _CONNECTIONS.pop(connection_id, None)
+    if isinstance(connection, EnterpriseWsConnection) and not connection.closed_at:
+        connection.closed_at = int(time.time() * 1000)
+        if not connection.close_reason:
+            connection.close_reason = "forgotten"
     if not conn or not conn.client_id:
         return
     users = _CLIENT_USERS.get(conn.client_id)
@@ -215,8 +222,26 @@ def forget_connection(connection: EnterpriseWsConnection | str | None) -> None:
         _CLIENT_USERS.pop(conn.client_id, None)
 
 
+def is_connection_active(connection: EnterpriseWsConnection | None) -> bool:
+    return bool(
+        connection
+        and not connection.closed_at
+        and _CONNECTIONS.get(connection.connection_id) is connection
+    )
+
+
+def mark_connection_dead(connection: EnterpriseWsConnection | None, reason: str = "") -> None:
+    if not connection:
+        return
+    if not connection.closed_at:
+        connection.closed_at = int(time.time() * 1000)
+    if reason and not connection.close_reason:
+        connection.close_reason = reason
+    forget_connection(connection)
+
+
 def active_connections() -> list[EnterpriseWsConnection]:
-    return list(_CONNECTIONS.values())
+    return [conn for conn in list(_CONNECTIONS.values()) if is_connection_active(conn)]
 
 
 def connection_snapshot() -> list[dict[str, Any]]:
@@ -401,6 +426,8 @@ def _remember_event(connection: EnterpriseWsConnection, message: Mapping[str, An
 
 
 async def send_to_connection(connection: EnterpriseWsConnection, message: Mapping[str, Any] | str) -> bool:
+    if not is_connection_active(connection):
+        return False
     if isinstance(message, str):
         text = message
         parsed, _raw = parse_ws_message(text)
@@ -416,8 +443,12 @@ async def send_to_connection(connection: EnterpriseWsConnection, message: Mappin
         connection.last_seen_at = int(time.time() * 1000)
         return True
     except Exception as exc:
-        print(f"[enterprise-ws] send failed user={connection.user_id} client={connection.client_id} error={exc}")
-        forget_connection(connection)
+        mark_connection_dead(connection, str(exc))
+        if not connection.send_failure_logged:
+            connection.send_failure_logged = True
+            error_text = str(exc)
+            if "Unexpected ASGI message" not in error_text and "websocket.close" not in error_text:
+                print(f"[enterprise-ws] send failed user={connection.user_id} client={connection.client_id} error={exc}")
         return False
 
 

@@ -44,6 +44,19 @@ class FakeWebSocket:
         self.messages.clear()
 
 
+class ClosedFakeWebSocket(FakeWebSocket):
+    def __init__(self) -> None:
+        super().__init__()
+        self.send_attempts = 0
+
+    async def send_text(self, text: str) -> None:
+        self.send_attempts += 1
+        raise RuntimeError(
+            "Unexpected ASGI message 'websocket.send', "
+            "after sending 'websocket.close' or response already completed."
+        )
+
+
 def _actor(user: dict, is_admin: bool = False) -> dict:
     return {
         "user_id": user["id"],
@@ -122,6 +135,28 @@ async def _run_checks() -> None:
         assert await ews.send_to_connection(conn_a, {"type": "stats", "online_count": 3}) is True
         assert [msg["type"] for msg in ws_a.decoded()] == ["stats", "stats"]
         ws_a.clear()
+
+        closed_ws = ClosedFakeWebSocket()
+        conn_closed = ews.register_connection(closed_ws, actor_a, "stats", "client-closed")
+        assert ews.visible_online_count() == 4
+        assert await ews.send_to_connection(conn_closed, {"type": "stats", "online_count": 4}) is False
+        assert conn_closed.closed_at > 0
+        assert all(item["connection_id"] != conn_closed.connection_id for item in ews.connection_snapshot())
+        assert ews.visible_online_count() == 3
+        assert closed_ws.send_attempts == 1
+        ews.forget_connection(conn_closed)
+        ews.forget_connection(conn_closed)
+        ws_a.clear()
+        ws_b.clear()
+        ws_admin.clear()
+        assert await ews.broadcast_stats() == 3
+        assert closed_ws.send_attempts == 1
+        assert [msg["type"] for msg in ws_a.decoded()] == ["stats"]
+        assert [msg["type"] for msg in ws_b.decoded()] == ["stats"]
+        assert [msg["type"] for msg in ws_admin.decoded()] == ["stats"]
+        ws_a.clear()
+        ws_b.clear()
+        ws_admin.clear()
 
         edb.record_canvas_owner(user_a["id"], "canvas-a")
         canvas_msg = {"type": "canvas_updated", "canvas_id": "canvas-a", "updated_at": 123, "client_id": "client-a"}
