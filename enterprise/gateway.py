@@ -12,6 +12,7 @@ import asyncio
 import json
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -41,6 +42,7 @@ from enterprise.config import (
 )
 from enterprise.auth import authenticate, create_token, verify_token
 from enterprise.db import init_db, log_action
+from enterprise import ws as enterprise_ws
 from enterprise.interceptors import (
     is_static_asset,
     is_stream_path,
@@ -466,6 +468,54 @@ def _build_enterprise_shell_guard(user: dict) -> str:
     blockSettingsFrames();
     installSettingsClickGuard();
   }
+  function enterpriseClientId(){
+    try {
+      const existing = localStorage.getItem('client_id');
+      if(existing) return existing;
+      const generated = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : ('ent-' + Date.now() + '-' + Math.random().toString(16).slice(2));
+      localStorage.setItem('client_id', generated);
+      return generated;
+    } catch(e) {
+      return 'ent-' + Date.now() + '-' + Math.random().toString(16).slice(2);
+    }
+  }
+  function ensureStatsWebSocket(){
+    if(window.top !== window) return;
+    if(!window.WebSocket || window.__enterpriseStatsWsConnecting) return;
+    const current = window.__enterpriseStatsWs;
+    if(current && (current.readyState === WebSocket.OPEN || current.readyState === WebSocket.CONNECTING)) return;
+    window.__enterpriseStatsWsConnecting = true;
+    const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
+    const clientId = enterpriseClientId();
+    const wsUrl = protocol + '://' + location.host + '/ws/stats?client_id=' + encodeURIComponent(clientId);
+    try {
+      const ws = new WebSocket(wsUrl);
+      window.__enterpriseStatsWs = ws;
+      ws.onmessage = function(event){
+        let data = null;
+        try { data = JSON.parse(event.data); } catch(e) { return; }
+        if(!data || data.type !== 'stats') return;
+        const ov = byId('online-val');
+        if(ov) ov.innerText = data.online_count;
+      };
+      ws.onopen = function(){
+        window.__enterpriseStatsWsConnecting = false;
+        window.__enterpriseStatsWsRetryMs = 1000;
+      };
+      ws.onerror = function(){
+        window.__enterpriseStatsWsConnecting = false;
+      };
+      ws.onclose = function(){
+        window.__enterpriseStatsWsConnecting = false;
+        const delay = Math.min(window.__enterpriseStatsWsRetryMs || 1000, 10000);
+        window.__enterpriseStatsWsRetryMs = Math.min(delay * 2, 10000);
+        clearTimeout(window.__enterpriseStatsWsRetryTimer);
+        window.__enterpriseStatsWsRetryTimer = setTimeout(ensureStatsWebSocket, delay);
+      };
+    } catch(e) {
+      window.__enterpriseStatsWsConnecting = false;
+    }
+  }
   function sanitizeAdminSettingsFrames(){
     if(normalUser) return;
     settingsFrameIds.forEach(function(id){
@@ -529,6 +579,7 @@ def _build_enterprise_shell_guard(user: dict) -> str:
     else wrapAdminUpdateText();
     applyGovernance();
     enterpriseVersionOnly();
+    ensureStatsWebSocket();
     const target = document.body || document.documentElement;
     if(target) {
       new MutationObserver(function(){ applyGovernance(); }).observe(target, {
@@ -537,6 +588,7 @@ def _build_enterprise_shell_guard(user: dict) -> str:
       });
     }
     window.setInterval(applyGovernance, 1500);
+    window.setInterval(ensureStatsWebSocket, 5000);
   }
   if(document.readyState === 'loading') {
     install();
@@ -684,9 +736,13 @@ async def ws_proxy(websocket: WebSocket, path: str):
         await websocket.close(code=1008)
         return
 
+    connection = None
     await websocket.accept()
-
-    upstream_ws_url = UPSTREAM_URL.replace("http://", "ws://") + f"/ws/{path}"
+    query_string = websocket.scope.get("query_string", b"").decode("utf-8", errors="ignore")
+    client_id = str(websocket.query_params.get("client_id") or "").strip()
+    connection = enterprise_ws.register_connection(websocket, user, path, client_id)
+    await enterprise_ws.broadcast_stats()
+    upstream_ws_url = enterprise_ws.build_upstream_ws_url(UPSTREAM_URL, path, query_string)
 
     try:
         import websockets as ws_lib
@@ -694,13 +750,16 @@ async def ws_proxy(websocket: WebSocket, path: str):
             async def recv_from_upstream():
                 try:
                     async for msg in upstream:
-                        await websocket.send_text(msg if isinstance(msg, str) else msg.decode())
+                        should_forward, text = enterprise_ws.should_forward_raw_message(connection, msg)
+                        if should_forward:
+                            await enterprise_ws.send_to_connection(connection, text)
                 except Exception:
                     pass
 
             async def recv_from_client():
                 try:
                     async for msg in websocket.iter_text():
+                        connection.last_seen_at = int(time.time() * 1000)
                         await upstream.send(msg)
                 except WebSocketDisconnect:
                     pass
@@ -714,6 +773,12 @@ async def ws_proxy(websocket: WebSocket, path: str):
     except Exception:
         try:
             await websocket.close(code=1011)
+        except Exception:
+            pass
+    finally:
+        enterprise_ws.forget_connection(connection)
+        try:
+            await enterprise_ws.broadcast_stats()
         except Exception:
             pass
 
