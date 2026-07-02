@@ -995,6 +995,7 @@ async def _forward(
             content_type=content_type,
             user=user,
             request_body=body,
+            query_params=request.query_params,
         )
         # 在 HTML 响应中注入用户信息栏
         if user and "text/html" in content_type:

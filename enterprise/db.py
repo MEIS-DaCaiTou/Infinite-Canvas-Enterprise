@@ -77,6 +77,27 @@ def init_db() -> None:
                 PRIMARY KEY (task_id)
             );
 
+            CREATE TABLE IF NOT EXISTS user_task_map (
+                task_type        TEXT NOT NULL,
+                task_id          TEXT NOT NULL,
+                user_id          TEXT NOT NULL,
+                source           TEXT,
+                canvas_id        TEXT,
+                workflow_id      TEXT,
+                upstream_task_id TEXT,
+                resource_url     TEXT,
+                status           TEXT,
+                created_at       INTEGER NOT NULL,
+                updated_at       INTEGER NOT NULL,
+                PRIMARY KEY (task_type, task_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_user_task_owner
+                ON user_task_map (user_id, task_type);
+
+            CREATE INDEX IF NOT EXISTS idx_user_task_upstream
+                ON user_task_map (upstream_task_id);
+
             CREATE TABLE IF NOT EXISTS user_history_map (
                 history_id   TEXT PRIMARY KEY,
                 user_id      TEXT NOT NULL,
@@ -965,6 +986,166 @@ def get_canvas_image_task_owner(task_id: str) -> Optional[str]:
 
 
 # ── 历史记录归属映射 ──────────────────────────────────────
+
+def record_task_owner(
+    user_id: str,
+    task_type: str,
+    task_id: str,
+    source: str = "",
+    canvas_id: str = "",
+    workflow_id: str = "",
+    upstream_task_id: str = "",
+    resource_url: str = "",
+    status: str = "",
+) -> bool:
+    """Record an enterprise owner for a provider or workflow task id."""
+    user_id = (user_id or "").strip()
+    task_type = (task_type or "").strip()
+    task_id = (task_id or "").strip()
+    if not user_id or not task_type or not task_id:
+        return False
+    now = int(time.time() * 1000)
+    conn = get_db()
+    try:
+        cur = conn.execute(
+            """
+            INSERT OR IGNORE INTO user_task_map
+                (task_type, task_id, user_id, source, canvas_id, workflow_id,
+                 upstream_task_id, resource_url, status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                task_type,
+                task_id,
+                user_id,
+                (source or "").strip(),
+                (canvas_id or "").strip(),
+                (workflow_id or "").strip(),
+                (upstream_task_id or "").strip(),
+                (resource_url or "").strip(),
+                (status or "").strip(),
+                now,
+                now,
+            ),
+        )
+        if cur.rowcount == 0:
+            conn.execute(
+                """
+                UPDATE user_task_map
+                   SET source = COALESCE(NULLIF(?, ''), source),
+                       canvas_id = COALESCE(NULLIF(?, ''), canvas_id),
+                       workflow_id = COALESCE(NULLIF(?, ''), workflow_id),
+                       upstream_task_id = COALESCE(NULLIF(?, ''), upstream_task_id),
+                       resource_url = COALESCE(NULLIF(?, ''), resource_url),
+                       status = COALESCE(NULLIF(?, ''), status),
+                       updated_at = ?
+                 WHERE task_type = ? AND task_id = ?
+                """,
+                (
+                    (source or "").strip(),
+                    (canvas_id or "").strip(),
+                    (workflow_id or "").strip(),
+                    (upstream_task_id or "").strip(),
+                    (resource_url or "").strip(),
+                    (status or "").strip(),
+                    now,
+                    task_type,
+                    task_id,
+                ),
+            )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def get_task_owner(task_type: str, task_id: str) -> Optional[str]:
+    task_type = (task_type or "").strip()
+    task_id = (task_id or "").strip()
+    if not task_type or not task_id:
+        return None
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT user_id FROM user_task_map WHERE task_type = ? AND task_id = ?",
+            (task_type, task_id),
+        ).fetchone()
+        return row["user_id"] if row else None
+    finally:
+        conn.close()
+
+
+def get_task_owner_any(task_id: str, task_types: Optional[list[str]] = None) -> Optional[str]:
+    task_id = (task_id or "").strip()
+    if not task_id:
+        return None
+    conn = get_db()
+    try:
+        if task_types:
+            clean_types = [(item or "").strip() for item in task_types if (item or "").strip()]
+            if not clean_types:
+                return None
+            placeholders = ",".join("?" for _ in clean_types)
+            row = conn.execute(
+                f"""
+                SELECT user_id FROM user_task_map
+                 WHERE task_id = ? AND task_type IN ({placeholders})
+                 ORDER BY updated_at DESC
+                 LIMIT 1
+                """,
+                [task_id, *clean_types],
+            ).fetchone()
+        else:
+            row = conn.execute(
+                """
+                SELECT user_id FROM user_task_map
+                 WHERE task_id = ?
+                 ORDER BY updated_at DESC
+                 LIMIT 1
+                """,
+                (task_id,),
+            ).fetchone()
+        return row["user_id"] if row else None
+    finally:
+        conn.close()
+
+
+def get_task(task_type: str, task_id: str) -> Optional[dict]:
+    task_type = (task_type or "").strip()
+    task_id = (task_id or "").strip()
+    if not task_type or not task_id:
+        return None
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT * FROM user_task_map WHERE task_type = ? AND task_id = ?",
+            (task_type, task_id),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def get_all_task_owner_map() -> dict[tuple[str, str], str]:
+    conn = get_db()
+    try:
+        rows = conn.execute("SELECT task_type, task_id, user_id FROM user_task_map").fetchall()
+        return {(row["task_type"], row["task_id"]): row["user_id"] for row in rows}
+    finally:
+        conn.close()
+
+
+def record_task_resource_owner(
+    task_type: str,
+    task_id: str,
+    resource_url: str,
+    source: str = "",
+) -> bool:
+    owner = get_task_owner(task_type, task_id)
+    if not owner:
+        return False
+    return record_resource_owner(owner, resource_url, source or f"task:{task_type}:{task_id}")
+
 
 def record_history_owner(
     user_id: str,

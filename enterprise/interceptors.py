@@ -97,6 +97,34 @@ _INPUT_REUSE_PREFIXES = (
     "api/canvas-comfy-tasks/",
 )
 
+TASK_TYPE_RUNNINGHUB = "runninghub"
+TASK_TYPE_PROVIDER_IMAGE = "provider_image"
+TASK_TYPE_ANGLE = "angle"
+TASK_TYPE_MODELSCOPE = "modelscope"
+TASK_TYPE_CANVAS_IMAGE = "canvas_image"
+TASK_TYPE_CANVAS_COMFY = "canvas_comfy"
+TASK_TYPE_CANVAS_VIDEO = "canvas_video"
+TASK_TYPE_COMFY_GENERATE = "comfy_generate"
+
+_IMAGE_TASK_QUERY_TYPES = (
+    TASK_TYPE_PROVIDER_IMAGE,
+    TASK_TYPE_CANVAS_IMAGE,
+    TASK_TYPE_ANGLE,
+    TASK_TYPE_MODELSCOPE,
+    TASK_TYPE_CANVAS_VIDEO,
+)
+
+_TASK_ID_KEYS = {
+    "task_id",
+    "taskId",
+    "request_id",
+    "requestId",
+    "prompt_id",
+    "promptId",
+    "submit_id",
+    "submitId",
+}
+
 _LOCAL_ASSET_MANAGE_PATHS = {
     "api/local-assets/delete",
     "api/local-assets/move",
@@ -266,6 +294,8 @@ def _query_get(query_params: Optional[Mapping[str, Any]], key: str) -> str:
     value = query_params.get(key)
     if value is None:
         return ""
+    if isinstance(value, (list, tuple)):
+        value = value[0] if value else ""
     return str(value)
 
 
@@ -1576,6 +1606,124 @@ def can_access_canvas_image_task(user: dict, task_id: str) -> bool:
     return bool(owner and owner == _user_id(user))
 
 
+def _task_ids_from_value(value: Any, found: Optional[list[str]] = None) -> list[str]:
+    found = found if found is not None else []
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if key in _TASK_ID_KEYS:
+                text = str(child or "").strip()
+                if text and text not in found:
+                    found.append(text)
+            _task_ids_from_value(child, found)
+    elif isinstance(value, list):
+        for child in value:
+            _task_ids_from_value(child, found)
+    return found
+
+
+def _task_ids_from_body(body: bytes | None) -> list[str]:
+    data = _json_from_body(body)
+    if data is None:
+        return []
+    return _task_ids_from_value(data)
+
+
+def _first_task_id_from_body(body: bytes | None) -> str:
+    ids = _task_ids_from_body(body)
+    return ids[0] if ids else ""
+
+
+def _workflow_id_from_body(body: bytes | None) -> str:
+    data = _json_from_body(body)
+    if not isinstance(data, dict):
+        return ""
+    return str(data.get("workflowId") or data.get("workflow_id") or "").strip()
+
+
+def _canvas_id_from_body(body: bytes | None) -> str:
+    data = _json_from_body(body)
+    if not isinstance(data, dict):
+        return ""
+    canvas_id = data.get("canvas_id") or data.get("canvasId")
+    if not canvas_id and isinstance(data.get("canvas"), dict):
+        canvas_id = data["canvas"].get("id")
+    return str(canvas_id or "").strip()
+
+
+def _history_owner_for_task_id(task_id: str) -> Optional[str]:
+    wanted = str(task_id or "").strip()
+    if not wanted:
+        return None
+    for record in _load_history_records():
+        if _history_record_task_id(record) != wanted:
+            continue
+        owner = edb.get_history_owner(history_id_for_record(record))
+        if owner:
+            return owner
+    return None
+
+
+def task_owner_for_id(task_id: str, task_types: Optional[list[str] | tuple[str, ...]] = None) -> Optional[str]:
+    task_id = str(task_id or "").strip()
+    if not task_id:
+        return None
+    owner = edb.get_task_owner_any(task_id, list(task_types) if task_types else None)
+    if owner:
+        return owner
+    owner = edb.get_canvas_image_task_owner(task_id)
+    if owner:
+        return owner
+    return _history_owner_for_task_id(task_id)
+
+
+def can_access_task(user: dict, task_type: str, task_id: str) -> bool:
+    if _is_admin(user):
+        return True
+    owner = edb.get_task_owner(task_type, task_id)
+    return bool(owner and owner == _user_id(user))
+
+
+def can_access_any_task(
+    user: dict,
+    task_id: str,
+    task_types: Optional[list[str] | tuple[str, ...]] = None,
+) -> bool:
+    if _is_admin(user):
+        return True
+    owner = task_owner_for_id(task_id, task_types)
+    return bool(owner and owner == _user_id(user))
+
+
+def _task_query_denial(
+    user: dict,
+    task_id: str,
+    task_types: Optional[list[str] | tuple[str, ...]] = None,
+) -> Optional[JSONResponse]:
+    if not task_id:
+        return _deny_not_found("task not found or access denied")
+    if not can_access_any_task(user, task_id, task_types):
+        return _deny_not_found("task not found or access denied")
+    return None
+
+
+def _task_query_denial_for_request(
+    path: str,
+    method: str,
+    user: dict,
+    query_params: Optional[Mapping[str, Any]],
+    body: bytes | None,
+) -> Optional[JSONResponse]:
+    method = method.upper()
+    if path == "api/runninghub/query" and method == "GET":
+        task_id = _query_get(query_params, "taskId") or _query_get(query_params, "task_id")
+        return _task_query_denial(user, task_id, [TASK_TYPE_RUNNINGHUB])
+    if path == "api/image-task-query" and method == "POST":
+        return _task_query_denial(user, _first_task_id_from_body(body), _IMAGE_TASK_QUERY_TYPES)
+    if path == "api/angle/poll_status" and method == "POST":
+        return _task_query_denial(user, _first_task_id_from_body(body), [TASK_TYPE_ANGLE])
+    return None
+
+
 def _resource_urls_from_request(
     path: str,
     method: str,
@@ -1753,6 +1901,10 @@ async def pre_process(
     canvas_task_id = _canvas_task_id_from_path(path)
     if canvas_task_id and not can_access_canvas_image_task(user, canvas_task_id):
         return _deny_not_found("生成任务不存在或无权限访问")
+
+    task_query_denial = _task_query_denial_for_request(path, method, user, query_params, body)
+    if task_query_denial is not None:
+        return task_query_denial
 
     local_asset_manage_urls = _local_asset_resource_urls_from_body(path, body)
     for resource_url in local_asset_manage_urls:
@@ -2468,6 +2620,164 @@ def _record_asset_library_response_resources(user: dict, path: str, method: str,
     return True
 
 
+def _task_status_from_data(data: Any) -> str:
+    if not isinstance(data, dict):
+        return ""
+    for key in ("status", "task_status", "taskStatus"):
+        value = data.get(key)
+        if value:
+            return str(value)
+    nested = data.get("data")
+    if isinstance(nested, dict):
+        for key in ("status", "task_status", "taskStatus"):
+            value = nested.get(key)
+            if value:
+                return str(value)
+    return ""
+
+
+def _record_task_owner_safe(
+    user_id: str,
+    task_type: str,
+    task_id: str,
+    source: str,
+    canvas_id: str = "",
+    workflow_id: str = "",
+    upstream_task_id: str = "",
+    resource_url: str = "",
+    status: str = "",
+) -> None:
+    try:
+        edb.record_task_owner(
+            user_id,
+            task_type,
+            task_id,
+            source=source,
+            canvas_id=canvas_id,
+            workflow_id=workflow_id,
+            upstream_task_id=upstream_task_id,
+            resource_url=resource_url,
+            status=status,
+        )
+    except Exception as exc:
+        print(f"[enterprise] record task owner failed: user={user_id} type={task_type} task={task_id} error={exc}")
+
+
+def _record_task_response_resources(
+    user: dict,
+    path: str,
+    task_type: str,
+    task_id: str,
+    data: Any,
+) -> None:
+    task_id = str(task_id or "").strip()
+    if not task_id:
+        return
+    owner = edb.get_task_owner(task_type, task_id)
+    if not owner and task_type != TASK_TYPE_PROVIDER_IMAGE:
+        owner = task_owner_for_id(task_id)
+    if not owner and not _is_admin(user):
+        owner = _user_id(user)
+    if not owner:
+        return
+    record_resource_urls_for_user(owner, f"task:{task_type}:{path}", data)
+    for resource_url in _extract_local_resource_urls(data):
+        _record_task_owner_safe(
+            owner,
+            task_type,
+            task_id,
+            path,
+            resource_url=resource_url,
+            status=_task_status_from_data(data),
+        )
+    record_history_payload_for_user_id(owner, path, data)
+
+
+def _record_generic_task_owners_from_response(
+    user: dict,
+    path: str,
+    method: str,
+    data: Any,
+    request_body: bytes | None,
+) -> None:
+    if method.upper() not in {"POST", "GET"} or not isinstance(data, dict):
+        return
+    user_id = _user_id(user)
+    if not user_id:
+        return
+    status = _task_status_from_data(data)
+    canvas_id = _canvas_id_from_body(request_body)
+    workflow_id = _workflow_id_from_body(request_body)
+    task_ids = _task_ids_from_value(data)
+    body_task_id = _first_task_id_from_body(request_body)
+
+    def record_all(task_type: str, source: str, ids: list[str], owner_id: str = "") -> None:
+        target_user_id = owner_id or user_id
+        for task_id in ids:
+            _record_task_owner_safe(
+                target_user_id,
+                task_type,
+                task_id,
+                source,
+                canvas_id=canvas_id,
+                workflow_id=workflow_id,
+                status=status,
+            )
+
+    if path == "api/runninghub/submit" and method.upper() == "POST":
+        record_all(TASK_TYPE_RUNNINGHUB, path, task_ids)
+        return
+    if path == "api/runninghub/workflow-submit" and method.upper() == "POST":
+        record_all(TASK_TYPE_RUNNINGHUB, path, task_ids)
+        return
+    if path == "api/canvas-video" and method.upper() == "POST":
+        record_all(TASK_TYPE_CANVAS_VIDEO, path, task_ids)
+        return
+    if path == "api/angle/generate" and method.upper() == "POST":
+        record_all(TASK_TYPE_ANGLE, path, task_ids)
+        return
+    if path == "api/angle/poll_status" and method.upper() == "POST" and body_task_id:
+        owner = task_owner_for_id(body_task_id, [TASK_TYPE_ANGLE]) or ("" if _is_admin(user) else user_id)
+        if owner:
+            _record_task_owner_safe(owner, TASK_TYPE_ANGLE, body_task_id, path, status=status)
+        return
+    if path == "api/ms/generate" and method.upper() == "POST":
+        record_all(TASK_TYPE_MODELSCOPE, path, task_ids)
+        return
+    if path in {"api/generate", "generate"} and method.upper() == "POST":
+        record_all(TASK_TYPE_COMFY_GENERATE, path, task_ids)
+        return
+    if path == "api/online-image" and method.upper() == "POST":
+        record_all(TASK_TYPE_PROVIDER_IMAGE, path, task_ids)
+        return
+    if path == "api/image-task-query" and method.upper() == "POST" and body_task_id:
+        owner = task_owner_for_id(body_task_id, _IMAGE_TASK_QUERY_TYPES) or ("" if _is_admin(user) else user_id)
+        if owner:
+            _record_task_owner_safe(owner, TASK_TYPE_PROVIDER_IMAGE, body_task_id, path, status=status)
+
+
+def _record_query_task_response_resources(
+    user: dict,
+    path: str,
+    method: str,
+    data: Any,
+    query_params: Optional[Mapping[str, Any]],
+    request_body: bytes | None,
+) -> None:
+    method = method.upper()
+    if path == "api/runninghub/query" and method == "GET":
+        task_id = _query_get(query_params, "taskId") or _query_get(query_params, "task_id")
+        _record_task_response_resources(user, path, TASK_TYPE_RUNNINGHUB, task_id, data)
+        return
+    if path == "api/image-task-query" and method == "POST":
+        task_id = _first_task_id_from_body(request_body)
+        _record_task_response_resources(user, path, TASK_TYPE_PROVIDER_IMAGE, task_id, data)
+        return
+    if path == "api/angle/poll_status" and method == "POST":
+        task_id = _first_task_id_from_body(request_body)
+        _record_task_response_resources(user, path, TASK_TYPE_ANGLE, task_id, data)
+
+
 def record_resources_from_data(user: dict, path: str, method: str, data: Any, request_body: bytes | None = None) -> None:
     if (
         method.upper() in {"POST", "PUT", "PATCH", "DELETE"}
@@ -2519,6 +2829,7 @@ async def post_process(
     content_type: str,
     user: dict,
     request_body: bytes | None = None,
+    query_params: Optional[Mapping[str, Any]] = None,
 ) -> Tuple[bytes, dict]:
     """
     返回 (处理后的 body bytes, 需要覆盖的响应头 dict)
@@ -2604,8 +2915,17 @@ async def post_process(
     if path in {"api/canvas-image-tasks", "api/canvas-comfy-tasks"} and method == "POST" and status_code in (200, 201):
         task_id = str(data.get("task_id") or "") if isinstance(data, dict) else ""
         if task_id:
+            task_type = TASK_TYPE_CANVAS_IMAGE if path == "api/canvas-image-tasks" else TASK_TYPE_CANVAS_COMFY
             try:
                 edb.record_canvas_image_task_owner(_user_id(user), task_id)
+                _record_task_owner_safe(
+                    _user_id(user),
+                    task_type,
+                    task_id,
+                    path,
+                    canvas_id=_canvas_id_from_body(request_body),
+                    status=str(data.get("status") or ""),
+                )
             except Exception as exc:
                 print(f"[enterprise] record canvas image task owner failed: user={_user_id(user)} task={task_id} error={exc}")
 
@@ -2614,10 +2934,22 @@ async def post_process(
         task_owner = edb.get_canvas_image_task_owner(canvas_task_id)
         if task_owner:
             record_resource_urls_for_user(task_owner, path, data)
+            upstream_task_id = str(data.get("upstream_task_id") or "") if isinstance(data, dict) else ""
+            if upstream_task_id:
+                _record_task_owner_safe(
+                    task_owner,
+                    TASK_TYPE_PROVIDER_IMAGE,
+                    upstream_task_id,
+                    path,
+                    upstream_task_id=upstream_task_id,
+                    status=str(data.get("status") or ""),
+                )
             if isinstance(data, dict) and str(data.get("status") or "").lower() == "succeeded":
                 record_history_payload_for_user_id(task_owner, path, data)
 
     if status_code in (200, 201):
+        _record_generic_task_owners_from_response(user, path, method, data, request_body)
+        _record_query_task_response_resources(user, path, method, data, query_params, request_body)
         record_resources_from_data(user, path, method, data, request_body)
         record_generated_history_for_user(user, path, method, data)
         if enterprise_ws.is_asset_library_write(path, method):
