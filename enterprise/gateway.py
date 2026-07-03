@@ -41,7 +41,7 @@ from enterprise.config import (
     UPSTREAM_URL,
 )
 from enterprise.auth import authenticate, create_token, verify_token
-from enterprise.db import init_db, log_action
+from enterprise.db import init_db, log_action, can_use_feature
 from enterprise import ws as enterprise_ws
 from enterprise.interceptors import (
     is_static_asset,
@@ -215,12 +215,23 @@ def _build_settings_access_denied_html(page_name: str = "设置页面") -> str:
 </html>"""
 
 
+def _settings_page_feature_key(path: str) -> str:
+    clean_path = (path or "").split("?", 1)[0].lstrip("/")
+    if clean_path == "static/api-settings.html":
+        return "api_settings_access"
+    if clean_path == "static/comfyui-settings.html":
+        return "workflow_settings_access"
+    return ""
+
+
 def _build_enterprise_shell_guard(user: dict) -> str:
     """Inject enterprise project-entry and update-permission governance into upstream HTML."""
     payload = {
         "repoUrl": ENTERPRISE_REPO_URL,
         "isAdmin": bool(user.get("is_admin")),
-        "updateEnabled": bool(ENTERPRISE_UPDATE_ENABLED and user.get("is_admin")),
+        "canApiSettings": bool(can_use_feature(user, "api_settings_access")),
+        "canWorkflowSettings": bool(can_use_feature(user, "workflow_settings_access")),
+        "updateEnabled": bool(ENTERPRISE_UPDATE_ENABLED and can_use_feature(user, "system_update")),
         "hideUpstreamAuthor": bool(ENTERPRISE_HIDE_UPSTREAM_AUTHOR or not user.get("is_admin")),
     }
     script = r'''
@@ -228,6 +239,8 @@ def _build_enterprise_shell_guard(user: dict) -> str:
 (function(){
   const cfg = __ENTERPRISE_CONFIG__;
   const normalUser = !cfg.isAdmin;
+  const canApiSettings = !!cfg.canApiSettings;
+  const canWorkflowSettings = !!cfg.canWorkflowSettings;
   let installed = false;
 
   function byId(id){ return document.getElementById(id); }
@@ -282,7 +295,7 @@ def _build_enterprise_shell_guard(user: dict) -> str:
     if(badge.textContent !== label) badge.textContent = label;
     const currentVersion = label.replace(/^v/, '');
     if(badge.dataset.currentVersion !== currentVersion) badge.dataset.currentVersion = currentVersion;
-    if(normalUser || !cfg.updateEnabled) {
+    if(!cfg.updateEnabled) {
       badge.classList.remove('checking');
       badge.removeAttribute('onclick');
       badge.removeAttribute('onkeydown');
@@ -378,6 +391,34 @@ def _build_enterprise_shell_guard(user: dict) -> str:
   function isSettingsPageId(id){
     return settingsPageIds.indexOf(String(id || '')) >= 0;
   }
+  function settingsKindFromText(text){
+    const value = String(text || '').toLowerCase();
+    if(value.includes('api-settings') || value.includes('api 设置') || value.includes('api 璁剧疆')) return 'api';
+    if(value.includes('comfyui-settings')) return 'workflow';
+    return '';
+  }
+  function settingsKindFromFrameId(id){
+    if(id === 'frame-api-settings' || id === 'api-settings') return 'api';
+    if(id === 'frame-comfyui-settings' || id === 'comfyui-settings') return 'workflow';
+    return '';
+  }
+  function canAccessSettingsKind(kind){
+    if(kind === 'api') return canApiSettings;
+    if(kind === 'workflow') return canWorkflowSettings;
+    return true;
+  }
+  function settingsTargetKind(el){
+    if(!el) return '';
+    const target = el.closest?.('button,a,[role="button"],[onclick],[href],.side-pill,.nav-item') || el;
+    const text = [
+      target.getAttribute?.('onclick') || '',
+      target.getAttribute?.('href') || '',
+      target.getAttribute?.('title') || '',
+      target.getAttribute?.('aria-label') || '',
+      target.textContent || ''
+    ].join(' ');
+    return settingsKindFromText(text);
+  }
   function matchesSettingsTarget(el){
     if(!el) return false;
     const target = el.closest?.('button,a,[role="button"],[onclick],[href],.side-pill,.nav-item') || el;
@@ -394,9 +435,11 @@ def _build_enterprise_shell_guard(user: dict) -> str:
       text.includes('工作流设置');
   }
   function hideSettingsEntrypoints(){
-    if(!normalUser) return;
+    if(canApiSettings && canWorkflowSettings) return;
     document.querySelectorAll('[onclick*="api-settings"],[onclick*="comfyui-settings"],a[href*="api-settings.html"],a[href*="comfyui-settings.html"]').forEach(function(el){
       const target = el.closest?.('.side-pill,.nav-item,button,a,[role="button"]') || el;
+      const kind = settingsTargetKind(target);
+      if(canAccessSettingsKind(kind)) return;
       target.hidden = true;
       target.setAttribute('aria-hidden', 'true');
       target.setAttribute('tabindex', '-1');
@@ -417,11 +460,12 @@ def _build_enterprise_shell_guard(user: dict) -> str:
     try { localStorage.setItem('studio_active_page', fallbackId); } catch(e) {}
   }
   function blockSettingsFrames(){
-    if(!normalUser) return;
+    if(canApiSettings && canWorkflowSettings) return;
     let blockedActive = false;
     settingsFrameIds.forEach(function(id){
       const frame = byId(id);
       if(!frame) return;
+      if(canAccessSettingsKind(settingsKindFromFrameId(id))) return;
       if(frame.classList.contains('active')) blockedActive = true;
       frame.removeAttribute('src');
       frame.removeAttribute('data-src');
@@ -432,7 +476,8 @@ def _build_enterprise_shell_guard(user: dict) -> str:
       frame.classList.remove('active');
     });
     try {
-      if(isSettingsPageId(localStorage.getItem('studio_active_page'))) blockedActive = true;
+      const activePage = localStorage.getItem('studio_active_page');
+      if(isSettingsPageId(activePage) && !canAccessSettingsKind(settingsKindFromFrameId(activePage))) blockedActive = true;
     } catch(e) {}
     if(blockedActive) activateFallbackPage();
   }
@@ -452,10 +497,11 @@ def _build_enterprise_shell_guard(user: dict) -> str:
     notice.__enterpriseTimer = setTimeout(function(){ notice.hidden = true; }, 2600);
   }
   function installSettingsClickGuard(){
-    if(!normalUser || window.__enterpriseSettingsClickGuardInstalled) return;
+    if((canApiSettings && canWorkflowSettings) || window.__enterpriseSettingsClickGuardInstalled) return;
     window.__enterpriseSettingsClickGuardInstalled = true;
     document.addEventListener('click', function(event){
-      if(!matchesSettingsTarget(event.target)) return;
+      const kind = settingsTargetKind(event.target);
+      if(!kind || canAccessSettingsKind(kind)) return;
       event.preventDefault();
       event.stopImmediatePropagation();
       showSettingsDeniedNotice();
@@ -463,7 +509,7 @@ def _build_enterprise_shell_guard(user: dict) -> str:
     }, true);
   }
   function guardSettingsEntrypoints(){
-    if(!normalUser) return;
+    if(canApiSettings && canWorkflowSettings) return;
     hideSettingsEntrypoints();
     blockSettingsFrames();
     installSettingsClickGuard();
@@ -539,12 +585,14 @@ def _build_enterprise_shell_guard(user: dict) -> str:
   }
   function applyGovernance(){
     document.body?.classList.toggle('enterprise-normal-user', normalUser);
+    document.body?.classList.toggle('enterprise-api-settings-denied', !canApiSettings);
+    document.body?.classList.toggle('enterprise-workflow-settings-denied', !canWorkflowSettings);
     document.body?.classList.toggle('enterprise-hide-upstream-author', !!cfg.hideUpstreamAuthor);
     setProjectEntry();
     governAuthor();
     guardSettingsEntrypoints();
     sanitizeAdminSettingsFrames();
-    if(normalUser || !cfg.updateEnabled) {
+    if(!cfg.updateEnabled) {
       hideUpdateUi();
       setVersionBadgeText();
     } else {
@@ -562,12 +610,12 @@ def _build_enterprise_shell_guard(user: dict) -> str:
       'body.enterprise-normal-user #update-source-list{display:none!important;}',
       'body.enterprise-hide-upstream-author .author-box{display:none!important;}',
       'body.enterprise-normal-user #project-version-badge{cursor:default!important;}',
-      'body.enterprise-normal-user [onclick*="api-settings"],',
-      'body.enterprise-normal-user [onclick*="comfyui-settings"],',
-      'body.enterprise-normal-user a[href*="api-settings.html"],',
-      'body.enterprise-normal-user a[href*="comfyui-settings.html"],',
-      'body.enterprise-normal-user #frame-api-settings,',
-      'body.enterprise-normal-user #frame-comfyui-settings{display:none!important;}'
+      'body.enterprise-api-settings-denied [onclick*="api-settings"],',
+      'body.enterprise-api-settings-denied a[href*="api-settings.html"],',
+      'body.enterprise-api-settings-denied #frame-api-settings{display:none!important;}',
+      'body.enterprise-workflow-settings-denied [onclick*="comfyui-settings"],',
+      'body.enterprise-workflow-settings-denied a[href*="comfyui-settings.html"],',
+      'body.enterprise-workflow-settings-denied #frame-comfyui-settings{display:none!important;}'
     ].join('\n');
     document.head.appendChild(style);
   }
@@ -575,7 +623,7 @@ def _build_enterprise_shell_guard(user: dict) -> str:
     if(installed) return;
     installed = true;
     installStyles();
-    if(normalUser || !cfg.updateEnabled) disableUpdateFunctions();
+    if(!cfg.updateEnabled) disableUpdateFunctions();
     else wrapAdminUpdateText();
     applyGovernance();
     enterpriseVersionOnly();
@@ -816,7 +864,8 @@ async def reverse_proxy(path: str, request: Request):
         user = getattr(request.state, "user", None)
         if not user:
             return RedirectResponse(f"/enterprise/login?next=/{path}")
-        if not user.get("is_admin"):
+        feature_key = _settings_page_feature_key(path)
+        if feature_key and not can_use_feature(user, feature_key):
             return HTMLResponse(
                 _build_settings_access_denied_html(_settings_page_name(path)),
                 status_code=403,

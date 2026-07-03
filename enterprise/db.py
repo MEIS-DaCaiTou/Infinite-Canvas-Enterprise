@@ -15,6 +15,48 @@ from typing import Optional
 from enterprise.config import DB_PATH, ADMIN_USERNAME, ADMIN_PASSWORD, ROOT_DIR
 
 
+FEATURE_FLAG_DEFINITIONS = {
+    "api_settings_access": {
+        "default_enabled": False,
+        "description": "Access API provider, key, base URL, and provider test settings.",
+    },
+    "workflow_settings_access": {
+        "default_enabled": False,
+        "description": "Access workflow, ComfyUI instance, RunningHub workflow, and related global settings.",
+    },
+    "runninghub_generation": {
+        "default_enabled": True,
+        "description": "Submit RunningHub generation tasks.",
+    },
+    "video_generation": {
+        "default_enabled": True,
+        "description": "Submit video generation tasks.",
+    },
+    "image_tools_generation": {
+        "default_enabled": True,
+        "description": "Submit online image, ZImage, Angle, ModelScope, and compatible image tool tasks.",
+    },
+    "asset_library_manage": {
+        "default_enabled": True,
+        "description": "Create, edit, move, delete, classify, crop, register, or import asset-library objects.",
+    },
+    "history_batch_delete": {
+        "default_enabled": True,
+        "description": "Delete generation history records through the history delete API.",
+    },
+    "local_asset_manage": {
+        "default_enabled": True,
+        "description": "Manage local-assets items, including move, rename, delete, caption, classify, and URL import.",
+    },
+    "system_update": {
+        "default_enabled": False,
+        "description": "Use enterprise-controlled upstream update endpoints and update UI.",
+    },
+}
+
+FEATURE_OVERRIDE_MODES = {"inherit", "allow", "deny"}
+
+
 def get_db() -> sqlite3.Connection:
     os.makedirs(os.path.dirname(os.path.abspath(DB_PATH)), exist_ok=True)
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -134,6 +176,26 @@ def init_db() -> None:
                 detail      TEXT,
                 ts          INTEGER NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS enterprise_feature_flags (
+                feature_key TEXT PRIMARY KEY,
+                enabled     INTEGER NOT NULL,
+                description TEXT,
+                updated_by  TEXT,
+                updated_at  INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS enterprise_user_feature_overrides (
+                user_id     TEXT NOT NULL,
+                feature_key TEXT NOT NULL,
+                mode        TEXT NOT NULL,
+                updated_by  TEXT,
+                updated_at  INTEGER NOT NULL,
+                PRIMARY KEY (user_id, feature_key)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_enterprise_user_feature_overrides_feature
+                ON enterprise_user_feature_overrides (feature_key);
         """)
         for column in ("parent_library_id", "parent_category_id"):
             try:
@@ -1265,6 +1327,237 @@ def get_all_history_owner_map() -> dict:
 
 
 # ── 使用日志 ──────────────────────────────────────────────
+
+# ─── Feature flags ──────────────────────────────────────────────────────────
+
+def is_known_feature_key(feature_key: str) -> bool:
+    return str(feature_key or "").strip() in FEATURE_FLAG_DEFINITIONS
+
+
+def _normalize_feature_key(feature_key: str) -> str:
+    key = str(feature_key or "").strip()
+    if key not in FEATURE_FLAG_DEFINITIONS:
+        raise ValueError(f"unknown feature key: {feature_key}")
+    return key
+
+
+def _normalize_override_mode(mode: str) -> str:
+    normalized = str(mode or "").strip().lower()
+    if normalized not in FEATURE_OVERRIDE_MODES:
+        raise ValueError(f"invalid feature override mode: {mode}")
+    return normalized
+
+
+def _feature_default_enabled(feature_key: str) -> bool:
+    key = _normalize_feature_key(feature_key)
+    return bool(FEATURE_FLAG_DEFINITIONS[key]["default_enabled"])
+
+
+def _feature_row(key: str, row: Optional[sqlite3.Row]) -> dict:
+    definition = FEATURE_FLAG_DEFINITIONS[key]
+    if row:
+        enabled = bool(row["enabled"])
+        description = row["description"] or definition["description"]
+        updated_by = row["updated_by"]
+        updated_at = row["updated_at"]
+        configured = True
+    else:
+        enabled = bool(definition["default_enabled"])
+        description = definition["description"]
+        updated_by = None
+        updated_at = None
+        configured = False
+    return {
+        "feature_key": key,
+        "enabled": enabled,
+        "default_enabled": bool(definition["default_enabled"]),
+        "description": description,
+        "updated_by": updated_by,
+        "updated_at": updated_at,
+        "configured": configured,
+    }
+
+
+def list_feature_flags() -> list[dict]:
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT feature_key, enabled, description, updated_by, updated_at FROM enterprise_feature_flags"
+        ).fetchall()
+        row_map = {row["feature_key"]: row for row in rows}
+        return [_feature_row(key, row_map.get(key)) for key in FEATURE_FLAG_DEFINITIONS]
+    finally:
+        conn.close()
+
+
+def get_feature_flag(feature_key: str) -> dict:
+    key = _normalize_feature_key(feature_key)
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT feature_key, enabled, description, updated_by, updated_at "
+            "FROM enterprise_feature_flags WHERE feature_key = ?",
+            (key,),
+        ).fetchone()
+        return _feature_row(key, row)
+    finally:
+        conn.close()
+
+
+def set_feature_flag(feature_key: str, enabled: bool, updated_by: str) -> tuple[dict, dict]:
+    key = _normalize_feature_key(feature_key)
+    old = get_feature_flag(key)
+    definition = FEATURE_FLAG_DEFINITIONS[key]
+    now = int(time.time() * 1000)
+    conn = get_db()
+    try:
+        conn.execute(
+            """
+            INSERT INTO enterprise_feature_flags (feature_key, enabled, description, updated_by, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(feature_key) DO UPDATE SET
+                enabled = excluded.enabled,
+                description = excluded.description,
+                updated_by = excluded.updated_by,
+                updated_at = excluded.updated_at
+            """,
+            (key, 1 if enabled else 0, definition["description"], updated_by, now),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return old, get_feature_flag(key)
+
+
+def get_user_feature_overrides(user_id: str) -> list[dict]:
+    uid = str(user_id or "").strip()
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            """
+            SELECT user_id, feature_key, mode, updated_by, updated_at
+            FROM enterprise_user_feature_overrides
+            WHERE user_id = ?
+            ORDER BY feature_key
+            """,
+            (uid,),
+        ).fetchall()
+        return [dict(row) for row in rows if is_known_feature_key(row["feature_key"])]
+    finally:
+        conn.close()
+
+
+def get_user_feature_override(user_id: str, feature_key: str) -> Optional[dict]:
+    uid = str(user_id or "").strip()
+    key = _normalize_feature_key(feature_key)
+    conn = get_db()
+    try:
+        row = conn.execute(
+            """
+            SELECT user_id, feature_key, mode, updated_by, updated_at
+            FROM enterprise_user_feature_overrides
+            WHERE user_id = ? AND feature_key = ?
+            """,
+            (uid, key),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def set_user_feature_override(
+    user_id: str,
+    feature_key: str,
+    mode: str,
+    updated_by: str,
+) -> tuple[Optional[dict], Optional[dict]]:
+    uid = str(user_id or "").strip()
+    key = _normalize_feature_key(feature_key)
+    normalized_mode = _normalize_override_mode(mode)
+    old = get_user_feature_override(uid, key)
+    if normalized_mode == "inherit":
+        return old, clear_user_feature_override(uid, key, updated_by)[1]
+    now = int(time.time() * 1000)
+    conn = get_db()
+    try:
+        conn.execute(
+            """
+            INSERT INTO enterprise_user_feature_overrides (user_id, feature_key, mode, updated_by, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, feature_key) DO UPDATE SET
+                mode = excluded.mode,
+                updated_by = excluded.updated_by,
+                updated_at = excluded.updated_at
+            """,
+            (uid, key, normalized_mode, updated_by, now),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return old, get_user_feature_override(uid, key)
+
+
+def clear_user_feature_override(
+    user_id: str,
+    feature_key: str,
+    updated_by: str = "",
+) -> tuple[Optional[dict], Optional[dict]]:
+    uid = str(user_id or "").strip()
+    key = _normalize_feature_key(feature_key)
+    old = get_user_feature_override(uid, key)
+    conn = get_db()
+    try:
+        conn.execute(
+            "DELETE FROM enterprise_user_feature_overrides WHERE user_id = ? AND feature_key = ?",
+            (uid, key),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return old, None
+
+
+def get_effective_feature_value(user: dict, feature_key: str) -> dict:
+    key = _normalize_feature_key(feature_key)
+    flag = get_feature_flag(key)
+    if user and bool(user.get("is_admin")):
+        return {
+            "feature_key": key,
+            "allowed": True,
+            "mode": "admin",
+            "source": "admin",
+            "global_enabled": bool(flag["enabled"]),
+            "default_enabled": bool(flag["default_enabled"]),
+        }
+    uid = str((user or {}).get("user_id") or (user or {}).get("id") or "").strip()
+    override = get_user_feature_override(uid, key) if uid else None
+    if override and override.get("mode") == "allow":
+        allowed = True
+        source = "user_override"
+    elif override and override.get("mode") == "deny":
+        allowed = False
+        source = "user_override"
+    else:
+        allowed = bool(flag["enabled"])
+        source = "global"
+    return {
+        "feature_key": key,
+        "allowed": allowed,
+        "mode": override.get("mode") if override else "inherit",
+        "source": source,
+        "global_enabled": bool(flag["enabled"]),
+        "default_enabled": bool(flag["default_enabled"]),
+        "updated_by": override.get("updated_by") if override else flag.get("updated_by"),
+        "updated_at": override.get("updated_at") if override else flag.get("updated_at"),
+    }
+
+
+def can_use_feature(user: dict, feature_key: str) -> bool:
+    try:
+        return bool(get_effective_feature_value(user, feature_key)["allowed"])
+    except Exception:
+        return False
+
 
 def log_action(user_id: str, action: str, detail: str = "") -> None:
     conn = get_db()

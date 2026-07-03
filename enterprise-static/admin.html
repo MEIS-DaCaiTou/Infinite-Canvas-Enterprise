@@ -132,6 +132,16 @@
     }
     .user-actions-cell { min-width: 330px; padding-top: 8px; padding-bottom: 8px; }
     .row-actions { display: flex; gap: 6px; align-items: center; flex-wrap: nowrap; white-space: nowrap; }
+    .feature-layout { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(280px, .7fr); gap: 14px; }
+    .feature-card { border: 1px solid var(--line); border-radius: 12px; padding: 14px; background: var(--panel); }
+    .feature-card h3 { margin: 0 0 8px; font-size: 13px; font-weight: 900; }
+    .feature-card p { margin: 0 0 12px; color: var(--muted); font-size: 12px; line-height: 1.55; }
+    .feature-list { display: flex; flex-direction: column; gap: 8px; }
+    .feature-row { display: grid; grid-template-columns: minmax(180px, 1fr) 110px 98px; gap: 10px; align-items: center; padding: 10px; border: 1px solid var(--line); border-radius: 10px; }
+    .feature-key { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; font-weight: 800; }
+    .feature-desc { color: var(--muted); font-size: 11.5px; line-height: 1.45; margin-top: 4px; }
+    .feature-effective { font-size: 12px; font-weight: 800; color: var(--muted); }
+    .feature-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
     /* ── 模态框 ── */
     .modal-backdrop {
@@ -236,6 +246,7 @@
       <button class="tab-btn" onclick="switchTab('projects', this)">项目归属</button>
       <button class="tab-btn" onclick="switchTab('canvases', this)">画布归属</button>
       <button class="tab-btn" onclick="switchTab('conversations', this)">对话归属</button>
+      <button class="tab-btn" onclick="switchTab('features', this)">权限开关</button>
     </nav>
 
     <!-- Tab：用户管理 -->
@@ -336,6 +347,34 @@
     </div>
     </div><!-- /tab-conversations -->
 
+    <!-- Tab：权限开关 -->
+    <div class="tab-panel" id="tab-features">
+      <div class="feature-layout">
+        <div class="feature-card">
+          <h3>全局功能开关</h3>
+          <p>全局默认值会影响未设置用户覆盖的普通用户。管理员始终允许。</p>
+          <div id="featureFlagList" class="feature-list">
+            <div style="color:var(--faint);font-size:12px;font-weight:800;">加载中…</div>
+          </div>
+        </div>
+        <div class="feature-card">
+          <h3>用户覆盖</h3>
+          <p>为单个用户设置 inherit / allow / deny。inherit 表示继承全局默认值。</p>
+          <div class="field">
+            <span class="label">目标用户</span>
+            <div class="field-frame">
+              <select id="featureUserSelect" class="select-user" style="max-width:none;width:100%;" onchange="loadFeatureOverrides()">
+                <option value="">选择用户</option>
+              </select>
+            </div>
+          </div>
+          <div id="featureOverrideList" class="feature-list">
+            <div style="color:var(--faint);font-size:12px;font-weight:800;">请选择用户</div>
+          </div>
+        </div>
+      </div>
+    </div><!-- /tab-features -->
+
   </div>
 </div>
 
@@ -410,6 +449,8 @@
   let _users = [];
   let _pwdTargetId = null;
   let _profileTargetId = null;
+  let _featureFlags = [];
+  let _featureOverrides = [];
 
   function showToast(msg, type = 'success') {
     const el = document.getElementById('toast');
@@ -659,10 +700,142 @@
     } else if (name === 'conversations') {
       primaryBtn.style.display = 'none';
       loadConversations();
+    } else if (name === 'features') {
+      primaryBtn.style.display = 'none';
+      loadFeatureFlags();
     }
   }
 
   // ── 项目归属管理
+  async function loadFeatureFlags() {
+    try {
+      const [flagData, users] = await Promise.all([
+        apiFetch('/enterprise/api/feature-flags'),
+        _users.length ? Promise.resolve(_users) : apiFetch('/enterprise/api/users'),
+      ]);
+      _featureFlags = flagData.features || [];
+      if (!_users.length) _users = users;
+      renderFeatureFlags();
+      renderFeatureUserSelect();
+      const selectedUser = document.getElementById('featureUserSelect').value;
+      if (selectedUser) await loadFeatureOverrides();
+    } catch (e) {
+      showToast('加载权限开关失败: ' + e.message, 'error');
+    }
+  }
+
+  function renderFeatureFlags() {
+    const target = document.getElementById('featureFlagList');
+    if (!_featureFlags.length) {
+      target.innerHTML = '<div style="color:var(--faint);font-size:12px;font-weight:800;">暂无功能开关</div>';
+      return;
+    }
+    target.innerHTML = _featureFlags.map(feature => {
+      const key = jsArg(feature.feature_key);
+      const keyHtml = escapeHtml(feature.feature_key);
+      const enabled = boolFlag(feature.enabled);
+      return `
+        <div class="feature-row">
+          <div>
+            <div class="feature-key">${keyHtml}</div>
+            <div class="feature-desc">${escapeHtml(feature.description || '')}</div>
+          </div>
+          <span class="badge ${enabled ? 'badge-active' : 'badge-disabled'}">${enabled ? '全局允许' : '全局禁止'}</span>
+          <button class="row-btn" onclick="toggleFeatureFlag('${key}', ${!enabled})">${enabled ? '禁用' : '启用'}</button>
+        </div>`;
+    }).join('');
+  }
+
+  async function toggleFeatureFlag(featureKey, enabled) {
+    try {
+      await apiFetch(`/enterprise/api/feature-flags/${encodeURIComponent(featureKey)}`, {
+        method: 'PUT',
+        body: JSON.stringify({ enabled }),
+      });
+      showToast('权限开关已更新');
+      await loadFeatureFlags();
+    } catch (e) {
+      showToast('保存权限开关失败: ' + e.message, 'error');
+    }
+  }
+
+  function renderFeatureUserSelect() {
+    const select = document.getElementById('featureUserSelect');
+    const previous = select.value;
+    select.innerHTML = '<option value="">选择用户</option>' + _users.map(u => {
+      const label = `${u.username}${u.display_name ? ' (' + u.display_name + ')' : ''}${boolFlag(u.is_admin) ? ' [管理员]' : ''}`;
+      return `<option value="${escapeHtml(u.id)}">${escapeHtml(label)}</option>`;
+    }).join('');
+    if (previous && _users.some(u => u.id === previous)) select.value = previous;
+  }
+
+  async function loadFeatureOverrides() {
+    const userId = document.getElementById('featureUserSelect').value;
+    const target = document.getElementById('featureOverrideList');
+    if (!userId) {
+      target.innerHTML = '<div style="color:var(--faint);font-size:12px;font-weight:800;">请选择用户</div>';
+      return;
+    }
+    target.innerHTML = '<div style="color:var(--faint);font-size:12px;font-weight:800;">加载中…</div>';
+    try {
+      const data = await apiFetch(`/enterprise/api/users/${encodeURIComponent(userId)}/feature-overrides`);
+      _featureOverrides = data.features || [];
+      renderFeatureOverrides();
+    } catch (e) {
+      showToast('加载用户权限失败: ' + e.message, 'error');
+      target.innerHTML = '<div style="color:#ef4444;font-size:12px;font-weight:800;">加载失败</div>';
+    }
+  }
+
+  function renderFeatureOverrides() {
+    const target = document.getElementById('featureOverrideList');
+    if (!_featureOverrides.length) {
+      target.innerHTML = '<div style="color:var(--faint);font-size:12px;font-weight:800;">暂无功能</div>';
+      return;
+    }
+    target.innerHTML = _featureOverrides.map(feature => {
+      const key = jsArg(feature.feature_key);
+      const keyHtml = escapeHtml(feature.feature_key);
+      const allowed = boolFlag(feature.effective_allowed);
+      const mode = feature.mode || 'inherit';
+      return `
+        <div class="feature-row" style="grid-template-columns:minmax(160px,1fr) 104px 118px;">
+          <div>
+            <div class="feature-key">${keyHtml}</div>
+            <div class="feature-desc">全局：${boolFlag(feature.global_enabled) ? '允许' : '禁止'} · 生效：${allowed ? '允许' : '禁止'}</div>
+          </div>
+          <span class="badge ${allowed ? 'badge-active' : 'badge-disabled'}">${allowed ? '允许' : '禁止'}</span>
+          <select class="select-user" style="max-width:118px;" onchange="setFeatureOverride('${key}', this.value)">
+            <option value="inherit" ${mode === 'inherit' ? 'selected' : ''}>inherit</option>
+            <option value="allow" ${mode === 'allow' ? 'selected' : ''}>allow</option>
+            <option value="deny" ${mode === 'deny' ? 'selected' : ''}>deny</option>
+          </select>
+        </div>`;
+    }).join('');
+  }
+
+  async function setFeatureOverride(featureKey, mode) {
+    const userId = document.getElementById('featureUserSelect').value;
+    if (!userId) return;
+    try {
+      if (mode === 'inherit') {
+        await apiFetch(`/enterprise/api/users/${encodeURIComponent(userId)}/feature-overrides/${encodeURIComponent(featureKey)}`, {
+          method: 'DELETE',
+        });
+      } else {
+        await apiFetch(`/enterprise/api/users/${encodeURIComponent(userId)}/feature-overrides/${encodeURIComponent(featureKey)}`, {
+          method: 'PUT',
+          body: JSON.stringify({ mode }),
+        });
+      }
+      showToast('用户权限覆盖已更新');
+      await loadFeatureOverrides();
+    } catch (e) {
+      showToast('保存用户权限失败: ' + e.message, 'error');
+      await loadFeatureOverrides();
+    }
+  }
+
   let _projects = [];
   let _projectOwnerMap = {};
 

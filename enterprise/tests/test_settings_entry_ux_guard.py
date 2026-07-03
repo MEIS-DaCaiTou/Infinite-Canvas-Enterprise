@@ -109,10 +109,12 @@ def _run_checks() -> None:
     script = _shell_guard_script(source)
     _assert_node_check(script)
     assert "normalUser = !cfg.isAdmin" in script
+    assert "canApiSettings" in script
+    assert "canWorkflowSettings" in script
     assert "function guardSettingsEntrypoints()" in script
-    assert "if(!normalUser) return;" in script
-    assert "body.enterprise-normal-user [onclick*=\"api-settings\"]" in script
-    assert "body.enterprise-normal-user [onclick*=\"comfyui-settings\"]" in script
+    assert "canApiSettings && canWorkflowSettings" in script
+    assert "body.enterprise-api-settings-denied [onclick*=\"api-settings\"]" in script
+    assert "body.enterprise-workflow-settings-denied [onclick*=\"comfyui-settings\"]" in script
     assert "frame-api-settings" in script
     assert "frame-comfyui-settings" in script
     assert "settingsDeniedSrcDoc" in script
