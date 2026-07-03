@@ -157,6 +157,15 @@ _COMFY_INPUT_RESPONSE_PATHS = {
     "api/comfyui/upload-base64",
 }
 
+_FEATURE_GATE_EXEMPT_UPLOAD_PATHS = {
+    "api/ai/upload",
+    "api/ai/upload-base64",
+    "api/ai/import-local-image",
+    "api/upload",
+    "api/comfyui/upload-base64",
+    "api/local-assets/upload",
+}
+
 _RUNTIME_MEDIA_KEY_PARTS = (
     "image",
     "images",
@@ -180,6 +189,16 @@ _RUNTIME_MEDIA_EXT_RE = re.compile(
 )
 
 MANAGED_MODELSCOPE_TOKEN = "__enterprise_managed_modelscope_token__"
+
+FEATURE_API_SETTINGS = "api_settings_access"
+FEATURE_WORKFLOW_SETTINGS = "workflow_settings_access"
+FEATURE_RUNNINGHUB_GENERATION = "runninghub_generation"
+FEATURE_VIDEO_GENERATION = "video_generation"
+FEATURE_IMAGE_TOOLS_GENERATION = "image_tools_generation"
+FEATURE_ASSET_LIBRARY_MANAGE = "asset_library_manage"
+FEATURE_HISTORY_BATCH_DELETE = "history_batch_delete"
+FEATURE_LOCAL_ASSET_MANAGE = "local_asset_manage"
+FEATURE_SYSTEM_UPDATE = "system_update"
 
 _SENSITIVE_SETTINGS_KEY_PARTS = (
     "api_key",
@@ -416,6 +435,79 @@ def _settings_denial_for_normal_user(path: str, method: str) -> bool:
     if path.startswith("api/jimeng/") and path != "api/jimeng/query-media":
         return True
     return False
+
+
+def _settings_feature_key(path: str, method: str) -> str:
+    if path == "api/providers" or path.startswith("api/providers/"):
+        return FEATURE_API_SETTINGS
+    if path == "api/comfyui/instances":
+        return FEATURE_WORKFLOW_SETTINGS
+    if path.startswith("api/workflows/") or path == "api/workflows":
+        return FEATURE_WORKFLOW_SETTINGS
+    if path.startswith("api/runninghub/workflows") or path in {
+        "api/runninghub/app-info",
+        "api/runninghub/workflow-info",
+    }:
+        return FEATURE_WORKFLOW_SETTINGS
+    if path.startswith("api/jimeng/") and path != "api/jimeng/query-media":
+        return FEATURE_WORKFLOW_SETTINGS
+    return FEATURE_API_SETTINGS
+
+
+def _feature_denial(user: dict, feature_key: str) -> Optional[JSONResponse]:
+    if edb.can_use_feature(user, feature_key):
+        return None
+    return _deny_forbidden("该功能已被管理员关闭")
+
+
+def _is_image_tools_submit(path: str, method: str) -> bool:
+    if method.upper() != "POST":
+        return False
+    return path in {
+        "api/online-image",
+        "api/angle/generate",
+        "api/ms/generate",
+        "api/generate",
+        "generate",
+    }
+
+
+def _is_runninghub_submit(path: str, method: str) -> bool:
+    return method.upper() == "POST" and path in {
+        "api/runninghub/submit",
+        "api/runninghub/workflow-submit",
+    }
+
+
+def _is_video_submit(path: str, method: str) -> bool:
+    return method.upper() == "POST" and path == "api/canvas-video"
+
+
+def _is_local_asset_manage_request(path: str, method: str) -> bool:
+    method = method.upper()
+    if method not in {"POST", "PUT", "PATCH", "DELETE"}:
+        return False
+    if path in _LOCAL_ASSET_MANAGE_PATHS:
+        return True
+    return path == "api/local-assets/import-urls"
+
+
+def _request_feature_key(path: str, method: str) -> str:
+    if path in _FEATURE_GATE_EXEMPT_UPLOAD_PATHS:
+        return ""
+    if _is_runninghub_submit(path, method):
+        return FEATURE_RUNNINGHUB_GENERATION
+    if _is_video_submit(path, method):
+        return FEATURE_VIDEO_GENERATION
+    if _is_image_tools_submit(path, method):
+        return FEATURE_IMAGE_TOOLS_GENERATION
+    if enterprise_ws.is_asset_library_write(path, method):
+        return FEATURE_ASSET_LIBRARY_MANAGE
+    if path == "api/history/delete" and method.upper() == "POST":
+        return FEATURE_HISTORY_BATCH_DELETE
+    if _is_local_asset_manage_request(path, method):
+        return FEATURE_LOCAL_ASSET_MANAGE
+    return ""
 
 
 def _settings_audit_action(path: str, method: str) -> str:
@@ -1856,7 +1948,7 @@ async def pre_process(
     if path in update_paths or path.startswith("api/update-"):
         if not ENTERPRISE_UPDATE_ENABLED:
             return _deny_forbidden("企业版更新入口已关闭")
-        if is_admin:
+        if edb.can_use_feature(user, FEATURE_SYSTEM_UPDATE):
             return None
         return _deny_forbidden("需要管理员权限才能执行项目更新")
 
@@ -1870,12 +1962,22 @@ async def pre_process(
         )
 
     if _settings_denial_for_normal_user(path, method):
-        if not is_admin:
+        settings_feature = _settings_feature_key(path, method)
+        if not edb.can_use_feature(user, settings_feature):
             return _deny_forbidden("需要管理员权限才能访问企业高风险设置")
         audit_settings_operation(user, path, method, body)
 
     if path == "api/history/delete" and method.upper() == "POST":
+        feature_denial = _feature_denial(user, FEATURE_HISTORY_BATCH_DELETE)
+        if feature_denial is not None:
+            return feature_denial
         return handle_history_delete(user, body)
+
+    request_feature = _request_feature_key(path, method)
+    if request_feature:
+        feature_denial = _feature_denial(user, request_feature)
+        if feature_denial is not None:
+            return feature_denial
 
     project_id = _project_id_from_path(path)
     if project_id:
@@ -2864,14 +2966,15 @@ async def post_process(
     # 上游 app-info 的 repo_url 指向上游仓库；企业版首页应默认指向企业仓库。
     # 普通用户不应获得上游更新源信息，避免前端兜底检测显示上游更新入口。
     if path == "api/app-info" and isinstance(data, dict):
+        can_update = bool(ENTERPRISE_UPDATE_ENABLED and edb.can_use_feature(user, FEATURE_SYSTEM_UPDATE))
         data["repo_url"] = ENTERPRISE_REPO_URL
         data["enterprise"] = {
             "repo_url": ENTERPRISE_REPO_URL,
-            "update_enabled": bool(ENTERPRISE_UPDATE_ENABLED and is_admin),
+            "update_enabled": can_update,
             "hide_upstream_author": bool(ENTERPRISE_HIDE_UPSTREAM_AUTHOR or not is_admin),
             "is_admin": is_admin,
         }
-        if not is_admin:
+        if not can_update:
             data["version_url"] = ""
             data["tree_url"] = ""
             data["sources"] = {}

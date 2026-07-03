@@ -32,6 +32,24 @@ def _audit_user_action(actor: dict, action: str, target: dict, summary: str, ext
     edb.log_action(actor["user_id"], action, json.dumps(detail, ensure_ascii=False))
 
 
+def _audit_permission_action(actor: dict, action: str, detail: dict) -> None:
+    payload = dict(detail)
+    payload["updated_by"] = actor["user_id"]
+    edb.log_action(actor["user_id"], action, json.dumps(payload, ensure_ascii=False))
+    edb.log_action(
+        actor["user_id"],
+        "permission_policy_updated",
+        json.dumps({"source_action": action, **payload}, ensure_ascii=False),
+    )
+
+
+def _target_user_or_404(user_id: str) -> dict:
+    target = edb.get_user_by_id_any_status(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    return target
+
+
 # ── 用户管理 ──────────────────────────────────────────────
 
 @router.get("/api/users")
@@ -183,6 +201,126 @@ async def delete_user(user_id: str, request: Request):
 
 
 # ── 画布归属查询（管理员专用）────────────────────────────
+
+@router.get("/api/feature-flags")
+async def list_feature_flags(request: Request):
+    _require_admin(request)
+    return {"features": edb.list_feature_flags()}
+
+
+@router.put("/api/feature-flags/{feature_key}")
+async def update_feature_flag(feature_key: str, request: Request):
+    current = _require_admin(request)
+    body = await request.json()
+    if "enabled" not in body or not isinstance(body.get("enabled"), bool):
+        raise HTTPException(status_code=400, detail="enabled 必须是布尔值")
+    try:
+        old, new = edb.set_feature_flag(feature_key, bool(body["enabled"]), current["user_id"])
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    _audit_permission_action(
+        current,
+        "feature_flag_changed",
+        {
+            "feature_key": new["feature_key"],
+            "old_value": old.get("enabled"),
+            "new_value": new.get("enabled"),
+        },
+    )
+    return {"success": True, "feature": new}
+
+
+@router.get("/api/users/{user_id}/feature-overrides")
+async def list_user_feature_overrides(user_id: str, request: Request):
+    _require_admin(request)
+    target = _target_user_or_404(user_id)
+    override_map = {
+        item["feature_key"]: item
+        for item in edb.get_user_feature_overrides(user_id)
+    }
+    actor = {
+        "user_id": target["id"],
+        "username": target.get("username", ""),
+        "is_admin": bool(target.get("is_admin")),
+    }
+    features = []
+    for feature in edb.list_feature_flags():
+        key = feature["feature_key"]
+        override = override_map.get(key)
+        effective = edb.get_effective_feature_value(actor, key)
+        features.append(
+            {
+                "feature_key": key,
+                "title": feature.get("title", key),
+                "description": feature.get("description", ""),
+                "global_enabled": feature.get("enabled"),
+                "default_enabled": feature.get("default_enabled"),
+                "mode": override.get("mode") if override else "inherit",
+                "effective_allowed": effective.get("allowed"),
+                "effective_source": effective.get("source"),
+                "updated_by": override.get("updated_by") if override else None,
+                "updated_at": override.get("updated_at") if override else None,
+            }
+        )
+    return {
+        "user": {
+            "id": target["id"],
+            "username": target["username"],
+            "display_name": target.get("display_name", ""),
+            "is_admin": bool(target.get("is_admin")),
+            "is_active": bool(target.get("is_active")),
+        },
+        "features": features,
+    }
+
+
+@router.put("/api/users/{user_id}/feature-overrides/{feature_key}")
+async def update_user_feature_override(user_id: str, feature_key: str, request: Request):
+    current = _require_admin(request)
+    target = _target_user_or_404(user_id)
+    body = await request.json()
+    mode = str(body.get("mode") or "").strip().lower()
+    try:
+        old, new = edb.set_user_feature_override(user_id, feature_key, mode, current["user_id"])
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    _audit_permission_action(
+        current,
+        "user_feature_override_changed",
+        {
+            "feature_key": feature_key,
+            "target_user_id": target["id"],
+            "target_username": target["username"],
+            "old_value": old.get("mode") if old else "inherit",
+            "new_value": new.get("mode") if new else "inherit",
+            "mode": new.get("mode") if new else "inherit",
+        },
+    )
+    return {"success": True, "override": new, "mode": new.get("mode") if new else "inherit"}
+
+
+@router.delete("/api/users/{user_id}/feature-overrides/{feature_key}")
+async def delete_user_feature_override(user_id: str, feature_key: str, request: Request):
+    current = _require_admin(request)
+    target = _target_user_or_404(user_id)
+    try:
+        old, new = edb.clear_user_feature_override(user_id, feature_key, current["user_id"])
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    _audit_permission_action(
+        current,
+        "user_feature_override_changed",
+        {
+            "feature_key": feature_key,
+            "target_user_id": target["id"],
+            "target_username": target["username"],
+            "old_value": old.get("mode") if old else "inherit",
+            "new_value": "inherit",
+            "mode": "inherit",
+        },
+    )
+    return {"success": True, "override": new, "mode": "inherit"}
+
 
 @router.get("/api/canvas-owners")
 async def canvas_owners(request: Request):
