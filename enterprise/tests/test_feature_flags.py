@@ -205,6 +205,33 @@ async def _run_checks() -> None:
             "local_asset_manage",
             FakeRequest(actor_admin, {"mode": "deny"}),
         )
+        # Feature gates must block submits/management, not ordinary input uploads.
+        for upload_path in [
+            "api/upload",
+            "api/comfyui/upload-base64",
+            "api/ai/upload",
+            "api/ai/upload-base64",
+            "api/local-assets/upload",
+        ]:
+            await _assert_allowed(upload_path, "POST", actor_a, {"files": []})
+        await interceptors.post_process(
+            "api/upload",
+            "POST",
+            200,
+            _body({"files": [{"comfy_name": "angle-input-a.png"}]}),
+            "application/json",
+            actor_a,
+        )
+        await interceptors.post_process(
+            "api/local-assets/upload",
+            "POST",
+            200,
+            _body({"files": [{"url": "/assets/uploads/enhance-input-a.png"}]}),
+            "application/json",
+            actor_a,
+        )
+        assert edb.get_resource_owner("/assets/input/angle-input-a.png") == user_a["id"]
+        assert edb.get_resource_owner("/assets/uploads/enhance-input-a.png") == user_a["id"]
         await _assert_forbidden("api/local-assets/delete", "POST", actor_a, {"names": ["owned-a.png"]})
         await _assert_forbidden("api/local-assets/import-urls", "POST", actor_a, {"urls": ["https://example.test/a.png"]})
         assert interceptors.can_access_resource(actor_a, "/assets/uploads/owned-a.png") is True

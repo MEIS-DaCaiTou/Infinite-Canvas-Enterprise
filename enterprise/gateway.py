@@ -388,6 +388,24 @@ def _build_enterprise_shell_guard(user: dict) -> str:
   const settingsPageIds = ['api-settings','comfyui-settings'];
   const settingsFrameIds = ['frame-api-settings','frame-comfyui-settings'];
   const settingsDeniedSrcDoc = '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f7f8fb;color:#0f172a;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.panel{width:min(520px,calc(100vw - 40px));background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:28px;box-shadow:0 16px 42px rgba(15,23,42,.08)}h1{margin:0 0 12px;font-size:22px;line-height:1.25}p{margin:0;color:#64748b;line-height:1.7;font-size:15px}</style></head><body><main class="panel"><h1>需要管理员权限</h1><p>该页面仅管理员可访问。你仍可正常使用在线生图、GPT 对话和画布功能。</p></main></body></html>';
+  const settingsEntryDefs = {
+    api: {
+      id: '__enterprise_api_settings_entry__',
+      pageId: 'api-settings',
+      frameId: 'frame-api-settings',
+      label: 'API 设置',
+      title: 'API 设置',
+      icon: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z"></path><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.38a1.7 1.7 0 0 0-1 .92 1.7 1.7 0 0 0-.14.67V21a2 2 0 1 1-4 0v-.08a1.7 1.7 0 0 0-1.1-1.59 1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.62 15a1.7 1.7 0 0 0-.92-1A1.7 1.7 0 0 0 3 13.86H3a2 2 0 1 1 0-4h.08a1.7 1.7 0 0 0 1.59-1.1 1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.62a1.7 1.7 0 0 0 1-.92 1.7 1.7 0 0 0 .14-.67V3a2 2 0 1 1 4 0v.08a1.7 1.7 0 0 0 1.1 1.59 1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.38 9c.27.34.6.6 1 .75.22.08.45.12.68.12H21a2 2 0 1 1 0 4h-.08a1.7 1.7 0 0 0-1.52 1.13Z"></path></svg>'
+    },
+    workflow: {
+      id: '__enterprise_workflow_settings_entry__',
+      pageId: 'comfyui-settings',
+      frameId: 'frame-comfyui-settings',
+      label: '工作流设置',
+      title: '工作流设置',
+      icon: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="14" width="7" height="7" rx="1.5"></rect><path d="M10 6.5h4"></path><path d="M17.5 10v4"></path><path d="M10 17.5h4"></path><path d="M6.5 10v3a4 4 0 0 0 4 4H14"></path></svg>'
+    }
+  };
   function isSettingsPageId(id){
     return settingsPageIds.indexOf(String(id || '')) >= 0;
   }
@@ -410,6 +428,8 @@ def _build_enterprise_shell_guard(user: dict) -> str:
   function settingsTargetKind(el){
     if(!el) return '';
     const target = el.closest?.('button,a,[role="button"],[onclick],[href],.side-pill,.nav-item') || el;
+    const dataKind = target.dataset?.enterpriseSettingsKind || el.dataset?.enterpriseSettingsKind || '';
+    if(dataKind === 'api' || dataKind === 'workflow') return dataKind;
     const text = [
       target.getAttribute?.('onclick') || '',
       target.getAttribute?.('href') || '',
@@ -422,6 +442,7 @@ def _build_enterprise_shell_guard(user: dict) -> str:
   function matchesSettingsTarget(el){
     if(!el) return false;
     const target = el.closest?.('button,a,[role="button"],[onclick],[href],.side-pill,.nav-item') || el;
+    if(target.dataset?.enterpriseSettingsKind) return true;
     const text = [
       target.getAttribute?.('onclick') || '',
       target.getAttribute?.('href') || '',
@@ -435,16 +456,88 @@ def _build_enterprise_shell_guard(user: dict) -> str:
       text.includes('工作流设置');
   }
   function hideSettingsEntrypoints(){
-    if(canApiSettings && canWorkflowSettings) return;
-    document.querySelectorAll('[onclick*="api-settings"],[onclick*="comfyui-settings"],a[href*="api-settings.html"],a[href*="comfyui-settings.html"]').forEach(function(el){
-      const target = el.closest?.('.side-pill,.nav-item,button,a,[role="button"]') || el;
+    document.querySelectorAll(settingsEntrySelector()).forEach(function(el){
+      const target = normalizeSettingsTarget(el);
       const kind = settingsTargetKind(target);
-      if(canAccessSettingsKind(kind)) return;
+      if(canAccessSettingsKind(kind)) {
+        revealSettingsTarget(target);
+        return;
+      }
       target.hidden = true;
       target.setAttribute('aria-hidden', 'true');
       target.setAttribute('tabindex', '-1');
       target.dataset.enterpriseSettingsHidden = 'true';
       if(target.style.display !== 'none') target.style.display = 'none';
+    });
+  }
+  function settingsEntrySelector(){
+    return '[onclick*="api-settings"],[onclick*="comfyui-settings"],a[href*="api-settings.html"],a[href*="comfyui-settings.html"],[data-enterprise-settings-kind]';
+  }
+  function normalizeSettingsTarget(el){
+    return el?.closest?.('.side-pill,.nav-item,button,a,[role="button"]') || el;
+  }
+  function revealSettingsTarget(target){
+    if(!target) return;
+    target.hidden = false;
+    target.removeAttribute('aria-hidden');
+    if(target.dataset?.enterpriseSettingsHidden) delete target.dataset.enterpriseSettingsHidden;
+    if(target.getAttribute('tabindex') === '-1') target.removeAttribute('tabindex');
+    if(target.style?.display === 'none') target.style.display = '';
+  }
+  function openEnterpriseSettings(kind, trigger){
+    const def = settingsEntryDefs[kind];
+    if(!def) return;
+    try {
+      if(typeof switchUI === 'function') {
+        switchUI(trigger || byId(def.id), def.pageId);
+        if(kind === 'api' && typeof setSidebarSettingsCollapsed === 'function') {
+          setSidebarSettingsCollapsed(false, { skipRemember:true });
+        }
+        return;
+      }
+    } catch(e) {}
+    const frame = byId(def.frameId);
+    if(frame) {
+      document.querySelectorAll('.nav-item,.side-pill').forEach(function(n){ n.classList.remove('active'); });
+      document.querySelectorAll('iframe').forEach(function(f){ f.classList.remove('active'); });
+      if(trigger) trigger.classList.add('active');
+      frame.classList.add('active');
+      if(!frame.src) frame.src = frame.dataset.src || ('/static/' + def.pageId + '.html');
+      try { localStorage.setItem('studio_active_page', def.pageId); } catch(e) {}
+      return;
+    }
+    window.location.href = '/static/' + def.pageId + '.html';
+  }
+  function ensureAllowedSettingsEntrypoints(){
+    if(!normalUser) return;
+    const group = byId('settings-fold-group');
+    if(!group) return;
+    Object.keys(settingsEntryDefs).forEach(function(kind){
+      const def = settingsEntryDefs[kind];
+      let entry = byId(def.id);
+      if(!canAccessSettingsKind(kind)) {
+        if(entry) entry.remove();
+        return;
+      }
+      if(!entry) {
+        entry = document.createElement('button');
+        entry.id = def.id;
+        entry.type = 'button';
+        entry.className = 'side-pill enterprise-settings-entry';
+        entry.dataset.enterpriseSettingsKind = kind;
+        entry.innerHTML = def.icon + '<span class="side-pill-text">' + def.label + '</span>';
+        group.appendChild(entry);
+      }
+      entry.title = def.title;
+      entry.setAttribute('aria-label', def.title);
+      entry.dataset.enterpriseSettingsKind = kind;
+      entry.onclick = function(event){
+        event?.preventDefault?.();
+        event?.stopPropagation?.();
+        openEnterpriseSettings(kind, entry);
+        return false;
+      };
+      revealSettingsTarget(entry);
     });
   }
   function activateFallbackPage(){
@@ -509,7 +602,7 @@ def _build_enterprise_shell_guard(user: dict) -> str:
     }, true);
   }
   function guardSettingsEntrypoints(){
-    if(canApiSettings && canWorkflowSettings) return;
+    ensureAllowedSettingsEntrypoints();
     hideSettingsEntrypoints();
     blockSettingsFrames();
     installSettingsClickGuard();
@@ -612,9 +705,11 @@ def _build_enterprise_shell_guard(user: dict) -> str:
       'body.enterprise-normal-user #project-version-badge{cursor:default!important;}',
       'body.enterprise-api-settings-denied [onclick*="api-settings"],',
       'body.enterprise-api-settings-denied a[href*="api-settings.html"],',
+      'body.enterprise-api-settings-denied [data-enterprise-settings-kind="api"],',
       'body.enterprise-api-settings-denied #frame-api-settings{display:none!important;}',
       'body.enterprise-workflow-settings-denied [onclick*="comfyui-settings"],',
       'body.enterprise-workflow-settings-denied a[href*="comfyui-settings.html"],',
+      'body.enterprise-workflow-settings-denied [data-enterprise-settings-kind="workflow"],',
       'body.enterprise-workflow-settings-denied #frame-comfyui-settings{display:none!important;}'
     ].join('\n');
     document.head.appendChild(style);

@@ -113,8 +113,15 @@ def _run_checks() -> None:
     assert "canWorkflowSettings" in script
     assert "function guardSettingsEntrypoints()" in script
     assert "canApiSettings && canWorkflowSettings" in script
+    assert "function ensureAllowedSettingsEntrypoints()" in script
+    assert "function openEnterpriseSettings(kind, trigger)" in script
+    assert "__enterprise_api_settings_entry__" in script
+    assert "__enterprise_workflow_settings_entry__" in script
+    assert "data-enterprise-settings-kind" in script
     assert "body.enterprise-api-settings-denied [onclick*=\"api-settings\"]" in script
     assert "body.enterprise-workflow-settings-denied [onclick*=\"comfyui-settings\"]" in script
+    assert "body.enterprise-api-settings-denied [data-enterprise-settings-kind=\"api\"]" in script
+    assert "body.enterprise-workflow-settings-denied [data-enterprise-settings-kind=\"workflow\"]" in script
     assert "frame-api-settings" in script
     assert "frame-comfyui-settings" in script
     assert "settingsDeniedSrcDoc" in script

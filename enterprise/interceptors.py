@@ -157,6 +157,15 @@ _COMFY_INPUT_RESPONSE_PATHS = {
     "api/comfyui/upload-base64",
 }
 
+_FEATURE_GATE_EXEMPT_UPLOAD_PATHS = {
+    "api/ai/upload",
+    "api/ai/upload-base64",
+    "api/ai/import-local-image",
+    "api/upload",
+    "api/comfyui/upload-base64",
+    "api/local-assets/upload",
+}
+
 _RUNTIME_MEDIA_KEY_PARTS = (
     "image",
     "images",
@@ -484,6 +493,8 @@ def _is_local_asset_manage_request(path: str, method: str) -> bool:
 
 
 def _request_feature_key(path: str, method: str) -> str:
+    if path in _FEATURE_GATE_EXEMPT_UPLOAD_PATHS:
+        return ""
     if _is_runninghub_submit(path, method):
         return FEATURE_RUNNINGHUB_GENERATION
     if _is_video_submit(path, method):
