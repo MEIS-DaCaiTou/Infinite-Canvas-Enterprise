@@ -132,16 +132,23 @@
     }
     .user-actions-cell { min-width: 330px; padding-top: 8px; padding-bottom: 8px; }
     .row-actions { display: flex; gap: 6px; align-items: center; flex-wrap: nowrap; white-space: nowrap; }
-    .feature-layout { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(280px, .7fr); gap: 14px; }
-    .feature-card { border: 1px solid var(--line); border-radius: 12px; padding: 14px; background: var(--panel); }
+    .feature-layout { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(420px, .85fr); gap: 14px; align-items: start; }
+    .feature-card { min-width: 0; border: 1px solid var(--line); border-radius: 12px; padding: 14px; background: var(--panel); }
     .feature-card h3 { margin: 0 0 8px; font-size: 13px; font-weight: 900; }
     .feature-card p { margin: 0 0 12px; color: var(--muted); font-size: 12px; line-height: 1.55; }
     .feature-list { display: flex; flex-direction: column; gap: 8px; }
-    .feature-row { display: grid; grid-template-columns: minmax(180px, 1fr) 110px 98px; gap: 10px; align-items: center; padding: 10px; border: 1px solid var(--line); border-radius: 10px; }
-    .feature-key { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; font-weight: 800; }
-    .feature-desc { color: var(--muted); font-size: 11.5px; line-height: 1.45; margin-top: 4px; }
+    .feature-row { min-width: 0; display: grid; grid-template-columns: minmax(180px, 1fr) 110px 98px; gap: 10px; align-items: center; padding: 10px; border: 1px solid var(--line); border-radius: 10px; }
+    .feature-title { min-width: 0; font-size: 13px; font-weight: 900; color: var(--text); }
+    .feature-key { min-width: 0; overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; font-weight: 800; color: var(--muted); margin-top: 3px; }
+    .feature-desc { min-width: 0; color: var(--muted); font-size: 11.5px; line-height: 1.45; margin-top: 4px; }
     .feature-effective { font-size: 12px; font-weight: 800; color: var(--muted); }
     .feature-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .feature-override-row { display: flex; flex-direction: column; align-items: stretch; gap: 9px; }
+    .feature-override-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; }
+    .feature-override-row .select-user { width: 100%; max-width: 100%; }
+    @media (max-width: 1280px) {
+      .feature-layout { grid-template-columns: 1fr; }
+    }
 
     /* ── 模态框 ── */
     .modal-backdrop {
@@ -733,10 +740,12 @@
     target.innerHTML = _featureFlags.map(feature => {
       const key = jsArg(feature.feature_key);
       const keyHtml = escapeHtml(feature.feature_key);
+      const titleHtml = escapeHtml(feature.title || feature.feature_key);
       const enabled = boolFlag(feature.enabled);
       return `
         <div class="feature-row">
           <div>
+            <div class="feature-title">${titleHtml}</div>
             <div class="feature-key">${keyHtml}</div>
             <div class="feature-desc">${escapeHtml(feature.description || '')}</div>
           </div>
@@ -796,16 +805,22 @@
     target.innerHTML = _featureOverrides.map(feature => {
       const key = jsArg(feature.feature_key);
       const keyHtml = escapeHtml(feature.feature_key);
+      const titleHtml = escapeHtml(feature.title || feature.feature_key);
       const allowed = boolFlag(feature.effective_allowed);
       const mode = feature.mode || 'inherit';
+      const globalText = boolFlag(feature.global_enabled) ? '允许' : '禁止';
+      const effectiveText = allowed ? '允许' : '禁止';
       return `
-        <div class="feature-row" style="grid-template-columns:minmax(160px,1fr) 104px 118px;">
-          <div>
-            <div class="feature-key">${keyHtml}</div>
-            <div class="feature-desc">全局：${boolFlag(feature.global_enabled) ? '允许' : '禁止'} · 生效：${allowed ? '允许' : '禁止'}</div>
+        <div class="feature-row feature-override-row">
+          <div class="feature-override-head">
+            <div style="min-width:0;">
+              <div class="feature-title">${titleHtml}</div>
+              <div class="feature-key">${keyHtml}</div>
+            </div>
+            <span class="badge ${allowed ? 'badge-active' : 'badge-disabled'}">生效：${effectiveText}</span>
           </div>
-          <span class="badge ${allowed ? 'badge-active' : 'badge-disabled'}">${allowed ? '允许' : '禁止'}</span>
-          <select class="select-user" style="max-width:118px;" onchange="setFeatureOverride('${key}', this.value)">
+          <div class="feature-desc">全局：${globalText} · 当前覆盖：${mode}</div>
+          <select class="select-user" onchange="setFeatureOverride('${key}', this.value)">
             <option value="inherit" ${mode === 'inherit' ? 'selected' : ''}>inherit</option>
             <option value="allow" ${mode === 'allow' ? 'selected' : ''}>allow</option>
             <option value="deny" ${mode === 'deny' ? 'selected' : ''}>deny</option>

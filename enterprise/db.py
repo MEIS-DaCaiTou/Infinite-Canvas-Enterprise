@@ -18,39 +18,48 @@ from enterprise.config import DB_PATH, ADMIN_USERNAME, ADMIN_PASSWORD, ROOT_DIR
 FEATURE_FLAG_DEFINITIONS = {
     "api_settings_access": {
         "default_enabled": False,
-        "description": "Access API provider, key, base URL, and provider test settings.",
+        "title": "API 设置访问",
+        "description": "允许访问 API Provider、Key、Base URL、Provider 测试等高风险设置。",
     },
     "workflow_settings_access": {
         "default_enabled": False,
-        "description": "Access workflow, ComfyUI instance, RunningHub workflow, and related global settings.",
+        "title": "工作流设置访问",
+        "description": "允许访问工作流、ComfyUI 实例、RunningHub 工作流和相关全局配置。",
     },
     "runninghub_generation": {
         "default_enabled": True,
-        "description": "Submit RunningHub generation tasks.",
+        "title": "RunningHub 生成功能",
+        "description": "允许提交 RunningHub 生成任务。",
     },
     "video_generation": {
         "default_enabled": True,
-        "description": "Submit video generation tasks.",
+        "title": "视频生成功能",
+        "description": "允许提交视频生成任务。",
     },
     "image_tools_generation": {
         "default_enabled": True,
-        "description": "Submit online image, ZImage, Angle, ModelScope, and compatible image tool tasks.",
+        "title": "图片工具生成功能",
+        "description": "允许提交在线生图、ZImage、Angle、ModelScope 等图片工具任务。",
     },
     "asset_library_manage": {
         "default_enabled": True,
-        "description": "Create, edit, move, delete, classify, crop, register, or import asset-library objects.",
+        "title": "素材库管理",
+        "description": "允许新增、编辑、移动、删除、分类、裁剪、注册或导入素材库对象。",
     },
     "history_batch_delete": {
         "default_enabled": True,
-        "description": "Delete generation history records through the history delete API.",
+        "title": "历史记录删除",
+        "description": "允许通过历史记录删除接口删除生成历史。",
     },
     "local_asset_manage": {
         "default_enabled": True,
-        "description": "Manage local-assets items, including move, rename, delete, caption, classify, and URL import.",
+        "title": "本地资源管理",
+        "description": "允许移动、重命名、删除、标注、分类或通过 URL 导入本地资源。",
     },
     "system_update": {
         "default_enabled": False,
-        "description": "Use enterprise-controlled upstream update endpoints and update UI.",
+        "title": "系统更新",
+        "description": "允许使用企业版受控的项目更新接口和更新入口。",
     },
 }
 
@@ -1357,7 +1366,7 @@ def _feature_row(key: str, row: Optional[sqlite3.Row]) -> dict:
     definition = FEATURE_FLAG_DEFINITIONS[key]
     if row:
         enabled = bool(row["enabled"])
-        description = row["description"] or definition["description"]
+        description = definition["description"]
         updated_by = row["updated_by"]
         updated_at = row["updated_at"]
         configured = True
@@ -1369,6 +1378,7 @@ def _feature_row(key: str, row: Optional[sqlite3.Row]) -> dict:
         configured = False
     return {
         "feature_key": key,
+        "title": definition["title"],
         "enabled": enabled,
         "default_enabled": bool(definition["default_enabled"]),
         "description": description,

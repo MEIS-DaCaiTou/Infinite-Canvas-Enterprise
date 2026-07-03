@@ -251,6 +251,7 @@ async def list_user_feature_overrides(user_id: str, request: Request):
         features.append(
             {
                 "feature_key": key,
+                "title": feature.get("title", key),
                 "description": feature.get("description", ""),
                 "global_enabled": feature.get("enabled"),
                 "default_enabled": feature.get("default_enabled"),
