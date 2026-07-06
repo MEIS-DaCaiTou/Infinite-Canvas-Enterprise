@@ -6,6 +6,25 @@
 
 ---
 
+## 2026-07-06 接手重点
+
+当前 main 已完成 3G owner 隔离与安全治理底座第一阶段：
+
+- PR #34：上传资源隔离与上传资源 owner 治理。
+- PR #38：素材库完整隔离与素材业务 owner 治理。
+- PR #42：WebSocket 广播隔离与实时事件 owner 治理。
+- PR #46：异步任务历史 owner 隔离。
+- PR #49：管理员权限开关最小版 + 审计。
+- Issue #50：上游同步与 Angle / Enhance ModelScope 上传解耦只读定位已完成；当前不整体同步上游，该上传解耦问题后续单独小修。
+
+接手时不要把当前项目误判为完整企业协作平台。当前已完成的是“隔离底座”：普通用户隔离、owner 归属、管理员兜底、关键 API 拦截、实时事件隔离、任务历史隔离、权限开关和审计记录。下一阶段如果进入协作能力，必须先设计 project members、canvas grants、共享/撤销、审计和迁移策略，再进入实现。
+
+当前架构“上游主应用 + enterprise gateway + interceptors + enterprise DB 映射”仍是阶段性正确路线；但 `enterprise/interceptors.py` 继续膨胀是长期风险。后续新增策略优先考虑拆到 `enterprise/policies/`，由 gateway / interceptors 编排，不要继续把所有业务判断堆进一个拦截器文件。
+
+端到端验收以 `docs/manual-acceptance-enterprise-e2e.md` 为基线，必须同时覆盖前端入口和后端 API；当前架构决策见 `docs/decisions/ADR-current-architecture-and-next-stage.md`。
+
+---
+
 ## 1. 项目概览
 
 本仓库是基于上游 `hero8152/Infinite-Canvas` 的企业多用户二次开发版本：

@@ -6,6 +6,25 @@
 
 ---
 
+## 2026-07-06 阶段状态更新
+
+3G 第一阶段 owner 隔离与安全治理底座已基本完成。已合并能力包括：
+
+- 3G-4A 上传资源隔离，PR #34。
+- 3G-4B 素材库完整隔离，PR #38。
+- 3G-5 WebSocket 广播隔离，PR #42。
+- 3G-6 异步任务历史 owner 隔离，PR #46。
+- 3G-7A 管理员权限开关最小版 + 审计，PR #49。
+- Issue #50 上游同步与 Angle / Enhance ModelScope 上传解耦只读定位已完成并关闭；结论是上游 2026.06.30 仍未修复该问题，当前不整体同步上游，Angle / Enhance 上传解耦后续单独小修。
+
+当前项目还不是完整企业协作平台。第一阶段完成的是普通用户隔离、owner 归属、管理员兜底、关键 API 拦截、实时事件隔离、任务历史隔离、权限开关和审计记录。下一阶段应从 owner 隔离升级到协作权限设计，并在实现前明确 project members、canvas grants、共享/撤销、审计和迁移策略。
+
+架构判断：上游 `main.py` / `static/` 保持内部上游服务，企业层通过 `enterprise/gateway.py`、`enterprise/interceptors.py`、`enterprise/db.py` 和 `enterprise-static/` 叠加多用户能力，这仍是当前阶段正确路线。长期风险是 `enterprise/interceptors.py` 已承载大量策略，后续新增策略应逐步模块化到 `enterprise/policies/`，避免继续扩大单文件拦截器。
+
+端到端验收基线：新增 `docs/manual-acceptance-enterprise-e2e.md`，统一记录 admin / user_a / user_b 在项目、画布、对话、资源、素材库、历史、任务、WebSocket、权限开关上的前端入口和后端 API 双重验收路径。
+
+---
+
 ## 1. 项目一句话定位
 
 本项目的唯一方向是在上游开源项目 [hero8152/Infinite-Canvas](https://github.com/hero8152/Infinite-Canvas) 之上构建企业多用户版本。不得将本项目扩展为与企业多用户版 Infinite Canvas 无关的方向。

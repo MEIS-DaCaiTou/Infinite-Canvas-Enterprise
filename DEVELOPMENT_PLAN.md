@@ -4,6 +4,29 @@
 
 ---
 
+## 2026-07-06 阶段结论：隔离底座第一阶段完成
+
+当前企业版已完成第一阶段安全隔离底座的主体闭环：
+
+- 3G-4A：上传资源隔离与上传资源 owner 治理，PR #34。
+- 3G-4B：素材库完整隔离与素材业务 owner 治理，PR #38。
+- 3G-5：WebSocket 广播隔离与实时事件 owner 治理，PR #42。
+- 3G-6：异步任务历史 owner 隔离，PR #46。
+- 3G-7A：管理员权限开关最小版 + 审计，PR #49。
+- Issue #50：上游同步与 Angle / Enhance ModelScope 上传解耦只读定位，已完成；上游 2026.06.30 尚未修复该问题，当前不整体同步上游。
+
+本阶段结论是：当前架构适配“单机无限画布小规模企业多用户化”的阶段目标。第一阶段重点不是组织协作，而是普通用户隔离、owner 归属、管理员兜底、关键 API 拦截、实时事件隔离、任务历史隔离、权限开关和审计记录。
+
+当前项目还不是完整企业协作平台。下一阶段应从“能隔离”升级为“可协作、可运维、可审计、可扩展、可验证”。协作能力需要单独设计 project members、canvas grants、共享与撤销、审计和迁移策略，不应直接把第一阶段 owner 模型扩展成临时 ACL。
+
+当前“上游主应用 + enterprise gateway + interceptors + enterprise DB 映射”仍是阶段性正确路线。长期风险是 `enterprise/interceptors.py` 继续中心化膨胀；后续新增策略应逐步模块化到 `enterprise/policies/`，再由 gateway / interceptors 编排调用。
+
+端到端验收基线见 `docs/manual-acceptance-enterprise-e2e.md`。当前架构评估与下一阶段演进决策见 `docs/decisions/ADR-current-architecture-and-next-stage.md`。
+
+本阶段不处理 Angle / Enhance ModelScope 上传解耦、不整体同步上游、不实现 team/workspace/project_members/canvas_grants、不做数据库功能 schema 改造、不重构 `interceptors.py`。
+
+---
+
 ## 总体顺序
 
 后续维护围绕“企业多用户版 Infinite Canvas”这一唯一方向推进。所有阶段都必须遵守 `PROJECT_CHARTER.md`、`CODE_BOUNDARIES.md` 和 `CODEX_WORKFLOW.md`。
