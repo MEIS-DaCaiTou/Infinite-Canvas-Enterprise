@@ -516,6 +516,8 @@
         localStorage.setItem("client_id", CLIENT_ID);
 
         let uploadedPath = "";
+        let uploadedFile = null;
+        let uploadedDataUrl = "";
         let currentResult = null;
         let currentUpscaleFactor = 2048;
         let enhanceProvider = 'local';
@@ -531,6 +533,21 @@
             document.getElementById('localControls').classList.toggle('hidden', p !== 'local');
             document.getElementById('msControls').classList.toggle('hidden', p !== 'ms');
             lucide.createIcons();
+
+            const btn = document.getElementById('genBtn');
+            const btnText = document.getElementById('btnText');
+            const hasPreview = uploadedDataUrl || (previewImg?.src && previewImg.src !== window.location.href);
+            if (btn && btnText && hasPreview && !btn.disabled) {
+                if (p === 'ms' || uploadedPath) {
+                    btnText.innerText = tr('studio.beginRemaster');
+                    btn.title = p === 'ms' && !uploadedPath
+                        ? "本地 ComfyUI 上传失败，仅影响本地模式；ModelScope 模式仍可继续。"
+                        : "";
+                } else {
+                    btnText.innerText = tr('studio.uploadFailed');
+                    btn.title = "";
+                }
+            }
         }
 
         const dropzone = document.getElementById('dropzone');
@@ -606,15 +623,20 @@
 
         async function handleFile(file) {
             if (!file) return;
+            uploadedFile = file;
+            uploadedPath = "";
+            uploadedDataUrl = "";
             const btn = document.getElementById('genBtn');
             const btnText = document.getElementById('btnText');
 
             // Disable button during upload
             btn.disabled = true;
+            btn.title = "";
             btnText.innerText = tr('studio.uploading');
 
             const reader = new FileReader();
             reader.onload = (e) => {
+                uploadedDataUrl = e.target.result;
                 previewImg.src = e.target.result;
                 previewImg.classList.remove('hidden');
                 document.getElementById('uploadContent').classList.add('opacity-0');
@@ -630,10 +652,17 @@
                 uploadedPath = data.files[0].comfy_name;
                 // Enable button after successful upload
                 btn.disabled = false;
+                btn.title = "";
                 btnText.innerText = tr('studio.beginRemaster');
             } catch (err) {
-                console.error("Upload error");
-                btnText.innerText = tr('studio.uploadFailed');
+                console.warn("Local upload error", err);
+                if (enhanceProvider === 'ms') {
+                    btnText.innerText = tr('studio.beginRemaster');
+                    btn.title = "本地 ComfyUI 上传失败，仅影响本地模式；ModelScope 模式仍可继续。";
+                } else {
+                    btnText.innerText = tr('studio.uploadFailed');
+                    btn.title = "";
+                }
                 btn.disabled = false;
             }
         }
@@ -667,7 +696,8 @@
         }
 
         async function handleGenerate() {
-            if (!uploadedPath) {
+            const msInputSrc = uploadedDataUrl || (previewImg?.src && previewImg.src !== window.location.href ? previewImg.src : "");
+            if ((enhanceProvider === 'local' && !uploadedPath) || (enhanceProvider === 'ms' && !msInputSrc)) {
                 const dropzone = document.getElementById('dropzone');
                 dropzone.style.transition = "0.2s";
                 dropzone.style.borderColor = "#ef4444";
@@ -692,7 +722,7 @@
                     // MS Cloud: Klein model + enhance LoRA
                     debugStep = "MS Cloud Request";
                     const previewEl = document.getElementById('previewImg');
-                    const previewSrc = previewEl.src;
+                    const previewSrc = msInputSrc;
                     if (!previewSrc || previewSrc === window.location.href) throw new Error("请先上传图片");
                     // 让出图尺寸与原图一致：取原图自然尺寸并对齐到 64 的倍数
                     const msSize = computeMsSize(previewEl.naturalWidth, previewEl.naturalHeight);
@@ -735,7 +765,11 @@
                     }
                     const msData = await msRes.json();
                     if (!msData.url) throw new Error("MS生成失败: 未返回图片");
-                    finalData = { images: [msData.url], timestamp: Date.now(), params: { "15": { "image": uploadedPath } } };
+                    finalData = {
+                        images: [msData.url],
+                        timestamp: Date.now(),
+                        params: uploadedPath ? { "15": { "image": uploadedPath } } : {}
+                    };
 
                 } else {
                     // Local ComfyUI

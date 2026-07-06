@@ -813,6 +813,17 @@
                 cloudBtn.classList.add('active');
                 localBtn.classList.remove('active');
             }
+
+            const btn = document.getElementById('genBtn');
+            const btnText = document.getElementById('btnText');
+            if (btn && btnText && uploadedFile) {
+                btn.disabled = false;
+                if (mode === 'cloud' || uploadedPath) {
+                    btnText.innerText = tr('studio.generateAngle');
+                } else {
+                    btnText.innerText = tr('studio.uploadFailed');
+                }
+            }
         };
 
         function generateUUID() {
@@ -877,10 +888,12 @@
         async function handleFile(file) {
             if (!file) return;
             uploadedFile = file; // Store for cloud usage
+            uploadedPath = "";
             const btn = document.getElementById('genBtn');
             const btnText = document.getElementById('btnText');
 
             btn.disabled = true;
+            btn.title = "";
             btnText.innerText = tr('studio.uploading');
 
             const reader = new FileReader();
@@ -904,10 +917,17 @@
                 const data = await res.json();
                 uploadedPath = data.files[0].comfy_name;
                 btn.disabled = false;
+                btn.title = "";
                 btnText.innerText = tr('studio.generateAngle');
             } catch (err) {
-                console.error("Upload error");
-                btnText.innerText = tr('studio.uploadFailed');
+                console.warn("Local upload error", err);
+                if (currentEngine === 'cloud') {
+                    btnText.innerText = tr('studio.generateAngle');
+                    btn.title = "本地 ComfyUI 上传失败，仅影响本地模式；云端模式仍可继续。";
+                } else {
+                    btnText.innerText = tr('studio.uploadFailed');
+                    btn.title = "";
+                }
                 btn.disabled = false;
             }
         }
