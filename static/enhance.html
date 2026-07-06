@@ -522,6 +522,39 @@
         let currentUpscaleFactor = 2048;
         let enhanceProvider = 'local';
 
+        function isEnhanceMsMode() {
+            const msBtn = document.getElementById('providerMs');
+            return enhanceProvider === 'ms' || msBtn?.classList.contains('active');
+        }
+
+        function hasEnhancePreviewInput() {
+            return !!uploadedDataUrl || !!(previewImg?.src && previewImg.src !== window.location.href);
+        }
+
+        function refreshEnhanceSubmitState() {
+            const btn = document.getElementById('genBtn');
+            const btnText = document.getElementById('btnText');
+            if (!btn || !btnText || !hasEnhancePreviewInput()) return;
+
+            btn.disabled = false;
+
+            if (isEnhanceMsMode()) {
+                btnText.innerText = tr('studio.beginRemaster');
+                btn.title = uploadedPath
+                    ? ''
+                    : '本地 ComfyUI 上传失败，仅影响本地模式；ModelScope 模式仍可继续。';
+                return;
+            }
+
+            if (uploadedPath) {
+                btnText.innerText = tr('studio.beginRemaster');
+                btn.title = '';
+            } else {
+                btnText.innerText = tr('studio.uploadFailed');
+                btn.title = '';
+            }
+        }
+
         function setEnhanceProvider(p) {
             enhanceProvider = p;
             document.getElementById('providerLocal').className = p === 'local'
@@ -533,21 +566,7 @@
             document.getElementById('localControls').classList.toggle('hidden', p !== 'local');
             document.getElementById('msControls').classList.toggle('hidden', p !== 'ms');
             lucide.createIcons();
-
-            const btn = document.getElementById('genBtn');
-            const btnText = document.getElementById('btnText');
-            const hasPreview = uploadedDataUrl || (previewImg?.src && previewImg.src !== window.location.href);
-            if (btn && btnText && hasPreview && !btn.disabled) {
-                if (p === 'ms' || uploadedPath) {
-                    btnText.innerText = tr('studio.beginRemaster');
-                    btn.title = p === 'ms' && !uploadedPath
-                        ? "本地 ComfyUI 上传失败，仅影响本地模式；ModelScope 模式仍可继续。"
-                        : "";
-                } else {
-                    btnText.innerText = tr('studio.uploadFailed');
-                    btn.title = "";
-                }
-            }
+            refreshEnhanceSubmitState();
         }
 
         const dropzone = document.getElementById('dropzone');
@@ -641,6 +660,7 @@
                 previewImg.classList.remove('hidden');
                 document.getElementById('uploadContent').classList.add('opacity-0');
                 document.getElementById('changeOverlay').classList.replace('hidden', 'flex');
+                refreshEnhanceSubmitState();
             };
             reader.readAsDataURL(file);
 
@@ -651,19 +671,10 @@
                 const data = await res.json();
                 uploadedPath = data.files[0].comfy_name;
                 // Enable button after successful upload
-                btn.disabled = false;
-                btn.title = "";
-                btnText.innerText = tr('studio.beginRemaster');
+                refreshEnhanceSubmitState();
             } catch (err) {
                 console.warn("Local upload error", err);
-                if (enhanceProvider === 'ms') {
-                    btnText.innerText = tr('studio.beginRemaster');
-                    btn.title = "本地 ComfyUI 上传失败，仅影响本地模式；ModelScope 模式仍可继续。";
-                } else {
-                    btnText.innerText = tr('studio.uploadFailed');
-                    btn.title = "";
-                }
-                btn.disabled = false;
+                refreshEnhanceSubmitState();
             }
         }
 
@@ -696,8 +707,9 @@
         }
 
         async function handleGenerate() {
+            const msMode = isEnhanceMsMode();
             const msInputSrc = uploadedDataUrl || (previewImg?.src && previewImg.src !== window.location.href ? previewImg.src : "");
-            if ((enhanceProvider === 'local' && !uploadedPath) || (enhanceProvider === 'ms' && !msInputSrc)) {
+            if ((!msMode && !uploadedPath) || (msMode && !msInputSrc)) {
                 const dropzone = document.getElementById('dropzone');
                 dropzone.style.transition = "0.2s";
                 dropzone.style.borderColor = "#ef4444";
@@ -718,7 +730,7 @@
             try {
                 let finalData;
 
-                if (enhanceProvider === 'ms') {
+                if (msMode) {
                     // MS Cloud: Klein model + enhance LoRA
                     debugStep = "MS Cloud Request";
                     const previewEl = document.getElementById('previewImg');
