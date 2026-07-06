@@ -796,6 +796,35 @@
         let currentEngine = 'local';
         const ENGINE_MODE_KEY = 'angle_engine_mode';
 
+        function isAngleCloudMode() {
+            const cloudBtn = document.getElementById('modeCloud');
+            return currentEngine === 'cloud' || cloudBtn?.classList.contains('active');
+        }
+
+        function refreshAngleSubmitState() {
+            const btn = document.getElementById('genBtn');
+            const btnText = document.getElementById('btnText');
+            if (!btn || !btnText || !uploadedFile) return;
+
+            btn.disabled = false;
+
+            if (isAngleCloudMode()) {
+                btnText.innerText = tr('studio.generateAngle');
+                btn.title = uploadedPath
+                    ? ''
+                    : '本地 ComfyUI 上传失败，仅影响本地模式；云端模式仍可继续。';
+                return;
+            }
+
+            if (uploadedPath) {
+                btnText.innerText = tr('studio.generateAngle');
+                btn.title = '';
+            } else {
+                btnText.innerText = tr('studio.uploadFailed');
+                btn.title = '';
+            }
+        }
+
         window.switchEngine = function(mode) {
             currentEngine = mode;
             localStorage.setItem(ENGINE_MODE_KEY, mode);
@@ -813,6 +842,7 @@
                 cloudBtn.classList.add('active');
                 localBtn.classList.remove('active');
             }
+            refreshAngleSubmitState();
         };
 
         function generateUUID() {
@@ -877,10 +907,12 @@
         async function handleFile(file) {
             if (!file) return;
             uploadedFile = file; // Store for cloud usage
+            uploadedPath = "";
             const btn = document.getElementById('genBtn');
             const btnText = document.getElementById('btnText');
 
             btn.disabled = true;
+            btn.title = "";
             btnText.innerText = tr('studio.uploading');
 
             const reader = new FileReader();
@@ -894,6 +926,7 @@
                 if (window.update3DTexture) {
                     window.update3DTexture(e.target.result);
                 }
+                refreshAngleSubmitState();
             };
             reader.readAsDataURL(file);
 
@@ -903,12 +936,10 @@
                 const res = await fetch('/api/upload', { method: 'POST', body: formData });
                 const data = await res.json();
                 uploadedPath = data.files[0].comfy_name;
-                btn.disabled = false;
-                btnText.innerText = tr('studio.generateAngle');
+                refreshAngleSubmitState();
             } catch (err) {
-                console.error("Upload error");
-                btnText.innerText = tr('studio.uploadFailed');
-                btn.disabled = false;
+                console.warn("Local upload error", err);
+                refreshAngleSubmitState();
             }
         }
 
@@ -1088,7 +1119,8 @@
         }
 
         async function handleGenerate() {
-            if (!uploadedPath && currentEngine === 'local') {
+            const cloudMode = isAngleCloudMode();
+            if (!uploadedPath && !cloudMode) {
                 // ... existing local check ...
                 const dropzone = document.getElementById('dropzone');
                 dropzone.style.transition = "0.2s";
@@ -1101,7 +1133,7 @@
                 return;
             }
             
-            if (!uploadedFile && currentEngine === 'cloud') {
+            if (!uploadedFile && cloudMode) {
                  alert("Please upload an image first");
                  return;
             }
@@ -1132,7 +1164,7 @@
             try {
                 let data;
                 
-                if (currentEngine === 'cloud') {
+                if (cloudMode) {
                     // Cloud Logic
                     data = await runCloudTask();
                 } else {

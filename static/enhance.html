@@ -516,9 +516,44 @@
         localStorage.setItem("client_id", CLIENT_ID);
 
         let uploadedPath = "";
+        let uploadedFile = null;
+        let uploadedDataUrl = "";
         let currentResult = null;
         let currentUpscaleFactor = 2048;
         let enhanceProvider = 'local';
+
+        function isEnhanceMsMode() {
+            const msBtn = document.getElementById('providerMs');
+            return enhanceProvider === 'ms' || msBtn?.classList.contains('active');
+        }
+
+        function hasEnhancePreviewInput() {
+            return !!uploadedDataUrl || !!(previewImg?.src && previewImg.src !== window.location.href);
+        }
+
+        function refreshEnhanceSubmitState() {
+            const btn = document.getElementById('genBtn');
+            const btnText = document.getElementById('btnText');
+            if (!btn || !btnText || !hasEnhancePreviewInput()) return;
+
+            btn.disabled = false;
+
+            if (isEnhanceMsMode()) {
+                btnText.innerText = tr('studio.beginRemaster');
+                btn.title = uploadedPath
+                    ? ''
+                    : '本地 ComfyUI 上传失败，仅影响本地模式；ModelScope 模式仍可继续。';
+                return;
+            }
+
+            if (uploadedPath) {
+                btnText.innerText = tr('studio.beginRemaster');
+                btn.title = '';
+            } else {
+                btnText.innerText = tr('studio.uploadFailed');
+                btn.title = '';
+            }
+        }
 
         function setEnhanceProvider(p) {
             enhanceProvider = p;
@@ -531,6 +566,7 @@
             document.getElementById('localControls').classList.toggle('hidden', p !== 'local');
             document.getElementById('msControls').classList.toggle('hidden', p !== 'ms');
             lucide.createIcons();
+            refreshEnhanceSubmitState();
         }
 
         const dropzone = document.getElementById('dropzone');
@@ -606,19 +642,25 @@
 
         async function handleFile(file) {
             if (!file) return;
+            uploadedFile = file;
+            uploadedPath = "";
+            uploadedDataUrl = "";
             const btn = document.getElementById('genBtn');
             const btnText = document.getElementById('btnText');
 
             // Disable button during upload
             btn.disabled = true;
+            btn.title = "";
             btnText.innerText = tr('studio.uploading');
 
             const reader = new FileReader();
             reader.onload = (e) => {
+                uploadedDataUrl = e.target.result;
                 previewImg.src = e.target.result;
                 previewImg.classList.remove('hidden');
                 document.getElementById('uploadContent').classList.add('opacity-0');
                 document.getElementById('changeOverlay').classList.replace('hidden', 'flex');
+                refreshEnhanceSubmitState();
             };
             reader.readAsDataURL(file);
 
@@ -629,12 +671,10 @@
                 const data = await res.json();
                 uploadedPath = data.files[0].comfy_name;
                 // Enable button after successful upload
-                btn.disabled = false;
-                btnText.innerText = tr('studio.beginRemaster');
+                refreshEnhanceSubmitState();
             } catch (err) {
-                console.error("Upload error");
-                btnText.innerText = tr('studio.uploadFailed');
-                btn.disabled = false;
+                console.warn("Local upload error", err);
+                refreshEnhanceSubmitState();
             }
         }
 
@@ -667,7 +707,9 @@
         }
 
         async function handleGenerate() {
-            if (!uploadedPath) {
+            const msMode = isEnhanceMsMode();
+            const msInputSrc = uploadedDataUrl || (previewImg?.src && previewImg.src !== window.location.href ? previewImg.src : "");
+            if ((!msMode && !uploadedPath) || (msMode && !msInputSrc)) {
                 const dropzone = document.getElementById('dropzone');
                 dropzone.style.transition = "0.2s";
                 dropzone.style.borderColor = "#ef4444";
@@ -688,11 +730,11 @@
             try {
                 let finalData;
 
-                if (enhanceProvider === 'ms') {
+                if (msMode) {
                     // MS Cloud: Klein model + enhance LoRA
                     debugStep = "MS Cloud Request";
                     const previewEl = document.getElementById('previewImg');
-                    const previewSrc = previewEl.src;
+                    const previewSrc = msInputSrc;
                     if (!previewSrc || previewSrc === window.location.href) throw new Error("请先上传图片");
                     // 让出图尺寸与原图一致：取原图自然尺寸并对齐到 64 的倍数
                     const msSize = computeMsSize(previewEl.naturalWidth, previewEl.naturalHeight);
@@ -735,7 +777,11 @@
                     }
                     const msData = await msRes.json();
                     if (!msData.url) throw new Error("MS生成失败: 未返回图片");
-                    finalData = { images: [msData.url], timestamp: Date.now(), params: { "15": { "image": uploadedPath } } };
+                    finalData = {
+                        images: [msData.url],
+                        timestamp: Date.now(),
+                        params: uploadedPath ? { "15": { "image": uploadedPath } } : {}
+                    };
 
                 } else {
                     // Local ComfyUI
