@@ -87,14 +87,14 @@
 
     /* ── 表格 ── */
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    .user-table { min-width: 980px; table-layout: fixed; }
+    .user-table { min-width: 1080px; table-layout: fixed; }
     .user-table th:nth-child(1) { width: 120px; }
     .user-table th:nth-child(2) { width: 140px; }
     .user-table th:nth-child(3) { width: 90px; }
     .user-table th:nth-child(4) { width: 86px; }
     .user-table th:nth-child(5) { width: 132px; }
     .user-table th:nth-child(6) { width: 132px; }
-    .user-table th:nth-child(7) { width: 330px; }
+    .user-table th:nth-child(7) { width: 430px; }
     th, td { padding: 11px 22px; text-align: left; }
     th {
       color: var(--faint); font-size: 10.5px; font-weight: 900;
@@ -130,7 +130,7 @@
       white-space: nowrap;
       word-break: normal;
     }
-    .user-actions-cell { min-width: 330px; padding-top: 8px; padding-bottom: 8px; }
+    .user-actions-cell { min-width: 430px; padding-top: 8px; padding-bottom: 8px; }
     .row-actions { display: flex; gap: 6px; align-items: center; flex-wrap: nowrap; white-space: nowrap; }
     .feature-layout { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(420px, .85fr); gap: 14px; align-items: start; }
     .feature-card { min-width: 0; border: 1px solid var(--line); border-radius: 12px; padding: 14px; background: var(--panel); }
@@ -162,7 +162,25 @@
       border-radius: 18px; padding: 28px; width: 400px;
       box-shadow: 0 20px 60px rgba(15,23,42,.18);
     }
+    .modal.wide { width: min(840px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto; }
     .modal h3 { font-size: 15px; font-weight: 900; margin-bottom: 20px; }
+    .impact-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 14px 0; }
+    .impact-count {
+      border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px;
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    }
+    .impact-count span:first-child { color: var(--muted); font-size: 12px; font-weight: 800; }
+    .impact-count span:last-child { color: var(--text); font-size: 14px; font-weight: 900; }
+    .impact-warnings {
+      margin: 12px 0; padding: 12px 14px; border-radius: 12px;
+      border: 1px solid rgba(239,68,68,.28); background: rgba(239,68,68,.06);
+      color: #dc2626; font-size: 12.5px; font-weight: 800; line-height: 1.65;
+    }
+    .impact-samples { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+    .impact-sample-block { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+    .impact-sample-title { font-size: 12px; font-weight: 900; margin-bottom: 8px; color: var(--text); }
+    .impact-sample-list { margin: 0; padding-left: 18px; color: var(--muted); font-size: 11.5px; line-height: 1.55; }
+    .impact-sample-empty { color: var(--faint); font-size: 11.5px; font-weight: 700; }
 
     /* ── 表单字段（完全复用上游 field-frame 规范）── */
     .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 13px; }
@@ -449,6 +467,24 @@
   </div>
 </div>
 
+<!-- Delete / cleanup impact preview modal -->
+<div class="modal-backdrop" id="impactModal">
+  <div class="modal wide">
+    <h3>删除/清理影响预览</h3>
+    <p id="impactSubtitle" style="color:var(--muted);font-size:12.5px;font-weight:700;margin-bottom:12px;"></p>
+    <div class="impact-warnings">
+      这是只读预览，不会删除 assets/，不会删除 output/，不会删除审计日志，也不会清理 owner 映射。
+    </div>
+    <div id="impactCounts" class="impact-summary"></div>
+    <div id="impactWarnings" class="impact-warnings" style="display:none;"></div>
+    <div id="impactSamples" class="impact-samples"></div>
+    <div class="error-inline" id="impactError"></div>
+    <div class="modal-actions">
+      <button class="action-btn" onclick="closeImpactModal()">关闭</button>
+    </div>
+  </div>
+</div>
+
 <!-- Toast -->
 <div id="toast"></div>
 
@@ -560,6 +596,7 @@
             <button class="row-btn" onclick="toggleRole('${id}','${username}',${isAdmin})">${isAdmin ? '撤销管理员' : '设为管理员'}</button>
             <button class="row-btn" onclick="openPwdModal('${id}','${username}')">重置密码</button>
             <button class="row-btn ${isActive ? 'danger' : ''}" onclick="setUserActive('${id}','${username}',${!isActive})">${isActive ? '禁用' : '启用'}</button>
+            <button class="row-btn" onclick="openImpactModal('${id}','${username}')">影响预览</button>
           </div>
         </td>
       </tr>`;
@@ -678,6 +715,96 @@
       renderUsers();
       showToast(`用户「${username}」已${action}`);
     } catch (e) { showToast(`${action}失败: ${e.message}`, 'error'); }
+  }
+
+  const IMPACT_COUNT_LABELS = {
+    projects: '项目归属',
+    canvases: '画布归属',
+    conversations: '对话归属',
+    resources: '资源 owner',
+    history: '历史记录',
+    asset_objects: '素材库对象',
+    canvas_tasks: '画布任务',
+    tasks: '异步任务',
+    feature_overrides: '权限覆盖',
+    audit_logs: '审计日志'
+  };
+
+  const IMPACT_SAMPLE_LABELS = {
+    projects: '项目',
+    canvases: '画布',
+    conversations: '对话',
+    resources: '资源',
+    history: '历史',
+    asset_objects: '素材库对象',
+    canvas_tasks: '画布任务',
+    tasks: '异步任务',
+    feature_overrides: '权限覆盖'
+  };
+
+  function closeImpactModal() {
+    document.getElementById('impactModal').classList.remove('show');
+  }
+
+  function impactSampleLabel(key, row) {
+    if (!row) return '';
+    if (key === 'projects') return row.project_id;
+    if (key === 'canvases') return row.canvas_id;
+    if (key === 'conversations') return row.conversation_id;
+    if (key === 'resources') return row.resource_url;
+    if (key === 'history') return [row.history_id, row.resource_url].filter(Boolean).join(' · ');
+    if (key === 'asset_objects') return [row.object_type, row.object_id, row.resource_url].filter(Boolean).join(' · ');
+    if (key === 'canvas_tasks') return row.task_id;
+    if (key === 'tasks') return [row.task_type, row.task_id, row.status].filter(Boolean).join(' · ');
+    if (key === 'feature_overrides') return [row.feature_key, row.mode].filter(Boolean).join(' · ');
+    return JSON.stringify(row);
+  }
+
+  function renderImpact(data) {
+    const counts = data.counts || {};
+    const samples = data.samples || {};
+    document.getElementById('impactCounts').innerHTML = Object.entries(IMPACT_COUNT_LABELS).map(([key, label]) => `
+      <div class="impact-count">
+        <span>${label}</span>
+        <span>${Number(counts[key] || 0)}</span>
+      </div>
+    `).join('');
+
+    const warningText = (data.warnings || []).map(escapeHtml).join('<br>');
+    const warningEl = document.getElementById('impactWarnings');
+    warningEl.innerHTML = warningText;
+    warningEl.style.display = warningText ? '' : 'none';
+
+    document.getElementById('impactSamples').innerHTML = Object.entries(IMPACT_SAMPLE_LABELS).map(([key, label]) => {
+      const rows = samples[key] || [];
+      const body = rows.length
+        ? `<ul class="impact-sample-list">${rows.map(row => `<li>${escapeHtml(impactSampleLabel(key, row) || '(empty)')}</li>`).join('')}</ul>`
+        : '<div class="impact-sample-empty">无样例</div>';
+      return `
+        <div class="impact-sample-block">
+          <div class="impact-sample-title">${label}样例</div>
+          ${body}
+        </div>
+      `;
+    }).join('');
+  }
+
+  async function openImpactModal(userId, username) {
+    document.getElementById('impactSubtitle').textContent = `正在预览用户「${username}」的删除/清理影响范围`;
+    document.getElementById('impactCounts').innerHTML = '<div style="color:var(--faint);font-size:12px;font-weight:800;">加载中...</div>';
+    document.getElementById('impactWarnings').style.display = 'none';
+    document.getElementById('impactSamples').innerHTML = '';
+    document.getElementById('impactError').textContent = '';
+    document.getElementById('impactModal').classList.add('show');
+    try {
+      const data = await apiFetch(`/enterprise/api/users/${encodeURIComponent(userId)}/delete-impact?sample_limit=10`);
+      const name = data.user?.display_name || data.user?.username || username;
+      document.getElementById('impactSubtitle').textContent = `用户：${name}（${data.user?.username || username}）`;
+      renderImpact(data);
+    } catch (e) {
+      document.getElementById('impactError').textContent = e.message;
+      document.getElementById('impactCounts').innerHTML = '';
+    }
   }
 
   // ── 点击 backdrop 关闭模态框

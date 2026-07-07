@@ -62,6 +62,39 @@ async def list_users(request: Request):
     return users
 
 
+@router.get("/api/users/{user_id}/delete-impact")
+async def user_delete_impact(user_id: str, request: Request):
+    current = _require_admin(request)
+    raw_limit = request.query_params.get("sample_limit", "20")
+    try:
+        sample_limit = int(raw_limit)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="sample_limit must be an integer")
+    if sample_limit < 0:
+        raise HTTPException(status_code=400, detail="sample_limit must be greater than or equal to 0")
+    sample_limit = min(sample_limit, 100)
+
+    target = _target_user_or_404(user_id)
+    impact = edb.get_user_delete_impact(user_id, sample_limit=sample_limit)
+    if not impact:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    edb.log_action(
+        current["user_id"],
+        "user_delete_dry_run",
+        json.dumps(
+            {
+                "target_user_id": target.get("id"),
+                "target_username": target.get("username"),
+                "counts": impact.get("counts", {}),
+                "sample_limit": sample_limit,
+            },
+            ensure_ascii=False,
+        ),
+    )
+    return impact
+
+
 @router.post("/api/users")
 async def create_user(request: Request):
     current = _require_admin(request)
