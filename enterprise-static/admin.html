@@ -132,6 +132,45 @@
     }
     .user-actions-cell { min-width: 430px; padding-top: 8px; padding-bottom: 8px; }
     .row-actions { display: flex; gap: 6px; align-items: center; flex-wrap: nowrap; white-space: nowrap; }
+    .disabled-user-row td { color: var(--faint); background: rgba(148,163,184,.045); }
+    .disabled-user-row:hover td { background: rgba(148,163,184,.09); }
+    .member-panel { padding: 14px 18px 16px; border-bottom: 1px solid var(--line); }
+    .member-stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
+    .member-stat-card {
+      min-width: 0; border: 1px solid var(--line); border-radius: 12px; padding: 9px 10px;
+      background: var(--panel); display: flex; flex-direction: column; gap: 3px;
+    }
+    .member-stat-label { color: var(--muted); font-size: 10.5px; font-weight: 900; letter-spacing: .03em; }
+    .member-stat-value { color: var(--text); font-size: 16px; font-weight: 900; }
+    .member-filter-grid { display: grid; grid-template-columns: 150px 140px minmax(220px, 1fr) 160px; gap: 10px; align-items: end; }
+    .member-filter-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+    .member-filter-field .field-frame { margin: 0; min-width: 0; }
+    .member-filter-field select,
+    .member-filter-field input { width: 100%; max-width: 100%; }
+    .pagination-bar {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      padding: 12px 18px 16px; border-top: 1px solid var(--line); flex-wrap: wrap;
+      color: var(--muted); font-size: 12px; font-weight: 800;
+    }
+    .pagination-top { justify-content: flex-start; padding-bottom: 12px; }
+    .pagination-bottom { justify-content: center; padding-top: 14px; }
+    .pagination-left,
+    .pagination-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+    .pagination-size {
+      display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+    }
+    .pagination-size select {
+      width: auto; min-width: 84px; padding: 7px 10px; border-radius: 10px;
+      border: 1px solid var(--line); background: var(--panel); color: var(--text); font-weight: 800;
+    }
+    .pagination-range { color: var(--faint); white-space: nowrap; }
+    .pagination-page { color: var(--muted); white-space: nowrap; }
+    .pagination-btn {
+      border: 1px solid var(--line); background: var(--panel); color: var(--muted);
+      border-radius: 10px; padding: 7px 11px; font-size: 12px; font-weight: 900; cursor: pointer;
+    }
+    .pagination-btn:hover:not(:disabled) { border-color: var(--text); color: var(--text); }
+    .pagination-btn:disabled { opacity: .45; cursor: not-allowed; }
     .feature-layout { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(420px, .85fr); gap: 14px; align-items: start; }
     .feature-card { min-width: 0; border: 1px solid var(--line); border-radius: 12px; padding: 14px; background: var(--panel); }
     .feature-card h3 { margin: 0 0 8px; font-size: 13px; font-weight: 900; }
@@ -148,6 +187,12 @@
     .feature-override-row .select-user { width: 100%; max-width: 100%; }
     @media (max-width: 1280px) {
       .feature-layout { grid-template-columns: 1fr; }
+      .member-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .member-filter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 720px) {
+      .member-stats,
+      .member-filter-grid { grid-template-columns: 1fr; }
     }
 
     /* ── 模态框 ── */
@@ -281,6 +326,55 @@
         <span class="block-title">成员列表</span>
         <span id="userCount" style="color:var(--faint);font-size:11.5px;font-weight:700;">加载中…</span>
       </div>
+      <div class="member-panel">
+        <div class="member-stats" id="memberStats">
+          <div class="member-stat-card"><span class="member-stat-label">全部用户</span><strong class="member-stat-value">—</strong></div>
+          <div class="member-stat-card"><span class="member-stat-label">正常用户</span><strong class="member-stat-value">—</strong></div>
+          <div class="member-stat-card"><span class="member-stat-label">已停用</span><strong class="member-stat-value">—</strong></div>
+          <div class="member-stat-card"><span class="member-stat-label">管理员</span><strong class="member-stat-value">—</strong></div>
+          <div class="member-stat-card"><span class="member-stat-label">当前显示</span><strong class="member-stat-value">—</strong></div>
+        </div>
+        <div class="member-filter-grid">
+          <label class="member-filter-field">
+            <span class="label">状态筛选</span>
+            <span class="field-frame">
+              <select id="memberStatusFilter" onchange="applyMemberFilters()">
+                <option value="active" selected>正常用户</option>
+                <option value="all">全部用户</option>
+                <option value="disabled">已停用用户</option>
+              </select>
+            </span>
+          </label>
+          <label class="member-filter-field">
+            <span class="label">角色筛选</span>
+            <span class="field-frame">
+              <select id="memberRoleFilter" onchange="applyMemberFilters()">
+                <option value="all" selected>全部角色</option>
+                <option value="admin">管理员</option>
+                <option value="user">普通用户</option>
+              </select>
+            </span>
+          </label>
+          <label class="member-filter-field">
+            <span class="label">搜索成员</span>
+            <span class="field-frame">
+              <input id="memberSearchInput" type="search" placeholder="搜索用户名 / 展示名" oninput="applyMemberFilters()" />
+            </span>
+          </label>
+          <label class="member-filter-field">
+            <span class="label">排序</span>
+            <span class="field-frame">
+              <select id="memberSortMode" onchange="applyMemberFilters()">
+                <option value="last_login" selected>最近登录优先</option>
+                <option value="created_at">创建时间最新</option>
+                <option value="username">用户名 A-Z</option>
+                <option value="status">状态：正常优先</option>
+              </select>
+            </span>
+          </label>
+        </div>
+      </div>
+      <div id="memberPagination" class="pagination-bar pagination-top"></div>
       <table class="user-table">
         <thead>
           <tr>
@@ -297,6 +391,7 @@
           <tr><td colspan="7" style="text-align:center;color:var(--faint);padding:48px 0;font-weight:700;">加载中…</td></tr>
         </tbody>
       </table>
+      <div id="memberPaginationBottom" class="pagination-bar pagination-bottom"></div>
     </div>
     </div><!-- /tab-users -->
 
@@ -307,6 +402,7 @@
         <span class="block-title">项目归属管理</span>
         <span id="projectCount" style="color:var(--faint);font-size:11.5px;font-weight:700;">加载中…</span>
       </div>
+      <div id="projectPagination" class="pagination-bar pagination-top"></div>
       <table>
         <thead>
           <tr>
@@ -321,6 +417,7 @@
           <tr><td colspan="5" style="text-align:center;color:var(--faint);padding:48px 0;font-weight:700;">加载中…</td></tr>
         </tbody>
       </table>
+      <div id="projectPaginationBottom" class="pagination-bar pagination-bottom"></div>
     </div>
     </div><!-- /tab-projects -->
 
@@ -331,6 +428,7 @@
         <span class="block-title">画布归属管理</span>
         <span id="canvasCount" style="color:var(--faint);font-size:11.5px;font-weight:700;">加载中…</span>
       </div>
+      <div id="canvasPagination" class="pagination-bar pagination-top"></div>
       <table>
         <thead>
           <tr>
@@ -344,6 +442,7 @@
           <tr><td colspan="4" style="text-align:center;color:var(--faint);padding:48px 0;font-weight:700;">加载中…</td></tr>
         </tbody>
       </table>
+      <div id="canvasPaginationBottom" class="pagination-bar pagination-bottom"></div>
     </div>
     </div><!-- /tab-canvases -->
 
@@ -354,6 +453,7 @@
         <span class="block-title">对话归属管理</span>
         <span id="conversationCount" style="color:var(--faint);font-size:11.5px;font-weight:700;">加载中…</span>
       </div>
+      <div id="conversationPagination" class="pagination-bar pagination-top"></div>
       <table>
         <thead>
           <tr>
@@ -369,6 +469,7 @@
           <tr><td colspan="6" style="text-align:center;color:var(--faint);padding:48px 0;font-weight:700;">加载中…</td></tr>
         </tbody>
       </table>
+      <div id="conversationPaginationBottom" class="pagination-bar pagination-bottom"></div>
     </div>
     </div><!-- /tab-conversations -->
 
@@ -497,6 +598,16 @@
   let _featureFlags = [];
   let _featureOverrides = [];
   let _impactTarget = null;
+  let _memberStatusFilter = 'active';
+  let _memberRoleFilter = 'all';
+  let _memberSearchQuery = '';
+  let _memberSortMode = 'last_login';
+  const _paginationState = {
+    member: { page: 1, pageSize: 25 },
+    projects: { page: 1, pageSize: 25 },
+    canvases: { page: 1, pageSize: 25 },
+    conversations: { page: 1, pageSize: 25 },
+  };
 
   function showToast(msg, type = 'success') {
     const el = document.getElementById('toast');
@@ -558,6 +669,178 @@
     return value === true || value === 1 || value === '1';
   }
 
+  function normalizePageSize(value) {
+    if (value === 'all') return 'all';
+    const parsed = Number(value);
+    return [25, 50, 100].includes(parsed) ? parsed : 25;
+  }
+
+  function getPaginationState(tableKey) {
+    if (!_paginationState[tableKey]) _paginationState[tableKey] = { page: 1, pageSize: 25 };
+    return _paginationState[tableKey];
+  }
+
+  function resetTablePage(tableKey) {
+    getPaginationState(tableKey).page = 1;
+  }
+
+  function paginateRows(rows, tableKey) {
+    const state = getPaginationState(tableKey);
+    const total = rows.length;
+    state.pageSize = normalizePageSize(state.pageSize);
+    if (state.pageSize === 'all') {
+      state.page = 1;
+      return { rows, total, page: 1, totalPages: 1, start: total ? 1 : 0, end: total, pageSize: 'all' };
+    }
+    const totalPages = Math.max(1, Math.ceil(total / state.pageSize));
+    if (!Number.isFinite(state.page) || state.page < 1) state.page = 1;
+    if (state.page > totalPages) state.page = totalPages;
+    const startIndex = (state.page - 1) * state.pageSize;
+    const pageRows = rows.slice(startIndex, startIndex + state.pageSize);
+    return {
+      rows: pageRows,
+      total,
+      page: state.page,
+      totalPages,
+      start: total ? startIndex + 1 : 0,
+      end: total ? startIndex + pageRows.length : 0,
+      pageSize: state.pageSize,
+    };
+  }
+
+  function renderTableByKey(tableKey) {
+    if (tableKey === 'member') return renderUsers();
+    if (tableKey === 'projects') return renderProjects();
+    if (tableKey === 'canvases') return renderCanvases();
+    if (tableKey === 'conversations') return renderConversations();
+  }
+
+  function setTablePageSize(tableKey, pageSize) {
+    const state = getPaginationState(tableKey);
+    state.pageSize = normalizePageSize(pageSize);
+    state.page = 1;
+    renderTableByKey(tableKey);
+  }
+
+  function setTablePage(tableKey, page) {
+    const state = getPaginationState(tableKey);
+    state.page = Number(page) || 1;
+    renderTableByKey(tableKey);
+  }
+
+  function renderPaginationControls(containerId, tableKey, pageInfo) {
+    const topContainer = document.getElementById(containerId);
+    const bottomContainer = document.getElementById(`${containerId}Bottom`);
+    if (!topContainer || !bottomContainer) return;
+    const pageSizeValue = String(pageInfo.pageSize);
+    const sizeOptions = [
+      [25, '25'],
+      [50, '50'],
+      [100, '100'],
+      ['all', '全部'],
+    ].map(([value, label]) => `<option value="${value}" ${String(value) === pageSizeValue ? 'selected' : ''}>${label}</option>`).join('');
+    const prevPage = Math.max(1, pageInfo.page - 1);
+    const nextPage = Math.min(pageInfo.totalPages, pageInfo.page + 1);
+    topContainer.innerHTML = `
+      <div class="pagination-left">
+        <label class="pagination-size">
+          <span>每页条数</span>
+          <select onchange="setTablePageSize('${tableKey}', this.value)">${sizeOptions}</select>
+        </label>
+        <span class="pagination-range">显示 ${pageInfo.start}-${pageInfo.end} / 共 ${pageInfo.total}</span>
+      </div>
+    `;
+    bottomContainer.innerHTML = `
+      <div class="pagination-right">
+        <button class="pagination-btn" onclick="setTablePage('${tableKey}', ${prevPage})" ${pageInfo.page <= 1 ? 'disabled' : ''}>上一页</button>
+        <span class="pagination-page">第 ${pageInfo.page} / ${pageInfo.totalPages} 页</span>
+        <button class="pagination-btn" onclick="setTablePage('${tableKey}', ${nextPage})" ${pageInfo.page >= pageInfo.totalPages ? 'disabled' : ''}>下一页</button>
+      </div>
+    `;
+  }
+
+  function readTimestamp(value) {
+    if (!value) return 0;
+    const parsed = new Date(value).getTime();
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  function compareUsernames(a, b) {
+    return String(a.username || '').localeCompare(String(b.username || ''), 'zh-CN', { sensitivity: 'base' });
+  }
+
+  function syncMemberFiltersFromDom() {
+    _memberStatusFilter = document.getElementById('memberStatusFilter')?.value || 'active';
+    _memberRoleFilter = document.getElementById('memberRoleFilter')?.value || 'all';
+    _memberSearchQuery = (document.getElementById('memberSearchInput')?.value || '').trim().toLowerCase();
+    _memberSortMode = document.getElementById('memberSortMode')?.value || 'last_login';
+  }
+
+  function getFilteredUsers() {
+    syncMemberFiltersFromDom();
+    let users = [..._users];
+    if (_memberStatusFilter === 'active') {
+      users = users.filter(u => boolFlag(u.is_active));
+    } else if (_memberStatusFilter === 'disabled') {
+      users = users.filter(u => !boolFlag(u.is_active));
+    }
+    if (_memberRoleFilter === 'admin') {
+      users = users.filter(u => boolFlag(u.is_admin));
+    } else if (_memberRoleFilter === 'user') {
+      users = users.filter(u => !boolFlag(u.is_admin));
+    }
+    if (_memberSearchQuery) {
+      users = users.filter(u => {
+        const username = String(u.username || '').toLowerCase();
+        const displayName = String(u.display_name || '').toLowerCase();
+        return username.includes(_memberSearchQuery) || displayName.includes(_memberSearchQuery);
+      });
+    }
+    users.sort((a, b) => {
+      if (_memberSortMode === 'created_at') {
+        return readTimestamp(b.created_at) - readTimestamp(a.created_at) || compareUsernames(a, b);
+      }
+      if (_memberSortMode === 'username') {
+        return compareUsernames(a, b);
+      }
+      if (_memberSortMode === 'status') {
+        return Number(boolFlag(b.is_active)) - Number(boolFlag(a.is_active)) || compareUsernames(a, b);
+      }
+      const aLogin = readTimestamp(a.last_login);
+      const bLogin = readTimestamp(b.last_login);
+      if (aLogin || bLogin) return bLogin - aLogin || compareUsernames(a, b);
+      return readTimestamp(b.created_at) - readTimestamp(a.created_at) || compareUsernames(a, b);
+    });
+    return users;
+  }
+
+  function renderMemberStats(filteredUsers) {
+    const statsEl = document.getElementById('memberStats');
+    if (!statsEl) return;
+    const total = _users.length;
+    const active = _users.filter(u => boolFlag(u.is_active)).length;
+    const disabled = total - active;
+    const admins = _users.filter(u => boolFlag(u.is_admin)).length;
+    const current = filteredUsers.length;
+    statsEl.innerHTML = [
+      ['全部用户', total],
+      ['正常用户', active],
+      ['已停用', disabled],
+      ['管理员', admins],
+      ['当前显示', current],
+    ].map(([label, value]) => `
+      <div class="member-stat-card">
+        <span class="member-stat-label">${label}</span>
+        <strong class="member-stat-value">${value}</strong>
+      </div>
+    `).join('');
+  }
+
+  function applyMemberFilters() {
+    resetTablePage('member');
+    renderUsers();
+  }
+
   // ── 加载用户列表
   async function fetchUsers() {
     return await apiFetch('/enterprise/api/users');
@@ -572,12 +855,20 @@
 
   function renderUsers() {
     const tbody = document.getElementById('userTable');
-    document.getElementById('userCount').textContent = `共 ${_users.length} 位成员`;
+    const visibleUsers = getFilteredUsers();
+    const pagedUsers = paginateRows(visibleUsers, 'member');
+    renderMemberStats(visibleUsers);
+    renderPaginationControls('memberPagination', 'member', pagedUsers);
+    document.getElementById('userCount').textContent = `当前显示 ${visibleUsers.length} / 全部 ${_users.length}`;
     if (!_users.length) {
       tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--faint);padding:48px 0;font-weight:700;">暂无用户</td></tr>';
       return;
     }
-    tbody.innerHTML = _users.map(u => {
+    if (!visibleUsers.length) {
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--faint);padding:48px 0;font-weight:700;">没有符合当前筛选条件的成员<br><span style="font-size:12px;font-weight:600;">请调整状态、角色或搜索关键词</span></td></tr>';
+      return;
+    }
+    tbody.innerHTML = pagedUsers.rows.map(u => {
       const id = jsArg(u.id);
       const username = jsArg(u.username);
       const displayName = jsArg(u.display_name || '');
@@ -586,7 +877,7 @@
       const isAdmin = boolFlag(u.is_admin);
       const isActive = boolFlag(u.is_active);
       return `
-      <tr>
+      <tr class="${isActive ? '' : 'disabled-user-row'}">
         <td class="truncate-cell" style="font-weight:800;" title="${usernameHtml}">${usernameHtml}</td>
         <td class="truncate-cell" style="color:var(--muted);" title="${displayNameHtml === '—' ? '' : displayNameHtml}">${displayNameHtml}</td>
         <td><span class="badge ${isAdmin ? 'badge-admin' : 'badge-user'}">${isAdmin ? '管理员' : '普通用户'}</span></td>
@@ -1062,6 +1353,7 @@
     document.getElementById('projectCount').textContent =
       `共 ${_projects.length} 个项目，其中 ${unowned.length} 个未分配；默认项目按用户独立呈现`;
     if (!_projects.length) {
+      renderPaginationControls('projectPagination', 'projects', paginateRows([], 'projects'));
       tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--faint);padding:48px 0;font-weight:700;">暂无项目</td></tr>';
       return;
     }
@@ -1074,7 +1366,9 @@
       const bUnowned = b.id !== 'default' && !_projectOwnerMap[b.id];
       return Number(bUnowned) - Number(aUnowned);
     });
-    tbody.innerHTML = sorted.map(project => {
+    const pagedProjects = paginateRows(sorted, 'projects');
+    renderPaginationControls('projectPagination', 'projects', pagedProjects);
+    tbody.innerHTML = pagedProjects.rows.map(project => {
       const projectIdRaw = String(project.id || '');
       const projectIdHtml = escapeHtml(projectIdRaw);
       const projectIdArg = jsArg(projectIdRaw);
@@ -1150,6 +1444,7 @@
       `共 ${_canvases.length} 个画布，其中 ${unowned.length} 个未分配`;
 
     if (!_canvases.length) {
+      renderPaginationControls('canvasPagination', 'canvases', paginateRows([], 'canvases'));
       tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--faint);padding:48px 0;font-weight:700;">暂无画布</td></tr>';
       return;
     }
@@ -1166,7 +1461,9 @@
       return aOwned - bOwned;
     });
 
-    tbody.innerHTML = sorted.map(c => {
+    const pagedCanvases = paginateRows(sorted, 'canvases');
+    renderPaginationControls('canvasPagination', 'canvases', pagedCanvases);
+    tbody.innerHTML = pagedCanvases.rows.map(c => {
       const canvasIdRaw = String(c.id || '');
       const titleHtml = escapeHtml(c.title || '（无标题）');
       const canvasIdHtml = escapeHtml(canvasIdRaw);
@@ -1235,6 +1532,7 @@
       `共 ${_conversations.length} 个对话，其中 ${unowned.length} 个未分配；未分配对话仅管理员可见`;
 
     if (!_conversations.length) {
+      renderPaginationControls('conversationPagination', 'conversations', paginateRows([], 'conversations'));
       tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--faint);padding:48px 0;font-weight:700;">暂无对话</td></tr>';
       return;
     }
@@ -1245,7 +1543,9 @@
       .join('');
 
     const sorted = [..._conversations].sort((a, b) => Number(b.unowned) - Number(a.unowned));
-    tbody.innerHTML = sorted.map(c => {
+    const pagedConversations = paginateRows(sorted, 'conversations');
+    renderPaginationControls('conversationPagination', 'conversations', pagedConversations);
+    tbody.innerHTML = pagedConversations.rows.map(c => {
       const id = jsArg(c.id);
       const idHtml = escapeHtml(c.id);
       const titleHtml = escapeHtml(c.title || '新对话');
