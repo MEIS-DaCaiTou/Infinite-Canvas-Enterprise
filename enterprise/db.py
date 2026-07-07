@@ -300,6 +300,130 @@ def list_users() -> list:
         conn.close()
 
 
+def get_user_delete_impact(user_id: str, sample_limit: int = 20) -> Optional[dict]:
+    """Return a read-only dry-run summary for user deletion/cleanup planning."""
+    user_id = (user_id or "").strip()
+    if not user_id:
+        return None
+    try:
+        sample_limit = int(sample_limit)
+    except Exception:
+        sample_limit = 20
+    sample_limit = max(0, min(100, sample_limit))
+
+    table_specs = {
+        "projects": (
+            "user_project_map",
+            "user_id",
+            "project_id, parent_project_id, visibility, created_at",
+            "created_at DESC",
+        ),
+        "canvases": (
+            "user_canvas_map",
+            "user_id",
+            "canvas_id, created_at",
+            "created_at DESC",
+        ),
+        "conversations": (
+            "user_conversation_map",
+            "user_id",
+            "conversation_id, created_at",
+            "created_at DESC",
+        ),
+        "resources": (
+            "user_resource_map",
+            "user_id",
+            "resource_url, source, created_at",
+            "created_at DESC",
+        ),
+        "history": (
+            "user_history_map",
+            "user_id",
+            "history_id, type, resource_url, task_id, source, created_at",
+            "created_at DESC",
+        ),
+        "asset_objects": (
+            "user_asset_object_map",
+            "user_id",
+            "object_type, object_id, parent_library_id, parent_category_id, resource_url, source, created_at, updated_at",
+            "updated_at DESC",
+        ),
+        "canvas_tasks": (
+            "user_canvas_task_map",
+            "user_id",
+            "task_id, created_at",
+            "created_at DESC",
+        ),
+        "tasks": (
+            "user_task_map",
+            "user_id",
+            "task_type, task_id, source, canvas_id, workflow_id, upstream_task_id, resource_url, status, created_at, updated_at",
+            "updated_at DESC",
+        ),
+        "feature_overrides": (
+            "enterprise_user_feature_overrides",
+            "user_id",
+            "feature_key, mode, updated_by, updated_at",
+            "updated_at DESC",
+        ),
+    }
+
+    conn = get_db()
+    try:
+        user_row = conn.execute(
+            "SELECT id, username, display_name, is_admin, is_active, created_at, last_login "
+            "FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+        if not user_row:
+            return None
+
+        counts: dict[str, int] = {}
+        samples: dict[str, list] = {}
+        for key, (table, owner_column, columns, order_by) in table_specs.items():
+            counts[key] = int(conn.execute(
+                f"SELECT COUNT(*) FROM {table} WHERE {owner_column} = ?",
+                (user_id,),
+            ).fetchone()[0])
+            rows = conn.execute(
+                f"""
+                SELECT {columns}
+                FROM {table}
+                WHERE {owner_column} = ?
+                ORDER BY {order_by}
+                LIMIT ?
+                """,
+                (user_id, sample_limit),
+            ).fetchall()
+            samples[key] = [dict(row) for row in rows]
+
+        audit_like = f"%{user_id}%"
+        counts["audit_logs"] = int(conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM usage_logs
+            WHERE user_id = ? OR detail LIKE ?
+            """,
+            (user_id, audit_like),
+        ).fetchone()[0])
+
+        user = dict(user_row)
+        user["is_admin"] = bool(user.get("is_admin"))
+        user["is_active"] = bool(user.get("is_active"))
+        return {
+            "user": user,
+            "counts": counts,
+            "samples": samples,
+            "warnings": [
+                "Runtime files are not deleted by this operation.",
+                "Audit logs are retained.",
+                "This is a read-only dry-run preview.",
+            ],
+        }
+    finally:
+        conn.close()
+
+
 def create_user(username: str, password: str, display_name: str = "", is_admin: bool = False) -> dict:
     conn = get_db()
     try:
