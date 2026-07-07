@@ -62,6 +62,7 @@ const pendingSandbox = {
   smartPendingTasks: node => Array.isArray(node?.pendingTasks) ? node.pendingTasks.filter(task => task?.taskId) : [],
   resultMediaUrls: value => Array.isArray(value) ? value : (value ? [value] : []),
   nonPreviewOutputImages: value => Array.isArray(value) ? value : [],
+  cleanHistoryImages: value => Array.isArray(value) ? value : [],
   stripImageGenerationMeta: item => item,
   copyMediaSizeFields: (item, target) => ({ ...target, ...(item || {}) }),
   mediaNodeDefaultScale: () => 1,
@@ -108,7 +109,8 @@ for (const expected of [
   'startSmartPendingGenerationLog(pendingNode, runLog, runLogStart);',
   'recordSmartPendingGenerationLog(node, additions, kind);',
   'const logState = pendingSmartGenerationLog(node, kind);',
-  'await resumeSmartPendingNode(pendingNode, {recordLog:false});',
+  'await resumeSmartPendingNode(outputSlot, {run:runLog, runLogStart, recordLog:false});',
+  'await resumeSmartPendingNode(pendingNode, {run:runLog, runLogStart, recordLog:false});',
 ]) {
   assert.ok(source.includes(expected), `missing regression hook: ${expected}`);
 }

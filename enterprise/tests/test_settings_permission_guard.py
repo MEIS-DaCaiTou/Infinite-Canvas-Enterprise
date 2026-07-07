@@ -137,6 +137,10 @@ async def _run_checks() -> None:
         await _assert_forbidden("api/providers/probe-async", "POST", actor_a, {"provider_id": "custom-api"})
         await _assert_forbidden("api/providers/fetch-models", "POST", actor_a, {"api_key": "sk-secret"})
         await _assert_forbidden("api/providers/custom-api/fetch-models", "GET", actor_a)
+        await _assert_forbidden("api/codex/status", "GET", actor_a)
+        await _assert_forbidden("api/codex/help", "POST", actor_a, {"command": "codex --help"})
+        await _assert_forbidden("api/gemini-cli/status", "GET", actor_a)
+        await _assert_forbidden("api/gemini-cli/help", "POST", actor_a, {"command": "gemini --help"})
 
         config_payload = {
             "base_url": "https://sensitive.example/v1",
@@ -266,6 +270,10 @@ async def _run_checks() -> None:
             ("api/providers/probe-async", "POST", {"provider_id": "custom-api"}),
             ("api/providers/fetch-models", "POST", {"provider_id": "custom-api"}),
             ("api/providers/custom-api/fetch-models", "GET", None),
+            ("api/codex/status", "GET", None),
+            ("api/codex/help", "POST", {"command": "codex --help"}),
+            ("api/gemini-cli/status", "GET", None),
+            ("api/gemini-cli/help", "POST", {"command": "gemini --help"}),
             ("api/workflows", "POST", workflow_payload),
             ("api/workflows/custom/guarded.json/config", "PUT", {"title": "Allowed"}),
             ("api/workflows/custom/guarded.json", "DELETE", None),
@@ -289,6 +297,8 @@ async def _run_checks() -> None:
             "settings_provider_tested",
             "settings_provider_probed",
             "settings_provider_models_fetched",
+            "settings_cli_status_checked",
+            "settings_cli_help_viewed",
             "settings_workflow_uploaded",
             "settings_workflow_config_saved",
             "settings_workflow_deleted",

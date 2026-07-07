@@ -7,6 +7,7 @@
     <script>
         (function(){
             try {
+                document.documentElement.dataset.studioFitScale = 'off';
                 var theme = localStorage.getItem('studio_theme') || localStorage.getItem('canvas_theme') || 'light';
                 if(theme === 'dark') {
                     document.documentElement.classList.add('studio-theme-dark');
@@ -15,12 +16,12 @@
             } catch(e) {}
         })();
     </script>
-    <script src="/static/vendor/js/tailwindcss-cdn.js?v=2026.06.22.1782095921"></script>
-    <script src="/static/vendor/js/lucide.js?v=2026.06.22.1782095919"></script>
-    <script src="/static/js/theme.js?v=2026.06.22.1782095915"></script>
-    <script src="/static/js/i18n.js?v=2026.06.22.1782095914"></script>
-    <link rel="stylesheet" href="/static/css/theme.css?v=2026.06.22.1782095910">
-    <link rel="stylesheet" href="/static/css/api-settings.css?v=2026.06.22.1782180157">
+    <script src="/static/vendor/js/tailwindcss-cdn.js?v=2026.07.5.1782696751"></script>
+    <script src="/static/vendor/js/lucide.js?v=2026.07.5.1782696749"></script>
+    <script src="/static/js/theme.js?v=2026.07.5.1783117645"></script>
+    <script src="/static/js/i18n.js?v=2026.07.5.1783116068"></script>
+    <link rel="stylesheet" href="/static/css/theme.css?v=2026.07.5.1782696682">
+    <link rel="stylesheet" href="/static/css/api-settings.css?v=2026.07.5.1783158442">
 </head>
 <body>
     <div class="page">
@@ -39,6 +40,15 @@
                     <div id="providerList" class="provider-list"></div>
                     <button class="add-btn" type="button" onclick="addProvider()"><i data-lucide="plus" class="w-4 h-4"></i><span data-i18n="api.addProvider">新增平台</span></button>
                     <button class="api-link-btn" type="button" onclick="openRecommendApi()"><i data-lucide="sparkles" class="w-4 h-4"></i><span data-i18n="api.recommendApi">推荐API</span></button>
+                    <div class="cli-quick-group">
+                        <div class="side-section-title" data-i18n="api.cliSettings">CLI 设置</div>
+                        <div class="cli-quick-list">
+                            <button class="cli-quick-btn" type="button" onclick="addCliProvider('jimeng')"><i data-lucide="image" class="w-3.5 h-3.5"></i><span>即梦 CLI</span></button>
+                            <button class="cli-quick-btn" type="button" onclick="addCliProvider('codex')"><i data-lucide="terminal" class="w-3.5 h-3.5"></i><span>GPT CLI</span></button>
+                            <button class="cli-quick-btn" type="button" onclick="addCliProvider('gemini-cli')"><i data-lucide="sparkles" class="w-3.5 h-3.5"></i><span>Antigravity CLI</span></button>
+                            <div class="cli-quick-note">需要先安装 CLI文件夹中的依赖。</div>
+                        </div>
+                    </div>
                 </aside>
 
                 <main id="settingsContent" class="content">
@@ -78,6 +88,9 @@
                                 </div>
                                 <div class="runninghub-hint">
                                     <span class="ms-line">国外地址：<span class="inline-code">https://www.runninghub.ai</span></span>
+                                </div>
+                                <div class="apimart-hint">
+                                    <span class="ms-line">国内请求地址：<span class="inline-code">https://apib.ai</span></span>
                                 </div>
                                 <div class="volcengine-hint">
                                     <span class="ms-line">方舟默认请求地址：<span class="inline-code">https://ark.cn-beijing.volces.com/api/v3</span></span>
@@ -212,6 +225,35 @@
                                 <div id="jimengCredit" class="jimeng-credit"></div>
                                 <div id="jimengLoginBox" class="jimeng-output" hidden></div>
                             </div>
+                            <div id="codexCliPanel" class="jimeng-cli-panel" hidden>
+                                <div class="jimeng-cli-head">
+                                    <div>
+                                        <div class="rh-key-title">OpenAI CLI 账户</div>
+                                        <div class="rh-key-desc">使用本机 codex 登录态，无需在本项目保存 API Key。</div>
+                                    </div>
+                                    <div id="codexCliStatus" class="jimeng-status-pill">未检测</div>
+                                </div>
+                                <div class="jimeng-actions">
+                                    <button class="action-btn primary-btn" type="button" onclick="refreshCodexStatus()"><i data-lucide="radar" class="w-3.5 h-3.5"></i><span>检测 CLI</span></button>
+                                    <button class="action-btn" type="button" onclick="openCodexHelp()"><i data-lucide="terminal" class="w-3.5 h-3.5"></i><span>帮助</span></button>
+                                </div>
+                                <div id="codexCliInfo" class="jimeng-credit"></div>
+                            </div>
+                            <div id="geminiCliPanel" class="jimeng-cli-panel" hidden>
+                                <div class="jimeng-cli-head">
+                                    <div>
+                                        <div class="rh-key-title">Antigravity CLI 账户</div>
+                                        <div class="rh-key-desc">使用本机 agy 登录态，无需在本项目保存 API Key。</div>
+                                        <div class="jimeng-credit">需要先安装 CLI 文件夹中的依赖。</div>
+                                    </div>
+                                    <div id="geminiCliStatus" class="jimeng-status-pill">未检测</div>
+                                </div>
+                                <div class="jimeng-actions">
+                                    <button class="action-btn primary-btn" type="button" onclick="refreshGeminiCliStatus()"><i data-lucide="radar" class="w-3.5 h-3.5"></i><span>检测 CLI</span></button>
+                                    <button class="action-btn" type="button" onclick="openGeminiCliHelp()"><i data-lucide="terminal" class="w-3.5 h-3.5"></i><span>帮助</span></button>
+                                </div>
+                                <div id="geminiCliInfo" class="jimeng-credit"></div>
+                            </div>
                             <!-- 验证操作行 -->
                             <div class="verify-action-row">
                                 <button id="testUrlBtn" class="action-btn" type="button" onclick="testConnection()">
@@ -228,12 +270,16 @@
                                         <option value="volcengine">方舟/Ark 任务协议</option>
                                         <option value="runninghub">RunningHub OpenAPI</option>
                                         <option value="jimeng">即梦 CLI</option>
+                                        <option value="codex">OpenAI Codex CLI</option>
+                                        <option value="gemini-cli">Antigravity CLI</option>
                                     </select>
                                 </div>
                                 <div class="field-frame image-request-mode-wrap">
                                     <select id="imageRequestModeInput" title="图片接口">
                                         <option value="openai">图片：OpenAI 标准</option>
                                         <option value="openai-json">图片：OpenAI JSON</option>
+                                        <option value="openai-video-proxy">图片：OpenAI 中转</option>
+                                        <option value="openai-responses">图片：OpenAI RS</option>
                                     </select>
                                 </div>
                             </div>
@@ -430,6 +476,54 @@
         </div>
     </div>
 
+    <div id="codexHelpOverlay" class="picker-overlay">
+        <div class="picker-modal jimeng-help-modal">
+            <div class="picker-head">
+                <div>
+                    <div class="picker-title">OpenAI Codex CLI 帮助</div>
+                    <div class="picker-count">查看 codex 官方命令帮助输出</div>
+                </div>
+                <div class="picker-close" onclick="closeCodexHelp()"><i data-lucide="x" class="w-4 h-4"></i></div>
+            </div>
+            <div class="jimeng-help-toolbar">
+                <select id="codexHelpCommand">
+                    <option value="">codex</option>
+                    <option value="exec">exec</option>
+                    <option value="login">login</option>
+                    <option value="logout">logout</option>
+                    <option value="doctor">doctor</option>
+                    <option value="mcp">mcp</option>
+                    <option value="app">app</option>
+                    <option value="update">update</option>
+                </select>
+                <button class="action-btn primary-btn" type="button" onclick="loadCodexHelp()"><i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i><span>刷新</span></button>
+            </div>
+            <pre id="codexHelpOutput" class="jimeng-help-output"></pre>
+        </div>
+    </div>
+
+    <div id="geminiCliHelpOverlay" class="picker-overlay">
+        <div class="picker-modal jimeng-help-modal">
+            <div class="picker-head">
+                <div>
+                    <div class="picker-title">Antigravity CLI 帮助</div>
+                    <div class="picker-count">查看 gemini 官方命令帮助输出</div>
+                </div>
+                <div class="picker-close" onclick="closeGeminiCliHelp()"><i data-lucide="x" class="w-4 h-4"></i></div>
+            </div>
+            <div class="jimeng-help-toolbar">
+                <select id="geminiCliHelpCommand">
+                    <option value="">gemini</option>
+                    <option value="help">help</option>
+                    <option value="mcp">mcp</option>
+                    <option value="extensions">extensions</option>
+                </select>
+                <button class="action-btn primary-btn" type="button" onclick="loadGeminiCliHelp()"><i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i><span>刷新</span></button>
+            </div>
+            <pre id="geminiCliHelpOutput" class="jimeng-help-output"></pre>
+        </div>
+    </div>
+
     <div id="rhWorkflowEditorOverlay" class="rh-workflow-editor-overlay">
         <div class="rh-workflow-editor-modal">
             <div class="rh-workflow-editor-head">
@@ -471,6 +565,6 @@
         </div>
     </div>
 
-    <script src="/static/js/api-settings.js?v=2026.06.22.1782180123"></script>
+    <script src="/static/js/api-settings.js?v=2026.07.5.1783323946"></script>
 </body>
 </html>
