@@ -152,6 +152,8 @@
       padding: 12px 18px 16px; border-top: 1px solid var(--line); flex-wrap: wrap;
       color: var(--muted); font-size: 12px; font-weight: 800;
     }
+    .pagination-top { justify-content: flex-start; padding-bottom: 12px; }
+    .pagination-bottom { justify-content: center; padding-top: 14px; }
     .pagination-left,
     .pagination-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
     .pagination-size {
@@ -372,7 +374,7 @@
           </label>
         </div>
       </div>
-      <div id="memberPagination" class="pagination-bar"></div>
+      <div id="memberPagination" class="pagination-bar pagination-top"></div>
       <table class="user-table">
         <thead>
           <tr>
@@ -389,6 +391,7 @@
           <tr><td colspan="7" style="text-align:center;color:var(--faint);padding:48px 0;font-weight:700;">加载中…</td></tr>
         </tbody>
       </table>
+      <div id="memberPaginationBottom" class="pagination-bar pagination-bottom"></div>
     </div>
     </div><!-- /tab-users -->
 
@@ -399,7 +402,7 @@
         <span class="block-title">项目归属管理</span>
         <span id="projectCount" style="color:var(--faint);font-size:11.5px;font-weight:700;">加载中…</span>
       </div>
-      <div id="projectPagination" class="pagination-bar"></div>
+      <div id="projectPagination" class="pagination-bar pagination-top"></div>
       <table>
         <thead>
           <tr>
@@ -414,6 +417,7 @@
           <tr><td colspan="5" style="text-align:center;color:var(--faint);padding:48px 0;font-weight:700;">加载中…</td></tr>
         </tbody>
       </table>
+      <div id="projectPaginationBottom" class="pagination-bar pagination-bottom"></div>
     </div>
     </div><!-- /tab-projects -->
 
@@ -424,7 +428,7 @@
         <span class="block-title">画布归属管理</span>
         <span id="canvasCount" style="color:var(--faint);font-size:11.5px;font-weight:700;">加载中…</span>
       </div>
-      <div id="canvasPagination" class="pagination-bar"></div>
+      <div id="canvasPagination" class="pagination-bar pagination-top"></div>
       <table>
         <thead>
           <tr>
@@ -438,6 +442,7 @@
           <tr><td colspan="4" style="text-align:center;color:var(--faint);padding:48px 0;font-weight:700;">加载中…</td></tr>
         </tbody>
       </table>
+      <div id="canvasPaginationBottom" class="pagination-bar pagination-bottom"></div>
     </div>
     </div><!-- /tab-canvases -->
 
@@ -448,7 +453,7 @@
         <span class="block-title">对话归属管理</span>
         <span id="conversationCount" style="color:var(--faint);font-size:11.5px;font-weight:700;">加载中…</span>
       </div>
-      <div id="conversationPagination" class="pagination-bar"></div>
+      <div id="conversationPagination" class="pagination-bar pagination-top"></div>
       <table>
         <thead>
           <tr>
@@ -464,6 +469,7 @@
           <tr><td colspan="6" style="text-align:center;color:var(--faint);padding:48px 0;font-weight:700;">加载中…</td></tr>
         </tbody>
       </table>
+      <div id="conversationPaginationBottom" class="pagination-bar pagination-bottom"></div>
     </div>
     </div><!-- /tab-conversations -->
 
@@ -597,10 +603,10 @@
   let _memberSearchQuery = '';
   let _memberSortMode = 'last_login';
   const _paginationState = {
-    member: { page: 1, pageSize: 20 },
-    projects: { page: 1, pageSize: 20 },
-    canvases: { page: 1, pageSize: 20 },
-    conversations: { page: 1, pageSize: 20 },
+    member: { page: 1, pageSize: 25 },
+    projects: { page: 1, pageSize: 25 },
+    canvases: { page: 1, pageSize: 25 },
+    conversations: { page: 1, pageSize: 25 },
   };
 
   function showToast(msg, type = 'success') {
@@ -666,11 +672,11 @@
   function normalizePageSize(value) {
     if (value === 'all') return 'all';
     const parsed = Number(value);
-    return [20, 50, 100].includes(parsed) ? parsed : 20;
+    return [25, 50, 100].includes(parsed) ? parsed : 25;
   }
 
   function getPaginationState(tableKey) {
-    if (!_paginationState[tableKey]) _paginationState[tableKey] = { page: 1, pageSize: 20 };
+    if (!_paginationState[tableKey]) _paginationState[tableKey] = { page: 1, pageSize: 25 };
     return _paginationState[tableKey];
   }
 
@@ -723,18 +729,19 @@
   }
 
   function renderPaginationControls(containerId, tableKey, pageInfo) {
-    const container = document.getElementById(containerId);
-    if (!container) return;
+    const topContainer = document.getElementById(containerId);
+    const bottomContainer = document.getElementById(`${containerId}Bottom`);
+    if (!topContainer || !bottomContainer) return;
     const pageSizeValue = String(pageInfo.pageSize);
     const sizeOptions = [
-      [20, '20'],
+      [25, '25'],
       [50, '50'],
       [100, '100'],
       ['all', '全部'],
     ].map(([value, label]) => `<option value="${value}" ${String(value) === pageSizeValue ? 'selected' : ''}>${label}</option>`).join('');
     const prevPage = Math.max(1, pageInfo.page - 1);
     const nextPage = Math.min(pageInfo.totalPages, pageInfo.page + 1);
-    container.innerHTML = `
+    topContainer.innerHTML = `
       <div class="pagination-left">
         <label class="pagination-size">
           <span>每页条数</span>
@@ -742,6 +749,8 @@
         </label>
         <span class="pagination-range">显示 ${pageInfo.start}-${pageInfo.end} / 共 ${pageInfo.total}</span>
       </div>
+    `;
+    bottomContainer.innerHTML = `
       <div class="pagination-right">
         <button class="pagination-btn" onclick="setTablePage('${tableKey}', ${prevPage})" ${pageInfo.page <= 1 ? 'disabled' : ''}>上一页</button>
         <span class="pagination-page">第 ${pageInfo.page} / ${pageInfo.totalPages} 页</span>

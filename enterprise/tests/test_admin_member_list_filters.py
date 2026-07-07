@@ -80,9 +80,13 @@ def test_admin_list_pagination_controls_are_present():
 
     for pagination_id in [
         "memberPagination",
+        "memberPaginationBottom",
         "projectPagination",
+        "projectPaginationBottom",
         "canvasPagination",
+        "canvasPaginationBottom",
         "conversationPagination",
+        "conversationPaginationBottom",
     ]:
         assert_contains(html, f'id="{pagination_id}"')
 
@@ -90,11 +94,13 @@ def test_admin_list_pagination_controls_are_present():
     assert_contains(html, "function renderPaginationControls(containerId, tableKey, pageInfo)")
     assert_contains(html, "function setTablePageSize(tableKey, pageSize)")
     assert_contains(html, "function setTablePage(tableKey, page)")
-    assert_contains(html, "member: { page: 1, pageSize: 20 }")
-    assert_contains(html, "projects: { page: 1, pageSize: 20 }")
-    assert_contains(html, "canvases: { page: 1, pageSize: 20 }")
-    assert_contains(html, "conversations: { page: 1, pageSize: 20 }")
-    assert_contains(html, "[20, '20']")
+    assert_contains(html, "member: { page: 1, pageSize: 25 }")
+    assert_contains(html, "projects: { page: 1, pageSize: 25 }")
+    assert_contains(html, "canvases: { page: 1, pageSize: 25 }")
+    assert_contains(html, "conversations: { page: 1, pageSize: 25 }")
+    assert "pageSize: 20" not in html
+    assert "[20, '20']" not in html
+    assert_contains(html, "[25, '25']")
     assert_contains(html, "[50, '50']")
     assert_contains(html, "[100, '100']")
     assert_contains(html, "['all', '全部']")
@@ -102,6 +108,8 @@ def test_admin_list_pagination_controls_are_present():
     assert_contains(html, "下一页")
     assert_contains(html, "第 ${pageInfo.page} / ${pageInfo.totalPages} 页")
     assert_contains(html, "显示 ${pageInfo.start}-${pageInfo.end} / 共 ${pageInfo.total}")
+    assert_contains(html, "topContainer.innerHTML")
+    assert_contains(html, "bottomContainer.innerHTML")
 
 
 def section_between(html: str, start_marker: str, end_marker: str) -> str:
@@ -110,17 +118,19 @@ def section_between(html: str, start_marker: str, end_marker: str) -> str:
     return html[start:end]
 
 
-def test_pagination_controls_are_above_their_tables():
+def test_pagination_controls_are_split_around_their_tables():
     html = read_admin_html()
 
     sections = [
-        ("成员管理", section_between(html, 'id="tab-users"', "<!-- /tab-users -->"), 'id="memberPagination"', '<table class="user-table">'),
-        ("项目归属", section_between(html, 'id="tab-projects"', "<!-- /tab-projects -->"), 'id="projectPagination"', "<table>"),
-        ("画布归属", section_between(html, 'id="tab-canvases"', "<!-- /tab-canvases -->"), 'id="canvasPagination"', "<table>"),
-        ("对话归属", section_between(html, 'id="tab-conversations"', "<!-- /tab-conversations -->"), 'id="conversationPagination"', "<table>"),
+        ("成员管理", section_between(html, 'id="tab-users"', "<!-- /tab-users -->"), 'id="memberPagination"', 'id="memberPaginationBottom"', '<table class="user-table">'),
+        ("项目归属", section_between(html, 'id="tab-projects"', "<!-- /tab-projects -->"), 'id="projectPagination"', 'id="projectPaginationBottom"', "<table>"),
+        ("画布归属", section_between(html, 'id="tab-canvases"', "<!-- /tab-canvases -->"), 'id="canvasPagination"', 'id="canvasPaginationBottom"', "<table>"),
+        ("对话归属", section_between(html, 'id="tab-conversations"', "<!-- /tab-conversations -->"), 'id="conversationPagination"', 'id="conversationPaginationBottom"', "<table>"),
     ]
-    for label, section, pagination_marker, table_marker in sections:
-        assert section.index(pagination_marker) < section.index(table_marker), f"{label} pagination should be above table"
+    for label, section, top_marker, bottom_marker, table_marker in sections:
+        table_index = section.index(table_marker)
+        assert section.index(top_marker) < table_index, f"{label} page-size/range controls should be above table"
+        assert section.index(bottom_marker) > table_index, f"{label} previous/next controls should be below table"
 
 
 def test_member_pagination_happens_after_filter_search_sort():
@@ -181,7 +191,7 @@ if __name__ == "__main__":
     test_member_stats_and_empty_state_are_present()
     test_member_filter_search_sort_logic_is_present()
     test_admin_list_pagination_controls_are_present()
-    test_pagination_controls_are_above_their_tables()
+    test_pagination_controls_are_split_around_their_tables()
     test_member_pagination_happens_after_filter_search_sort()
     test_assignment_lists_keep_unowned_first_sorting()
     test_no_high_risk_member_management_entries_added()
