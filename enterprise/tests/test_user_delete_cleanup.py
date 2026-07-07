@@ -229,8 +229,33 @@ async def _run_checks() -> None:
             admin_api.purge_user_feature_overrides(user_a["id"], FakeRequest(actor_a)),
             {403},
         )
+        await _expect_http_error(
+            admin_api.delete_user(user_a["id"], FakeRequest(actor_admin)),
+            {400},
+        )
+        await _expect_http_error(
+            admin_api.delete_user(
+                user_a["id"],
+                FakeRequest(actor_admin, body={"confirm_username": "wrong-user"}),
+            ),
+            {400},
+        )
+        await _expect_http_error(
+            admin_api.purge_user_feature_overrides(user_a["id"], FakeRequest(actor_admin)),
+            {400},
+        )
+        await _expect_http_error(
+            admin_api.purge_user_feature_overrides(
+                user_a["id"],
+                FakeRequest(actor_admin, body={"confirm_username": "wrong-user"}),
+            ),
+            {400},
+        )
 
-        deleted = await admin_api.delete_user(user_a["id"], FakeRequest(actor_admin))
+        deleted = await admin_api.delete_user(
+            user_a["id"],
+            FakeRequest(actor_admin, body={"confirm_username": "delete_a", "reason": "offboarding"}),
+        )
         assert deleted["success"] is True
         assert deleted["soft_deleted"] is True
         assert deleted["status"] == "disabled"
@@ -256,8 +281,16 @@ async def _run_checks() -> None:
         assert deleted_detail["target_user_id"] == user_a["id"]
         assert deleted_detail["soft_delete"] is True
         assert deleted_detail["is_active"] is False
+        assert deleted_detail["previous_is_active"] is True
+        assert deleted_detail["reason"] == "offboarding"
+        assert deleted_detail["owned_data_retained"] is True
+        assert deleted_detail["runtime_files_deleted"] is False
+        assert deleted_detail["owner_mappings_cleaned"] is False
 
-        purge = await admin_api.purge_user_feature_overrides(user_a["id"], FakeRequest(actor_admin))
+        purge = await admin_api.purge_user_feature_overrides(
+            user_a["id"],
+            FakeRequest(actor_admin, body={"confirm_username": "delete_a", "reason": "cleanup overrides"}),
+        )
         assert purge["success"] is True
         assert purge["cleared_count"] == 1
         assert edb.get_user_feature_override(user_a["id"], "system_update") is None
@@ -274,7 +307,10 @@ async def _run_checks() -> None:
         assert purge_detail["target_user_id"] == user_a["id"]
         assert purge_detail["old_count"] == 1
         assert purge_detail["cleared_count"] == 1
+        assert purge_detail["deleted_count"] == 1
+        assert purge_detail["old_feature_keys"] == ["system_update"]
         assert purge_detail["old_values"] == [{"feature_key": "system_update", "mode": "deny"}]
+        assert purge_detail["reason"] == "cleanup overrides"
         policy_logs, _ = edb.get_logs(limit=20, action="permission_policy_updated")
         assert any(
             json.loads(row["detail"]).get("source_action") == "user_feature_overrides_cleared"

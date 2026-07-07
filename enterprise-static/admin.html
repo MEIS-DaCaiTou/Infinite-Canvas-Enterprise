@@ -827,7 +827,10 @@
       return;
     }
     try {
-      await apiFetch(`/enterprise/api/users/${encodeURIComponent(userId)}`, { method: 'DELETE' });
+      await apiFetch(`/enterprise/api/users/${encodeURIComponent(userId)}`, {
+        method: 'DELETE',
+        body: JSON.stringify({ confirm_username: typed, reason: '' }),
+      });
       showToast(`用户「${username}」已软删除（禁用）`);
       closeImpactModal();
       await loadUsers();
@@ -840,9 +843,16 @@
   async function purgeImpactOverrides() {
     if (!_impactTarget) return;
     const { userId, username } = _impactTarget;
-    if (!confirm(`确认清理用户「${username}」的权限覆盖？\n该操作只删除 enterprise_user_feature_overrides，不会删除账号或 owner 映射。`)) return;
+    const typed = prompt(`清理权限覆盖只会删除 enterprise_user_feature_overrides，不会删除账号、assets/、output/ 或 owner 映射。\n\n如确认清理用户「${username}」的权限覆盖，请输入用户名：`);
+    if (typed !== username) {
+      showToast('用户名确认不匹配，已取消', 'error');
+      return;
+    }
     try {
-      const result = await apiFetch(`/enterprise/api/users/${encodeURIComponent(userId)}/purge-overrides`, { method: 'POST' });
+      const result = await apiFetch(`/enterprise/api/users/${encodeURIComponent(userId)}/purge-overrides`, {
+        method: 'POST',
+        body: JSON.stringify({ confirm_username: typed, reason: '' }),
+      });
       showToast(`已清理权限覆盖：${Number(result.cleared_count || 0)} 条`);
       await openImpactModal(userId, username);
       const selected = document.getElementById('featureUserSelect')?.value;
