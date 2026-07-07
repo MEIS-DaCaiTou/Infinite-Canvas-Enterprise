@@ -75,6 +75,59 @@ def test_member_filter_search_sort_logic_is_present():
     assert_contains(html, "disabled-user-row")
 
 
+def test_admin_list_pagination_controls_are_present():
+    html = read_admin_html()
+
+    for pagination_id in [
+        "memberPagination",
+        "projectPagination",
+        "canvasPagination",
+        "conversationPagination",
+    ]:
+        assert_contains(html, f'id="{pagination_id}"')
+
+    assert_contains(html, "function paginateRows(rows, tableKey)")
+    assert_contains(html, "function renderPaginationControls(containerId, tableKey, pageInfo)")
+    assert_contains(html, "function setTablePageSize(tableKey, pageSize)")
+    assert_contains(html, "function setTablePage(tableKey, page)")
+    assert_contains(html, "member: { page: 1, pageSize: 20 }")
+    assert_contains(html, "projects: { page: 1, pageSize: 20 }")
+    assert_contains(html, "canvases: { page: 1, pageSize: 20 }")
+    assert_contains(html, "conversations: { page: 1, pageSize: 20 }")
+    assert_contains(html, "[20, '20']")
+    assert_contains(html, "[50, '50']")
+    assert_contains(html, "[100, '100']")
+    assert_contains(html, "['all', '全部']")
+    assert_contains(html, "上一页")
+    assert_contains(html, "下一页")
+    assert_contains(html, "第 ${pageInfo.page} / ${pageInfo.totalPages} 页")
+    assert_contains(html, "显示 ${pageInfo.start}-${pageInfo.end} / 共 ${pageInfo.total}")
+
+
+def test_member_pagination_happens_after_filter_search_sort():
+    html = read_admin_html()
+    render_start = html.index("function renderUsers()")
+    visible_index = html.index("const visibleUsers = getFilteredUsers();", render_start)
+    paged_index = html.index("const pagedUsers = paginateRows(visibleUsers, 'member');", render_start)
+    stats_index = html.index("renderMemberStats(visibleUsers);", render_start)
+    rows_index = html.index("pagedUsers.rows.map", render_start)
+
+    assert visible_index < paged_index < rows_index
+    assert visible_index < stats_index < rows_index
+
+
+def test_assignment_lists_keep_unowned_first_sorting():
+    html = read_admin_html()
+
+    assert_contains(html, "const aUnowned = a.id !== 'default' && !_projectOwnerMap[a.id];")
+    assert_contains(html, "const bUnowned = b.id !== 'default' && !_projectOwnerMap[b.id];")
+    assert_contains(html, "return Number(bUnowned) - Number(aUnowned);")
+    assert_contains(html, "const aOwned = !!_ownerMap[a.id];")
+    assert_contains(html, "const bOwned = !!_ownerMap[b.id];")
+    assert_contains(html, "return aOwned - bOwned;")
+    assert_contains(html, "Number(b.unowned) - Number(a.unowned)")
+
+
 def test_no_high_risk_member_management_entries_added():
     html = read_admin_html()
 
@@ -108,6 +161,9 @@ if __name__ == "__main__":
     test_member_filter_controls_are_present()
     test_member_stats_and_empty_state_are_present()
     test_member_filter_search_sort_logic_is_present()
+    test_admin_list_pagination_controls_are_present()
+    test_member_pagination_happens_after_filter_search_sort()
+    test_assignment_lists_keep_unowned_first_sorting()
     test_no_high_risk_member_management_entries_added()
     test_admin_inline_script_parses()
     print("admin member list filter tests passed")

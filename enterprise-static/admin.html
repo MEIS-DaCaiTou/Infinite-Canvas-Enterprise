@@ -147,6 +147,28 @@
     .member-filter-field .field-frame { margin: 0; min-width: 0; }
     .member-filter-field select,
     .member-filter-field input { width: 100%; max-width: 100%; }
+    .pagination-bar {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      padding: 12px 18px 16px; border-top: 1px solid var(--line); flex-wrap: wrap;
+      color: var(--muted); font-size: 12px; font-weight: 800;
+    }
+    .pagination-left,
+    .pagination-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+    .pagination-size {
+      display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+    }
+    .pagination-size select {
+      width: auto; min-width: 84px; padding: 7px 10px; border-radius: 10px;
+      border: 1px solid var(--line); background: var(--panel); color: var(--text); font-weight: 800;
+    }
+    .pagination-range { color: var(--faint); white-space: nowrap; }
+    .pagination-page { color: var(--muted); white-space: nowrap; }
+    .pagination-btn {
+      border: 1px solid var(--line); background: var(--panel); color: var(--muted);
+      border-radius: 10px; padding: 7px 11px; font-size: 12px; font-weight: 900; cursor: pointer;
+    }
+    .pagination-btn:hover:not(:disabled) { border-color: var(--text); color: var(--text); }
+    .pagination-btn:disabled { opacity: .45; cursor: not-allowed; }
     .feature-layout { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(420px, .85fr); gap: 14px; align-items: start; }
     .feature-card { min-width: 0; border: 1px solid var(--line); border-radius: 12px; padding: 14px; background: var(--panel); }
     .feature-card h3 { margin: 0 0 8px; font-size: 13px; font-weight: 900; }
@@ -366,6 +388,7 @@
           <tr><td colspan="7" style="text-align:center;color:var(--faint);padding:48px 0;font-weight:700;">加载中…</td></tr>
         </tbody>
       </table>
+      <div id="memberPagination" class="pagination-bar"></div>
     </div>
     </div><!-- /tab-users -->
 
@@ -390,6 +413,7 @@
           <tr><td colspan="5" style="text-align:center;color:var(--faint);padding:48px 0;font-weight:700;">加载中…</td></tr>
         </tbody>
       </table>
+      <div id="projectPagination" class="pagination-bar"></div>
     </div>
     </div><!-- /tab-projects -->
 
@@ -413,6 +437,7 @@
           <tr><td colspan="4" style="text-align:center;color:var(--faint);padding:48px 0;font-weight:700;">加载中…</td></tr>
         </tbody>
       </table>
+      <div id="canvasPagination" class="pagination-bar"></div>
     </div>
     </div><!-- /tab-canvases -->
 
@@ -438,6 +463,7 @@
           <tr><td colspan="6" style="text-align:center;color:var(--faint);padding:48px 0;font-weight:700;">加载中…</td></tr>
         </tbody>
       </table>
+      <div id="conversationPagination" class="pagination-bar"></div>
     </div>
     </div><!-- /tab-conversations -->
 
@@ -570,6 +596,12 @@
   let _memberRoleFilter = 'all';
   let _memberSearchQuery = '';
   let _memberSortMode = 'last_login';
+  const _paginationState = {
+    member: { page: 1, pageSize: 20 },
+    projects: { page: 1, pageSize: 20 },
+    canvases: { page: 1, pageSize: 20 },
+    conversations: { page: 1, pageSize: 20 },
+  };
 
   function showToast(msg, type = 'success') {
     const el = document.getElementById('toast');
@@ -629,6 +661,93 @@
 
   function boolFlag(value) {
     return value === true || value === 1 || value === '1';
+  }
+
+  function normalizePageSize(value) {
+    if (value === 'all') return 'all';
+    const parsed = Number(value);
+    return [20, 50, 100].includes(parsed) ? parsed : 20;
+  }
+
+  function getPaginationState(tableKey) {
+    if (!_paginationState[tableKey]) _paginationState[tableKey] = { page: 1, pageSize: 20 };
+    return _paginationState[tableKey];
+  }
+
+  function resetTablePage(tableKey) {
+    getPaginationState(tableKey).page = 1;
+  }
+
+  function paginateRows(rows, tableKey) {
+    const state = getPaginationState(tableKey);
+    const total = rows.length;
+    state.pageSize = normalizePageSize(state.pageSize);
+    if (state.pageSize === 'all') {
+      state.page = 1;
+      return { rows, total, page: 1, totalPages: 1, start: total ? 1 : 0, end: total, pageSize: 'all' };
+    }
+    const totalPages = Math.max(1, Math.ceil(total / state.pageSize));
+    if (!Number.isFinite(state.page) || state.page < 1) state.page = 1;
+    if (state.page > totalPages) state.page = totalPages;
+    const startIndex = (state.page - 1) * state.pageSize;
+    const pageRows = rows.slice(startIndex, startIndex + state.pageSize);
+    return {
+      rows: pageRows,
+      total,
+      page: state.page,
+      totalPages,
+      start: total ? startIndex + 1 : 0,
+      end: total ? startIndex + pageRows.length : 0,
+      pageSize: state.pageSize,
+    };
+  }
+
+  function renderTableByKey(tableKey) {
+    if (tableKey === 'member') return renderUsers();
+    if (tableKey === 'projects') return renderProjects();
+    if (tableKey === 'canvases') return renderCanvases();
+    if (tableKey === 'conversations') return renderConversations();
+  }
+
+  function setTablePageSize(tableKey, pageSize) {
+    const state = getPaginationState(tableKey);
+    state.pageSize = normalizePageSize(pageSize);
+    state.page = 1;
+    renderTableByKey(tableKey);
+  }
+
+  function setTablePage(tableKey, page) {
+    const state = getPaginationState(tableKey);
+    state.page = Number(page) || 1;
+    renderTableByKey(tableKey);
+  }
+
+  function renderPaginationControls(containerId, tableKey, pageInfo) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    const pageSizeValue = String(pageInfo.pageSize);
+    const sizeOptions = [
+      [20, '20'],
+      [50, '50'],
+      [100, '100'],
+      ['all', '全部'],
+    ].map(([value, label]) => `<option value="${value}" ${String(value) === pageSizeValue ? 'selected' : ''}>${label}</option>`).join('');
+    const prevPage = Math.max(1, pageInfo.page - 1);
+    const nextPage = Math.min(pageInfo.totalPages, pageInfo.page + 1);
+    container.innerHTML = `
+      <div class="pagination-left">
+        <label class="pagination-size">
+          <span>每页条数</span>
+          <select onchange="setTablePageSize('${tableKey}', this.value)">${sizeOptions}</select>
+        </label>
+        <span class="pagination-range">显示 ${pageInfo.start}-${pageInfo.end} / 共 ${pageInfo.total}</span>
+      </div>
+      <div class="pagination-right">
+        <button class="pagination-btn" onclick="setTablePage('${tableKey}', ${prevPage})" ${pageInfo.page <= 1 ? 'disabled' : ''}>上一页</button>
+        <span class="pagination-page">第 ${pageInfo.page} / ${pageInfo.totalPages} 页</span>
+        <button class="pagination-btn" onclick="setTablePage('${tableKey}', ${nextPage})" ${pageInfo.page >= pageInfo.totalPages ? 'disabled' : ''}>下一页</button>
+      </div>
+    `;
   }
 
   function readTimestamp(value) {
@@ -709,6 +828,7 @@
   }
 
   function applyMemberFilters() {
+    resetTablePage('member');
     renderUsers();
   }
 
@@ -727,7 +847,9 @@
   function renderUsers() {
     const tbody = document.getElementById('userTable');
     const visibleUsers = getFilteredUsers();
+    const pagedUsers = paginateRows(visibleUsers, 'member');
     renderMemberStats(visibleUsers);
+    renderPaginationControls('memberPagination', 'member', pagedUsers);
     document.getElementById('userCount').textContent = `当前显示 ${visibleUsers.length} / 全部 ${_users.length}`;
     if (!_users.length) {
       tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--faint);padding:48px 0;font-weight:700;">暂无用户</td></tr>';
@@ -737,7 +859,7 @@
       tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--faint);padding:48px 0;font-weight:700;">没有符合当前筛选条件的成员<br><span style="font-size:12px;font-weight:600;">请调整状态、角色或搜索关键词</span></td></tr>';
       return;
     }
-    tbody.innerHTML = visibleUsers.map(u => {
+    tbody.innerHTML = pagedUsers.rows.map(u => {
       const id = jsArg(u.id);
       const username = jsArg(u.username);
       const displayName = jsArg(u.display_name || '');
@@ -1222,6 +1344,7 @@
     document.getElementById('projectCount').textContent =
       `共 ${_projects.length} 个项目，其中 ${unowned.length} 个未分配；默认项目按用户独立呈现`;
     if (!_projects.length) {
+      renderPaginationControls('projectPagination', 'projects', paginateRows([], 'projects'));
       tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--faint);padding:48px 0;font-weight:700;">暂无项目</td></tr>';
       return;
     }
@@ -1234,7 +1357,9 @@
       const bUnowned = b.id !== 'default' && !_projectOwnerMap[b.id];
       return Number(bUnowned) - Number(aUnowned);
     });
-    tbody.innerHTML = sorted.map(project => {
+    const pagedProjects = paginateRows(sorted, 'projects');
+    renderPaginationControls('projectPagination', 'projects', pagedProjects);
+    tbody.innerHTML = pagedProjects.rows.map(project => {
       const projectIdRaw = String(project.id || '');
       const projectIdHtml = escapeHtml(projectIdRaw);
       const projectIdArg = jsArg(projectIdRaw);
@@ -1310,6 +1435,7 @@
       `共 ${_canvases.length} 个画布，其中 ${unowned.length} 个未分配`;
 
     if (!_canvases.length) {
+      renderPaginationControls('canvasPagination', 'canvases', paginateRows([], 'canvases'));
       tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--faint);padding:48px 0;font-weight:700;">暂无画布</td></tr>';
       return;
     }
@@ -1326,7 +1452,9 @@
       return aOwned - bOwned;
     });
 
-    tbody.innerHTML = sorted.map(c => {
+    const pagedCanvases = paginateRows(sorted, 'canvases');
+    renderPaginationControls('canvasPagination', 'canvases', pagedCanvases);
+    tbody.innerHTML = pagedCanvases.rows.map(c => {
       const canvasIdRaw = String(c.id || '');
       const titleHtml = escapeHtml(c.title || '（无标题）');
       const canvasIdHtml = escapeHtml(canvasIdRaw);
@@ -1395,6 +1523,7 @@
       `共 ${_conversations.length} 个对话，其中 ${unowned.length} 个未分配；未分配对话仅管理员可见`;
 
     if (!_conversations.length) {
+      renderPaginationControls('conversationPagination', 'conversations', paginateRows([], 'conversations'));
       tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--faint);padding:48px 0;font-weight:700;">暂无对话</td></tr>';
       return;
     }
@@ -1405,7 +1534,9 @@
       .join('');
 
     const sorted = [..._conversations].sort((a, b) => Number(b.unowned) - Number(a.unowned));
-    tbody.innerHTML = sorted.map(c => {
+    const pagedConversations = paginateRows(sorted, 'conversations');
+    renderPaginationControls('conversationPagination', 'conversations', pagedConversations);
+    tbody.innerHTML = pagedConversations.rows.map(c => {
       const id = jsArg(c.id);
       const idHtml = escapeHtml(c.id);
       const titleHtml = escapeHtml(c.title || '新对话');
