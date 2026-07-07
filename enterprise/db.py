@@ -300,6 +300,16 @@ def list_users() -> list:
         conn.close()
 
 
+def count_active_admins() -> int:
+    conn = get_db()
+    try:
+        return int(conn.execute(
+            "SELECT COUNT(*) FROM users WHERE is_admin = 1 AND is_active = 1"
+        ).fetchone()[0])
+    finally:
+        conn.close()
+
+
 def get_user_delete_impact(user_id: str, sample_limit: int = 20) -> Optional[dict]:
     """Return a read-only dry-run summary for user deletion/cleanup planning."""
     user_id = (user_id or "").strip()
@@ -1649,6 +1659,21 @@ def clear_user_feature_override(
     finally:
         conn.close()
     return old, None
+
+
+def clear_all_user_feature_overrides(user_id: str, updated_by: str = "") -> list[dict]:
+    uid = str(user_id or "").strip()
+    old = get_user_feature_overrides(uid)
+    conn = get_db()
+    try:
+        conn.execute(
+            "DELETE FROM enterprise_user_feature_overrides WHERE user_id = ?",
+            (uid,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return old
 
 
 def get_effective_feature_value(user: dict, feature_key: str) -> dict:

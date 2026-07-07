@@ -480,6 +480,8 @@
     <div id="impactSamples" class="impact-samples"></div>
     <div class="error-inline" id="impactError"></div>
     <div class="modal-actions">
+      <button class="action-btn danger" id="impactSoftDeleteBtn" onclick="softDeleteImpactUser()">软删除账号（禁用）</button>
+      <button class="action-btn" id="impactPurgeOverridesBtn" onclick="purgeImpactOverrides()">清理权限覆盖</button>
       <button class="action-btn" onclick="closeImpactModal()">关闭</button>
     </div>
   </div>
@@ -494,6 +496,7 @@
   let _profileTargetId = null;
   let _featureFlags = [];
   let _featureOverrides = [];
+  let _impactTarget = null;
 
   function showToast(msg, type = 'success') {
     const el = document.getElementById('toast');
@@ -744,6 +747,7 @@
 
   function closeImpactModal() {
     document.getElementById('impactModal').classList.remove('show');
+    _impactTarget = null;
   }
 
   function impactSampleLabel(key, row) {
@@ -763,6 +767,12 @@
   function renderImpact(data) {
     const counts = data.counts || {};
     const samples = data.samples || {};
+    const purgeBtn = document.getElementById('impactPurgeOverridesBtn');
+    if (purgeBtn) {
+      const count = Number(counts.feature_overrides || 0);
+      purgeBtn.disabled = count <= 0;
+      purgeBtn.title = count <= 0 ? '该用户没有权限覆盖可清理' : '';
+    }
     document.getElementById('impactCounts').innerHTML = Object.entries(IMPACT_COUNT_LABELS).map(([key, label]) => `
       <div class="impact-count">
         <span>${label}</span>
@@ -790,6 +800,7 @@
   }
 
   async function openImpactModal(userId, username) {
+    _impactTarget = { userId, username };
     document.getElementById('impactSubtitle').textContent = `正在预览用户「${username}」的删除/清理影响范围`;
     document.getElementById('impactCounts').innerHTML = '<div style="color:var(--faint);font-size:12px;font-weight:800;">加载中...</div>';
     document.getElementById('impactWarnings').style.display = 'none';
@@ -804,6 +815,51 @@
     } catch (e) {
       document.getElementById('impactError').textContent = e.message;
       document.getElementById('impactCounts').innerHTML = '';
+    }
+  }
+
+  async function softDeleteImpactUser() {
+    if (!_impactTarget) return;
+    const { userId, username } = _impactTarget;
+    const typed = prompt(`软删除账号只会禁用登录，不会删除 assets/、output/、审计日志或 owner 映射。\n\n如确认软删除用户「${username}」，请输入用户名：`);
+    if (typed !== username) {
+      showToast('用户名确认不匹配，已取消', 'error');
+      return;
+    }
+    try {
+      await apiFetch(`/enterprise/api/users/${encodeURIComponent(userId)}`, {
+        method: 'DELETE',
+        body: JSON.stringify({ confirm_username: typed, reason: '' }),
+      });
+      showToast(`用户「${username}」已软删除（禁用）`);
+      closeImpactModal();
+      await loadUsers();
+    } catch (e) {
+      document.getElementById('impactError').textContent = e.message;
+      showToast(`软删除失败: ${e.message}`, 'error');
+    }
+  }
+
+  async function purgeImpactOverrides() {
+    if (!_impactTarget) return;
+    const { userId, username } = _impactTarget;
+    const typed = prompt(`清理权限覆盖只会删除 enterprise_user_feature_overrides，不会删除账号、assets/、output/ 或 owner 映射。\n\n如确认清理用户「${username}」的权限覆盖，请输入用户名：`);
+    if (typed !== username) {
+      showToast('用户名确认不匹配，已取消', 'error');
+      return;
+    }
+    try {
+      const result = await apiFetch(`/enterprise/api/users/${encodeURIComponent(userId)}/purge-overrides`, {
+        method: 'POST',
+        body: JSON.stringify({ confirm_username: typed, reason: '' }),
+      });
+      showToast(`已清理权限覆盖：${Number(result.cleared_count || 0)} 条`);
+      await openImpactModal(userId, username);
+      const selected = document.getElementById('featureUserSelect')?.value;
+      if (selected === userId) await loadFeatureOverrides();
+    } catch (e) {
+      document.getElementById('impactError').textContent = e.message;
+      showToast(`清理权限覆盖失败: ${e.message}`, 'error');
     }
   }
 

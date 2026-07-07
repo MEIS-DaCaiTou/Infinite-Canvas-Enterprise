@@ -50,6 +50,33 @@ def _target_user_or_404(user_id: str) -> dict:
     return target
 
 
+def _is_active_admin(user: dict) -> bool:
+    return bool(user.get("is_admin")) and bool(user.get("is_active"))
+
+
+def _ensure_not_last_active_admin(target: dict, action: str) -> None:
+    if _is_active_admin(target) and edb.count_active_admins() <= 1:
+        raise HTTPException(status_code=400, detail=f"Cannot {action} the last active administrator")
+
+
+async def _confirmed_user_action_body(request: Request, target: dict) -> dict:
+    try:
+        body = await request.json()
+    except Exception:
+        body = None
+    if not isinstance(body, dict) or not body:
+        raise HTTPException(status_code=400, detail="confirm_username is required")
+    confirm_username = str(body.get("confirm_username") or "").strip()
+    if not confirm_username:
+        raise HTTPException(status_code=400, detail="confirm_username is required")
+    if confirm_username != str(target.get("username") or ""):
+        raise HTTPException(status_code=400, detail="confirm_username does not match target username")
+    return {
+        "confirm_username": confirm_username,
+        "reason": str(body.get("reason") or "").strip(),
+    }
+
+
 # ── 用户管理 ──────────────────────────────────────────────
 
 @router.get("/api/users")
@@ -176,6 +203,9 @@ async def update_user_active(user_id: str, request: Request):
     if user_id == current["user_id"] and not is_active:
         raise HTTPException(status_code=400, detail="不能禁用自己")
 
+    if not is_active:
+        _ensure_not_last_active_admin(target, "disable")
+
     edb.set_user_active(user_id, is_active)
     action = "user_enabled" if is_active else "user_disabled"
     summary = f"{'启用' if is_active else '禁用'}用户 {target['username']}"
@@ -216,13 +246,24 @@ async def delete_user(user_id: str, request: Request):
     target = edb.get_user_by_id_any_status(user_id)
     if not target:
         raise HTTPException(status_code=404, detail="用户不存在")
+    _ensure_not_last_active_admin(target, "soft delete")
+    confirmation = await _confirmed_user_action_body(request, target)
+    previous_is_active = bool(target.get("is_active"))
     edb.set_user_active(user_id, False)
     _audit_user_action(
         current,
-        "user_disabled",
+        "user_deleted",
         target,
         f"删除/软禁用用户 {target['username']}",
-        {"is_active": False, "soft_delete": True},
+        {
+            "is_active": False,
+            "soft_delete": True,
+            "previous_is_active": previous_is_active,
+            "reason": confirmation["reason"],
+            "owned_data_retained": True,
+            "runtime_files_deleted": False,
+            "owner_mappings_cleaned": False,
+        },
     )
     return {
         "success": True,
@@ -353,6 +394,38 @@ async def delete_user_feature_override(user_id: str, feature_key: str, request: 
         },
     )
     return {"success": True, "override": new, "mode": "inherit"}
+
+
+@router.post("/api/users/{user_id}/purge-overrides")
+async def purge_user_feature_overrides(user_id: str, request: Request):
+    current = _require_admin(request)
+    target = _target_user_or_404(user_id)
+    confirmation = await _confirmed_user_action_body(request, target)
+    old = edb.clear_all_user_feature_overrides(user_id, current["user_id"])
+    old_values = [
+        {"feature_key": item.get("feature_key"), "mode": item.get("mode")}
+        for item in old
+    ]
+    old_feature_keys = [item.get("feature_key") for item in old]
+    _audit_permission_action(
+        current,
+        "user_feature_overrides_cleared",
+        {
+            "target_user_id": target["id"],
+            "target_username": target["username"],
+            "old_count": len(old),
+            "cleared_count": len(old),
+            "deleted_count": len(old),
+            "old_feature_keys": old_feature_keys,
+            "old_values": old_values,
+            "reason": confirmation["reason"],
+        },
+    )
+    return {
+        "success": True,
+        "user_id": user_id,
+        "cleared_count": len(old),
+    }
 
 
 @router.get("/api/canvas-owners")

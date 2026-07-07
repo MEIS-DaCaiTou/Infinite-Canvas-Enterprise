@@ -32,12 +32,18 @@ def _prepare_env(tmp: Path) -> None:
 
 
 class FakeRequest:
-    def __init__(self, user: dict | None, query_params: dict | None = None):
+    def __init__(
+        self,
+        user: dict | None,
+        query_params: dict | None = None,
+        body: dict | None = None,
+    ):
         self.state = SimpleNamespace(user=user)
         self.query_params = query_params or {}
+        self._body = body or {}
 
     async def json(self):
-        return {}
+        return self._body
 
 
 async def _expect_http_error(coro, expected_status: set[int]) -> None:
@@ -196,12 +202,129 @@ async def _run_checks() -> None:
         assert "cookie" not in logs[0]["detail"].lower()
         assert "api key" not in logs[0]["detail"].lower()
 
+        await _expect_http_error(
+            admin_api.delete_user(admin["id"], FakeRequest(actor_admin)),
+            {400},
+        )
+        await _expect_http_error(
+            admin_api.update_user_active(
+                admin["id"],
+                FakeRequest(actor_admin, body={"is_active": False}),
+            ),
+            {400},
+        )
+        ghost_admin = {"user_id": "other-admin", "username": "other-admin", "is_admin": True}
+        await _expect_http_error(
+            admin_api.update_user_active(
+                admin["id"],
+                FakeRequest(ghost_admin, body={"is_active": False}),
+            ),
+            {400},
+        )
+        await _expect_http_error(
+            admin_api.delete_user(admin["id"], FakeRequest(ghost_admin)),
+            {400},
+        )
+        await _expect_http_error(
+            admin_api.purge_user_feature_overrides(user_a["id"], FakeRequest(actor_a)),
+            {403},
+        )
+        await _expect_http_error(
+            admin_api.delete_user(user_a["id"], FakeRequest(actor_admin)),
+            {400},
+        )
+        await _expect_http_error(
+            admin_api.delete_user(
+                user_a["id"],
+                FakeRequest(actor_admin, body={"confirm_username": "wrong-user"}),
+            ),
+            {400},
+        )
+        await _expect_http_error(
+            admin_api.purge_user_feature_overrides(user_a["id"], FakeRequest(actor_admin)),
+            {400},
+        )
+        await _expect_http_error(
+            admin_api.purge_user_feature_overrides(
+                user_a["id"],
+                FakeRequest(actor_admin, body={"confirm_username": "wrong-user"}),
+            ),
+            {400},
+        )
+
+        deleted = await admin_api.delete_user(
+            user_a["id"],
+            FakeRequest(actor_admin, body={"confirm_username": "delete_a", "reason": "offboarding"}),
+        )
+        assert deleted["success"] is True
+        assert deleted["soft_deleted"] is True
+        assert deleted["status"] == "disabled"
+        assert edb.get_user_by_id_any_status(user_a["id"])["is_active"] == 0
+        assert edb.get_user_by_id(user_a["id"]) is None
+        assert edb.get_user_by_username("delete_a") is None
+        assert edb.get_project_owner("project-a") == user_a["id"]
+        assert edb.get_canvas_owner("canvas-a") == user_a["id"]
+        assert edb.get_conversation_owner("conversation-a") == user_a["id"]
+        assert edb.get_resource_owner("/assets/uploads/a-0.png") == user_a["id"]
+        assert edb.get_history_owner("history-a") == user_a["id"]
+        assert edb.get_asset_object_owner("item", "asset-item-a") == user_a["id"]
+        assert edb.get_canvas_image_task_owner("canvas-task-a") == user_a["id"]
+        assert edb.get_task_owner("runninghub", "task-a") == user_a["id"]
+        assert edb.get_user_feature_override(user_a["id"], "system_update")["mode"] == "deny"
+        assert runtime_marker.exists()
+        assert runtime_marker.read_bytes() == b"runtime"
+        assert runtime_marker.stat().st_mtime_ns == runtime_mtime
+
+        deleted_logs, _ = edb.get_logs(limit=20, action="user_deleted")
+        assert deleted_logs, "soft-delete audit log missing"
+        deleted_detail = json.loads(deleted_logs[0]["detail"])
+        assert deleted_detail["target_user_id"] == user_a["id"]
+        assert deleted_detail["soft_delete"] is True
+        assert deleted_detail["is_active"] is False
+        assert deleted_detail["previous_is_active"] is True
+        assert deleted_detail["reason"] == "offboarding"
+        assert deleted_detail["owned_data_retained"] is True
+        assert deleted_detail["runtime_files_deleted"] is False
+        assert deleted_detail["owner_mappings_cleaned"] is False
+
+        purge = await admin_api.purge_user_feature_overrides(
+            user_a["id"],
+            FakeRequest(actor_admin, body={"confirm_username": "delete_a", "reason": "cleanup overrides"}),
+        )
+        assert purge["success"] is True
+        assert purge["cleared_count"] == 1
+        assert edb.get_user_feature_override(user_a["id"], "system_update") is None
+        impact_after_purge = edb.get_user_delete_impact(user_a["id"], sample_limit=10)
+        assert impact_after_purge["counts"]["feature_overrides"] == 0
+        assert impact_after_purge["counts"]["projects"] == 1
+        assert edb.get_resource_owner("/assets/uploads/a-0.png") == user_a["id"]
+        assert runtime_marker.exists()
+        assert runtime_marker.read_bytes() == b"runtime"
+
+        purge_logs, _ = edb.get_logs(limit=20, action="user_feature_overrides_cleared")
+        assert purge_logs, "feature override purge audit log missing"
+        purge_detail = json.loads(purge_logs[0]["detail"])
+        assert purge_detail["target_user_id"] == user_a["id"]
+        assert purge_detail["old_count"] == 1
+        assert purge_detail["cleared_count"] == 1
+        assert purge_detail["deleted_count"] == 1
+        assert purge_detail["old_feature_keys"] == ["system_update"]
+        assert purge_detail["old_values"] == [{"feature_key": "system_update", "mode": "deny"}]
+        assert purge_detail["reason"] == "cleanup overrides"
+        policy_logs, _ = edb.get_logs(limit=20, action="permission_policy_updated")
+        assert any(
+            json.loads(row["detail"]).get("source_action") == "user_feature_overrides_cleared"
+            for row in policy_logs
+        )
+
         missing = edb.get_user_delete_impact(user_b["id"], sample_limit=1)
         assert missing["counts"]["projects"] == 0
         assert missing["samples"]["projects"] == []
 
         logs_html = (ROOT / "enterprise-static" / "logs.html").read_text(encoding="utf-8")
         assert 'value="user_delete_dry_run"' in logs_html
+        assert 'value="user_deleted"' in logs_html
+        assert 'value="user_feature_overrides_cleared"' in logs_html
 
     print("user delete cleanup dry-run checks passed")
 
