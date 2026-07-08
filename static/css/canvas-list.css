@@ -56,6 +56,13 @@ body { margin:0; height:100vh; overflow:hidden; background:var(--page); color:va
 
 /* ===== Workspace shell (two pane) ===== */
 .workspace { position:relative; display:flex; height:100vh; overflow:hidden; }
+html[data-studio-scale="off"].studio-scale-managed .workspace {
+    /* 标准化 zoom 下百分比宽度已按 zoom 换算，不能再除以 scale（会宽出 1/scale 倍、右侧被裁）；
+       vh 单位不受 zoom 影响，高度仍需除以 scale 补偿 */
+    width: 100%;
+    height: calc(100vh / var(--studio-ui-scale, 1));
+    zoom: var(--studio-ui-scale, 1);
+}
 
 /* ===== LEFT sidebar ===== */
 .ws-sidebar { flex:0 0 272px; width:272px; display:flex; flex-direction:column; background:var(--panel); border-right:1px solid var(--line); border-left:0; backdrop-filter:blur(14px); box-shadow:none; }
@@ -288,4 +295,62 @@ body { margin:0; height:100vh; overflow:hidden; background:var(--page); color:va
     .ws-card-meta { padding:8px; gap:5px; }
     .ws-trash-list { grid-template-columns:1fr; padding:12px; }
     .ws-trash-note { margin:12px 12px 0; }
+}
+html[data-studio-scale="off"].studio-scale-managed .ws-primary-btn span {
+    display:inline;
+}
+html[data-studio-scale="off"].studio-scale-managed .workspace {
+    flex-direction:row;
+}
+html[data-studio-scale="off"].studio-scale-managed .ws-sidebar {
+    flex:0 0 272px;
+    width:272px;
+    max-height:none;
+    border-right:1px solid var(--line);
+    border-bottom:none;
+}
+html[data-studio-scale="off"].studio-scale-managed .ws-main {
+    min-width:0;
+    min-height:0;
+}
+html[data-studio-scale="off"].studio-scale-managed .ws-topbar {
+    align-items:center;
+    gap:12px;
+    padding:11px 18px;
+}
+html[data-studio-scale="off"].studio-scale-managed .ws-topbar-left {
+    flex:1 1 auto;
+    min-width:0;
+}
+html[data-studio-scale="off"].studio-scale-managed .ws-board-name {
+    max-width:none;
+}
+html[data-studio-scale="off"].studio-scale-managed .ws-topbar-right {
+    flex:0 0 auto;
+    flex-wrap:nowrap;
+    justify-content:flex-end;
+}
+html[data-studio-scale="off"].studio-scale-managed .ws-paste-btn span {
+    display:inline;
+}
+@media (max-width:1320px), (max-height:860px) {
+    /* 按钮保持在顶栏行内：.workspace 有 zoom 缩放，fixed/absolute 在 zoom 子树里定位不可靠，会被推出屏幕外 */
+    html[data-studio-scale="off"].studio-scale-managed .ws-topbar-left {
+        flex:1 1 auto;
+        min-width:0;
+    }
+    html[data-studio-scale="off"].studio-scale-managed .ws-topbar-right {
+        position:static;
+        display:flex;
+        align-items:center;
+        gap:8px;
+        flex:0 0 auto;
+        flex-wrap:nowrap;
+    }
+    html[data-studio-scale="off"].studio-scale-managed .ws-topbar-right .ws-icon-btn,
+    html[data-studio-scale="off"].studio-scale-managed .ws-topbar-right .ws-primary-btn {
+        display:inline-flex;
+        visibility:visible;
+        opacity:1;
+    }
 }

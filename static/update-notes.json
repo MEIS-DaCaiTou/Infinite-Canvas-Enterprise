@@ -1,10 +1,18 @@
 {
-  "version": "2026.06.23",
-  "updated_at": "2026-06-23T11:06:00+08:00",
+  "version": "2026.07.06",
+  "updated_at": "2026-07-06T18:13:36+08:00",
   "items": [
     {
-      "type": "improve",
-      "text": "修复循环节点bug，新增API支持"
+      "type": "feature",
+      "text": "修复GPT/Gemini的CLI协议"
+    },
+    {
+      "type": "feature",
+      "text": "修复推荐API的生成bug"
+    },
+    {
+      "type": "feature",
+      "text": "进一步优化画布流畅性"
     }
   ]
 }

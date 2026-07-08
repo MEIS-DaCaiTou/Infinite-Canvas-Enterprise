@@ -417,6 +417,13 @@ def _settings_denial_for_normal_user(path: str, method: str) -> bool:
     method = method.upper()
     if path == "api/providers" or path.startswith("api/providers/"):
         return True
+    if path in {
+        "api/codex/status",
+        "api/codex/help",
+        "api/gemini-cli/status",
+        "api/gemini-cli/help",
+    }:
+        return True
     if path == "api/comfyui/instances":
         return True
     if path in {
@@ -439,6 +446,8 @@ def _settings_denial_for_normal_user(path: str, method: str) -> bool:
 
 def _settings_feature_key(path: str, method: str) -> str:
     if path == "api/providers" or path.startswith("api/providers/"):
+        return FEATURE_API_SETTINGS
+    if path.startswith("api/codex/") or path.startswith("api/gemini-cli/"):
         return FEATURE_API_SETTINGS
     if path == "api/comfyui/instances":
         return FEATURE_WORKFLOW_SETTINGS
@@ -524,6 +533,10 @@ def _settings_audit_action(path: str, method: str) -> str:
         return "settings_provider_models_fetched"
     if path.startswith("api/providers/") and method in {"POST", "PUT", "PATCH", "DELETE"}:
         return "settings_provider_modified"
+    if path in {"api/codex/status", "api/gemini-cli/status"} and method == "GET":
+        return "settings_cli_status_checked"
+    if path in {"api/codex/help", "api/gemini-cli/help"} and method == "POST":
+        return "settings_cli_help_viewed"
     if path == "api/comfyui/instances" and method in {"POST", "PUT", "PATCH", "DELETE"}:
         return "settings_comfy_instances_saved"
     if path == "api/workflows" and method == "POST":
