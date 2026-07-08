@@ -2422,6 +2422,18 @@ class CloudGenRequest(BaseModel):
     loras: Optional[Any] = None
     client_id: Optional[str] = None
 
+
+ALLOWED_HISTORY_TYPES = {"zimage", "klein", "enhance", "online", "angle"}
+
+
+def normalize_history_type(value, default="zimage"):
+    history_type = str(value or "").strip().lower()
+    fallback = str(default or "zimage").strip().lower()
+    if fallback not in ALLOWED_HISTORY_TYPES:
+        fallback = "zimage"
+    return history_type if history_type in ALLOWED_HISTORY_TYPES else fallback
+
+
 class CloudPollRequest(BaseModel):
     task_id: str
     api_key: str = ""
@@ -2592,6 +2604,7 @@ class MsGenerateRequest(BaseModel):
     size: str = ""
     loras: Optional[Any] = None
     client_id: Optional[str] = None
+    type: str = "klein"
 
 class CanvasLLMRequest(BaseModel):
     message: str = Field(min_length=1, max_length=LLM_MESSAGE_MAX_LENGTH)
@@ -15938,7 +15951,12 @@ async def generate_cloud(req: CloudGenRequest):
                         print(f"Download error: {dl_e}")
                         local_path = img_url
 
-                    record = {"timestamp": time.time(), "prompt": req.prompt, "images": [local_path], "type": "cloud"}
+                    record = {
+                        "timestamp": time.time(),
+                        "prompt": req.prompt,
+                        "images": [local_path],
+                        "type": normalize_history_type(req.type, "zimage"),
+                    }
                     save_to_history(record)
                     try:
                         await manager.broadcast_new_image(record)
@@ -16037,7 +16055,7 @@ async def ms_generate(req: MsGenerateRequest):
                             "timestamp": time.time(),
                             "prompt": req.prompt,
                             "images": [local_path],
-                            "type": "klein",
+                            "type": normalize_history_type(req.type, "klein"),
                             "model": req.model,
                         }
                         save_to_history(record)
