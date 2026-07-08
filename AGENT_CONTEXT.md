@@ -2,11 +2,18 @@
 
 > 给后续 Codex / Agent 的第一阅读文件。上下文压缩、换线程、长期维护恢复时，先按本文阅读顺序恢复项目方向，再执行当前 Issue。
 
-更新时间：2026-06-25
+更新时间：2026-07-08
 
 ---
 
-## 2026-07-06 阶段状态更新
+## 2026-07-08 阶段状态更新
+
+当前稳定基线：
+
+- main / origin/main：`73a645f2bdded5df5c7109903c8b57eab9e3c459`
+- 当前上游版本：`2026.07.6`
+- 固定上游目标 commit：`hero8152/Infinite-Canvas@f1dd6834a72f3e7ff8340be05a84347d931e9cb9`
+- U-1 / U-2 临时 worktree 已清理；后续任务从原主项目目录最新 `main` 新建分支。
 
 3G 第一阶段 owner 隔离与安全治理底座已基本完成。已合并能力包括：
 
@@ -15,13 +22,19 @@
 - 3G-5 WebSocket 广播隔离，PR #42。
 - 3G-6 异步任务历史 owner 隔离，PR #46。
 - 3G-7A 管理员权限开关最小版 + 审计，PR #49。
-- Issue #50 上游同步与 Angle / Enhance ModelScope 上传解耦只读定位已完成并关闭；结论是上游 2026.06.30 仍未修复该问题，当前不整体同步上游，Angle / Enhance 上传解耦后续单独小修。
+- Angle / Enhance ModelScope 上传解耦，PR #53。
+- 3G-7B-1 delete-impact dry-run，PR #55。
+- 3G-7B-2 soft delete + override cleanup，PR #56。
+- 3G-7B-3 成员管理搜索 / 筛选 / 分页，PR #58。
+- U-1 上游同步只读审计，PR #60。
+- U-2 上游 `2026.07.6` 受控同步与企业兼容，PR #61。
+- U-2-F1 / U-2-F2 文生图 / Enhance 刷新后历史丢失定位和 history type 一致性修复，PR #62。
 
 当前项目还不是完整企业协作平台。第一阶段完成的是普通用户隔离、owner 归属、管理员兜底、关键 API 拦截、实时事件隔离、任务历史隔离、权限开关和审计记录。下一阶段应从 owner 隔离升级到协作权限设计，并在实现前明确 project members、canvas grants、共享/撤销、审计和迁移策略。
 
 架构判断：上游 `main.py` / `static/` 保持内部上游服务，企业层通过 `enterprise/gateway.py`、`enterprise/interceptors.py`、`enterprise/db.py` 和 `enterprise-static/` 叠加多用户能力，这仍是当前阶段正确路线。长期风险是 `enterprise/interceptors.py` 已承载大量策略，后续新增策略应逐步模块化到 `enterprise/policies/`，避免继续扩大单文件拦截器。
 
-端到端验收基线：新增 `docs/manual-acceptance-enterprise-e2e.md`，统一记录 admin / user_a / user_b 在项目、画布、对话、资源、素材库、历史、任务、WebSocket、权限开关上的前端入口和后端 API 双重验收路径。
+端到端验收基线：`docs/manual-acceptance-enterprise-e2e.md` 记录 admin / user_a / user_b 在项目、画布、对话、资源、素材库、历史、任务、WebSocket、权限开关上的前端入口和后端 API 双重验收路径。当前状态总览见 `docs/CURRENT_PROJECT_STATUS.md`。
 
 ---
 
@@ -61,11 +74,11 @@
 
 | 项 | 当前状态 |
 |----|----------|
-| 本地上游版本 | `2026.06.23` |
+| 本地上游版本 | `2026.07.6` |
 | 企业私有仓库 | `MEIS-DaCaiTou/Infinite-Canvas-Enterprise` |
-| 企业仓库最新提交 | 以 `git log -1 --oneline` 为准；上游同步基线为 `hero8152/Infinite-Canvas@0da3ff9` |
+| 企业仓库最新提交 | 稳定基线为 `73a645f2bdded5df5c7109903c8b57eab9e3c459`；如 main 前进，以 `git log -1 --oneline` 和最新文档为准 |
 | 上游源码仓库 | `hero8152/Infinite-Canvas` |
-| 上游 bugfix PR | [hero8152/Infinite-Canvas#67](https://github.com/hero8152/Infinite-Canvas/pull/67)，状态 OPEN；2026-06-11 查询为 `CONFLICTING` |
+| 上游目标 commit | `f1dd6834a72f3e7ff8340be05a84347d931e9cb9` |
 | 当前运行端口 | `8000` 企业网关，`3001` 内部上游 |
 | 当前健康检查 | `/enterprise/health` 返回 `gateway=ok`、`upstream=ok` |
 | 测试脚本目录 | 统一放在 `enterprise/tests/`，不要散落到根目录或上游目录 |

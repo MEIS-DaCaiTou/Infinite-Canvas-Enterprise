@@ -8,20 +8,23 @@
 
 Codex 每次开始任务前，必须先阅读：
 
-1. `PROJECT_CHARTER.md`
-2. `AGENT_CONTEXT.md`
-3. `ARCHITECTURE.md`
-4. `CODE_BOUNDARIES.md`
-5. `CODEX_WORKFLOW.md`
-6. `SECURITY_BASELINE.md`
-7. `DEVELOPMENT_PLAN.md`
-8. 必要时阅读 `ENTERPRISE_DOCS.md`
-9. 与当前任务相关的 Issue 正文
+1. `PROJECT_SCOPE_LOCK.md`
+2. `PROJECT_HANDOFF_FOR_NEW_AGENT.md`
+3. `docs/CURRENT_PROJECT_STATUS.md`
+4. `PROJECT_CHARTER.md`
+5. `AGENT_CONTEXT.md`
+6. `ARCHITECTURE.md`
+7. `CODE_BOUNDARIES.md`
+8. `CODEX_WORKFLOW.md`
+9. `SECURITY_BASELINE.md`
+10. `DEVELOPMENT_PLAN.md`
+11. 必要时阅读 `ENTERPRISE_DOCS.md`
+12. 与当前任务相关的 Issue 正文
 
 如果当前任务涉及浏览器行为、登录权限、企业入口治理、上游同步、画布/对话/素材访问或管理后台回归，还必须阅读：
 
-10. `enterprise/tests/BROWSER_REGRESSION_CHECKLIST.md`
-11. `enterprise/tests/browser-regression.md`
+13. `enterprise/tests/BROWSER_REGRESSION_CHECKLIST.md`
+14. `enterprise/tests/browser-regression.md`
 
 阅读完成后，先确认当前任务边界，再开始修改文件。
 
@@ -38,6 +41,9 @@ Codex 每次开始任务前，必须先阅读：
 - 不提交真实密钥、真实 Token、真实 Cookie、真实数据库或真实运行时配置。
 - 不直接推送到 `main`。
 - 如发现额外问题，只记录为后续建议，不在当前任务中直接实现。
+- 每个任务必须基于最新 `main`；开始前执行 `git checkout main` 与 `git pull --ff-only origin main`，除非任务明确要求在现有 PR 分支继续追加修复。
+- 不再引用已清理的 `D:\CodeProject\26-5-27-无限画布-u1-audit` 或 `D:\CodeProject\26-5-27-无限画布-u2-sync` worktree 作为当前运行目录。
+- 重大 PR 合并后必须同步相关文档，避免代码事实、任务状态和 Agent 交接资料长期脱节。
 
 ---
 
@@ -65,6 +71,8 @@ Codex 每次开始任务前，必须先阅读：
 - `test/...`：测试与验证
 - `chore/...`：维护任务
 
+所有实现型 PR 默认保持 Draft，等待主对话复核和必要的项目负责人浏览器验收。只有收到明确指令后，才可转 Ready 并合并。文档 PR 也默认 Draft，除非任务明确要求直接发布。
+
 ---
 
 ## 4. 每次任务完成后必须提供
@@ -89,6 +97,7 @@ Codex 每次开始任务前，必须先阅读：
 
 ```powershell
 git diff --name-only
+git diff --stat
 ```
 
 并确认只涉及文档文件。
@@ -111,4 +120,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\enterprise\tests\smoke.ps1
 `main.py`、`static/`、`workflows/`、`API/`、`python/`、`VERSION` 是上游更新覆盖区域。
 
 默认不应修改这些文件。如果 PR 修改了这些区域，必须显式说明原因、风险、回滚方案，以及是否需要同步给上游。
+
+U-2 / U-2-F2 已确认：上游覆盖区可以在受控上游同步或明确 bugfix 中被最小化修改，但必须可审计、可回滚，并明确跳过 `API/.env`、`python/`、`CLI/`、`assets/`、`output/`、`data/asset_library.json`、运行时数据库、env、token、cookie、key 和本地日志。
 

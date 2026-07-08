@@ -2,21 +2,24 @@
 
 状态：Accepted
 
-日期：2026-07-06
+日期：2026-07-08
 
 ## 背景
 
 Infinite Canvas Enterprise 基于上游 `hero8152/Infinite-Canvas` 做企业多用户二次开发。上游仍持续维护 `main.py`、`static/`、`workflows/`、`API/`、`python/` 和 `VERSION`。
 
-截至 2026-07-06，企业版已完成第一阶段隔离底座：
+截至 2026-07-08，企业版已完成第一阶段隔离底座，并已受控同步到上游 `2026.07.6`：
 
 - 3G-4A：上传资源隔离。
 - 3G-4B：素材库完整隔离。
 - 3G-5：WebSocket 广播隔离。
 - 3G-6：异步任务历史 owner 隔离。
 - 3G-7A：管理员权限开关最小版 + 审计。
+- 3G-7B：用户删除影响预览、soft delete 安全保护、feature override 清理、成员管理搜索 / 筛选 / 分页。
+- U-2：上游 `2026.07.6` 受控同步与企业兼容。
+- U-2-F2：zimage / enhance / klein 云端 history type 一致性修复。
 
-Issue #50 已确认：上游 `2026.06.30` 仍未修复 Angle / Enhance ModelScope 上传解耦问题，当前不整体同步上游，该问题后续单独小修。
+Angle / Enhance ModelScope 上传解耦已由 PR #53 完成；上游 `2026.07.6` 受控同步已由 PR #61 完成；刷新后历史丢失问题已由 PR #62 修复。当前不再依赖 PR #61 / #62 分支或临时 worktree。
 
 ## 决策
 
@@ -70,7 +73,7 @@ main.py 上游服务
 
 ## 下一阶段方向
 
-下一阶段不应直接进入大规模功能实现，而应先完成协作权限设计：
+DOC-1 完成后，下一阶段不应直接进入大规模协作功能实现，而应先完成浏览器级自动化回归、外部 provider 成功链路补验、生产部署安全治理，再进入协作权限设计：
 
 - project members。
 - canvas grants。
@@ -110,7 +113,7 @@ main.py 上游服务
 - `enterprise/interceptors.py` 大重构。
 - Postgres / 队列 / 运维系统。
 - 上游同步实现。
-- Angle / Enhance ModelScope 上传解耦实现。
+- Angle / Enhance ModelScope 上传解耦实现，已由 PR #53 完成，后续只做回归。
 - provider 质量、中转站、ModelScope Key、2K/high 问题优化。
 
 这些内容必须分别立项、定位、设计和验收。
@@ -128,4 +131,4 @@ main.py 上游服务
 
 - `enterprise/interceptors.py` 的模块化不会在本 ADR 立即完成，短期仍需谨慎维护。
 - 协作能力需要额外设计周期，不能直接复用单 owner 模型。
-- Angle / Enhance 上传解耦仍需单独小修任务处理。
+- 外部 provider 成功链路仍需要有可用 Key 后补验，不能把 provider / token / 模型质量问题误判为企业隔离失败。

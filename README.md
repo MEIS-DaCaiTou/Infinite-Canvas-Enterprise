@@ -66,14 +66,17 @@ The enterprise launcher starts both services:
 
 Before any development or maintenance task, read these documents first:
 
-1. `PROJECT_CHARTER.md`
-2. `AGENT_CONTEXT.md`
-3. `ARCHITECTURE.md`
-4. `CODE_BOUNDARIES.md`
-5. `CODEX_WORKFLOW.md`
-6. `DEVELOPMENT_PLAN.md`
-7. `ENTERPRISE_DOCS.md`
-8. The current GitHub Issue text
+1. `PROJECT_SCOPE_LOCK.md`
+2. `PROJECT_HANDOFF_FOR_NEW_AGENT.md`
+3. `docs/CURRENT_PROJECT_STATUS.md`
+4. `PROJECT_CHARTER.md`
+5. `AGENT_CONTEXT.md`
+6. `ARCHITECTURE.md`
+7. `CODE_BOUNDARIES.md`
+8. `CODEX_WORKFLOW.md`
+9. `DEVELOPMENT_PLAN.md`
+10. `ENTERPRISE_DOCS.md`
+11. The current GitHub Issue text
 
 This is mandatory because the enterprise layer and upstream layer have different ownership and update rules.
 
@@ -100,7 +103,11 @@ Changes to upstream-covered files are allowed only for controlled upstream syncs
 
 ## Upstream Synchronization
 
-Current upstream baseline: `2026.06.23`
+Current stable enterprise baseline: `73a645f2bdded5df5c7109903c8b57eab9e3c459`
+
+Current upstream baseline: `2026.07.6`
+
+Current upstream target commit: `hero8152/Infinite-Canvas@f1dd6834a72f3e7ff8340be05a84347d931e9cb9`
 
 Upstream source: [hero8152/Infinite-Canvas](https://github.com/hero8152/Infinite-Canvas)
 
@@ -153,8 +160,13 @@ Never commit:
 - real tokens
 - real cookies
 - `enterprise.env`
+- `API/.env`
+- `python/`
 - real databases
 - runtime data under `data/`
+- `history.json`
+- `assets/`
+- `output/`
 - local media preview caches
 
 See `SECURITY_BASELINE.md` for the full baseline.
@@ -183,6 +195,7 @@ Startup/stop lifecycle tests may interrupt the running service. Run them only wh
 
 - Enterprise gateway: `0.0.0.0:8000`
 - Internal upstream: `127.0.0.1:3001`
-- Current upstream baseline: `2026.06.23`
+- Current upstream baseline: `2026.07.6`
+- Current stable main baseline: `73a645f2bdded5df5c7109903c8b57eab9e3c459`
 - Enterprise tests live in `enterprise/tests/`
 - Runtime data and secrets must stay out of Git

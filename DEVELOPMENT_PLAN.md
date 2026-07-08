@@ -1,10 +1,10 @@
 # 无限画布企业版 · 后续开发规划
 
-更新时间：2026-06-25
+更新时间：2026-07-08
 
 ---
 
-## 2026-07-06 阶段结论：隔离底座第一阶段完成
+## 2026-07-08 阶段结论：隔离底座第一阶段完成并同步到上游 2026.07.6
 
 当前企业版已完成第一阶段安全隔离底座的主体闭环：
 
@@ -13,7 +13,13 @@
 - 3G-5：WebSocket 广播隔离与实时事件 owner 治理，PR #42。
 - 3G-6：异步任务历史 owner 隔离，PR #46。
 - 3G-7A：管理员权限开关最小版 + 审计，PR #49。
-- Issue #50：上游同步与 Angle / Enhance ModelScope 上传解耦只读定位，已完成；上游 2026.06.30 尚未修复该问题，当前不整体同步上游。
+- Angle / Enhance ModelScope 上传解耦，PR #53。
+- 3G-7B-1：delete-impact dry-run，PR #55。
+- 3G-7B-2：soft delete + feature override cleanup，PR #56。
+- 3G-7B-3：成员管理搜索 / 筛选 / 分页，PR #58。
+- U-1：上游同步只读审计，PR #60。
+- U-2：上游 `2026.07.6` 受控同步与企业兼容，PR #61。
+- U-2-F1 / U-2-F2：文生图 / Enhance 刷新后历史丢失定位和 history type 一致性修复，PR #62。
 
 本阶段结论是：当前架构适配“单机无限画布小规模企业多用户化”的阶段目标。第一阶段重点不是组织协作，而是普通用户隔离、owner 归属、管理员兜底、关键 API 拦截、实时事件隔离、任务历史隔离、权限开关和审计记录。
 
@@ -23,7 +29,16 @@
 
 端到端验收基线见 `docs/manual-acceptance-enterprise-e2e.md`。当前架构评估与下一阶段演进决策见 `docs/decisions/ADR-current-architecture-and-next-stage.md`。
 
-本阶段不处理 Angle / Enhance ModelScope 上传解耦、不整体同步上游、不实现 team/workspace/project_members/canvas_grants、不做数据库功能 schema 改造、不重构 `interceptors.py`。
+当前稳定基线为 `73a645f2bdded5df5c7109903c8b57eab9e3c459`，上游版本为 `2026.07.6`。本阶段仍不实现 team/workspace/project_members/canvas_grants、不做数据库功能 schema 改造、不重构 `interceptors.py`。
+
+当前后续任务顺序：
+
+1. DOC-1：项目文档体系全量同步与 Agent 交接资料更新。
+2. 3G-8：浏览器级自动化回归。
+3. 3G-6 外部 provider 成功链路补验。
+4. 3G-9：生产部署安全治理。
+5. 协作权限设计 ADR + 端到端验收矩阵。
+6. `enterprise/interceptors.py` 模块化只读审计。
 
 ---
 
@@ -136,11 +151,14 @@ Task 3G 设计与实施路线：
 
 - 3G-1 已完成：`ENTERPRISE_ISOLATION_MATRIX.md` 与 `ENTERPRISE_PERMISSION_DESIGN.md` 定义数据域、API/入口权限矩阵、管理员开关、迁移原则及 A/B/admin 验收。
 - 3G-2 已完成：项目、画布列表隔离，建立 `user_project_map` 和每用户默认项目语义；覆盖项目 CRUD、项目计数、画布创建/移动、回收站、管理员项目归属分配、管理员跨用户移动画布后的 canvas owner 同步，以及管理员分配画布 owner 时的 project/default 一致性修正。当前上游项目 API 为扁平节点，未来独立 folder/parent API 需复用该 owner 模型。
-- 3G-3 待办：在线/本地功能历史、任务、缩略图和生成日志的 owner 链。
-- 3G-4 待办：素材库、上传文件夹、提示词库、共享目录和批量管理隔离。
-- 3G-5 待办：WebSocket `new_image`、任务完成、队列和资源更新的按 owner 广播。
-- 3G-6 待办：企业后台权限开关与 API/工作流/平台入口治理。
-- 3G-7 待办：A/B/admin 浏览器级回归脚本化、上游同步门禁和长期记录。
+- 3G-3 已完成：在线 / 本地功能历史、全局 `history.json` owner 治理、列表过滤和删除鉴权。
+- 3G-4A 已完成：上传资源隔离与上传资源 owner 治理。
+- 3G-4B 已完成：素材库完整隔离与素材业务 owner 治理。
+- 3G-5 已完成：WebSocket 广播隔离与实时事件 owner 治理。
+- 3G-6 已完成 owner 拦截基线：异步任务历史持久化列表隔离；外部 provider 成功链路后续有真实 Key 后补验。
+- 3G-7A 已完成：管理员权限开关最小版 + 审计。
+- 3G-7B 已完成：delete-impact dry-run、soft delete 安全保护、feature override 清理、成员管理搜索 / 筛选 / 分页。
+- 3G-8 待办：A/B/admin 浏览器级回归脚本化、上游同步门禁和长期记录。
 
 ---
 
@@ -234,6 +252,9 @@ Task 3G 设计与实施路线：
 - Issue #11 已恢复企业版 README 首页边界：根目录 `README.md` 是企业仓库入口，上游 README 移至 `docs/upstream/README.upstream.md`，同步规则写入 `docs/upstream/SYNC_POLICY.md`。
 - Issue #13 已建立企业版项目入口与更新权限治理：前端项目主页指向企业仓库，普通用户隐藏更新提示、更新入口和上游作者社交区，更新相关接口继续由企业网关强制管理员权限；管理员更新文案定位为企业版受控运维能力。
 - Task 3U 已完成受控上游同步：上游覆盖区域升级到 `hero8152/Infinite-Canvas@0da3ff9` / `2026.06.23`；根目录企业 README 与企业层目录未被覆盖。上游未吸收 PR #21 的 Smart Canvas 旧日志兼容修复，因此已将其最小迁移到新版 `static/js/smart-canvas.js`，并继续由 `enterprise/tests/test_smart_canvas_logs.js` 覆盖。
+- U-1 / PR #60 已完成上游同步只读审计，明确不能直接 merge upstream/main。
+- U-2 / PR #61 已完成到 `hero8152/Infinite-Canvas@f1dd6834a72f3e7ff8340be05a84347d931e9cb9` / `2026.07.6` 的受控同步，未提交 `API/.env`、`python/`、`CLI/`、`assets/`、`output/`、`data/asset_library.json` 或敏感运行时文件。
+- U-2-F2 / PR #62 已完成文生图 / Enhance 云端 history type 一致性修复，并通过最小浏览器确认。
 
 待办：
 

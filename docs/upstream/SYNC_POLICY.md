@@ -55,10 +55,13 @@ Every upstream sync PR must state:
 ## Current Upstream Baseline
 
 - Upstream repository: `hero8152/Infinite-Canvas`
-- Current enterprise baseline: `2026.06.23`
-- Last recorded upstream commit: `0da3ff9ae0477e6e18b7c241020c2ce8cb0d5c73`
+- Current enterprise upstream baseline: `2026.07.6`
+- Current stable enterprise commit: `73a645f2bdded5df5c7109903c8b57eab9e3c459`
+- Last controlled upstream target commit: `f1dd6834a72f3e7ff8340be05a84347d931e9cb9`
 
-The 2026.06.23 sync found that upstream did not yet include the Enterprise PR #21 Smart Canvas log compatibility work. The sync therefore retains only the documented minimal compatibility hooks in `static/js/smart-canvas.js`; future upstream syncs must rerun `enterprise/tests/test_smart_canvas_logs.js` before deciding whether the local patch can be removed.
+U-1 documented that the enterprise repository had no usable merge-base for a normal upstream merge. U-2 therefore used a controlled, patch-style sync to the fixed upstream target `f1dd6834a72f3e7ff8340be05a84347d931e9cb9`, not a direct merge, rebase, or broad cherry-pick.
+
+U-2 explicitly skipped `API/.env`, `python/`, `CLI/` output, `assets/`, `output/`, `data/asset_library.json`, runtime databases, env files, tokens, cookies, keys, and local logs. U-2-F2 then fixed the history type inconsistency exposed after sync: zimage cloud history is saved as `zimage`, Enhance ModelScope history is saved as `enhance`, and Klein remains `klein`.
 
 ## Intentional Difference
 

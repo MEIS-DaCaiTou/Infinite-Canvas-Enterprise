@@ -1,5 +1,14 @@
 # U-2 上游受控同步实施记录
 
+## 最终状态（2026-07-08）
+
+- PR #61 已合并，U-2 已完成受控同步到上游 `2026.07.6`。
+- 最终 U-2 PR head：`4823dfd55421cabcd4e689c252749534ee044d47`。
+- 当前主线在 PR #62 后稳定为：`73a645f2bdded5df5c7109903c8b57eab9e3c459`。
+- U-2 clean worktree 运行态验证已补做完成：服务来源确认为 `D:\CodeProject\26-5-27-无限画布-u2-sync`；`/api/app-info` 返回 `version=2026.07.6`；`/static/js/touch-mouse.js` 返回 200；`diagnose.ps1` 和 `smoke.ps1` 在 U-2 worktree 服务上通过。
+- 项目负责人已基于 U-2 worktree 服务完成浏览器验收并确认通过，重点覆盖登录、普通用户管理后台拒绝、API 设置页新版推荐平台与 CLI 设置展示、权限边界、版本显示、Smart Canvas / Classic Canvas 基础路径、RunningHub / Angle / Enhance 相关入口和企业隔离核心路径。
+- 合并后 U-1 / U-2 临时 worktree 已清理，不再作为当前运行目录。
+
 ## 基线
 
 - 企业版基线：`966a2aa021ae86fb732cd228e7928010febc1253`
@@ -84,7 +93,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\enterprise\tests\diagnose.
 powershell -NoProfile -ExecutionPolicy Bypass -File .\enterprise\tests\smoke.ps1
 ```
 
-说明：`diagnose.ps1` / `smoke.ps1` 返回通过，但当时 8000 / 3001 端口由原主工作区旧服务占用，因此仅作为现有服务健康记录，不作为 U-2 clean worktree 浏览器验收结论。
+说明：早期 `diagnose.ps1` / `smoke.ps1` 曾在原主工作区旧服务上返回通过，仅作为历史记录，不作为最终 U-2 结论。最终运行态验证已在 U-2 clean worktree 服务上重新完成并通过，见本文“最终状态”。
 
 ## 建议项目负责人手动验收
 
