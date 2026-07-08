@@ -764,6 +764,7 @@
                             prompt,
                             api_key: token,
                             model: 'black-forest-labs/FLUX.2-klein-9B',
+                            type: 'enhance',
                             image_urls: [previewSrc],
                             width: msSize.width,
                             height: msSize.height,
@@ -780,6 +781,7 @@
                     finalData = {
                         images: [msData.url],
                         timestamp: Date.now(),
+                        type: 'enhance',
                         params: uploadedPath ? { "15": { "image": uploadedPath } } : {}
                     };
 
