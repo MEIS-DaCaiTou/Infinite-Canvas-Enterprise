@@ -188,6 +188,21 @@ def run_all() -> None:
         assert not Path(dry_backup["backup_dir"]).exists()
         assert "super-secret-value" not in json.dumps(dry_backup, ensure_ascii=False)
 
+        api_env_path = app_root / "API" / ".env"
+        api_env_path.unlink()
+        _, missing_api_env_backup = run_ops(
+            app_root,
+            "backup",
+            "--backup-root",
+            str(app_root.parent / "backups"),
+        )
+        assert missing_api_env_backup["status"] == "warn"
+        assert "API/.env missing" in missing_api_env_backup["warnings"]
+        sensitive_files = {item["path"]: item for item in missing_api_env_backup["sensitive_files"]}
+        assert sensitive_files["API/.env"]["exists"] is False
+        assert sensitive_files["API/.env"]["env_keys"] == []
+        write_text(api_env_path, "API_PROVIDER_CUSTOM_API_KEY=secret-key-value\n")
+
         _, executed_backup = run_ops(
             app_root,
             "backup",
@@ -213,6 +228,22 @@ def run_all() -> None:
         _, unsafe_report = run_ops(app_root, "validate-release", "--release", str(unsafe_zip), expect=2)
         assert unsafe_report["status"] == "fail"
         assert unsafe_report["forbidden_path_count"] == 1
+
+        windows_unsafe_zip = app_root.parent / "windows-unsafe-release.zip"
+        with zipfile.ZipFile(windows_unsafe_zip, "w") as archive:
+            archive.writestr("C:/release/main.py", "unsafe")
+            archive.writestr("D:\\release\\main.py", "unsafe")
+            archive.writestr("\\\\server\\share\\main-backslash.py", "unsafe")
+            archive.writestr("//server/share/main-slash.py", "unsafe")
+        _, windows_unsafe_report = run_ops(
+            app_root,
+            "validate-release",
+            "--release",
+            str(windows_unsafe_zip),
+            expect=2,
+        )
+        assert windows_unsafe_report["status"] == "fail"
+        assert windows_unsafe_report["forbidden_path_count"] == 4
 
         good_release = app_root.parent / "good-release"
         create_release(good_release, forbidden=False)

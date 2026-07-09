@@ -45,6 +45,11 @@ CRITICAL_RUNTIME_PATHS = (
     "API/.env",
 )
 
+REQUIRED_ENV_FILES = (
+    "enterprise.env",
+    "API/.env",
+)
+
 BACKUP_ITEMS = (
     "VERSION",
     "main.py",
@@ -618,8 +623,10 @@ def command_backup(args: argparse.Namespace, job_id: str, logger: OpsJobLogger) 
     backup_id = args.backup_id or f"{args.backup_type}-{compact_timestamp()}-{uuid.uuid4().hex[:8]}"
     backup_dir = backup_root / backup_id
     item_summaries = [backup_item_summary(app_root, rel_path) for rel_path in BACKUP_ITEMS]
+    env_summaries = [env_file_summary(app_root, rel_path) for rel_path in REQUIRED_ENV_FILES]
     missing = [item["path"] for item in item_summaries if item["required"] and not item["exists"]]
-    warnings = [f"{path} missing" for path in missing]
+    missing.extend(item["path"] for item in env_summaries if item["required"] and not item["exists"])
+    warnings = sorted({f"{path} missing" for path in missing})
     dry_run = not args.execute
 
     manifest: dict[str, Any] = {
@@ -636,10 +643,7 @@ def command_backup(args: argparse.Namespace, job_id: str, logger: OpsJobLogger) 
         "git": collect_git_summary(app_root),
         "version": read_version(app_root),
         "items": item_summaries,
-        "sensitive_files": [
-            {"path": "enterprise.env", "env_keys": read_env_keys(app_root / "enterprise.env")},
-            {"path": "API/.env", "env_keys": read_env_keys(app_root / "API" / ".env")},
-        ],
+        "sensitive_files": env_summaries,
         "warnings": warnings,
         "note": "Manifest records env key names only. Env values and secrets are not written to the manifest.",
     }
@@ -676,6 +680,16 @@ def backup_item_summary(app_root: Path, rel_path: str) -> dict[str, Any]:
             summary["sha256"] = ""
     summary["required"] = required
     return summary
+
+
+def env_file_summary(app_root: Path, rel_path: str) -> dict[str, Any]:
+    path = app_root / rel_path
+    return {
+        "path": rel_path,
+        "exists": path.exists() and path.is_file(),
+        "required": True,
+        "env_keys": read_env_keys(path),
+    }
 
 
 def copy_backup_items(app_root: Path, backup_dir: Path) -> None:
@@ -763,8 +777,7 @@ def validate_release(release_path: Path, job_id: str) -> dict[str, Any]:
 
 def release_forbidden_reason(entry: str) -> str:
     normalized = normalize_release_entry(entry)
-    lower = normalized.lower()
-    if normalized.startswith("/") or any(part == ".." for part in normalized.split("/")):
+    if is_unsafe_release_entry_path(normalized):
         return "unsafe-path"
     normalized = normalized.lstrip("/")
     lower = normalized.lower()
@@ -792,6 +805,18 @@ def release_forbidden_reason(entry: str) -> str:
 def normalize_release_entry(entry: str) -> str:
     raw = entry.replace("\\", "/")
     return raw[2:] if raw.startswith("./") else raw
+
+
+def is_unsafe_release_entry_path(entry: str) -> bool:
+    normalized = entry.replace("\\", "/")
+    parts = normalized.split("/")
+    if normalized.startswith("//"):
+        return True
+    if normalized.startswith("/"):
+        return True
+    if len(normalized) >= 3 and normalized[1] == ":" and normalized[0].isalpha() and normalized[2] == "/":
+        return True
+    return any(part == ".." for part in parts)
 
 
 def has_release_app_signal(entries: list[str]) -> bool:

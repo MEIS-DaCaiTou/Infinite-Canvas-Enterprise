@@ -94,7 +94,7 @@ python -m enterprise.ops.runner backup --execute --backup-root D:\ic-backups
 - backup id / type / 时间。
 - 当前版本和 Git 摘要。
 - 备份对象存在性、文件数量、大小。
-- 文件级 SHA-256。
+- 顶层文件项 SHA-256，以及目录项文件数量 / 大小汇总。
 - `enterprise.env` 和 `API/.env` 的 key 名称。
 
 实际备份复制到：
