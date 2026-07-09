@@ -96,6 +96,7 @@ python -m enterprise.ops.runner backup --execute --backup-root D:\ic-backups
 - 备份对象存在性、文件数量、大小。
 - 顶层文件项 SHA-256，以及目录项文件数量 / 大小汇总。
 - `enterprise.env` 和 `API/.env` 的 key 名称。
+- SQLite 备份方式、状态和目标路径：`sqlite_backup_method`、`sqlite_backup_status`、`sqlite_backup_path`。
 
 实际备份复制到：
 
@@ -105,6 +106,8 @@ python -m enterprise.ops.runner backup --execute --backup-root D:\ic-backups
 ```
 
 备份会包含生产恢复需要的 env 文件本体，因此备份目录必须按敏感资产管理，不得提交 Git，不得公开上传。
+
+`backup --execute` 不直接复制运行中的 `data/enterprise.db`、`enterprise.db-wal` 或 `enterprise.db-shm`。复制 `data/` 目录时会跳过这些 SQLite 运行态文件，然后使用 `sqlite3.Connection.backup()` 在备份目录生成一致性的 `app/data/enterprise.db`。如果 SQLite 备份失败，backup manifest 状态为 `fail`，命令返回非 0。
 
 ## 6. check-data
 
@@ -135,6 +138,8 @@ python -m enterprise.ops.runner backup --execute --backup-root D:\ic-backups
 - Token / Cookie / auth 文件路径。
 
 该命令只读扫描 release，不修改 release。
+
+校验会识别任意顶层目录包裹下的运行时 / 敏感路径，例如 `Infinite-Canvas-Enterprise/data/enterprise.db`、`release-root/app/history.json` 或 `some-wrapper/API/.env`。
 
 ## 8. prepare-upgrade
 

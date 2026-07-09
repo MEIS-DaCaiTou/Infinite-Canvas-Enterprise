@@ -76,6 +76,9 @@ BACKUP_IGNORE_NAMES = {
     "logs",
 }
 
+SQLITE_BACKUP_METHOD = "sqlite3.Connection.backup"
+SQLITE_RUNTIME_NAMES = {"enterprise.db", "enterprise.db-wal", "enterprise.db-shm"}
+
 RELEASE_FORBIDDEN_PREFIXES = (
     "assets/",
     "output/",
@@ -628,6 +631,12 @@ def command_backup(args: argparse.Namespace, job_id: str, logger: OpsJobLogger) 
     missing.extend(item["path"] for item in env_summaries if item["required"] and not item["exists"])
     warnings = sorted({f"{path} missing" for path in missing})
     dry_run = not args.execute
+    sqlite_backup_path = backup_dir / "app" / "data" / "enterprise.db"
+    sqlite_backup: dict[str, Any] = {
+        "sqlite_backup_method": SQLITE_BACKUP_METHOD,
+        "sqlite_backup_status": "dry-run" if dry_run else "pending",
+        "sqlite_backup_path": sqlite_backup_path.as_posix(),
+    }
 
     manifest: dict[str, Any] = {
         "kind": "backup-manifest",
@@ -644,6 +653,7 @@ def command_backup(args: argparse.Namespace, job_id: str, logger: OpsJobLogger) 
         "version": read_version(app_root),
         "items": item_summaries,
         "sensitive_files": env_summaries,
+        **sqlite_backup,
         "warnings": warnings,
         "note": "Manifest records env key names only. Env values and secrets are not written to the manifest.",
     }
@@ -653,6 +663,16 @@ def command_backup(args: argparse.Namespace, job_id: str, logger: OpsJobLogger) 
             raise RuntimeError(f"backup directory already exists: {backup_dir}")
         logger.event("copy_started", backup_dir=backup_dir.as_posix())
         copy_backup_items(app_root, backup_dir)
+        logger.event("sqlite_backup_started", sqlite_backup_path=sqlite_backup_path.as_posix())
+        sqlite_backup = backup_sqlite_database(app_root / "data" / "enterprise.db", sqlite_backup_path)
+        manifest.update(sqlite_backup)
+        if sqlite_backup["sqlite_backup_status"] == "failed":
+            manifest["status"] = "fail"
+        logger.event(
+            "sqlite_backup_finished",
+            status=sqlite_backup["sqlite_backup_status"],
+            sqlite_backup_path=sqlite_backup_path.as_posix(),
+        )
         manifest["copied_at"] = utc_now()
         manifest["dry_run"] = False
         manifest_path = backup_dir / "backup-manifest.json"
@@ -708,10 +728,42 @@ def copy_backup_items(app_root: Path, backup_dir: Path) -> None:
 
 def backup_ignore(dir_path: str, names: list[str]) -> set[str]:
     ignored = {name for name in names if name in BACKUP_IGNORE_NAMES}
+    if Path(dir_path).name == "data":
+        ignored.update(name for name in names if name in SQLITE_RUNTIME_NAMES)
     if Path(dir_path).name == "API":
         # Keep API/.env in production backups; it is a critical restore file.
         ignored.discard(".env")
     return ignored
+
+
+def backup_sqlite_database(source_path: Path, destination_path: Path) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "sqlite_backup_method": SQLITE_BACKUP_METHOD,
+        "sqlite_backup_status": "pending",
+        "sqlite_backup_path": destination_path.as_posix(),
+    }
+    if not source_path.exists():
+        result["sqlite_backup_status"] = "failed"
+        result["sqlite_backup_error"] = "source database missing"
+        return result
+
+    destination_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if destination_path.exists():
+            destination_path.unlink()
+        with sqlite_connect_readonly(source_path) as source_conn:
+            with sqlite3.connect(destination_path) as destination_conn:
+                source_conn.backup(destination_conn)
+        result["sqlite_backup_status"] = "success"
+        try:
+            result["sqlite_backup_size_bytes"] = destination_path.stat().st_size
+            result["sqlite_backup_sha256"] = sha256_file(destination_path)
+        except OSError:
+            pass
+    except Exception as exc:
+        result["sqlite_backup_status"] = "failed"
+        result["sqlite_backup_error"] = str(exc)
+    return result
 
 
 def command_validate_release(args: argparse.Namespace, job_id: str, logger: OpsJobLogger) -> dict[str, Any]:
@@ -783,11 +835,7 @@ def release_forbidden_reason(entry: str) -> str:
     lower = normalized.lower()
     parts = lower.split("/")
     basename = parts[-1] if parts else lower
-    candidate_roots = [lower]
-    if lower.startswith("app/"):
-        candidate_roots.append(lower[4:])
-    if lower.startswith("release/app/"):
-        candidate_roots.append(lower[12:])
+    candidate_roots = path_suffix_candidates(lower)
     for candidate in candidate_roots:
         if candidate in {item.lower() for item in RELEASE_FORBIDDEN_EXACT}:
             return "exact"
@@ -817,6 +865,12 @@ def is_unsafe_release_entry_path(entry: str) -> bool:
     if len(normalized) >= 3 and normalized[1] == ":" and normalized[0].isalpha() and normalized[2] == "/":
         return True
     return any(part == ".." for part in parts)
+
+
+def path_suffix_candidates(path: str) -> list[str]:
+    parts = [part for part in path.split("/") if part]
+    candidates = ["/".join(parts[index:]) for index in range(len(parts))]
+    return candidates or [path]
 
 
 def has_release_app_signal(entries: list[str]) -> bool:

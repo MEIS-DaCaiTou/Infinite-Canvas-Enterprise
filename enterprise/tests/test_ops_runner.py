@@ -203,24 +203,73 @@ def run_all() -> None:
         assert sensitive_files["API/.env"]["env_keys"] == []
         write_text(api_env_path, "API_PROVIDER_CUSTOM_API_KEY=secret-key-value\n")
 
-        _, executed_backup = run_ops(
-            app_root,
-            "backup",
-            "--backup-root",
-            str(app_root.parent / "backups"),
-            "--execute",
-        )
+        live_conn = sqlite3.connect(app_root / "data" / "enterprise.db")
+        try:
+            live_conn.execute("PRAGMA journal_mode=WAL")
+            live_conn.execute(
+                "CREATE TABLE IF NOT EXISTS ops_backup_probe (id INTEGER PRIMARY KEY, value TEXT)"
+            )
+            live_conn.execute("INSERT INTO ops_backup_probe (value) VALUES (?)", ("wal-backed-commit",))
+            live_conn.commit()
+
+            _, executed_backup = run_ops(
+                app_root,
+                "backup",
+                "--backup-root",
+                str(app_root.parent / "backups"),
+                "--execute",
+            )
+        finally:
+            live_conn.close()
         assert executed_backup["dry_run"] is False
+        assert executed_backup["status"] == "pass"
+        assert executed_backup["sqlite_backup_method"] == "sqlite3.Connection.backup"
+        assert executed_backup["sqlite_backup_status"] == "success"
         backup_dir = Path(executed_backup["backup_dir"])
+        backup_db = backup_dir / "app" / "data" / "enterprise.db"
         assert (backup_dir / "app" / "history.json").exists()
         assert (backup_dir / "app" / "API" / ".env").exists()
+        assert backup_db.exists()
+        assert not (backup_dir / "app" / "data" / "enterprise.db-wal").exists()
+        assert not (backup_dir / "app" / "data" / "enterprise.db-shm").exists()
         assert (backup_dir / "backup-manifest.json").exists()
+        with sqlite3.connect(backup_db) as backup_conn:
+            row = backup_conn.execute(
+                "SELECT value FROM ops_backup_probe ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+        assert row and row[0] == "wal-backed-commit"
+
+        bad_sqlite_root = app_root.parent / "bad-sqlite-app"
+        write_text(bad_sqlite_root / "enterprise.env", "JWT_SECRET=bad\n")
+        write_text(bad_sqlite_root / "API" / ".env", "API_PROVIDER_CUSTOM_API_KEY=bad\n")
+        write_text(bad_sqlite_root / "data" / "enterprise.db", "not a sqlite database\n")
+        _, failed_sqlite_backup = run_ops(
+            bad_sqlite_root,
+            "backup",
+            "--backup-root",
+            str(app_root.parent / "bad-sqlite-backups"),
+            "--execute",
+            expect=2,
+        )
+        assert failed_sqlite_backup["status"] == "fail"
+        assert failed_sqlite_backup["sqlite_backup_method"] == "sqlite3.Connection.backup"
+        assert failed_sqlite_backup["sqlite_backup_status"] == "failed"
+        assert Path(failed_sqlite_backup["_report_path"]).exists()
 
         bad_release = app_root.parent / "bad-release"
         create_release(bad_release, forbidden=True)
         _, release_report = run_ops(app_root, "validate-release", "--release", str(bad_release), expect=2)
         assert release_report["status"] == "fail"
         assert release_report["forbidden_path_count"] == 1
+
+        wrapped_release = app_root.parent / "wrapped-release"
+        write_text(wrapped_release / "Infinite-Canvas-Enterprise" / "data" / "enterprise.db", "db")
+        write_text(wrapped_release / "Infinite-Canvas-Enterprise" / "assets" / "output" / "a.png", "image")
+        write_text(wrapped_release / "release-root" / "app" / "history.json", "[]")
+        write_text(wrapped_release / "some-wrapper" / "API" / ".env", "SECRET=value\n")
+        _, wrapped_report = run_ops(app_root, "validate-release", "--release", str(wrapped_release), expect=2)
+        assert wrapped_report["status"] == "fail"
+        assert wrapped_report["forbidden_path_count"] == 4
 
         unsafe_zip = app_root.parent / "unsafe-release.zip"
         with zipfile.ZipFile(unsafe_zip, "w") as archive:
