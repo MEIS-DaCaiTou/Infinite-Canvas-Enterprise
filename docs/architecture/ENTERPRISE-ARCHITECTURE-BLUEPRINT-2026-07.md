@@ -229,8 +229,8 @@ Update Center 应成为管理员触发和查看 OPS job 的入口，而不是直
 | 分类 | 能力 |
 | --- | --- |
 | 当前已实现 | 企业网关、登录、JWT Cookie、管理员后台、用户管理、启用 / 禁用、soft delete、delete-impact、feature flags、user overrides、审计基础、项目 / 画布 / 对话 / 资源 / 历史 / 素材 / 任务 owner 隔离、WebSocket 隔离、U-2 上游受控同步、U-2-F2 history type 修复。 |
-| 当前部分具备 | 受控更新入口、操作日志、启动安全警告、生产只读盘点、生产升级治理设计、资源引用回溯、外部 provider task owner 拦截。 |
-| 当前未实现 | OPS runner、备份脚本、离线 release 包生成、apply-upgrade、rollback、完整 OPS job log、本地结构化 access/app/error/security log、远程日志推送、Dockerfile、docker-compose、1Panel 正式部署手册、schema migration 工具、数据治理巡检工具、PostgreSQL 生产支持、对象存储生产支持。 |
+| 当前部分具备 | 受控更新入口、操作日志、启动安全警告、生产只读盘点、生产升级治理设计、OPS-2A runner 第一版、inventory、backup manifest / copy、check-data、validate-release、prepare-upgrade、OPS job 本地 JSONL、资源引用回溯、外部 provider task owner 拦截。 |
+| 当前未实现 | apply-upgrade、rollback、完整本地 access/app/error/security log、远程日志推送、Dockerfile、docker-compose、1Panel 正式部署手册、schema migration 工具、自动修复型数据治理工具、PostgreSQL 生产支持、对象存储生产支持。 |
 | 长期目标 | Update Center、计划驱动升级、自动备份、可回滚发布、集中日志、PostgreSQL、对象存储、多服务器部署、协作 ACL、浏览器级自动化回归基线。 |
 
 本文只记录架构蓝图，不代表上述长期目标已经实现。
