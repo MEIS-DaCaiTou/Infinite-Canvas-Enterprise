@@ -31,14 +31,15 @@
 
 当前稳定基线为 `73a645f2bdded5df5c7109903c8b57eab9e3c459`，上游版本为 `2026.07.6`。本阶段仍不实现 team/workspace/project_members/canvas_grants、不做数据库功能 schema 改造、不重构 `interceptors.py`。
 
-当前后续任务顺序：
+DOC-1 文档体系同步已完成，PR #63。
 
-1. DOC-1：项目文档体系全量同步与 Agent 交接资料更新。
-2. 3G-8：浏览器级自动化回归。
-3. 3G-6 外部 provider 成功链路补验。
-4. 3G-9：生产部署安全治理。
-5. 协作权限设计 ADR + 端到端验收矩阵。
-6. `enterprise/interceptors.py` 模块化只读审计。
+PR #63 合并后的后续任务顺序：
+
+1. 3G-8：浏览器级自动化回归。
+2. 3G-6 外部 provider 成功链路补验。
+3. 3G-9：生产部署安全治理。
+4. 协作权限设计 ADR + 端到端验收矩阵。
+5. `enterprise/interceptors.py` 模块化只读审计。
 
 ---
 

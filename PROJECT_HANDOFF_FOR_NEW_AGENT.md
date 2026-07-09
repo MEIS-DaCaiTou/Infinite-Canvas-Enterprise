@@ -288,11 +288,10 @@ data/, assets/, output/, static/, workflows/
 
 ## 8. 当前未完成任务矩阵
 
-以下为 2026-07-08 稳定基线后的任务队列。历史 PR #24 后的 3G-3 至 3G-7A/7B 已完成，不应再按旧待办执行：
+以下为 2026-07-08 稳定基线后的任务队列。历史 PR #24 后的 3G-3 至 3G-7A/7B 已完成，DOC-1 已由 PR #63 完成，不应再按旧待办执行：
 
 | 后续任务 | 范围 | 当前状态 |
 | --- | --- | --- |
-| DOC-1 | 文档体系全量同步与 Agent 交接资料更新 | 当前任务 |
 | Task 3G-8 | 浏览器级自动化回归，把 A/B/admin 关键路径脚本化 | 待启动 |
 | 3G-6 外部成功链路补验 | RunningHub / ModelScope / provider 有可用 Key 后做真实成功链路补验 | 待启动 |
 | Task 3G-9 | 生产部署安全治理、默认密钥/管理员密码/运行时配置检查 | 待启动 |
@@ -315,12 +314,11 @@ data/, assets/, output/, static/, workflows/
 
 推荐顺序：
 
-1. DOC-1：项目文档体系全量同步与 Agent 交接资料更新。
-2. Task 3G-8：浏览器级自动化回归。
-3. 3G-6 外部 provider 成功链路补验。
-4. Task 3G-9：生产部署安全治理。
-5. 协作权限设计 ADR + 端到端验收矩阵。
-6. `enterprise/interceptors.py` 模块化只读审计。
+1. Task 3G-8：浏览器级自动化回归。
+2. 3G-6 外部 provider 成功链路补验。
+3. Task 3G-9：生产部署安全治理。
+4. 协作权限设计 ADR + 端到端验收矩阵。
+5. `enterprise/interceptors.py` 模块化只读审计。
 
 每个任务必须独立分支、独立 Draft PR、独立测试和浏览器验收。不要一次性处理多个 Task。
 
@@ -472,7 +470,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\enterprise\tests\smoke.ps1
 当前已经完成企业安全隔离底座第一阶段、3G-7B 用户治理、U-2 受控上游同步和 U-2-F2 history type 修复。
 
 推荐下一个开发任务：
-先执行 DOC-1 文档体系同步；完成后按 PROJECT_SCOPE_LOCK.md 当前队列推进 3G-8 浏览器级自动化回归、3G-6 外部 provider 成功链路补验、3G-9 生产部署安全治理、协作权限设计 ADR 和 interceptors 模块化只读审计。
+DOC-1 文档体系同步已完成，PR #63。后续按 PROJECT_SCOPE_LOCK.md 当前队列推进 3G-8 浏览器级自动化回归、3G-6 外部 provider 成功链路补验、3G-9 生产部署安全治理、协作权限设计 ADR 和 interceptors 模块化只读审计。
 
 执行任何任务前，先确认当前 Issue 范围并复核代码边界。实现后必须补充 A/B/admin 自动化或浏览器验收，并在 PR 描述里写清测试结果、风险、回滚方案、是否修改上游覆盖区、是否提交运行时数据。
 ```
