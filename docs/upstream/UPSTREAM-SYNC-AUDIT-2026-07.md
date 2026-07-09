@@ -1,5 +1,7 @@
 # U-1 上游同步只读审计报告
 
+> 说明：本文是 PR #60 的 U-1 只读审计报告，记录的是 U-2 受控同步前的审计基线。当前项目已由 PR #61 同步到上游 `2026.07.6`，并由 PR #62 完成 history type 修复；当前稳定基线请以 `PROJECT_SCOPE_LOCK.md` 和 `docs/CURRENT_PROJECT_STATUS.md` 为准。
+
 ## 1. 审计结论摘要
 
 本次不建议立即整体同步上游，也不建议直接 merge / rebase / cherry-pick `upstream/main`。
@@ -44,7 +46,7 @@
 重要口径说明：
 
 - `git merge-base origin/main upstream/main` 未返回共同祖先。因此 `git diff origin/main..upstream/main` 是“企业版当前树 vs 上游当前树”的树差异，不是可直接同步计划。
-- 为了识别上游自身从企业版当前 `VERSION=2026.06.23` 到最新 `2026.07.6` 的演进，本报告同时参考上游 `0da3ff9ae0477e6e18b7c241020c2ce8cb0d5c73` 到 `f1dd6834a72f3e7ff8340be05a84347d931e9cb9` 的差异。`0da3ff9` 的上游 `VERSION` 同为 `2026.06.23`，可作为“上游版本演进参考”，但它不是 Git merge-base。
+- 为了识别上游自身从审计时企业版 `VERSION=2026.06.23` 到目标 `2026.07.6` 的演进，本报告同时参考上游 `0da3ff9ae0477e6e18b7c241020c2ce8cb0d5c73` 到 `f1dd6834a72f3e7ff8340be05a84347d931e9cb9` 的差异。`0da3ff9` 的上游 `VERSION` 同为 `2026.06.23`，可作为“上游版本演进参考”，但它不是 Git merge-base。
 
 ## 3. 当前企业版关键架构
 

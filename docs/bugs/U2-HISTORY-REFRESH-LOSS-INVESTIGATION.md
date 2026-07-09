@@ -1,5 +1,23 @@
 # U2-F1 文生图 / 细节增强刷新后历史记录丢失定位报告
 
+## 0. 已修复状态（2026-07-08）
+
+本报告的定位结论已由 PR #62 修复并合并到 `main`，当前稳定基线为：
+
+- main / origin/main：`73a645f2bdded5df5c7109903c8b57eab9e3c459`
+- 上游版本：`2026.07.6`
+- 修复 PR：PR #62
+
+已完成修复：
+
+- `/generate` 使用安全白名单后的请求 `type`，文生图 ModelScope 云端记录保存为 `type=zimage`。
+- `/api/ms/generate` 支持安全白名单 type，默认仍为 `klein`；Enhance ModelScope 云端记录保存为 `type=enhance`，Klein 仍保存为 `type=klein`。
+- `static/zimage.html`、`static/enhance.html`、`static/klein.html` 的云端请求 type 与刷新读取 type 保持一致。
+- 项目负责人合并后最小浏览器确认已通过：`/api/app-info` 显示 `2026.07.6`；zimage / enhance / klein 页面可打开；user_a 刷新后历史仍在；user_b 仍看不到 user_a 历史。
+- 企业 owner 过滤不是根因，修复后也未放宽 owner 过滤。
+
+以下章节保留 U-2-F1 只读定位时的现场证据和根因分析，用于后续回归和审计。
+
 ## 1. 问题摘要
 
 PR #61 合并到企业版 `main` 后，浏览器复测发现：
@@ -18,7 +36,7 @@ PR #61 合并到企业版 `main` 后，浏览器复测发现：
 
 - 企业版仓库：`MEIS-DaCaiTou/Infinite-Canvas-Enterprise`
 - 当前分支：`chore/u2-f1-history-refresh-loss-investigation`
-- 当前 main / origin/main：`25a9c65ee5739dc9f268d165f0a1dcbcbfe54ebc`
+- 定位时 main / origin/main：`25a9c65ee5739dc9f268d165f0a1dcbcbfe54ebc`
 - 上游固定目标：`hero8152/Infinite-Canvas@f1dd6834a72f3e7ff8340be05a84347d931e9cb9`
 - 启动目录：`D:\CodeProject\26-5-27-无限画布`
 - 上游服务：`http://127.0.0.1:3001`

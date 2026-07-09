@@ -1,6 +1,6 @@
 # Infinite Canvas Enterprise · 项目定位与后续开发范围锁定
 
-更新时间：2026-07-06
+更新时间：2026-07-08
 适用对象：ChatGPT 主对话、Codex、后续 Agent、人工审核者。  
 状态：项目方向与后续开发范围已由项目负责人审核确认，后续任务不得偏离本文。
 
@@ -62,17 +62,18 @@ data / assets / output / static / workflows
 
 ## 2. 当前真实基线
 
-依据 Codex 完成的项目整体进展汇报，当前基线为：
+依据 PR #60、#61、#62 合并后的主线状态，当前稳定开发基线为：
 
 | 项 | 当前状态 |
 |----|----------|
 | 当前分支 | `main` |
-| main 同步状态 | `git pull --ff-only origin main` 显示 `Already up to date` |
-| 最新 HEAD | `a7e7fbad3a1e6f9988439242accc3964bf6c6e49` |
-| 上游基线版本 | `2026.06.23` |
-| PR #18-#46 | 已确认合并到 `main` |
-| 最小健康检查 | `py_compile`、ownership isolation、Smart Canvas JS check、Smart Canvas logs、diagnose、smoke 均通过 |
-| Git 工作区 | `static/*.html` 存在本地行尾脏文件，未 stage、未 commit，不得带入后续任务分支 |
+| main / origin/main | `73a645f2bdded5df5c7109903c8b57eab9e3c459` |
+| 当前上游基线版本 | `2026.07.6` |
+| 固定上游目标 commit | `hero8152/Infinite-Canvas@f1dd6834a72f3e7ff8340be05a84347d931e9cb9` |
+| PR #18-#62 | 已确认合并到 `main` |
+| 最近关键合并 | PR #60 U-1 上游同步只读审计；PR #61 U-2 受控同步；PR #62 U-2-F1 / U-2-F2 history type 修复 |
+| 最小浏览器确认 | `/api/app-info` 显示 `2026.07.6`；登录页、zimage/enhance/klein 页面可打开；user_a 刷新后历史仍在；user_b 不可见 user_a 历史 |
+| Git 工作区 | 允许存在本地运行时 `assets/uploads/*` 未跟踪文件，不得 stage / commit |
 | 运行时数据 | 本地存在 `enterprise.env`、`API/.env`、`data/enterprise.db`、`history.json`、`assets/`、`output/` 等，均不得提交 |
 
 已完成的重要能力：
@@ -81,7 +82,7 @@ data / assets / output / static / workflows
 2. 生成 output 资源 owner 补记。
 3. output URL 规范化与旧画布资源回填。
 4. Smart Canvas 旧日志持久化兼容。
-5. 上游同步到 `2026.06.23`，保留企业补丁。
+5. 上游已由 PR #61 受控同步到 `2026.07.6`，保留企业补丁与企业治理能力。
 6. 企业隔离设计与 API 矩阵文档。
 7. 项目/文件夹/画布列表隔离。
 8. 管理员跨用户项目移动画布后 canvas owner 自动同步。
@@ -95,16 +96,21 @@ data / assets / output / static / workflows
 16. WebSocket 广播隔离与实时事件 owner 治理：WebSocket 连接绑定 enterprise user，按 owner 过滤 `canvas_updated`、`asset_library_updated`、`new_image`、`cloud_status` 等实时事件，并清理 dead WebSocket connection。
 17. 异步任务历史持久化列表隔离 owner 基线：RunningHub、provider image task query、Angle、ModelScope、video、image conversion、Smart Canvas / Comfy 本地 task 等异步任务 id 进入企业层 `user_task_map`，普通用户不能查询、复用、删除或轮询他人 task id；任务输出资源继续接入 `user_resource_map`。
 18. 管理员权限开关最小版 + 审计：feature flag 全局开关、单用户 `inherit` / `allow` / `deny` 覆盖、管理员 bypass、权限变更审计、API/工作流设置入口与高风险提交类 API 后端守卫已由 PR #49 完成。
+19. 用户删除影响 dry-run 预览：PR #55 已完成 `GET /enterprise/api/users/{id}/delete-impact`、成员管理影响预览入口和 `user_delete_dry_run` 审计。
+20. soft delete 语义收口与 feature override 清理：PR #56 已完成删除自己/最后 active 管理员保护、后端 `confirm_username` 二次确认、用户权限覆盖清理和审计补强。
+21. 成员管理可用性增强：PR #58 已完成成员搜索、状态/角色筛选、排序、默认隐藏已停用用户、统计和 25/50/100/全部分页。
+22. 上游同步审计与受控同步：PR #60 完成 U-1 只读审计，PR #61 受控同步到上游 `2026.07.6`，跳过 `API/.env`、`python/`、`CLI/`、`assets/`、`output/`、`data/asset_library.json` 和敏感运行时文件。
+23. U-2-F1 / U-2-F2：PR #62 已并入文生图 / Enhance 刷新后历史丢失定位报告，并修复 zimage / enhance / klein 云端 history type 一致性；企业 owner 过滤保持不变。
 
 PR #24 后真实浏览器验收已确认：管理员将用户 A 的画布移动到用户 B 项目后，画布 owner 同步为 B；A 不可见，B 可见并可生成 output；刷新、退出重登后 output 仍可见；管理员可见；其他普通用户不可见。
 
 项目/画布/资源归属链路、历史记录、上传文件、素材库、WebSocket 广播隔离和异步任务 owner 拦截已分别由前序 PR 完成。
 
-Task 3G-6 风险边界：真实 RunningHub / ModelScope / provider 成功链路因当前本地缺少可用 Key，尚未做端到端成功链路浏览器验收；该风险已在 PR #46 中记录为“后续有 Key 后补验”。这不影响 3G-6 当前 owner 拦截能力、模拟成功响应资源 owner 记录能力和 A/B/admin 资源隔离验收的合并结论。
+Task 3G-6 风险边界：真实 RunningHub / ModelScope / provider 成功链路曾因缺少可用 Key 未完整补验，后续仍需在 3G-6 外部 provider 成功链路补验任务中以真实 Key / Provider 环境确认；这不影响当前 owner 拦截基线和 U-2-F2 已验证的 zimage / enhance / klein history type 修复。
 
-Task 3G-7A 已由 PR #49 收口。Issue #50 已完成只读定位并确认：上游 2026.06.30 仍未修复 Angle / Enhance ModelScope 上传解耦；当前不整体同步上游，该上传解耦问题后续单独小修，不混入本文档同步任务。
+Task 3G-7A 已由 PR #49 收口；Task 3G-7B 已由 PR #55 / #56 / #58 完成用户治理最小闭环。Issue #50 已完成只读定位；Angle / Enhance 上传解耦已由 PR #53 完成，U-2-F2 进一步修复云端生成刷新后 history type 一致性。
 
-当前阶段结论：企业安全隔离底座第一阶段已基本完成，但项目还不是完整企业协作平台。下一阶段应从 owner 隔离升级到协作权限设计；在进入 team / workspace / project_members / canvas_grants 等实现前，先建立端到端验收基线和架构演进 ADR。
+当前阶段结论：企业安全隔离底座第一阶段已基本完成，但项目还不是完整企业协作平台。DOC-1 文档体系同步已由 PR #63 完成；下一阶段应先推进 3G-8 浏览器级自动化回归和外部 provider 成功链路补验，再从 owner 隔离升级到协作权限设计。
 
 架构结论：当前“上游主应用 + enterprise gateway + interceptors + enterprise DB 映射”是阶段性正确路线；但 `enterprise/interceptors.py` 继续膨胀是长期风险，后续新增策略应逐步模块化到 `enterprise/policies/`。
 
@@ -298,7 +304,7 @@ PR #42 已完成 WebSocket 广播隔离与实时事件 owner 治理，包括：
 
 3G-6 不重新处理 3G-5 的 WebSocket 实时广播路由；如发现实时事件副作用，只记录为 3G-5 后续小修，不混入任务历史列表治理。
 
-风险边界：真实 RunningHub / ModelScope / provider 成功链路因当前缺少可用 Key 未端到端验收，后续有 Key 后补验；这不影响 3G-6 当前 owner 拦截能力合并结论。
+风险边界：真实 RunningHub / ModelScope / provider 成功链路仍需后续在可用 Key 环境补验；当前 PR #46 owner 拦截基线与 PR #62 history type 一致性修复均已合并。
 
 ### Task 3G-7A：管理员权限开关最小版 + 审计补强
 
@@ -319,19 +325,100 @@ PR #42 已完成 WebSocket 广播隔离与实时事件 owner 治理，包括：
 
 不扩大到复杂 SaaS ACL、团队空间、计费、每用户 API Key、复杂角色体系或部门权限。
 
-### 下一阶段：协作权限设计与端到端验收基线
+### Task 3G-7B-1：用户删除影响 dry-run 预览
 
-状态：当前下一阶段。
+状态：已完成，PR #55。
 
 范围：
 
-- 沉淀当前架构阶段结论。
-- 建立 admin / user_a / user_b 端到端验收矩阵。
-- 明确项目、画布、对话、资源、素材库、历史、任务、WebSocket、权限开关的前端入口和后端 API 双重验收。
-- 在实现协作能力前设计 project members、canvas grants、共享/撤销、授权审计和迁移规则。
-- 逐步规划 `enterprise/policies/`，降低 `enterprise/interceptors.py` 中心化膨胀风险。
+- `GET /enterprise/api/users/{id}/delete-impact`。
+- 管理后台成员列表“影响预览”只读入口。
+- `user_delete_dry_run` 审计。
+- 不执行删除、不清理 owner mappings、不删除运行时文件。
 
-不处理 team/workspace/project_members/canvas_grants 实现，不做数据库 schema 功能改造，不重构 `interceptors.py`，不做上游同步，不做 Angle / Enhance ModelScope 上传解耦实现。
+### Task 3G-7B-2：soft delete 语义收口 + feature override 清理
+
+状态：已完成，PR #56。
+
+范围：
+
+- `DELETE /enterprise/api/users/{id}` 明确为 soft delete / 禁用账号，不硬删 users 行。
+- 后端强制 `confirm_username` 二次确认。
+- 禁止删除自己。
+- 禁止删除或禁用最后一个 active 管理员。
+- `POST /enterprise/api/users/{id}/purge-overrides` 清理目标用户 feature overrides，并写审计。
+- 不实现 owner transfer、cleanup-preview、cleanup 或运行时文件删除。
+
+### Task 3G-7B-3：成员管理搜索 / 筛选 / 分页
+
+状态：已完成，PR #58。
+
+范围：
+
+- 成员管理默认隐藏已停用用户。
+- 状态筛选、角色筛选、用户名 / 展示名搜索、排序、统计。
+- 25 / 50 / 100 / 全部分页。
+- 项目归属、画布归属、对话归属表格分页。
+- 不修改后端用户治理语义，不新增删除、转交或清理入口。
+
+### U-1：上游同步只读审计
+
+状态：已完成，PR #60。
+
+范围：
+
+- 只读分析企业版与上游差异。
+- 形成 `docs/upstream/UPSTREAM-SYNC-AUDIT-2026-07.md`。
+- 明确不能普通 merge upstream，后续必须受控同步。
+
+### U-2：上游 2026.07.6 受控同步与企业兼容
+
+状态：已完成，PR #61。
+
+范围：
+
+- 固定目标 `hero8152/Infinite-Canvas@f1dd6834a72f3e7ff8340be05a84347d931e9cb9`。
+- 受控同步上游 `2026.07.6` 的 `main.py`、必要 `static/` 更新和 API 设置页相关文件。
+- 保留企业 gateway / interceptors / owner / feature flag / WebSocket / 管理后台治理能力。
+- 跳过 `API/.env`、`python/`、`CLI/`、`assets/`、`output/`、`data/asset_library.json` 和所有敏感运行时文件。
+
+### U-2-F1 / U-2-F2：文生图与 Enhance 刷新后历史记录丢失定位和修复
+
+状态：已完成，PR #62。
+
+范围：
+
+- `docs/bugs/U2-HISTORY-REFRESH-LOSS-INVESTIGATION.md` 记录只读定位结论。
+- `/generate` 使用安全白名单后的 `req.type`，文生图云端保存 `type=zimage`。
+- `/api/ms/generate` 支持安全白名单 type，默认 `klein`，Enhance 云端保存 `type=enhance`。
+- `static/zimage.html`、`static/enhance.html`、`static/klein.html` 的云端请求 type 与刷新读取 type 保持一致。
+- 不放宽 owner 过滤；user_a 刷新后历史仍在，user_b 不可见。
+
+### DOC-1：文档体系全量同步与 Agent 交接资料更新
+
+状态：已完成，PR #63。
+
+范围：
+
+- 同步当前稳定基线 `73a645f2bdded5df5c7109903c8b57eab9e3c459`。
+- 同步上游版本 `2026.07.6`。
+- 同步 PR #60 / #61 / #62 已完成事实。
+- 更新 Agent 交接、范围锁、能力矩阵、权限设计、上游同步和 bug 报告文档。
+- 只修改 Markdown，不修改业务代码。
+
+### 下一阶段任务顺序
+
+状态：PR #63 合并后按以下顺序推进。
+
+范围：
+
+1. 3G-8：浏览器级自动化回归。
+2. 3G-6 外部 provider 成功链路补验。
+3. 3G-9：生产部署安全治理。
+4. 协作权限设计 ADR + 端到端验收矩阵。
+5. `enterprise/interceptors.py` 模块化只读审计。
+
+当前不处理 team/workspace/project_members/canvas_grants 实现，不做数据库 schema 功能改造，不重构 `interceptors.py`，不再使用已清理的 U-1 / U-2 worktree，不做未经批准的新上游同步。
 
 ### Task 3G-8：浏览器级自动化回归
 
