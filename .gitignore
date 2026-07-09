@@ -8,6 +8,8 @@ API/.env
 # 企业版数据库（不提交到仓库）
 data/enterprise.db
 data/*.db
+data/*.db-wal
+data/*.db-shm
 
 # Python 缓存
 __pycache__/
@@ -35,3 +37,9 @@ output/
 assets/library/
 assets/output/
 assets/input/
+assets/uploads/
+
+# OPS local reports, job logs, and generated backup copies
+logs/
+ops_artifacts/
+ops_backups/

@@ -44,6 +44,8 @@ OPS-2A 不实现：
 
 OPS-2A 是生产运维工具套件第一版，优先解决“看清楚、备得住、校验过、能计划”的问题。
 
+OPS-2A 实现与命令说明见：`docs/ops/OPS-2A-PRODUCTION-OPS-TOOLKIT-2026-07.md`。
+
 ## 3. OPS-3 边界
 
 OPS-3 规划：
