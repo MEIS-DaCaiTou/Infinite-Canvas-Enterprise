@@ -2,6 +2,8 @@
 
 本文档描述当前企业多用户版 Infinite Canvas 的运行架构和主要模块职责。
 
+> 当前事实源：本文件保留快速运行架构说明。基于 `main@a095ce2eb9ef9afda356cb6f20b6c38851f52b1d` 的完整评估、风险与 P0 / P1 / P2 / P3 演进方向见 `docs/architecture/ARCH-2A-ARCHITECTURE-ASSESSMENT-AND-EVOLUTION-2026-07.md`。当前统一定位是“已投入生产的企业安全增强型单机模块化单体”；规划中的 Docker、PostgreSQL、Redis、对象存储、apply-upgrade、restore 和 rollback 尚未实现。
+
 ---
 
 ## 1. 总体架构
