@@ -1,7 +1,7 @@
 # Infinite-Canvas-Enterprise 开发路线图（2026-2027）
 
 更新时间：2026-07-10
-当前 main 基线：`a095ce2eb9ef9afda356cb6f20b6c38851f52b1d`
+ARCH-2A 代码核对基线（PR #69 合并后）：`a095ce2eb9ef9afda356cb6f20b6c38851f52b1d`
 
 ## 1. 路线原则
 
@@ -31,9 +31,9 @@ OPS-2A / OPS-2B 已进入 main，项目负责人已在生产侧人工完成 dry-
 
 ## 3. 当前阶段
 
-当前阶段是 ARCH-2A：基于 main 代码同步架构评估、目标原则和 P0 / P1 / P2 / P3 演进顺序。
+ARCH-2A 架构评估与演进方向文档同步已完成，由 PR #70 承载。完成 ARCH-2A 只代表架构共识、目标原则和 P0 / P1 / P2 / P3 路线同步完成。
 
-ARCH-2A 是 docs-only，不实施：
+ARCH-2A 完成不代表以下事项已经实施：
 
 - P0 security fix。
 - policy / repository / service 重构。
@@ -43,16 +43,17 @@ ARCH-2A 是 docs-only，不实施：
 - apply-upgrade、restore 或 rollback executor。
 - 自动 owner-map 修复。
 
-ARCH-2A 完成后，先拆 P0 安全任务，不直接进入大规模架构重构或生产升级。
+当前进入 ARCH-2B / SEC-1 P0 安全任务拆分与实施规划阶段。每个安全事项必须使用独立 Issue、独立分支和独立 Draft PR，不将全部 P0 项目打包到一个大 PR；当前也不直接进入大规模架构重构或生产升级。
 
 ## 4. 近期路线
 
-### 4.1 ARCH-2A：架构评估与方向同步
+### 4.1 ARCH-2A：已完成的架构评估与方向同步
 
 - 统一当前系统定位。
 - 分开当前实现、部分实现、已确认方向和长期目标。
 - 固化目标模块边界和架构决策。
 - 建立后续任务拆解与审查规则。
+- 状态：文档同步已完成，由 PR #70 承载；不代表任何整改已实施。
 
 ### 4.2 ARCH-2B / SEC-1：P0 安全整改任务拆分
 

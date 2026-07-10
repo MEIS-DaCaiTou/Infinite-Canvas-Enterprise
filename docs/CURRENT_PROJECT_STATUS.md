@@ -2,10 +2,10 @@
 
 更新时间：2026-07-10
 
-## 1. 当前稳定基线
+## 1. ARCH-2A 核对基线与运行事实
 
 - 企业版仓库：`MEIS-DaCaiTou/Infinite-Canvas-Enterprise`
-- 当前稳定 main / origin/main：`a095ce2eb9ef9afda356cb6f20b6c38851f52b1d`
+- ARCH-2A 代码核对基线（PR #69 合并后）：`a095ce2eb9ef9afda356cb6f20b6c38851f52b1d`
 - 当前上游版本：`2026.07.6`
 - 固定上游目标 commit：`hero8152/Infinite-Canvas@f1dd6834a72f3e7ff8340be05a84347d931e9cb9`
 - 当前运行架构：浏览器 / 局域网用户 -> `enterprise/gateway.py:8000` -> `main.py:3001` -> 上游 `data / assets / output / static / workflows`
@@ -28,7 +28,7 @@
 
 当前生产仍是 Windows + bat + bundled Python + SQLite + JSON + 本地文件系统。当前项目还不是完整企业协作平台，也不是分布式、高可用、多服务器、零停机升级或 Docker-ready 平台。
 
-ARCH-2A 正在基于当前 main 同步架构评估与演进方向；这只是文档阶段，尚未实施任何安全整改、模块拆分、数据库迁移或部署变更。详细评估见 [ARCH-2A：整体架构评估与演进方向](./architecture/ARCH-2A-ARCHITECTURE-ASSESSMENT-AND-EVOLUTION-2026-07.md)。
+ARCH-2A 已完成当前架构评估与演进方向文档同步，由 PR #70 承载。完成 ARCH-2A 只代表架构共识和路线同步完成；P0 安全整改、模块化、migration、restore、Docker、PostgreSQL 等均未实施。详细评估见 [ARCH-2A：整体架构评估与演进方向](./architecture/ARCH-2A-ARCHITECTURE-ASSESSMENT-AND-EVOLUTION-2026-07.md)。
 
 ## 3. 已完成任务一览
 
@@ -52,8 +52,7 @@ ARCH-2A 正在基于当前 main 同步架构评估与演进方向；这只是文
 | ARCH-1 | 已完成，PR #66 | 企业架构蓝图、开发路线图、Docker / 1Panel 蓝图和 OPS 路线图。 |
 | OPS-2A | 已完成，PR #67 | 生产运维工具套件第一版：inventory、check-data、backup、validate-release、prepare-upgrade；merge commit `7f8586ca90f74a8a172ff9ab2af390099c4cdbc5`。 |
 | OPS-2B | 已完成，PR #69 | Windows 生产侧 dry-run / backup execute wrapper；merge commit `a095ce2eb9ef9afda356cb6f20b6c38851f52b1d`。 |
-
-当前文档任务：ARCH-2A 正在同步架构事实、风险、目标原则和 P0 / P1 / P2 / P3 演进顺序，不代表任何整改已完成。
+| ARCH-2A | 已完成，PR #70 | 当前架构评估、目标原则、架构决策表和 P0 / P1 / P2 / P3 演进方向同步；不代表任何整改已实施。 |
 
 ## 4. 当前能力矩阵摘要
 
@@ -93,18 +92,19 @@ OPS-2A / OPS-2B 生产侧人工确认：
 
 ## 6. 后续任务队列
 
-当前进入 ARCH-2A 文档同步阶段。项目负责人已确认继续采用“上游主应用 + enterprise gateway + enterprise data + OPS”的模块化单体路线，不立即微服务化。
+ARCH-2A 文档同步已完成。项目负责人已确认继续采用“上游主应用 + enterprise gateway + enterprise data + OPS”的模块化单体路线，不立即微服务化。当前进入 ARCH-2B / SEC-1 P0 安全事项拆分与实施规划阶段。
+
+每个 P0 安全事项必须使用独立 Issue、独立分支和独立 Draft PR，不将全部 P0 项目打包到一个大 PR。
 
 下一步顺序：
 
-1. 完成 ARCH-2A 架构评估与演进方向同步。
-2. 拆分 ARCH-2B / SEC-1 P0 安全任务：会话撤销、JWT 角色同步、HTTP / WebSocket 未分类默认拒绝、更新开关语义、Cookie / CSRF / 限流 / 跳转 / 静态路径 / 错误脱敏和依赖锁。
-3. 设计 DATA-1 数据一致性、schema version、migration history 和人工 owner reconciliation 基础。
-4. 推进 backup restore rehearsal；在 restore / rollback 未完成演练前，不接入网页 apply-upgrade。
-5. 推进 OBS-1 / OPS-L1 日志与可观测性基础。
-6. 逐域推进 ARCH-3 policy 模块化和 PERF-1 真流式代理 / 性能基线。
-7. OPS-D1 Docker / 1Panel 单机生产化后置到安全、数据和恢复基础稳定之后。
-8. PostgreSQL、Redis、MinIO / S3、多实例和多服务器属于长期 P3 目标。
+1. 拆分 ARCH-2B / SEC-1 P0 安全任务：会话撤销、JWT 角色同步、HTTP / WebSocket 未分类默认拒绝、更新开关语义、Cookie / CSRF / 限流 / 跳转 / 静态路径 / 错误脱敏和依赖锁。
+2. 设计 DATA-1 数据一致性、schema version、migration history 和人工 owner reconciliation 基础。
+3. 推进 backup restore rehearsal；在 restore / rollback 未完成演练前，不接入网页 apply-upgrade。
+4. 推进 OBS-1 / OPS-L1 日志与可观测性基础。
+5. 逐域推进 ARCH-3 policy 模块化和 PERF-1 真流式代理 / 性能基线。
+6. OPS-D1 Docker / 1Panel 单机生产化后置到安全、数据和恢复基础稳定之后。
+7. PostgreSQL、Redis、MinIO / S3、多实例和多服务器属于长期 P3 目标。
 
 3G-8 浏览器级自动化回归、3G-6 外部 provider 成功链路补验和长期协作 ACL 仍保留，但不得挤占 P0 安全与数据一致性优先级。
 
@@ -146,7 +146,7 @@ git rev-parse HEAD
 git status --short --untracked-files=all
 ```
 
-确认 HEAD 为 `a095ce2eb9ef9afda356cb6f20b6c38851f52b1d` 或其后的 main。若 main 已前进，先读取最新 `PROJECT_SCOPE_LOCK.md`、本文件、ARCH-2A 评估和最近 PR，再开始新任务。
+从最新 main 开始新任务；`a095ce2eb9ef9afda356cb6f20b6c38851f52b1d` 仅作为 ARCH-2A 代码核对基线。若 main 已前进，先读取最新 `PROJECT_SCOPE_LOCK.md`、本文件、ARCH-2A 评估和最近 PR，再开始新任务。
 
 每个新任务必须：
 
