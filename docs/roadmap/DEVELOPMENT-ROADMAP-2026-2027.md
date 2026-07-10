@@ -46,7 +46,7 @@ ARCH-2A 完成不代表以下事项已经实施：
 - apply-upgrade、restore 或 rollback executor。
 - 自动 owner-map 修复。
 
-SEC-1A 已完成 ADR 决策，由 PR #71 承载。SEC-1B1 已完成仓库实现和临时数据库验证，由 PR #72 承载；不代表生产 migration 已激活、super_admin 已创建或 Capability / Step-up / 安全审计已经实现。当前下一阶段是 SEC-1F0，之后才是 SEC-1B2 migration activation 与首次 bootstrap。每个安全事项必须使用独立 Issue、独立分支和独立 Draft PR。
+SEC-1A 已完成 ADR 决策，由 PR #71 承载。SEC-1B1 已完成仓库实现和临时数据库验证，由 PR #72 承载；不代表生产 migration 已激活、super_admin 已创建或 SEC-1C0 / Capability / Step-up / 安全审计已经实现。当前下一阶段是 SEC-1F0，随后是 SEC-1C0；SEC-1B2 migration activation 与首次 bootstrap 必须后置到两者。每个安全事项必须使用独立 Issue、独立分支和独立 Draft PR。
 
 ## 4. 近期路线
 
@@ -67,7 +67,8 @@ SEC-1A 只完成 ADR。后续按独立 Issue / Draft PR 实施：
 | SEC-1A | user / admin / super_admin、Capability、L0–L3、Step-up、bootstrap 和高风险治理 ADR | ADR 决策完成；未实现代码 |
 | SEC-1B1 | `role`、`auth_version`、migration、JWT 当前状态加载和旧 Token 撤销的实现与临时数据库验证；不激活生产 migration | 仓库实现完成，PR #72；生产未激活 |
 | SEC-1F0 | 最小强制安全审计 schema、append-only 写入、bootstrap / role change / break-glass、敏感字段禁记、fail closed 和临时数据库测试 | 下一阶段，SEC-1B2 前置，未实现 |
-| SEC-1B2 | migration activation 与本机首次 super_admin bootstrap；依次进入 `UNINITIALIZED`、`ACTIVE` | SEC-1F0 后置，未实现 |
+| SEC-1C0 | 首次 bootstrap 前的 super_admin 过渡保护：admin 不得影响 super_admin、禁止自行提权、正常在线事务不得将 active super_admin 降为零；不实现完整 Capability | SEC-1F0 后置、SEC-1B2 前置，未实现 |
+| SEC-1B2 | migration activation 与本机首次 super_admin bootstrap；依次进入 `UNINITIALIZED`、`ACTIVE` | SEC-1F0 和 SEC-1C0 后置，未实现 |
 | SEC-1C | Capability 后端门禁、最后超级管理员保护、防自我提权、admin 不得影响 super_admin | 未实现 |
 | SEC-1D | Step-up Authentication、单次 Operation Token、replay protection、CSRF / Origin | 未实现 |
 | SEC-1E | 管理后台角色治理、高风险警告、二次认证 UI 和浏览器回归 | 未实现 |

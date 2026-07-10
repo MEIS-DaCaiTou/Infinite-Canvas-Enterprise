@@ -34,11 +34,34 @@ class RoleAuthMigrationError(RuntimeError):
 
 
 @contextmanager
-def _open_connection(source: sqlite3.Connection | str | os.PathLike[str]) -> Iterator[sqlite3.Connection]:
+def _open_connection(
+    source: sqlite3.Connection | str | os.PathLike[str],
+    *,
+    mode: str,
+) -> Iterator[sqlite3.Connection]:
     if isinstance(source, sqlite3.Connection):
         yield source
         return
-    conn = sqlite3.connect(str(Path(source)))
+
+    if mode not in {"ro", "rw"}:
+        raise ValueError("SQLite connection mode must be ro or rw")
+
+    path = Path(source).expanduser()
+    try:
+        if not path.exists():
+            raise RoleAuthMigrationError("SQLite database file does not exist")
+        if not path.is_file():
+            raise RoleAuthMigrationError("SQLite database path is not a regular file")
+        database_uri = f"{path.resolve(strict=True).as_uri()}?mode={mode}"
+    except RoleAuthMigrationError:
+        raise
+    except (OSError, ValueError) as exc:
+        raise RoleAuthMigrationError("SQLite database path could not be validated") from exc
+
+    try:
+        conn = sqlite3.connect(database_uri, uri=True)
+    except sqlite3.Error as exc:
+        raise RoleAuthMigrationError("existing SQLite database could not be opened") from exc
     try:
         yield conn
     finally:
@@ -162,7 +185,7 @@ def inspect_role_auth_schema(
     source: sqlite3.Connection | str | os.PathLike[str],
 ) -> dict:
     """Inspect role/auth readiness using only SQLite schema and aggregate reads."""
-    with _open_connection(source) as conn:
+    with _open_connection(source, mode="ro") as conn:
         return _inspect(conn)
 
 
@@ -199,7 +222,7 @@ def apply_role_auth_migration(
     Callers must supply a specific temporary/test database or connection. The
     application never invokes this function automatically.
     """
-    with _open_connection(source) as conn:
+    with _open_connection(source, mode="rw") as conn:
         if conn.in_transaction:
             raise RoleAuthMigrationError("migration requires an idle SQLite connection")
         inspection = _inspect(conn)

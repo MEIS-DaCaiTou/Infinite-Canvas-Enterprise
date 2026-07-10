@@ -549,6 +549,7 @@ def create_user(username: str, password: str, display_name: str = "", is_admin: 
 
 
 def update_user_password(user_id: str, new_password: str) -> bool:
+    password_hash = _hash_password(new_password)
     conn = get_db()
     try:
         schema_state = _user_schema_state(conn)
@@ -558,7 +559,6 @@ def update_user_password(user_id: str, new_password: str) -> bool:
             conn.rollback()
             return False
         user = normalize_user_record(row, schema_state)
-        password_hash = _hash_password(new_password)
         if schema_state == ROLE_AUTH_READY:
             cur = conn.execute(
                 "UPDATE users SET password_hash = ?, auth_version = ? WHERE id = ?",

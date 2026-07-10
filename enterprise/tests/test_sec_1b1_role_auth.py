@@ -145,7 +145,22 @@ def _run_checks() -> None:
         edb.ADMIN_USERNAME = "admin"
         edb.ADMIN_PASSWORD = TEST_ADMIN_PASSWORD
 
-        # A. Legacy inspection and read-only planning.
+        # A. Missing paths fail without creating a SQLite file.
+        missing_db = tmp / "missing role auth.db"
+        for operation in (
+            inspect_role_auth_schema,
+            plan_role_auth_migration,
+            apply_role_auth_migration,
+        ):
+            try:
+                operation(missing_db)
+            except RoleAuthMigrationError as exc:
+                assert str(missing_db) not in str(exc)
+            else:
+                raise AssertionError(f"{operation.__name__} accepted a missing database")
+            assert not missing_db.exists()
+
+        # B. Legacy inspection and read-only planning.
         legacy_plan_db = tmp / "legacy-plan.db"
         conn = _legacy_connection(legacy_plan_db)
         legacy_hash = edb._hash_password("legacy-password")
@@ -162,6 +177,8 @@ def _run_checks() -> None:
         assert inspection["is_migrated"] is False
         assert inspection["needs_migration"] is True
         assert inspection["has_invalid_role"] is False
+        assert _columns(legacy_plan_db) == before_columns
+        assert legacy_plan_db.read_bytes() == before_bytes
 
         plan = plan_role_auth_migration(legacy_plan_db)
         assert plan["migration_id"] == MIGRATION_ID
@@ -180,6 +197,30 @@ def _run_checks() -> None:
         assert _columns(legacy_plan_db) == before_columns
         assert legacy_plan_db.read_bytes() == before_bytes
 
+        # URI paths with Windows-compatible spaces and reserved characters work.
+        windows_path_dir = tmp / "windows path compatibility"
+        windows_path_dir.mkdir()
+        windows_path_db = windows_path_dir / "role auth # legacy.db"
+        conn = _legacy_connection(windows_path_db)
+        _insert_legacy_users(conn, legacy_hash)
+        conn.close()
+        windows_columns = _columns(windows_path_db)
+        windows_bytes = windows_path_db.read_bytes()
+        assert inspect_role_auth_schema(windows_path_db)["current_state"] == SCHEMA_LEGACY
+        assert plan_role_auth_migration(windows_path_db)["current_state"] == SCHEMA_LEGACY
+        assert _columns(windows_path_db) == windows_columns
+        assert windows_path_db.read_bytes() == windows_bytes
+        assert apply_role_auth_migration(windows_path_db)["current_state"] == ROLE_AUTH_READY
+
+        # Explicit sqlite3.Connection inputs retain inspect/plan/apply support.
+        explicit_connection_db = tmp / "explicit-connection.db"
+        conn = _legacy_connection(explicit_connection_db)
+        _insert_legacy_users(conn, legacy_hash)
+        assert inspect_role_auth_schema(conn)["current_state"] == SCHEMA_LEGACY
+        assert plan_role_auth_migration(conn)["current_state"] == SCHEMA_LEGACY
+        assert apply_role_auth_migration(conn)["current_state"] == ROLE_AUTH_READY
+        conn.close()
+
         # init_db must keep a legacy users table untouched.
         edb.DB_PATH = str(legacy_plan_db)
         edb.init_db()
@@ -192,7 +233,7 @@ def _run_checks() -> None:
         assert inserted_legacy_admin["role"] == ROLE_ADMIN
         assert inserted_legacy_admin["auth_version"] == 0
 
-        # B. Explicit migration, preservation, idempotency, and rollback.
+        # C. Explicit migration, preservation, idempotency, and rollback.
         migration_db = tmp / "migration.db"
         conn = _legacy_connection(migration_db)
         _insert_legacy_users(conn, legacy_hash)
@@ -271,7 +312,7 @@ def _run_checks() -> None:
         assert _columns(rollback_db) == rollback_columns
         assert inspect_role_auth_schema(rollback_db)["current_state"] == SCHEMA_LEGACY
 
-        # C. Fresh schema and legacy is_admin creation compatibility.
+        # D. Fresh schema and legacy is_admin creation compatibility.
         fresh_db = tmp / "fresh.db"
         edb.DB_PATH = str(fresh_db)
         edb.init_db()
@@ -314,7 +355,7 @@ def _run_checks() -> None:
         finally:
             conn.close()
 
-        # D/E. JWT payload and current database state principal.
+        # E. JWT payload and current database state principal.
         token = auth.create_token(user["id"])
         payload = jwt.decode(token, TEST_SECRET, algorithms=["HS256"])
         assert payload["user_id"] == user["id"]
