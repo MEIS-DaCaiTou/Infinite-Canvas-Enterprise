@@ -27,7 +27,7 @@ ARCH-2A 代码核对基线（PR #69 合并后）：`a095ce2eb9ef9afda356cb6f20b6
 | OPS-2A | 已完成，PR #67 | inventory、check-data、backup、validate-release、prepare-upgrade 和 OPS job JSONL。 |
 | OPS-2B | 已完成，PR #69 | Windows bundled Python + runner.py 直调的 dry-run 和 backup execute wrapper。 |
 | ARCH-2A | 已完成，PR #70 | 当前架构评估、目标原则和 P0 / P1 / P2 / P3 演进方向同步。 |
-| SEC-1A | ADR 决策完成，由本 Draft PR 承载 | 超级管理员、Capability、L0–L3、Step-up 和高风险治理基线；没有实施安全功能。 |
+| SEC-1A | 已完成 ADR 决策，PR #71 | 超级管理员、Capability、L0–L3、Step-up 和高风险治理基线；不代表任何超级管理员或安全能力已经实现。 |
 
 OPS-2A / OPS-2B 已进入 main，项目负责人已在生产侧人工完成 dry-run 和一次单独确认的正式备份。该事实不代表 restore、upgrade、apply-upgrade 或 rollback 已实现，也不代表生产已经升级。当前 `check-data` 仍有 warn，数据未被自动修复。
 
@@ -45,7 +45,7 @@ ARCH-2A 完成不代表以下事项已经实施：
 - apply-upgrade、restore 或 rollback executor。
 - 自动 owner-map 修复。
 
-SEC-1A 已完成 ADR 决策，当前进入 SEC-1B 角色 schema 与会话版本阶段。SEC-1B 至 SEC-1U 每个安全事项必须使用独立 Issue、独立分支和独立 Draft PR，不将全部 P0 项目打包到一个大 PR；当前也不直接进入大规模架构重构或生产升级。
+SEC-1A 已完成 ADR 决策，由 PR #71 承载；不代表任何超级管理员或安全能力已经实现。当前进入 SEC-1B1 角色 schema 与会话版本基础阶段。推荐顺序为 SEC-1B1 -> SEC-1F0 -> SEC-1B2 -> SEC-1C -> SEC-1D -> SEC-1E -> SEC-1F -> SEC-1U；首次 super_admin bootstrap 不得早于 SEC-1F0。每个安全事项必须使用独立 Issue、独立分支和独立 Draft PR，不将全部 P0 项目打包到一个大 PR；当前也不直接进入大规模架构重构或生产升级。
 
 ## 4. 近期路线
 
@@ -64,11 +64,13 @@ SEC-1A 只完成 ADR。后续按独立 Issue / Draft PR 实施：
 | 任务 | 范围 | 状态 |
 | --- | --- | --- |
 | SEC-1A | user / admin / super_admin、Capability、L0–L3、Step-up、bootstrap 和高风险治理 ADR | ADR 决策完成；未实现代码 |
-| SEC-1B | `role`、`auth_version`、migration、JWT 当前角色加载和旧 Token 撤销 | 下一阶段，未实现 |
+| SEC-1B1 | `role`、`auth_version`、migration、JWT 当前状态加载和旧 Token 撤销的实现与临时数据库验证；不激活生产 migration | 下一阶段，未实现 |
+| SEC-1F0 | 最小强制安全审计 schema、append-only 写入、bootstrap / role change / break-glass、敏感字段禁记、fail closed 和临时数据库测试 | SEC-1B2 前置，未实现 |
+| SEC-1B2 | migration activation 与本机首次 super_admin bootstrap；依次进入 `UNINITIALIZED`、`ACTIVE` | SEC-1F0 后置，未实现 |
 | SEC-1C | Capability 后端门禁、最后超级管理员保护、防自我提权、admin 不得影响 super_admin | 未实现 |
 | SEC-1D | Step-up Authentication、单次 Operation Token、replay protection、CSRF / Origin | 未实现 |
 | SEC-1E | 管理后台角色治理、高风险警告、二次认证 UI 和浏览器回归 | 未实现 |
-| SEC-1F | 独立安全审计事件、脱敏、查询、导出和保留策略 | 未实现 |
+| SEC-1F | 完整安全审计查询、脱敏摘要导出、保留和归档策略 | 未实现 |
 | SEC-1U | `system_update` bypass、更新总开关、升级 approve / execute、白名单 OPS 和禁止任意 shell | 未实现 |
 
 其它 P0 安全事项继续独立拆分：HTTP 未分类 route 默认拒绝、WebSocket 未知 event 默认拒绝、Secure Cookie、登录限流、`next` URL 校验、企业静态路径 containment、生产错误脱敏和依赖锁定。SEC-1A 的详细决策见 [ADR SEC-1A](../decisions/ADR-SEC-1A-SUPER-ADMIN-CAPABILITY-GOVERNANCE-2026-07.md)。

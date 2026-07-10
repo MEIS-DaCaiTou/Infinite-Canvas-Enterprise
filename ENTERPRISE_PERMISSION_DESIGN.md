@@ -29,7 +29,7 @@
 - 目标后端授权以 Capability 为主，前端隐藏不替代后端检查。
 - super_admin 是最高人工角色，但 mandatory security controls 高于 super_admin。
 - 正式备份、升级、回滚、恢复、migration 和批量数据治理需要风险分级、Step-up、Operation Token、计划 / manifest 和不可关闭审计。
-- SEC-1A 只完成 ADR，不修改 schema、JWT、API、管理页面或 OPS executor；实现必须拆分为 SEC-1B 至 SEC-1U 的独立任务。
+- SEC-1A 只完成 ADR，不修改 schema、JWT、API、管理页面或 OPS executor；推荐实施顺序为 SEC-1B1 -> SEC-1F0 -> SEC-1B2 -> SEC-1C -> SEC-1D -> SEC-1E -> SEC-1F -> SEC-1U，首次 super_admin bootstrap 不得早于 SEC-1F0。
 
 ## 1. 权限模型
 

@@ -123,6 +123,8 @@ user < admin < super_admin < mandatory security controls
 - `role_updated_at`：最近角色变更时间。
 - `role_updated_by`：最近角色变更执行者。
 
+实现还需要能够判断超级管理员治理生命周期是否已完成首次 bootstrap，例如记录 `bootstrap_completed_at` 或等价元数据；本 ADR 只规定必须可区分生命周期状态，不决定最终表名、字段名或存储位置。
+
 `is_admin` 可以在迁移期作为兼容字段保留，但它不是长期事实源。新权限判断不得继续散落地直接依赖 `is_admin`；兼容字段的写入、读取优先级和废弃时机由 SEC-1B migration 决定。
 
 建议迁移映射：
@@ -168,14 +170,14 @@ user < admin < super_admin < mandatory security controls
 | `data.reconciliation.execute` | 执行已批准的数据 reconciliation |
 | `data.migration.plan` | 生成数据库 migration 计划 |
 | `data.migration.execute` | 执行已批准的数据库 migration |
-| `data.sensitive_export` | 导出敏感或完整数据集 |
+| `data.sensitive_export` | 导出完整数据集或包含敏感字段的数据 |
 
 ### 7.3 安全治理（6）
 
 | Capability | 语义 |
 | --- | --- |
 | `security.audit.read` | 查看安全审计 |
-| `security.audit.export` | 导出脱敏安全审计 |
+| `security.audit.export` | 导出限定时间、字段和范围的脱敏安全审计摘要 |
 | `security.settings.read` | 读取安全配置摘要 |
 | `security.settings.manage` | 修改允许在线管理的安全策略 |
 | `security.telemetry.configure` | 配置远程遥测上传策略 |
@@ -213,9 +215,14 @@ user < admin < super_admin < mandatory security controls
 | 使用自身业务功能 | 业务域 Capability | L0 | 允许 | 允许 | 允许 | owner / grant 校验 |
 | 查看用户 | `users.read` | L1 | 拒绝 | 允许 | 允许 | admin 不得读取不必要的超级管理员敏感字段 |
 | 创建普通用户 | `users.create` | L1 | 拒绝 | 允许 | 允许 | 不能通过创建接口指定更高角色 |
-| 更新 / 停用 / soft delete 普通用户 | `users.update`、`users.disable`、`users.delete` | L1/L2 | 拒绝 | 条件允许 | 条件允许 | 当前用户、目标角色、最后超级管理员保护 |
-| 重置密码 / 撤销会话 | `users.password.reset`、`sessions.revoke`、`sessions.revoke_all` | L2 | 拒绝 | 仅普通用户 | 条件允许 | Step-up；admin 不能影响 super_admin |
-| 授予或撤销 admin | `roles.admin.assign`、`roles.admin.revoke` | L2 | 拒绝 | 拒绝 | 条件允许 | Step-up、reason、审计、会话撤销 |
+| 修改普通用户非安全资料 | `users.update` | L1 | 拒绝 | 允许 | 允许 | 仅 display name 等非安全资料，写入日常管理审计 |
+| 启用普通用户 | `users.disable` | L1 | 拒绝 | 允许 | 允许 | 重新启用后旧 Token 仍必须因 `auth_version` 不匹配而失效 |
+| 停用普通用户 | `users.disable` | L2 | 拒绝 | 条件允许 | 条件允许 | Step-up、reason、递增 `auth_version` |
+| soft delete 普通用户 | `users.delete` | L2 | 拒绝 | 条件允许 | 条件允许 | Step-up、影响预览、明确确认、reason |
+| 重置普通用户密码 | `users.password.reset` | L2 | 拒绝 | 条件允许 | 条件允许 | Step-up + Operation Token；admin 不能影响 super_admin |
+| 撤销指定会话 | `sessions.revoke` | L2 | 拒绝 | 条件允许 | 条件允许 | Step-up、目标会话绑定 |
+| 撤销全部会话 | `sessions.revoke_all` | L2 | 拒绝 | 条件允许 | 条件允许 | Step-up + Operation Token、递增 `auth_version` |
+| 授予或撤销 admin | `roles.admin.assign`、`roles.admin.revoke` | L2 | 拒绝 | 拒绝 | 条件允许 | Step-up + Operation Token、reason、审计、会话撤销 |
 | 授予或撤销 super_admin | `roles.super_admin.assign`、`roles.super_admin.revoke` | L3 | 拒绝 | 拒绝 | 条件允许 | Operation Token、最后超级管理员保护、不可关闭审计 |
 | 读取 owner | `ownership.read` | L1 | 仅自身 | 允许 | 允许 | 目标范围限制 |
 | 单项 owner 管理 | `ownership.manage` | L1 | 拒绝 | 允许 | 允许 | actor / before / after 审计 |
@@ -224,7 +231,7 @@ user < admin < super_admin < mandatory security controls
 | reconciliation plan | `data.reconciliation.plan` | L2 | 拒绝 | 条件允许 | 条件允许 | 只生成 plan，不修改数据 |
 | reconciliation execute | `data.reconciliation.execute` | L3 | 拒绝 | 拒绝 | 条件允许 | 已批准 plan、Operation Token、备份、审计 |
 | 审计查看 | `security.audit.read` | L1 | 拒绝 | 允许 | 允许 | 服务端脱敏 |
-| 审计导出 | `security.audit.export` | L2 | 拒绝 | 条件允许 | 条件允许 | Step-up、范围、reason；导出本身继续审计 |
+| 审计摘要导出 | `security.audit.export` | L2 | 拒绝 | 条件允许 | 条件允许 | admin 可在 Step-up 后导出脱敏、限定时间、限定字段和限定范围的摘要；导出本身继续审计 |
 | 安全设置读取 | `security.settings.read` | L1 | 拒绝 | 允许 | 允许 | 只返回脱敏摘要 |
 | inventory | `ops.inventory` | L1 | 拒绝 | 允许 | 允许 | 只读 |
 | check-data | `ops.check_data`、`data.check` | L1 | 拒绝 | 允许 | 允许 | 只读，不自动修复 |
@@ -240,10 +247,10 @@ user < admin < super_admin < mandatory security controls
 | restore | `ops.restore.approve`、`ops.restore.execute` | L3 | 拒绝 | 拒绝 | 条件允许 | restore plan、隔离演练、Operation Token；当前未实现 |
 | migration plan | `data.migration.plan` | L2 | 拒绝 | 条件允许 | 条件允许 | dry-run、临时数据库、备份和 rollback 设计 |
 | migration execute | `data.migration.execute` | L3 | 拒绝 | 拒绝 | 条件允许 | 已批准 plan、维护模式、Operation Token |
-| 安全配置管理 | `security.settings.manage` | L2 | 拒绝 | 拒绝 | 条件允许 | Step-up；硬性安全门禁不可关闭 |
+| 安全配置管理 | `security.settings.manage` | L2 | 拒绝 | 拒绝 | 条件允许 | Step-up + Operation Token；硬性安全门禁不可关闭 |
 | 遥测配置 | `security.telemetry.configure` | L3 | 拒绝 | 拒绝 | 条件允许 | 明确目的地、数据范围、Operation Token |
 | 本机应急恢复 | `security.emergency_recovery` | L3 | 拒绝 | 拒绝 | 仅本机 break-glass | 系统无 active super_admin、离线流程、不可关闭审计 |
-| 敏感数据导出 | `data.sensitive_export` | L3 | 拒绝 | 拒绝 | 条件允许 | 最小范围、reason、Operation Token、审计 |
+| 敏感数据导出 | `data.sensitive_export` | L3 | 拒绝 | 拒绝 | 条件允许 | 完整或含敏感字段的数据；Operation Token、reason、不可关闭审计 |
 
 `admin` 可以 prepare，但不能 approve 或 execute 生产高危流程。单超级管理员环境中，同一账号可以依次 prepare、approve、execute，但三个步骤必须保持独立状态、使用对应 Capability，并分别写入审计；禁止单击即升级。
 
@@ -252,8 +259,8 @@ user < admin < super_admin < mandatory security controls
 | 等级 | 典型操作 | 最低角色 | 重新认证 | Operation Token | reason | plan / manifest | 强制审计 | API 自动调用 | 批量执行 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | L0 普通业务 | 画布、生成图片、查看自身数据 | user | 否 | 否 | 否 | 否 | 按业务审计策略 | 可在已认证业务 API 中调用 | 仅业务定义范围 |
-| L1 日常管理 | 创建 / 停用普通用户、单项 owner、查看审计、只读 OPS | admin | 通常否 | 否 | 破坏性动作需要 | 只读报告或单项目标 | 是 | 允许白名单 API，不允许通用命令 | 仅受限、可回退的小批量 |
-| L2 敏感管理 | 密码重置、授予 admin、撤销全部会话、审计导出、批量治理计划、安全策略 | admin 或 super_admin，按矩阵 | 是 | 指定动作需要 | 是 | dry-run / plan 或目标摘要 | 是 | 仅显式交互的白名单 API | 只允许先 plan / preview |
+| L1 日常管理 | 创建普通用户、修改非安全资料、启用普通用户、单项 owner、查看审计、只读 OPS | admin | 通常否 | 否 | 破坏性动作需要 | 只读报告或单项目标 | 是 | 允许白名单 API，不允许通用命令 | 仅受限、可回退的小批量 |
+| L2 敏感管理 | 停用 / soft delete 普通用户、密码重置、授予 admin、撤销全部会话、审计摘要导出、批量治理计划、安全策略 | admin 或 super_admin，按矩阵 | 必须 | 指定动作需要 | 是 | dry-run / plan 或目标摘要 | 是 | 仅显式交互的白名单 API | 只允许先 plan / preview |
 | L3 生产高危 | super_admin 变更、backup execute、维护模式、升级、回滚、恢复、migration、批量修复、敏感导出、遥测上传 | super_admin | 是 | 必须 | 必须 | 必须有对应 plan / manifest / preconditions | 不可关闭，写入失败则 fail closed | 禁止无人值守或任意 API 自动触发 | 仅执行已批准、范围固定的 plan |
 
 风险级别与角色不是同一维度。某个 L2 动作可以要求 super_admin；某个 super_admin 执行 L1 也不能省略其正常审计。
@@ -270,7 +277,7 @@ user < admin < super_admin < mandatory security controls
 - 允许最后一个 active super_admin 自行降级。
 - 通过 user override、兼容字段或 migration 绕过该保护。
 
-保护必须在数据库事务内基于当前状态重新判断，不能只依赖前端按钮状态或请求前缓存。数据层必须保证系统至少保留一个 active super_admin；具体约束与并发处理由 SEC-1B / SEC-1C 设计。
+保护必须在数据库事务内基于当前状态重新判断，不能只依赖前端按钮状态或请求前缓存。进入 `ACTIVE` 状态后，所有正常在线角色管理事务不得将 active super_admin 数量降为零；`UNINITIALIZED` 和 `RECOVERY_REQUIRED` 是受限状态，L3 全部关闭，只允许本机 bootstrap 或 break-glass。具体状态存储、约束与并发处理由 SEC-1B1 / SEC-1B2 / SEC-1C 设计。
 
 ### 10.2 禁止自我提权
 
@@ -344,7 +351,7 @@ Token 中的 `auth_version` 与数据库不一致时，旧 Token 立即失效。
 
 ## 12. Step-up Authentication 与 Operation Token
 
-所有 L2 / L3 操作都必须重新认证。所有 L3 操作必须使用 Operation Token；以下 L2 操作也必须使用 Operation Token：密码重置、授予 / 撤销 admin、撤销目标用户全部会话、审计导出和安全设置修改。只生成 plan / preview 的其它 L2 操作至少要求 Step-up，SEC-1D 可根据威胁模型进一步扩大 Operation Token 范围，但不得缩小上述基线。
+所有 L2 / L3 操作都必须重新认证。所有 L3 操作必须使用 Operation Token；以下 L2 操作也必须使用 Operation Token：密码重置、授予 / 撤销 admin、撤销目标用户全部会话和安全设置修改。`security.audit.export` 要求 Step-up、限定时间 / 字段 / 范围和导出审计，但本基线不强制 Operation Token。只生成 plan / preview 的其它 L2 操作至少要求 Step-up，SEC-1D 可根据威胁模型进一步扩大 Operation Token 范围，但不得缩小上述基线。
 
 L2 / L3 二次认证流程：
 
@@ -378,9 +385,27 @@ Operation Token 至少绑定：
 
 本 ADR 不实现 Step-up 或 Operation Token。
 
-## 13. 超级管理员初始化与 break-glass
+## 13. 超级管理员治理生命周期、初始化与 break-glass
 
-### 13.1 首次 bootstrap
+### 13.1 生命周期状态
+
+| 状态 | 判定 | 允许行为 | 禁止行为 |
+| --- | --- | --- | --- |
+| `UNINITIALIZED` | 从旧 `is_admin` 模型迁移后，尚未完成首次 super_admin bootstrap | 普通业务继续；只允许生产主机本机首次 bootstrap | 所有 L3；远程 bootstrap；普通角色管理创建 super_admin |
+| `ACTIVE` | 首次 bootstrap 已完成，且至少存在一个 active super_admin | 正常业务、受授权治理和满足门禁的高危流程 | 任何正常在线事务将 active super_admin 数量降为零 |
+| `RECOVERY_REQUIRED` | 系统曾完成 bootstrap，但当前没有 active super_admin | 普通业务继续；只允许生产主机本机 break-glass 恢复 | 所有 L3；重新走首次 bootstrap；远程恢复 |
+
+状态转换规则：
+
+- SEC-1B1 只准备并使用临时数据库验证 migration 与 JWT 当前状态加载，不开放在线角色写入，也不激活生产 migration。
+- `UNINITIALIZED -> ACTIVE`：SEC-1B2 在 SEC-1F0 可用后激活 migration，再执行本机首次 bootstrap；两个动作都必须写入强制审计。
+- `ACTIVE` 的正常在线事务必须维持至少一个 active super_admin。
+- 如果损坏、异常 migration 或离线事故导致已初始化系统变为零 active super_admin，系统进入 `RECOVERY_REQUIRED`，不得退回 `UNINITIALIZED`。
+- `RECOVERY_REQUIRED -> ACTIVE`：仅通过本机 break-glass 恢复并成功写入强制审计。
+
+实现可以记录 `bootstrap_completed`、`bootstrap_completed_at` 或等价元数据，以区分从未初始化与初始化后异常；本 ADR 不决定最终表结构。
+
+### 13.2 首次 bootstrap
 
 禁止：
 
@@ -391,39 +416,66 @@ Operation Token 至少绑定：
 
 允许的 staged design：
 
-1. SEC-1B 先将现有 `is_admin` 映射为 `user` / `admin`。
-2. 项目负责人明确指定一个现有管理员用户名。
-3. 通过生产主机本机维护命令或一次性 bootstrap 配置执行。
-4. 仅在系统不存在任何 super_admin 时允许。
-5. 操作要求本机交互、明确确认和审计。
-6. 一次性配置成功后必须标记已消费或由项目负责人人工移除。
+1. SEC-1B1 建立 `role`、`auth_version`、migration 和 JWT 当前状态加载，并使用临时数据库验证 `is_admin` 到 `user` / `admin` 的映射；不激活生产 migration，不开放在线角色写入，也不执行 bootstrap。
+2. SEC-1F0 建立可 fail closed 的最小 `security_audit_events` 写入基础。
+3. SEC-1B2 激活 migration，将现有 `is_admin` 映射为 `user` / `admin`，写入 migration activation 审计，系统进入 `UNINITIALIZED`。
+4. 项目负责人明确指定一个现有管理员用户名。
+5. 通过生产主机本机维护命令或一次性 bootstrap 配置执行。
+6. 仅在 `UNINITIALIZED` 且系统不存在任何 super_admin 时允许。
+7. 操作要求本机交互、明确确认，并在角色变更前成功写入强制审计。
+8. 一次性配置成功后必须标记已消费或由项目负责人人工移除，生命周期进入 `ACTIVE`。
 
-bootstrap 命令不得成为远程通用提权 API，也不得接受任意 SQL 或 shell。
+bootstrap 命令不得成为远程通用提权 API，也不得接受任意 SQL 或 shell。首次 bootstrap 不得早于 SEC-1F0。
 
-### 13.2 无 active super_admin
+### 13.3 `RECOVERY_REQUIRED` 与 break-glass
 
-如果系统因误删、误降级、损坏或 migration 异常而没有 active super_admin：
+如果已完成 bootstrap 的系统因损坏、异常 migration 或离线事故而没有 active super_admin，必须进入 `RECOVERY_REQUIRED`：
 
 - 普通业务和 owner 隔离继续运行。
 - 所有 L3 操作自动禁用。
 - 系统输出不含敏感信息的高优先级安全告警。
 - 只允许在生产主机本机使用离线 break-glass 流程恢复一个明确账号。
-- break-glass 必须验证系统确实无 active super_admin，记录原因、actor / operator、时间、目标账号和结果。
+- break-glass 必须验证 bootstrap 曾完成且当前确实无 active super_admin，记录原因、actor / operator、时间、目标账号和结果。
+- break-glass 事件必须通过 SEC-1F0 append-only 接口写入；强制审计写入失败时恢复 fail closed。
 - 恢复后必须递增目标 `auth_version`，撤销旧会话并复核审计。
 
 `security.emergency_recovery` 不是远程万能权限，而是对本机受限恢复实现的命名边界。
 
-### 13.3 数量策略
+### 13.4 数量策略
 
 - 系统允许多个 super_admin。
-- 数据层必须保护至少一个 active super_admin。
+- 进入 `ACTIVE` 后，正常在线角色管理事务必须保护至少一个 active super_admin。
 - 小规模部署可以只有一个。
 - 生产最佳实践建议至少两个相互独立的超级管理员账号，但初期不作为硬性门禁。
 - 双人审批可作为后续增强，不属于 SEC-1A 或首轮实现。
 
 ## 14. 安全审计模型
 
-现有 `usage_logs` 不足以表达角色快照、Capability、风险等级、operation、request、release、backup、plan、before / after 和结构化结果，也不能保证写入失败时阻止 L3 操作。后续 SEC-1F 应建立独立 `security_audit_events`。
+现有 `usage_logs` 不足以表达角色快照、Capability、风险等级、operation、request、release、backup、plan、before / after 和结构化结果，也不能保证写入失败时阻止 L3 或 bootstrap。首次 bootstrap 之前必须先由 SEC-1F0 建立最小强制审计基础；后续 SEC-1F 再完成查询、导出、保留和归档能力。
+
+### 14.1 SEC-1F0：Minimal Mandatory Security Audit Foundation
+
+SEC-1F0 至少包括：
+
+- `security_audit_events` 最小 schema。
+- 单向 append-only 写入接口，不提供普通删除或更新接口。
+- migration activation、bootstrap、role change 和 break-glass 事件。
+- 禁止记录密码、JWT、Cookie、Operation Token、API Key 和 env value。
+- L3 / bootstrap 强制审计写入失败时 fail closed。
+- 使用临时数据库覆盖 schema、append-only、脱敏字段和 fail-closed 行为的测试。
+
+SEC-1F0 暂不包括：
+
+- 管理后台页面。
+- 复杂查询。
+- 导出。
+- 归档。
+- 保留周期。
+- 远程日志平台。
+
+SEC-1F0 是 SEC-1B2 首次 bootstrap 的前置门禁，不代表完整安全审计系统已经实现。
+
+### 14.2 完整安全审计目标
 
 目标字段至少包括：
 
@@ -513,17 +565,19 @@ admin 可以 read / prepare，super_admin 可以 read / prepare / approve / exec
 
 | 任务 | 范围 | 明确不混入 |
 | --- | --- | --- |
-| SEC-1B | `role`、`auth_version`、migration、JWT 当前角色加载、角色 / 密码变化后的旧 Token 失效 | Capability UI、OPS executor |
+| SEC-1B1 | `role`、`auth_version`、migration、JWT 当前状态加载和旧 Token 撤销的实现与临时数据库验证 | 生产 migration activation、在线角色写入、首次 super_admin bootstrap、Capability UI、OPS executor |
+| SEC-1F0 | 最小 `security_audit_events` schema、append-only 写入、bootstrap / role change / break-glass、脱敏禁记、L3 / bootstrap fail closed、临时数据库测试 | 管理页面、复杂查询、导出、归档、保留周期、远程日志 |
+| SEC-1B2 | migration activation、本机首次 super_admin bootstrap 和一次性配置消费；依次进入 `UNINITIALIZED`、`ACTIVE` | 早于 SEC-1F0 执行、远程提权、自动升级现有管理员 |
 | SEC-1C | `require_role`、`require_capability`、最后超级管理员保护、防自我提权、admin 不得影响 super_admin | Step-up UI、升级执行 |
 | SEC-1D | 重新认证、单次短期 Operation Token、action / target 绑定、replay protection、CSRF / Origin | 管理后台大改版 |
 | SEC-1E | 角色展示、角色调整、高风险警告、二次认证 UI、浏览器回归 | 数据库和 OPS 大重构 |
-| SEC-1F | `security_audit_events`、脱敏、查询、导出、保留策略 | 生产日志平台或遥测实现 |
+| SEC-1F | 完整安全审计查询、脱敏摘要导出、保留和归档策略 | 远程日志平台或遥测实现 |
 | SEC-1U | `system_update` bypass、`ENTERPRISE_UPDATE_ENABLED` 默认策略、super_admin approve / execute、白名单 OPS、禁止任意 shell | 通用 shell、未演练 apply-upgrade |
 | OPS-2C | Release Builder | upgrade executor |
 | OPS-4A | Restore / Rollback Rehearsal | 网页一键升级 |
 | OPS-4B | Controlled Maintenance Upgrade Executor | 未通过门禁的生产执行 |
 
-这些任务不得合并成一个大 PR。SEC-1A 本身不实施任何一项代码。
+推荐实施顺序为：SEC-1B1 -> SEC-1F0 -> SEC-1B2 -> SEC-1C -> SEC-1D -> SEC-1E -> SEC-1F -> SEC-1U。SEC-1B 可以保留为总任务，但首次 bootstrap 不得早于 SEC-1F0。这些任务不得合并成一个大 PR，SEC-1A 本身不实施任何一项代码。
 
 ## 19. 后续测试与验收矩阵
 
@@ -537,6 +591,9 @@ admin 可以 read / prepare，super_admin 可以 read / prepare / approve / exec
 - 超级管理员可以授予 / 撤销管理员。
 - 超级管理员授予或管理另一个超级管理员需要 L3 门禁。
 - 禁止通过请求体、override 或直接 API 自我提权。
+- `UNINITIALIZED` 只允许本机首次 bootstrap，普通业务继续且 L3 全部拒绝。
+- `ACTIVE` 下的并发角色事务不能将 active super_admin 数量降为零。
+- `RECOVERY_REQUIRED` 只允许本机 break-glass，普通业务继续且 L3 全部拒绝。
 - 最后一个 active super_admin 不能被降级、停用、soft delete 或删除。
 - 角色变化、密码变化、禁用和 soft delete 后旧 Token 立即失效。
 - 重新启用后旧 Token 不得恢复有效。
@@ -552,7 +609,8 @@ admin 可以 read / prepare，super_admin 可以 read / prepare / approve / exec
 - backup manifest `dry_run=true` 或 SQLite backup 失败时拒绝。
 - check-data 存在 critical 时拒绝。
 - restore rehearsal、maintenance mode、task drain 或 rollback point 缺失时拒绝。
-- L3 强制审计写入失败时，业务动作 fail closed 且不产生部分执行。
+- SEC-1F0 必须先于首次 bootstrap 可用，并使用临时数据库验证 append-only 与敏感字段禁记。
+- L3、首次 bootstrap 或 break-glass 的强制审计写入失败时，动作 fail closed 且不产生部分执行。
 - 前端隐藏、直接 API、刷新 / 重登和 WebSocket 路径都不能绕过后端授权。
 
 每个权限实现 PR 还必须覆盖列表过滤、直接 ID、资源 URL、刷新 / 重登和相关 WebSocket 事件；前端行为不能替代后端用例。
