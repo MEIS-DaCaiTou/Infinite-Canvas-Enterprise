@@ -1,7 +1,7 @@
 # Infinite Canvas Enterprise 权限设计与 Task 3G 实施路线
 
-更新时间：2026-07-08
-状态：企业权限治理设计与当前实现基线。本文记录当前已实现状态，不修改业务行为。
+更新时间：2026-07-10
+状态：企业权限治理的当前实现基线与已接受演进方向。本文明确区分现状和规划，不修改业务行为。
 
 ## 2026-07-08 阶段结论
 
@@ -12,14 +12,24 @@
 - 普通用户默认不能访问 API 设置、工作流设置和系统更新。
 - 管理员可配置全局 feature flag。
 - 管理员可配置单个用户的 `inherit` / `allow` / `deny` 覆盖。
-- 管理员永远 bypass。
+- 当前代码中管理员会 bypass feature flag；该行为是现状，不是长期目标，SEC-1U 将独立整改更新与高危能力的 bypass 语义。
 - 权限开关变更写入审计日志，并可在操作日志中筛选。
 - 3G-7B 已完成用户删除影响预览、soft delete 安全保护、feature override 清理和成员管理搜索 / 筛选 / 分页；这些能力不改变复杂协作 ACL，只服务于单企业用户治理。
 - U-2 已同步到上游 `2026.07.6`，Codex / Gemini CLI 等新增 provider 设置路径继续纳入 API 设置权限边界。
 
-当前权限模型仍是“管理员 / 普通用户 + 最小 feature flag”，不是复杂 RBAC、团队空间、部门权限、计费或每用户 API Key。下一阶段如进入协作权限设计，应先定义项目成员、画布授权、素材共享、撤销和审计，再扩展实现。
+当前权限模型仍是“管理员 / 普通用户 + 最小 feature flag”，没有 `super_admin`、`role`、`auth_version`、Capability、Step-up Authentication 或 Operation Token；也不是复杂 RBAC、团队空间、部门权限、计费或每用户 API Key。下一阶段如进入协作权限设计，应先定义项目成员、画布授权、素材共享、撤销和审计，再扩展实现。
 
 后续新增权限策略不应继续无边界堆入 `enterprise/interceptors.py`。建议逐步引入 `enterprise/policies/`，由 gateway / interceptors 负责调用。
+
+## SEC-1A 决策同步
+
+[ADR SEC-1A：超级管理员、Capability 与高风险操作治理](docs/decisions/ADR-SEC-1A-SUPER-ADMIN-CAPABILITY-GOVERNANCE-2026-07.md) 已建立 staged implementation 决策：
+
+- 目标基础角色为 `user`、`admin`、`super_admin`，但当前代码和生产仍只有 `is_admin` 二级模型。
+- 目标后端授权以 Capability 为主，前端隐藏不替代后端检查。
+- super_admin 是最高人工角色，但 mandatory security controls 高于 super_admin。
+- 正式备份、升级、回滚、恢复、migration 和批量数据治理需要风险分级、Step-up、Operation Token、计划 / manifest 和不可关闭审计。
+- SEC-1A 只完成 ADR，不修改 schema、JWT、API、管理页面或 OPS executor；实现必须拆分为 SEC-1B 至 SEC-1U 的独立任务。
 
 ## 1. 权限模型
 
@@ -54,7 +64,7 @@
 | 工作流设置 | 可见，受安全审计 | 默认隐藏且写 API 返回 403 | 登录页 | admin-only 或 owner/ACL | `user_workflow_settings_visible`、`user_workflow_settings_editable`，默认 false |
 | Comfy/视频/图片转换/平台登录 | 可见，按部署策略 | 默认隐藏或只允许安全的生成入口 | 登录页 | feature permission + input/resource owner | `user_comfy_enabled`、`user_video_enabled`、`user_image_convert_enabled` |
 | 企业项目主页 | 可见，指向企业仓库 | 默认可见且指向企业仓库；可配置隐藏 | 登录页 | 无敏感 API | `user_enterprise_home_visible` |
-| 上游更新/回滚 | 可见，文案为企业受控更新 | 隐藏，直接 API 403 | 401 | admin-only | `enterprise_update_enabled` |
+| 上游更新/回滚 | 当前可见，文案为企业受控更新；目标由 SEC-1U 收口 | 隐藏，直接 API 403 | 401 | 当前 admin-only；目标为 Capability + 强制门禁 | `enterprise_update_enabled` |
 | 管理后台、审计日志 | 可见 | 隐藏，直接 403 | 登录页/401 | admin-only | 不向普通用户开放 |
 | 快捷键、普通 UI 帮助 | 可见 | 可见 | 不适用 | 无 | 无 |
 | 项目页新增按钮/文件夹操作 | 可见 | 按项目创建/管理开关和 owner 显示 | 登录页 | project owner | `user_project_create_enabled`、`user_project_manage_enabled` |
