@@ -1,144 +1,209 @@
 # Infinite-Canvas-Enterprise 开发路线图（2026-2027）
 
-## 1. 已完成阶段
+更新时间：2026-07-10
+ARCH-2A 代码核对基线（PR #69 合并后）：`a095ce2eb9ef9afda356cb6f20b6c38851f52b1d`
+
+## 1. 路线原则
+
+当前系统定位是“已投入生产的企业安全增强型单机模块化单体”。总体路线保持：
+
+> 先稳固安全和数据一致性，再建立恢复、性能和可观测性，随后推进单机生产化，最后扩大到多实例、多服务器和团队协作。
+
+当前继续采用“上游主应用 + enterprise gateway + enterprise data + OPS”的模块化单体，不立即微服务化。任何未来规划都不能写成当前已经支持的能力。
+
+详细架构评估、代码事实和技术决策见 [ARCH-2A：整体架构评估与演进方向](../architecture/ARCH-2A-ARCHITECTURE-ASSESSMENT-AND-EVOLUTION-2026-07.md)。
+
+## 2. 已完成基线
 
 | 阶段 | 状态 | 说明 |
 | --- | --- | --- |
-| 3G-7B-1 | 已完成 | 用户删除影响 dry-run 预览。 |
-| 3G-7B-2 | 已完成 | soft delete 语义收口、管理员保护、feature override 清理。 |
-| 3G-7B-3 | 已完成 | 成员管理搜索、筛选、排序、分页，默认隐藏已停用用户。 |
-| U-1 | 已完成 | 上游同步只读审计。 |
-| U-2 | 已完成 | 受控同步到上游 `2026.07.6` 并补企业兼容。 |
-| U-2-F1 / U-2-F2 | 已完成 | 文生图 / Enhance 刷新后历史丢失定位与云端 history type 一致性修复。 |
-| DOC-1 | 已完成 | 项目文档体系全量同步与 Agent 交接资料更新。 |
-| OPS-0 | 已完成 | 生产环境只读盘点。 |
-| OPS-0A | 已完成 | 生产只读盘点报告文档化，PR #64。 |
-| OPS-1 | 已完成 | 生产备份、离线发布包、升级演练、回滚、数据库迁移与数据治理方案设计，PR #65。 |
-| ARCH-1 | 已完成 | 企业架构蓝图、开发路线图、Docker / 1Panel 蓝图和 OPS 路线图，PR #66。 |
+| 3G owner 隔离主线 | 已完成第一阶段 | 项目、画布、对话、资源、历史、任务、素材和已知敏感 WebSocket 事件的 owner 隔离基础。 |
+| 3G-7B | 已完成 | delete-impact、soft delete、feature override 清理和成员管理增强。 |
+| U-1 / U-2 / U-2-F2 | 已完成 | 上游只读审计、受控同步到 `2026.07.6` 和 history type 一致性修复。 |
+| DOC-1 | 已完成，PR #63 | 项目文档体系与 Agent 交接资料同步。 |
+| OPS-0 / OPS-0A | 已完成，PR #64 | 生产环境只读盘点和事实文档化。 |
+| OPS-1 | 已完成，PR #65 | 生产备份、离线发布、演练、回滚、migration 与数据治理方案设计。 |
+| ARCH-1 | 已完成，PR #66 | 企业架构、开发路线、Docker / 1Panel 和 OPS 蓝图。 |
+| OPS-2A | 已完成，PR #67 | inventory、check-data、backup、validate-release、prepare-upgrade 和 OPS job JSONL。 |
+| OPS-2B | 已完成，PR #69 | Windows bundled Python + runner.py 直调的 dry-run 和 backup execute wrapper。 |
 
-## 2. 当前优先阶段
+OPS-2A / OPS-2B 已进入 main，项目负责人已在生产侧人工完成 dry-run 和一次单独确认的正式备份。该事实不代表 restore、upgrade、apply-upgrade 或 rollback 已实现，也不代表生产已经升级。当前 `check-data` 仍有 warn，数据未被自动修复。
 
-当前进入 OPS-2A：生产运维脚本工具套件第一版。
+## 3. 当前阶段
 
-3G-8 暂后置但不取消。
+ARCH-2A 架构评估与演进方向文档同步已完成，由 PR #70 承载。完成 ARCH-2A 只代表架构共识、目标原则和 P0 / P1 / P2 / P3 路线同步完成。
 
-ARCH-1 已把企业层、上游边界、生产 OPS、日志、Docker / 1Panel、PostgreSQL、对象存储和多服务器部署路线沉淀为后续 Agent 可执行的统一蓝图。OPS-2A 从这条蓝图进入第一版工具实现。
+ARCH-2A 完成不代表以下事项已经实施：
 
-## 3. 生产运维主线 OPS
+- P0 security fix。
+- policy / repository / service 重构。
+- schema migration。
+- Docker / 1Panel。
+- PostgreSQL、Redis 或对象存储。
+- apply-upgrade、restore 或 rollback executor。
+- 自动 owner-map 修复。
 
-| 阶段 | 目标 | 状态 |
-| --- | --- | --- |
-| OPS-2A | 生产运维脚本工具套件第一版：ops-runner、inventory、backup、check-data、validate-release、prepare-upgrade、OPS job 本地结构化日志。 | 下一步 |
-| OPS-2B | release 包生成 / 校验机制增强。 | 规划 |
-| OPS-3 | Update Center 页面接入 OPS 能力，支持 apply-upgrade / rollback。 | 规划 |
-| OPS-4 | 生产升级演练。 | 规划 |
-| OPS-5 | 数据完整性巡检工具。 | 规划 |
-| OPS-6 | 管理员后台数据治理页面。 | 规划 |
-| OPS-7 | SQLite migration 机制。 | 规划 |
-| OPS-8 | PostgreSQL 迁移 ADR 与演练。 | 规划 |
+当前进入 ARCH-2B / SEC-1 P0 安全任务拆分与实施规划阶段。每个安全事项必须使用独立 Issue、独立分支和独立 Draft PR，不将全部 P0 项目打包到一个大 PR；当前也不直接进入大规模架构重构或生产升级。
 
-OPS-2A 是当前最小可执行入口。它先建立盘点、备份、数据检查、发布包校验和计划生成能力，不直接执行升级或回滚。
+## 4. 近期路线
 
-## 4. 日志与可观测性主线 OPS-L
+### 4.1 ARCH-2A：已完成的架构评估与方向同步
 
-| 阶段 | 目标 |
+- 统一当前系统定位。
+- 分开当前实现、部分实现、已确认方向和长期目标。
+- 固化目标模块边界和架构决策。
+- 建立后续任务拆解与审查规则。
+- 状态：文档同步已完成，由 PR #70 承载；不代表任何整改已实施。
+
+### 4.2 ARCH-2B / SEC-1：P0 安全整改任务拆分
+
+按独立 Issue / Draft PR 拆分：
+
+- JWT 角色与数据库状态同步。
+- session / token version 和旧 Token 撤销。
+- `system_update` 管理员 bypass 与生产总开关语义。
+- HTTP 未分类 route 默认拒绝。
+- WebSocket 未知 event 默认拒绝。
+- Secure Cookie、CSRF、登录限流。
+- `next` URL 校验。
+- 企业静态文件路径 containment。
+- 生产错误响应脱敏。
+- 依赖声明和版本锁定。
+
+### 4.3 DATA-1：数据一致性与 migration 基础设计
+
+- repository 接口。
+- schema version。
+- migration history。
+- SQLite `busy_timeout`、索引和约束复核。
+- owner reconciliation 报告与人工修复计划。
+- 临时数据库 dry-run、备份和回滚测试。
+
+不自动修复生产 owner map，不直接修改生产数据库。
+
+### 4.4 OPS 恢复演练
+
+- 核对已执行 backup manifest。
+- 在隔离副本中做 restore rehearsal。
+- 验证 SQLite、JSON、assets / output、env 和启动链路。
+- 记录人工 rollback 决策点与恢复时间。
+
+已有 backup 不等于 restore 已完成。restore rehearsal 通过前，不接入网页 apply-upgrade。
+
+### 4.5 OBS-1 / OPS-L1：日志与可观测性基础
+
+- access / app / error / security / operation log。
+- request_id / job_id。
+- 本地结构化 JSONL 与轮转 / 保留策略。
+- 磁盘、SQLite、任务、WebSocket 和 upstream 健康检查。
+- 默认脱敏和敏感字段审计。
+
+当前只有 usage audit、OPS job JSONL 和进程输出，不能写成完整日志体系已实现。
+
+## 5. 中期路线
+
+### 5.1 ARCH-3：策略模块化
+
+- 建立显式 route registry 和 WebSocket event registry。
+- 按数据域渐进拆分 policy。
+- 引入 service / repository 边界。
+- 每次只迁移一个数据域并保持 API 行为兼容。
+- 不一次性重写 `interceptors.py`。
+
+### 5.2 PERF-1：真流式代理和性能基线
+
+- 真正流式上传 / 下载 / SSE。
+- 大文件限制、timeout、背压和中断传播。
+- 去除在线全目录扫描。
+- 同步 SQLite / 文件 I/O 与 async handler 隔离。
+- 建立可重复负载测试，不承诺未经测试的容量数字。
+
+### 5.3 OPS-D1：Docker / 1Panel 单机生产化
+
+- Linux entrypoint 和单容器双进程管理。
+- Dockerfile、Compose、volume、healthcheck 和日志。
+- 1Panel HTTPS、WebSocket proxy、上传大小和长任务 timeout。
+- 计划任务备份与恢复演练。
+
+当前不是 Docker-ready。只有该阶段实现并完成验收后，才能更新支持声明。
+
+### 5.4 PostgreSQL 迁移准备
+
+- 先完成 DATA-1 repository 和 migration 基础。
+- 设计 PostgreSQL target schema ADR。
+- 建立 SQLite 导出 / PostgreSQL 导入的临时环境演练。
+- 定义校验、维护窗口和回滚。
+
+这一阶段是准备，不是 PostgreSQL 正式迁移。
+
+## 6. 长期路线
+
+1. PostgreSQL 正式迁移。
+2. Redis / durable queue / Pub/Sub。
+3. MinIO / S3 / NAS storage adapter。
+4. 多实例 session、realtime 和任务执行。
+5. 多服务器健康检查与集中日志。
+6. workspace / organization / member roles / ACL / grants。
+7. 团队资源、项目协作、共享 / 撤销和合规审计。
+8. 高可用、灾备和故障演练。
+
+这些是 P3 长期目标，不是当前能力。
+
+## 7. OPS 路线
+
+建议顺序：
+
+1. release builder。
+2. release validator 增强。
+3. backup restore rehearsal。
+4. 人工维护窗口 upgrade rehearsal。
+5. 人工 rollback 验证。
+6. 最后才评估 Update Center 的 apply-upgrade。
+
+`prepare-upgrade` 只生成 plan。OPS-3 / OPS-4 不得被描述为当前已实现；网页端未来也只能调用白名单、计划驱动、可审计的 OPS API，不能执行任意 shell。
+
+## 8. 自动化测试路线
+
+3G-8 浏览器级自动化回归保留，并应逐步纳入每个安全 / policy 阶段：
+
+- 登录 / 登出与旧 Token 撤销。
+- admin、user A、user B。
+- 列表过滤和直接 ID。
+- 资源 URL。
+- 刷新、退出重登和角色变化。
+- 历史、画布、对话、素材、任务。
+- 设置与高风险功能。
+- WebSocket 已知事件和未知事件。
+- Update Center 仅在实际实现后纳入。
+
+每个权限 PR 都必须提供对应 API 回归；前端隐藏不能替代后端鉴权。
+
+## 9. 阶段门禁
+
+| 进入阶段 | 前置门禁 |
 | --- | --- |
-| OPS-L1 | 本地结构化日志：access / app / error / security / ops job JSONL。 |
-| OPS-L2 | 远程日志推送：脱敏后推送到外部日志服务。 |
-| OPS-L3 | 日志查询 / 管理后台展示。 |
-| OPS-L4 | 集中日志平台适配：Loki / ELK / OpenSearch / ClickHouse 等。 |
+| ARCH-3 | P0 默认拒绝策略和关键会话安全已建立，现有 A/B/admin 回归可运行。 |
+| DATA-1 migration 实现 | schema / backup / rollback 设计通过，临时数据库测试可重复。 |
+| OPS 正式升级演练 | executed backup、restore rehearsal、release validation 和 data-check 已人工复核。 |
+| Docker / 1Panel | volume、日志、healthcheck、backup / restore 和 WebSocket 验收方案已明确。 |
+| PostgreSQL 正式迁移 | repository、schema version、导入校验、维护窗口和回滚演练完成。 |
+| 多实例 / 多服务器 | session、queue、realtime、shared storage 和集中可观测性完成。 |
+| 团队协作 ACL | organization / member / grant / revoke / audit 模型和迁移策略独立评审。 |
 
-当前只有基础审计日志和进程输出，不应写成已有完整日志体系。
+## 10. 持续禁止事项
 
-## 5. Docker / 1Panel / 部署主线 OPS-D
+- 生产 `git pull`、`checkout main`、`reset --hard` 或开发目录覆盖。
+- 未备份、未恢复演练、未回滚设计的生产升级。
+- 自动修复生产 owner map 或自动删除生产文件。
+- 在普通功能 PR 中顺手完成大规模架构重构。
+- 把 Docker、PostgreSQL、Redis、MinIO、apply-upgrade、restore、rollback 写成已实现。
+- 用连接池大小、WAL 或单进程 WebSocket 推导并发容量或多实例能力。
 
-| 阶段 | 目标 |
-| --- | --- |
-| OPS-D1 | Docker / 1Panel 部署设计。 |
-| OPS-D2 | Dockerfile + docker-compose.yml。 |
-| OPS-D3 | 1Panel 部署手册与 WebSocket / HTTPS 验收。 |
-| OPS-D4 | PostgreSQL + 对象存储生产化。 |
-| OPS-D5 | 多服务器部署设计。 |
+## 11. 任务交付规则
 
-当前项目还不是 Docker-ready，不能宣称支持一键 Docker 部署。Docker / 1Panel 是后续部署目标。
-
-## 6. 自动化测试主线 3G-8
-
-3G-8 不取消，等 OPS 生产治理基线建立后推进。
-
-3G-8 应覆盖：
-
-- 登录 / 登出。
-- 管理员登录。
-- 普通用户登录。
-- 用户 A / 用户 B 数据隔离。
-- 历史记录。
-- 画布。
-- 对话。
-- 素材库。
-- 管理后台。
-- Update Center。
-- WebSocket。
-- API 设置 / 工作流设置权限边界。
-- 生成路径最小冒烟。
-
-3G-8 的目标是把当前项目负责人手动验收的核心路径脚本化。
-
-## 7. 企业后台主线
-
-企业后台后续应逐步覆盖：
-
-- 用户管理。
-- 权限管理。
-- 功能开关。
-- 审计日志。
-- OPS job 状态。
-- 备份记录。
-- 升级记录。
-- 数据治理。
-- 日志查看。
-
-当前已经具备成员管理、归属管理、操作日志和权限开关。OPS job、备份记录、升级记录、数据治理和日志查看仍是后续规划。
-
-## 8. 数据层主线
-
-数据层路线：
-
-- 短期保留 SQLite。
-- 建立 schema version。
-- 建立 migration dry-run。
-- PostgreSQL 作为长期优先目标。
-- MySQL 作为备选。
-- 补齐 owner map 完整性检查。
-- 设计对象存储 / NAS。
-- 建立多服务器前置条件。
-
-PostgreSQL 优先原因是它更适合 JSON / JSONB、复杂 owner 映射、审计日志和数据治理查询，也更适合未来多服务器部署。
-
-## 9. 上游同步主线
-
-上游同步应继续采用受控路线：
-
-1. 上游同步只读审计。
-2. 受控同步。
-3. 企业兼容修复。
-4. 生产副本演练。
-5. 维护窗口升级。
-6. 回滚。
-
-不得直接 merge upstream/main，不得整目录覆盖 `static/`，不得提交运行时目录或敏感配置。
-
-## 10. 优先级说明
-
-当前优先级：
-
-```text
-OPS-2A
-  -> OPS-L1 / OPS-D1 可并行设计
-  -> OPS-3
-  -> OPS-4
-  -> 3G-8
-  -> OPS-5 / OPS-6 / OPS-7 / OPS-8
-```
-
-这一路线的核心判断是：生产环境已有真实用户和真实数据。进入更多功能开发或自动化回归前，必须先建立生产备份、盘点、发布、日志和回滚基础。
+- 每个 P0 / P1 / P2 / P3 项目使用独立 Issue、独立分支和独立 Draft PR。
+- 安全策略变更至少覆盖 user A、user B、admin。
+- 权限变更覆盖列表、直接 ID、资源 URL、刷新 / 重登和 WebSocket。
+- migration 必须有 dry-run、备份、回滚和临时数据库测试。
+- 生产动作由项目负责人人工执行；Codex 不直接连接生产主机。
+- 每个实现 PR 同步对应状态文档，保持当前事实与规划边界一致。
