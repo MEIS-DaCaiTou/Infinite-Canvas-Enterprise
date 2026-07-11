@@ -179,7 +179,7 @@ async def update_user_role(user_id: str, request: Request):
         raise HTTPException(status_code=404, detail="用户不存在")
     body = await request.json()
     is_admin = bool(body.get("is_admin", False))
-    edb.update_user_role(user_id, is_admin)
+    edb.update_user_role(user_id, is_admin, updated_by=current["user_id"])
     _audit_user_action(
         current,
         "user_role_updated",

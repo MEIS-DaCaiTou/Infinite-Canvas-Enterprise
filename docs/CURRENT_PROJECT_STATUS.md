@@ -7,6 +7,7 @@
 - 企业版仓库：`MEIS-DaCaiTou/Infinite-Canvas-Enterprise`
 - ARCH-2A 代码核对基线（PR #69 合并后）：`a095ce2eb9ef9afda356cb6f20b6c38851f52b1d`
 - SEC-1A 代码核对基线：`dcb6629569246f58a2eda358d1073693376d6fa9`
+- SEC-1B1 代码实现基线：`4432dd7af3898b0d9511d6add79f3e7de891d00f`
 - 当前上游版本：`2026.07.6`
 - 固定上游目标 commit：`hero8152/Infinite-Canvas@f1dd6834a72f3e7ff8340be05a84347d931e9cb9`
 - 当前运行架构：浏览器 / 局域网用户 -> `enterprise/gateway.py:8000` -> `main.py:3001` -> 上游 `data / assets / output / static / workflows`
@@ -31,7 +32,9 @@
 
 ARCH-2A 已完成当前架构评估与演进方向文档同步，由 PR #70 承载。完成 ARCH-2A 只代表架构共识和路线同步完成；P0 安全整改、模块化、migration、restore、Docker、PostgreSQL 等均未实施。详细评估见 [ARCH-2A：整体架构评估与演进方向](./architecture/ARCH-2A-ARCHITECTURE-ASSESSMENT-AND-EVOLUTION-2026-07.md)。
 
-SEC-1A 已完成 ADR 决策，由 PR #71 承载；不代表任何超级管理员或安全能力已经实现。ADR 定义超级管理员、Capability 和高风险操作治理方向；当前代码和生产仍是 `is_admin` 普通用户 / 管理员二级模型，没有 `super_admin`、`role`、`auth_version`、Step-up Authentication、Operation Token 或专用安全审计表。详细决策见 [ADR SEC-1A](./decisions/ADR-SEC-1A-SUPER-ADMIN-CAPABILITY-GOVERNANCE-2026-07.md)。
+SEC-1A 已完成 ADR 决策，由 PR #71 承载；该 PR 只定义超级管理员、Capability 和高风险操作治理方向，没有实施安全能力。SEC-1B1 后续只落地 role / auth_version 与 JWT 当前状态基础；`super_admin`、Capability、Step-up Authentication、Operation Token 和专用安全审计仍未实现。详细决策见 [ADR SEC-1A](./decisions/ADR-SEC-1A-SUPER-ADMIN-CAPABILITY-GOVERNANCE-2026-07.md)。
+
+SEC-1B1 已完成仓库实现和临时数据库验证，由 PR #72 承载。该实现增加 role / auth_version schema 基础、显式 legacy migration inspect / plan / apply 和 JWT 当前数据库状态加载；不代表生产 migration 已激活，不代表 super_admin 已创建，也不代表 SEC-1C0 过渡保护、Capability、Step-up 或安全审计已经实现。生产数据库仍按 LEGACY 状态治理，SEC-1B2 维护窗口 activation 前不得调用 migration apply。
 
 ## 3. 已完成任务一览
 
@@ -57,12 +60,13 @@ SEC-1A 已完成 ADR 决策，由 PR #71 承载；不代表任何超级管理员
 | OPS-2B | 已完成，PR #69 | Windows 生产侧 dry-run / backup execute wrapper；merge commit `a095ce2eb9ef9afda356cb6f20b6c38851f52b1d`。 |
 | ARCH-2A | 已完成，PR #70 | 当前架构评估、目标原则、架构决策表和 P0 / P1 / P2 / P3 演进方向同步；不代表任何整改已实施。 |
 | SEC-1A | 已完成 ADR 决策，PR #71 | 定义 user / admin / super_admin、Capability、L0–L3、Step-up、bootstrap 和高风险治理；不代表任何超级管理员或安全能力已经实现。 |
+| SEC-1B1 | 仓库实现与临时数据库验证完成，PR #72 | role / auth_version、新旧 schema 兼容、显式 migration 基础和 JWT 当前状态加载；生产 migration 未激活。 |
 
 ## 4. 当前能力矩阵摘要
 
 | 能力域 | 当前状态 |
 | --- | --- |
-| 登录 / JWT Cookie | 已落地，企业网关统一校验。 |
+| 登录 / JWT Cookie | SEC-1B1 已在仓库实现数据库当前状态 principal 和 auth_version 校验；生产 LEGACY schema 尚未激活版本撤销。 |
 | 管理后台 | 已有成员管理、项目归属、画布归属、对话归属、操作日志、权限开关。 |
 | 成员治理 | 已有启用 / 禁用、soft delete、delete-impact dry-run、feature override 清理、成员搜索 / 筛选 / 分页。 |
 | 项目 / 画布 / 对话隔离 | 已按 owner 过滤；管理员可治理归属。 |
@@ -74,7 +78,7 @@ SEC-1A 已完成 ADR 决策，由 PR #71 承载；不代表任何超级管理员
 | API / 工作流权限 | 已分类的高风险设置与功能已有 feature flag + user override + 审计；管理员 bypass 与未分类路由默认策略列入 P0 整改。 |
 | 上游同步 | U-2 已受控同步到 `2026.07.6`，未直接 merge upstream。 |
 | OPS 工具 | OPS-2A / OPS-2B 已进入 main，提供 inventory / check-data / backup / validate-release / prepare-upgrade 和 Windows wrapper；不代表生产已升级，也不代表 apply-upgrade / restore / rollback、Docker / 1Panel 或 PostgreSQL 已实现。 |
-| 超级管理员 / Capability | 仅 SEC-1A ADR 已决策；当前未实现，生产仍使用 `is_admin` 二级模型。 |
+| 超级管理员 / Capability | SEC-1B1 只建立固定 role 基础，不创建 super_admin，也不实现 Capability；生产仍使用现有 `is_admin` 数据。 |
 
 ## 5. 当前人工确认
 
@@ -97,15 +101,15 @@ OPS-2A / OPS-2B 生产侧人工确认：
 
 ## 6. 后续任务队列
 
-ARCH-2A 文档同步已完成。项目负责人已确认继续采用“上游主应用 + enterprise gateway + enterprise data + OPS”的模块化单体路线，不立即微服务化。SEC-1A 已完成角色与高风险治理 ADR，当前下一项是 SEC-1B1 角色 schema 与会话版本基础；首次 super_admin bootstrap 必须后置到 SEC-1F0 最小强制安全审计之后。
+ARCH-2A、SEC-1A 和 SEC-1B1 仓库实现已完成。SEC-1B1 没有激活生产 migration；当前下一阶段是 SEC-1F0 最小强制安全审计，随后实施 SEC-1C0 super_admin 过渡保护。首次 migration activation 和 super_admin bootstrap 仍属于 SEC-1B2，且必须后置到 SEC-1F0 与 SEC-1C0。
 
 每个 P0 安全事项必须使用独立 Issue、独立分支和独立 Draft PR，不将全部 P0 项目打包到一个大 PR。
 
 下一步顺序：
 
-1. SEC-1B1：独立实现并用临时数据库验证 `role`、`auth_version`、migration、JWT 当前状态加载和旧 Token 撤销；不激活生产 migration，不开放在线角色写入，不执行首次 bootstrap。
-2. SEC-1F0：最小 `security_audit_events`、append-only 写入、bootstrap / role change / break-glass、敏感字段禁记、L3 / bootstrap fail closed 和临时数据库测试。
-3. SEC-1B2：仅在 SEC-1F0 可用后激活 migration 并实施本机首次 super_admin bootstrap，依次进入 `UNINITIALIZED`、`ACTIVE`。
+1. SEC-1F0：最小 `security_audit_events`、append-only 写入、bootstrap / role change / break-glass、敏感字段禁记、L3 / bootstrap fail closed 和临时数据库测试。
+2. SEC-1C0：在首次 bootstrap 前实施 super_admin 过渡保护，阻止 admin 影响 super_admin、阻止自行提权并保证正常在线事务不把 active super_admin 降为零；不实现完整 Capability 矩阵。
+3. SEC-1B2：仅在 SEC-1F0 和 SEC-1C0 可用后激活 migration 并实施本机首次 super_admin bootstrap，依次进入 `UNINITIALIZED`、`ACTIVE`。
 4. 按独立 Issue / Draft PR 继续 SEC-1C Capability 门禁、SEC-1D Step-up、SEC-1E UI、SEC-1F 完整审计和 SEC-1U 升级安全收口。
 5. 设计 DATA-1 数据一致性、schema version、migration history 和人工 owner reconciliation 基础。
 6. 推进 backup restore rehearsal；在 restore / rollback 未完成演练前，不接入网页 apply-upgrade。

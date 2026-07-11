@@ -567,7 +567,8 @@ admin 可以 read / prepare，super_admin 可以 read / prepare / approve / exec
 | --- | --- | --- |
 | SEC-1B1 | `role`、`auth_version`、migration、JWT 当前状态加载和旧 Token 撤销的实现与临时数据库验证 | 生产 migration activation、在线角色写入、首次 super_admin bootstrap、Capability UI、OPS executor |
 | SEC-1F0 | 最小 `security_audit_events` schema、append-only 写入、bootstrap / role change / break-glass、脱敏禁记、L3 / bootstrap fail closed、临时数据库测试 | 管理页面、复杂查询、导出、归档、保留周期、远程日志 |
-| SEC-1B2 | migration activation、本机首次 super_admin bootstrap 和一次性配置消费；依次进入 `UNINITIALIZED`、`ACTIVE` | 早于 SEC-1F0 执行、远程提权、自动升级现有管理员 |
+| SEC-1C0 | 首次 bootstrap 前的 super_admin 过渡保护：admin 不得修改其角色、重置密码、启停、soft delete 或撤销会话；最后 active super_admin 保护与禁止自行提权 | 完整 Capability 矩阵、Step-up UI、升级执行 |
+| SEC-1B2 | migration activation、本机首次 super_admin bootstrap 和一次性配置消费；依次进入 `UNINITIALIZED`、`ACTIVE` | 早于 SEC-1F0 / SEC-1C0 执行、远程提权、自动升级现有管理员 |
 | SEC-1C | `require_role`、`require_capability`、最后超级管理员保护、防自我提权、admin 不得影响 super_admin | Step-up UI、升级执行 |
 | SEC-1D | 重新认证、单次短期 Operation Token、action / target 绑定、replay protection、CSRF / Origin | 管理后台大改版 |
 | SEC-1E | 角色展示、角色调整、高风险警告、二次认证 UI、浏览器回归 | 数据库和 OPS 大重构 |
@@ -577,7 +578,9 @@ admin 可以 read / prepare，super_admin 可以 read / prepare / approve / exec
 | OPS-4A | Restore / Rollback Rehearsal | 网页一键升级 |
 | OPS-4B | Controlled Maintenance Upgrade Executor | 未通过门禁的生产执行 |
 
-推荐实施顺序为：SEC-1B1 -> SEC-1F0 -> SEC-1B2 -> SEC-1C -> SEC-1D -> SEC-1E -> SEC-1F -> SEC-1U。SEC-1B 可以保留为总任务，但首次 bootstrap 不得早于 SEC-1F0。这些任务不得合并成一个大 PR，SEC-1A 本身不实施任何一项代码。
+推荐实施顺序为：SEC-1B1 -> SEC-1F0 -> SEC-1C0 -> SEC-1B2 -> SEC-1C -> SEC-1D -> SEC-1E -> SEC-1F -> SEC-1U。SEC-1B 可以保留为总任务，但首次 bootstrap 不得早于 SEC-1F0 和 SEC-1C0。这些任务不得合并成一个大 PR，SEC-1A 本身不实施任何一项代码。
+
+实施顺序安全澄清：SEC-1C0 只实现首个 super_admin 出现前必须具备的过渡保护，不提前实现完整 Capability。它必须确保 admin 无法修改 super_admin 角色、重置其密码、启停、soft delete 或撤销其会话，禁止自行提权，并保证正常在线事务不能把 active super_admin 数量降为零。PR #72 不实现 SEC-1C0，也不创建 super_admin；SEC-1B2 不得早于 SEC-1C0。
 
 ## 19. 后续测试与验收矩阵
 

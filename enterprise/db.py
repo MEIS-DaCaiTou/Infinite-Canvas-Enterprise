@@ -13,6 +13,21 @@ import json
 from typing import Optional
 
 from enterprise.config import DB_PATH, ADMIN_USERNAME, ADMIN_PASSWORD, ROOT_DIR
+from enterprise.migrations.sec_1b1_role_auth import (
+    ROLE_AUTH_READY,
+    SCHEMA_LEGACY,
+    classify_role_auth_schema,
+    get_user_columns,
+)
+from enterprise.roles import (
+    LEGACY_AUTH_VERSION,
+    ROLE_ADMIN,
+    ROLE_USER,
+    is_admin_role,
+    normalize_auth_version,
+    normalize_role,
+    role_from_legacy_is_admin,
+)
 
 
 FEATURE_FLAG_DEFINITIONS = {
@@ -74,6 +89,42 @@ def get_db() -> sqlite3.Connection:
     return conn
 
 
+def _user_schema_state(conn: sqlite3.Connection) -> str:
+    columns = get_user_columns(conn)
+    if "is_admin" not in columns:
+        raise RuntimeError("users compatibility schema is incomplete")
+    state = classify_role_auth_schema(columns)
+    if state not in {SCHEMA_LEGACY, ROLE_AUTH_READY}:
+        raise RuntimeError("unsupported users role/auth schema state")
+    return state
+
+
+def normalize_user_record(row: sqlite3.Row | dict, schema_state: str) -> dict:
+    """Normalize legacy and migrated users into one fail-closed record."""
+    record = dict(row)
+    if schema_state == SCHEMA_LEGACY:
+        role = role_from_legacy_is_admin(record.get("is_admin"))
+        auth_version = LEGACY_AUTH_VERSION
+    elif schema_state == ROLE_AUTH_READY:
+        role = normalize_role(record.get("role"))
+        auth_version = normalize_auth_version(record.get("auth_version"))
+    else:
+        raise ValueError("unsupported users role/auth schema state")
+    record["role"] = role
+    record["auth_version"] = auth_version
+    record["is_admin"] = is_admin_role(role)
+    record["is_active"] = bool(record.get("is_active"))
+    record["_role_auth_schema_state"] = schema_state
+    return record
+
+
+def _public_user_record(user: dict) -> dict:
+    public = dict(user)
+    public.pop("password_hash", None)
+    public.pop("_role_auth_schema_state", None)
+    return public
+
+
 def init_db() -> None:
     """初始化数据库表结构，并创建默认管理员账号"""
     conn = get_db()
@@ -85,6 +136,12 @@ def init_db() -> None:
                 password_hash TEXT NOT NULL,
                 display_name TEXT,
                 is_admin    INTEGER DEFAULT 0,
+                role        TEXT NOT NULL DEFAULT 'user'
+                            CHECK (role IN ('user', 'admin', 'super_admin')),
+                auth_version INTEGER NOT NULL DEFAULT 1
+                             CHECK (auth_version >= 0),
+                role_updated_at INTEGER,
+                role_updated_by TEXT,
                 is_active   INTEGER DEFAULT 1,
                 created_at  INTEGER NOT NULL,
                 last_login  INTEGER
@@ -211,6 +268,11 @@ def init_db() -> None:
                 conn.execute(f"ALTER TABLE user_asset_object_map ADD COLUMN {column} TEXT")
             except sqlite3.OperationalError:
                 pass
+        user_schema_state = _user_schema_state(conn)
+        if user_schema_state == ROLE_AUTH_READY:
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_users_role_active ON users (role, is_active)"
+            )
         conn.commit()
 
         # 如果管理员不存在则创建
@@ -220,11 +282,23 @@ def init_db() -> None:
         if not existing:
             uid = uuid.uuid4().hex
             ph = _hash_password(ADMIN_PASSWORD)
-            conn.execute(
-                "INSERT INTO users (id, username, password_hash, display_name, is_admin, created_at) "
-                "VALUES (?, ?, ?, ?, 1, ?)",
-                (uid, ADMIN_USERNAME, ph, "管理员", int(time.time() * 1000))
-            )
+            now = int(time.time() * 1000)
+            if user_schema_state == ROLE_AUTH_READY:
+                conn.execute(
+                    """
+                    INSERT INTO users (
+                        id, username, password_hash, display_name,
+                        is_admin, role, auth_version, created_at
+                    ) VALUES (?, ?, ?, ?, 1, ?, 1, ?)
+                    """,
+                    (uid, ADMIN_USERNAME, ph, "管理员", ROLE_ADMIN, now),
+                )
+            else:
+                conn.execute(
+                    "INSERT INTO users (id, username, password_hash, display_name, is_admin, created_at) "
+                    "VALUES (?, ?, ?, ?, 1, ?)",
+                    (uid, ADMIN_USERNAME, ph, "管理员", now),
+                )
             conn.commit()
             print(f"[企业版] 已创建管理员账号: {ADMIN_USERNAME}")
     finally:
@@ -257,10 +331,11 @@ def verify_password(password: str, password_hash: str) -> bool:
 def get_user_by_username(username: str) -> Optional[dict]:
     conn = get_db()
     try:
+        schema_state = _user_schema_state(conn)
         row = conn.execute(
             "SELECT * FROM users WHERE username = ? AND is_active = 1", (username,)
         ).fetchone()
-        return dict(row) if row else None
+        return normalize_user_record(row, schema_state) if row else None
     finally:
         conn.close()
 
@@ -268,10 +343,11 @@ def get_user_by_username(username: str) -> Optional[dict]:
 def get_user_by_id(user_id: str) -> Optional[dict]:
     conn = get_db()
     try:
+        schema_state = _user_schema_state(conn)
         row = conn.execute(
             "SELECT * FROM users WHERE id = ? AND is_active = 1", (user_id,)
         ).fetchone()
-        return dict(row) if row else None
+        return normalize_user_record(row, schema_state) if row else None
     finally:
         conn.close()
 
@@ -280,10 +356,11 @@ def get_user_by_id_any_status(user_id: str) -> Optional[dict]:
     """按 ID 查询用户，包含已禁用账号，供管理员操作使用。"""
     conn = get_db()
     try:
+        schema_state = _user_schema_state(conn)
         row = conn.execute(
             "SELECT * FROM users WHERE id = ?", (user_id,)
         ).fetchone()
-        return dict(row) if row else None
+        return normalize_user_record(row, schema_state) if row else None
     finally:
         conn.close()
 
@@ -291,11 +368,14 @@ def get_user_by_id_any_status(user_id: str) -> Optional[dict]:
 def list_users() -> list:
     conn = get_db()
     try:
+        schema_state = _user_schema_state(conn)
         rows = conn.execute(
-            "SELECT id, username, display_name, is_admin, is_active, created_at, last_login "
-            "FROM users ORDER BY created_at ASC"
+            "SELECT * FROM users ORDER BY created_at ASC"
         ).fetchall()
-        return [dict(r) for r in rows]
+        return [
+            _public_user_record(normalize_user_record(row, schema_state))
+            for row in rows
+        ]
     finally:
         conn.close()
 
@@ -303,9 +383,17 @@ def list_users() -> list:
 def count_active_admins() -> int:
     conn = get_db()
     try:
-        return int(conn.execute(
-            "SELECT COUNT(*) FROM users WHERE is_admin = 1 AND is_active = 1"
-        ).fetchone()[0])
+        schema_state = _user_schema_state(conn)
+        rows = conn.execute(
+            "SELECT role, auth_version, is_admin, is_active FROM users WHERE is_active = 1"
+            if schema_state == ROLE_AUTH_READY
+            else "SELECT is_admin, is_active FROM users WHERE is_active = 1"
+        ).fetchall()
+        return sum(
+            1
+            for row in rows
+            if normalize_user_record(row, schema_state)["is_admin"]
+        )
     finally:
         conn.close()
 
@@ -380,11 +468,8 @@ def get_user_delete_impact(user_id: str, sample_limit: int = 20) -> Optional[dic
 
     conn = get_db()
     try:
-        user_row = conn.execute(
-            "SELECT id, username, display_name, is_admin, is_active, created_at, last_login "
-            "FROM users WHERE id = ?",
-            (user_id,),
-        ).fetchone()
+        schema_state = _user_schema_state(conn)
+        user_row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
         if not user_row:
             return None
 
@@ -417,9 +502,7 @@ def get_user_delete_impact(user_id: str, sample_limit: int = 20) -> Optional[dic
             (user_id, audit_like),
         ).fetchone()[0])
 
-        user = dict(user_row)
-        user["is_admin"] = bool(user.get("is_admin"))
-        user["is_active"] = bool(user.get("is_active"))
+        user = _public_user_record(normalize_user_record(user_row, schema_state))
         return {
             "user": user,
             "counts": counts,
@@ -437,13 +520,28 @@ def get_user_delete_impact(user_id: str, sample_limit: int = 20) -> Optional[dic
 def create_user(username: str, password: str, display_name: str = "", is_admin: bool = False) -> dict:
     conn = get_db()
     try:
+        schema_state = _user_schema_state(conn)
         uid = uuid.uuid4().hex
         ph = _hash_password(password)
-        conn.execute(
-            "INSERT INTO users (id, username, password_hash, display_name, is_admin, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (uid, username, ph, display_name or username, 1 if is_admin else 0, int(time.time() * 1000))
-        )
+        now = int(time.time() * 1000)
+        legacy_is_admin = 1 if is_admin else 0
+        if schema_state == ROLE_AUTH_READY:
+            role = ROLE_ADMIN if is_admin else ROLE_USER
+            conn.execute(
+                """
+                INSERT INTO users (
+                    id, username, password_hash, display_name,
+                    is_admin, role, auth_version, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, 1, ?)
+                """,
+                (uid, username, ph, display_name or username, legacy_is_admin, role, now),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO users (id, username, password_hash, display_name, is_admin, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (uid, username, ph, display_name or username, legacy_is_admin, now),
+            )
         conn.commit()
         return {"id": uid, "username": username}
     finally:
@@ -451,26 +549,69 @@ def create_user(username: str, password: str, display_name: str = "", is_admin: 
 
 
 def update_user_password(user_id: str, new_password: str) -> bool:
+    password_hash = _hash_password(new_password)
     conn = get_db()
     try:
-        cur = conn.execute(
-            "UPDATE users SET password_hash = ? WHERE id = ?",
-            (_hash_password(new_password), user_id)
-        )
+        schema_state = _user_schema_state(conn)
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not row:
+            conn.rollback()
+            return False
+        user = normalize_user_record(row, schema_state)
+        if schema_state == ROLE_AUTH_READY:
+            cur = conn.execute(
+                "UPDATE users SET password_hash = ?, auth_version = ? WHERE id = ?",
+                (password_hash, user["auth_version"] + 1, user_id),
+            )
+        else:
+            cur = conn.execute(
+                "UPDATE users SET password_hash = ? WHERE id = ?",
+                (password_hash, user_id),
+            )
         conn.commit()
         return cur.rowcount > 0
     finally:
         conn.close()
 
 
-def update_user_role(user_id: str, is_admin: bool) -> bool:
+def update_user_role(user_id: str, is_admin: bool, updated_by: Optional[str] = None) -> bool:
     """修改用户管理员权限"""
     conn = get_db()
     try:
-        cur = conn.execute(
-            "UPDATE users SET is_admin = ? WHERE id = ?",
-            (1 if is_admin else 0, user_id)
-        )
+        schema_state = _user_schema_state(conn)
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not row:
+            conn.rollback()
+            return False
+        user = normalize_user_record(row, schema_state)
+        legacy_is_admin = 1 if is_admin else 0
+        if schema_state == ROLE_AUTH_READY:
+            target_role = ROLE_ADMIN if is_admin else ROLE_USER
+            role_changed = user["role"] != target_role
+            next_version = user["auth_version"] + (1 if role_changed else 0)
+            cur = conn.execute(
+                """
+                UPDATE users
+                SET role = ?, is_admin = ?, auth_version = ?,
+                    role_updated_at = ?, role_updated_by = ?
+                WHERE id = ?
+                """,
+                (
+                    target_role,
+                    legacy_is_admin,
+                    next_version,
+                    int(time.time() * 1000) if role_changed else user.get("role_updated_at"),
+                    updated_by if role_changed else user.get("role_updated_by"),
+                    user_id,
+                ),
+            )
+        else:
+            cur = conn.execute(
+                "UPDATE users SET is_admin = ? WHERE id = ?",
+                (legacy_is_admin, user_id),
+            )
         conn.commit()
         return cur.rowcount > 0
     finally:
@@ -495,10 +636,29 @@ def set_user_active(user_id: str, is_active: bool) -> bool:
     """启用或禁用账号。"""
     conn = get_db()
     try:
-        cur = conn.execute(
-            "UPDATE users SET is_active = ? WHERE id = ?",
-            (1 if is_active else 0, user_id)
-        )
+        schema_state = _user_schema_state(conn)
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not row:
+            conn.rollback()
+            return False
+        user = normalize_user_record(row, schema_state)
+        next_active = bool(is_active)
+        state_changed = user["is_active"] != next_active
+        if schema_state == ROLE_AUTH_READY:
+            cur = conn.execute(
+                "UPDATE users SET is_active = ?, auth_version = ? WHERE id = ?",
+                (
+                    1 if next_active else 0,
+                    user["auth_version"] + (1 if state_changed else 0),
+                    user_id,
+                ),
+            )
+        else:
+            cur = conn.execute(
+                "UPDATE users SET is_active = ? WHERE id = ?",
+                (1 if next_active else 0, user_id),
+            )
         conn.commit()
         return cur.rowcount > 0
     finally:

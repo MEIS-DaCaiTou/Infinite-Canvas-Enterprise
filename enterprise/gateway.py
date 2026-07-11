@@ -772,12 +772,13 @@ async def do_login(request: Request):
         return JSONResponse({"error": "用户名或密码错误"}, status_code=401)
 
     log_action(user["id"], "login")
-    token = create_token(user["id"], user["username"], bool(user["is_admin"]))
+    token = create_token(user["id"])
 
     next_url = request.query_params.get("next", "/")
     resp = JSONResponse({
         "success": True,
         "is_admin": bool(user["is_admin"]),
+        "role": user["role"],
         "next": next_url,
     })
     resp.set_cookie(
