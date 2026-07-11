@@ -277,6 +277,13 @@ def inspect_security_audit_connection(conn: sqlite3.Connection) -> dict[str, Any
         str(row[0]): (str(row[1]), str(row[2] or ""))
         for row in index_rows
     }
+    unexpected_indexes = sorted(
+        str(row[0])
+        for row in index_rows
+        if str(row[1]) == SECURITY_AUDIT_TABLE
+        and str(row[0]) not in SECURITY_AUDIT_INDEX_DEFINITIONS
+        and row[2] is not None
+    )
     missing_indexes: list[str] = []
     mismatched_indexes: list[str] = []
     for name, definition in SECURITY_AUDIT_INDEX_DEFINITIONS.items():
@@ -296,6 +303,12 @@ def inspect_security_audit_connection(conn: sqlite3.Connection) -> dict[str, Any
     ).fetchall()
     table_triggers = sorted(str(row[0]) for row in trigger_rows if str(row[1]) == SECURITY_AUDIT_TABLE)
     trigger_lookup = {str(row[0]): (str(row[1]), str(row[2] or "")) for row in trigger_rows}
+    unexpected_triggers = sorted(
+        str(row[0])
+        for row in trigger_rows
+        if str(row[1]) == SECURITY_AUDIT_TABLE
+        and str(row[0]) not in SECURITY_AUDIT_TRIGGER_DEFINITIONS
+    )
     missing_triggers: list[str] = []
     mismatched_triggers: list[str] = []
     for name, expected_sql in SECURITY_AUDIT_TRIGGER_DEFINITIONS.items():
@@ -308,6 +321,19 @@ def inspect_security_audit_connection(conn: sqlite3.Connection) -> dict[str, Any
             != _canonicalize_schema_sql(expected_sql)
         ):
             mismatched_triggers.append(name)
+
+    temporary_trigger_rows = conn.execute(
+        "SELECT name, tbl_name FROM sqlite_temp_master WHERE type = 'trigger'"
+    ).fetchall()
+    audit_table_names = {
+        SECURITY_AUDIT_TABLE.casefold(),
+        f"main.{SECURITY_AUDIT_TABLE}".casefold(),
+    }
+    temporary_triggers = sorted(
+        str(row[0])
+        for row in temporary_trigger_rows
+        if str(row[1]).casefold() in audit_table_names
+    )
 
     constraint_issues = (
         ["canonical_table_definition_mismatch"]
@@ -330,7 +356,7 @@ def inspect_security_audit_connection(conn: sqlite3.Connection) -> dict[str, Any
         except sqlite3.Error:
             event_count = None
 
-    if not object_row and not object_conflicts:
+    if not object_row and not object_conflicts and not temporary_triggers:
         state = SECURITY_AUDIT_MISSING
     elif (
         table_exists
@@ -338,8 +364,11 @@ def inspect_security_audit_connection(conn: sqlite3.Connection) -> dict[str, Any
         and table_definition_matches
         and not missing_indexes
         and not mismatched_indexes
+        and not unexpected_indexes
         and not missing_triggers
         and not mismatched_triggers
+        and not unexpected_triggers
+        and not temporary_triggers
         and not constraint_issues
         and not object_conflicts
         and event_count is not None
@@ -357,10 +386,16 @@ def inspect_security_audit_connection(conn: sqlite3.Connection) -> dict[str, Any
         warnings.append("security audit schema is missing required indexes")
     if mismatched_indexes:
         warnings.append("security audit indexes differ from canonical definitions")
+    if unexpected_indexes:
+        warnings.append("security audit table has non-canonical user indexes")
     if missing_triggers:
         warnings.append("security audit schema is missing append-only triggers")
     if mismatched_triggers:
         warnings.append("security audit triggers differ from canonical definitions")
+    if unexpected_triggers:
+        warnings.append("security audit table has non-canonical triggers")
+    if temporary_triggers:
+        warnings.append("security audit table has temporary triggers")
     if constraint_issues:
         warnings.append("security audit table differs from the canonical definition")
     if object_conflicts:
@@ -380,9 +415,12 @@ def inspect_security_audit_connection(conn: sqlite3.Connection) -> dict[str, Any
         "indexes": table_indexes,
         "missing_indexes": missing_indexes,
         "mismatched_indexes": mismatched_indexes,
+        "unexpected_indexes": unexpected_indexes,
         "triggers": table_triggers,
         "missing_triggers": missing_triggers,
         "mismatched_triggers": mismatched_triggers,
+        "unexpected_triggers": unexpected_triggers,
+        "temporary_triggers": temporary_triggers,
         "constraint_issues": constraint_issues,
         "object_conflicts": object_conflicts,
         "event_count": event_count,
@@ -612,8 +650,24 @@ def _append_with_connection(conn: sqlite3.Connection, event: dict[str, Any]) -> 
 
     event_id = uuid.uuid4().hex
     created_at = int(time.time() * 1000)
+    expected_row = (
+        event["operation_id"],
+        event["action"],
+        event["risk_level"],
+        event["result"],
+        event["actor_type"],
+        event["actor_user_id"],
+        event["actor_role"],
+        event["actor_label"],
+        event["capability"],
+        event["target_type"],
+        event["target_id"],
+        event["reason"],
+        event["context_json"],
+        created_at,
+    )
     try:
-        conn.execute(
+        cursor = conn.execute(
             f"""
             INSERT INTO {SECURITY_AUDIT_TABLE} (
                 event_id, operation_id, action, risk_level, result,
@@ -639,8 +693,23 @@ def _append_with_connection(conn: sqlite3.Connection, event: dict[str, Any]) -> 
                 created_at,
             ),
         )
+        if cursor.rowcount != 1:
+            raise SecurityAuditWriteError("mandatory security audit insert was not confirmed")
+        stored_rows = conn.execute(
+            f"""
+            SELECT
+                operation_id, action, risk_level, result, actor_type,
+                actor_user_id, actor_role, actor_label, capability,
+                target_type, target_id, reason, context_json, created_at
+            FROM {SECURITY_AUDIT_TABLE}
+            WHERE event_id = ?
+            """,
+            (event_id,),
+        ).fetchall()
     except sqlite3.Error as exc:
         raise SecurityAuditWriteError("mandatory security audit event could not be written") from exc
+    if len(stored_rows) != 1 or tuple(stored_rows[0]) != expected_row:
+        raise SecurityAuditWriteError("mandatory security audit insert was not confirmed")
     return {
         "event_id": event_id,
         "operation_id": event["operation_id"],

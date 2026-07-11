@@ -254,6 +254,9 @@ def _run_checks() -> None:
         assert ready["current_state"] == audit.SECURITY_AUDIT_READY
         assert set(ready["indexes"]) >= set(audit.SECURITY_AUDIT_INDEXES)
         assert set(ready["triggers"]) >= set(audit.SECURITY_AUDIT_TRIGGERS)
+        assert ready["unexpected_indexes"] == []
+        assert ready["unexpected_triggers"] == []
+        assert ready["temporary_triggers"] == []
         activation = _rows(
             apply_db,
             "SELECT action, risk_level, result, actor_type, actor_user_id, actor_role, "
@@ -360,6 +363,48 @@ def _run_checks() -> None:
             """,
         )
 
+        def assert_unexpected_trigger(filename: str, trigger_name: str, trigger_sql: str) -> None:
+            tampered_db = tmp / filename
+            _legacy_database(tampered_db)
+            _apply(tampered_db)
+            conn = sqlite3.connect(tampered_db)
+            conn.execute(trigger_sql)
+            conn.commit()
+            conn.close()
+            tampered = inspect_security_audit_schema(tampered_db)
+            assert tampered["current_state"] == audit.SECURITY_AUDIT_PARTIAL
+            assert tampered["unexpected_triggers"] == [trigger_name]
+            assert any("non-canonical triggers" in warning for warning in tampered["warnings"])
+            snapshot = _schema_snapshot(tampered_db)
+            plan = plan_security_audit_migration(tampered_db)
+            assert plan["can_apply"] is False
+            assert _schema_snapshot(tampered_db) == snapshot
+            _assert_raises(SecurityAuditMigrationError, lambda: _apply(tampered_db))
+            assert _schema_snapshot(tampered_db) == snapshot
+
+        assert_unexpected_trigger(
+            "unexpected-ignore-trigger.db",
+            "ignore_security_audit_insert",
+            """
+            CREATE TRIGGER ignore_security_audit_insert
+            BEFORE INSERT ON security_audit_events
+            BEGIN
+                SELECT RAISE(IGNORE);
+            END
+            """,
+        )
+        assert_unexpected_trigger(
+            "unexpected-benign-trigger.db",
+            "observe_security_audit_insert",
+            """
+            CREATE TRIGGER observe_security_audit_insert
+            AFTER INSERT ON security_audit_events
+            BEGIN
+                SELECT 1;
+            END
+            """,
+        )
+
         index_tamper_db = tmp / "different-index-definition.db"
         _legacy_database(index_tamper_db)
         _apply(index_tamper_db)
@@ -374,6 +419,24 @@ def _run_checks() -> None:
         index_tampered = inspect_security_audit_schema(index_tamper_db)
         assert index_tampered["current_state"] == audit.SECURITY_AUDIT_PARTIAL
         assert "idx_security_audit_operation" in index_tampered["mismatched_indexes"]
+
+        extra_index_db = tmp / "unexpected-index.db"
+        _legacy_database(extra_index_db)
+        _apply(extra_index_db)
+        conn = sqlite3.connect(extra_index_db)
+        conn.execute(
+            "CREATE INDEX idx_security_audit_extra ON security_audit_events (created_at, id)"
+        )
+        conn.commit()
+        conn.close()
+        extra_index = inspect_security_audit_schema(extra_index_db)
+        assert extra_index["current_state"] == audit.SECURITY_AUDIT_PARTIAL
+        assert extra_index["unexpected_indexes"] == ["idx_security_audit_extra"]
+        extra_index_snapshot = _schema_snapshot(extra_index_db)
+        assert plan_security_audit_migration(extra_index_db)["can_apply"] is False
+        assert _schema_snapshot(extra_index_db) == extra_index_snapshot
+        _assert_raises(SecurityAuditMigrationError, lambda: _apply(extra_index_db))
+        assert _schema_snapshot(extra_index_db) == extra_index_snapshot
 
         comment_table_db = tmp / "comment-fake-constraint.db"
         _legacy_database(comment_table_db)
@@ -640,33 +703,122 @@ def _run_checks() -> None:
 
         conn.execute(
             """
-            CREATE TEMP TRIGGER fail_mandatory_audit
-            BEFORE INSERT ON security_audit_events
-            WHEN NEW.operation_id = 'op-injected-write-failure'
+            CREATE TEMP TRIGGER ignore_mandatory_audit
+            BEFORE INSERT ON main.security_audit_events
             BEGIN
-                SELECT RAISE(ABORT, 'injected write failure');
+                SELECT RAISE(IGNORE);
             END
             """
         )
         conn.commit()
-        usage_count = conn.execute("SELECT COUNT(*) FROM usage_logs").fetchone()[0]
-        conn.execute("BEGIN IMMEDIATE")
-        conn.execute("INSERT INTO transaction_probe (id) VALUES ('failed-business')")
+        temp_inspection = inspect_security_audit_schema(conn)
+        assert temp_inspection["current_state"] == audit.SECURITY_AUDIT_PARTIAL
+        assert temp_inspection["temporary_triggers"] == ["ignore_mandatory_audit"]
+        assert any("temporary triggers" in warning for warning in temp_inspection["warnings"])
+        assert plan_security_audit_migration(conn)["can_apply"] is False
         _assert_raises(
-            audit.SecurityAuditWriteError,
+            SecurityAuditMigrationError,
+            lambda: apply_security_audit_migration(
+                conn,
+                actor_user_id="admin-id",
+                actor_label="temporary-local-operator",
+                operation_id="op-temp-trigger-apply-rejected",
+                reason="verify temporary trigger is not auto-repaired",
+            ),
+        )
+        assert inspect_security_audit_schema(conn)["temporary_triggers"] == [
+            "ignore_mandatory_audit"
+        ]
+        usage_count = conn.execute("SELECT COUNT(*) FROM usage_logs").fetchone()[0]
+        event_count = conn.execute("SELECT COUNT(*) FROM security_audit_events").fetchone()[0]
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("INSERT INTO transaction_probe (id) VALUES ('temp-trigger-rejected-business')")
+        _assert_raises(
+            audit.SecurityAuditSchemaError,
             lambda: audit.append_security_audit_event(
-                **_event_kwargs("op-injected-write-failure"),
+                **_event_kwargs("op-temp-trigger-schema-rejected"),
                 connection=conn,
             ),
         )
         assert conn.in_transaction is True
         conn.rollback()
         assert conn.execute(
-            "SELECT COUNT(*) FROM transaction_probe WHERE id = 'failed-business'"
+            "SELECT COUNT(*) FROM transaction_probe WHERE id = 'temp-trigger-rejected-business'"
+        ).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM security_audit_events").fetchone()[0] == event_count
+        assert conn.execute("SELECT COUNT(*) FROM usage_logs").fetchone()[0] == usage_count
+
+        original_inspect = audit.inspect_security_audit_connection
+        audit.inspect_security_audit_connection = lambda _conn: {
+            **temp_inspection,
+            "current_state": audit.SECURITY_AUDIT_READY,
+        }
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute("INSERT INTO transaction_probe (id) VALUES ('silent-ignore-business')")
+            _assert_raises(
+                audit.SecurityAuditWriteError,
+                lambda: audit.append_security_audit_event(
+                    **_event_kwargs("op-silent-ignore"),
+                    connection=conn,
+                ),
+            )
+            assert conn.in_transaction is True
+        finally:
+            audit.inspect_security_audit_connection = original_inspect
+        conn.rollback()
+        assert conn.execute(
+            "SELECT COUNT(*) FROM transaction_probe WHERE id = 'silent-ignore-business'"
+        ).fetchone()[0] == 0
+        assert conn.execute(
+            "SELECT COUNT(*) FROM security_audit_events WHERE operation_id = 'op-silent-ignore'"
         ).fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM usage_logs").fetchone()[0] == usage_count
-        conn.execute("DROP TRIGGER fail_mandatory_audit")
+        assert not list(tmp.rglob("*.log"))
+        assert conn.execute("SELECT 1").fetchone()[0] == 1
+        conn.execute("DROP TRIGGER ignore_mandatory_audit")
         conn.commit()
+
+        readback_db = tmp / "write-readback-mismatch.db"
+        _legacy_database(readback_db)
+        _apply(readback_db)
+        readback_conn = sqlite3.connect(readback_db)
+        ready_inspection = inspect_security_audit_schema(readback_conn)
+        readback_conn.execute("DROP TRIGGER trg_security_audit_no_update")
+        readback_conn.execute(
+            """
+            CREATE TEMP TRIGGER alter_mandatory_audit
+            AFTER INSERT ON main.security_audit_events
+            BEGIN
+                UPDATE security_audit_events
+                SET result = 'failed'
+                WHERE event_id = NEW.event_id;
+            END
+            """
+        )
+        readback_conn.commit()
+        readback_usage_count = readback_conn.execute("SELECT COUNT(*) FROM usage_logs").fetchone()[0]
+        original_inspect = audit.inspect_security_audit_connection
+        audit.inspect_security_audit_connection = lambda _conn: ready_inspection
+        try:
+            readback_conn.execute("BEGIN IMMEDIATE")
+            _assert_raises(
+                audit.SecurityAuditWriteError,
+                lambda: audit.append_security_audit_event(
+                    **_event_kwargs("op-readback-mismatch"),
+                    connection=readback_conn,
+                ),
+            )
+            assert readback_conn.in_transaction is True
+        finally:
+            audit.inspect_security_audit_connection = original_inspect
+        readback_conn.rollback()
+        assert readback_conn.execute(
+            "SELECT COUNT(*) FROM security_audit_events WHERE operation_id = 'op-readback-mismatch'"
+        ).fetchone()[0] == 0
+        assert readback_conn.execute("SELECT COUNT(*) FROM usage_logs").fetchone()[0] == readback_usage_count
+        assert readback_conn.execute("SELECT 1").fetchone()[0] == 1
+        readback_conn.close()
 
         # H. Main-schema UPDATE/DELETE triggers preserve immutable rows.
         immutable = conn.execute(
