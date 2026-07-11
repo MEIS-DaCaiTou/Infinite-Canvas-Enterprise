@@ -1,6 +1,6 @@
 # Infinite-Canvas-Enterprise 开发路线图（2026-2027）
 
-更新时间：2026-07-10
+更新时间：2026-07-11
 ARCH-2A 代码核对基线（PR #69 合并后）：`a095ce2eb9ef9afda356cb6f20b6c38851f52b1d`
 
 ## 1. 路线原则
@@ -29,6 +29,7 @@ ARCH-2A 代码核对基线（PR #69 合并后）：`a095ce2eb9ef9afda356cb6f20b6
 | ARCH-2A | 已完成，PR #70 | 当前架构评估、目标原则和 P0 / P1 / P2 / P3 演进方向同步。 |
 | SEC-1A | 已完成 ADR 决策，PR #71 | 超级管理员、Capability、L0–L3、Step-up 和高风险治理基线；不代表任何超级管理员或安全能力已经实现。 |
 | SEC-1B1 | 仓库实现与临时数据库验证完成，PR #72 | role / auth_version、新旧 schema 兼容、显式 migration 基础和 JWT 当前状态加载；生产 migration 未激活。 |
+| SEC-1F0 | 仓库实现与临时数据库验证完成，PR #73 | 最小强制安全审计 Schema、append-only writer、显式 migration 和 fail closed；生产 Schema 未激活，在线操作未接线。 |
 
 OPS-2A / OPS-2B 已进入 main，项目负责人已在生产侧人工完成 dry-run 和一次单独确认的正式备份。该事实不代表 restore、upgrade、apply-upgrade 或 rollback 已实现，也不代表生产已经升级。当前 `check-data` 仍有 warn，数据未被自动修复。
 
@@ -46,7 +47,7 @@ ARCH-2A 完成不代表以下事项已经实施：
 - apply-upgrade、restore 或 rollback executor。
 - 自动 owner-map 修复。
 
-SEC-1A 已完成 ADR 决策，由 PR #71 承载。SEC-1B1 已完成仓库实现和临时数据库验证，由 PR #72 承载；不代表生产 migration 已激活、super_admin 已创建或 SEC-1C0 / Capability / Step-up / 安全审计已经实现。当前下一阶段是 SEC-1F0，随后是 SEC-1C0；SEC-1B2 migration activation 与首次 bootstrap 必须后置到两者。每个安全事项必须使用独立 Issue、独立分支和独立 Draft PR。
+SEC-1A 已完成 ADR 决策，由 PR #71 承载。SEC-1B1 和 SEC-1F0 已完成仓库实现及临时数据库验证，分别由 PR #72 和 PR #73 承载；不代表任何 production migration 已激活、super_admin 已创建、现有管理操作已接入 mandatory audit，或 SEC-1C0 / Capability / Step-up 已实现。当前下一阶段是 SEC-1C0；SEC-1B2 migration activation 与首次 bootstrap 必须后置到 SEC-1F0 和 SEC-1C0。每个安全事项必须使用独立 Issue、独立分支和独立 Draft PR。
 
 ## 4. 近期路线
 
@@ -66,7 +67,7 @@ SEC-1A 只完成 ADR。后续按独立 Issue / Draft PR 实施：
 | --- | --- | --- |
 | SEC-1A | user / admin / super_admin、Capability、L0–L3、Step-up、bootstrap 和高风险治理 ADR | ADR 决策完成；未实现代码 |
 | SEC-1B1 | `role`、`auth_version`、migration、JWT 当前状态加载和旧 Token 撤销的实现与临时数据库验证；不激活生产 migration | 仓库实现完成，PR #72；生产未激活 |
-| SEC-1F0 | 最小强制安全审计 schema、append-only 写入、bootstrap / role change / break-glass、敏感字段禁记、fail closed 和临时数据库测试 | 下一阶段，SEC-1B2 前置，未实现 |
+| SEC-1F0 | 最小强制安全审计 schema、append-only 写入、bootstrap / role change / break-glass catalog、敏感字段禁记、fail closed 和临时数据库测试 | 仓库实现完成，PR #73；生产未激活，在线操作未接线 |
 | SEC-1C0 | 首次 bootstrap 前的 super_admin 过渡保护：admin 不得影响 super_admin、禁止自行提权、正常在线事务不得将 active super_admin 降为零；不实现完整 Capability | SEC-1F0 后置、SEC-1B2 前置，未实现 |
 | SEC-1B2 | migration activation 与本机首次 super_admin bootstrap；依次进入 `UNINITIALIZED`、`ACTIVE` | SEC-1F0 和 SEC-1C0 后置，未实现 |
 | SEC-1C | Capability 后端门禁、最后超级管理员保护、防自我提权、admin 不得影响 super_admin | 未实现 |

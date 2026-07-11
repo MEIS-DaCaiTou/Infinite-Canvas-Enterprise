@@ -475,6 +475,8 @@ SEC-1F0 暂不包括：
 
 SEC-1F0 是 SEC-1B2 首次 bootstrap 的前置门禁，不代表完整安全审计系统已经实现。
 
+SEC-1F0 的仓库实现见 [SEC-1F0：最小强制安全审计基础](../security/SEC-1F0-MANDATORY-SECURITY-AUDIT-IMPLEMENTATION-2026-07.md)。该阶段只提供显式 migration、append-only writer、敏感字段拒绝和 fail-closed 底层异常；完整查询、导出、保留和归档仍属于 SEC-1F。
+
 ### 14.2 完整安全审计目标
 
 目标字段至少包括：

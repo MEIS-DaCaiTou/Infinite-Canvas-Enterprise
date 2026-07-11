@@ -16,6 +16,7 @@ Before adding or changing scripts, read:
 - `test_start_stop.ps1` verifies the launcher lifecycle: stop old listeners, start the enterprise launcher, wait for health, terminate the launcher, and confirm `3001/8000` are released.
 - `test_ops_runner.py` verifies the OPS-2A command runner with temporary app roots, including inventory, backup manifest/copy, data-check, release validation, upgrade-plan generation, and JSONL job logs.
 - `test_sec_1b1_role_auth.py` verifies legacy/new users schemas, explicit role/auth migration planning and rollback, current-state JWT principals, auth-version session invalidation, and existing admin/feature/WebSocket compatibility using temporary SQLite databases only.
+- `test_sec_1f0_security_audit.py` verifies the explicit mandatory security-audit migration, append-only triggers, actor validation, caller-owned transactions, fail-closed writes, recursive sensitive-field rejection, and bounded JSON context using temporary SQLite databases only.
 - `test_ownership_isolation.py` runs non-destructive ownership isolation checks with a temporary SQLite database and temporary project/canvas/conversation files, including A/B/admin project owner, project-list, canvas-move, and direct-ID denial cases.
 - `test_smart_canvas_logs.js` verifies Smart Canvas legacy log normalization, merge behavior, and async task completion logging hooks without calling a model provider.
 - `SMOKE_CHECKLIST.md` is the manual checklist to run after every upstream update.
