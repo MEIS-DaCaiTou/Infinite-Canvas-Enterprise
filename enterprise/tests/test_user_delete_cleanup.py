@@ -62,11 +62,21 @@ async def _run_checks() -> None:
 
         from enterprise import admin_api
         from enterprise import db as edb
+        from enterprise.migrations.sec_1f0_security_audit import (
+            apply_security_audit_migration,
+        )
 
         edb.init_db()
         user_a = edb.create_user("delete_a", "password-a", "Delete A", False)
         user_b = edb.create_user("delete_b", "password-b", "Delete B", False)
         admin = edb.get_user_by_username("admin")
+        apply_security_audit_migration(
+            edb.DB_PATH,
+            actor_user_id=admin["id"],
+            actor_label="temporary-user-delete-operator",
+            operation_id="op-user-delete-audit-activation",
+            reason="temporary user-delete regression fixture",
+        )
 
         actor_a = {"user_id": user_a["id"], "username": "delete_a", "is_admin": False}
         actor_admin = {"user_id": admin["id"], "username": "admin", "is_admin": True}

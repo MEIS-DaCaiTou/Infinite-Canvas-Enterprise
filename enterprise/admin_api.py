@@ -8,8 +8,25 @@ from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
 
 from enterprise import db as edb
+from enterprise import security_user_governance as user_governance
+from enterprise.migrations.sec_1b1_role_auth import ROLE_AUTH_READY
 
 router = APIRouter()
+
+
+def _raise_governance_http(exc: user_governance.UserGovernanceError) -> None:
+    raise HTTPException(
+        status_code=exc.status_code,
+        detail={"code": exc.code, "message": exc.public_message},
+    ) from exc
+
+
+def _role_auth_ready() -> bool:
+    try:
+        return user_governance.get_role_auth_schema_state() == ROLE_AUTH_READY
+    except user_governance.UserGovernanceError as exc:
+        _raise_governance_http(exc)
+    return False
 
 
 def _require_admin(request: Request) -> dict:
@@ -129,7 +146,8 @@ async def create_user(request: Request):
     username = (body.get("username") or "").strip()
     password = (body.get("password") or "").strip()
     display_name = (body.get("display_name") or "").strip()
-    is_admin = bool(body.get("is_admin", False))
+    requested_is_admin = body.get("is_admin", False)
+    is_admin = bool(requested_is_admin)
 
     if not username or not password:
         raise HTTPException(status_code=400, detail="用户名和密码不能为空")
@@ -137,7 +155,21 @@ async def create_user(request: Request):
         raise HTTPException(status_code=400, detail="密码至少6位")
 
     try:
-        result = edb.create_user(username, password, display_name, is_admin)
+        if _role_auth_ready():
+            result = user_governance.create_ordinary_user(
+                actor_user_id=current["user_id"],
+                username=username,
+                password=password,
+                display_name=display_name,
+                requested_is_admin=requested_is_admin,
+                role_field_present="role" in body,
+                requested_role=body.get("role"),
+            )
+            is_admin = False
+        else:
+            result = edb.create_user(username, password, display_name, is_admin)
+    except user_governance.UserGovernanceError as exc:
+        _raise_governance_http(exc)
     except Exception as e:
         if "UNIQUE" in str(e):
             raise HTTPException(status_code=409, detail="用户名已存在")
@@ -157,21 +189,44 @@ async def create_user(request: Request):
 @router.put("/api/users/{user_id}/password")
 async def reset_password(user_id: str, request: Request):
     current = _require_admin(request)
-    target = edb.get_user_by_id_any_status(user_id)
-    if not target:
-        raise HTTPException(status_code=404, detail="用户不存在")
     body = await request.json()
     new_password = (body.get("password") or "").strip()
     if len(new_password) < 6:
         raise HTTPException(status_code=400, detail="密码至少6位")
-    edb.update_user_password(user_id, new_password)
+    ready = _role_auth_ready()
+    if ready:
+        try:
+            result = user_governance.reset_user_password(
+                actor_user_id=current["user_id"],
+                target_user_id=user_id,
+                new_password=new_password,
+                reason=body.get("reason"),
+            )
+        except user_governance.UserGovernanceError as exc:
+            _raise_governance_http(exc)
+        target = result["user"]
+    else:
+        target = _target_user_or_404(user_id)
+        edb.update_user_password(user_id, new_password)
     _audit_user_action(current, "user_password_reset", target, f"重置用户 {target['username']} 的密码")
-    return {"success": True, "user_id": user_id}
+    return {
+        "success": True,
+        "user_id": user_id,
+        **({"operation_id": result["operation_id"]} if ready else {}),
+    }
 
 
 @router.put("/api/users/{user_id}/role")
 async def update_user_role(user_id: str, request: Request):
     current = _require_admin(request)
+    if _role_auth_ready():
+        try:
+            user_governance.deny_online_role_change(
+                actor_user_id=current["user_id"],
+                target_user_id=user_id,
+            )
+        except user_governance.UserGovernanceError as exc:
+            _raise_governance_http(exc)
     if user_id == current["user_id"]:
         raise HTTPException(status_code=400, detail="不能修改自己的权限")
     target = edb.get_user_by_id_any_status(user_id)
@@ -193,13 +248,33 @@ async def update_user_role(user_id: str, request: Request):
 @router.put("/api/users/{user_id}/active")
 async def update_user_active(user_id: str, request: Request):
     current = _require_admin(request)
-    target = edb.get_user_by_id_any_status(user_id)
-    if not target:
-        raise HTTPException(status_code=404, detail="用户不存在")
     body = await request.json()
     if "is_active" not in body or not isinstance(body.get("is_active"), bool):
         raise HTTPException(status_code=400, detail="is_active 必须是布尔值")
     is_active = body["is_active"]
+    if _role_auth_ready():
+        try:
+            result = user_governance.set_user_active(
+                actor_user_id=current["user_id"],
+                target_user_id=user_id,
+                is_active=is_active,
+                reason=body.get("reason"),
+            )
+        except user_governance.UserGovernanceError as exc:
+            _raise_governance_http(exc)
+        target = result["user"]
+        action = "user_enabled" if is_active else "user_disabled"
+        summary = f"{'启用' if is_active else '禁用'}用户 {target['username']}"
+        _audit_user_action(current, action, target, summary, {"is_active": is_active})
+        return {
+            "success": True,
+            "user_id": user_id,
+            "is_active": is_active,
+            "status": "enabled" if is_active else "disabled",
+            "operation_id": result["operation_id"],
+        }
+
+    target = _target_user_or_404(user_id)
     if user_id == current["user_id"] and not is_active:
         raise HTTPException(status_code=400, detail="不能禁用自己")
 
@@ -221,13 +296,25 @@ async def update_user_active(user_id: str, request: Request):
 @router.put("/api/users/{user_id}/profile")
 async def update_user_profile(user_id: str, request: Request):
     current = _require_admin(request)
-    target = edb.get_user_by_id_any_status(user_id)
-    if not target:
-        raise HTTPException(status_code=404, detail="用户不存在")
     body = await request.json()
-    display_name = (body.get("display_name") or "").strip() or target["username"]
-    edb.update_user_profile(user_id, display_name)
-    updated = {**target, "display_name": display_name}
+    display_name = (body.get("display_name") or "").strip()
+    if _role_auth_ready():
+        try:
+            current_target = user_governance.update_user_profile(
+                actor_user_id=current["user_id"],
+                target_user_id=user_id,
+                display_name=display_name,
+            )
+        except user_governance.UserGovernanceError as exc:
+            _raise_governance_http(exc)
+        updated = current_target["user"]
+        target = updated
+        display_name = updated["display_name"]
+    else:
+        target = _target_user_or_404(user_id)
+        display_name = display_name or target["username"]
+        edb.update_user_profile(user_id, display_name)
+        updated = {**target, "display_name": display_name}
     _audit_user_action(
         current,
         "user_profile_updated",
@@ -241,6 +328,48 @@ async def update_user_profile(user_id: str, request: Request):
 @router.delete("/api/users/{user_id}")
 async def delete_user(user_id: str, request: Request):
     current = _require_admin(request)
+    if _role_auth_ready():
+        try:
+            body = await request.json()
+        except Exception:
+            body = None
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="confirm_username is required")
+        try:
+            result = user_governance.soft_delete_user(
+                actor_user_id=current["user_id"],
+                target_user_id=user_id,
+                confirm_username=body.get("confirm_username"),
+                reason=body.get("reason"),
+            )
+        except user_governance.UserGovernanceError as exc:
+            _raise_governance_http(exc)
+        target = result["user"]
+        previous_is_active = bool(target.get("is_active"))
+        _audit_user_action(
+            current,
+            "user_deleted",
+            target,
+            f"删除/软禁用用户 {target['username']}",
+            {
+                "is_active": False,
+                "soft_delete": True,
+                "previous_is_active": previous_is_active,
+                "reason": body.get("reason"),
+                "owned_data_retained": True,
+                "runtime_files_deleted": False,
+                "owner_mappings_cleaned": False,
+            },
+        )
+        return {
+            "success": True,
+            "user_id": user_id,
+            "is_active": False,
+            "status": "disabled",
+            "soft_deleted": True,
+            "operation_id": result["operation_id"],
+        }
+
     if user_id == current["user_id"]:
         raise HTTPException(status_code=400, detail="不能删除自己")
     target = edb.get_user_by_id_any_status(user_id)
@@ -690,6 +819,18 @@ async def change_my_password(request: Request):
         raise HTTPException(status_code=400, detail="旧密码和新密码不能为空")
     if len(new_password) < 6:
         raise HTTPException(status_code=400, detail="新密码至少6位")
+
+    if _role_auth_ready():
+        try:
+            result = user_governance.change_own_password(
+                actor_user_id=user["user_id"],
+                old_password=old_password,
+                new_password=new_password,
+            )
+        except user_governance.UserGovernanceError as exc:
+            _raise_governance_http(exc)
+        edb.log_action(user["user_id"], "password_changed", None)
+        return {"success": True, "operation_id": result["operation_id"]}
 
     db_user = edb.get_user_by_id(user["user_id"])
     if not db_user or not edb.verify_password(old_password, db_user["password_hash"]):
