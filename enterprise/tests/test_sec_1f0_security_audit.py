@@ -257,6 +257,7 @@ def _run_checks() -> None:
         assert ready["unexpected_indexes"] == []
         assert ready["unexpected_triggers"] == []
         assert ready["temporary_triggers"] == []
+        assert ready["temporary_shadow_objects"] == []
         activation = _rows(
             apply_db,
             "SELECT action, risk_level, result, actor_type, actor_user_id, actor_role, "
@@ -280,6 +281,212 @@ def _run_checks() -> None:
         assert second_apply["activation_event_written"] is False
         assert second_apply["event_count"] == 1
         assert "actor_role" not in inspect.signature(apply_security_audit_migration).parameters
+
+        # TEMP table/view names cannot shadow the durable main audit table.
+        shadow_db = tmp / "temporary-audit-shadow.db"
+        _legacy_database(shadow_db)
+        _apply(shadow_db)
+        shadow_conn = sqlite3.connect(shadow_db)
+        ready_shadow_inspection = inspect_security_audit_schema(shadow_conn)
+        main_schema_before_shadow = shadow_conn.execute(
+            "SELECT type, name, tbl_name, sql FROM main.sqlite_master ORDER BY type, name"
+        ).fetchall()
+        shadow_conn.execute(
+            "CREATE TEMP TABLE security_audit_events AS "
+            "SELECT * FROM main.security_audit_events WHERE 0"
+        )
+        shadow_conn.commit()
+        table_shadow = inspect_security_audit_schema(shadow_conn)
+        assert table_shadow["current_state"] == audit.SECURITY_AUDIT_PARTIAL
+        assert table_shadow["temporary_shadow_objects"] == [
+            {"type": "table", "name": "security_audit_events"}
+        ]
+        assert any("temporary shadow objects" in warning for warning in table_shadow["warnings"])
+        assert plan_security_audit_migration(shadow_conn)["can_apply"] is False
+        _assert_raises(
+            SecurityAuditMigrationError,
+            lambda: apply_security_audit_migration(
+                shadow_conn,
+                actor_user_id="admin-id",
+                actor_label="temporary-local-operator",
+                operation_id="op-temp-table-shadow-apply",
+                reason="verify temporary table shadow is rejected",
+            ),
+        )
+        assert shadow_conn.execute(
+            "SELECT type FROM sqlite_temp_master WHERE name = 'security_audit_events'"
+        ).fetchone() == ("table",)
+        assert shadow_conn.execute(
+            "SELECT type, name, tbl_name, sql FROM main.sqlite_master ORDER BY type, name"
+        ).fetchall() == main_schema_before_shadow
+
+        # Even if inspect is bypassed, writer data operations remain main-qualified.
+        original_inspect = audit.inspect_security_audit_connection
+        audit.inspect_security_audit_connection = lambda _conn: ready_shadow_inspection
+        try:
+            shadow_conn.execute("BEGIN IMMEDIATE")
+            rollback_shadow_event = audit.append_security_audit_event(
+                **_event_kwargs("op-main-shadow-rollback"),
+                connection=shadow_conn,
+            )
+            assert shadow_conn.execute(
+                "SELECT COUNT(*) FROM main.security_audit_events WHERE event_id = ?",
+                (rollback_shadow_event["event_id"],),
+            ).fetchone()[0] == 1
+            assert shadow_conn.execute(
+                "SELECT COUNT(*) FROM temp.security_audit_events WHERE event_id = ?",
+                (rollback_shadow_event["event_id"],),
+            ).fetchone()[0] == 0
+            assert shadow_conn.in_transaction is True
+            shadow_conn.rollback()
+            assert shadow_conn.execute(
+                "SELECT COUNT(*) FROM main.security_audit_events WHERE event_id = ?",
+                (rollback_shadow_event["event_id"],),
+            ).fetchone()[0] == 0
+
+            shadow_conn.execute("BEGIN IMMEDIATE")
+            committed_shadow_event = audit.append_security_audit_event(
+                **_event_kwargs("op-main-shadow-commit", result="success"),
+                connection=shadow_conn,
+            )
+            assert shadow_conn.in_transaction is True
+            shadow_conn.commit()
+            assert shadow_conn.execute(
+                "SELECT COUNT(*) FROM main.security_audit_events WHERE event_id = ?",
+                (committed_shadow_event["event_id"],),
+            ).fetchone()[0] == 1
+            assert shadow_conn.execute(
+                "SELECT COUNT(*) FROM temp.security_audit_events WHERE event_id = ?",
+                (committed_shadow_event["event_id"],),
+            ).fetchone()[0] == 0
+        finally:
+            audit.inspect_security_audit_connection = original_inspect
+        assert shadow_conn.execute("SELECT 1").fetchone()[0] == 1
+        shadow_conn.execute("DROP TABLE temp.security_audit_events")
+        shadow_conn.execute(
+            "CREATE TEMP VIEW SECURITY_AUDIT_EVENTS AS "
+            "SELECT * FROM main.security_audit_events"
+        )
+        shadow_conn.commit()
+        view_shadow = inspect_security_audit_schema(shadow_conn)
+        assert view_shadow["current_state"] == audit.SECURITY_AUDIT_PARTIAL
+        assert view_shadow["temporary_shadow_objects"] == [
+            {"type": "view", "name": "SECURITY_AUDIT_EVENTS"}
+        ]
+        assert plan_security_audit_migration(shadow_conn)["can_apply"] is False
+        _assert_raises(
+            SecurityAuditMigrationError,
+            lambda: apply_security_audit_migration(
+                shadow_conn,
+                actor_user_id="admin-id",
+                actor_label="temporary-local-operator",
+                operation_id="op-temp-view-shadow-apply",
+                reason="verify temporary view shadow is rejected",
+            ),
+        )
+        assert shadow_conn.execute(
+            "SELECT type FROM sqlite_temp_master "
+            "WHERE name = 'security_audit_events' COLLATE NOCASE"
+        ).fetchone() == ("view",)
+        shadow_conn.execute("DROP VIEW temp.SECURITY_AUDIT_EVENTS")
+        shadow_conn.commit()
+        shadow_conn.close()
+
+        # Activation actor identity and role always come from main.users.
+        def add_forged_temp_user(
+            conn: sqlite3.Connection,
+            *,
+            user_id: str,
+            role: str,
+            is_active: int,
+        ) -> None:
+            conn.executescript(
+                """
+                CREATE TEMP TABLE users (
+                    id TEXT PRIMARY KEY,
+                    username TEXT,
+                    password_hash TEXT,
+                    display_name TEXT,
+                    is_admin INTEGER,
+                    is_active INTEGER,
+                    created_at INTEGER,
+                    last_login INTEGER,
+                    role TEXT,
+                    auth_version INTEGER,
+                    role_updated_at INTEGER,
+                    role_updated_by TEXT
+                );
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO temp.users (
+                    id, username, password_hash, display_name, is_admin,
+                    is_active, created_at, role, auth_version
+                ) VALUES (?, ?, 'temporary-hash', 'Forged', 1, ?, 1, ?, 1)
+                """,
+                (user_id, f"temp-{user_id}", is_active, role),
+            )
+            conn.commit()
+
+        for filename, actor_id in (
+            ("temp-users-forged-admin.db", "user-id"),
+            ("temp-users-forged-active.db", "disabled-admin-id"),
+        ):
+            actor_db = tmp / filename
+            _legacy_database(actor_db)
+            actor_conn = sqlite3.connect(actor_db)
+            add_forged_temp_user(
+                actor_conn,
+                user_id=actor_id,
+                role="super_admin",
+                is_active=1,
+            )
+            _assert_raises(
+                SecurityAuditMigrationError,
+                lambda conn=actor_conn, user_id=actor_id: apply_security_audit_migration(
+                    conn,
+                    actor_user_id=user_id,
+                    actor_label="temporary-local-operator",
+                    operation_id=f"op-reject-{user_id}",
+                    reason="verify main user state rejects forged temp actor",
+                ),
+            )
+            assert actor_conn.execute(
+                "SELECT 1 FROM main.sqlite_master "
+                "WHERE type = 'table' AND name = 'security_audit_events'"
+            ).fetchone() is None
+            assert actor_conn.execute(
+                "SELECT role FROM temp.users WHERE id = ?",
+                (actor_id,),
+            ).fetchone() == ("super_admin",)
+            actor_conn.close()
+
+        active_admin_db = tmp / "temp-users-cannot-demote-main-admin.db"
+        _legacy_database(active_admin_db)
+        active_admin_conn = sqlite3.connect(active_admin_db)
+        add_forged_temp_user(
+            active_admin_conn,
+            user_id="admin-id",
+            role="user",
+            is_active=0,
+        )
+        active_admin_apply = apply_security_audit_migration(
+            active_admin_conn,
+            actor_user_id="admin-id",
+            actor_label="temporary-local-operator",
+            operation_id="op-main-admin-wins",
+            reason="verify main active admin is authoritative",
+        )
+        assert active_admin_apply["current_state"] == audit.SECURITY_AUDIT_READY
+        assert active_admin_conn.execute(
+            "SELECT actor_role FROM main.security_audit_events "
+            "WHERE operation_id = 'op-main-admin-wins'"
+        ).fetchone() == ("admin",)
+        assert active_admin_conn.execute(
+            "SELECT role, is_active FROM temp.users WHERE id = 'admin-id'"
+        ).fetchone() == ("user", 0)
+        active_admin_conn.close()
 
         # Canonical DDL is exact: inert, rebound, or altered managed objects are PARTIAL.
         def assert_trigger_tamper(

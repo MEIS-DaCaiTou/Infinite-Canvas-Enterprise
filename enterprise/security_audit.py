@@ -13,7 +13,6 @@ from enterprise.migrations.sec_1b1_role_auth import (
     ROLE_AUTH_READY,
     SCHEMA_LEGACY,
     classify_role_auth_schema,
-    get_user_columns,
 )
 from enterprise.migrations.sqlite_existing import open_existing_sqlite
 from enterprise.roles import (
@@ -243,14 +242,35 @@ def _canonicalize_schema_sql(value: str | None) -> str:
     return "".join(result).rstrip(";")
 
 
-def _index_columns(conn: sqlite3.Connection, name: str) -> tuple[str, ...]:
-    return tuple(str(row[2]) for row in conn.execute(f'PRAGMA index_info("{name}")').fetchall())
+def _main_table_columns(conn: sqlite3.Connection, table_name: str) -> tuple[str, ...]:
+    """Read columns only from a fixed SEC-1F0 main-schema table."""
+    if table_name not in {SECURITY_AUDIT_TABLE, "users"}:
+        raise ValueError("unsupported main-schema table")
+    exists = conn.execute(
+        "SELECT 1 FROM main.sqlite_master WHERE type = 'table' AND name = ?",
+        (table_name,),
+    ).fetchone()
+    if not exists:
+        return ()
+    return tuple(
+        str(row[1])
+        for row in conn.execute(f'PRAGMA main.table_info("{table_name}")').fetchall()
+    )
+
+
+def _main_index_columns(conn: sqlite3.Connection, name: str) -> tuple[str, ...]:
+    if name not in SECURITY_AUDIT_INDEX_DEFINITIONS:
+        raise ValueError("unsupported main-schema index")
+    return tuple(
+        str(row[2])
+        for row in conn.execute(f'PRAGMA main.index_info("{name}")').fetchall()
+    )
 
 
 def inspect_security_audit_connection(conn: sqlite3.Connection) -> dict[str, Any]:
     """Require managed objects to exactly match the canonical SEC-1F0 DDL."""
     object_row = conn.execute(
-        "SELECT type, sql FROM sqlite_master WHERE name = ?",
+        "SELECT type, sql FROM main.sqlite_master WHERE name = ?",
         (SECURITY_AUDIT_TABLE,),
     ).fetchone()
     object_type = str(object_row[0]) if object_row else None
@@ -258,7 +278,7 @@ def inspect_security_audit_connection(conn: sqlite3.Connection) -> dict[str, Any
     table_sql = str(object_row[1] or "") if object_row else ""
 
     columns = (
-        tuple(str(row[1]) for row in conn.execute(f"PRAGMA table_info({SECURITY_AUDIT_TABLE})").fetchall())
+        _main_table_columns(conn, SECURITY_AUDIT_TABLE)
         if table_exists
         else ()
     )
@@ -270,7 +290,7 @@ def inspect_security_audit_connection(conn: sqlite3.Connection) -> dict[str, Any
     )
 
     index_rows = conn.execute(
-        "SELECT name, tbl_name, sql FROM sqlite_master WHERE type = 'index'"
+        "SELECT name, tbl_name, sql FROM main.sqlite_master WHERE type = 'index'"
     ).fetchall()
     table_indexes = sorted(str(row[0]) for row in index_rows if str(row[1]) == SECURITY_AUDIT_TABLE)
     index_lookup = {
@@ -292,14 +312,14 @@ def inspect_security_audit_connection(conn: sqlite3.Connection) -> dict[str, Any
             missing_indexes.append(name)
         elif (
             actual[0] != SECURITY_AUDIT_TABLE
-            or _index_columns(conn, name) != definition["columns"]
+            or _main_index_columns(conn, name) != definition["columns"]
             or _canonicalize_schema_sql(actual[1])
             != _canonicalize_schema_sql(definition["sql"])
         ):
             mismatched_indexes.append(name)
 
     trigger_rows = conn.execute(
-        "SELECT name, tbl_name, sql FROM sqlite_master WHERE type = 'trigger'"
+        "SELECT name, tbl_name, sql FROM main.sqlite_master WHERE type = 'trigger'"
     ).fetchall()
     table_triggers = sorted(str(row[0]) for row in trigger_rows if str(row[1]) == SECURITY_AUDIT_TABLE)
     trigger_lookup = {str(row[0]): (str(row[1]), str(row[2] or "")) for row in trigger_rows}
@@ -325,6 +345,9 @@ def inspect_security_audit_connection(conn: sqlite3.Connection) -> dict[str, Any
     temporary_trigger_rows = conn.execute(
         "SELECT name, tbl_name FROM sqlite_temp_master WHERE type = 'trigger'"
     ).fetchall()
+    temporary_shadow_rows = conn.execute(
+        "SELECT type, name FROM sqlite_temp_master WHERE type IN ('table', 'view')"
+    ).fetchall()
     audit_table_names = {
         SECURITY_AUDIT_TABLE.casefold(),
         f"main.{SECURITY_AUDIT_TABLE}".casefold(),
@@ -333,6 +356,14 @@ def inspect_security_audit_connection(conn: sqlite3.Connection) -> dict[str, Any
         str(row[0])
         for row in temporary_trigger_rows
         if str(row[1]).casefold() in audit_table_names
+    )
+    temporary_shadow_objects = sorted(
+        (
+            {"type": str(row[0]), "name": str(row[1])}
+            for row in temporary_shadow_rows
+            if str(row[1]).casefold() == SECURITY_AUDIT_TABLE.casefold()
+        ),
+        key=lambda item: (item["type"], item["name"].casefold()),
     )
 
     constraint_issues = (
@@ -352,11 +383,20 @@ def inspect_security_audit_connection(conn: sqlite3.Connection) -> dict[str, Any
     event_count: int | None = 0
     if table_exists:
         try:
-            event_count = int(conn.execute(f"SELECT COUNT(*) FROM {SECURITY_AUDIT_TABLE}").fetchone()[0])
+            event_count = int(
+                conn.execute(
+                    f"SELECT COUNT(*) FROM main.{SECURITY_AUDIT_TABLE}"
+                ).fetchone()[0]
+            )
         except sqlite3.Error:
             event_count = None
 
-    if not object_row and not object_conflicts and not temporary_triggers:
+    if (
+        not object_row
+        and not object_conflicts
+        and not temporary_triggers
+        and not temporary_shadow_objects
+    ):
         state = SECURITY_AUDIT_MISSING
     elif (
         table_exists
@@ -369,6 +409,7 @@ def inspect_security_audit_connection(conn: sqlite3.Connection) -> dict[str, Any
         and not mismatched_triggers
         and not unexpected_triggers
         and not temporary_triggers
+        and not temporary_shadow_objects
         and not constraint_issues
         and not object_conflicts
         and event_count is not None
@@ -396,6 +437,8 @@ def inspect_security_audit_connection(conn: sqlite3.Connection) -> dict[str, Any
         warnings.append("security audit table has non-canonical triggers")
     if temporary_triggers:
         warnings.append("security audit table has temporary triggers")
+    if temporary_shadow_objects:
+        warnings.append("security audit table has temporary shadow objects")
     if constraint_issues:
         warnings.append("security audit table differs from the canonical definition")
     if object_conflicts:
@@ -421,6 +464,7 @@ def inspect_security_audit_connection(conn: sqlite3.Connection) -> dict[str, Any
         "mismatched_triggers": mismatched_triggers,
         "unexpected_triggers": unexpected_triggers,
         "temporary_triggers": temporary_triggers,
+        "temporary_shadow_objects": temporary_shadow_objects,
         "constraint_issues": constraint_issues,
         "object_conflicts": object_conflicts,
         "event_count": event_count,
@@ -512,7 +556,7 @@ def resolve_security_audit_activation_actor_role(
     if not isinstance(actor_user_id, str) or not actor_user_id or actor_user_id.isspace():
         raise SecurityAuditValidationError("activation actor_user_id must be a non-empty string")
     try:
-        columns = get_user_columns(conn)
+        columns = _main_table_columns(conn, "users")
     except sqlite3.Error as exc:
         raise SecurityAuditSchemaError("activation actor database state could not be read") from exc
     if "is_admin" not in columns or "is_active" not in columns:
@@ -524,7 +568,7 @@ def resolve_security_audit_activation_actor_role(
     if schema_state == ROLE_AUTH_READY:
         try:
             row = conn.execute(
-                "SELECT role, auth_version, is_active FROM users WHERE id = ?",
+                "SELECT role, auth_version, is_active FROM main.users WHERE id = ?",
                 (actor_user_id,),
             ).fetchone()
         except sqlite3.Error as exc:
@@ -539,7 +583,7 @@ def resolve_security_audit_activation_actor_role(
     else:
         try:
             row = conn.execute(
-                "SELECT is_admin, is_active FROM users WHERE id = ?",
+                "SELECT is_admin, is_active FROM main.users WHERE id = ?",
                 (actor_user_id,),
             ).fetchone()
         except sqlite3.Error as exc:
@@ -669,7 +713,7 @@ def _append_with_connection(conn: sqlite3.Connection, event: dict[str, Any]) -> 
     try:
         cursor = conn.execute(
             f"""
-            INSERT INTO {SECURITY_AUDIT_TABLE} (
+            INSERT INTO main.{SECURITY_AUDIT_TABLE} (
                 event_id, operation_id, action, risk_level, result,
                 actor_type, actor_user_id, actor_role, actor_label,
                 capability, target_type, target_id, reason, context_json, created_at
@@ -701,7 +745,7 @@ def _append_with_connection(conn: sqlite3.Connection, event: dict[str, Any]) -> 
                 operation_id, action, risk_level, result, actor_type,
                 actor_user_id, actor_role, actor_label, capability,
                 target_type, target_id, reason, context_json, created_at
-            FROM {SECURITY_AUDIT_TABLE}
+            FROM main.{SECURITY_AUDIT_TABLE}
             WHERE event_id = ?
             """,
             (event_id,),
