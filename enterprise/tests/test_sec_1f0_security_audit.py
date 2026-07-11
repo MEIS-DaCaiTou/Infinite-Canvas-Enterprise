@@ -278,6 +278,123 @@ def _run_checks() -> None:
         assert second_apply["event_count"] == 1
         assert "actor_role" not in inspect.signature(apply_security_audit_migration).parameters
 
+        # Canonical DDL is exact: inert, rebound, or altered managed objects are PARTIAL.
+        def assert_trigger_tamper(
+            filename: str,
+            trigger_name: str,
+            replacement_sql: str,
+            *,
+            create_other_table: bool = False,
+        ) -> None:
+            tampered_db = tmp / filename
+            _legacy_database(tampered_db)
+            _apply(tampered_db)
+            conn = sqlite3.connect(tampered_db)
+            conn.execute(f"DROP TRIGGER {trigger_name}")
+            if create_other_table:
+                conn.execute("CREATE TABLE other_audit_target (id INTEGER PRIMARY KEY)")
+            conn.execute(replacement_sql)
+            conn.commit()
+            conn.close()
+            tampered = inspect_security_audit_schema(tampered_db)
+            assert tampered["current_state"] == audit.SECURITY_AUDIT_PARTIAL
+            assert trigger_name in tampered["mismatched_triggers"]
+            snapshot = _schema_snapshot(tampered_db)
+            _assert_raises(SecurityAuditMigrationError, lambda: _apply(tampered_db))
+            assert _schema_snapshot(tampered_db) == snapshot
+
+        assert_trigger_tamper(
+            "update-when-zero.db",
+            "trg_security_audit_no_update",
+            """
+            CREATE TRIGGER trg_security_audit_no_update
+            BEFORE UPDATE ON security_audit_events WHEN 0
+            BEGIN
+                SELECT RAISE(ABORT, 'security audit events are append-only');
+            END
+            """,
+        )
+        assert_trigger_tamper(
+            "delete-when-zero.db",
+            "trg_security_audit_no_delete",
+            """
+            CREATE TRIGGER trg_security_audit_no_delete
+            BEFORE DELETE ON security_audit_events WHEN 0
+            BEGIN
+                SELECT RAISE(ABORT, 'security audit events are append-only');
+            END
+            """,
+        )
+        assert_trigger_tamper(
+            "same-text-no-raise.db",
+            "trg_security_audit_no_update",
+            """
+            CREATE TRIGGER trg_security_audit_no_update
+            BEFORE UPDATE ON security_audit_events
+            BEGIN
+                SELECT 'security audit events are append-only';
+            END
+            """,
+        )
+        assert_trigger_tamper(
+            "wrong-trigger-table.db",
+            "trg_security_audit_no_update",
+            """
+            CREATE TRIGGER trg_security_audit_no_update
+            BEFORE UPDATE ON other_audit_target
+            BEGIN
+                SELECT RAISE(ABORT, 'security audit events are append-only');
+            END
+            """,
+            create_other_table=True,
+        )
+        assert_trigger_tamper(
+            "different-trigger-body.db",
+            "trg_security_audit_no_delete",
+            """
+            CREATE TRIGGER trg_security_audit_no_delete
+            BEFORE DELETE ON security_audit_events
+            BEGIN
+                SELECT RAISE(ABORT, 'different trigger body');
+            END
+            """,
+        )
+
+        index_tamper_db = tmp / "different-index-definition.db"
+        _legacy_database(index_tamper_db)
+        _apply(index_tamper_db)
+        conn = sqlite3.connect(index_tamper_db)
+        conn.execute("DROP INDEX idx_security_audit_operation")
+        conn.execute(
+            "CREATE INDEX idx_security_audit_operation "
+            "ON security_audit_events (operation_id, id) WHERE 0"
+        )
+        conn.commit()
+        conn.close()
+        index_tampered = inspect_security_audit_schema(index_tamper_db)
+        assert index_tampered["current_state"] == audit.SECURITY_AUDIT_PARTIAL
+        assert "idx_security_audit_operation" in index_tampered["mismatched_indexes"]
+
+        comment_table_db = tmp / "comment-fake-constraint.db"
+        _legacy_database(comment_table_db)
+        fake_table_sql = audit.SECURITY_AUDIT_CREATE_TABLE_SQL.replace(
+            "CHECK (risk_level IN ('L0', 'L1', 'L2', 'L3'))",
+            "/* CHECK (risk_level IN ('L0', 'L1', 'L2', 'L3')) */",
+        )
+        conn = sqlite3.connect(comment_table_db)
+        conn.execute(fake_table_sql)
+        for definition in audit.SECURITY_AUDIT_INDEX_DEFINITIONS.values():
+            conn.execute(definition["sql"])
+        for statement in audit.SECURITY_AUDIT_TRIGGER_DEFINITIONS.values():
+            conn.execute(statement)
+        conn.commit()
+        conn.close()
+        fake_table = inspect_security_audit_schema(comment_table_db)
+        assert fake_table["current_state"] == audit.SECURITY_AUDIT_PARTIAL
+        assert fake_table["table_definition_matches"] is False
+        assert fake_table["constraint_issues"] == ["canonical_table_definition_mismatch"]
+        _assert_raises(SecurityAuditMigrationError, lambda: _apply(comment_table_db))
+
         super_db = tmp / "temporary-super-fixture.db"
         _ready_super_admin_database(super_db)
         super_result = _apply(super_db)
@@ -425,6 +542,71 @@ def _run_checks() -> None:
         conn = sqlite3.connect(apply_db)
         conn.execute("CREATE TABLE transaction_probe (id TEXT PRIMARY KEY)")
         conn.commit()
+        rejected_event_count = conn.execute(
+            "SELECT COUNT(*) FROM security_audit_events"
+        ).fetchone()[0]
+        rejected_usage_count = conn.execute("SELECT COUNT(*) FROM usage_logs").fetchone()[0]
+        assert conn.in_transaction is False
+        _assert_raises(
+            audit.SecurityAuditValidationError,
+            lambda: audit.append_security_audit_event(
+                **_event_kwargs("op-default-no-transaction"),
+                connection=conn,
+            ),
+        )
+        assert conn.in_transaction is False
+        assert conn.execute("SELECT 1").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM security_audit_events").fetchone()[0] == rejected_event_count
+        assert conn.execute("SELECT COUNT(*) FROM usage_logs").fetchone()[0] == rejected_usage_count
+        assert not list(tmp.rglob("*.log"))
+
+        autocommit_conn = sqlite3.connect(apply_db, isolation_level=None)
+        assert autocommit_conn.in_transaction is False
+        _assert_raises(
+            audit.SecurityAuditValidationError,
+            lambda: audit.append_security_audit_event(
+                **_event_kwargs("op-autocommit-no-begin"),
+                connection=autocommit_conn,
+            ),
+        )
+        assert autocommit_conn.in_transaction is False
+        autocommit_conn.execute("BEGIN")
+        autocommit_conn.execute(
+            "INSERT INTO transaction_probe (id) VALUES ('autocommit-rollback-business')"
+        )
+        audit.append_security_audit_event(
+            **_event_kwargs("op-autocommit-explicit-begin"),
+            connection=autocommit_conn,
+        )
+        assert autocommit_conn.in_transaction is True
+        assert autocommit_conn.execute("SELECT 1").fetchone()[0] == 1
+        autocommit_conn.rollback()
+        assert autocommit_conn.execute(
+            "SELECT COUNT(*) FROM transaction_probe WHERE id = 'autocommit-rollback-business'"
+        ).fetchone()[0] == 0
+        assert autocommit_conn.execute(
+            "SELECT COUNT(*) FROM security_audit_events "
+            "WHERE operation_id = 'op-autocommit-explicit-begin'"
+        ).fetchone()[0] == 0
+        autocommit_conn.execute("BEGIN")
+        autocommit_conn.execute(
+            "INSERT INTO transaction_probe (id) VALUES ('autocommit-commit-business')"
+        )
+        audit.append_security_audit_event(
+            **_event_kwargs("op-autocommit-explicit-commit", result="success"),
+            connection=autocommit_conn,
+        )
+        assert autocommit_conn.in_transaction is True
+        autocommit_conn.commit()
+        assert autocommit_conn.execute(
+            "SELECT COUNT(*) FROM transaction_probe WHERE id = 'autocommit-commit-business'"
+        ).fetchone()[0] == 1
+        assert autocommit_conn.execute(
+            "SELECT COUNT(*) FROM security_audit_events "
+            "WHERE operation_id = 'op-autocommit-explicit-commit'"
+        ).fetchone()[0] == 1
+        autocommit_conn.close()
+
         conn.execute("BEGIN IMMEDIATE")
         conn.execute("INSERT INTO transaction_probe (id) VALUES ('rollback-business')")
         audit.append_security_audit_event(
@@ -447,6 +629,7 @@ def _run_checks() -> None:
             connection=conn,
         )
         assert conn.in_transaction is True
+        assert conn.execute("SELECT 1").fetchone()[0] == 1
         conn.commit()
         assert conn.execute(
             "SELECT COUNT(*) FROM transaction_probe WHERE id = 'commit-business'"
@@ -509,6 +692,7 @@ def _run_checks() -> None:
             "SELECT event_id, action, result FROM security_audit_events WHERE event_id = ?",
             (immutable[0],),
         ).fetchone() == immutable
+        conn.execute("BEGIN IMMEDIATE")
         inserted = audit.append_security_audit_event(
             **_event_kwargs("op-after-trigger-check"),
             connection=conn,
@@ -532,6 +716,25 @@ def _run_checks() -> None:
             "refresh_token",
             "operation_token",
             "private_key",
+            "db_password",
+            "database_password",
+            "admin_password",
+            "user_password",
+            "credential",
+            "credentials",
+            "auth_token",
+            "bearer_token",
+            "session_token",
+            "user_access_token",
+            "raw_request_body",
+            "request_payload",
+            "full_user_prompt",
+            "raw_prompt",
+            "canvas_data",
+            "canvas_json_data",
+            "private_key_pem",
+            "environment_value",
+            "production_env",
         )
         contexts = [{key: secret_value} for key in sensitive_keys]
         contexts.extend(
@@ -553,6 +756,22 @@ def _run_checks() -> None:
             )
             assert secret_value not in str(exc)
         assert len(_rows(apply_db, "SELECT id FROM security_audit_events")) == event_count_before
+        token_count_event = audit.append_security_audit_event(
+            **_event_kwargs(
+                "op-non-secret-token-count",
+                context={
+                    "token_count": 42,
+                    "usage": {"input_token_count": 12, "output_token_count": 30},
+                },
+            ),
+            database_path=apply_db,
+        )
+        token_count_context = _rows(
+            apply_db,
+            "SELECT context_json FROM security_audit_events WHERE event_id = ?",
+            (token_count_event["event_id"],),
+        )[0][0]
+        assert json.loads(token_count_context)["token_count"] == 42
 
         # J. JSON-safe type, depth, key, string, and serialized size limits.
         json_invalid = (

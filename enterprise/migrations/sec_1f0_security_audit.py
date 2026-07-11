@@ -6,66 +6,20 @@ from typing import Any
 
 from enterprise.migrations.sqlite_existing import open_existing_sqlite
 from enterprise.security_audit import (
+    SECURITY_AUDIT_CREATE_TABLE_SQL,
+    SECURITY_AUDIT_INDEX_DEFINITIONS,
     SECURITY_AUDIT_INDEXES,
     SECURITY_AUDIT_MIGRATION_ID,
     SECURITY_AUDIT_MISSING,
     SECURITY_AUDIT_PARTIAL,
     SECURITY_AUDIT_READY,
     SECURITY_AUDIT_TABLE,
+    SECURITY_AUDIT_TRIGGER_DEFINITIONS,
     SECURITY_AUDIT_TRIGGERS,
     SecurityAuditError,
     append_security_audit_event,
     inspect_security_audit_connection,
     resolve_security_audit_activation_actor_role,
-)
-
-
-CREATE_TABLE_SQL = f"""
-CREATE TABLE {SECURITY_AUDIT_TABLE} (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    event_id TEXT NOT NULL UNIQUE,
-    operation_id TEXT NOT NULL,
-    action TEXT NOT NULL,
-    risk_level TEXT NOT NULL
-        CHECK (risk_level IN ('L0', 'L1', 'L2', 'L3')),
-    result TEXT NOT NULL
-        CHECK (result IN ('attempted', 'success', 'denied', 'failed')),
-    actor_type TEXT NOT NULL
-        CHECK (actor_type IN ('user', 'system', 'local_operator')),
-    actor_user_id TEXT,
-    actor_role TEXT
-        CHECK (actor_role IS NULL OR actor_role IN ('user', 'admin', 'super_admin')),
-    actor_label TEXT,
-    capability TEXT,
-    target_type TEXT,
-    target_id TEXT,
-    reason TEXT,
-    context_json TEXT NOT NULL DEFAULT '{{}}',
-    created_at INTEGER NOT NULL
-)
-"""
-
-CREATE_INDEX_SQL = (
-    f"CREATE INDEX idx_security_audit_operation ON {SECURITY_AUDIT_TABLE} (operation_id, id)",
-    f"CREATE INDEX idx_security_audit_action_created ON {SECURITY_AUDIT_TABLE} (action, created_at)",
-    f"CREATE INDEX idx_security_audit_actor_created ON {SECURITY_AUDIT_TABLE} (actor_user_id, created_at)",
-)
-
-CREATE_TRIGGER_SQL = (
-    f"""
-    CREATE TRIGGER trg_security_audit_no_update
-    BEFORE UPDATE ON {SECURITY_AUDIT_TABLE}
-    BEGIN
-        SELECT RAISE(ABORT, 'security audit events are append-only');
-    END
-    """,
-    f"""
-    CREATE TRIGGER trg_security_audit_no_delete
-    BEFORE DELETE ON {SECURITY_AUDIT_TABLE}
-    BEGIN
-        SELECT RAISE(ABORT, 'security audit events are append-only');
-    END
-    """,
 )
 
 
@@ -145,10 +99,10 @@ def apply_security_audit_migration(
             conn.execute("BEGIN IMMEDIATE")
             started = True
             actor_role = resolve_security_audit_activation_actor_role(conn, actor_user_id)
-            conn.execute(CREATE_TABLE_SQL)
-            for statement in CREATE_INDEX_SQL:
-                conn.execute(statement)
-            for statement in CREATE_TRIGGER_SQL:
+            conn.execute(SECURITY_AUDIT_CREATE_TABLE_SQL)
+            for definition in SECURITY_AUDIT_INDEX_DEFINITIONS.values():
+                conn.execute(definition["sql"])
+            for statement in SECURITY_AUDIT_TRIGGER_DEFINITIONS.values():
                 conn.execute(statement)
             activation_event = append_security_audit_event(
                 action="security.audit.foundation.activate",

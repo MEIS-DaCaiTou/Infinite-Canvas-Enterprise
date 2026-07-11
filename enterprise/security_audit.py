@@ -50,16 +50,69 @@ SECURITY_AUDIT_COLUMNS = (
     "created_at",
 )
 
-SECURITY_AUDIT_INDEXES = {
-    "idx_security_audit_operation": ("operation_id", "id"),
-    "idx_security_audit_action_created": ("action", "created_at"),
-    "idx_security_audit_actor_created": ("actor_user_id", "created_at"),
+SECURITY_AUDIT_CREATE_TABLE_SQL = f"""
+CREATE TABLE {SECURITY_AUDIT_TABLE} (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id TEXT NOT NULL UNIQUE,
+    operation_id TEXT NOT NULL,
+    action TEXT NOT NULL,
+    risk_level TEXT NOT NULL
+        CHECK (risk_level IN ('L0', 'L1', 'L2', 'L3')),
+    result TEXT NOT NULL
+        CHECK (result IN ('attempted', 'success', 'denied', 'failed')),
+    actor_type TEXT NOT NULL
+        CHECK (actor_type IN ('user', 'system', 'local_operator')),
+    actor_user_id TEXT,
+    actor_role TEXT
+        CHECK (actor_role IS NULL OR actor_role IN ('user', 'admin', 'super_admin')),
+    actor_label TEXT,
+    capability TEXT,
+    target_type TEXT,
+    target_id TEXT,
+    reason TEXT,
+    context_json TEXT NOT NULL DEFAULT '{{}}',
+    created_at INTEGER NOT NULL
+)
+"""
+
+SECURITY_AUDIT_INDEX_DEFINITIONS = {
+    "idx_security_audit_operation": {
+        "columns": ("operation_id", "id"),
+        "sql": f"CREATE INDEX idx_security_audit_operation ON {SECURITY_AUDIT_TABLE} (operation_id, id)",
+    },
+    "idx_security_audit_action_created": {
+        "columns": ("action", "created_at"),
+        "sql": f"CREATE INDEX idx_security_audit_action_created ON {SECURITY_AUDIT_TABLE} (action, created_at)",
+    },
+    "idx_security_audit_actor_created": {
+        "columns": ("actor_user_id", "created_at"),
+        "sql": f"CREATE INDEX idx_security_audit_actor_created ON {SECURITY_AUDIT_TABLE} (actor_user_id, created_at)",
+    },
 }
 
-SECURITY_AUDIT_TRIGGERS = {
-    "trg_security_audit_no_update": "update",
-    "trg_security_audit_no_delete": "delete",
+SECURITY_AUDIT_TRIGGER_DEFINITIONS = {
+    "trg_security_audit_no_update": f"""
+    CREATE TRIGGER trg_security_audit_no_update
+    BEFORE UPDATE ON {SECURITY_AUDIT_TABLE}
+    BEGIN
+        SELECT RAISE(ABORT, 'security audit events are append-only');
+    END
+    """,
+    "trg_security_audit_no_delete": f"""
+    CREATE TRIGGER trg_security_audit_no_delete
+    BEFORE DELETE ON {SECURITY_AUDIT_TABLE}
+    BEGIN
+        SELECT RAISE(ABORT, 'security audit events are append-only');
+    END
+    """,
 }
+
+# Compatibility names are derived from the canonical definitions, not separate DDL facts.
+SECURITY_AUDIT_INDEXES = {
+    name: definition["columns"]
+    for name, definition in SECURITY_AUDIT_INDEX_DEFINITIONS.items()
+}
+SECURITY_AUDIT_TRIGGERS = tuple(SECURITY_AUDIT_TRIGGER_DEFINITIONS)
 
 VALID_RISK_LEVELS = frozenset({"L0", "L1", "L2", "L3"})
 VALID_RESULTS = frozenset({"attempted", "success", "denied", "failed"})
@@ -113,6 +166,25 @@ _PROHIBITED_CONTEXT_KEYS = frozenset(
         "env",
         "environmentsecret",
         "privatekey",
+        "dbpassword",
+        "databasepassword",
+        "adminpassword",
+        "userpassword",
+        "credential",
+        "credentials",
+        "authtoken",
+        "bearertoken",
+        "sessiontoken",
+        "useraccesstoken",
+        "rawrequestbody",
+        "requestpayload",
+        "fulluserprompt",
+        "rawprompt",
+        "canvasdata",
+        "canvasjsondata",
+        "privatekeypem",
+        "environmentvalue",
+        "productionenv",
         "prompt",
         "userprompt",
         "requestbody",
@@ -122,19 +194,6 @@ _PROHIBITED_CONTEXT_KEYS = frozenset(
         "uploadcontent",
         "databasecontent",
     }
-)
-
-_TABLE_CONSTRAINT_MARKERS = (
-    "idintegerprimarykeyautoincrement",
-    "event_idtextnotnullunique",
-    "operation_idtextnotnull",
-    "actiontextnotnull",
-    "check(risk_levelin('l0','l1','l2','l3'))",
-    "check(resultin('attempted','success','denied','failed'))",
-    "check(actor_typein('user','system','local_operator'))",
-    "check(actor_roleisnulloractor_rolein('user','admin','super_admin'))",
-    "context_jsontextnotnulldefault'{}'",
-    "created_atintegernotnull",
 )
 
 
@@ -154,8 +213,34 @@ class SecurityAuditWriteError(SecurityAuditError):
     """Raised when a mandatory event cannot be appended."""
 
 
-def _normalize_sql(value: str | None) -> str:
-    return re.sub(r"\s+", "", str(value or "").lower())
+def _canonicalize_schema_sql(value: str | None) -> str:
+    """Normalize SQL whitespace/case outside quoted values, preserving all content."""
+    sql = str(value or "").strip()
+    result: list[str] = []
+    closing_quote: str | None = None
+    index = 0
+    while index < len(sql):
+        char = sql[index]
+        if closing_quote is not None:
+            result.append(char)
+            if char == closing_quote:
+                if closing_quote in {"'", '"', "`"} and index + 1 < len(sql) and sql[index + 1] == char:
+                    result.append(sql[index + 1])
+                    index += 1
+                else:
+                    closing_quote = None
+        elif char.isspace():
+            pass
+        elif char in {"'", '"', "`"}:
+            closing_quote = char
+            result.append(char)
+        elif char == "[":
+            closing_quote = "]"
+            result.append(char)
+        else:
+            result.append(char.casefold())
+        index += 1
+    return "".join(result).rstrip(";")
 
 
 def _index_columns(conn: sqlite3.Connection, name: str) -> tuple[str, ...]:
@@ -163,7 +248,7 @@ def _index_columns(conn: sqlite3.Connection, name: str) -> tuple[str, ...]:
 
 
 def inspect_security_audit_connection(conn: sqlite3.Connection) -> dict[str, Any]:
-    """Inspect actual table, index, trigger, and constraint state without writes."""
+    """Require managed objects to exactly match the canonical SEC-1F0 DDL."""
     object_row = conn.execute(
         "SELECT type, sql FROM sqlite_master WHERE name = ?",
         (SECURITY_AUDIT_TABLE,),
@@ -178,45 +263,63 @@ def inspect_security_audit_connection(conn: sqlite3.Connection) -> dict[str, Any
         else ()
     )
     missing_columns = [name for name in SECURITY_AUDIT_COLUMNS if name not in columns]
+    table_definition_matches = (
+        table_exists
+        and _canonicalize_schema_sql(table_sql)
+        == _canonicalize_schema_sql(SECURITY_AUDIT_CREATE_TABLE_SQL)
+    )
 
     index_rows = conn.execute(
-        "SELECT name, tbl_name FROM sqlite_master WHERE type = 'index'"
+        "SELECT name, tbl_name, sql FROM sqlite_master WHERE type = 'index'"
     ).fetchall()
     table_indexes = sorted(str(row[0]) for row in index_rows if str(row[1]) == SECURITY_AUDIT_TABLE)
-    index_lookup = {str(row[0]): str(row[1]) for row in index_rows}
-    missing_indexes = []
-    for name, expected_columns in SECURITY_AUDIT_INDEXES.items():
-        if index_lookup.get(name) != SECURITY_AUDIT_TABLE or _index_columns(conn, name) != expected_columns:
+    index_lookup = {
+        str(row[0]): (str(row[1]), str(row[2] or ""))
+        for row in index_rows
+    }
+    missing_indexes: list[str] = []
+    mismatched_indexes: list[str] = []
+    for name, definition in SECURITY_AUDIT_INDEX_DEFINITIONS.items():
+        actual = index_lookup.get(name)
+        if actual is None:
             missing_indexes.append(name)
+        elif (
+            actual[0] != SECURITY_AUDIT_TABLE
+            or _index_columns(conn, name) != definition["columns"]
+            or _canonicalize_schema_sql(actual[1])
+            != _canonicalize_schema_sql(definition["sql"])
+        ):
+            mismatched_indexes.append(name)
 
     trigger_rows = conn.execute(
         "SELECT name, tbl_name, sql FROM sqlite_master WHERE type = 'trigger'"
     ).fetchall()
     table_triggers = sorted(str(row[0]) for row in trigger_rows if str(row[1]) == SECURITY_AUDIT_TABLE)
     trigger_lookup = {str(row[0]): (str(row[1]), str(row[2] or "")) for row in trigger_rows}
-    missing_triggers = []
-    for name, operation in SECURITY_AUDIT_TRIGGERS.items():
-        trigger = trigger_lookup.get(name)
-        normalized = _normalize_sql(trigger[1]) if trigger else ""
-        marker = f"before{operation}on{SECURITY_AUDIT_TABLE}"
-        if (
-            not trigger
-            or trigger[0] != SECURITY_AUDIT_TABLE
-            or marker not in normalized
-            or "raise(abort,'securityauditeventsareappend-only')" not in normalized
-        ):
+    missing_triggers: list[str] = []
+    mismatched_triggers: list[str] = []
+    for name, expected_sql in SECURITY_AUDIT_TRIGGER_DEFINITIONS.items():
+        actual = trigger_lookup.get(name)
+        if actual is None:
             missing_triggers.append(name)
+        elif (
+            actual[0] != SECURITY_AUDIT_TABLE
+            or _canonicalize_schema_sql(actual[1])
+            != _canonicalize_schema_sql(expected_sql)
+        ):
+            mismatched_triggers.append(name)
 
-    normalized_table_sql = _normalize_sql(table_sql)
-    constraint_issues = [
-        marker for marker in _TABLE_CONSTRAINT_MARKERS if marker not in normalized_table_sql
-    ] if table_exists else []
+    constraint_issues = (
+        ["canonical_table_definition_mismatch"]
+        if table_exists and not table_definition_matches
+        else []
+    )
 
     expected_names = set(SECURITY_AUDIT_INDEXES) | set(SECURITY_AUDIT_TRIGGERS)
     object_conflicts = sorted(
         name
         for name in expected_names
-        if (name in index_lookup and index_lookup[name] != SECURITY_AUDIT_TABLE)
+        if (name in index_lookup and index_lookup[name][0] != SECURITY_AUDIT_TABLE)
         or (name in trigger_lookup and trigger_lookup[name][0] != SECURITY_AUDIT_TABLE)
     )
 
@@ -232,8 +335,11 @@ def inspect_security_audit_connection(conn: sqlite3.Connection) -> dict[str, Any
     elif (
         table_exists
         and not missing_columns
+        and table_definition_matches
         and not missing_indexes
+        and not mismatched_indexes
         and not missing_triggers
+        and not mismatched_triggers
         and not constraint_issues
         and not object_conflicts
         and event_count is not None
@@ -249,10 +355,14 @@ def inspect_security_audit_connection(conn: sqlite3.Connection) -> dict[str, Any
         warnings.append("security audit table is missing required columns")
     if missing_indexes:
         warnings.append("security audit schema is missing required indexes")
+    if mismatched_indexes:
+        warnings.append("security audit indexes differ from canonical definitions")
     if missing_triggers:
         warnings.append("security audit schema is missing append-only triggers")
+    if mismatched_triggers:
+        warnings.append("security audit triggers differ from canonical definitions")
     if constraint_issues:
-        warnings.append("security audit table constraints require manual review")
+        warnings.append("security audit table differs from the canonical definition")
     if object_conflicts:
         warnings.append("security audit object names conflict with other schema objects")
     if event_count is None:
@@ -266,14 +376,18 @@ def inspect_security_audit_connection(conn: sqlite3.Connection) -> dict[str, Any
         "columns": list(columns),
         "required_columns": list(SECURITY_AUDIT_COLUMNS),
         "missing_columns": missing_columns,
+        "table_definition_matches": table_definition_matches,
         "indexes": table_indexes,
         "missing_indexes": missing_indexes,
+        "mismatched_indexes": mismatched_indexes,
         "triggers": table_triggers,
         "missing_triggers": missing_triggers,
+        "mismatched_triggers": mismatched_triggers,
         "constraint_issues": constraint_issues,
         "object_conflicts": object_conflicts,
         "event_count": event_count,
         "is_ready": state == SECURITY_AUDIT_READY,
+        "canonical_schema_matches": state == SECURITY_AUDIT_READY,
         "needs_migration": state == SECURITY_AUDIT_MISSING,
         "warnings": warnings,
     }
@@ -558,6 +672,15 @@ def append_security_audit_event(
     """Append one mandatory event or raise; never fall back to a best-effort log."""
     if (connection is None) == (database_path is None):
         raise SecurityAuditValidationError("provide exactly one connection or database_path")
+    if connection is not None:
+        try:
+            active_transaction = connection.in_transaction
+        except sqlite3.Error as exc:
+            raise SecurityAuditWriteError("caller connection state could not be inspected") from exc
+        if not active_transaction:
+            raise SecurityAuditValidationError(
+                "caller connection requires an active explicit transaction"
+            )
     event = _validate_event(
         action=action,
         risk_level=risk_level,
