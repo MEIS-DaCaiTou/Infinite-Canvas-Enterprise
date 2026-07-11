@@ -343,12 +343,24 @@ def _run_checks() -> None:
         conn.commit()
         conn.close()
         assert "role" not in inspect.signature(edb.create_user).parameters
-        try:
-            normalize_role("owner")
-        except ValueError:
-            pass
-        else:
-            raise AssertionError("invalid role accepted")
+        for valid_role in (ROLE_USER, ROLE_ADMIN, ROLE_SUPER_ADMIN):
+            assert normalize_role(valid_role) == valid_role
+        invalid_roles = (
+            "owner",
+            " admin ",
+            "ADMIN",
+            "Admin",
+            "\tadmin",
+            "admin\n",
+            "super_admin ",
+        )
+        for invalid_role in invalid_roles:
+            try:
+                normalize_role(invalid_role)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError(f"invalid role accepted: {invalid_role!r}")
         conn = sqlite3.connect(fresh_db)
         try:
             assert conn.execute("SELECT COUNT(*) FROM users WHERE role = ?", (ROLE_SUPER_ADMIN,)).fetchone()[0] == 0
@@ -381,34 +393,61 @@ def _run_checks() -> None:
             "is_admin": False,
             "jti": payload["jti"],
         }
+        now = int(time.time())
+        ready_claims = {
+            "user_id": user["id"],
+            "auth_version": 1,
+            "jti": "ready-required-claims",
+            "iat": now,
+            "exp": now + 300,
+        }
+        for missing_claim in ("exp", "iat", "auth_version", "jti"):
+            incomplete_claims = dict(ready_claims)
+            incomplete_claims.pop(missing_claim)
+            assert auth.verify_token(_jwt(incomplete_claims)) is None
+        for invalid_jti in ("", 123):
+            invalid_jti_claims = dict(ready_claims, jti=invalid_jti)
+            assert auth.verify_token(_jwt(invalid_jti_claims)) is None
+        for invalid_iat in ("not-a-time", True):
+            invalid_iat_claims = dict(ready_claims, iat=invalid_iat)
+            assert auth.verify_token(_jwt(invalid_iat_claims)) is None
+        invalid_exp_claims = dict(ready_claims, exp="not-a-time")
+        assert auth.verify_token(_jwt(invalid_exp_claims)) is None
+        for invalid_user_id in ("", 123):
+            invalid_user_claims = dict(ready_claims, user_id=invalid_user_id)
+            assert auth.verify_token(_jwt(invalid_user_claims)) is None
+        expired_claims = dict(ready_claims, exp=now - 1)
+        assert auth.verify_token(_jwt(expired_claims)) is None
+
         forged = _jwt({
             "user_id": user["id"],
             "auth_version": 1,
             "is_admin": True,
             "role": ROLE_SUPER_ADMIN,
             "jti": "forged-role-claims",
-            "iat": int(time.time()),
-            "exp": int(time.time()) + 300,
+            "iat": now,
+            "exp": now + 300,
         })
         forged_principal = auth.verify_token(forged)
         assert forged_principal["role"] == ROLE_USER
         assert forged_principal["is_admin"] is False
-        assert auth.verify_token(_jwt({"user_id": "missing", "auth_version": 1, "exp": int(time.time()) + 60})) is None
-        assert auth.verify_token(_jwt({"user_id": user["id"], "auth_version": 1, "exp": int(time.time()) - 1})) is None
-        assert auth.verify_token(_jwt({"user_id": user["id"], "auth_version": 1, "exp": int(time.time()) + 60}, "wrong-secret")) is None
+        missing_user_claims = dict(ready_claims, user_id="missing")
+        assert auth.verify_token(_jwt(missing_user_claims)) is None
+        assert auth.verify_token(_jwt(ready_claims, "wrong-secret")) is None
 
-        conn = sqlite3.connect(fresh_db)
-        conn.execute("PRAGMA ignore_check_constraints = ON")
-        conn.execute("UPDATE users SET role = ? WHERE id = ?", ("invalid-role", user["id"]))
-        conn.commit()
-        conn.close()
-        try:
-            edb.get_user_by_id(user["id"])
-        except ValueError:
-            pass
-        else:
-            raise AssertionError("invalid migrated role did not fail closed")
-        assert auth.verify_token(token) is None
+        for invalid_role in invalid_roles:
+            conn = sqlite3.connect(fresh_db)
+            conn.execute("PRAGMA ignore_check_constraints = ON")
+            conn.execute("UPDATE users SET role = ? WHERE id = ?", (invalid_role, user["id"]))
+            conn.commit()
+            conn.close()
+            try:
+                edb.get_user_by_id(user["id"])
+            except ValueError:
+                pass
+            else:
+                raise AssertionError(f"invalid migrated role did not fail closed: {invalid_role!r}")
+            assert auth.verify_token(token) is None
         conn = sqlite3.connect(fresh_db)
         conn.execute("PRAGMA ignore_check_constraints = ON")
         conn.execute("UPDATE users SET role = ?, auth_version = ? WHERE id = ?", (ROLE_USER, "bad", user["id"]))
@@ -492,6 +531,16 @@ def _run_checks() -> None:
         old_principal = auth.verify_token(old_token)
         assert old_principal["role"] == ROLE_USER
         assert old_principal["is_admin"] is False
+        legacy_without_exp = {
+            "user_id": "legacy-user",
+            "iat": int(time.time()),
+        }
+        assert auth.verify_token(_jwt(legacy_without_exp)) is None
+        legacy_without_iat = {
+            "user_id": "legacy-user",
+            "exp": int(time.time()) + 600,
+        }
+        assert auth.verify_token(_jwt(legacy_without_iat)) is None
         conn = sqlite3.connect(legacy_token_db)
         conn.execute("UPDATE users SET is_admin = 1 WHERE id = ?", ("legacy-user",))
         conn.commit()

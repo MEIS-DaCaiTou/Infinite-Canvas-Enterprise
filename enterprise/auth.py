@@ -32,16 +32,32 @@ def create_token(user_id: str) -> str:
 def verify_token(token: str) -> Optional[dict]:
     """Validate a JWT and return a principal built from current DB state."""
     try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+        payload = jwt.decode(
+            token,
+            JWT_SECRET,
+            algorithms=["HS256"],
+            options={
+                "require": ["user_id", "iat", "exp"],
+                "verify_iat": True,
+                "verify_exp": True,
+            },
+        )
         user_id = payload.get("user_id")
         if not isinstance(user_id, str) or not user_id:
             return None
+        for claim in ("iat", "exp"):
+            value = payload.get(claim)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                return None
         user = get_user_by_id(user_id)
         if not user:
             return None
         schema_ready = user.get("_role_auth_schema_state") == ROLE_AUTH_READY
+        jti = payload.get("jti")
         if schema_ready:
             if "auth_version" not in payload:
+                return None
+            if not isinstance(jti, str) or not jti:
                 return None
             token_auth_version = normalize_auth_version(payload.get("auth_version"))
             if token_auth_version != user["auth_version"]:
@@ -58,7 +74,6 @@ def verify_token(token: str) -> Optional[dict]:
             "auth_version": user["auth_version"],
             "is_admin": user["is_admin"],
         }
-        jti = payload.get("jti")
         if isinstance(jti, str) and jti:
             principal["jti"] = jti
         return principal

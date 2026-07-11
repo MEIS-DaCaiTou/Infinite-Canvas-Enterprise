@@ -10,12 +10,9 @@ LEGACY_AUTH_VERSION = 0
 
 def normalize_role(value: object) -> str:
     """Return a valid fixed role or fail closed."""
-    if not isinstance(value, str):
+    if not isinstance(value, str) or value not in VALID_ROLES:
         raise ValueError("invalid user role")
-    role = value.strip()
-    if role not in VALID_ROLES:
-        raise ValueError("invalid user role")
-    return role
+    return value
 
 
 def role_from_legacy_is_admin(value: object) -> str:
