@@ -147,6 +147,30 @@ def _index_names(conn: sqlite3.Connection) -> set[str]:
     }
 
 
+def _target_index_is_valid(conn: sqlite3.Connection) -> bool:
+    """Confirm the SEC-1B1 user index has its expected main-schema semantics."""
+    row = conn.execute(
+        "SELECT tbl_name, sql FROM main.sqlite_master WHERE type = 'index' AND name = ?",
+        (TARGET_INDEX,),
+    ).fetchone()
+    if not row or str(row[0]) != "users" or not row[1]:
+        return False
+    index_rows = [
+        item
+        for item in conn.execute("PRAGMA main.index_list(users)").fetchall()
+        if str(item[1]) == TARGET_INDEX
+    ]
+    if len(index_rows) != 1:
+        return False
+    index_row = index_rows[0]
+    if len(index_row) < 5 or index_row[2] != 0 or str(index_row[3]) != "c" or index_row[4] != 0:
+        return False
+    return tuple(str(item[2]) for item in conn.execute(f"PRAGMA main.index_info({TARGET_INDEX})").fetchall()) == (
+        "role",
+        "is_active",
+    )
+
+
 def _scalar(conn: sqlite3.Connection, sql: str, params: tuple[object, ...] = ()) -> int:
     row = conn.execute(sql, params).fetchone()
     return int(row[0] or 0) if row else 0
@@ -157,13 +181,15 @@ def _raw_users(conn: sqlite3.Connection, *, state: str) -> list[sqlite3.Row | tu
         return conn.execute(
             """
             SELECT id, username, password_hash, display_name, is_admin, is_active,
-                   role, auth_version, role_updated_at, role_updated_by
+                   created_at, last_login, role, auth_version, role_updated_at,
+                   role_updated_by
             FROM main.users ORDER BY id
             """
         ).fetchall()
     return conn.execute(
         """
-        SELECT id, username, password_hash, display_name, is_admin, is_active
+        SELECT id, username, password_hash, display_name, is_admin, is_active,
+               created_at, last_login
         FROM main.users ORDER BY id
         """
     ).fetchall()
@@ -268,6 +294,7 @@ def _inspect(conn: sqlite3.Connection) -> dict[str, Any]:
         "is_migrated": state == ROLE_AUTH_READY,
         "needs_migration": state == SCHEMA_LEGACY,
         "existing_indexes": sorted(_index_names(conn)) if columns else [],
+        "target_index_valid": _target_index_is_valid(conn) if columns else False,
         **interference,
         "warnings": [],
     }
@@ -310,6 +337,8 @@ def _inspect(conn: sqlite3.Connection) -> dict[str, Any]:
             result["warnings"].append("role and is_admin compatibility values disagree")
     if result["invalid_auth_version_count"]:
         result["warnings"].append("invalid auth_version values require manual review")
+    if base_state == ROLE_AUTH_READY and not result["target_index_valid"]:
+        result["warnings"].append("required role/auth user index is missing or invalid")
     if base_state == SCHEMA_PARTIAL:
         result["warnings"].append("partial SEC-1B1 schema requires manual review")
     if any(interference.values()):
@@ -378,10 +407,30 @@ def _verify_migrated_users(
     before_rows: list[sqlite3.Row | tuple[Any, ...]],
 ) -> None:
     inspection = _inspect(conn)
-    if inspection["current_state"] != ROLE_AUTH_READY:
+    if (
+        inspection["current_state"] != ROLE_AUTH_READY
+        or inspection["base_state"] != ROLE_AUTH_READY
+    ):
         raise RoleAuthMigrationError("SEC-1B1 migration did not reach the target schema")
-    if TARGET_INDEX not in inspection["existing_indexes"]:
+    if not _target_index_is_valid(conn):
         raise RoleAuthMigrationError("SEC-1B1 role index was not created")
+    if any(
+        inspection[key]
+        for key in (
+            "invalid_ready_is_admin_count",
+            "invalid_is_active_count",
+            "invalid_role_count",
+            "invalid_auth_version_count",
+            "role_is_admin_mismatch_count",
+            "super_admin_count",
+        )
+    ):
+        raise RoleAuthMigrationError("SEC-1B1 migration left invalid ready user data")
+    if any(
+        inspection[key]
+        for key in ("temporary_shadow_objects", "temporary_triggers", "main_user_triggers")
+    ):
+        raise RoleAuthMigrationError("SEC-1B1 migration left users schema interference")
     after_rows = _raw_users(conn, state=ROLE_AUTH_READY)
     if len(after_rows) != len(before_rows):
         raise RoleAuthMigrationError("SEC-1B1 migration changed the user count")
@@ -394,11 +443,24 @@ def _verify_migrated_users(
             raise RoleAuthMigrationError("SEC-1B1 migration changed user identity")
         if before_state == SCHEMA_LEGACY:
             expected_role = ROLE_ADMIN if before[4] == 1 else ROLE_USER
-            if raw[:6] != before[:6] or raw[6:] != (expected_role, 1, None, None):
+            expected_is_admin = 1 if before[4] == 1 else 0
+            expected = before[:4] + (expected_is_admin,) + before[5:] + (
+                expected_role,
+                1,
+                None,
+                None,
+            )
+            if len(raw) != len(expected) or any(
+                type(actual) is not type(expected_value) or actual != expected_value
+                for actual, expected_value in zip(raw, expected)
+            ):
                 raise RoleAuthMigrationError("SEC-1B1 migration raw verification failed")
-        elif raw != before:
+        elif len(raw) != len(before) or any(
+            type(actual) is not type(expected_value) or actual != expected_value
+            for actual, expected_value in zip(raw, before)
+        ):
             raise RoleAuthMigrationError("SEC-1B1 ready migration changed user data")
-        if raw[6] == ROLE_SUPER_ADMIN:
+        if raw[8] == ROLE_SUPER_ADMIN:
             raise RoleAuthMigrationError("SEC-1B1 must not create super-admin users")
 
 
@@ -435,6 +497,7 @@ def apply_role_auth_migration_in_transaction(conn: sqlite3.Connection) -> dict[s
                 """
                 UPDATE main.users
                 SET role = CASE WHEN is_admin = 1 THEN ? ELSE ? END,
+                    is_admin = CASE WHEN is_admin = 1 THEN 1 ELSE 0 END,
                     auth_version = 1,
                     role_updated_at = NULL,
                     role_updated_by = NULL

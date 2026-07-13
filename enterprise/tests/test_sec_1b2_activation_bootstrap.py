@@ -38,7 +38,7 @@ def _sha256(path: Path) -> str:
     return _sha256_file(path)
 
 
-def _legacy_database(path: Path) -> None:
+def _legacy_database(path: Path, *, include_null_is_admin_user: bool = False) -> None:
     from enterprise import db as edb
 
     now = int(time.time() * 1000)
@@ -69,6 +69,24 @@ def _legacy_database(path: Path) -> None:
         );
         """
     )
+    users = [
+        ("admin-id", "admin", edb._hash_password("admin-password"), "Admin", 1, 1, now, None),
+        ("admin-two-id", "admin-two", edb._hash_password("admin-two-password"), "Admin Two", 1, 1, now, None),
+        ("user-id", "user", edb._hash_password("user-password"), "User", 0, 1, now, None),
+    ]
+    if include_null_is_admin_user:
+        users.append(
+            (
+                "null-user-id",
+                "null-user",
+                edb._hash_password("null-user-password"),
+                "NULL User",
+                None,
+                1,
+                now,
+                321,
+            )
+        )
     conn.executemany(
         """
         INSERT INTO users (
@@ -76,11 +94,7 @@ def _legacy_database(path: Path) -> None:
             is_admin, is_active, created_at, last_login
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        [
-            ("admin-id", "admin", edb._hash_password("admin-password"), "Admin", 1, 1, now, None),
-            ("admin-two-id", "admin-two", edb._hash_password("admin-two-password"), "Admin Two", 1, 1, now, None),
-            ("user-id", "user", edb._hash_password("user-password"), "User", 0, 1, now, None),
-        ],
+        users,
     )
     conn.execute(
         "INSERT INTO usage_logs (user_id, action, detail, ts) VALUES (?, ?, ?, ?)",
@@ -248,6 +262,7 @@ def _run_checks() -> None:
         SecurityBootstrapPostCommitError,
         SecurityBootstrapPlanError,
         SecurityBootstrapValidationError,
+        _plan_hash,
         execute_sec_1b2_activation,
         inspect_super_admin_lifecycle,
         plan_sec_1b2_activation,
@@ -409,6 +424,41 @@ def _run_checks() -> None:
             conn.rollback()
             conn.close()
 
+            # A2. The caller-owned SEC-1B1 primitive treats NULL legacy
+            # administrator flags as ordinary users, normalizes them on
+            # commit, and leaves them untouched when the caller rolls back.
+            null_primitive_commit_db = tmp / "null-primitive-commit.db"
+            _legacy_database(null_primitive_commit_db, include_null_is_admin_user=True)
+            conn = sqlite3.connect(null_primitive_commit_db)
+            conn.execute("BEGIN")
+            null_role_result = apply_role_auth_migration_in_transaction(conn)
+            assert null_role_result["current_state"] == ROLE_AUTH_READY
+            assert conn.in_transaction is True
+            null_committed = conn.execute(
+                "SELECT role, is_admin, typeof(is_admin), auth_version "
+                "FROM main.users WHERE id = 'null-user-id'"
+            ).fetchone()
+            assert null_committed == ("user", 0, "integer", 1)
+            conn.commit()
+            conn.close()
+            null_commit_inspection = inspect_role_auth_schema(null_primitive_commit_db)
+            assert null_commit_inspection["current_state"] == ROLE_AUTH_READY
+            assert null_commit_inspection["invalid_ready_is_admin_count"] == 0
+            assert null_commit_inspection["role_is_admin_mismatch_count"] == 0
+
+            null_primitive_rollback_db = tmp / "null-primitive-rollback.db"
+            _legacy_database(null_primitive_rollback_db, include_null_is_admin_user=True)
+            conn = sqlite3.connect(null_primitive_rollback_db)
+            conn.execute("BEGIN")
+            apply_role_auth_migration_in_transaction(conn)
+            assert conn.in_transaction is True
+            conn.rollback()
+            assert conn.execute(
+                "SELECT is_admin FROM main.users WHERE id = 'null-user-id'"
+            ).fetchone()[0] is None
+            conn.close()
+            assert inspect_role_auth_schema(null_primitive_rollback_db)["current_state"] == SCHEMA_LEGACY
+
             # B. Canonical immutable lifecycle schema, including append-only behavior.
             lifecycle_db = tmp / "lifecycle.db"
             _legacy_database(lifecycle_db)
@@ -559,6 +609,17 @@ def _run_checks() -> None:
                 seed_lifecycle_fixture(corrupted, audit_changes=change)
                 assert inspect_super_admin_lifecycle(corrupted)["lifecycle_state"] == LIFECYCLE_RECOVERY_REQUIRED
 
+            # An otherwise valid marker and bootstrap audit cannot make an
+            # ACTIVE lifecycle out of raw READY compatibility corruption.
+            ready_data_corrupt = tmp / "lifecycle-ready-data-corrupt.db"
+            seed_lifecycle_fixture(ready_data_corrupt)
+            conn = sqlite3.connect(ready_data_corrupt)
+            conn.execute("UPDATE main.users SET is_admin = NULL WHERE id = 'user-id'")
+            conn.commit()
+            conn.close()
+            assert inspect_role_auth_schema(ready_data_corrupt)["invalid_ready_is_admin_count"] == 1
+            assert inspect_super_admin_lifecycle(ready_data_corrupt)["lifecycle_state"] == LIFECYCLE_RECOVERY_REQUIRED
+
             # C. Read-only plan and executed-backup gates.
             plan_db = tmp / "plan.db"
             _legacy_database(plan_db)
@@ -575,6 +636,42 @@ def _run_checks() -> None:
             assert plan_db.read_bytes() == before_bytes
             assert _schema_rows(plan_db) == before_schema
             assert "admin-password" not in json.dumps(plan)
+
+            # Plan identity and time bounds are validated before a runner can
+            # prompt for a password or confirmation phrase.
+            def resign_plan(candidate: dict) -> dict:
+                unsigned = dict(candidate)
+                unsigned.pop("plan_hash", None)
+                candidate["plan_hash"] = _plan_hash(unsigned)
+                return candidate
+
+            actor_mismatch_plan = resign_plan(dict(plan, actor_user_id="different-admin"))
+            _assert_raises(
+                SecurityBootstrapPlanError,
+                lambda: validate_sec_1b2_plan(
+                    actor_mismatch_plan,
+                    actor_mismatch_plan["plan_hash"],
+                    now_ms=now,
+                ),
+            )
+            future_plan = resign_plan(dict(plan, created_at=now + 1, expires_at=now + 2))
+            _assert_raises(
+                SecurityBootstrapPlanError,
+                lambda: validate_sec_1b2_plan(
+                    future_plan,
+                    future_plan["plan_hash"],
+                    now_ms=now,
+                ),
+            )
+            equal_time_plan = resign_plan(dict(plan, created_at=now, expires_at=now))
+            _assert_raises(
+                SecurityBootstrapPlanError,
+                lambda: validate_sec_1b2_plan(
+                    equal_time_plan,
+                    equal_time_plan["plan_hash"],
+                    now_ms=now,
+                ),
+            )
             for changes in (
                 {"dry_run": True},
                 {"status": "fail"},
@@ -851,6 +948,67 @@ def _run_checks() -> None:
             _assert_raises(SecurityBootstrapError, lambda: _plan(plan_db, manifest, now + 2))
             assert _schema_rows(plan_db) == snapshot_after_active
 
+            # D2. A complete LEGACY activation normalizes NULL is_admin to a
+            # clean READY ordinary user before the marker can become ACTIVE.
+            null_activation_db = tmp / "null-activation.db"
+            _legacy_database(null_activation_db, include_null_is_admin_user=True)
+            null_before = _user(null_activation_db, "null-user-id")
+            null_prepare = prepare_sec_1b2_journal(database_path=null_activation_db, now_ms=now)
+            assert null_prepare["journal_mode_after"] == "delete"
+            null_manifest = _manifest(tmp, null_activation_db, now_ms=now)
+            null_plan = _plan(null_activation_db, null_manifest, now)
+            null_report = _execute(null_activation_db, null_manifest, null_plan, now + 1)
+            assert null_report["success"] is True
+            null_lifecycle = inspect_super_admin_lifecycle(null_activation_db)
+            assert null_lifecycle["lifecycle_state"] == LIFECYCLE_ACTIVE
+            assert null_lifecycle["active_super_admin_count"] == 1
+            null_inspection = inspect_role_auth_schema(null_activation_db)
+            assert null_inspection["current_state"] == ROLE_AUTH_READY
+            for key in (
+                "invalid_ready_is_admin_count",
+                "invalid_is_active_count",
+                "invalid_role_count",
+                "invalid_auth_version_count",
+                "role_is_admin_mismatch_count",
+            ):
+                assert null_inspection[key] == 0
+            null_after = _user(null_activation_db, "null-user-id")
+            for field in (
+                "id",
+                "username",
+                "password_hash",
+                "display_name",
+                "is_active",
+                "created_at",
+                "last_login",
+            ):
+                assert null_after[field] == null_before[field]
+                assert type(null_after[field]) is type(null_before[field])
+            assert null_after["role"] == "user"
+            assert type(null_after["is_admin"]) is int and null_after["is_admin"] == 0
+            assert type(null_after["auth_version"]) is int and null_after["auth_version"] == 1
+            assert _user(null_activation_db, "admin-id")["role"] == "super_admin"
+            assert _user(null_activation_db, "admin-two-id")["role"] == "admin"
+            conn = sqlite3.connect(null_activation_db)
+            try:
+                assert conn.execute(
+                    "SELECT typeof(is_admin) FROM main.users WHERE id = 'null-user-id'"
+                ).fetchone()[0] == "integer"
+                assert conn.execute(
+                    "SELECT action FROM main.usage_logs WHERE id = 1"
+                ).fetchone()[0] == "existing"
+                assert conn.execute(
+                    "SELECT user_id FROM main.user_canvas_map WHERE canvas_id = 'canvas-keep'"
+                ).fetchone()[0] == "user-id"
+            finally:
+                conn.close()
+            null_events = _audit_rows(null_activation_db, null_plan["operation_id"])
+            assert {event["action"] for event in null_events} == {
+                "security.audit.foundation.activate",
+                "security.role_auth.migration.activate",
+                "security.super_admin.bootstrap",
+            }
+
             # E. Wrong password and stale plan rollback without committed schema or users.
             rollback_db = tmp / "rollback.db"
             _legacy_database(rollback_db)
@@ -934,6 +1092,42 @@ def _run_checks() -> None:
             assert role_error.database_changes_committed is False
             assert not _table_exists(role_error_db, "security_audit_events")
 
+            # E2b2. SEC-1B2 repeats the raw READY gate after the SEC-1B1
+            # primitive. A later mutation cannot leave a committed ACTIVE
+            # lifecycle with a NULL or mismatched compatibility flag.
+            null_gate_db = tmp / "null-ready-gate-rollback.db"
+            _legacy_database(null_gate_db, include_null_is_admin_user=True)
+            null_gate_manifest = _manifest(tmp, null_gate_db, now_ms=now)
+            null_gate_plan = _plan(null_gate_db, null_gate_manifest, now)
+            original_role_apply = bootstrap_module.apply_role_auth_migration_in_transaction
+
+            def _apply_then_corrupt_ready_data(conn):
+                result = original_role_apply(conn)
+                conn.execute("UPDATE main.users SET is_admin = NULL WHERE id = 'null-user-id'")
+                return result
+
+            bootstrap_module.apply_role_auth_migration_in_transaction = _apply_then_corrupt_ready_data
+            try:
+                null_gate_error = _assert_raises(
+                    SecurityBootstrapLifecycleError,
+                    lambda: _execute(null_gate_db, null_gate_manifest, null_gate_plan, now + 1),
+                )
+            finally:
+                bootstrap_module.apply_role_auth_migration_in_transaction = original_role_apply
+            assert null_gate_error.database_transaction_rolled_back is True
+            assert null_gate_error.no_database_changes_committed is True
+            assert null_gate_error.database_changes_committed is False
+            assert not _table_exists(null_gate_db, "security_audit_events")
+            assert not _table_exists(null_gate_db, "security_governance_bootstrap")
+            assert inspect_role_auth_schema(null_gate_db)["current_state"] == SCHEMA_LEGACY
+            conn = sqlite3.connect(null_gate_db)
+            try:
+                assert conn.execute(
+                    "SELECT is_admin FROM main.users WHERE id = 'null-user-id'"
+                ).fetchone()[0] is None
+            finally:
+                conn.close()
+
             # E2c. Failure after commit is never reported as a rollback.
             post_commit_db = tmp / "post-commit.db"
             _legacy_database(post_commit_db)
@@ -1005,9 +1199,19 @@ def _run_checks() -> None:
             assert validated_copy == runner_validation_plan
             assert validated_copy is not runner_validation_plan
 
-            def assert_invalid_runner_plan_is_prompt_free(label: str, mutate_plan, *, expected_hash: str | None = None) -> None:
+            def assert_invalid_runner_plan_is_prompt_free(
+                label: str,
+                mutate_plan,
+                *,
+                expected_hash: str | None = None,
+                resign: bool = False,
+            ) -> None:
                 candidate = json.loads(json.dumps(runner_validation_plan))
                 mutate_plan(candidate)
+                if resign:
+                    unsigned = dict(candidate)
+                    unsigned.pop("plan_hash", None)
+                    candidate["plan_hash"] = _plan_hash(unsigned)
                 plan_path = tmp / f"runner-invalid-{label}.json"
                 plan_path.write_text(json.dumps(candidate), encoding="utf-8")
                 report_path = tmp / f"runner-invalid-{label}-report.json"
@@ -1039,7 +1243,7 @@ def _run_checks() -> None:
                                 "execute",
                                 "--database", str(runner_validation_db),
                                 "--plan", str(plan_path),
-                                "--expected-plan-hash", expected_hash or runner_validation_plan["plan_hash"],
+                                "--expected-plan-hash", expected_hash or candidate["plan_hash"],
                                 "--backup-manifest", str(runner_validation_manifest),
                                 "--target-user-id", "admin-id",
                                 "--target-username", "admin",
@@ -1075,6 +1279,21 @@ def _run_checks() -> None:
             assert_invalid_runner_plan_is_prompt_free(
                 "target",
                 lambda plan: plan.update({"target_user_id": "other-admin"}),
+            )
+            assert_invalid_runner_plan_is_prompt_free(
+                "actor-mismatch",
+                lambda plan: plan.update({"actor_user_id": "other-admin"}),
+                resign=True,
+            )
+            assert_invalid_runner_plan_is_prompt_free(
+                "created-at-future",
+                lambda plan: plan.update({"created_at": now + 1, "expires_at": now + 2}),
+                resign=True,
+            )
+            assert_invalid_runner_plan_is_prompt_free(
+                "expires-equals-created",
+                lambda plan: plan.update({"created_at": now, "expires_at": now}),
+                resign=True,
             )
             assert_invalid_runner_plan_is_prompt_free(
                 "expires-at",

@@ -672,6 +672,27 @@ def _bootstrap_audit_matches_marker(conn: sqlite3.Connection, marker: dict[str, 
     )
 
 
+def _role_auth_ready_data_is_clean(inspection: dict[str, Any]) -> bool:
+    """Return whether raw SEC-1B1 READY data can support an ACTIVE lifecycle."""
+    invalid_keys = (
+        "invalid_ready_is_admin_count",
+        "invalid_is_active_count",
+        "invalid_role_count",
+        "invalid_auth_version_count",
+        "role_is_admin_mismatch_count",
+    )
+    return (
+        inspection.get("current_state") == ROLE_AUTH_READY
+        and inspection.get("base_state") == ROLE_AUTH_READY
+        and inspection.get("target_index_valid") is True
+        and all(type(inspection.get(key)) is int and inspection[key] == 0 for key in invalid_keys)
+        and not any(
+            inspection.get(key)
+            for key in ("temporary_shadow_objects", "temporary_triggers", "main_user_triggers")
+        )
+    )
+
+
 def _lifecycle_from_connection(conn: sqlite3.Connection) -> dict[str, Any]:
     role_auth = inspect_role_auth_schema(conn)
     audit = inspect_security_audit_connection(conn)
@@ -721,7 +742,7 @@ def _lifecycle_from_connection(conn: sqlite3.Connection) -> dict[str, Any]:
             LIFECYCLE_UNINITIALIZED if super_admin_count == 0 else LIFECYCLE_RECOVERY_REQUIRED
         )
     elif (
-        role_state == ROLE_AUTH_READY
+        _role_auth_ready_data_is_clean(role_auth)
         and audit_state == SECURITY_AUDIT_READY
         and marker_data_valid
         and marker_target is not None
@@ -784,6 +805,28 @@ def _assert_role_auth_inspection_is_safe(inspection: dict[str, Any]) -> None:
         for key in ("temporary_shadow_objects", "temporary_triggers", "main_user_triggers")
     ):
         raise SecurityBootstrapLifecycleError("role/auth schema has unsupported temporary or trigger state")
+    if inspection.get("current_state") == ROLE_AUTH_READY and (
+        inspection.get("base_state") != ROLE_AUTH_READY
+        or inspection.get("target_index_valid") is not True
+    ):
+        raise SecurityBootstrapLifecycleError("role/auth ready schema is incomplete")
+
+
+def _assert_clean_ready_role_auth(
+    inspection: dict[str, Any],
+    *,
+    expected_super_admin_count: int,
+) -> None:
+    """Require the raw SEC-1B1 ready state expected at a bootstrap checkpoint."""
+    _assert_role_auth_inspection_is_safe(inspection)
+    if (
+        inspection.get("current_state") != ROLE_AUTH_READY
+        or inspection.get("base_state") != ROLE_AUTH_READY
+        or inspection.get("target_index_valid") is not True
+        or type(inspection.get("super_admin_count")) is not int
+        or inspection["super_admin_count"] != expected_super_admin_count
+    ):
+        raise SecurityBootstrapIntegrityError("role/auth ready data does not meet bootstrap requirements")
 
 
 def inspect_super_admin_lifecycle(
@@ -930,7 +973,8 @@ def _validated_plan(plan: object, expected_plan_hash: object, *, now_ms: int) ->
         or isinstance(created_at, bool)
         or not isinstance(created_at, int)
         or created_at < 0
-        or expires_at < created_at
+        or created_at > now_ms
+        or expires_at <= created_at
         or expires_at - created_at > MAX_PLAN_AGE_MS
         or now_ms > expires_at
     ):
@@ -996,7 +1040,11 @@ def _validated_plan(plan: object, expected_plan_hash: object, *, now_ms: int) ->
         "reason",
         "backup_id",
     ):
-        _required_text(key, plan.get(key))
+        value = _required_text(key, plan.get(key))
+        if value != value.strip():
+            raise SecurityBootstrapPlanError("activation plan text field is not canonical")
+    if plan.get("actor_user_id") != plan.get("target_user_id"):
+        raise SecurityBootstrapPlanError("activation plan actor and target do not match")
     return plan
 
 
@@ -1190,6 +1238,17 @@ def execute_sec_1b2_activation(
                 event_ids["foundation"] = audit_result["activation_event_id"]
             if lifecycle["role_auth_state"] == SCHEMA_LEGACY:
                 role_result = apply_role_auth_migration_in_transaction(conn)
+                role_auth_after_migration = inspect_role_auth_schema(conn)
+                _assert_clean_ready_role_auth(
+                    role_auth_after_migration,
+                    expected_super_admin_count=0,
+                )
+                _validate_raw_active_admin(
+                    conn,
+                    user_id=target_id,
+                    username=target_name,
+                    role_auth_state=ROLE_AUTH_READY,
+                )
                 migration_event = append_security_audit_event(
                     action="security.role_auth.migration.activate",
                     risk_level="L3",
@@ -1214,11 +1273,15 @@ def execute_sec_1b2_activation(
             ensure_bootstrap_lifecycle_schema_in_transaction(conn)
 
             lifecycle_after_schema = _lifecycle_from_connection(conn)
+            _assert_clean_ready_role_auth(
+                lifecycle_after_schema["role_auth_inspection"],
+                expected_super_admin_count=0,
+            )
             if (
                 lifecycle_after_schema["role_auth_state"] != ROLE_AUTH_READY
+                or lifecycle_after_schema["role_auth_inspection"].get("base_state") != ROLE_AUTH_READY
                 or lifecycle_after_schema["audit_state"] != SECURITY_AUDIT_READY
                 or lifecycle_after_schema["lifecycle_state"] != LIFECYCLE_UNINITIALIZED
-                or lifecycle_after_schema["super_admin_count"] != 0
             ):
                 raise SecurityBootstrapIntegrityError("activation prerequisites changed inside transaction")
             target_before = _validate_raw_active_admin(
@@ -1303,8 +1366,14 @@ def execute_sec_1b2_activation(
             )
             event_ids["bootstrap"] = bootstrap_event["event_id"]
             final = _lifecycle_from_connection(conn)
+            _assert_clean_ready_role_auth(
+                final["role_auth_inspection"],
+                expected_super_admin_count=1,
+            )
             if (
                 final["lifecycle_state"] != LIFECYCLE_ACTIVE
+                or final["role_auth_inspection"].get("current_state") != ROLE_AUTH_READY
+                or final["role_auth_inspection"].get("base_state") != ROLE_AUTH_READY
                 or final["active_super_admin_count"] != 1
                 or final["target_user_id"] != target_id
             ):

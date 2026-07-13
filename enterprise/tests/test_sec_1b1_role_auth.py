@@ -327,6 +327,59 @@ def _run_checks() -> None:
         assert second_apply["current_state"] == ROLE_AUTH_READY
         assert _row(migration_db, "legacy_admin") == migrated_admin
 
+        # C1. Legacy NULL is_admin is a valid ordinary-user compatibility
+        # value, but the READY schema must persist it as raw integer 0.
+        null_admin_db = tmp / "legacy-null-is-admin.db"
+        conn = _legacy_connection(null_admin_db)
+        null_created_at = int(time.time() * 1000)
+        conn.execute(
+            """
+            INSERT INTO main.users (
+                id, username, password_hash, display_name,
+                is_admin, is_active, created_at, last_login
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "legacy-null-user",
+                "legacy_null_user",
+                legacy_hash,
+                "Legacy NULL User",
+                None,
+                1,
+                null_created_at,
+                456,
+            ),
+        )
+        conn.commit()
+        conn.close()
+        null_before = _row(null_admin_db, "legacy_null_user")
+        null_inspection = inspect_role_auth_schema(null_admin_db)
+        assert null_inspection["current_state"] == SCHEMA_LEGACY
+        assert null_inspection["legacy_user_to_user_count"] == 1
+        assert null_inspection["legacy_admin_to_admin_count"] == 0
+        assert null_inspection["invalid_legacy_is_admin_count"] == 0
+        assert plan_role_auth_migration(null_admin_db)["current_state"] == SCHEMA_LEGACY
+        assert apply_role_auth_migration(null_admin_db)["current_state"] == ROLE_AUTH_READY
+        null_after = _row(null_admin_db, "legacy_null_user")
+        for field in (
+            "id",
+            "username",
+            "password_hash",
+            "display_name",
+            "is_active",
+            "created_at",
+            "last_login",
+        ):
+            assert null_after[field] == null_before[field]
+            assert type(null_after[field]) is type(null_before[field])
+        assert type(null_after["is_admin"]) is int and null_after["is_admin"] == 0
+        assert null_after["role"] == ROLE_USER
+        assert type(null_after["auth_version"]) is int and null_after["auth_version"] == 1
+        null_ready_inspection = inspect_role_auth_schema(null_admin_db)
+        assert null_ready_inspection["invalid_ready_is_admin_count"] == 0
+        assert null_ready_inspection["role_is_admin_mismatch_count"] == 0
+        assert null_ready_inspection["super_admin_count"] == 0
+
         rollback_db = tmp / "rollback.db"
         conn = _legacy_connection(rollback_db)
         _insert_legacy_users(conn, legacy_hash)
