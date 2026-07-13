@@ -68,6 +68,7 @@ async def _run_checks() -> None:
         _prepare_env(tmp)
 
         from enterprise import db as edb
+        from enterprise.tests.ready_user_fixture import insert_ready_user_fixture
         from enterprise import interceptors
         from enterprise import admin_api
 
@@ -80,8 +81,8 @@ async def _run_checks() -> None:
         interceptors._HISTORY_FILE = history_path
 
         edb.init_db()
-        user_a = edb.create_user("hist_a", "password-a", "History A", False)
-        user_b = edb.create_user("hist_b", "password-b", "History B", False)
+        user_a = insert_ready_user_fixture(edb.DB_PATH, username="hist_a", password_hash=edb._hash_password("password-a"), display_name="History A")
+        user_b = insert_ready_user_fixture(edb.DB_PATH, username="hist_b", password_hash=edb._hash_password("password-b"), display_name="History B")
         admin = edb.get_user_by_username("admin")
 
         actor_a = {"user_id": user_a["id"], "username": "hist_a", "is_admin": False}

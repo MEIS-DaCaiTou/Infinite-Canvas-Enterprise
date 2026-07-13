@@ -62,14 +62,47 @@ async def _run_checks() -> None:
 
         from enterprise import admin_api
         from enterprise import db as edb
+        from enterprise.tests.ready_user_fixture import insert_ready_user_fixture
+        from enterprise.migrations.sec_1f0_security_audit import (
+            apply_security_audit_migration,
+        )
 
         edb.init_db()
-        user_a = edb.create_user("delete_a", "password-a", "Delete A", False)
-        user_b = edb.create_user("delete_b", "password-b", "Delete B", False)
+        insert_ready_user_fixture(
+            edb.DB_PATH,
+            username="delete_a",
+            password_hash=edb._hash_password("password-a"),
+            display_name="Delete A",
+        )
+        insert_ready_user_fixture(
+            edb.DB_PATH,
+            username="delete_b",
+            password_hash=edb._hash_password("password-b"),
+            display_name="Delete B",
+        )
+        user_a = edb.get_user_by_username("delete_a")
+        user_b = edb.get_user_by_username("delete_b")
         admin = edb.get_user_by_username("admin")
+        apply_security_audit_migration(
+            edb.DB_PATH,
+            actor_user_id=admin["id"],
+            actor_label="temporary-user-delete-operator",
+            operation_id="op-user-delete-audit-activation",
+            reason="temporary user-delete regression fixture",
+        )
 
-        actor_a = {"user_id": user_a["id"], "username": "delete_a", "is_admin": False}
-        actor_admin = {"user_id": admin["id"], "username": "admin", "is_admin": True}
+        actor_a = {
+            "user_id": user_a["id"],
+            "username": "delete_a",
+            "is_admin": False,
+            "auth_version": user_a["auth_version"],
+        }
+        actor_admin = {
+            "user_id": admin["id"],
+            "username": "admin",
+            "is_admin": True,
+            "auth_version": admin["auth_version"],
+        }
 
         runtime_assets = tmp / "assets"
         runtime_assets.mkdir()
@@ -213,17 +246,34 @@ async def _run_checks() -> None:
             ),
             {400},
         )
-        ghost_admin = {"user_id": "other-admin", "username": "other-admin", "is_admin": True}
+        ghost_admin = {
+            "user_id": "other-admin",
+            "username": "other-admin",
+            "is_admin": True,
+            "auth_version": 1,
+        }
         await _expect_http_error(
             admin_api.update_user_active(
                 admin["id"],
-                FakeRequest(ghost_admin, body={"is_active": False}),
+                FakeRequest(
+                    ghost_admin,
+                    body={"is_active": False, "reason": "temporary ghost actor"},
+                ),
             ),
-            {400},
+            {403},
         )
         await _expect_http_error(
-            admin_api.delete_user(admin["id"], FakeRequest(ghost_admin)),
-            {400},
+            admin_api.delete_user(
+                admin["id"],
+                FakeRequest(
+                    ghost_admin,
+                    body={
+                        "confirm_username": "admin",
+                        "reason": "temporary ghost actor",
+                    },
+                ),
+            ),
+            {403},
         )
         await _expect_http_error(
             admin_api.purge_user_feature_overrides(user_a["id"], FakeRequest(actor_a)),

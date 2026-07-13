@@ -81,6 +81,10 @@ FEATURE_FLAG_DEFINITIONS = {
 FEATURE_OVERRIDE_MODES = {"inherit", "allow", "deny"}
 
 
+class SecureUserGovernanceRequiredError(RuntimeError):
+    """Raised when a legacy mutator is unsafe for ROLE_AUTH_READY."""
+
+
 def get_db() -> sqlite3.Connection:
     os.makedirs(os.path.dirname(os.path.abspath(DB_PATH)), exist_ok=True)
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -521,27 +525,19 @@ def create_user(username: str, password: str, display_name: str = "", is_admin: 
     conn = get_db()
     try:
         schema_state = _user_schema_state(conn)
+        if schema_state == ROLE_AUTH_READY:
+            raise SecureUserGovernanceRequiredError(
+                "ROLE_AUTH_READY user creation requires secure governance"
+            )
         uid = uuid.uuid4().hex
         ph = _hash_password(password)
         now = int(time.time() * 1000)
         legacy_is_admin = 1 if is_admin else 0
-        if schema_state == ROLE_AUTH_READY:
-            role = ROLE_ADMIN if is_admin else ROLE_USER
-            conn.execute(
-                """
-                INSERT INTO users (
-                    id, username, password_hash, display_name,
-                    is_admin, role, auth_version, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, 1, ?)
-                """,
-                (uid, username, ph, display_name or username, legacy_is_admin, role, now),
-            )
-        else:
-            conn.execute(
-                "INSERT INTO users (id, username, password_hash, display_name, is_admin, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (uid, username, ph, display_name or username, legacy_is_admin, now),
-            )
+        conn.execute(
+            "INSERT INTO users (id, username, password_hash, display_name, is_admin, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (uid, username, ph, display_name or username, legacy_is_admin, now),
+        )
         conn.commit()
         return {"id": uid, "username": username}
     finally:
@@ -553,6 +549,10 @@ def update_user_password(user_id: str, new_password: str) -> bool:
     conn = get_db()
     try:
         schema_state = _user_schema_state(conn)
+        if schema_state == ROLE_AUTH_READY:
+            raise SecureUserGovernanceRequiredError(
+                "ROLE_AUTH_READY password changes require secure governance"
+            )
         conn.execute("BEGIN IMMEDIATE")
         row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
         if not row:
@@ -580,6 +580,10 @@ def update_user_role(user_id: str, is_admin: bool, updated_by: Optional[str] = N
     conn = get_db()
     try:
         schema_state = _user_schema_state(conn)
+        if schema_state == ROLE_AUTH_READY:
+            raise SecureUserGovernanceRequiredError(
+                "ROLE_AUTH_READY role changes are closed online"
+            )
         conn.execute("BEGIN IMMEDIATE")
         row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
         if not row:
@@ -622,6 +626,10 @@ def update_user_profile(user_id: str, display_name: str) -> bool:
     """更新用户展示名。空展示名由调用方决定是否回退。"""
     conn = get_db()
     try:
+        if _user_schema_state(conn) == ROLE_AUTH_READY:
+            raise SecureUserGovernanceRequiredError(
+                "ROLE_AUTH_READY profile changes require secure governance"
+            )
         cur = conn.execute(
             "UPDATE users SET display_name = ? WHERE id = ?",
             (display_name, user_id)
@@ -637,6 +645,10 @@ def set_user_active(user_id: str, is_active: bool) -> bool:
     conn = get_db()
     try:
         schema_state = _user_schema_state(conn)
+        if schema_state == ROLE_AUTH_READY:
+            raise SecureUserGovernanceRequiredError(
+                "ROLE_AUTH_READY active changes require secure governance"
+            )
         conn.execute("BEGIN IMMEDIATE")
         row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
         if not row:

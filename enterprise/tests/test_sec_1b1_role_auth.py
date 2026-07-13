@@ -12,6 +12,7 @@ import sqlite3
 import sys
 import tempfile
 import time
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -91,6 +92,31 @@ def _row(path: Path, username: str) -> dict:
         conn.close()
 
 
+def _insert_ready_user_fixture(
+    path: Path,
+    *,
+    username: str,
+    password_hash: str,
+    display_name: str,
+) -> dict:
+    user_id = uuid.uuid4().hex
+    conn = sqlite3.connect(path)
+    try:
+        conn.execute(
+            """
+            INSERT INTO main.users (
+                id, username, password_hash, display_name,
+                is_admin, role, auth_version, is_active, created_at
+            ) VALUES (?, ?, ?, ?, 0, 'user', 1, 1, ?)
+            """,
+            (user_id, username, password_hash, display_name, int(time.time() * 1000)),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return {"id": user_id, "username": username}
+
+
 def _jwt(payload: dict, secret: str = TEST_SECRET) -> str:
     return jwt.encode(payload, secret, algorithm="HS256")
 
@@ -102,6 +128,14 @@ def _assert_http_status(func, expected: int) -> None:
         assert exc.status_code == expected, (exc.status_code, expected)
         return
     raise AssertionError(f"expected HTTPException {expected}")
+
+
+def _assert_raises(error_type, func):
+    try:
+        func()
+    except error_type as exc:
+        return exc
+    raise AssertionError(f"expected {error_type.__name__}")
 
 
 async def _login(gateway, username: str, password: str):
@@ -123,6 +157,7 @@ def _run_checks() -> None:
         from enterprise import auth
         from enterprise import db as edb
         from enterprise import gateway
+        from enterprise import security_user_governance as governance
         from enterprise.migrations.sec_1b1_role_auth import (
             MIGRATION_ID,
             ROLE_AUTH_READY,
@@ -131,6 +166,9 @@ def _run_checks() -> None:
             apply_role_auth_migration,
             inspect_role_auth_schema,
             plan_role_auth_migration,
+        )
+        from enterprise.migrations.sec_1f0_security_audit import (
+            apply_security_audit_migration,
         )
         from enterprise.roles import (
             ROLE_ADMIN,
@@ -323,13 +361,23 @@ def _run_checks() -> None:
         assert default_admin["is_admin"] is True
         assert default_admin["auth_version"] == 1
 
-        user = edb.create_user("sec_user", "password-user", "Sec User", False)
-        created_admin = edb.create_user("sec_admin", "password-admin", "Sec Admin", True)
+        user = _insert_ready_user_fixture(
+            fresh_db,
+            username="sec_user",
+            password_hash=edb._hash_password("password-user"),
+            display_name="Sec User",
+        )
+        _assert_raises(
+            edb.SecureUserGovernanceRequiredError,
+            lambda: edb.create_user("sec_admin", "password-admin", "Sec Admin", True),
+        )
+        _assert_raises(
+            edb.SecureUserGovernanceRequiredError,
+            lambda: edb.create_user("sec_user_bypass", "password-user", "Sec User", False),
+        )
         user_row = edb.get_user_by_id(user["id"])
-        admin_row = edb.get_user_by_id(created_admin["id"])
         assert user_row["role"] == ROLE_USER and user_row["is_admin"] is False
-        assert admin_row["role"] == ROLE_ADMIN and admin_row["is_admin"] is True
-        assert user_row["auth_version"] == admin_row["auth_version"] == 1
+        assert user_row["auth_version"] == 1
         assert is_admin_role(ROLE_SUPER_ADMIN) is True
         conn = sqlite3.connect(fresh_db)
         conn.execute("UPDATE users SET is_admin = 1 WHERE id = ?", (user["id"],))
@@ -467,17 +515,51 @@ def _run_checks() -> None:
         conn.close()
 
         # F. auth_version invalidation and no-op rules.
-        edb.update_user_profile(user["id"], "Renamed User")
+        apply_security_audit_migration(
+            fresh_db,
+            actor_user_id=default_admin["id"],
+            actor_label="temporary-sec-1b1-operator",
+            operation_id="op-sec-1b1-audit-activation",
+            reason="temporary SEC-1B1 regression fixture",
+        )
+        governance.update_user_profile(
+            actor_user_id=default_admin["id"],
+            expected_actor_auth_version=edb.get_user_by_id(default_admin["id"])["auth_version"],
+            target_user_id=user["id"],
+            display_name="Renamed User",
+        )
         assert auth.verify_token(token)["username"] == "sec_user"
         edb.update_last_login(user["id"])
         assert auth.verify_token(token) is not None
 
-        assert edb.update_user_password(user["id"], "new-password-user") is True
+        governance.reset_user_password(
+            actor_user_id=default_admin["id"],
+            expected_actor_auth_version=edb.get_user_by_id(default_admin["id"])["auth_version"],
+            target_user_id=user["id"],
+            new_password="new-password-user",
+            reason="temporary SEC-1B1 password reset",
+        )
         assert auth.verify_token(token) is None
         token_after_password = auth.create_token(user["id"])
         assert auth.verify_token(token_after_password) is not None
 
-        assert edb.update_user_role(user["id"], True, updated_by=default_admin["id"]) is True
+        _assert_raises(
+            edb.SecureUserGovernanceRequiredError,
+            lambda: edb.update_user_role(user["id"], True, updated_by=default_admin["id"]),
+        )
+        conn = sqlite3.connect(fresh_db)
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(
+            """
+            UPDATE main.users
+            SET role = ?, is_admin = 1, auth_version = auth_version + 1,
+                role_updated_at = ?, role_updated_by = ?
+            WHERE id = ?
+            """,
+            (ROLE_ADMIN, int(time.time() * 1000), default_admin["id"], user["id"]),
+        )
+        conn.commit()
+        conn.close()
         assert auth.verify_token(token_after_password) is None
         promoted = edb.get_user_by_id(user["id"])
         assert promoted["role_updated_by"] == default_admin["id"]
@@ -488,7 +570,19 @@ def _run_checks() -> None:
         assert admin_principal["is_admin"] is True
         assert admin_api._require_admin(SimpleNamespace(state=SimpleNamespace(user=admin_principal))) == admin_principal
 
-        assert edb.update_user_role(user["id"], False, updated_by=default_admin["id"]) is True
+        conn = sqlite3.connect(fresh_db)
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(
+            """
+            UPDATE main.users
+            SET role = ?, is_admin = 0, auth_version = auth_version + 1,
+                role_updated_at = ?, role_updated_by = ?
+            WHERE id = ?
+            """,
+            (ROLE_USER, int(time.time() * 1000), default_admin["id"], user["id"]),
+        )
+        conn.commit()
+        conn.close()
         assert auth.verify_token(admin_token) is None
         user_token = auth.create_token(user["id"])
         _assert_http_status(
@@ -497,11 +591,23 @@ def _run_checks() -> None:
         )
 
         before_disable_version = edb.get_user_by_id(user["id"])["auth_version"]
-        assert edb.set_user_active(user["id"], False) is True
+        governance.set_user_active(
+            actor_user_id=default_admin["id"],
+            expected_actor_auth_version=edb.get_user_by_id(default_admin["id"])["auth_version"],
+            target_user_id=user["id"],
+            is_active=False,
+            reason="temporary SEC-1B1 disable",
+        )
         assert auth.verify_token(user_token) is None
         disabled = edb.get_user_by_id_any_status(user["id"])
         assert disabled["auth_version"] == before_disable_version + 1
-        assert edb.set_user_active(user["id"], True) is True
+        governance.set_user_active(
+            actor_user_id=default_admin["id"],
+            expected_actor_auth_version=edb.get_user_by_id(default_admin["id"])["auth_version"],
+            target_user_id=user["id"],
+            is_active=True,
+            reason="temporary SEC-1B1 enable",
+        )
         assert auth.verify_token(user_token) is None
         enabled = edb.get_user_by_id(user["id"])
         assert enabled["auth_version"] == before_disable_version + 2
@@ -509,9 +615,18 @@ def _run_checks() -> None:
         assert auth.verify_token(enabled_token) is not None
 
         stable_version = enabled["auth_version"]
-        assert edb.set_user_active(user["id"], True) is True
+        governance.set_user_active(
+            actor_user_id=default_admin["id"],
+            expected_actor_auth_version=edb.get_user_by_id(default_admin["id"])["auth_version"],
+            target_user_id=user["id"],
+            is_active=True,
+            reason="temporary SEC-1B1 repeated enable",
+        )
         assert edb.get_user_by_id(user["id"])["auth_version"] == stable_version
-        assert edb.update_user_role(user["id"], False, updated_by=default_admin["id"]) is True
+        _assert_raises(
+            edb.SecureUserGovernanceRequiredError,
+            lambda: edb.update_user_role(user["id"], False, updated_by=default_admin["id"]),
+        )
         assert edb.get_user_by_id(user["id"])["auth_version"] == stable_version
 
         # G. Legacy tokens ignore cached privilege, then expire on migration.
