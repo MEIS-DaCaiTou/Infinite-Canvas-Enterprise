@@ -238,6 +238,7 @@ def _run_checks() -> None:
         LIFECYCLE_ACTIVE,
         LIFECYCLE_RECOVERY_REQUIRED,
         LIFECYCLE_UNINITIALIZED,
+        SecurityBootstrapConcurrentDatabaseChange,
         SecurityBootstrapError,
         SecurityBootstrapBackupError,
         SecurityBootstrapIntegrityError,
@@ -251,6 +252,7 @@ def _run_checks() -> None:
         inspect_super_admin_lifecycle,
         plan_sec_1b2_activation,
         prepare_sec_1b2_journal,
+        validate_sec_1b2_plan,
     )
     from enterprise.security_audit import SECURITY_AUDIT_MISSING, SECURITY_AUDIT_READY
     from tools import sec_1b2_local_runner as runner
@@ -514,6 +516,20 @@ def _run_checks() -> None:
                         }
                     )
                 },
+                {
+                    "context_json": (
+                        '{"lifecycle_before":"UNINITIALIZED","lifecycle_after":"ACTIVE",'
+                        '"role_before":"admin","role_after":"user","role_after":"super_admin",'
+                        '"auth_version_incremented":true}'
+                    )
+                },
+                {
+                    "context_json": (
+                        '{"lifecycle_before":"UNINITIALIZED","lifecycle_after":"ACTIVE",'
+                        '"role_before":"admin","role_after":"super_admin","role_after":"user",'
+                        '"auth_version_incremented":true}'
+                    )
+                },
                 {"context_json": json.dumps(["not", "a", "context"] )},
                 {
                     "context_json": json.dumps(
@@ -637,53 +653,114 @@ def _run_checks() -> None:
                 lock_prepare_conn.rollback()
                 lock_prepare_conn.close()
 
-            # C3b. WAL -> DELETE must fail closed if another connection changes
-            # non-users data or schema in the transactionless SQLite switch gap.
+            # C3b. WAL -> DELETE must fail closed if another connection writes
+            # during the transactionless switch gap. The runner report must not
+            # claim that no database changes occurred when that writer commits.
             import enterprise.security_bootstrap as bootstrap_module
 
-            def assert_window_change_rejected(label: str, mutate_external) -> None:
+            def assert_window_change_rejected(label: str, mutate_external, *, after_switch: bool = False) -> None:
                 window_db = tmp / f"journal-window-{label}.db"
                 _legacy_database(window_db)
                 conn = sqlite3.connect(window_db)
                 conn.execute("PRAGMA journal_mode = WAL")
                 conn.close()
                 _checkpoint_temporary_wal(window_db)
-                users_before = [_user(window_db, user_id) for user_id in ("admin-id", "admin-two-id", "user-id")]
                 original_switch = bootstrap_module._switch_journal_mode_to_delete
+                switch_calls = 0
 
                 def mutate_then_switch(preparation_conn, **kwargs):
+                    nonlocal switch_calls
+                    switch_calls += 1
+                    if after_switch:
+                        original_switch(preparation_conn, **kwargs)
                     external = sqlite3.connect(window_db)
                     try:
                         mutate_external(external)
                         external.commit()
                     finally:
                         external.close()
-                    return original_switch(preparation_conn, **kwargs)
+                    if not after_switch:
+                        return original_switch(preparation_conn, **kwargs)
+                    return None
 
                 bootstrap_module._switch_journal_mode_to_delete = mutate_then_switch
+                report_path = tmp / f"journal-window-{label}-report.json"
+                original_runner_input = getattr(runner, "input", None)
+                runner.input = lambda _prompt: f"SEC-1B2 PREPARE-JOURNAL {window_db.name}"
+                stderr = StringIO()
                 try:
-                    _assert_raises(SecurityBootstrapError, lambda: prepare_sec_1b2_journal(database_path=window_db, now_ms=now))
+                    with redirect_stderr(stderr):
+                        assert runner.main(
+                            [
+                                "prepare-journal",
+                                "--database", str(window_db),
+                                "--report-output", str(report_path),
+                                "--confirm-service-stopped",
+                            ]
+                        ) == 2
                 finally:
                     bootstrap_module._switch_journal_mode_to_delete = original_switch
-                assert [_user(window_db, user_id) for user_id in ("admin-id", "admin-two-id", "user-id")] == users_before
+                    if original_runner_input is None:
+                        del runner.input
+                    else:
+                        runner.input = original_runner_input
+                assert switch_calls == 1
+                report = json.loads(report_path.read_text(encoding="utf-8"))
+                assert report["success"] is False
+                assert report["error_code"] == SecurityBootstrapConcurrentDatabaseChange.code
+                assert report["execution_state"] == "database_changed_during_journal_preparation"
+                assert report["database_transaction_rolled_back"] is False
+                assert report["no_database_changes_committed"] is False
+                assert report["database_changes_committed"] is after_switch
+                assert report["external_database_changes_detected"] is True
+                assert report["post_commit_verification_required"] is True
+                assert report["do_not_rerun_until_status_verified"] is True
+                assert report["journal_mode_changed"] is after_switch
+                serialized_report = json.dumps(report, ensure_ascii=False)
+                assert "temporary-window-secret" not in serialized_report
+                assert "temporary-window-secret" not in stderr.getvalue()
+                assert "database changed during preparation" in stderr.getvalue().casefold()
+                assert "do not rerun" in stderr.getvalue().casefold()
+                assert "run status" in stderr.getvalue().casefold()
+                journal_conn = sqlite3.connect(window_db)
+                try:
+                    mode = str(journal_conn.execute("PRAGMA main.journal_mode").fetchone()[0]).casefold()
+                finally:
+                    journal_conn.close()
+                assert mode == ("delete" if after_switch else "wal")
 
             assert_window_change_rejected(
                 "canvas-map",
                 lambda conn: conn.execute(
                     "INSERT INTO main.user_canvas_map (user_id, canvas_id, created_at) VALUES (?, ?, ?)",
-                    ("user-id", "canvas-window-change", now),
+                    ("user-id", "temporary-window-secret-canvas", now),
                 ),
             )
             assert_window_change_rejected(
                 "usage-logs",
                 lambda conn: conn.execute(
                     "INSERT INTO main.usage_logs (user_id, action, detail, ts) VALUES (?, ?, ?, ?)",
-                    ("user-id", "window-change", "non-secret", now),
+                    ("user-id", "window-change", "temporary-window-secret-usage", now),
                 ),
             )
             assert_window_change_rejected(
                 "schema",
                 lambda conn: conn.execute("CREATE TABLE journal_window_schema (id INTEGER PRIMARY KEY)"),
+            )
+            assert_window_change_rejected(
+                "users",
+                lambda conn: conn.execute(
+                    "UPDATE main.users SET display_name = ? WHERE id = ?",
+                    ("temporary-window-secret-users", "user-id"),
+                ),
+            )
+            assert_window_change_rejected(
+                "after-switch",
+                lambda conn: conn.execute(
+                    "INSERT INTO main.usage_logs (user_id, action, detail, ts) VALUES (?, ?, ?, ?)",
+                    ("user-id", "after-switch", "temporary-window-secret-after", now),
+                ),
+                after_switch=True,
             )
             delete_journal_db = tmp / "delete-journal.db"
             _legacy_database(delete_journal_db)
@@ -914,7 +991,106 @@ def _run_checks() -> None:
             assert runtime_post_commit_error.report["do_not_rerun_until_status_verified"] is True
             assert inspect_super_admin_lifecycle(post_commit_runtime_db)["lifecycle_state"] == LIFECYCLE_ACTIVE
 
-            # E2e. The runner cannot enter execute if it cannot durably record
+            # E2e. Runner validation is read-only and happens before password,
+            # confirmation, report reservation, or the execute service call.
+            runner_validation_db = tmp / "runner-plan-validation.db"
+            _legacy_database(runner_validation_db)
+            runner_validation_manifest = _manifest(tmp, runner_validation_db, now_ms=now)
+            runner_validation_plan = _plan(runner_validation_db, runner_validation_manifest, now)
+            validated_copy = validate_sec_1b2_plan(
+                runner_validation_plan,
+                runner_validation_plan["plan_hash"],
+                now_ms=now,
+            )
+            assert validated_copy == runner_validation_plan
+            assert validated_copy is not runner_validation_plan
+
+            def assert_invalid_runner_plan_is_prompt_free(label: str, mutate_plan, *, expected_hash: str | None = None) -> None:
+                candidate = json.loads(json.dumps(runner_validation_plan))
+                mutate_plan(candidate)
+                plan_path = tmp / f"runner-invalid-{label}.json"
+                plan_path.write_text(json.dumps(candidate), encoding="utf-8")
+                report_path = tmp / f"runner-invalid-{label}-report.json"
+                calls = {"getpass": 0, "input": 0, "execute": 0}
+                original_runner_getpass = runner.getpass.getpass
+                original_runner_input = getattr(runner, "input", None)
+                original_runner_execute = runner.execute_sec_1b2_activation
+
+                def reject_getpass(_prompt):
+                    calls["getpass"] += 1
+                    raise AssertionError("getpass must not run for an invalid plan")
+
+                def reject_input(_prompt):
+                    calls["input"] += 1
+                    raise AssertionError("confirmation must not run for an invalid plan")
+
+                def reject_execute(**_kwargs):
+                    calls["execute"] += 1
+                    raise AssertionError("execute service must not run for an invalid plan")
+
+                runner.getpass.getpass = reject_getpass
+                runner.input = reject_input
+                runner.execute_sec_1b2_activation = reject_execute
+                stderr = StringIO()
+                try:
+                    with redirect_stderr(stderr):
+                        assert runner.main(
+                            [
+                                "execute",
+                                "--database", str(runner_validation_db),
+                                "--plan", str(plan_path),
+                                "--expected-plan-hash", expected_hash or runner_validation_plan["plan_hash"],
+                                "--backup-manifest", str(runner_validation_manifest),
+                                "--target-user-id", "admin-id",
+                                "--target-username", "admin",
+                                "--actor-label", "temporary-local-operator",
+                                "--reason", "temporary SEC-1B2 rehearsal",
+                                "--report-output", str(report_path),
+                                "--confirm-service-stopped",
+                                "--confirm-backup-reviewed",
+                                "--confirm-session-impact-reviewed",
+                                "--confirm-first-bootstrap",
+                            ]
+                        ) == 1
+                finally:
+                    runner.getpass.getpass = original_runner_getpass
+                    runner.execute_sec_1b2_activation = original_runner_execute
+                    if original_runner_input is None:
+                        del runner.input
+                    else:
+                        runner.input = original_runner_input
+                assert calls == {"getpass": 0, "input": 0, "execute": 0}
+                assert not report_path.exists()
+                assert str(plan_path) not in stderr.getvalue()
+                assert inspect_super_admin_lifecycle(runner_validation_db)["lifecycle_state"] == LIFECYCLE_UNINITIALIZED
+
+            assert_invalid_runner_plan_is_prompt_free(
+                "operation-id",
+                lambda plan: plan.update({"operation_id": "tampered-operation"}),
+            )
+            assert_invalid_runner_plan_is_prompt_free(
+                "session-scope",
+                lambda plan: plan["session_impact"].update({"session_invalidation_scope": "bootstrap_target_only"}),
+            )
+            assert_invalid_runner_plan_is_prompt_free(
+                "target",
+                lambda plan: plan.update({"target_user_id": "other-admin"}),
+            )
+            assert_invalid_runner_plan_is_prompt_free(
+                "expires-at",
+                lambda plan: plan.update({"expires_at": 0}),
+            )
+            assert_invalid_runner_plan_is_prompt_free(
+                "stored-hash",
+                lambda plan: plan.update({"plan_hash": "0" * 64}),
+            )
+            assert_invalid_runner_plan_is_prompt_free(
+                "expected-hash",
+                lambda _plan: None,
+                expected_hash="f" * 64,
+            )
+
+            # E2f. The runner cannot enter execute if it cannot durably record
             # execution_in_progress before the database transaction starts.
             runner_pending_db = tmp / "runner-pending.db"
             _legacy_database(runner_pending_db)
@@ -1038,11 +1214,23 @@ def _run_checks() -> None:
             runner_success_report_path = tmp / "runner-success-report.json"
             original_runner_getpass = runner.getpass.getpass
             original_runner_input = getattr(runner, "input", None)
-            runner.getpass.getpass = lambda _prompt: "admin-password"
-            runner.input = lambda _prompt: (
-                f"SEC-1B2 {runner_success_plan['operation_id']} admin "
-                f"{runner_success_plan['session_impact']['session_invalidation_scope']}"
-            )
+            success_prompt_calls = {"getpass": 0, "input": 0}
+
+            def success_getpass(_prompt):
+                success_prompt_calls["getpass"] += 1
+                return "admin-password"
+
+            def success_input(prompt):
+                success_prompt_calls["input"] += 1
+                expected_phrase = (
+                    f"SEC-1B2 {runner_success_plan['operation_id']} admin "
+                    f"{runner_success_plan['session_impact']['session_invalidation_scope']}"
+                )
+                assert expected_phrase in prompt
+                return expected_phrase
+
+            runner.getpass.getpass = success_getpass
+            runner.input = success_input
             try:
                 assert runner.main(
                     [
@@ -1072,6 +1260,7 @@ def _run_checks() -> None:
             assert success_report["success"] is True
             assert success_report["execution_state"] == "database_committed"
             assert success_report["do_not_rerun_until_status_verified"] is False
+            assert success_prompt_calls == {"getpass": 1, "input": 1}
 
             # E3. Supported resume states do not duplicate prior activation events.
             resume_audit_db = tmp / "resume-audit.db"

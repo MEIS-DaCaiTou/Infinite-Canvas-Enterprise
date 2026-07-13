@@ -83,6 +83,8 @@ class SecurityBootstrapError(RuntimeError):
         no_database_changes_committed: bool = True,
         database_changes_committed: bool = False,
         post_commit_verification_required: bool = False,
+        external_database_changes_detected: bool = False,
+        journal_mode_changed: bool = False,
         report: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(message)
@@ -91,6 +93,8 @@ class SecurityBootstrapError(RuntimeError):
         self.no_database_changes_committed = no_database_changes_committed
         self.database_changes_committed = database_changes_committed
         self.post_commit_verification_required = post_commit_verification_required
+        self.external_database_changes_detected = external_database_changes_detected
+        self.journal_mode_changed = journal_mode_changed
         self.report = report
 
 
@@ -137,6 +141,11 @@ class SecurityBootstrapPostCommitError(SecurityBootstrapError):
 class SecurityBootstrapJournalPreparationError(SecurityBootstrapError):
     code = "SEC_1B2_JOURNAL_PREPARATION_VERIFICATION_REQUIRED"
     public_message = "Journal preparation may have completed; manual verification is required"
+
+
+class SecurityBootstrapConcurrentDatabaseChange(SecurityBootstrapError):
+    code = "SEC_1B2_EXTERNAL_DATABASE_CHANGE"
+    public_message = "Database changed during journal preparation; stop all writers and verify status"
 
 
 def _utc_now_ms() -> int:
@@ -406,6 +415,20 @@ def _journal_prepare_observation(conn: sqlite3.Connection) -> dict[str, Any]:
     }
 
 
+def _concurrent_database_change_error(*, journal_mode_changed: bool) -> SecurityBootstrapConcurrentDatabaseChange:
+    """Describe an external writer observed during the WAL preparation window."""
+    return SecurityBootstrapConcurrentDatabaseChange(
+        "external database change detected during journal preparation",
+        execution_state="database_changed_during_journal_preparation",
+        database_transaction_rolled_back=False,
+        no_database_changes_committed=False,
+        database_changes_committed=journal_mode_changed,
+        post_commit_verification_required=True,
+        external_database_changes_detected=True,
+        journal_mode_changed=journal_mode_changed,
+    )
+
+
 def _switch_journal_mode_to_delete(
     conn: sqlite3.Connection,
     *,
@@ -413,7 +436,7 @@ def _switch_journal_mode_to_delete(
 ) -> None:
     """Perform the SQLite-required transactionless WAL -> DELETE header change."""
     if _journal_prepare_observation(conn) != before_observation:
-        raise SecurityBootstrapIntegrityError("SQLite data changed before journal mode switch")
+        raise _concurrent_database_change_error(journal_mode_changed=False)
     result = conn.execute("PRAGMA main.journal_mode = DELETE").fetchone()
     if not result or str(result[0]).casefold() != "delete":
         raise SecurityBootstrapValidationError("SQLite journal mode did not switch to DELETE")
@@ -463,12 +486,14 @@ def prepare_sec_1b2_journal(
                 raise SecurityBootstrapIntegrityError("SQLite journal preparation could not be verified")
             after_observation = _journal_prepare_observation(conn)
             if after_observation != before_observation:
-                raise SecurityBootstrapIntegrityError("SQLite data changed during journal preparation")
+                raise _concurrent_database_change_error(journal_mode_changed=journal_changed)
             conn.rollback()
             transaction_started = False
         except SecurityBootstrapError as exc:
             if transaction_started and conn.in_transaction:
                 conn.rollback()
+            if isinstance(exc, SecurityBootstrapConcurrentDatabaseChange):
+                raise
             if journal_changed:
                 raise SecurityBootstrapJournalPreparationError(
                     "journal preparation changed the database header before verification failed",
@@ -476,6 +501,7 @@ def prepare_sec_1b2_journal(
                     database_changes_committed=True,
                     no_database_changes_committed=False,
                     post_commit_verification_required=True,
+                    journal_mode_changed=True,
                 ) from exc
             raise
         except sqlite3.Error as exc:
@@ -488,6 +514,7 @@ def prepare_sec_1b2_journal(
                     database_changes_committed=True,
                     no_database_changes_committed=False,
                     post_commit_verification_required=True,
+                    journal_mode_changed=True,
                 ) from exc
             raise SecurityBootstrapLockError("controlled journal preparation could not acquire an exclusive lock") from exc
     try:
@@ -502,6 +529,8 @@ def prepare_sec_1b2_journal(
             "database_size_after": path.stat().st_size,
             "started_at": started_at,
             "completed_at": _utc_now_ms(),
+            "external_database_changes_detected": False,
+            "journal_mode_changed": journal_changed,
             "warnings": [],
         }
     except OSError as exc:
@@ -513,6 +542,7 @@ def prepare_sec_1b2_journal(
             database_changes_committed=True,
             no_database_changes_committed=False,
             post_commit_verification_required=True,
+            journal_mode_changed=True,
         ) from exc
 
 
@@ -586,6 +616,16 @@ def _strict_context_matches(context: object, expected: dict[str, Any]) -> bool:
     )
 
 
+def _reject_duplicate_json_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    """Reject duplicate object keys instead of accepting json.loads last-key-wins behavior."""
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON object key")
+        result[key] = value
+    return result
+
+
 def _bootstrap_audit_matches_marker(conn: sqlite3.Connection, marker: dict[str, Any]) -> bool:
     """Require the immutable marker to match one exact L3 bootstrap event."""
     try:
@@ -614,7 +654,7 @@ def _bootstrap_audit_matches_marker(conn: sqlite3.Connection, marker: dict[str, 
         "auth_version_incremented": True,
     }
     try:
-        context = json.loads(row[10])
+        context = json.loads(row[10], object_pairs_hook=_reject_duplicate_json_keys)
     except (TypeError, ValueError, json.JSONDecodeError):
         return False
     return (
@@ -861,7 +901,7 @@ def plan_sec_1b2_activation(
 
 
 def _validated_plan(plan: object, expected_plan_hash: object, *, now_ms: int) -> dict[str, Any]:
-    if not isinstance(plan, dict):
+    if type(plan) is not dict:
         raise SecurityBootstrapPlanError("activation plan is invalid")
     expected_hash = _required_text("expected_plan_hash", expected_plan_hash, maximum=64)
     stored_hash = plan.get("plan_hash")
@@ -880,6 +920,8 @@ def _validated_plan(plan: object, expected_plan_hash: object, *, now_ms: int) ->
         raise SecurityBootstrapPlanError("activation plan has unsupported values")
     if plan.get("role_auth_state_before") not in {SCHEMA_LEGACY, ROLE_AUTH_READY}:
         raise SecurityBootstrapPlanError("activation plan role/auth state is invalid")
+    if plan.get("audit_state_before") not in {SECURITY_AUDIT_MISSING, SECURITY_AUDIT_READY}:
+        raise SecurityBootstrapPlanError("activation plan audit state is invalid")
     expires_at = plan.get("expires_at")
     created_at = plan.get("created_at")
     if (
@@ -898,26 +940,86 @@ def _validated_plan(plan: object, expected_plan_hash: object, *, now_ms: int) ->
             raise SecurityBootstrapPlanError("activation plan is missing an integrity fingerprint")
     if plan.get("source_database_relative_path") not in ALLOWED_SOURCE_DATABASE_RELATIVE_PATHS:
         raise SecurityBootstrapPlanError("activation plan source database path is invalid")
-    if type(plan.get("source_database_size")) is not int or plan["source_database_size"] < 0:
-        raise SecurityBootstrapPlanError("activation plan source database size is invalid")
+    for key in (
+        "database_size",
+        "source_database_size",
+        "backup_database_size",
+        "target_auth_version_before",
+        "backup_created_at",
+    ):
+        if type(plan.get(key)) is not int or plan[key] < 0:
+            raise SecurityBootstrapPlanError("activation plan numeric field is invalid")
     if plan.get("source_database_journal_mode") not in SAFE_JOURNAL_MODES:
         raise SecurityBootstrapPlanError("activation plan source journal mode is invalid")
+    if not _is_hex_sha256(plan.get("backup_database_sha256")):
+        raise SecurityBootstrapPlanError("activation plan backup fingerprint is invalid")
     impact = plan.get("session_impact")
     expected_scope = (
         "all_existing_sessions"
         if plan.get("role_auth_state_before") == SCHEMA_LEGACY
         else "bootstrap_target_only"
     )
-    if not isinstance(impact, dict) or impact != {
+    if not _strict_context_matches(impact, {
         "session_invalidation_scope": expected_scope,
         "all_existing_tokens_invalidated": plan.get("role_auth_state_before") == SCHEMA_LEGACY,
         "target_tokens_invalidated": True,
         "reauthentication_required": True,
-    }:
+    }):
         raise SecurityBootstrapPlanError("activation plan session impact is invalid")
-    for key in ("plan_id", "operation_id", "target_user_id", "target_username", "actor_user_id", "actor_label", "reason"):
+    expected_actions = [
+        action
+        for action, required in (
+            ("security.audit.foundation.activate", plan.get("audit_state_before") == SECURITY_AUDIT_MISSING),
+            ("security.role_auth.migration.activate", plan.get("role_auth_state_before") == SCHEMA_LEGACY),
+            ("security.super_admin.bootstrap", True),
+        )
+        if required
+    ]
+    if plan.get("actions") != expected_actions:
+        raise SecurityBootstrapPlanError("activation plan actions are invalid")
+    if not _strict_context_matches(plan.get("expected_states_after"), {
+        "role_auth_state": ROLE_AUTH_READY,
+        "audit_state": SECURITY_AUDIT_READY,
+        "lifecycle_state": LIFECYCLE_ACTIVE,
+        "active_super_admin_count": 1,
+    }):
+        raise SecurityBootstrapPlanError("activation plan expected state is invalid")
+    if plan.get("warnings") != []:
+        raise SecurityBootstrapPlanError("activation plan warnings are invalid")
+    for key in (
+        "plan_id",
+        "operation_id",
+        "target_user_id",
+        "target_username",
+        "actor_user_id",
+        "actor_label",
+        "reason",
+        "backup_id",
+    ):
         _required_text(key, plan.get(key))
     return plan
+
+
+def validate_sec_1b2_plan(
+    plan: object,
+    expected_plan_hash: object,
+    *,
+    now_ms: int | None = None,
+) -> dict[str, Any]:
+    """Validate a plan read-only before any runner prompt, report, or database mutation."""
+    validation_time = _utc_now_ms() if now_ms is None else now_ms
+    if type(validation_time) is not int or validation_time < 0:
+        raise SecurityBootstrapPlanError("activation plan validation time is invalid")
+    try:
+        approved = _validated_plan(plan, expected_plan_hash, now_ms=validation_time)
+        copied = json.loads(_canonical_json(approved))
+    except SecurityBootstrapError:
+        raise
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise SecurityBootstrapPlanError("activation plan is invalid") from exc
+    if type(copied) is not dict:
+        raise SecurityBootstrapPlanError("activation plan is invalid")
+    return copied
 
 
 def _assert_plan_matches_runtime(
@@ -1020,7 +1122,7 @@ def execute_sec_1b2_activation(
     started_at = _utc_now_ms() if now_ms is None else now_ms
     if isinstance(started_at, bool) or not isinstance(started_at, int) or started_at < 0:
         raise SecurityBootstrapValidationError("activation time is invalid")
-    approved_plan = _validated_plan(plan, expected_plan_hash, now_ms=started_at)
+    approved_plan = validate_sec_1b2_plan(plan, expected_plan_hash, now_ms=started_at)
     path = _existing_regular_file(database_path, label="database")
     backup: dict[str, Any] = {}
     event_ids: dict[str, str | None] = {

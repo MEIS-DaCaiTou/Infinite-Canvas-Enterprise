@@ -24,6 +24,7 @@ from enterprise.security_bootstrap import (  # noqa: E402
     inspect_super_admin_lifecycle,
     plan_sec_1b2_activation,
     prepare_sec_1b2_journal,
+    validate_sec_1b2_plan,
 )
 
 
@@ -96,6 +97,8 @@ def _pending_report_payload(
         "database_changes_committed": None,
         "post_commit_verification_required": True,
         "do_not_rerun_until_status_verified": True,
+        "external_database_changes_detected": False,
+        "journal_mode_changed": False,
     }
 
 
@@ -135,9 +138,13 @@ def _failure_report(exc: SecurityBootstrapError) -> dict[str, Any]:
             "no_database_changes_committed": exc.no_database_changes_committed,
             "database_changes_committed": exc.database_changes_committed,
             "post_commit_verification_required": exc.post_commit_verification_required,
+            "external_database_changes_detected": exc.external_database_changes_detected,
+            "journal_mode_changed": exc.journal_mode_changed,
             "do_not_rerun_until_status_verified": bool(
                 exc.database_changes_committed
                 or exc.post_commit_verification_required
+                or exc.external_database_changes_detected
+                or exc.no_database_changes_committed is not True
                 or report.get("do_not_rerun_until_status_verified") is True
             ),
         }
@@ -255,6 +262,12 @@ def _run_prepare_journal(args: argparse.Namespace) -> int:
             state = "journal state may have changed" if exc.database_changes_committed else "journal state was not changed"
             print(f"SEC-1B2 journal preparation failed; {state} and the report could not be finalized", file=sys.stderr)
             return 2
+        if exc.external_database_changes_detected:
+            print(
+                "SEC-1B2 journal preparation failed: database changed during preparation; do not rerun; verify stopped services and run status",
+                file=sys.stderr,
+            )
+            return 2
         print(f"SEC-1B2 journal preparation failed: {report_path}", file=sys.stderr)
         return 2 if exc.database_changes_committed else 1
     try:
@@ -267,9 +280,10 @@ def _run_prepare_journal(args: argparse.Namespace) -> int:
 
 
 def _run_execute(args: argparse.Namespace) -> int:
-    report_path = _safe_output_path(args.report_output, label="report output")
-    plan = _load_json_file(args.plan, label="activation plan")
-    _required_execute_confirmations(args)
+    plan = validate_sec_1b2_plan(
+        _load_json_file(args.plan, label="activation plan"),
+        args.expected_plan_hash,
+    )
     operation_id = plan.get("operation_id")
     if not isinstance(operation_id, str) or not operation_id:
         raise SecurityBootstrapError("activation plan is invalid")
@@ -277,7 +291,12 @@ def _run_execute(args: argparse.Namespace) -> int:
     session_scope = session_impact.get("session_invalidation_scope") if isinstance(session_impact, dict) else None
     if session_scope not in {"all_existing_sessions", "bootstrap_target_only"}:
         raise SecurityBootstrapError("activation plan session impact is invalid")
-    phrase = f"SEC-1B2 {operation_id} {args.target_username} {session_scope}"
+    target_username = plan.get("target_username")
+    if not isinstance(target_username, str) or not target_username:
+        raise SecurityBootstrapError("activation plan is invalid")
+    _required_execute_confirmations(args)
+    report_path = _safe_output_path(args.report_output, label="report output")
+    phrase = f"SEC-1B2 {operation_id} {target_username} {session_scope}"
     password = getpass.getpass("Current selected admin password: ")
     entered_phrase = input(f"Type exactly '{phrase}' to execute: ")
     if entered_phrase != phrase:
