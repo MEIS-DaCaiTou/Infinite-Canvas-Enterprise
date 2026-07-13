@@ -664,7 +664,11 @@ def command_backup(args: argparse.Namespace, job_id: str, logger: OpsJobLogger) 
         logger.event("copy_started", backup_dir=backup_dir.as_posix())
         copy_backup_items(app_root, backup_dir)
         logger.event("sqlite_backup_started", sqlite_backup_path=sqlite_backup_path.as_posix())
-        sqlite_backup = backup_sqlite_database(app_root / "data" / "enterprise.db", sqlite_backup_path)
+        sqlite_backup = backup_sqlite_database(
+            app_root / "data" / "enterprise.db",
+            sqlite_backup_path,
+            source_database_relative_path="data/enterprise.db",
+        )
         manifest.update(sqlite_backup)
         if sqlite_backup["sqlite_backup_status"] == "failed":
             manifest["status"] = "fail"
@@ -736,7 +740,12 @@ def backup_ignore(dir_path: str, names: list[str]) -> set[str]:
     return ignored
 
 
-def backup_sqlite_database(source_path: Path, destination_path: Path) -> dict[str, Any]:
+def backup_sqlite_database(
+    source_path: Path,
+    destination_path: Path,
+    *,
+    source_database_relative_path: str,
+) -> dict[str, Any]:
     result: dict[str, Any] = {
         "sqlite_backup_method": SQLITE_BACKUP_METHOD,
         "sqlite_backup_status": "pending",
@@ -752,12 +761,22 @@ def backup_sqlite_database(source_path: Path, destination_path: Path) -> dict[st
         if destination_path.exists():
             destination_path.unlink()
         with sqlite_connect_readonly(source_path) as source_conn:
+            journal_mode_row = source_conn.execute("PRAGMA main.journal_mode").fetchone()
+            if not journal_mode_row or not isinstance(journal_mode_row[0], str):
+                raise RuntimeError("source database journal mode could not be inspected")
+            source_fingerprint = {
+                "source_database_relative_path": source_database_relative_path,
+                "source_database_size_bytes": source_path.stat().st_size,
+                "source_database_sha256": sha256_file(source_path),
+                "source_database_journal_mode": journal_mode_row[0].casefold(),
+            }
             with sqlite3.connect(destination_path) as destination_conn:
                 source_conn.backup(destination_conn)
         result["sqlite_backup_status"] = "success"
         try:
             result["sqlite_backup_size_bytes"] = destination_path.stat().st_size
             result["sqlite_backup_sha256"] = sha256_file(destination_path)
+            result.update(source_fingerprint)
         except OSError:
             pass
     except Exception as exc:

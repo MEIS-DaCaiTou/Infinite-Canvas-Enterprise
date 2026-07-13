@@ -26,7 +26,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from enterprise.ops.runner import history_id_for_record
+from enterprise.ops.runner import history_id_for_record, sha256_file
 
 
 def write_text(path: Path, text: str) -> None:
@@ -42,8 +42,7 @@ def write_json(path: Path, payload: object) -> None:
 def run_ops(app_root: Path, *args: str, expect: int = 0) -> tuple[subprocess.CompletedProcess[str], dict]:
     cmd = [
         sys.executable,
-        "-m",
-        "enterprise.ops.runner",
+        str(ROOT / "enterprise" / "ops" / "runner.py"),
         *args,
         "--app-root",
         str(app_root),
@@ -52,9 +51,7 @@ def run_ops(app_root: Path, *args: str, expect: int = 0) -> tuple[subprocess.Com
         "--log-file",
         str(app_root / "logs" / "ops" / "jobs.jsonl"),
     ]
-    env = os.environ.copy()
-    env["PYTHONPATH"] = str(ROOT)
-    result = subprocess.run(cmd, cwd=ROOT, text=True, capture_output=True, env=env)
+    result = subprocess.run(cmd, cwd=ROOT, text=True, capture_output=True, env=os.environ.copy())
     assert result.returncode == expect, result.stderr + result.stdout
     report_path = Path(result.stdout.strip().split(": ", 1)[1])
     report = json.loads(report_path.read_text(encoding="utf-8"))
@@ -211,6 +208,9 @@ def run_all() -> None:
             )
             live_conn.execute("INSERT INTO ops_backup_probe (value) VALUES (?)", ("wal-backed-commit",))
             live_conn.commit()
+            source_db = app_root / "data" / "enterprise.db"
+            source_size_before_backup = source_db.stat().st_size
+            source_sha256_before_backup = sha256_file(source_db)
 
             _, executed_backup = run_ops(
                 app_root,
@@ -225,6 +225,10 @@ def run_all() -> None:
         assert executed_backup["status"] == "pass"
         assert executed_backup["sqlite_backup_method"] == "sqlite3.Connection.backup"
         assert executed_backup["sqlite_backup_status"] == "success"
+        assert executed_backup["source_database_relative_path"] == "data/enterprise.db"
+        assert executed_backup["source_database_size_bytes"] == source_size_before_backup
+        assert executed_backup["source_database_sha256"] == source_sha256_before_backup
+        assert executed_backup["source_database_journal_mode"] == "wal"
         backup_dir = Path(executed_backup["backup_dir"])
         backup_db = backup_dir / "app" / "data" / "enterprise.db"
         assert (backup_dir / "app" / "history.json").exists()
