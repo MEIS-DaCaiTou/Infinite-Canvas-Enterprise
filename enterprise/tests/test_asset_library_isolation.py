@@ -103,6 +103,7 @@ async def _run_checks() -> None:
         _prepare_env(tmp)
 
         from enterprise import db as edb
+        from enterprise.tests.ready_user_fixture import insert_ready_user_fixture
         from enterprise import interceptors as interceptors_module
 
         globals()["interceptors"] = interceptors_module
@@ -116,8 +117,8 @@ async def _run_checks() -> None:
         edb._conversation_root = lambda: str(interceptors._CONVERSATION_DATA_DIR)
 
         edb.init_db()
-        user_a = edb.create_user("asset_a", "password-a", "Asset A", False)
-        user_b = edb.create_user("asset_b", "password-b", "Asset B", False)
+        user_a = insert_ready_user_fixture(edb.DB_PATH, username="asset_a", password_hash=edb._hash_password("password-a"), display_name="Asset A")
+        user_b = insert_ready_user_fixture(edb.DB_PATH, username="asset_b", password_hash=edb._hash_password("password-b"), display_name="Asset B")
         admin = edb.get_user_by_username("admin")
 
         actor_a = {"user_id": user_a["id"], "username": "asset_a", "is_admin": False}

@@ -271,6 +271,7 @@ def _run_checks() -> None:
                     409,
                 )
             )
+            assert legacy_duplicate.detail["code"] == "USERNAME_CONFLICT"
             assert "sqlite" not in json.dumps(legacy_duplicate.detail).lower()
 
             # B/C. READY without a READY audit schema fails closed for sensitive paths.
@@ -278,8 +279,11 @@ def _run_checks() -> None:
             edb.DB_PATH = str(missing_audit_db)
             edb.init_db()
             missing_admin = edb.get_user_by_username("admin")
-            missing_user = edb.create_user(
-                "missing-user", "temporary-password", "Missing User", False
+            missing_user = _add_ready_user(
+                missing_audit_db,
+                username="missing-user",
+                role=ROLE_USER,
+                password="temporary-password",
             )
             assert governance.get_role_auth_schema_state() == ROLE_AUTH_READY
             before_missing = _user_row(missing_audit_db, missing_user["id"])
@@ -1012,6 +1016,239 @@ def _run_checks() -> None:
             assert _user_row(ready_db, integrity_target["id"]) == before_actor_tamper
             assert _user_row(ready_db, admin["id"]) == before_admin_tamper
 
+            # N1b. Raw readback rejects corruption that normalized records would hide.
+            for trigger_name, assignment in (
+                ("sec1c0_raw_create_admin", "is_admin = 1"),
+                ("sec1c0_raw_create_active", "is_active = 2"),
+            ):
+                username = f"{trigger_name}-user"
+                before_audit = _audit_count(ready_db)
+                before_usage = _usage_count(ready_db)
+                install_users_trigger(
+                    trigger_name,
+                    f"""
+                    CREATE TRIGGER {trigger_name}
+                    AFTER INSERT ON users
+                    WHEN NEW.username = '{username}'
+                    BEGIN
+                        UPDATE users SET {assignment} WHERE id = NEW.id;
+                    END
+                    """,
+                )
+                try:
+                    _assert_raises(
+                        governance.UserGovernanceIntegrityError,
+                        lambda username=username: governance.create_ordinary_user(
+                            actor_user_id=admin["id"],
+                            expected_actor_auth_version=_auth_version(ready_db, admin["id"]),
+                            username=username,
+                            password="temporary-raw-create-password",
+                            display_name="Raw Create",
+                            requested_is_admin=False,
+                            role_field_present=False,
+                        ),
+                    )
+                finally:
+                    drop_users_trigger(trigger_name)
+                conn = sqlite3.connect(ready_db)
+                assert conn.execute(
+                    "SELECT 1 FROM main.users WHERE username = ?", (username,)
+                ).fetchone() is None
+                conn.close()
+                assert _audit_count(ready_db) == before_audit
+                assert _usage_count(ready_db) == before_usage
+
+            raw_target_tamper_cases = (
+                (
+                    "sec1c0_raw_password_admin",
+                    "AFTER UPDATE OF password_hash ON users",
+                    "is_admin = 1",
+                    lambda: governance.reset_user_password(
+                        actor_user_id=admin["id"],
+                        expected_actor_auth_version=_auth_version(ready_db, admin["id"]),
+                        target_user_id=integrity_target["id"],
+                        new_password="temporary-raw-password",
+                        reason="temporary raw password tamper",
+                    ),
+                ),
+                (
+                    "sec1c0_raw_active_noncanonical",
+                    "AFTER UPDATE OF is_active ON users",
+                    "is_active = 2",
+                    lambda: governance.set_user_active(
+                        actor_user_id=admin["id"],
+                        expected_actor_auth_version=_auth_version(ready_db, admin["id"]),
+                        target_user_id=integrity_target["id"],
+                        is_active=False,
+                        reason="temporary raw active tamper",
+                    ),
+                ),
+                (
+                    "sec1c0_raw_profile_admin",
+                    "AFTER UPDATE OF display_name ON users",
+                    "is_admin = 1",
+                    lambda: governance.update_user_profile(
+                        actor_user_id=admin["id"],
+                        expected_actor_auth_version=_auth_version(ready_db, admin["id"]),
+                        target_user_id=integrity_target["id"],
+                        display_name="Raw Profile Tamper",
+                    ),
+                ),
+            )
+            for trigger_name, trigger_event, assignment, call in raw_target_tamper_cases:
+                before_target = _user_row(ready_db, integrity_target["id"])
+                before_audit = _audit_count(ready_db)
+                install_users_trigger(
+                    trigger_name,
+                    f"""
+                    CREATE TRIGGER {trigger_name}
+                    {trigger_event}
+                    WHEN NEW.id = '{integrity_target["id"]}'
+                    BEGIN
+                        UPDATE users SET {assignment} WHERE id = NEW.id;
+                    END
+                    """,
+                )
+                try:
+                    _assert_raises(governance.UserGovernanceIntegrityError, call)
+                finally:
+                    drop_users_trigger(trigger_name)
+                assert _user_row(ready_db, integrity_target["id"]) == before_target
+                assert _audit_count(ready_db) == before_audit
+
+            for trigger_name, assignment in (
+                ("sec1c0_raw_actor_admin", "is_admin = 0"),
+                ("sec1c0_raw_actor_active", "is_active = 2"),
+            ):
+                before_target = _user_row(ready_db, integrity_target["id"])
+                before_actor = _user_row(ready_db, admin["id"])
+                before_audit = _audit_count(ready_db)
+                install_users_trigger(
+                    trigger_name,
+                    f"""
+                    CREATE TRIGGER {trigger_name}
+                    AFTER UPDATE OF display_name ON users
+                    WHEN NEW.id = '{integrity_target["id"]}'
+                    BEGIN
+                        UPDATE users SET {assignment} WHERE id = '{admin["id"]}';
+                    END
+                    """,
+                )
+                try:
+                    _assert_raises(
+                        governance.UserGovernanceIntegrityError,
+                        lambda: governance.update_user_profile(
+                            actor_user_id=admin["id"],
+                            expected_actor_auth_version=_auth_version(ready_db, admin["id"]),
+                            target_user_id=integrity_target["id"],
+                            display_name="Raw Actor Tamper",
+                        ),
+                    )
+                finally:
+                    drop_users_trigger(trigger_name)
+                assert _user_row(ready_db, integrity_target["id"]) == before_target
+                assert _user_row(ready_db, admin["id"]) == before_actor
+                assert _audit_count(ready_db) == before_audit
+
+            # N1c. Rejected governance paths must not spend a PBKDF2 hash.
+            original_hash_password = edb._hash_password
+
+            def reject_hash(_password: str) -> str:
+                raise AssertionError("hash must not run before governance authorization")
+
+            edb._hash_password = reject_hash
+            try:
+                _assert_raises(
+                    governance.UserGovernancePolicyDenied,
+                    lambda: governance.create_ordinary_user(
+                        actor_user_id=user_b["id"],
+                        expected_actor_auth_version=_auth_version(ready_db, user_b["id"]),
+                        username="ordinary-hash-denied",
+                        password="ordinary-hash-password",
+                        display_name="Ordinary Hash Denied",
+                        requested_is_admin=False,
+                        role_field_present=False,
+                    ),
+                )
+                _assert_raises(
+                    governance.UserGovernancePolicyDenied,
+                    lambda: governance.reset_user_password(
+                        actor_user_id=admin["id"],
+                        expected_actor_auth_version=_auth_version(ready_db, admin["id"]),
+                        target_user_id=super_a["id"],
+                        new_password="protected-target-password",
+                        reason="temporary protected target",
+                    ),
+                )
+                _assert_raises(
+                    governance.UserGovernancePolicyDenied,
+                    lambda: governance.create_ordinary_user(
+                        actor_user_id=admin["id"],
+                        expected_actor_auth_version=_auth_version(ready_db, admin["id"]),
+                        username="elevated-hash-denied",
+                        password="elevated-hash-password",
+                        display_name="Elevated Hash Denied",
+                        requested_is_admin=True,
+                        role_field_present=False,
+                    ),
+                )
+                _assert_raises(
+                    governance.UserGovernancePolicyDenied,
+                    lambda: governance.change_own_password(
+                        actor_user_id=user_b["id"],
+                        expected_actor_auth_version=_auth_version(ready_db, user_b["id"]),
+                        old_password="incorrect-password",
+                        new_password="self-hash-password",
+                    ),
+                )
+            finally:
+                edb._hash_password = original_hash_password
+
+            hash_calls: list[str] = []
+
+            def counting_hash(password: str) -> str:
+                hash_calls.append(password)
+                return original_hash_password(password)
+
+            edb._hash_password = counting_hash
+            try:
+                allowed_hash_create = governance.create_ordinary_user(
+                    actor_user_id=admin["id"],
+                    expected_actor_auth_version=_auth_version(ready_db, admin["id"]),
+                    username="allowed-hash-create",
+                    password="allowed-hash-create-password",
+                    display_name="Allowed Hash Create",
+                    requested_is_admin=False,
+                    role_field_present=False,
+                )
+                assert len(hash_calls) == 1
+                hash_calls.clear()
+                governance.reset_user_password(
+                    actor_user_id=admin["id"],
+                    expected_actor_auth_version=_auth_version(ready_db, admin["id"]),
+                    target_user_id=allowed_hash_create["id"],
+                    new_password="allowed-hash-reset-password",
+                    reason="temporary allowed hash reset",
+                )
+                assert len(hash_calls) == 1
+                hash_calls.clear()
+                hash_self = _add_ready_user(
+                    ready_db,
+                    username="allowed-hash-self",
+                    role=ROLE_USER,
+                    password="allowed-hash-self-old",
+                )
+                hash_calls.clear()
+                governance.change_own_password(
+                    actor_user_id=hash_self["id"],
+                    expected_actor_auth_version=_auth_version(ready_db, hash_self["id"]),
+                    old_password="allowed-hash-self-old",
+                    new_password="allowed-hash-self-new",
+                )
+                assert len(hash_calls) == 1
+            finally:
+                edb._hash_password = original_hash_password
+
             # N2. The governance transaction rejects a principal revoked after middleware.
             stale_actor = _add_ready_user(ready_db, username="stale-admin", role=ROLE_ADMIN)
             stale_target = _add_ready_user(ready_db, username="stale-target", role=ROLE_USER)
@@ -1023,6 +1260,27 @@ def _run_checks() -> None:
             conn.commit()
             conn.close()
             stale_before = _user_row(ready_db, stale_target["id"])
+            original_hash_password = edb._hash_password
+
+            def reject_stale_hash(_password: str) -> str:
+                raise AssertionError("stale actor must not run a password hash")
+
+            edb._hash_password = reject_stale_hash
+            try:
+                _assert_raises(
+                    governance.UserGovernanceStaleSession,
+                    lambda: governance.create_ordinary_user(
+                        actor_user_id=stale_actor["id"],
+                        expected_actor_auth_version=1,
+                        username="stale-hash-denied",
+                        password="stale-hash-password",
+                        display_name="Stale Hash Denied",
+                        requested_is_admin=False,
+                        role_field_present=False,
+                    ),
+                )
+            finally:
+                edb._hash_password = original_hash_password
             stale_calls = (
                 lambda: governance.reset_user_password(
                     actor_user_id=stale_actor["id"],
@@ -1368,11 +1626,15 @@ def _run_checks() -> None:
                 lambda: edb.set_user_active(direct_target["id"], False),
                 lambda: edb.delete_user(direct_target["id"]),
                 lambda: edb.update_user_profile(direct_target["id"], "Direct Rename"),
+                lambda: edb.create_user("direct-user", "direct-password", "Direct", False),
                 lambda: edb.create_user("direct-admin", "direct-password", "Direct", True),
             ):
                 _assert_raises(edb.SecureUserGovernanceRequiredError, call)
             assert _user_row(ready_db, direct_target["id"]) == before_direct
             conn = sqlite3.connect(ready_db)
+            assert conn.execute(
+                "SELECT 1 FROM main.users WHERE username = 'direct-user'"
+            ).fetchone() is None
             assert conn.execute(
                 "SELECT 1 FROM main.users WHERE username = 'direct-admin'"
             ).fetchone() is None
@@ -1688,6 +1950,7 @@ def _run_checks() -> None:
                     409,
                 )
             )
+            assert ready_duplicate.detail["code"] == "USERNAME_CONFLICT"
             assert "sqlite" not in json.dumps(ready_duplicate.detail).lower()
             password_response = asyncio.run(
                 admin_api.reset_password(

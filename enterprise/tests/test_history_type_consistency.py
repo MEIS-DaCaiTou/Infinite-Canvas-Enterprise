@@ -96,6 +96,7 @@ async def _check_enterprise_owner_maps() -> None:
         os.environ.setdefault("ADMIN_PASSWORD", "change-me-in-tests")
 
         from enterprise import db as edb
+        from enterprise.tests.ready_user_fixture import insert_ready_user_fixture
         from enterprise import interceptors
 
         history_path = tmp / "history.json"
@@ -105,8 +106,8 @@ async def _check_enterprise_owner_maps() -> None:
         interceptors._HISTORY_FILE = history_path
 
         edb.init_db()
-        user_a = edb.create_user("type_a", "password-a", "History Type A", False)
-        user_b = edb.create_user("type_b", "password-b", "History Type B", False)
+        user_a = insert_ready_user_fixture(edb.DB_PATH, username="type_a", password_hash=edb._hash_password("password-a"), display_name="History Type A")
+        user_b = insert_ready_user_fixture(edb.DB_PATH, username="type_b", password_hash=edb._hash_password("password-b"), display_name="History Type B")
         admin = edb.get_user_by_username("admin")
 
         actor_a = {"user_id": user_a["id"], "username": "type_a", "is_admin": False}

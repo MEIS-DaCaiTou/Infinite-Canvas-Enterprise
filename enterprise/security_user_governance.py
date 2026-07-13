@@ -59,6 +59,12 @@ class UserGovernanceConflict(UserGovernanceError):
     public_message = "User governance state conflict"
 
 
+class UserGovernanceUsernameConflict(UserGovernanceError):
+    status_code = 409
+    code = "USERNAME_CONFLICT"
+    public_message = "Username already exists"
+
+
 class UserGovernanceIntegrityError(UserGovernanceError):
     status_code = 409
     code = "USER_GOVERNANCE_INTEGRITY_FAILED"
@@ -273,40 +279,103 @@ def _require_affected_row(cursor: sqlite3.Cursor) -> None:
         raise UserGovernanceIntegrityError()
 
 
-def _verify_user_fields(
+RAW_USER_COMPARE_FIELDS = (
+    "id",
+    "username",
+    "password_hash",
+    "display_name",
+    "is_admin",
+    "role",
+    "auth_version",
+    "is_active",
+    "role_updated_at",
+    "role_updated_by",
+)
+RAW_ACTOR_SECURITY_FIELDS = (
+    "id",
+    "password_hash",
+    "is_admin",
+    "role",
+    "auth_version",
+    "is_active",
+    "role_updated_at",
+    "role_updated_by",
+)
+
+
+def _find_raw_ready_user(conn: sqlite3.Connection, user_id: str) -> dict[str, Any] | None:
+    row = conn.execute(
+        "SELECT * FROM main.users WHERE id = ?",
+        (user_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    raw = dict(row)
+    try:
+        role = normalize_role(raw.get("role"))
+    except ValueError as exc:
+        raise UserGovernanceIntegrityError() from exc
+    if raw.get("role") != role:
+        raise UserGovernanceIntegrityError()
+    if type(raw.get("is_admin")) is not int or raw["is_admin"] not in {0, 1}:
+        raise UserGovernanceIntegrityError()
+    if raw["is_admin"] != (0 if role == ROLE_USER else 1):
+        raise UserGovernanceIntegrityError()
+    if type(raw.get("is_active")) is not int or raw["is_active"] not in {0, 1}:
+        raise UserGovernanceIntegrityError()
+    if (
+        type(raw.get("auth_version")) is not int
+        or raw["auth_version"] < 0
+    ):
+        raise UserGovernanceIntegrityError()
+    return raw
+
+
+def _load_raw_ready_user(conn: sqlite3.Connection, user_id: str) -> dict[str, Any]:
+    raw = _find_raw_ready_user(conn, user_id)
+    if raw is None:
+        raise UserGovernanceIntegrityError()
+    return raw
+
+
+def _raw_expected_fields(raw: dict[str, Any], **changes: Any) -> dict[str, Any]:
+    expected = {field: raw.get(field) for field in RAW_USER_COMPARE_FIELDS}
+    expected.update(changes)
+    return expected
+
+
+def _verify_raw_user_fields(
     conn: sqlite3.Connection,
     user_id: str,
     expected_fields: dict[str, Any],
 ) -> dict[str, Any]:
-    try:
-        actual = _load_user(conn, user_id)
-    except UserGovernanceNotFound as exc:
-        raise UserGovernanceIntegrityError() from exc
+    actual = _load_raw_ready_user(conn, user_id)
     for field, expected_value in expected_fields.items():
-        if actual.get(field) != expected_value:
+        actual_value = actual.get(field)
+        if type(actual_value) is not type(expected_value) or actual_value != expected_value:
             raise UserGovernanceIntegrityError()
     return actual
 
 
 def _verify_actor_security_state(
     conn: sqlite3.Connection,
-    actor: dict[str, Any],
+    actor_raw: dict[str, Any],
     *,
     expected_auth_version: int | None = None,
+    expected_password_hash: str | None = None,
 ) -> dict[str, Any]:
-    return _verify_user_fields(
+    expected = {
+        field: actor_raw.get(field)
+        for field in RAW_ACTOR_SECURITY_FIELDS
+    }
+    if expected_auth_version is not None:
+        expected["auth_version"] = expected_auth_version
+    if expected_password_hash is not None:
+        expected["password_hash"] = expected_password_hash
+    return _verify_raw_user_fields(
         conn,
-        actor["id"],
-        {
-            "id": actor["id"],
-            "role": actor["role"],
-            "is_active": actor["is_active"],
-            "auth_version": (
-                actor["auth_version"]
-                if expected_auth_version is None
-                else expected_auth_version
-            ),
-        },
+        actor_raw["id"],
+        expected,
     )
 
 
@@ -451,7 +520,6 @@ def create_ordinary_user(
     role_field_present: bool,
     requested_role: object = None,
 ) -> dict[str, Any]:
-    password_hash = edb._hash_password(password)
     candidate_user_id = uuid.uuid4().hex
     conn = edb.get_db()
     try:
@@ -463,6 +531,7 @@ def create_ordinary_user(
             actor_user_id=actor_user_id,
             expected_actor_auth_version=expected_actor_auth_version,
         )
+        actor_raw = _load_raw_ready_user(conn, actor["id"])
         actor = _authorize_actor(
             conn,
             actor=actor,
@@ -482,6 +551,12 @@ def create_ordinary_user(
                 policy_code="online_role_assignment_closed",
                 super_admin_request=requested_super_admin,
             )
+        if conn.execute(
+            "SELECT 1 FROM main.users WHERE username = ?",
+            (username,),
+        ).fetchone():
+            raise UserGovernanceUsernameConflict()
+        password_hash = edb._hash_password(password)
         expected_display_name = display_name or username
         cursor = conn.execute(
             """
@@ -500,7 +575,7 @@ def create_ordinary_user(
             ),
         )
         _require_affected_row(cursor)
-        _verify_user_fields(
+        _verify_raw_user_fields(
             conn,
             candidate_user_id,
             {
@@ -508,13 +583,13 @@ def create_ordinary_user(
                 "username": username,
                 "password_hash": password_hash,
                 "display_name": expected_display_name,
-                "is_admin": False,
+                "is_admin": 0,
                 "role": ROLE_USER,
                 "auth_version": 1,
-                "is_active": True,
+                "is_active": 1,
             },
         )
-        _verify_actor_security_state(conn, actor)
+        _verify_actor_security_state(conn, actor_raw)
         conn.commit()
         return {"id": candidate_user_id, "username": username}
     except Exception as exc:
@@ -532,7 +607,6 @@ def reset_user_password(
     reason: object,
 ) -> dict[str, Any]:
     validated_reason = _required_reason(reason)
-    password_hash = edb._hash_password(new_password)
     conn = edb.get_db()
     try:
         conn.execute("BEGIN IMMEDIATE")
@@ -542,6 +616,7 @@ def reset_user_password(
             actor_user_id=actor_user_id,
             expected_actor_auth_version=expected_actor_auth_version,
         )
+        actor_raw = _load_raw_ready_user(conn, actor["id"])
         target = _find_user(conn, target_user_id)
         _require_audit_ready(conn)
         actor = _authorize_actor(
@@ -553,6 +628,7 @@ def reset_user_password(
             operation="password_reset",
         )
         target = _require_target(target)
+        target_raw = _load_raw_ready_user(conn, target["id"])
         if not _policy_allows_target(actor, target, operation="password_reset"):
             raise _commit_denied(
                 conn,
@@ -562,6 +638,7 @@ def reset_user_password(
                 operation="password_reset",
                 policy_code="target_role_protected",
             )
+        password_hash = edb._hash_password(new_password)
         next_version = target["auth_version"] + 1
         cursor = conn.execute(
             """
@@ -572,20 +649,17 @@ def reset_user_password(
             (password_hash, next_version, target["id"]),
         )
         _require_affected_row(cursor)
-        updated_target = _verify_user_fields(
+        _verify_raw_user_fields(
             conn,
             target["id"],
-            {
-                "password_hash": password_hash,
-                "auth_version": next_version,
-                "role": target["role"],
-                "is_admin": target["is_admin"],
-                "is_active": target["is_active"],
-                "role_updated_at": target.get("role_updated_at"),
-                "role_updated_by": target.get("role_updated_by"),
-            },
+            _raw_expected_fields(
+                target_raw,
+                password_hash=password_hash,
+                auth_version=next_version,
+            ),
         )
-        _verify_actor_security_state(conn, actor)
+        updated_target = _load_user(conn, target["id"])
+        _verify_actor_security_state(conn, actor_raw)
         operation_id = uuid.uuid4().hex
         _append_audit(
             conn,
@@ -622,13 +696,13 @@ def change_own_password(
     old_password: str,
     new_password: str,
 ) -> dict[str, Any]:
-    password_hash = edb._hash_password(new_password)
     conn = edb.get_db()
     try:
         conn.execute("BEGIN IMMEDIATE")
         _require_ready_schema(conn)
         _require_audit_ready(conn)
         actor = _load_user(conn, actor_user_id)
+        actor_raw = _load_raw_ready_user(conn, actor["id"])
         expected_version = _required_actor_auth_version(expected_actor_auth_version)
         if not actor["is_active"]:
             raise UserGovernancePolicyDenied("Current password is incorrect")
@@ -644,29 +718,27 @@ def change_own_password(
             )
         if not edb.verify_password(old_password, actor["password_hash"]):
             raise UserGovernancePolicyDenied("Current password is incorrect")
+        password_hash = edb._hash_password(new_password)
         next_version = actor["auth_version"] + 1
         cursor = conn.execute(
             "UPDATE main.users SET password_hash = ?, auth_version = ? WHERE id = ?",
             (password_hash, next_version, actor["id"]),
         )
         _require_affected_row(cursor)
-        _verify_user_fields(
+        _verify_raw_user_fields(
             conn,
             actor["id"],
-            {
-                "password_hash": password_hash,
-                "auth_version": next_version,
-                "role": actor["role"],
-                "is_admin": actor["is_admin"],
-                "is_active": actor["is_active"],
-                "role_updated_at": actor.get("role_updated_at"),
-                "role_updated_by": actor.get("role_updated_by"),
-            },
+            _raw_expected_fields(
+                actor_raw,
+                password_hash=password_hash,
+                auth_version=next_version,
+            ),
         )
         _verify_actor_security_state(
             conn,
-            actor,
+            actor_raw,
             expected_auth_version=next_version,
+            expected_password_hash=password_hash,
         )
         operation_id = uuid.uuid4().hex
         _append_audit(
@@ -711,6 +783,7 @@ def set_user_active(
             actor_user_id=actor_user_id,
             expected_actor_auth_version=expected_actor_auth_version,
         )
+        actor_raw = _load_raw_ready_user(conn, actor["id"])
         target = _find_user(conn, target_user_id)
         _require_audit_ready(conn)
         actor = _authorize_actor(
@@ -722,6 +795,7 @@ def set_user_active(
             operation="active_change",
         )
         target = _require_target(target)
+        target_raw = _load_raw_ready_user(conn, target["id"])
         if not _policy_allows_target(actor, target, operation="active_change"):
             raise _commit_denied(
                 conn,
@@ -740,20 +814,17 @@ def set_user_active(
                 (1 if is_active else 0, next_version, target["id"]),
             )
             _require_affected_row(cursor)
-        updated_target = _verify_user_fields(
+        _verify_raw_user_fields(
             conn,
             target["id"],
-            {
-                "is_active": is_active,
-                "auth_version": next_version,
-                "role": target["role"],
-                "is_admin": target["is_admin"],
-                "password_hash": target["password_hash"],
-                "role_updated_at": target.get("role_updated_at"),
-                "role_updated_by": target.get("role_updated_by"),
-            },
+            _raw_expected_fields(
+                target_raw,
+                is_active=1 if is_active else 0,
+                auth_version=next_version,
+            ),
         )
-        _verify_actor_security_state(conn, actor)
+        updated_target = _load_user(conn, target["id"])
+        _verify_actor_security_state(conn, actor_raw)
         operation_id = uuid.uuid4().hex
         _append_audit(
             conn,
@@ -804,6 +875,7 @@ def soft_delete_user(
             actor_user_id=actor_user_id,
             expected_actor_auth_version=expected_actor_auth_version,
         )
+        actor_raw = _load_raw_ready_user(conn, actor["id"])
         target = _find_user(conn, target_user_id)
         _require_audit_ready(conn)
         actor = _authorize_actor(
@@ -815,6 +887,7 @@ def soft_delete_user(
             operation="soft_delete",
         )
         target = _require_target(target)
+        target_raw = _load_raw_ready_user(conn, target["id"])
         if not isinstance(confirm_username, str) or confirm_username != target["username"]:
             raise UserGovernanceValidationError("Confirmation username does not match")
         if not _policy_allows_target(actor, target, operation="soft_delete"):
@@ -835,20 +908,17 @@ def soft_delete_user(
                 (next_version, target["id"]),
             )
             _require_affected_row(cursor)
-        updated_target = _verify_user_fields(
+        _verify_raw_user_fields(
             conn,
             target["id"],
-            {
-                "is_active": False,
-                "auth_version": next_version,
-                "role": target["role"],
-                "is_admin": target["is_admin"],
-                "password_hash": target["password_hash"],
-                "role_updated_at": target.get("role_updated_at"),
-                "role_updated_by": target.get("role_updated_by"),
-            },
+            _raw_expected_fields(
+                target_raw,
+                is_active=0,
+                auth_version=next_version,
+            ),
         )
-        _verify_actor_security_state(conn, actor)
+        updated_target = _load_user(conn, target["id"])
+        _verify_actor_security_state(conn, actor_raw)
         operation_id = uuid.uuid4().hex
         _append_audit(
             conn,
@@ -896,6 +966,7 @@ def update_user_profile(
             actor_user_id=actor_user_id,
             expected_actor_auth_version=expected_actor_auth_version,
         )
+        actor_raw = _load_raw_ready_user(conn, actor["id"])
         target = _find_user(conn, target_user_id)
         actor = _authorize_actor(
             conn,
@@ -906,6 +977,7 @@ def update_user_profile(
             operation="profile_update",
         )
         target = _require_target(target)
+        target_raw = _load_raw_ready_user(conn, target["id"])
         if not _policy_allows_target(actor, target, operation="profile_update"):
             raise _commit_denied(
                 conn,
@@ -921,21 +993,13 @@ def update_user_profile(
             (next_display_name, target["id"]),
         )
         _require_affected_row(cursor)
-        updated_target = _verify_user_fields(
+        _verify_raw_user_fields(
             conn,
             target["id"],
-            {
-                "display_name": next_display_name,
-                "role": target["role"],
-                "is_admin": target["is_admin"],
-                "auth_version": target["auth_version"],
-                "is_active": target["is_active"],
-                "password_hash": target["password_hash"],
-                "role_updated_at": target.get("role_updated_at"),
-                "role_updated_by": target.get("role_updated_by"),
-            },
+            _raw_expected_fields(target_raw, display_name=next_display_name),
         )
-        _verify_actor_security_state(conn, actor)
+        updated_target = _load_user(conn, target["id"])
+        _verify_actor_security_state(conn, actor_raw)
         conn.commit()
         return {"user": _safe_public_user(updated_target)}
     except Exception as exc:

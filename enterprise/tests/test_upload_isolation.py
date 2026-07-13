@@ -55,6 +55,7 @@ async def _run_checks() -> None:
         _prepare_env(tmp)
 
         from enterprise import db as edb
+        from enterprise.tests.ready_user_fixture import insert_ready_user_fixture
         from enterprise import interceptors as interceptors_module
 
         globals()["interceptors"] = interceptors_module
@@ -70,8 +71,8 @@ async def _run_checks() -> None:
         edb.CANVAS_DATA_DIR = str(canvas_dir)
 
         edb.init_db()
-        user_a = edb.create_user("upload_a", "password-a", "Upload A", False)
-        user_b = edb.create_user("upload_b", "password-b", "Upload B", False)
+        user_a = insert_ready_user_fixture(edb.DB_PATH, username="upload_a", password_hash=edb._hash_password("password-a"), display_name="Upload A")
+        user_b = insert_ready_user_fixture(edb.DB_PATH, username="upload_b", password_hash=edb._hash_password("password-b"), display_name="Upload B")
         admin = edb.get_user_by_username("admin")
 
         actor_a = {"user_id": user_a["id"], "username": "upload_a", "is_admin": False}

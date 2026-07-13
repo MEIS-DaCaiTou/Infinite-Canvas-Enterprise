@@ -62,13 +62,24 @@ async def _run_checks() -> None:
 
         from enterprise import admin_api
         from enterprise import db as edb
+        from enterprise.tests.ready_user_fixture import insert_ready_user_fixture
         from enterprise.migrations.sec_1f0_security_audit import (
             apply_security_audit_migration,
         )
 
         edb.init_db()
-        edb.create_user("delete_a", "password-a", "Delete A", False)
-        edb.create_user("delete_b", "password-b", "Delete B", False)
+        insert_ready_user_fixture(
+            edb.DB_PATH,
+            username="delete_a",
+            password_hash=edb._hash_password("password-a"),
+            display_name="Delete A",
+        )
+        insert_ready_user_fixture(
+            edb.DB_PATH,
+            username="delete_b",
+            password_hash=edb._hash_password("password-b"),
+            display_name="Delete B",
+        )
         user_a = edb.get_user_by_username("delete_a")
         user_b = edb.get_user_by_username("delete_b")
         admin = edb.get_user_by_username("admin")

@@ -12,6 +12,7 @@ import sqlite3
 import sys
 import tempfile
 import time
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -89,6 +90,31 @@ def _row(path: Path, username: str) -> dict:
         return dict(row)
     finally:
         conn.close()
+
+
+def _insert_ready_user_fixture(
+    path: Path,
+    *,
+    username: str,
+    password_hash: str,
+    display_name: str,
+) -> dict:
+    user_id = uuid.uuid4().hex
+    conn = sqlite3.connect(path)
+    try:
+        conn.execute(
+            """
+            INSERT INTO main.users (
+                id, username, password_hash, display_name,
+                is_admin, role, auth_version, is_active, created_at
+            ) VALUES (?, ?, ?, ?, 0, 'user', 1, 1, ?)
+            """,
+            (user_id, username, password_hash, display_name, int(time.time() * 1000)),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return {"id": user_id, "username": username}
 
 
 def _jwt(payload: dict, secret: str = TEST_SECRET) -> str:
@@ -335,10 +361,19 @@ def _run_checks() -> None:
         assert default_admin["is_admin"] is True
         assert default_admin["auth_version"] == 1
 
-        user = edb.create_user("sec_user", "password-user", "Sec User", False)
+        user = _insert_ready_user_fixture(
+            fresh_db,
+            username="sec_user",
+            password_hash=edb._hash_password("password-user"),
+            display_name="Sec User",
+        )
         _assert_raises(
             edb.SecureUserGovernanceRequiredError,
             lambda: edb.create_user("sec_admin", "password-admin", "Sec Admin", True),
+        )
+        _assert_raises(
+            edb.SecureUserGovernanceRequiredError,
+            lambda: edb.create_user("sec_user_bypass", "password-user", "Sec User", False),
         )
         user_row = edb.get_user_by_id(user["id"])
         assert user_row["role"] == ROLE_USER and user_row["is_admin"] is False

@@ -91,13 +91,14 @@ async def _run_checks() -> None:
         _prepare_env(tmp)
 
         from enterprise import db as edb
+        from enterprise.tests.ready_user_fixture import insert_ready_user_fixture
         from enterprise import interceptors as enterprise_interceptors
 
         globals()["interceptors"] = enterprise_interceptors
 
         edb.init_db()
-        user_a = edb.create_user("settings_a", "password-a", "Settings A", False)
-        user_b = edb.create_user("settings_b", "password-b", "Settings B", False)
+        user_a = insert_ready_user_fixture(edb.DB_PATH, username="settings_a", password_hash=edb._hash_password("password-a"), display_name="Settings A")
+        user_b = insert_ready_user_fixture(edb.DB_PATH, username="settings_b", password_hash=edb._hash_password("password-b"), display_name="Settings B")
         admin = edb.get_user_by_username("admin")
 
         actor_a = {"user_id": user_a["id"], "username": "settings_a", "is_admin": False}

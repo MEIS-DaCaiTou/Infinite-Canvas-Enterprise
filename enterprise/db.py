@@ -525,31 +525,19 @@ def create_user(username: str, password: str, display_name: str = "", is_admin: 
     conn = get_db()
     try:
         schema_state = _user_schema_state(conn)
-        if schema_state == ROLE_AUTH_READY and is_admin:
+        if schema_state == ROLE_AUTH_READY:
             raise SecureUserGovernanceRequiredError(
-                "ROLE_AUTH_READY administrator creation requires secure governance"
+                "ROLE_AUTH_READY user creation requires secure governance"
             )
         uid = uuid.uuid4().hex
         ph = _hash_password(password)
         now = int(time.time() * 1000)
         legacy_is_admin = 1 if is_admin else 0
-        if schema_state == ROLE_AUTH_READY:
-            role = ROLE_ADMIN if is_admin else ROLE_USER
-            conn.execute(
-                """
-                INSERT INTO users (
-                    id, username, password_hash, display_name,
-                    is_admin, role, auth_version, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, 1, ?)
-                """,
-                (uid, username, ph, display_name or username, legacy_is_admin, role, now),
-            )
-        else:
-            conn.execute(
-                "INSERT INTO users (id, username, password_hash, display_name, is_admin, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (uid, username, ph, display_name or username, legacy_is_admin, now),
-            )
+        conn.execute(
+            "INSERT INTO users (id, username, password_hash, display_name, is_admin, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (uid, username, ph, display_name or username, legacy_is_admin, now),
+        )
         conn.commit()
         return {"id": uid, "username": username}
     finally:
