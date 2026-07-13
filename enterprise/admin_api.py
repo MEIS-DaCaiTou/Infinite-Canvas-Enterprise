@@ -3,6 +3,7 @@
 挂载到 /enterprise 路径下，仅管理员可访问
 """
 import json
+import sqlite3
 
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
@@ -189,10 +190,16 @@ async def create_user(request: Request):
             result = edb.create_user(username, password, display_name, is_admin)
     except user_governance.UserGovernanceError as exc:
         _raise_governance_http(exc)
-    except Exception as e:
-        if "UNIQUE" in str(e):
-            raise HTTPException(status_code=409, detail="用户名已存在")
-        raise HTTPException(status_code=500, detail=str(e))
+    except sqlite3.IntegrityError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "USERNAME_CONFLICT", "message": "Username already exists"},
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "USER_CREATE_FAILED", "message": "User creation failed"},
+        ) from exc
 
     target = edb.get_user_by_id_any_status(result["id"]) or result
     _audit_user_action(

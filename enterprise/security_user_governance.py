@@ -138,12 +138,16 @@ def _normalize_ready_user(row: sqlite3.Row | None) -> dict[str, Any] | None:
         raise UserGovernanceUnavailable("Current role state is invalid") from exc
 
 
-def _load_user(conn: sqlite3.Connection, user_id: str) -> dict[str, Any]:
+def _find_user(conn: sqlite3.Connection, user_id: str) -> dict[str, Any] | None:
     row = conn.execute(
         "SELECT * FROM main.users WHERE id = ?",
         (user_id,),
     ).fetchone()
-    user = _normalize_ready_user(row)
+    return _normalize_ready_user(row)
+
+
+def _load_user(conn: sqlite3.Connection, user_id: str) -> dict[str, Any]:
+    user = _find_user(conn, user_id)
     if user is None:
         raise UserGovernanceNotFound()
     return user
@@ -161,9 +165,7 @@ def _load_actor(conn: sqlite3.Connection, actor_user_id: str) -> dict[str, Any]:
 
 def _required_actor_auth_version(value: object) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise UserGovernanceValidationError(
-            "A current authentication version is required"
-        )
+        raise UserGovernanceStaleSession()
     return value
 
 
@@ -180,6 +182,23 @@ def _safe_public_user(user: dict[str, Any]) -> dict[str, Any]:
     result.pop("password_hash", None)
     result.pop("_role_auth_schema_state", None)
     return result
+
+
+def _authenticate_actor(
+    conn: sqlite3.Connection,
+    *,
+    actor_user_id: str,
+    expected_actor_auth_version: object,
+) -> tuple[dict[str, Any], bool]:
+    expected_version = _required_actor_auth_version(expected_actor_auth_version)
+    actor = _load_actor(conn, actor_user_id)
+    return actor, actor["auth_version"] == expected_version
+
+
+def _require_target(target: dict[str, Any] | None) -> dict[str, Any]:
+    if target is None:
+        raise UserGovernanceNotFound()
+    return target
 
 
 def _policy_allows_target(
@@ -332,16 +351,14 @@ def _commit_denied(
 def _authorize_actor(
     conn: sqlite3.Connection,
     *,
-    actor_user_id: str,
-    expected_actor_auth_version: object,
+    actor: dict[str, Any],
+    auth_version_matches: bool,
     target_id: str,
     target_role: str | None,
     operation: str,
     super_admin_request: bool = False,
 ) -> dict[str, Any]:
-    expected_version = _required_actor_auth_version(expected_actor_auth_version)
-    actor = _load_actor(conn, actor_user_id)
-    if actor["auth_version"] != expected_version:
+    if not auth_version_matches:
         raise _commit_denied(
             conn,
             actor=actor,
@@ -441,10 +458,15 @@ def create_ordinary_user(
         conn.execute("BEGIN IMMEDIATE")
         _require_ready_schema(conn)
         requested_super_admin = requested_role == ROLE_SUPER_ADMIN
-        actor = _authorize_actor(
+        actor, auth_version_matches = _authenticate_actor(
             conn,
             actor_user_id=actor_user_id,
             expected_actor_auth_version=expected_actor_auth_version,
+        )
+        actor = _authorize_actor(
+            conn,
+            actor=actor,
+            auth_version_matches=auth_version_matches,
             target_id=candidate_user_id,
             target_role=None,
             operation="create_user",
@@ -515,16 +537,22 @@ def reset_user_password(
     try:
         conn.execute("BEGIN IMMEDIATE")
         _require_ready_schema(conn)
-        _require_audit_ready(conn)
-        target = _load_user(conn, target_user_id)
-        actor = _authorize_actor(
+        actor, auth_version_matches = _authenticate_actor(
             conn,
             actor_user_id=actor_user_id,
             expected_actor_auth_version=expected_actor_auth_version,
-            target_id=target["id"],
-            target_role=target["role"],
+        )
+        target = _find_user(conn, target_user_id)
+        _require_audit_ready(conn)
+        actor = _authorize_actor(
+            conn,
+            actor=actor,
+            auth_version_matches=auth_version_matches,
+            target_id=target_user_id,
+            target_role=target["role"] if target else None,
             operation="password_reset",
         )
+        target = _require_target(target)
         if not _policy_allows_target(actor, target, operation="password_reset"):
             raise _commit_denied(
                 conn,
@@ -678,16 +706,22 @@ def set_user_active(
     try:
         conn.execute("BEGIN IMMEDIATE")
         _require_ready_schema(conn)
-        _require_audit_ready(conn)
-        target = _load_user(conn, target_user_id)
-        actor = _authorize_actor(
+        actor, auth_version_matches = _authenticate_actor(
             conn,
             actor_user_id=actor_user_id,
             expected_actor_auth_version=expected_actor_auth_version,
-            target_id=target["id"],
-            target_role=target["role"],
+        )
+        target = _find_user(conn, target_user_id)
+        _require_audit_ready(conn)
+        actor = _authorize_actor(
+            conn,
+            actor=actor,
+            auth_version_matches=auth_version_matches,
+            target_id=target_user_id,
+            target_role=target["role"] if target else None,
             operation="active_change",
         )
+        target = _require_target(target)
         if not _policy_allows_target(actor, target, operation="active_change"):
             raise _commit_denied(
                 conn,
@@ -765,16 +799,22 @@ def soft_delete_user(
     try:
         conn.execute("BEGIN IMMEDIATE")
         _require_ready_schema(conn)
-        _require_audit_ready(conn)
-        target = _load_user(conn, target_user_id)
-        actor = _authorize_actor(
+        actor, auth_version_matches = _authenticate_actor(
             conn,
             actor_user_id=actor_user_id,
             expected_actor_auth_version=expected_actor_auth_version,
-            target_id=target["id"],
-            target_role=target["role"],
+        )
+        target = _find_user(conn, target_user_id)
+        _require_audit_ready(conn)
+        actor = _authorize_actor(
+            conn,
+            actor=actor,
+            auth_version_matches=auth_version_matches,
+            target_id=target_user_id,
+            target_role=target["role"] if target else None,
             operation="soft_delete",
         )
+        target = _require_target(target)
         if not isinstance(confirm_username, str) or confirm_username != target["username"]:
             raise UserGovernanceValidationError("Confirmation username does not match")
         if not _policy_allows_target(actor, target, operation="soft_delete"):
@@ -817,7 +857,7 @@ def soft_delete_user(
             result="success",
             actor=actor,
             operation_id=operation_id,
-            target_id=target["id"],
+            target_id=target_user_id,
             reason=validated_reason,
             context=_audit_context(
                 policy_code="sec_1c0_soft_delete",
@@ -851,15 +891,21 @@ def update_user_profile(
     try:
         conn.execute("BEGIN IMMEDIATE")
         _require_ready_schema(conn)
-        target = _load_user(conn, target_user_id)
-        actor = _authorize_actor(
+        actor, auth_version_matches = _authenticate_actor(
             conn,
             actor_user_id=actor_user_id,
             expected_actor_auth_version=expected_actor_auth_version,
-            target_id=target["id"],
-            target_role=target["role"],
+        )
+        target = _find_user(conn, target_user_id)
+        actor = _authorize_actor(
+            conn,
+            actor=actor,
+            auth_version_matches=auth_version_matches,
+            target_id=target_user_id,
+            target_role=target["role"] if target else None,
             operation="profile_update",
         )
+        target = _require_target(target)
         if not _policy_allows_target(actor, target, operation="profile_update"):
             raise _commit_denied(
                 conn,
@@ -912,17 +958,23 @@ def deny_online_role_change(
     try:
         conn.execute("BEGIN IMMEDIATE")
         _require_ready_schema(conn)
-        target = _load_user(conn, target_user_id)
         requested_super_admin = requested_role == ROLE_SUPER_ADMIN
-        actor = _authorize_actor(
+        actor, auth_version_matches = _authenticate_actor(
             conn,
             actor_user_id=actor_user_id,
             expected_actor_auth_version=expected_actor_auth_version,
-            target_id=target["id"],
-            target_role=target["role"],
+        )
+        target = _find_user(conn, target_user_id)
+        actor = _authorize_actor(
+            conn,
+            actor=actor,
+            auth_version_matches=auth_version_matches,
+            target_id=target_user_id,
+            target_role=target["role"] if target else None,
             operation="role_change",
             super_admin_request=requested_super_admin,
         )
+        _require_target(target)
         raise _commit_denied(
             conn,
             actor=actor,
@@ -948,16 +1000,22 @@ def check_session_revoke_policy(
     try:
         conn.execute("BEGIN IMMEDIATE")
         _require_ready_schema(conn)
-        _require_audit_ready(conn)
-        target = _load_user(conn, target_user_id)
-        actor = _authorize_actor(
+        actor, auth_version_matches = _authenticate_actor(
             conn,
             actor_user_id=actor_user_id,
             expected_actor_auth_version=expected_actor_auth_version,
-            target_id=target["id"],
-            target_role=target["role"],
+        )
+        target = _find_user(conn, target_user_id)
+        _require_audit_ready(conn)
+        actor = _authorize_actor(
+            conn,
+            actor=actor,
+            auth_version_matches=auth_version_matches,
+            target_id=target_user_id,
+            target_role=target["role"] if target else None,
             operation="session_revoke_all",
         )
+        target = _require_target(target)
         if not _policy_allows_target(actor, target, operation="session_revoke"):
             raise _commit_denied(
                 conn,

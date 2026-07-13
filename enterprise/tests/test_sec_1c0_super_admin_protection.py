@@ -251,6 +251,28 @@ def _run_checks() -> None:
             assert conn.execute("SELECT COUNT(*) FROM main.usage_logs").fetchone()[0] == 1
             conn.close()
 
+            legacy_duplicate = asyncio.run(
+                _assert_http_status(
+                    admin_api.create_user(
+                        FakeRequest(
+                            {
+                                "user_id": legacy_admin["id"],
+                                "username": "legacy-admin",
+                                "is_admin": True,
+                            },
+                            {
+                                "username": "legacy-user",
+                                "password": "legacy-duplicate-password",
+                                "display_name": "Legacy Duplicate",
+                                "is_admin": False,
+                            },
+                        )
+                    ),
+                    409,
+                )
+            )
+            assert "sqlite" not in json.dumps(legacy_duplicate.detail).lower()
+
             # B/C. READY without a READY audit schema fails closed for sensitive paths.
             missing_audit_db = tmp / "ready-audit-missing.db"
             edb.DB_PATH = str(missing_audit_db)
@@ -1160,6 +1182,181 @@ def _run_checks() -> None:
                 assert "ordinary-user-denied" not in denied["context_json"]
             assert _user_row(ready_db, user_a["id"]) == before_ordinary_target
 
+            # N4. Authenticate actor before a missing target becomes observable.
+            missing_target_id = f"missing-target-{uuid.uuid4().hex}"
+            stale_missing_calls = (
+                lambda: governance.reset_user_password(
+                    actor_user_id=stale_actor["id"],
+                    expected_actor_auth_version=1,
+                    target_user_id=missing_target_id,
+                    new_password="stale-missing-password",
+                    reason="temporary stale missing target",
+                ),
+                lambda: governance.set_user_active(
+                    actor_user_id=stale_actor["id"],
+                    expected_actor_auth_version=1,
+                    target_user_id=missing_target_id,
+                    is_active=False,
+                    reason="temporary stale missing target",
+                ),
+                lambda: governance.soft_delete_user(
+                    actor_user_id=stale_actor["id"],
+                    expected_actor_auth_version=1,
+                    target_user_id=missing_target_id,
+                    confirm_username="not-reached",
+                    reason="temporary stale missing target",
+                ),
+                lambda: governance.update_user_profile(
+                    actor_user_id=stale_actor["id"],
+                    expected_actor_auth_version=1,
+                    target_user_id=missing_target_id,
+                    display_name="Stale Missing Target",
+                ),
+                lambda: governance.deny_online_role_change(
+                    actor_user_id=stale_actor["id"],
+                    expected_actor_auth_version=1,
+                    target_user_id=missing_target_id,
+                    role_field_present=True,
+                    requested_role=ROLE_ADMIN,
+                    is_admin_field_present=True,
+                    requested_is_admin=True,
+                ),
+                lambda: governance.check_session_revoke_policy(
+                    actor_user_id=stale_actor["id"],
+                    expected_actor_auth_version=1,
+                    target_user_id=missing_target_id,
+                ),
+            )
+            for call in stale_missing_calls:
+                _assert_raises(governance.UserGovernanceStaleSession, call)
+                denied = _latest_audit(ready_db, "security.authorization.denied")
+                assert denied["actor_user_id"] == stale_actor["id"]
+                assert json.loads(denied["context_json"])["policy_code"] == "stale_actor_auth_version"
+
+            ordinary_missing_calls = (
+                (
+                    "L2",
+                    lambda: governance.reset_user_password(
+                        actor_user_id=user_b["id"],
+                        expected_actor_auth_version=_auth_version(ready_db, user_b["id"]),
+                        target_user_id=missing_target_id,
+                        new_password="ordinary-missing-password",
+                        reason="temporary ordinary missing target",
+                    ),
+                ),
+                (
+                    "L2",
+                    lambda: governance.set_user_active(
+                        actor_user_id=user_b["id"],
+                        expected_actor_auth_version=_auth_version(ready_db, user_b["id"]),
+                        target_user_id=missing_target_id,
+                        is_active=False,
+                        reason="temporary ordinary missing target",
+                    ),
+                ),
+                (
+                    "L2",
+                    lambda: governance.soft_delete_user(
+                        actor_user_id=user_b["id"],
+                        expected_actor_auth_version=_auth_version(ready_db, user_b["id"]),
+                        target_user_id=missing_target_id,
+                        confirm_username="not-reached",
+                        reason="temporary ordinary missing target",
+                    ),
+                ),
+                (
+                    "L2",
+                    lambda: governance.update_user_profile(
+                        actor_user_id=user_b["id"],
+                        expected_actor_auth_version=_auth_version(ready_db, user_b["id"]),
+                        target_user_id=missing_target_id,
+                        display_name="Ordinary Missing Target",
+                    ),
+                ),
+                (
+                    "L3",
+                    lambda: governance.deny_online_role_change(
+                        actor_user_id=user_b["id"],
+                        expected_actor_auth_version=_auth_version(ready_db, user_b["id"]),
+                        target_user_id=missing_target_id,
+                        role_field_present=True,
+                        requested_role=ROLE_SUPER_ADMIN,
+                        is_admin_field_present=False,
+                        requested_is_admin=None,
+                    ),
+                ),
+                (
+                    "L2",
+                    lambda: governance.check_session_revoke_policy(
+                        actor_user_id=user_b["id"],
+                        expected_actor_auth_version=_auth_version(ready_db, user_b["id"]),
+                        target_user_id=missing_target_id,
+                    ),
+                ),
+            )
+            for expected_risk, call in ordinary_missing_calls:
+                _assert_raises(governance.UserGovernancePolicyDenied, call)
+                denied = _latest_audit(ready_db, "security.authorization.denied")
+                assert denied["actor_role"] == ROLE_USER
+                assert denied["risk_level"] == expected_risk
+
+            fresh_missing_calls = (
+                lambda: governance.reset_user_password(
+                    actor_user_id=admin["id"],
+                    expected_actor_auth_version=_auth_version(ready_db, admin["id"]),
+                    target_user_id=missing_target_id,
+                    new_password="fresh-missing-password",
+                    reason="temporary fresh missing target",
+                ),
+                lambda: governance.set_user_active(
+                    actor_user_id=admin["id"],
+                    expected_actor_auth_version=_auth_version(ready_db, admin["id"]),
+                    target_user_id=missing_target_id,
+                    is_active=False,
+                    reason="temporary fresh missing target",
+                ),
+                lambda: governance.soft_delete_user(
+                    actor_user_id=admin["id"],
+                    expected_actor_auth_version=_auth_version(ready_db, admin["id"]),
+                    target_user_id=missing_target_id,
+                    confirm_username="not-reached",
+                    reason="temporary fresh missing target",
+                ),
+                lambda: governance.update_user_profile(
+                    actor_user_id=admin["id"],
+                    expected_actor_auth_version=_auth_version(ready_db, admin["id"]),
+                    target_user_id=missing_target_id,
+                    display_name="Fresh Missing Target",
+                ),
+                lambda: governance.deny_online_role_change(
+                    actor_user_id=admin["id"],
+                    expected_actor_auth_version=_auth_version(ready_db, admin["id"]),
+                    target_user_id=missing_target_id,
+                    role_field_present=True,
+                    requested_role=ROLE_ADMIN,
+                    is_admin_field_present=True,
+                    requested_is_admin=True,
+                ),
+                lambda: governance.check_session_revoke_policy(
+                    actor_user_id=admin["id"],
+                    expected_actor_auth_version=_auth_version(ready_db, admin["id"]),
+                    target_user_id=missing_target_id,
+                ),
+            )
+            for call in fresh_missing_calls:
+                _assert_raises(governance.UserGovernanceNotFound, call)
+
+            for invalid_version in (None, True, False, "1", 1.0, -1):
+                _assert_raises(
+                    governance.UserGovernanceStaleSession,
+                    lambda invalid_version=invalid_version: governance.update_user_profile(
+                        actor_user_id=admin["id"],
+                        expected_actor_auth_version=invalid_version,
+                        target_user_id=user_a["id"],
+                        display_name="Invalid Version",
+                    ),
+                )
+
             # O. Legacy mutators cannot bypass READY protections.
             direct_target = _add_ready_user(
                 ready_db, username="direct-target", role=ROLE_SUPER_ADMIN
@@ -1297,9 +1494,72 @@ def _run_checks() -> None:
                 )
             )
 
+            for invalid_version in (None, False, "1", 1.0, -1):
+                invalid_principal = {
+                    **_principal(admin),
+                    "auth_version": invalid_version,
+                }
+                asyncio.run(
+                    _assert_http_status(
+                        admin_api.update_user_profile(
+                            user_a["id"],
+                            FakeRequest(invalid_principal, {"display_name": "Invalid API Version"}),
+                        ),
+                        401,
+                )
+            )
+
             ordinary_api_principal = _principal(
                 {**user_b, "auth_version": _auth_version(ready_db, user_b["id"])}
             )
+            stale_missing_api = asyncio.run(
+                _assert_http_status(
+                    admin_api.reset_password(
+                        missing_target_id,
+                        FakeRequest(
+                            stale_principal,
+                            {
+                                "password": "stale-missing-api-password",
+                                "reason": "temporary stale missing API target",
+                            },
+                        ),
+                    ),
+                    401,
+                )
+            )
+            assert "not found" not in json.dumps(stale_missing_api.detail).lower()
+            ordinary_missing_api = asyncio.run(
+                _assert_http_status(
+                    admin_api.reset_password(
+                        missing_target_id,
+                        FakeRequest(
+                            ordinary_api_principal,
+                            {
+                                "password": "ordinary-missing-api-password",
+                                "reason": "temporary ordinary missing API target",
+                            },
+                        ),
+                    ),
+                    403,
+                )
+            )
+            assert "not found" not in json.dumps(ordinary_missing_api.detail).lower()
+            asyncio.run(
+                _assert_http_status(
+                    admin_api.reset_password(
+                        missing_target_id,
+                        FakeRequest(
+                            _principal(admin),
+                            {
+                                "password": "fresh-missing-api-password",
+                                "reason": "temporary fresh missing API target",
+                            },
+                        ),
+                    ),
+                    404,
+                )
+            )
+
             asyncio.run(
                 _assert_http_status(
                     admin_api.create_user(
@@ -1363,6 +1623,39 @@ def _run_checks() -> None:
             ).fetchone() is None
             conn.close()
 
+            before_unexpected_create_usage = _usage_count(ready_db)
+            original_create_ordinary_user = governance.create_ordinary_user
+
+            def raise_unexpected_create_error(**_kwargs):
+                raise RuntimeError("temporary-secret-create-error sqlite /private/test.db")
+
+            governance.create_ordinary_user = raise_unexpected_create_error
+            try:
+                unexpected_create = asyncio.run(
+                    _assert_http_status(
+                        admin_api.create_user(
+                            FakeRequest(
+                                _principal(admin),
+                                {
+                                    "username": "unexpected-create-error",
+                                    "password": "unexpected-create-password",
+                                    "display_name": "Unexpected Create",
+                                    "is_admin": False,
+                                },
+                            )
+                        ),
+                        500,
+                    )
+                )
+            finally:
+                governance.create_ordinary_user = original_create_ordinary_user
+            unexpected_detail = json.dumps(unexpected_create.detail).lower()
+            assert "temporary-secret-create-error" not in unexpected_detail
+            assert "sqlite" not in unexpected_detail
+            assert "/private/test.db" not in unexpected_detail
+            assert "runtimeerror" not in unexpected_detail
+            assert _usage_count(ready_db) == before_unexpected_create_usage
+
             created_response = asyncio.run(
                 admin_api.create_user(
                     FakeRequest(
@@ -1379,6 +1672,23 @@ def _run_checks() -> None:
             assert created_response.status_code == 201
             api_user_id = json.loads(created_response.body)["user"]["id"]
             assert _user_row(ready_db, api_user_id)["role"] == ROLE_USER
+            ready_duplicate = asyncio.run(
+                _assert_http_status(
+                    admin_api.create_user(
+                        FakeRequest(
+                            _principal(admin),
+                            {
+                                "username": "api-user",
+                                "password": "ready-duplicate-password",
+                                "display_name": "Ready Duplicate",
+                                "is_admin": False,
+                            },
+                        )
+                    ),
+                    409,
+                )
+            )
+            assert "sqlite" not in json.dumps(ready_duplicate.detail).lower()
             password_response = asyncio.run(
                 admin_api.reset_password(
                     api_user_id,
