@@ -20,8 +20,9 @@ a browser refresh of the same static resources; it does not change page markup,
 inline JavaScript behavior, routes, permissions, request contracts, or visual
 rules. TARGET contains later behavior and security-compatible UI work, so its
 cache values and all TARGET content are preserved. The two SVGs differ from BASE
-only by line-ending representation and are already byte-identical between the
-archive and TARGET.
+only by line-ending representation. Git-normalized content is identical to
+TARGET; any raw working-tree difference is limited to platform line-ending
+representation.
 
 ## 15-file reconciliation matrix
 
@@ -40,8 +41,8 @@ archive and TARGET.
 | `static/online.html` | Static cache-query refresh only | Current RunningHub model/app/workflow selection contract | Kept TARGET cache values and selection behavior | Dropped | TARGET contains later compatible provider-selection behavior | `test_feature_flags.py`, `test_history_isolation.py` |
 | `static/smart-canvas.html` | Static cache-query refresh only | Touch support, arrange/image-edit controls, and current log-compatible markup | Kept TARGET cache values, imports, and markup | Dropped | TARGET behavior is newer and Smart Canvas log compatibility must remain intact | `test_smart_canvas_logs.js` |
 | `static/zimage.html` | Static cache-query refresh only | Explicit `zimage` request/history type contract | Kept TARGET cache values and request payload | Dropped | Preserves normalized history typing and isolation compatibility | `test_history_type_consistency.py`, `test_history_isolation.py` |
-| `static/images/volcengine-theme-dark.svg` | Line-ending representation only; no visual change | Archive asset bytes already equal TARGET | No content conflict | Retained (already identical) | No repository edit is needed | Archive manifest/hash verification |
-| `static/images/volcengine-theme-light.svg` | Line-ending representation only; no visual change | Archive asset bytes already equal TARGET | No content conflict | Retained (already identical) | No repository edit is needed | Archive manifest/hash verification |
+| `static/images/volcengine-theme-dark.svg` | Line-ending representation only; no visual change | Git-normalized content is identical to TARGET; any raw working-tree difference is limited to platform line-ending representation | No content conflict | Retained (Git-normalized identical) | No repository edit is needed | Archive manifest/hash verification |
+| `static/images/volcengine-theme-light.svg` | Line-ending representation only; no visual change | Git-normalized content is identical to TARGET; any raw working-tree difference is limited to platform line-ending representation | No content conflict | Retained (Git-normalized identical) | No repository edit is needed | Archive manifest/hash verification |
 
 ## Result and validation
 
@@ -63,4 +64,4 @@ deployment, runtime workflow files, database changes, or migration changes:
 
 No focused regression test was added because no archive behavior was retained or
 adapted. A final changed-file secret scan, scope check, and conflict-marker check
-are required before commit.
+were completed before commit and passed.
