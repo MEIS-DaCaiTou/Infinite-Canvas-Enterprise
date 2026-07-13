@@ -162,6 +162,7 @@ def _run_checks() -> None:
             MIGRATION_ID,
             ROLE_AUTH_READY,
             SCHEMA_LEGACY,
+            SCHEMA_PARTIAL,
             RoleAuthMigrationError,
             apply_role_auth_migration,
             inspect_role_auth_schema,
@@ -348,7 +349,9 @@ def _run_checks() -> None:
         else:
             raise AssertionError("migration failure injection did not fail")
         assert _columns(rollback_db) == rollback_columns
-        assert inspect_role_auth_schema(rollback_db)["current_state"] == SCHEMA_LEGACY
+        rollback_inspection = inspect_role_auth_schema(rollback_db)
+        assert rollback_inspection["current_state"] == SCHEMA_PARTIAL
+        assert rollback_inspection["main_user_triggers"] == ["reject_sec_1b1_update"]
 
         # D. Fresh schema and legacy is_admin creation compatibility.
         fresh_db = tmp / "fresh.db"

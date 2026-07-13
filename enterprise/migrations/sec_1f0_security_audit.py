@@ -85,42 +85,18 @@ def apply_security_audit_migration(
     ) as conn:
         if conn.in_transaction:
             raise SecurityAuditMigrationError("migration requires an idle SQLite connection")
-        inspection = _inspect(conn)
-        state = inspection["current_state"]
-        if state == SECURITY_AUDIT_PARTIAL:
-            raise SecurityAuditMigrationError("partial security audit schema requires manual review")
-        if state == SECURITY_AUDIT_READY:
-            return {**inspection, "activation_event_written": False}
-        if state != SECURITY_AUDIT_MISSING:
-            raise SecurityAuditMigrationError("security audit schema state is unsupported")
-
-        started = False
         try:
             conn.execute("BEGIN IMMEDIATE")
-            started = True
-            actor_role = resolve_security_audit_activation_actor_role(conn, actor_user_id)
-            conn.execute(SECURITY_AUDIT_CREATE_TABLE_SQL)
-            for definition in SECURITY_AUDIT_INDEX_DEFINITIONS.values():
-                conn.execute(definition["sql"])
-            for statement in SECURITY_AUDIT_TRIGGER_DEFINITIONS.values():
-                conn.execute(statement)
-            activation_event = append_security_audit_event(
-                action="security.audit.foundation.activate",
-                risk_level="L3",
-                result="success",
-                actor_type="local_operator",
-                operation_id=operation_id,
+            result = apply_security_audit_migration_in_transaction(
+                conn,
                 actor_user_id=actor_user_id,
-                actor_role=actor_role,
                 actor_label=actor_label,
+                operation_id=operation_id,
                 reason=reason,
-                context={"migration_id": SECURITY_AUDIT_MIGRATION_ID},
-                connection=conn,
             )
             conn.commit()
-            started = False
         except Exception as exc:
-            if started and conn.in_transaction:
+            if conn.in_transaction:
                 conn.rollback()
             if isinstance(exc, SecurityAuditMigrationError):
                 raise
@@ -131,12 +107,68 @@ def apply_security_audit_migration(
             raise SecurityAuditMigrationError(
                 "SEC-1F0 migration failed and was rolled back"
             ) from exc
+        return result
 
-        result = _inspect(conn)
-        if result["current_state"] != SECURITY_AUDIT_READY:
-            raise SecurityAuditMigrationError("SEC-1F0 migration did not reach the target schema")
+
+def apply_security_audit_migration_in_transaction(
+    conn: sqlite3.Connection,
+    *,
+    actor_user_id: object,
+    actor_label: object,
+    operation_id: object,
+    reason: object,
+) -> dict[str, Any]:
+    """Create SEC-1F0 inside an already active caller transaction.
+
+    The primitive deliberately does not begin, commit, roll back, or close the
+    connection.  This lets SEC-1B2 keep audit activation and bootstrap state in
+    one atomic transaction.
+    """
+    if not isinstance(conn, sqlite3.Connection) or not conn.in_transaction:
+        raise SecurityAuditMigrationError("migration requires an active caller transaction")
+    inspection = _inspect(conn)
+    state = inspection["current_state"]
+    if state == SECURITY_AUDIT_PARTIAL:
+        raise SecurityAuditMigrationError("partial security audit schema requires manual review")
+    if state == SECURITY_AUDIT_READY:
         return {
-            **result,
-            "activation_event_written": True,
-            "activation_event_id": activation_event["event_id"],
+            **inspection,
+            "activation_event_written": False,
+            "activation_event_id": None,
         }
+    if state != SECURITY_AUDIT_MISSING:
+        raise SecurityAuditMigrationError("security audit schema state is unsupported")
+
+    try:
+        actor_role = resolve_security_audit_activation_actor_role(conn, actor_user_id)
+        conn.execute(SECURITY_AUDIT_CREATE_TABLE_SQL)
+        for definition in SECURITY_AUDIT_INDEX_DEFINITIONS.values():
+            conn.execute(definition["sql"])
+        for statement in SECURITY_AUDIT_TRIGGER_DEFINITIONS.values():
+            conn.execute(statement)
+        activation_event = append_security_audit_event(
+            action="security.audit.foundation.activate",
+            risk_level="L3",
+            result="success",
+            actor_type="local_operator",
+            operation_id=operation_id,
+            actor_user_id=actor_user_id,
+            actor_role=actor_role,
+            actor_label=actor_label,
+            reason=reason,
+            context={"migration_id": SECURITY_AUDIT_MIGRATION_ID},
+            connection=conn,
+        )
+    except SecurityAuditError as exc:
+        raise SecurityAuditMigrationError("security audit activation could not complete") from exc
+    except sqlite3.Error as exc:
+        raise SecurityAuditMigrationError("SEC-1F0 migration could not complete") from exc
+
+    result = _inspect(conn)
+    if result["current_state"] != SECURITY_AUDIT_READY:
+        raise SecurityAuditMigrationError("SEC-1F0 migration did not reach the target schema")
+    return {
+        **result,
+        "activation_event_written": True,
+        "activation_event_id": activation_event["event_id"],
+    }

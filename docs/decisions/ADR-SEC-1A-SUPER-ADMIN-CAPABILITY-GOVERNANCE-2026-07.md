@@ -479,6 +479,8 @@ SEC-1F0 的仓库实现见 [SEC-1F0：最小强制安全审计基础](../securit
 
 SEC-1C0 的仓库实现见 [SEC-1C0：首次 bootstrap 前的超级管理员过渡保护](../security/SEC-1C0-SUPER-ADMIN-TRANSITIONAL-PROTECTION-2026-07.md)。该阶段建立 admin / target 过渡保护、原子 mandatory audit 和最后 active super_admin helper，但在线角色及 super_admin 安全治理仍关闭；完整 Capability 属于 SEC-1C，Step-up / Operation Token 属于 SEC-1D，首次本机 bootstrap 属于 SEC-1B2。
 
+SEC-1B2 的仓库实施说明见 [SEC-1B2：受控迁移激活与首次本机 Bootstrap](../security/SEC-1B2-CONTROLLED-ACTIVATION-BOOTSTRAP-2026-07.md)。它选择 immutable lifecycle marker、`UNINITIALIZED` / `ACTIVE` / `RECOVERY_REQUIRED` inspect、正式 backup/plan/fingerprint 门禁和仅本机交互执行；首次 bootstrap 只能提升一个明确指定的 active admin，actor 必须等于 target。它不提供 production execute、远程入口、自动选择、break-glass、Capability 或 Step-up。
+
 ### 14.2 完整安全审计目标
 
 目标字段至少包括：
