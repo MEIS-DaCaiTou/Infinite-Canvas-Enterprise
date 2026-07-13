@@ -7,7 +7,9 @@ does not expose a password argument, remote mode, repair mode, or bypass flag.
 import argparse
 import getpass
 import json
+import os
 import sys
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +23,7 @@ from enterprise.security_bootstrap import (  # noqa: E402
     execute_sec_1b2_activation,
     inspect_super_admin_lifecycle,
     plan_sec_1b2_activation,
+    prepare_sec_1b2_journal,
 )
 
 
@@ -52,8 +55,61 @@ def _load_json_file(value: str, *, label: str) -> dict[str, Any]:
     return parsed
 
 
-def _write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.write_text(_canonical_json(payload) + "\n", encoding="utf-8")
+def _write_new_json(path: Path, payload: dict[str, Any]) -> None:
+    with path.open("x", encoding="utf-8", newline="\n") as handle:
+        handle.write(_canonical_json(payload) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def _write_final_json(path: Path, payload: dict[str, Any]) -> None:
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with temporary.open("x", encoding="utf-8", newline="\n") as handle:
+            handle.write(_canonical_json(payload) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    except OSError:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+
+def _reserve_pending_report(path: Path, *, command: str, operation_id: str | None, plan_hash: str | None) -> None:
+    _write_new_json(
+        path,
+        {
+            "success": False,
+            "command": command,
+            "operation_id": operation_id,
+            "plan_hash": plan_hash,
+            "execution_state": "transaction_not_started",
+            "database_transaction_rolled_back": False,
+            "no_database_changes_committed": None,
+            "database_changes_committed": None,
+            "post_commit_verification_required": False,
+        },
+    )
+
+
+def _failure_report(exc: SecurityBootstrapError) -> dict[str, Any]:
+    report = dict(exc.report) if isinstance(exc.report, dict) else {}
+    report.update(
+        {
+            "success": False,
+            "error_code": exc.code,
+            "public_message": exc.public_message,
+            "execution_state": exc.execution_state,
+            "database_transaction_rolled_back": exc.database_transaction_rolled_back,
+            "no_database_changes_committed": exc.no_database_changes_committed,
+            "database_changes_committed": exc.database_changes_committed,
+            "post_commit_verification_required": exc.post_commit_verification_required,
+        }
+    )
+    return report
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -64,6 +120,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     status = subparsers.add_parser("status", help="Inspect lifecycle read-only.")
     status.add_argument("--database", required=True, help="Existing local SQLite database file.")
+
+    prepare = subparsers.add_parser("prepare-journal", help="Locally prepare a stopped WAL database for activation.")
+    prepare.add_argument("--database", required=True, help="Existing local SQLite database file.")
+    prepare.add_argument("--report-output", required=True, help="New JSON preparation report path.")
+    prepare.add_argument("--confirm-service-stopped", action="store_true")
 
     plan = subparsers.add_parser("plan", help="Generate a read-only activation plan.")
     plan.add_argument("--database", required=True, help="Existing local SQLite database file.")
@@ -106,7 +167,7 @@ def _run_plan(args: argparse.Namespace) -> int:
         reason=args.reason,
         backup_manifest_path=args.backup_manifest,
     )
-    _write_json(output, plan)
+    _write_new_json(output, plan)
     print(f"SEC-1B2 plan created: {output}")
     print(f"plan_hash: {plan['plan_hash']}")
     return 0
@@ -127,6 +188,41 @@ def _required_execute_confirmations(args: argparse.Namespace) -> None:
         raise SecurityBootstrapError("all maintenance confirmations are required")
 
 
+def _run_prepare_journal(args: argparse.Namespace) -> int:
+    report_path = _safe_output_path(args.report_output, label="preparation report output")
+    if not args.confirm_service_stopped:
+        raise SecurityBootstrapError("service-stopped confirmation is required")
+    database_label = Path(args.database).name
+    phrase = f"SEC-1B2 PREPARE-JOURNAL {database_label}"
+    entered_phrase = input(f"Type exactly '{phrase}' to prepare the journal: ")
+    if entered_phrase != phrase:
+        raise SecurityBootstrapError("journal preparation confirmation phrase was not accepted")
+    _reserve_pending_report(
+        report_path,
+        command="prepare-journal",
+        operation_id=None,
+        plan_hash=None,
+    )
+    try:
+        report = prepare_sec_1b2_journal(database_path=args.database)
+    except SecurityBootstrapError as exc:
+        try:
+            _write_final_json(report_path, _failure_report(exc))
+        except OSError:
+            state = "journal state may have changed" if exc.database_changes_committed else "journal state was not changed"
+            print(f"SEC-1B2 journal preparation failed; {state} and the report could not be finalized", file=sys.stderr)
+            return 2
+        print(f"SEC-1B2 journal preparation failed: {report_path}", file=sys.stderr)
+        return 2 if exc.database_changes_committed else 1
+    try:
+        _write_final_json(report_path, report)
+    except OSError:
+        print("SEC-1B2 journal preparation completed but its report could not be finalized", file=sys.stderr)
+        return 2
+    print(f"SEC-1B2 journal preparation succeeded: {report_path}")
+    return 0
+
+
 def _run_execute(args: argparse.Namespace) -> int:
     report_path = _safe_output_path(args.report_output, label="report output")
     plan = _load_json_file(args.plan, label="activation plan")
@@ -139,6 +235,12 @@ def _run_execute(args: argparse.Namespace) -> int:
     entered_phrase = input(f"Type exactly '{phrase}' to execute: ")
     if entered_phrase != phrase:
         raise SecurityBootstrapError("activation confirmation phrase was not accepted")
+    _reserve_pending_report(
+        report_path,
+        command="execute",
+        operation_id=operation_id,
+        plan_hash=plan.get("plan_hash") if isinstance(plan.get("plan_hash"), str) else None,
+    )
     try:
         report = execute_sec_1b2_activation(
             database_path=args.database,
@@ -152,17 +254,19 @@ def _run_execute(args: argparse.Namespace) -> int:
             current_password=password,
         )
     except SecurityBootstrapError as exc:
-        report = {
-            "success": False,
-            "error_code": exc.code,
-            "public_message": exc.public_message,
-            "database_transaction_rolled_back": True,
-            "no_database_changes_committed": True,
-        }
-        _write_json(report_path, report)
+        try:
+            _write_final_json(report_path, _failure_report(exc))
+        except OSError:
+            state = "database changes were committed" if exc.database_changes_committed else "database changes were not confirmed"
+            print(f"SEC-1B2 execute failed; {state} and the report could not be finalized", file=sys.stderr)
+            return 2
         print(f"SEC-1B2 execute failed: {report_path}", file=sys.stderr)
-        return 1
-    _write_json(report_path, report)
+        return 2 if exc.database_changes_committed else 1
+    try:
+        _write_final_json(report_path, report)
+    except OSError:
+        print("SEC-1B2 execute committed database changes but the report could not be finalized; do not rerun", file=sys.stderr)
+        return 2
     print(f"SEC-1B2 execute succeeded: {report_path}")
     return 0
 
@@ -172,6 +276,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "status":
             return _run_status(args)
+        if args.command == "prepare-journal":
+            return _run_prepare_journal(args)
         if args.command == "plan":
             return _run_plan(args)
         if args.command == "execute":
@@ -180,6 +286,9 @@ def main(argv: list[str] | None = None) -> int:
     except SecurityBootstrapError as exc:
         print(f"SEC-1B2 {exc.code}: {exc.public_message}", file=sys.stderr)
         return 1
+    except Exception:
+        print("SEC-1B2 SEC_1B2_INTERNAL_ERROR: Local runner failed", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

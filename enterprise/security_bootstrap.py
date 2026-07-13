@@ -21,6 +21,7 @@ from enterprise.migrations.sec_1b1_role_auth import (
     ROLE_AUTH_READY,
     SCHEMA_LEGACY,
     SCHEMA_PARTIAL,
+    RoleAuthMigrationError,
     apply_role_auth_migration_in_transaction,
     inspect_role_auth_schema,
 )
@@ -59,6 +60,8 @@ from enterprise.security_audit import (
 SEC_1B2_PLAN_VERSION = "sec-1b2-activation-plan-v1"
 MAX_PLAN_AGE_MS = 24 * 60 * 60 * 1000
 SAFE_JOURNAL_MODES = frozenset({"delete"})
+PREPARABLE_JOURNAL_MODES = frozenset({"wal", "delete"})
+ALLOWED_SOURCE_DATABASE_RELATIVE_PATHS = frozenset({"data/enterprise.db"})
 LIFECYCLE_UNINITIALIZED = "UNINITIALIZED"
 LIFECYCLE_ACTIVE = "ACTIVE"
 LIFECYCLE_RECOVERY_REQUIRED = "RECOVERY_REQUIRED"
@@ -70,6 +73,25 @@ class SecurityBootstrapError(RuntimeError):
 
     code = "SEC_1B2_FAILED"
     public_message = "Controlled activation failed"
+
+    def __init__(
+        self,
+        message: str = "",
+        *,
+        execution_state: str = "transaction_not_started",
+        database_transaction_rolled_back: bool = False,
+        no_database_changes_committed: bool = True,
+        database_changes_committed: bool = False,
+        post_commit_verification_required: bool = False,
+        report: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.execution_state = execution_state
+        self.database_transaction_rolled_back = database_transaction_rolled_back
+        self.no_database_changes_committed = no_database_changes_committed
+        self.database_changes_committed = database_changes_committed
+        self.post_commit_verification_required = post_commit_verification_required
+        self.report = report
 
 
 class SecurityBootstrapValidationError(SecurityBootstrapError):
@@ -105,6 +127,16 @@ class SecurityBootstrapIntegrityError(SecurityBootstrapError):
 class SecurityBootstrapPasswordError(SecurityBootstrapError):
     code = "SEC_1B2_PASSWORD_REJECTED"
     public_message = "Local administrator password verification failed"
+
+
+class SecurityBootstrapPostCommitError(SecurityBootstrapError):
+    code = "SEC_1B2_POST_COMMIT_VERIFICATION_REQUIRED"
+    public_message = "Activation committed; post-commit verification is required"
+
+
+class SecurityBootstrapJournalPreparationError(SecurityBootstrapError):
+    code = "SEC_1B2_JOURNAL_PREPARATION_VERIFICATION_REQUIRED"
+    public_message = "Journal preparation may have completed; manual verification is required"
 
 
 def _utc_now_ms() -> int:
@@ -165,6 +197,12 @@ def _is_hex_sha256(value: object) -> bool:
     return isinstance(value, str) and len(value) == 64 and all(char in "0123456789abcdef" for char in value.casefold())
 
 
+def _required_nonnegative_int(name: str, value: object) -> int:
+    if type(value) is not int or value < 0:
+        raise SecurityBootstrapBackupError(f"backup manifest lacks {name}")
+    return value
+
+
 def _validate_backup_manifest(path_value: str | os.PathLike[str], *, now_ms: int) -> dict[str, Any]:
     """Validate the real OPS-2A executed-manifest fields without exposing paths."""
     manifest_path = _existing_regular_file(path_value, label="backup manifest")
@@ -200,6 +238,16 @@ def _validate_backup_manifest(path_value: str | os.PathLike[str], *, now_ms: int
         raise
     except OSError as exc:
         raise SecurityBootstrapBackupError("backup database could not be validated") from exc
+    source_relative_path = manifest.get("source_database_relative_path")
+    source_size = _required_nonnegative_int("source database size", manifest.get("source_database_size_bytes"))
+    source_hash = manifest.get("source_database_sha256")
+    source_journal_mode = manifest.get("source_database_journal_mode")
+    if source_relative_path not in ALLOWED_SOURCE_DATABASE_RELATIVE_PATHS:
+        raise SecurityBootstrapBackupError("backup manifest source database path is not allowed")
+    if not _is_hex_sha256(source_hash):
+        raise SecurityBootstrapBackupError("backup manifest lacks source database checksum")
+    if not isinstance(source_journal_mode, str) or source_journal_mode.casefold() not in PREPARABLE_JOURNAL_MODES:
+        raise SecurityBootstrapBackupError("backup manifest source journal mode is not supported")
     expected_size = manifest.get("sqlite_backup_size_bytes")
     expected_hash = manifest.get("sqlite_backup_sha256")
     if isinstance(expected_size, bool) or not isinstance(expected_size, int) or expected_size < 1:
@@ -218,6 +266,10 @@ def _validate_backup_manifest(path_value: str | os.PathLike[str], *, now_ms: int
         "backup_manifest_sha256": _sha256_file(manifest_path),
         "backup_id": backup_id,
         "backup_created_at": created_at,
+        "source_database_relative_path": source_relative_path,
+        "source_database_size_bytes": source_size,
+        "source_database_sha256": source_hash.casefold(),
+        "source_database_journal_mode": source_journal_mode.casefold(),
         "sqlite_backup_sha256": expected_hash.casefold(),
         "sqlite_backup_size_bytes": expected_size,
     }
@@ -244,6 +296,163 @@ def _database_runtime_state(conn: sqlite3.Connection, database_path: Path) -> di
         }
     except OSError as exc:
         raise SecurityBootstrapValidationError("database fingerprint could not be calculated") from exc
+
+
+def _assert_backup_matches_database(backup: dict[str, Any], runtime: dict[str, Any]) -> None:
+    if (
+        backup["source_database_size_bytes"] != runtime["database_size"]
+        or backup["source_database_sha256"] != runtime["database_sha256"]
+        or backup["source_database_journal_mode"] != runtime["journal_mode"]
+    ):
+        raise SecurityBootstrapBackupError("executed backup does not match the activation database")
+
+
+def _mark_rollback_outcome(error: SecurityBootstrapError, *, rolled_back: bool) -> SecurityBootstrapError:
+    error.execution_state = "transaction_rolled_back" if rolled_back else "transaction_active"
+    error.database_transaction_rolled_back = rolled_back
+    error.no_database_changes_committed = rolled_back
+    error.database_changes_committed = False
+    error.post_commit_verification_required = False
+    return error
+
+
+def _temporary_sidecars(database_path: Path) -> list[str]:
+    return [
+        suffix
+        for suffix in ("-wal", "-shm")
+        if Path(f"{database_path}{suffix}").exists()
+    ]
+
+
+def _quoted_identifier(value: str) -> str:
+    return '"' + value.replace('"', '""') + '"'
+
+
+def _journal_prepare_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
+    """Return non-secret content digests used only to prove journal preparation made no DML."""
+    table_count = int(
+        conn.execute("SELECT COUNT(*) FROM main.sqlite_master WHERE type = 'table'").fetchone()[0]
+    )
+    users_exists = conn.execute(
+        "SELECT 1 FROM main.sqlite_master WHERE type = 'table' AND name = 'users'"
+    ).fetchone() is not None
+    if not users_exists:
+        return {"table_count": table_count, "users_count": None, "users_digest": None}
+    columns = [
+        str(row[1])
+        for row in conn.execute("PRAGMA main.table_info(users)").fetchall()
+    ]
+    if not columns:
+        raise SecurityBootstrapIntegrityError("users table could not be snapshotted for journal preparation")
+    quoted_columns = ", ".join(f"quote({_quoted_identifier(name)})" for name in columns)
+    order_column = "id" if "id" in columns else columns[0]
+    rows = conn.execute(
+        f"SELECT {quoted_columns} FROM main.users ORDER BY {_quoted_identifier(order_column)}"
+    ).fetchall()
+    digest = hashlib.sha256(
+        _canonical_json({"columns": columns, "rows": [list(row) for row in rows]}).encode("utf-8")
+    ).hexdigest()
+    return {"table_count": table_count, "users_count": len(rows), "users_digest": digest}
+
+
+def prepare_sec_1b2_journal(
+    *,
+    database_path: str | os.PathLike[str],
+    now_ms: int | None = None,
+) -> dict[str, Any]:
+    """Locally change a stopped WAL database to DELETE without touching application rows."""
+    path = _existing_regular_file(database_path, label="database")
+    started_at = _utc_now_ms() if now_ms is None else now_ms
+    if type(started_at) is not int or started_at < 0:
+        raise SecurityBootstrapValidationError("journal preparation time is invalid")
+    if _temporary_sidecars(path):
+        raise SecurityBootstrapValidationError("SQLite sidecar files must be resolved before journal preparation")
+    try:
+        before_sha256 = _sha256_file(path)
+        before_size = path.stat().st_size
+    except OSError as exc:
+        raise SecurityBootstrapValidationError("database could not be fingerprinted before journal preparation") from exc
+    with open_existing_sqlite(path, mode="rw", error_type=SecurityBootstrapValidationError) as conn:
+        transaction_started = False
+        journal_changed = False
+        try:
+            conn.execute("PRAGMA busy_timeout = 250")
+            conn.execute("BEGIN EXCLUSIVE")
+            transaction_started = True
+            journal_before = str(conn.execute("PRAGMA main.journal_mode").fetchone()[0]).casefold()
+            if journal_before not in PREPARABLE_JOURNAL_MODES:
+                raise SecurityBootstrapValidationError("SQLite journal mode is not eligible for controlled preparation")
+            # The pre-open sidecar check is authoritative. Opening a WAL database
+            # may create its own shared-memory sidecar before we hold the lock.
+            before_snapshot = _journal_prepare_snapshot(conn)
+            conn.rollback()
+            transaction_started = False
+
+            # SQLite does not allow WAL -> DELETE while a transaction is active.
+            if journal_before == "wal":
+                result = conn.execute("PRAGMA main.journal_mode = DELETE").fetchone()
+                if not result or str(result[0]).casefold() != "delete":
+                    raise SecurityBootstrapValidationError("SQLite journal mode did not switch to DELETE")
+                journal_changed = True
+
+            conn.execute("BEGIN EXCLUSIVE")
+            transaction_started = True
+            journal_after = str(conn.execute("PRAGMA main.journal_mode").fetchone()[0]).casefold()
+            if journal_after != "delete" or _temporary_sidecars(path):
+                raise SecurityBootstrapIntegrityError("SQLite journal preparation could not be verified")
+            after_snapshot = _journal_prepare_snapshot(conn)
+            if after_snapshot != before_snapshot:
+                raise SecurityBootstrapIntegrityError("SQLite data changed during journal preparation")
+            conn.rollback()
+            transaction_started = False
+        except SecurityBootstrapError as exc:
+            if transaction_started and conn.in_transaction:
+                conn.rollback()
+            if journal_changed:
+                raise SecurityBootstrapJournalPreparationError(
+                    "journal preparation changed the database header before verification failed",
+                    execution_state="journal_prepared_verification_failed",
+                    database_changes_committed=True,
+                    no_database_changes_committed=False,
+                    post_commit_verification_required=True,
+                ) from exc
+            raise
+        except sqlite3.Error as exc:
+            if transaction_started and conn.in_transaction:
+                conn.rollback()
+            if journal_changed:
+                raise SecurityBootstrapJournalPreparationError(
+                    "journal preparation changed the database header before verification failed",
+                    execution_state="journal_prepared_verification_failed",
+                    database_changes_committed=True,
+                    no_database_changes_committed=False,
+                    post_commit_verification_required=True,
+                ) from exc
+            raise SecurityBootstrapLockError("controlled journal preparation could not acquire an exclusive lock") from exc
+    try:
+        return {
+            "success": True,
+            "database_label": path.name,
+            "journal_mode_before": journal_before,
+            "journal_mode_after": "delete",
+            "database_sha256_before": before_sha256,
+            "database_sha256_after": _sha256_file(path),
+            "database_size_before": before_size,
+            "database_size_after": path.stat().st_size,
+            "started_at": started_at,
+            "completed_at": _utc_now_ms(),
+            "warnings": [],
+        }
+    except OSError as exc:
+        if not journal_changed:
+            raise SecurityBootstrapIntegrityError("journal preparation could not be fingerprinted") from exc
+        raise SecurityBootstrapJournalPreparationError(
+            "journal preparation completed but could not be fingerprinted",
+            execution_state="journal_prepared_verification_failed",
+            database_changes_committed=True,
+            no_database_changes_committed=False,
+            post_commit_verification_required=True,
+        ) from exc
 
 
 def _raw_role_from_user(row: sqlite3.Row, role_auth_state: str) -> str:
@@ -306,6 +515,52 @@ def _validate_raw_active_admin(
     return row
 
 
+def _bootstrap_audit_matches_marker(conn: sqlite3.Connection, marker: dict[str, Any]) -> bool:
+    """Require the immutable marker to match one exact L3 bootstrap event."""
+    try:
+        rows = conn.execute(
+            """
+            SELECT operation_id, action, risk_level, result, actor_type,
+                   actor_user_id, actor_role, actor_label, target_type,
+                   target_id, context_json
+            FROM main.security_audit_events
+            WHERE operation_id = ?
+              AND action = 'security.super_admin.bootstrap'
+              AND result = 'success'
+            """,
+            (marker["bootstrap_operation_id"],),
+        ).fetchall()
+    except (KeyError, sqlite3.Error):
+        return False
+    if len(rows) != 1:
+        return False
+    row = rows[0]
+    expected_context = {
+        "lifecycle_before": LIFECYCLE_UNINITIALIZED,
+        "lifecycle_after": LIFECYCLE_ACTIVE,
+        "role_before": ROLE_ADMIN,
+        "role_after": ROLE_SUPER_ADMIN,
+        "auth_version_incremented": True,
+    }
+    try:
+        context = json.loads(row[10])
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return False
+    return (
+        row[0] == marker["bootstrap_operation_id"]
+        and row[1] == "security.super_admin.bootstrap"
+        and row[2] == "L3"
+        and row[3] == "success"
+        and row[4] == "local_operator"
+        and row[5] == marker["bootstrap_completed_by"]
+        and row[6] == ROLE_SUPER_ADMIN
+        and row[7] == marker["bootstrap_actor_label"]
+        and row[8] == "user"
+        and row[9] == marker["bootstrap_target_user_id"]
+        and context == expected_context
+    )
+
+
 def _lifecycle_from_connection(conn: sqlite3.Connection) -> dict[str, Any]:
     role_auth = inspect_role_auth_schema(conn)
     audit = inspect_security_audit_connection(conn)
@@ -333,6 +588,7 @@ def _lifecycle_from_connection(conn: sqlite3.Connection) -> dict[str, Any]:
     marker_target_role: str | None = None
     marker_target_is_active: bool | None = None
     audit_matches = False
+    marker_data_valid = bool(bootstrap.get("marker_data_valid", False))
     warnings = list(role_auth.get("warnings", [])) + list(audit.get("warnings", [])) + list(bootstrap.get("warnings", []))
     if marker:
         if role_state == ROLE_AUTH_READY:
@@ -344,18 +600,8 @@ def _lifecycle_from_connection(conn: sqlite3.Connection) -> dict[str, Any]:
                 except SecurityBootstrapIntegrityError:
                     marker_target_role = None
                     marker_target_is_active = False
-        if audit_state == SECURITY_AUDIT_READY:
-            audit_matches = int(
-                conn.execute(
-                    """
-                    SELECT COUNT(*) FROM main.security_audit_events
-                    WHERE operation_id = ?
-                      AND action = 'security.super_admin.bootstrap'
-                      AND result = 'success'
-                    """,
-                    (marker["bootstrap_operation_id"],),
-                ).fetchone()[0]
-            ) == 1
+        if marker_data_valid and audit_state == SECURITY_AUDIT_READY:
+            audit_matches = _bootstrap_audit_matches_marker(conn, marker)
 
     if bootstrap_state == BOOTSTRAP_PARTIAL:
         lifecycle_state = LIFECYCLE_SCHEMA_PARTIAL
@@ -366,6 +612,7 @@ def _lifecycle_from_connection(conn: sqlite3.Connection) -> dict[str, Any]:
     elif (
         role_state == ROLE_AUTH_READY
         and audit_state == SECURITY_AUDIT_READY
+        and marker_data_valid
         and marker_target is not None
         and marker_target_role == ROLE_SUPER_ADMIN
         and marker_target_is_active is True
@@ -391,6 +638,7 @@ def _lifecycle_from_connection(conn: sqlite3.Connection) -> dict[str, Any]:
         "marker_target_exists": marker_target is not None if marker else None,
         "marker_target_role": marker_target_role,
         "marker_target_is_active": marker_target_is_active,
+        "marker_data_valid": marker_data_valid if marker else None,
         "bootstrap_audit_matches": audit_matches if marker else None,
         "role_auth_state": role_state,
         "audit_state": audit_state,
@@ -464,6 +712,7 @@ def plan_sec_1b2_activation(
     backup = _validate_backup_manifest(backup_manifest_path, now_ms=created_at)
     with open_existing_sqlite(path, mode="ro", error_type=SecurityBootstrapValidationError) as conn:
         runtime = _database_runtime_state(conn, path)
+        _assert_backup_matches_database(backup, runtime)
         lifecycle = _lifecycle_from_connection(conn)
         _assert_role_auth_inspection_is_safe(lifecycle["role_auth_inspection"])
         if lifecycle["lifecycle_state"] != LIFECYCLE_UNINITIALIZED:
@@ -490,6 +739,10 @@ def plan_sec_1b2_activation(
         "expires_at": created_at + MAX_PLAN_AGE_MS,
         "database_size": runtime["database_size"],
         "database_sha256": runtime["database_sha256"],
+        "source_database_relative_path": backup["source_database_relative_path"],
+        "source_database_size": backup["source_database_size_bytes"],
+        "source_database_sha256": backup["source_database_sha256"],
+        "source_database_journal_mode": backup["source_database_journal_mode"],
         "backup_manifest_sha256": backup["backup_manifest_sha256"],
         "backup_id": backup["backup_id"],
         "backup_created_at": backup["backup_created_at"],
@@ -520,7 +773,16 @@ def plan_sec_1b2_activation(
             "lifecycle_state": LIFECYCLE_ACTIVE,
             "active_super_admin_count": 1,
         },
-        "session_impact": "all_existing_tokens_invalidated_and_reauthentication_required",
+        "session_impact": {
+            "session_invalidation_scope": (
+                "all_existing_sessions"
+                if lifecycle["role_auth_state"] == SCHEMA_LEGACY
+                else "bootstrap_target_only"
+            ),
+            "all_existing_tokens_invalidated": lifecycle["role_auth_state"] == SCHEMA_LEGACY,
+            "target_tokens_invalidated": True,
+            "reauthentication_required": True,
+        },
         "warnings": [],
     }
     plan["plan_hash"] = _plan_hash(plan)
@@ -545,6 +807,8 @@ def _validated_plan(plan: object, expected_plan_hash: object, *, now_ms: int) ->
     }
     if any(plan.get(key) != value for key, value in required.items()):
         raise SecurityBootstrapPlanError("activation plan has unsupported values")
+    if plan.get("role_auth_state_before") not in {SCHEMA_LEGACY, ROLE_AUTH_READY}:
+        raise SecurityBootstrapPlanError("activation plan role/auth state is invalid")
     expires_at = plan.get("expires_at")
     created_at = plan.get("created_at")
     if (
@@ -558,9 +822,28 @@ def _validated_plan(plan: object, expected_plan_hash: object, *, now_ms: int) ->
         or now_ms > expires_at
     ):
         raise SecurityBootstrapPlanError("activation plan is expired")
-    for key in ("database_sha256", "backup_manifest_sha256"):
+    for key in ("database_sha256", "source_database_sha256", "backup_manifest_sha256"):
         if not _is_hex_sha256(plan.get(key)):
             raise SecurityBootstrapPlanError("activation plan is missing an integrity fingerprint")
+    if plan.get("source_database_relative_path") not in ALLOWED_SOURCE_DATABASE_RELATIVE_PATHS:
+        raise SecurityBootstrapPlanError("activation plan source database path is invalid")
+    if type(plan.get("source_database_size")) is not int or plan["source_database_size"] < 0:
+        raise SecurityBootstrapPlanError("activation plan source database size is invalid")
+    if plan.get("source_database_journal_mode") not in SAFE_JOURNAL_MODES:
+        raise SecurityBootstrapPlanError("activation plan source journal mode is invalid")
+    impact = plan.get("session_impact")
+    expected_scope = (
+        "all_existing_sessions"
+        if plan.get("role_auth_state_before") == SCHEMA_LEGACY
+        else "bootstrap_target_only"
+    )
+    if not isinstance(impact, dict) or impact != {
+        "session_invalidation_scope": expected_scope,
+        "all_existing_tokens_invalidated": plan.get("role_auth_state_before") == SCHEMA_LEGACY,
+        "target_tokens_invalidated": True,
+        "reauthentication_required": True,
+    }:
+        raise SecurityBootstrapPlanError("activation plan session impact is invalid")
     for key in ("plan_id", "operation_id", "target_user_id", "target_username", "actor_user_id", "actor_label", "reason"):
         _required_text(key, plan.get(key))
     return plan
@@ -578,6 +861,13 @@ def _assert_plan_matches_runtime(
 ) -> None:
     if runtime["database_size"] != plan["database_size"] or runtime["database_sha256"] != plan["database_sha256"]:
         raise SecurityBootstrapPlanError("database changed after activation plan")
+    if (
+        backup["source_database_relative_path"] != plan["source_database_relative_path"]
+        or backup["source_database_size_bytes"] != plan["source_database_size"]
+        or backup["source_database_sha256"] != plan["source_database_sha256"]
+        or backup["source_database_journal_mode"] != plan["source_database_journal_mode"]
+    ):
+        raise SecurityBootstrapPlanError("backup source fingerprint changed after activation plan")
     if backup["backup_manifest_sha256"] != plan["backup_manifest_sha256"]:
         raise SecurityBootstrapPlanError("backup manifest changed after activation plan")
     if (
@@ -661,7 +951,7 @@ def execute_sec_1b2_activation(
         raise SecurityBootstrapValidationError("activation time is invalid")
     approved_plan = _validated_plan(plan, expected_plan_hash, now_ms=started_at)
     path = _existing_regular_file(database_path, label="database")
-    backup = _validate_backup_manifest(backup_manifest_path, now_ms=started_at)
+    backup: dict[str, Any] = {}
     event_ids: dict[str, str | None] = {
         "foundation": None,
         "role_auth_migration": None,
@@ -673,6 +963,7 @@ def execute_sec_1b2_activation(
     target_after_auth_version: int | None = None
     database_sha256_before = ""
     transaction_started = False
+    transaction_rolled_back = False
 
     with open_existing_sqlite(path, mode="rw", error_type=SecurityBootstrapValidationError) as conn:
         try:
@@ -684,6 +975,7 @@ def execute_sec_1b2_activation(
         try:
             runtime = _database_runtime_state(conn, path)
             database_sha256_before = runtime["database_sha256"]
+            backup = _validate_backup_manifest(backup_manifest_path, now_ms=started_at)
             _assert_plan_matches_runtime(
                 plan=approved_plan,
                 runtime=runtime,
@@ -693,6 +985,7 @@ def execute_sec_1b2_activation(
                 actor_label=label,
                 reason=audit_reason,
             )
+            _assert_backup_matches_database(backup, runtime)
             lifecycle = _lifecycle_from_connection(conn)
             _assert_role_auth_inspection_is_safe(lifecycle["role_auth_inspection"])
             before_states = {
@@ -868,30 +1161,35 @@ def execute_sec_1b2_activation(
             }
             conn.commit()
             transaction_started = False
-        except SecurityBootstrapError:
+        except SecurityBootstrapError as exc:
             if transaction_started and conn.in_transaction:
                 conn.rollback()
-            raise
-        except (SecurityAuditMigrationError, BootstrapLifecycleMigrationError, SecurityAuditError) as exc:
+                transaction_rolled_back = True
+            raise _mark_rollback_outcome(exc, rolled_back=transaction_rolled_back)
+        except (
+            RoleAuthMigrationError,
+            SecurityAuditMigrationError,
+            BootstrapLifecycleMigrationError,
+            SecurityAuditError,
+        ) as exc:
             if transaction_started and conn.in_transaction:
                 conn.rollback()
-            raise SecurityBootstrapIntegrityError("controlled activation transaction was rolled back") from exc
+                transaction_rolled_back = True
+            error = SecurityBootstrapIntegrityError("controlled activation transaction was rolled back")
+            raise _mark_rollback_outcome(error, rolled_back=transaction_rolled_back) from exc
         except sqlite3.Error as exc:
             if transaction_started and conn.in_transaction:
                 conn.rollback()
-            raise SecurityBootstrapIntegrityError("controlled activation transaction was rolled back") from exc
+                transaction_rolled_back = True
+            error = SecurityBootstrapIntegrityError("controlled activation transaction was rolled back")
+            raise _mark_rollback_outcome(error, rolled_back=transaction_rolled_back) from exc
 
-    try:
-        database_sha256_after = _sha256_file(path)
-    except OSError as exc:
-        raise SecurityBootstrapIntegrityError("database fingerprint could not be calculated after activation") from exc
-    return {
+    report_base = {
         "success": True,
         "operation_id": approved_plan["operation_id"],
         "plan_id": approved_plan["plan_id"],
         "plan_hash": approved_plan["plan_hash"],
         "database_sha256_before": database_sha256_before,
-        "database_sha256_after": database_sha256_after,
         "backup_manifest_sha256": backup["backup_manifest_sha256"],
         "started_at": started_at,
         "completed_at": _utc_now_ms(),
@@ -904,6 +1202,33 @@ def execute_sec_1b2_activation(
         "target_auth_version_before": target_before_auth_version,
         "target_auth_version_after": target_after_auth_version,
         "event_ids": event_ids,
-        "old_tokens_invalidated": True,
+        "session_impact": approved_plan["session_impact"],
+        "old_tokens_invalidated": approved_plan["session_impact"]["all_existing_tokens_invalidated"],
+        "target_tokens_invalidated": True,
+        "execution_state": "database_committed",
+        "database_transaction_rolled_back": False,
+        "no_database_changes_committed": False,
+        "database_changes_committed": True,
         "warnings": [],
     }
+    try:
+        database_sha256_after = _sha256_file(path)
+    except OSError as exc:
+        report_base.update(
+            {
+                "success": False,
+                "database_sha256_after": None,
+                "execution_state": "post_commit_verification_failed",
+                "post_commit_verification_required": True,
+            }
+        )
+        raise SecurityBootstrapPostCommitError(
+            "database fingerprint could not be calculated after activation",
+            execution_state="post_commit_verification_failed",
+            database_changes_committed=True,
+            no_database_changes_committed=False,
+            post_commit_verification_required=True,
+            report=report_base,
+        ) from exc
+    report_base["database_sha256_after"] = database_sha256_after
+    return report_base

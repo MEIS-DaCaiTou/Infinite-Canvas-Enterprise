@@ -30,12 +30,24 @@ BOOTSTRAP_COLUMNS = (
 BOOTSTRAP_CREATE_TABLE_SQL = f"""
 CREATE TABLE {BOOTSTRAP_TABLE} (
     singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
-    bootstrap_completed_at INTEGER NOT NULL,
-    bootstrap_completed_by TEXT NOT NULL,
-    bootstrap_target_user_id TEXT NOT NULL,
-    bootstrap_operation_id TEXT NOT NULL UNIQUE,
-    bootstrap_actor_label TEXT NOT NULL,
+    bootstrap_completed_at INTEGER NOT NULL
+        CHECK (typeof(bootstrap_completed_at) = 'integer' AND bootstrap_completed_at >= 0),
+    bootstrap_completed_by TEXT NOT NULL
+        CHECK (typeof(bootstrap_completed_by) = 'text' AND length(bootstrap_completed_by) > 0
+               AND bootstrap_completed_by = trim(bootstrap_completed_by)),
+    bootstrap_target_user_id TEXT NOT NULL
+        CHECK (typeof(bootstrap_target_user_id) = 'text' AND length(bootstrap_target_user_id) > 0
+               AND bootstrap_target_user_id = trim(bootstrap_target_user_id)),
+    bootstrap_operation_id TEXT NOT NULL UNIQUE
+        CHECK (typeof(bootstrap_operation_id) = 'text' AND length(bootstrap_operation_id) > 0
+               AND bootstrap_operation_id = trim(bootstrap_operation_id)),
+    bootstrap_actor_label TEXT NOT NULL
+        CHECK (typeof(bootstrap_actor_label) = 'text' AND length(bootstrap_actor_label) > 0
+               AND bootstrap_actor_label = trim(bootstrap_actor_label)),
     created_at INTEGER NOT NULL
+        CHECK (typeof(created_at) = 'integer' AND created_at >= 0),
+    CHECK (bootstrap_completed_by = bootstrap_target_user_id),
+    CHECK (created_at = bootstrap_completed_at)
 )
 """
 
@@ -115,6 +127,41 @@ def _main_index_columns(conn: sqlite3.Connection, name: str) -> tuple[str, ...]:
         str(row[2])
         for row in conn.execute(f"PRAGMA main.index_info({name})").fetchall()
     )
+
+
+def _validate_marker_raw(marker: dict[str, Any] | None) -> list[str]:
+    """Validate persisted marker values without changing the canonical schema state."""
+    if marker is None:
+        return []
+    errors: list[str] = []
+    if type(marker.get("singleton_id")) is not int or marker["singleton_id"] != 1:
+        errors.append("singleton_id")
+    for name in ("bootstrap_completed_at", "created_at"):
+        value = marker.get(name)
+        if type(value) is not int or value < 0:
+            errors.append(name)
+    if (
+        type(marker.get("bootstrap_completed_at")) is int
+        and type(marker.get("created_at")) is int
+        and marker["bootstrap_completed_at"] != marker["created_at"]
+    ):
+        errors.append("timestamps_differ")
+    for name in (
+        "bootstrap_completed_by",
+        "bootstrap_target_user_id",
+        "bootstrap_operation_id",
+        "bootstrap_actor_label",
+    ):
+        value = marker.get(name)
+        if not isinstance(value, str) or not value or value.isspace() or value != value.strip():
+            errors.append(name)
+    if (
+        isinstance(marker.get("bootstrap_completed_by"), str)
+        and isinstance(marker.get("bootstrap_target_user_id"), str)
+        and marker["bootstrap_completed_by"] != marker["bootstrap_target_user_id"]
+    ):
+        errors.append("actor_target_differ")
+    return errors
 
 
 def inspect_bootstrap_lifecycle_connection(conn: sqlite3.Connection) -> dict[str, Any]:
@@ -219,6 +266,7 @@ def inspect_bootstrap_lifecycle_connection(conn: sqlite3.Connection) -> dict[str
 
     marker_count: int | None = 0
     marker: dict[str, Any] | None = None
+    marker_validation_errors: list[str] = []
     if table_exists:
         try:
             rows = conn.execute(
@@ -228,6 +276,7 @@ def inspect_bootstrap_lifecycle_connection(conn: sqlite3.Connection) -> dict[str
             marker_count = len(rows)
             if len(rows) == 1:
                 marker = dict(zip(BOOTSTRAP_COLUMNS, tuple(rows[0])))
+                marker_validation_errors = _validate_marker_raw(marker)
         except sqlite3.Error:
             marker_count = None
 
@@ -273,6 +322,8 @@ def inspect_bootstrap_lifecycle_connection(conn: sqlite3.Connection) -> dict[str
         warnings.append("bootstrap lifecycle object names conflict with other schema objects")
     if marker_count is None or marker_count > 1:
         warnings.append("bootstrap lifecycle marker rows are invalid")
+    if marker_validation_errors:
+        warnings.append("bootstrap lifecycle marker data requires manual review")
 
     return {
         "migration_id": BOOTSTRAP_MIGRATION_ID,
@@ -296,6 +347,8 @@ def inspect_bootstrap_lifecycle_connection(conn: sqlite3.Connection) -> dict[str
         "object_conflicts": object_conflicts,
         "marker_count": marker_count,
         "marker": marker,
+        "marker_data_valid": not marker_validation_errors,
+        "marker_validation_errors": marker_validation_errors,
         "is_ready": state == BOOTSTRAP_READY,
         "needs_migration": state == BOOTSTRAP_MISSING,
         "warnings": warnings,

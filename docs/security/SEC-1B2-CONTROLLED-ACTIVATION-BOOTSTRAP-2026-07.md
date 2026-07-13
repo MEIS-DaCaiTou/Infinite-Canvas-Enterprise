@@ -14,12 +14,12 @@ SEC-1B1 和 SEC-1F0 都提供 caller-transaction primitive。它们要求现有 
 
 ## 生命周期
 
-`security_governance_bootstrap` 是 singleton、append-only marker：`singleton_id=1`，记录完成时间、bootstrap actor/target、operation ID 和脱敏 operator label。canonical schema 包含 target index 及禁止 UPDATE / DELETE 的 trigger。DDL、额外对象、TEMP shadow 或 TEMP trigger 不一致均为 PARTIAL，代码不会自动修补。
+`security_governance_bootstrap` 是 singleton、append-only marker：`singleton_id=1`，记录完成时间、bootstrap actor/target、operation ID 和脱敏 operator label。canonical schema 强制非空、无首尾空白的 marker 文本、非负整数时间、`created_at=bootstrap_completed_at` 与 `bootstrap_completed_by=bootstrap_target_user_id`；包含 target index 及禁止 UPDATE / DELETE 的 trigger。DDL、额外对象、TEMP shadow 或 TEMP trigger 不一致均为 PARTIAL，代码不会自动修补。
 
 | 状态 | 判定 | 行为 |
 | --- | --- | --- |
 | `UNINITIALIZED` | 无 marker，且没有任何 `super_admin` | 可以生成首次本机 bootstrap plan；普通业务不因该状态停止。 |
-| `ACTIVE` | marker 合法，marker target 是 active `super_admin`，至少一个 active `super_admin`，且 bootstrap audit 基本事实一致 | 首次 runner 拒绝重复执行。 |
+| `ACTIVE` | marker 原始字段合法，marker target 是 active `super_admin`，至少一个 active `super_admin`，且恰好一条 bootstrap audit 精确匹配 marker | 首次 runner 拒绝重复执行。 |
 | `RECOVERY_REQUIRED` | marker 缺失但已有任何 `super_admin`，marker target 不存在/不再是 active `super_admin`，或 bootstrap audit 不一致 | 首次 runner 拒绝；未来独立 break-glass 处理。 |
 | `LIFECYCLE_SCHEMA_PARTIAL` | marker schema 或 TEMP/canonical 完整性不符合要求 | 与 `RECOVERY_REQUIRED` 区分；人工分析，不自动 repair。 |
 
@@ -31,15 +31,15 @@ SEC-1B1 和 SEC-1F0 都提供 caller-transaction primitive。它们要求现有 
 
 plan 使用确定性 JSON（`ensure_ascii=False`、`sort_keys=True`、紧凑 separators），其 `plan_hash` 为删除 `plan_hash` 字段后的规范 JSON 的 SHA-256。plan 最长有效期 24 小时，且绑定：
 
-- 数据库 size 与 SHA-256；
+- 当前目标数据库与 source database 的 size、SHA-256 与 journal mode；
 - manifest SHA-256、backup ID、SQLite backup SHA-256 与 size；
 - role/auth、audit、lifecycle 的 activation 前状态；
 - 明确 target ID、精确 username、actor label、reason；
 - server-generated plan ID 与 operation ID。
 
-backup manifest 必须是 OPS-2A 实际格式的 `kind=backup-manifest`、`dry_run=false`、`status=pass`/`success`、`sqlite_backup_status=success`，并含可复核的 SQLite backup path、size 与 SHA-256。manifest 及 backup 必须存在、匹配且在 24 小时窗口内；dry-run、failed、critical warning、缺字段或 checksum 失配均拒绝。SEC-1B2 不修改备份、不会删除 WAL/SHM、不会 checkpoint。
+正式 OPS backup manifest 额外记录受控的 `source_database_relative_path=data/enterprise.db`、`source_database_size_bytes`、`source_database_sha256` 和 `source_database_journal_mode`。SEC-1B2 要求 `kind=backup-manifest`、`dry_run=false`、`status=pass`/`success`、`sqlite_backup_status=success`，并同时验证 source fingerprint、backup path、backup size 与 backup SHA-256。plan 与 execute 都重新核对当前目标数据库是否等于 manifest source；旧 manifest 缺少 source fingerprint、来自其它数据库的 backup、dry-run、failed、critical warning、缺字段或 checksum 失配均拒绝。SEC-1B2 不修改备份、不会删除 WAL/SHM、不会 checkpoint。
 
-服务停止后的 runner 只接受 `DELETE` journal mode 且不存在 `-wal` / `-shm` sidecar；其它状态 fail closed，要求人工复核而不是自动处理。
+应用连接默认使用 WAL，因此本机 runner 提供显式 `prepare-journal`。它要求服务已停止确认和绑定数据库文件名的确认短语，先预检独占锁与既有 sidecar；存在 `-wal` / `-shm` 时直接拒绝，不删除 sidecar、不 checkpoint。只有 WAL 且无 sidecar、无并发连接时，才会切换到 DELETE 并验证 users/table 基本数据未变。prepare 后必须重新创建正式 backup，再生成 plan；plan / execute 只接受 DELETE 且无 sidecar。
 
 ## Target 与密码
 
@@ -64,19 +64,20 @@ execute 在所有人工确认完成后使用短 `busy_timeout` 和 `BEGIN EXCLUS
 
 ## Token 与 Resume
 
-LEGACY token 在 activation 前可按 SEC-1B1 兼容验证。迁移把所有用户的 `auth_version` 初始化为 1，使迁移前 token 失效；bootstrap target 随后递增到 2，因此也必须重新登录。代码不自动签发 token，也不修改 `JWT_SECRET`。
+LEGACY activation 把所有用户的 `auth_version` 初始化为 1，使所有既有 token 失效；bootstrap target 随后递增到 2。若 role/auth 已是 READY、只执行 bootstrap resume，则只有 target 的旧 token 失效，其他当前版本 token 保持有效。plan 与 report 明确给出 `session_invalidation_scope`、`all_existing_tokens_invalidated` 与 `target_tokens_invalidated`；代码不自动签发 token，也不修改 `JWT_SECRET`。
 
 允许的 resume 前提是 audit READY + LEGACY，或 audit READY + ROLE_AUTH_READY + UNINITIALIZED；已经 READY 的层不会重复写对应 activation event。`ACTIVE`、`RECOVERY_REQUIRED`、任何 PARTIAL schema、stale plan、changed database/manifest/target 和锁冲突均拒绝。
 
 ## 本机 Runner 与 Report
 
-`tools/sec_1b2_local_runner.py` 只能直接运行文件，并只提供 `status`、`plan`、`execute`：
+`tools/sec_1b2_local_runner.py` 只能直接运行文件，并只提供 `status`、`prepare-journal`、`plan`、`execute`：
 
 - `status` 只读 inspect；
+- `prepare-journal` 需要显式服务停止确认、交互式数据库标签确认和新的 preparation report 路径；
 - `plan` 需要显式 database、formal manifest、target ID/username、actor label、reason 与新输出路径；
 - `execute` 需要 plan、expected plan hash、相同 manifest/target/label/reason、四个维护确认、交互密码和绑定 `SEC-1B2 <operation_id> <username>` 的确认短语。
 
-没有 password、remote、web、api、daemon、force、skip、repair 或 break-glass 参数。report 必须写到调用者指定的新路径；成功 report 只记录 plan / operation、fingerprint、前后状态、target 角色/version、event ID、token impact 和 warning 摘要。失败 report 使用固定错误 code、`database_transaction_rolled_back=true` 与 `no_database_changes_committed=true`，不记录密码、hash、Token、Cookie、SQL、数据库内容或绝对路径。
+没有 password、remote、web、api、daemon、force、skip、repair、checkpoint 或 break-glass 参数。report 必须先以排他方式预留到调用者指定的新路径；final report 使用安全写入和 flush / fsync。成功 report 记录 plan / operation、必要的数据库与 manifest cryptographic fingerprint、前后状态、target 角色/version、event ID、token impact 和 warning 摘要，但不记录密码或 password hash。失败 report 使用固定错误 code 与真实 transaction state：只有确认 rollback 后才写 `database_transaction_rolled_back=true`；commit 后 fingerprint 或 report 写入失败会明确 `database_changes_committed=true` 和 `post_commit_verification_required=true`，绝不伪称未提交。report 不记录 Token、Cookie、SQL、数据库内容、绝对路径或 traceback。
 
 ## 未实现项
 
