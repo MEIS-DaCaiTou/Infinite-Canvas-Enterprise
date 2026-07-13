@@ -78,20 +78,48 @@ def _write_final_json(path: Path, payload: dict[str, Any]) -> None:
         raise
 
 
+def _pending_report_payload(
+    *,
+    command: str,
+    operation_id: str | None,
+    plan_hash: str | None,
+    execution_state: str,
+) -> dict[str, Any]:
+    return {
+        "success": False,
+        "command": command,
+        "operation_id": operation_id,
+        "plan_hash": plan_hash,
+        "execution_state": execution_state,
+        "database_transaction_rolled_back": False,
+        "no_database_changes_committed": None,
+        "database_changes_committed": None,
+        "post_commit_verification_required": True,
+        "do_not_rerun_until_status_verified": True,
+    }
+
+
 def _reserve_pending_report(path: Path, *, command: str, operation_id: str | None, plan_hash: str | None) -> None:
     _write_new_json(
         path,
-        {
-            "success": False,
-            "command": command,
-            "operation_id": operation_id,
-            "plan_hash": plan_hash,
-            "execution_state": "transaction_not_started",
-            "database_transaction_rolled_back": False,
-            "no_database_changes_committed": None,
-            "database_changes_committed": None,
-            "post_commit_verification_required": False,
-        },
+        _pending_report_payload(
+            command=command,
+            operation_id=operation_id,
+            plan_hash=plan_hash,
+            execution_state="pending_manual_verification_required",
+        ),
+    )
+
+
+def _mark_execution_in_progress(path: Path, *, command: str, operation_id: str | None, plan_hash: str | None) -> None:
+    _write_final_json(
+        path,
+        _pending_report_payload(
+            command=command,
+            operation_id=operation_id,
+            plan_hash=plan_hash,
+            execution_state="execution_in_progress",
+        ),
     )
 
 
@@ -107,6 +135,11 @@ def _failure_report(exc: SecurityBootstrapError) -> dict[str, Any]:
             "no_database_changes_committed": exc.no_database_changes_committed,
             "database_changes_committed": exc.database_changes_committed,
             "post_commit_verification_required": exc.post_commit_verification_required,
+            "do_not_rerun_until_status_verified": bool(
+                exc.database_changes_committed
+                or exc.post_commit_verification_required
+                or report.get("do_not_rerun_until_status_verified") is True
+            ),
         }
     )
     return report
@@ -147,7 +180,7 @@ def build_parser() -> argparse.ArgumentParser:
     execute.add_argument("--report-output", required=True, help="New JSON report output path.")
     execute.add_argument("--confirm-service-stopped", action="store_true")
     execute.add_argument("--confirm-backup-reviewed", action="store_true")
-    execute.add_argument("--confirm-old-tokens-invalidated", action="store_true")
+    execute.add_argument("--confirm-session-impact-reviewed", action="store_true")
     execute.add_argument("--confirm-first-bootstrap", action="store_true")
     return parser
 
@@ -179,7 +212,7 @@ def _required_execute_confirmations(args: argparse.Namespace) -> None:
         for name, present in (
             ("service stopped", args.confirm_service_stopped),
             ("formal backup reviewed", args.confirm_backup_reviewed),
-            ("old-token invalidation acknowledged", args.confirm_old_tokens_invalidated),
+            ("session impact reviewed", args.confirm_session_impact_reviewed),
             ("first bootstrap acknowledged", args.confirm_first_bootstrap),
         )
         if not present
@@ -204,11 +237,21 @@ def _run_prepare_journal(args: argparse.Namespace) -> int:
         plan_hash=None,
     )
     try:
+        _mark_execution_in_progress(
+            report_path,
+            command="prepare-journal",
+            operation_id=None,
+            plan_hash=None,
+        )
+    except Exception:
+        print("SEC-1B2 journal preparation was not started because its execution state could not be persisted", file=sys.stderr)
+        return 1
+    try:
         report = prepare_sec_1b2_journal(database_path=args.database)
     except SecurityBootstrapError as exc:
         try:
             _write_final_json(report_path, _failure_report(exc))
-        except OSError:
+        except Exception:
             state = "journal state may have changed" if exc.database_changes_committed else "journal state was not changed"
             print(f"SEC-1B2 journal preparation failed; {state} and the report could not be finalized", file=sys.stderr)
             return 2
@@ -216,7 +259,7 @@ def _run_prepare_journal(args: argparse.Namespace) -> int:
         return 2 if exc.database_changes_committed else 1
     try:
         _write_final_json(report_path, report)
-    except OSError:
+    except Exception:
         print("SEC-1B2 journal preparation completed but its report could not be finalized", file=sys.stderr)
         return 2
     print(f"SEC-1B2 journal preparation succeeded: {report_path}")
@@ -230,7 +273,11 @@ def _run_execute(args: argparse.Namespace) -> int:
     operation_id = plan.get("operation_id")
     if not isinstance(operation_id, str) or not operation_id:
         raise SecurityBootstrapError("activation plan is invalid")
-    phrase = f"SEC-1B2 {operation_id} {args.target_username}"
+    session_impact = plan.get("session_impact")
+    session_scope = session_impact.get("session_invalidation_scope") if isinstance(session_impact, dict) else None
+    if session_scope not in {"all_existing_sessions", "bootstrap_target_only"}:
+        raise SecurityBootstrapError("activation plan session impact is invalid")
+    phrase = f"SEC-1B2 {operation_id} {args.target_username} {session_scope}"
     password = getpass.getpass("Current selected admin password: ")
     entered_phrase = input(f"Type exactly '{phrase}' to execute: ")
     if entered_phrase != phrase:
@@ -241,6 +288,16 @@ def _run_execute(args: argparse.Namespace) -> int:
         operation_id=operation_id,
         plan_hash=plan.get("plan_hash") if isinstance(plan.get("plan_hash"), str) else None,
     )
+    try:
+        _mark_execution_in_progress(
+            report_path,
+            command="execute",
+            operation_id=operation_id,
+            plan_hash=plan.get("plan_hash") if isinstance(plan.get("plan_hash"), str) else None,
+        )
+    except Exception:
+        print("SEC-1B2 execute was not started because its execution state could not be persisted", file=sys.stderr)
+        return 1
     try:
         report = execute_sec_1b2_activation(
             database_path=args.database,
@@ -256,16 +313,17 @@ def _run_execute(args: argparse.Namespace) -> int:
     except SecurityBootstrapError as exc:
         try:
             _write_final_json(report_path, _failure_report(exc))
-        except OSError:
+        except Exception:
             state = "database changes were committed" if exc.database_changes_committed else "database changes were not confirmed"
-            print(f"SEC-1B2 execute failed; {state} and the report could not be finalized", file=sys.stderr)
+            retry = "; do not rerun until status is verified" if exc.database_changes_committed else ""
+            print(f"SEC-1B2 execute failed; {state} and the report could not be finalized{retry}", file=sys.stderr)
             return 2
         print(f"SEC-1B2 execute failed: {report_path}", file=sys.stderr)
         return 2 if exc.database_changes_committed else 1
     try:
         _write_final_json(report_path, report)
-    except OSError:
-        print("SEC-1B2 execute committed database changes but the report could not be finalized; do not rerun", file=sys.stderr)
+    except Exception:
+        print("SEC-1B2 execute committed database changes but the report could not be finalized; do not rerun until status is verified", file=sys.stderr)
         return 2
     print(f"SEC-1B2 execute succeeded: {report_path}")
     return 0

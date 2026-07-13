@@ -470,6 +470,73 @@ def _run_checks() -> None:
                 {"risk_level": "L2"},
                 {"actor_role": "admin"},
                 {"context_json": "{}"},
+                {
+                    "context_json": json.dumps(
+                        {
+                            "lifecycle_before": "UNINITIALIZED",
+                            "lifecycle_after": "ACTIVE",
+                            "role_before": "admin",
+                            "role_after": "super_admin",
+                            "auth_version_incremented": 1,
+                        }
+                    )
+                },
+                {
+                    "context_json": json.dumps(
+                        {
+                            "lifecycle_before": "UNINITIALIZED",
+                            "lifecycle_after": "ACTIVE",
+                            "role_before": "admin",
+                            "role_after": "super_admin",
+                            "auth_version_incremented": "true",
+                        }
+                    )
+                },
+                {
+                    "context_json": json.dumps(
+                        {
+                            "lifecycle_before": "UNINITIALIZED",
+                            "lifecycle_after": "ACTIVE",
+                            "role_before": "admin",
+                            "role_after": "super_admin",
+                        }
+                    )
+                },
+                {
+                    "context_json": json.dumps(
+                        {
+                            "lifecycle_before": "UNINITIALIZED",
+                            "lifecycle_after": "ACTIVE",
+                            "role_before": "admin",
+                            "role_after": "super_admin",
+                            "auth_version_incremented": True,
+                            "unexpected": "field",
+                        }
+                    )
+                },
+                {"context_json": json.dumps(["not", "a", "context"] )},
+                {
+                    "context_json": json.dumps(
+                        {
+                            "lifecycle_before": 1,
+                            "lifecycle_after": "ACTIVE",
+                            "role_before": "admin",
+                            "role_after": "super_admin",
+                            "auth_version_incremented": True,
+                        }
+                    )
+                },
+                {
+                    "context_json": json.dumps(
+                        {
+                            "lifecycle_before": "UNINITIALIZED",
+                            "lifecycle_after": "ACTIVE",
+                            "role_before": "admin",
+                            "role_after": ["super_admin"],
+                            "auth_version_incremented": True,
+                        }
+                    )
+                },
             )
             for index, change in enumerate(audit_corruptions):
                 corrupted = tmp / f"lifecycle-audit-corrupt-{index}.db"
@@ -569,6 +636,60 @@ def _run_checks() -> None:
             finally:
                 lock_prepare_conn.rollback()
                 lock_prepare_conn.close()
+
+            # C3b. WAL -> DELETE must fail closed if another connection changes
+            # non-users data or schema in the transactionless SQLite switch gap.
+            import enterprise.security_bootstrap as bootstrap_module
+
+            def assert_window_change_rejected(label: str, mutate_external) -> None:
+                window_db = tmp / f"journal-window-{label}.db"
+                _legacy_database(window_db)
+                conn = sqlite3.connect(window_db)
+                conn.execute("PRAGMA journal_mode = WAL")
+                conn.close()
+                _checkpoint_temporary_wal(window_db)
+                users_before = [_user(window_db, user_id) for user_id in ("admin-id", "admin-two-id", "user-id")]
+                original_switch = bootstrap_module._switch_journal_mode_to_delete
+
+                def mutate_then_switch(preparation_conn, **kwargs):
+                    external = sqlite3.connect(window_db)
+                    try:
+                        mutate_external(external)
+                        external.commit()
+                    finally:
+                        external.close()
+                    return original_switch(preparation_conn, **kwargs)
+
+                bootstrap_module._switch_journal_mode_to_delete = mutate_then_switch
+                try:
+                    _assert_raises(SecurityBootstrapError, lambda: prepare_sec_1b2_journal(database_path=window_db, now_ms=now))
+                finally:
+                    bootstrap_module._switch_journal_mode_to_delete = original_switch
+                assert [_user(window_db, user_id) for user_id in ("admin-id", "admin-two-id", "user-id")] == users_before
+
+            assert_window_change_rejected(
+                "canvas-map",
+                lambda conn: conn.execute(
+                    "INSERT INTO main.user_canvas_map (user_id, canvas_id, created_at) VALUES (?, ?, ?)",
+                    ("user-id", "canvas-window-change", now),
+                ),
+            )
+            assert_window_change_rejected(
+                "usage-logs",
+                lambda conn: conn.execute(
+                    "INSERT INTO main.usage_logs (user_id, action, detail, ts) VALUES (?, ?, ?, ?)",
+                    ("user-id", "window-change", "non-secret", now),
+                ),
+            )
+            assert_window_change_rejected(
+                "schema",
+                lambda conn: conn.execute("CREATE TABLE journal_window_schema (id INTEGER PRIMARY KEY)"),
+            )
+            delete_journal_db = tmp / "delete-journal.db"
+            _legacy_database(delete_journal_db)
+            delete_report = prepare_sec_1b2_journal(database_path=delete_journal_db, now_ms=now)
+            assert delete_report["journal_mode_before"] == "delete"
+            assert delete_report["journal_mode_after"] == "delete"
             runner_prepare_db = tmp / "runner-prepare.db"
             _legacy_database(runner_prepare_db)
             conn = sqlite3.connect(runner_prepare_db)
@@ -765,8 +886,89 @@ def _run_checks() -> None:
             assert inspect_super_admin_lifecycle(post_commit_db)["lifecycle_state"] == LIFECYCLE_ACTIVE
             assert "admin-password" not in json.dumps(post_commit_error.report, ensure_ascii=False)
 
-            # E2d. If the final report write fails after a real commit, the
-            # runner returns a distinct status and emits an explicit warning.
+            # E2d. Any post-commit Exception, not only OSError, carries the
+            # committed-state result and forces later status verification.
+            post_commit_runtime_db = tmp / "post-commit-runtime.db"
+            _legacy_database(post_commit_runtime_db)
+            post_commit_runtime_manifest = _manifest(tmp, post_commit_runtime_db, now_ms=now)
+            post_commit_runtime_plan = _plan(post_commit_runtime_db, post_commit_runtime_manifest, now)
+            original_hash = bootstrap_module._sha256_file
+            hash_calls = 0
+
+            def _fail_only_post_commit_runtime_hash(value):
+                nonlocal hash_calls
+                hash_calls += 1
+                if hash_calls == 4:
+                    raise RuntimeError("temporary post-commit runtime failure")
+                return original_hash(value)
+
+            bootstrap_module._sha256_file = _fail_only_post_commit_runtime_hash
+            try:
+                runtime_post_commit_error = _assert_raises(
+                    SecurityBootstrapPostCommitError,
+                    lambda: _execute(post_commit_runtime_db, post_commit_runtime_manifest, post_commit_runtime_plan, now + 1),
+                )
+            finally:
+                bootstrap_module._sha256_file = original_hash
+            assert runtime_post_commit_error.database_changes_committed is True
+            assert runtime_post_commit_error.report["do_not_rerun_until_status_verified"] is True
+            assert inspect_super_admin_lifecycle(post_commit_runtime_db)["lifecycle_state"] == LIFECYCLE_ACTIVE
+
+            # E2e. The runner cannot enter execute if it cannot durably record
+            # execution_in_progress before the database transaction starts.
+            runner_pending_db = tmp / "runner-pending.db"
+            _legacy_database(runner_pending_db)
+            runner_pending_manifest = _manifest(tmp, runner_pending_db, now_ms=now)
+            runner_pending_plan = _plan(runner_pending_db, runner_pending_manifest, now)
+            runner_pending_plan_path = tmp / "runner-pending-plan.json"
+            runner_pending_plan_path.write_text(json.dumps(runner_pending_plan), encoding="utf-8")
+            runner_pending_report_path = tmp / "runner-pending-report.json"
+            original_mark_in_progress = runner._mark_execution_in_progress
+            original_runner_execute = runner.execute_sec_1b2_activation
+            original_runner_getpass = runner.getpass.getpass
+            original_runner_input = getattr(runner, "input", None)
+            runner._mark_execution_in_progress = lambda **_kwargs: (_ for _ in ()).throw(OSError("temporary state write failure"))
+            runner.execute_sec_1b2_activation = lambda **_kwargs: (_ for _ in ()).throw(AssertionError("execute must not run"))
+            runner.getpass.getpass = lambda _prompt: "admin-password"
+            runner.input = lambda _prompt: (
+                f"SEC-1B2 {runner_pending_plan['operation_id']} admin "
+                f"{runner_pending_plan['session_impact']['session_invalidation_scope']}"
+            )
+            try:
+                assert runner.main(
+                    [
+                        "execute",
+                        "--database", str(runner_pending_db),
+                        "--plan", str(runner_pending_plan_path),
+                        "--expected-plan-hash", runner_pending_plan["plan_hash"],
+                        "--backup-manifest", str(runner_pending_manifest),
+                        "--target-user-id", "admin-id",
+                        "--target-username", "admin",
+                        "--actor-label", "temporary-local-operator",
+                        "--reason", "temporary SEC-1B2 rehearsal",
+                        "--report-output", str(runner_pending_report_path),
+                        "--confirm-service-stopped",
+                        "--confirm-backup-reviewed",
+                        "--confirm-session-impact-reviewed",
+                        "--confirm-first-bootstrap",
+                    ]
+                ) == 1
+            finally:
+                runner._mark_execution_in_progress = original_mark_in_progress
+                runner.execute_sec_1b2_activation = original_runner_execute
+                runner.getpass.getpass = original_runner_getpass
+                if original_runner_input is None:
+                    del runner.input
+                else:
+                    runner.input = original_runner_input
+            assert inspect_super_admin_lifecycle(runner_pending_db)["lifecycle_state"] == LIFECYCLE_UNINITIALIZED
+            pending_before_execute = json.loads(runner_pending_report_path.read_text(encoding="utf-8"))
+            assert pending_before_execute["execution_state"] == "pending_manual_verification_required"
+            assert pending_before_execute["do_not_rerun_until_status_verified"] is True
+
+            # E2f. If the final report write fails after a real commit, the
+            # runner returns a distinct status and leaves execution_in_progress
+            # rather than a false transaction-not-started claim on disk.
             runner_report_db = tmp / "runner-report.db"
             _legacy_database(runner_report_db)
             runner_manifest = _manifest(tmp, runner_report_db, now_ms=now)
@@ -780,12 +982,15 @@ def _run_checks() -> None:
 
             def _fail_success_report(_path, payload):
                 if payload.get("database_changes_committed") is True and payload.get("success") is True:
-                    raise OSError("temporary report write failure")
+                    raise RuntimeError("temporary report write failure")
                 return original_runner_write(_path, payload)
 
             runner._write_final_json = _fail_success_report
             runner.getpass.getpass = lambda _prompt: "admin-password"
-            runner.input = lambda _prompt: f"SEC-1B2 {runner_plan['operation_id']} admin"
+            runner.input = lambda _prompt: (
+                f"SEC-1B2 {runner_plan['operation_id']} admin "
+                f"{runner_plan['session_impact']['session_invalidation_scope']}"
+            )
             stderr = StringIO()
             try:
                 with redirect_stderr(stderr):
@@ -803,7 +1008,7 @@ def _run_checks() -> None:
                             "--report-output", str(runner_report_path),
                             "--confirm-service-stopped",
                             "--confirm-backup-reviewed",
-                            "--confirm-old-tokens-invalidated",
+                            "--confirm-session-impact-reviewed",
                             "--confirm-first-bootstrap",
                         ]
                     )
@@ -819,6 +1024,54 @@ def _run_checks() -> None:
             assert inspect_super_admin_lifecycle(runner_report_db)["lifecycle_state"] == LIFECYCLE_ACTIVE
             pending_report = json.loads(runner_report_path.read_text(encoding="utf-8"))
             assert pending_report["database_changes_committed"] is None
+            assert pending_report["execution_state"] == "execution_in_progress"
+            assert pending_report["do_not_rerun_until_status_verified"] is True
+
+            # E2g. A normal final report replaces the in-progress record only
+            # after the committed activation report has been written safely.
+            runner_success_db = tmp / "runner-success.db"
+            _legacy_database(runner_success_db)
+            runner_success_manifest = _manifest(tmp, runner_success_db, now_ms=now)
+            runner_success_plan = _plan(runner_success_db, runner_success_manifest, now)
+            runner_success_plan_path = tmp / "runner-success-plan.json"
+            runner_success_plan_path.write_text(json.dumps(runner_success_plan), encoding="utf-8")
+            runner_success_report_path = tmp / "runner-success-report.json"
+            original_runner_getpass = runner.getpass.getpass
+            original_runner_input = getattr(runner, "input", None)
+            runner.getpass.getpass = lambda _prompt: "admin-password"
+            runner.input = lambda _prompt: (
+                f"SEC-1B2 {runner_success_plan['operation_id']} admin "
+                f"{runner_success_plan['session_impact']['session_invalidation_scope']}"
+            )
+            try:
+                assert runner.main(
+                    [
+                        "execute",
+                        "--database", str(runner_success_db),
+                        "--plan", str(runner_success_plan_path),
+                        "--expected-plan-hash", runner_success_plan["plan_hash"],
+                        "--backup-manifest", str(runner_success_manifest),
+                        "--target-user-id", "admin-id",
+                        "--target-username", "admin",
+                        "--actor-label", "temporary-local-operator",
+                        "--reason", "temporary SEC-1B2 rehearsal",
+                        "--report-output", str(runner_success_report_path),
+                        "--confirm-service-stopped",
+                        "--confirm-backup-reviewed",
+                        "--confirm-session-impact-reviewed",
+                        "--confirm-first-bootstrap",
+                    ]
+                ) == 0
+            finally:
+                runner.getpass.getpass = original_runner_getpass
+                if original_runner_input is None:
+                    del runner.input
+                else:
+                    runner.input = original_runner_input
+            success_report = json.loads(runner_success_report_path.read_text(encoding="utf-8"))
+            assert success_report["success"] is True
+            assert success_report["execution_state"] == "database_committed"
+            assert success_report["do_not_rerun_until_status_verified"] is False
 
             # E3. Supported resume states do not duplicate prior activation events.
             resume_audit_db = tmp / "resume-audit.db"
@@ -907,11 +1160,22 @@ def _run_checks() -> None:
             # H. Runner surface is local-only, with the explicit journal preparation gate.
             parser = runner.build_parser()
             help_text = parser.format_help().casefold()
+            subparsers_action = next(action for action in parser._actions if getattr(action, "choices", None))
+            execute_help = subparsers_action.choices["execute"].format_help().casefold()
             assert all(command in help_text for command in ("status", "prepare-journal", "plan", "execute"))
             assert all(
-                forbidden not in help_text
-                for forbidden in ("--password", "break-glass", "--force", "--skip", "--repair", "--checkpoint")
+                forbidden not in execute_help
+                for forbidden in (
+                    "--password",
+                    "break-glass",
+                    "--force",
+                    "--skip",
+                    "--repair",
+                    "--checkpoint",
+                    "--confirm-old-tokens-invalidated",
+                )
             )
+            assert "--confirm-session-impact-reviewed" in execute_help
         finally:
             edb.DB_PATH = original_db_path
             auth.JWT_SECRET = original_jwt_secret

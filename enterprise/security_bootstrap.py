@@ -329,30 +329,94 @@ def _quoted_identifier(value: str) -> str:
 
 
 def _journal_prepare_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
-    """Return non-secret content digests used only to prove journal preparation made no DML."""
-    table_count = int(
-        conn.execute("SELECT COUNT(*) FROM main.sqlite_master WHERE type = 'table'").fetchone()[0]
-    )
+    """Return non-secret data and schema summaries for journal preparation."""
+    schema_rows = conn.execute(
+        """
+        SELECT type, name, tbl_name, sql
+        FROM main.sqlite_master
+        WHERE name NOT LIKE 'sqlite_%'
+        ORDER BY type, name
+        """
+    ).fetchall()
+    table_names = [str(row[1]) for row in schema_rows if row[0] == "table"]
+    table_count = len(table_names)
+    schema_digest = hashlib.sha256(
+        _canonical_json({"objects": [list(row) for row in schema_rows]}).encode("utf-8")
+    ).hexdigest()
+    table_data_digests: dict[str, str] = {}
+    for table_name in table_names:
+        columns = [
+            str(row[1])
+            for row in conn.execute(f"PRAGMA main.table_info({_quoted_identifier(table_name)})").fetchall()
+        ]
+        if not columns:
+            raise SecurityBootstrapIntegrityError("database table could not be snapshotted for journal preparation")
+        raw_value_columns: list[str] = []
+        for name in columns:
+            quoted_name = _quoted_identifier(name)
+            raw_value_columns.extend(
+                (
+                    f"typeof({quoted_name})",
+                    f"COALESCE(hex(CAST({quoted_name} AS BLOB)), '')",
+                )
+            )
+        table_rows = conn.execute(
+            f"SELECT {', '.join(raw_value_columns)} FROM main.{_quoted_identifier(table_name)}"
+        ).fetchall()
+        normalized_rows = sorted([list(row) for row in table_rows])
+        table_data_digests[table_name] = hashlib.sha256(
+            _canonical_json({"columns": columns, "rows": normalized_rows}).encode("utf-8")
+        ).hexdigest()
     users_exists = conn.execute(
         "SELECT 1 FROM main.sqlite_master WHERE type = 'table' AND name = 'users'"
     ).fetchone() is not None
     if not users_exists:
-        return {"table_count": table_count, "users_count": None, "users_digest": None}
-    columns = [
-        str(row[1])
-        for row in conn.execute("PRAGMA main.table_info(users)").fetchall()
-    ]
-    if not columns:
-        raise SecurityBootstrapIntegrityError("users table could not be snapshotted for journal preparation")
-    quoted_columns = ", ".join(f"quote({_quoted_identifier(name)})" for name in columns)
-    order_column = "id" if "id" in columns else columns[0]
-    rows = conn.execute(
-        f"SELECT {quoted_columns} FROM main.users ORDER BY {_quoted_identifier(order_column)}"
-    ).fetchall()
-    digest = hashlib.sha256(
-        _canonical_json({"columns": columns, "rows": [list(row) for row in rows]}).encode("utf-8")
-    ).hexdigest()
-    return {"table_count": table_count, "users_count": len(rows), "users_digest": digest}
+        return {
+            "table_count": table_count,
+            "table_names": table_names,
+            "schema_digest": schema_digest,
+            "table_data_digests": table_data_digests,
+            "users_count": None,
+            "users_digest": None,
+        }
+    return {
+        "table_count": table_count,
+        "table_names": table_names,
+        "schema_digest": schema_digest,
+        "table_data_digests": table_data_digests,
+        "users_count": int(conn.execute("SELECT COUNT(*) FROM main.users").fetchone()[0]),
+        "users_digest": table_data_digests["users"],
+    }
+
+
+def _journal_prepare_observation(conn: sqlite3.Connection) -> dict[str, Any]:
+    """Capture same-connection change counters around the unavoidable WAL switch gap."""
+    pragma_values: dict[str, int] = {}
+    for name in ("data_version", "schema_version", "user_version"):
+        row = conn.execute(f"PRAGMA main.{name}").fetchone()
+        if not row or type(row[0]) is not int:
+            raise SecurityBootstrapIntegrityError("SQLite journal preparation metadata is invalid")
+        pragma_values[name] = row[0]
+    if type(conn.total_changes) is not int:
+        raise SecurityBootstrapIntegrityError("SQLite journal preparation change counter is invalid")
+    return {
+        **pragma_values,
+        "total_changes": conn.total_changes,
+        "snapshot": _journal_prepare_snapshot(conn),
+    }
+
+
+def _switch_journal_mode_to_delete(
+    conn: sqlite3.Connection,
+    *,
+    before_observation: dict[str, Any],
+) -> None:
+    """Perform the SQLite-required transactionless WAL -> DELETE header change."""
+    if _journal_prepare_observation(conn) != before_observation:
+        raise SecurityBootstrapIntegrityError("SQLite data changed before journal mode switch")
+    result = conn.execute("PRAGMA main.journal_mode = DELETE").fetchone()
+    if not result or str(result[0]).casefold() != "delete":
+        raise SecurityBootstrapValidationError("SQLite journal mode did not switch to DELETE")
 
 
 def prepare_sec_1b2_journal(
@@ -384,24 +448,21 @@ def prepare_sec_1b2_journal(
                 raise SecurityBootstrapValidationError("SQLite journal mode is not eligible for controlled preparation")
             # The pre-open sidecar check is authoritative. Opening a WAL database
             # may create its own shared-memory sidecar before we hold the lock.
-            before_snapshot = _journal_prepare_snapshot(conn)
-            conn.rollback()
-            transaction_started = False
+            before_observation = _journal_prepare_observation(conn)
 
             # SQLite does not allow WAL -> DELETE while a transaction is active.
             if journal_before == "wal":
-                result = conn.execute("PRAGMA main.journal_mode = DELETE").fetchone()
-                if not result or str(result[0]).casefold() != "delete":
-                    raise SecurityBootstrapValidationError("SQLite journal mode did not switch to DELETE")
+                conn.rollback()
+                transaction_started = False
+                _switch_journal_mode_to_delete(conn, before_observation=before_observation)
                 journal_changed = True
-
-            conn.execute("BEGIN EXCLUSIVE")
-            transaction_started = True
+                conn.execute("BEGIN EXCLUSIVE")
+                transaction_started = True
             journal_after = str(conn.execute("PRAGMA main.journal_mode").fetchone()[0]).casefold()
             if journal_after != "delete" or _temporary_sidecars(path):
                 raise SecurityBootstrapIntegrityError("SQLite journal preparation could not be verified")
-            after_snapshot = _journal_prepare_snapshot(conn)
-            if after_snapshot != before_snapshot:
+            after_observation = _journal_prepare_observation(conn)
+            if after_observation != before_observation:
                 raise SecurityBootstrapIntegrityError("SQLite data changed during journal preparation")
             conn.rollback()
             transaction_started = False
@@ -515,6 +576,16 @@ def _validate_raw_active_admin(
     return row
 
 
+def _strict_context_matches(context: object, expected: dict[str, Any]) -> bool:
+    """Compare JSON context values without Python's bool/int equality coercion."""
+    if type(context) is not dict or set(context) != set(expected):
+        return False
+    return all(
+        type(context[key]) is type(expected_value) and context[key] == expected_value
+        for key, expected_value in expected.items()
+    )
+
+
 def _bootstrap_audit_matches_marker(conn: sqlite3.Connection, marker: dict[str, Any]) -> bool:
     """Require the immutable marker to match one exact L3 bootstrap event."""
     try:
@@ -557,7 +628,7 @@ def _bootstrap_audit_matches_marker(conn: sqlite3.Connection, marker: dict[str, 
         and row[7] == marker["bootstrap_actor_label"]
         and row[8] == "user"
         and row[9] == marker["bootstrap_target_user_id"]
-        and context == expected_context
+        and _strict_context_matches(context, expected_context)
     )
 
 
@@ -1184,51 +1255,62 @@ def execute_sec_1b2_activation(
             error = SecurityBootstrapIntegrityError("controlled activation transaction was rolled back")
             raise _mark_rollback_outcome(error, rolled_back=transaction_rolled_back) from exc
 
-    report_base = {
-        "success": True,
+    report_base: dict[str, Any] = {
+        "success": False,
         "operation_id": approved_plan["operation_id"],
         "plan_id": approved_plan["plan_id"],
         "plan_hash": approved_plan["plan_hash"],
-        "database_sha256_before": database_sha256_before,
-        "backup_manifest_sha256": backup["backup_manifest_sha256"],
-        "started_at": started_at,
-        "completed_at": _utc_now_ms(),
-        "before_states": before_states,
-        "after_states": after_states,
-        "target_user_id": target_id,
-        "target_username": target_name,
-        "target_role_before": ROLE_ADMIN,
-        "target_role_after": ROLE_SUPER_ADMIN,
-        "target_auth_version_before": target_before_auth_version,
-        "target_auth_version_after": target_after_auth_version,
-        "event_ids": event_ids,
-        "session_impact": approved_plan["session_impact"],
-        "old_tokens_invalidated": approved_plan["session_impact"]["all_existing_tokens_invalidated"],
-        "target_tokens_invalidated": True,
-        "execution_state": "database_committed",
+        "execution_state": "post_commit_verification_failed",
         "database_transaction_rolled_back": False,
         "no_database_changes_committed": False,
         "database_changes_committed": True,
-        "warnings": [],
+        "post_commit_verification_required": True,
+        "do_not_rerun_until_status_verified": True,
     }
     try:
+        report_base.update(
+            {
+                "success": True,
+                "database_sha256_before": database_sha256_before,
+                "backup_manifest_sha256": backup["backup_manifest_sha256"],
+                "started_at": started_at,
+                "before_states": before_states,
+                "after_states": after_states,
+                "target_user_id": target_id,
+                "target_username": target_name,
+                "target_role_before": ROLE_ADMIN,
+                "target_role_after": ROLE_SUPER_ADMIN,
+                "target_auth_version_before": target_before_auth_version,
+                "target_auth_version_after": target_after_auth_version,
+                "event_ids": event_ids,
+                "session_impact": approved_plan["session_impact"],
+                "old_tokens_invalidated": approved_plan["session_impact"]["all_existing_tokens_invalidated"],
+                "target_tokens_invalidated": True,
+                "execution_state": "database_committed",
+                "post_commit_verification_required": False,
+                "do_not_rerun_until_status_verified": False,
+                "warnings": [],
+            }
+        )
+        report_base["completed_at"] = _utc_now_ms()
         database_sha256_after = _sha256_file(path)
-    except OSError as exc:
+        report_base["database_sha256_after"] = database_sha256_after
+        return report_base
+    except Exception as exc:
         report_base.update(
             {
                 "success": False,
                 "database_sha256_after": None,
                 "execution_state": "post_commit_verification_failed",
                 "post_commit_verification_required": True,
+                "do_not_rerun_until_status_verified": True,
             }
         )
         raise SecurityBootstrapPostCommitError(
-            "database fingerprint could not be calculated after activation",
+            "post-commit verification failed after activation",
             execution_state="post_commit_verification_failed",
             database_changes_committed=True,
             no_database_changes_committed=False,
             post_commit_verification_required=True,
             report=report_base,
         ) from exc
-    report_base["database_sha256_after"] = database_sha256_after
-    return report_base
