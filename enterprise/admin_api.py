@@ -37,6 +37,23 @@ def _require_admin(request: Request) -> dict:
     return user
 
 
+def _require_ready_principal(request: Request) -> dict:
+    """Accept only the minimal verified-principal facts used by READY governance."""
+    user = getattr(request.state, "user", None)
+    if not isinstance(user, dict) or not isinstance(user.get("user_id"), str) or not user["user_id"]:
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "STALE_AUTHENTICATION", "message": "Authentication is no longer current"},
+        )
+    auth_version = user.get("auth_version")
+    if isinstance(auth_version, bool) or not isinstance(auth_version, int) or auth_version < 0:
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "STALE_AUTHENTICATION", "message": "Authentication is no longer current"},
+        )
+    return user
+
+
 def _audit_user_action(actor: dict, action: str, target: dict, summary: str, extra: dict | None = None) -> None:
     """记录管理员用户管理操作。"""
     detail = {
@@ -141,7 +158,8 @@ async def user_delete_impact(user_id: str, request: Request):
 
 @router.post("/api/users")
 async def create_user(request: Request):
-    current = _require_admin(request)
+    ready = _role_auth_ready()
+    current = _require_ready_principal(request) if ready else _require_admin(request)
     body = await request.json()
     username = (body.get("username") or "").strip()
     password = (body.get("password") or "").strip()
@@ -155,9 +173,10 @@ async def create_user(request: Request):
         raise HTTPException(status_code=400, detail="密码至少6位")
 
     try:
-        if _role_auth_ready():
+        if ready:
             result = user_governance.create_ordinary_user(
                 actor_user_id=current["user_id"],
+                expected_actor_auth_version=current["auth_version"],
                 username=username,
                 password=password,
                 display_name=display_name,
@@ -188,16 +207,17 @@ async def create_user(request: Request):
 
 @router.put("/api/users/{user_id}/password")
 async def reset_password(user_id: str, request: Request):
-    current = _require_admin(request)
+    ready = _role_auth_ready()
+    current = _require_ready_principal(request) if ready else _require_admin(request)
     body = await request.json()
     new_password = (body.get("password") or "").strip()
     if len(new_password) < 6:
         raise HTTPException(status_code=400, detail="密码至少6位")
-    ready = _role_auth_ready()
     if ready:
         try:
             result = user_governance.reset_user_password(
                 actor_user_id=current["user_id"],
+                expected_actor_auth_version=current["auth_version"],
                 target_user_id=user_id,
                 new_password=new_password,
                 reason=body.get("reason"),
@@ -218,12 +238,24 @@ async def reset_password(user_id: str, request: Request):
 
 @router.put("/api/users/{user_id}/role")
 async def update_user_role(user_id: str, request: Request):
-    current = _require_admin(request)
-    if _role_auth_ready():
+    ready = _role_auth_ready()
+    current = _require_ready_principal(request) if ready else _require_admin(request)
+    if ready:
+        try:
+            body = await request.json()
+        except Exception:
+            body = None
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="Invalid role update request")
         try:
             user_governance.deny_online_role_change(
                 actor_user_id=current["user_id"],
+                expected_actor_auth_version=current["auth_version"],
                 target_user_id=user_id,
+                role_field_present="role" in body,
+                requested_role=body.get("role"),
+                is_admin_field_present="is_admin" in body,
+                requested_is_admin=body.get("is_admin"),
             )
         except user_governance.UserGovernanceError as exc:
             _raise_governance_http(exc)
@@ -247,15 +279,17 @@ async def update_user_role(user_id: str, request: Request):
 
 @router.put("/api/users/{user_id}/active")
 async def update_user_active(user_id: str, request: Request):
-    current = _require_admin(request)
+    ready = _role_auth_ready()
+    current = _require_ready_principal(request) if ready else _require_admin(request)
     body = await request.json()
     if "is_active" not in body or not isinstance(body.get("is_active"), bool):
         raise HTTPException(status_code=400, detail="is_active 必须是布尔值")
     is_active = body["is_active"]
-    if _role_auth_ready():
+    if ready:
         try:
             result = user_governance.set_user_active(
                 actor_user_id=current["user_id"],
+                expected_actor_auth_version=current["auth_version"],
                 target_user_id=user_id,
                 is_active=is_active,
                 reason=body.get("reason"),
@@ -295,13 +329,15 @@ async def update_user_active(user_id: str, request: Request):
 
 @router.put("/api/users/{user_id}/profile")
 async def update_user_profile(user_id: str, request: Request):
-    current = _require_admin(request)
+    ready = _role_auth_ready()
+    current = _require_ready_principal(request) if ready else _require_admin(request)
     body = await request.json()
     display_name = (body.get("display_name") or "").strip()
-    if _role_auth_ready():
+    if ready:
         try:
             current_target = user_governance.update_user_profile(
                 actor_user_id=current["user_id"],
+                expected_actor_auth_version=current["auth_version"],
                 target_user_id=user_id,
                 display_name=display_name,
             )
@@ -327,8 +363,9 @@ async def update_user_profile(user_id: str, request: Request):
 
 @router.delete("/api/users/{user_id}")
 async def delete_user(user_id: str, request: Request):
-    current = _require_admin(request)
-    if _role_auth_ready():
+    ready = _role_auth_ready()
+    current = _require_ready_principal(request) if ready else _require_admin(request)
+    if ready:
         try:
             body = await request.json()
         except Exception:
@@ -338,6 +375,7 @@ async def delete_user(user_id: str, request: Request):
         try:
             result = user_governance.soft_delete_user(
                 actor_user_id=current["user_id"],
+                expected_actor_auth_version=current["auth_version"],
                 target_user_id=user_id,
                 confirm_username=body.get("confirm_username"),
                 reason=body.get("reason"),
@@ -345,7 +383,7 @@ async def delete_user(user_id: str, request: Request):
         except user_governance.UserGovernanceError as exc:
             _raise_governance_http(exc)
         target = result["user"]
-        previous_is_active = bool(target.get("is_active"))
+        previous_is_active = bool(result["state_changed"])
         _audit_user_action(
             current,
             "user_deleted",
@@ -820,10 +858,13 @@ async def change_my_password(request: Request):
     if len(new_password) < 6:
         raise HTTPException(status_code=400, detail="新密码至少6位")
 
-    if _role_auth_ready():
+    ready = _role_auth_ready()
+    if ready:
+        user = _require_ready_principal(request)
         try:
             result = user_governance.change_own_password(
                 actor_user_id=user["user_id"],
+                expected_actor_auth_version=user["auth_version"],
                 old_password=old_password,
                 new_password=new_password,
             )

@@ -155,6 +155,23 @@ def _audit_rows(path: Path, operation_id: str | None = None) -> list[dict]:
         conn.close()
 
 
+def _audit_count(path: Path, action: str | None = None) -> int:
+    conn = sqlite3.connect(path)
+    try:
+        if action is None:
+            return int(
+                conn.execute("SELECT COUNT(*) FROM main.security_audit_events").fetchone()[0]
+            )
+        return int(
+            conn.execute(
+                "SELECT COUNT(*) FROM main.security_audit_events WHERE action = ?",
+                (action,),
+            ).fetchone()[0]
+        )
+    finally:
+        conn.close()
+
+
 def _latest_audit(path: Path, action: str) -> dict:
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
@@ -177,6 +194,10 @@ def _usage_count(path: Path) -> int:
         conn.close()
 
 
+def _auth_version(path: Path, user_id: str) -> int:
+    return int(_user_row(path, user_id)["auth_version"])
+
+
 def _principal(user: dict, *, forged_role: str | None = None) -> dict:
     role = forged_role or user["role"]
     return {
@@ -185,6 +206,7 @@ def _principal(user: dict, *, forged_role: str | None = None) -> dict:
         "role": role,
         "is_admin": role in {"admin", "super_admin"},
         "is_active": True,
+        "auth_version": user.get("auth_version", 1),
     }
 
 
@@ -243,28 +265,37 @@ def _run_checks() -> None:
             sensitive_missing_calls = (
                 lambda: governance.reset_user_password(
                     actor_user_id=missing_admin["id"],
+                    expected_actor_auth_version=_auth_version(missing_audit_db, missing_admin["id"]),
                     target_user_id=missing_user["id"],
                     new_password="replacement-password",
                     reason="temporary reset",
                 ),
                 lambda: governance.set_user_active(
                     actor_user_id=missing_admin["id"],
+                    expected_actor_auth_version=_auth_version(missing_audit_db, missing_admin["id"]),
                     target_user_id=missing_user["id"],
                     is_active=False,
                     reason="temporary disable",
                 ),
                 lambda: governance.soft_delete_user(
                     actor_user_id=missing_admin["id"],
+                    expected_actor_auth_version=_auth_version(missing_audit_db, missing_admin["id"]),
                     target_user_id=missing_user["id"],
                     confirm_username="missing-user",
                     reason="temporary deletion",
                 ),
                 lambda: governance.deny_online_role_change(
                     actor_user_id=missing_admin["id"],
+                    expected_actor_auth_version=_auth_version(missing_audit_db, missing_admin["id"]),
                     target_user_id=missing_user["id"],
+                    role_field_present=False,
+                    requested_role=None,
+                    is_admin_field_present=False,
+                    requested_is_admin=None,
                 ),
                 lambda: governance.check_session_revoke_policy(
                     actor_user_id=missing_admin["id"],
+                    expected_actor_auth_version=_auth_version(missing_audit_db, missing_admin["id"]),
                     target_user_id=missing_user["id"],
                 ),
             )
@@ -317,6 +348,7 @@ def _run_checks() -> None:
             conn.close()
             prebootstrap_reset = governance.reset_user_password(
                 actor_user_id=admin["id"],
+                expected_actor_auth_version=_auth_version(ready_db, admin["id"]),
                 target_user_id=prebootstrap_user["id"],
                 new_password="prebootstrap-new-password",
                 reason="temporary pre-bootstrap governance",
@@ -332,6 +364,7 @@ def _run_checks() -> None:
                 governance.UserGovernancePolicyDenied,
                 lambda: governance.reset_user_password(
                     actor_user_id=user_b["id"],
+                    expected_actor_auth_version=_auth_version(ready_db, user_b["id"]),
                     target_user_id=user_a["id"],
                     new_password="user-cannot-govern",
                     reason="temporary user denial",
@@ -341,6 +374,7 @@ def _run_checks() -> None:
             token = auth.create_token(user_a["id"])
             reset = governance.reset_user_password(
                 actor_user_id=admin["id"],
+                expected_actor_auth_version=_auth_version(ready_db, admin["id"]),
                 target_user_id=user_a["id"],
                 new_password="replacement-password-a",
                 reason="temporary password reset",
@@ -358,6 +392,7 @@ def _run_checks() -> None:
                     governance.UserGovernanceValidationError,
                     lambda invalid_reason=invalid_reason: governance.reset_user_password(
                         actor_user_id=admin["id"],
+                        expected_actor_auth_version=_auth_version(ready_db, admin["id"]),
                         target_user_id=user_a["id"],
                         new_password="must-not-change-for-invalid-reason",
                         reason=invalid_reason,
@@ -371,6 +406,7 @@ def _run_checks() -> None:
                     governance.UserGovernancePolicyDenied,
                     lambda target=target: governance.reset_user_password(
                         actor_user_id=admin["id"],
+                        expected_actor_auth_version=_auth_version(ready_db, admin["id"]),
                         target_user_id=target["id"],
                         new_password="must-not-be-written",
                         reason="temporary denied reset",
@@ -386,6 +422,7 @@ def _run_checks() -> None:
 
             super_reset_admin = governance.reset_user_password(
                 actor_user_id=super_a["id"],
+                expected_actor_auth_version=_auth_version(ready_db, super_a["id"]),
                 target_user_id=admin_b["id"],
                 new_password="super-reset-admin-password",
                 reason="temporary super-admin reset",
@@ -395,6 +432,7 @@ def _run_checks() -> None:
                 governance.UserGovernancePolicyDenied,
                 lambda: governance.reset_user_password(
                     actor_user_id=super_a["id"],
+                    expected_actor_auth_version=_auth_version(ready_db, super_a["id"]),
                     target_user_id=super_b["id"],
                     new_password="must-not-change-super",
                     reason="temporary denied super reset",
@@ -404,6 +442,7 @@ def _run_checks() -> None:
             # Active transitions increment only on actual changes.
             first_disable = governance.set_user_active(
                 actor_user_id=admin["id"],
+                expected_actor_auth_version=_auth_version(ready_db, admin["id"]),
                 target_user_id=user_b["id"],
                 is_active=False,
                 reason="temporary disable",
@@ -411,6 +450,7 @@ def _run_checks() -> None:
             assert first_disable["state_changed"] is True and first_disable["auth_version"] == 2
             second_disable = governance.set_user_active(
                 actor_user_id=admin["id"],
+                expected_actor_auth_version=_auth_version(ready_db, admin["id"]),
                 target_user_id=user_b["id"],
                 is_active=False,
                 reason="temporary repeated disable",
@@ -418,6 +458,7 @@ def _run_checks() -> None:
             assert second_disable["state_changed"] is False and second_disable["auth_version"] == 2
             enabled = governance.set_user_active(
                 actor_user_id=admin["id"],
+                expected_actor_auth_version=_auth_version(ready_db, admin["id"]),
                 target_user_id=user_b["id"],
                 is_active=True,
                 reason="temporary enable",
@@ -433,6 +474,7 @@ def _run_checks() -> None:
                     governance.UserGovernancePolicyDenied,
                     lambda actor_id=actor_id, target=target: governance.set_user_active(
                         actor_user_id=actor_id,
+                        expected_actor_auth_version=_auth_version(ready_db, actor_id),
                         target_user_id=target["id"],
                         is_active=False,
                         reason="temporary denied active change",
@@ -441,6 +483,7 @@ def _run_checks() -> None:
                 assert _user_row(ready_db, target["id"]) == before
             super_disable_admin = governance.set_user_active(
                 actor_user_id=super_a["id"],
+                expected_actor_auth_version=_auth_version(ready_db, super_a["id"]),
                 target_user_id=admin_b["id"],
                 is_active=False,
                 reason="temporary disable admin",
@@ -448,6 +491,7 @@ def _run_checks() -> None:
             assert super_disable_admin["state_changed"] is True
             governance.set_user_active(
                 actor_user_id=super_a["id"],
+                expected_actor_auth_version=_auth_version(ready_db, super_a["id"]),
                 target_user_id=admin_b["id"],
                 is_active=True,
                 reason="temporary enable admin",
@@ -456,6 +500,7 @@ def _run_checks() -> None:
             delete_target = _add_ready_user(ready_db, username="delete-user", role=ROLE_USER)
             deleted = governance.soft_delete_user(
                 actor_user_id=admin["id"],
+                expected_actor_auth_version=_auth_version(ready_db, admin["id"]),
                 target_user_id=delete_target["id"],
                 confirm_username="delete-user",
                 reason="temporary offboarding",
@@ -472,6 +517,7 @@ def _run_checks() -> None:
                     governance.UserGovernancePolicyDenied,
                     lambda actor_id=actor_id, target=target: governance.soft_delete_user(
                         actor_user_id=actor_id,
+                        expected_actor_auth_version=_auth_version(ready_db, actor_id),
                         target_user_id=target["id"],
                         confirm_username=target["username"],
                         reason="temporary denied delete",
@@ -483,6 +529,7 @@ def _run_checks() -> None:
             )
             governance.soft_delete_user(
                 actor_user_id=super_a["id"],
+                expected_actor_auth_version=_auth_version(ready_db, super_a["id"]),
                 target_user_id=super_delete_admin["id"],
                 confirm_username="delete-admin",
                 reason="temporary admin offboarding",
@@ -491,6 +538,7 @@ def _run_checks() -> None:
 
             profile_user = governance.update_user_profile(
                 actor_user_id=admin["id"],
+                expected_actor_auth_version=_auth_version(ready_db, admin["id"]),
                 target_user_id=user_a["id"],
                 display_name="User A Renamed",
             )
@@ -499,6 +547,7 @@ def _run_checks() -> None:
                 governance.UserGovernancePolicyDenied,
                 lambda: governance.update_user_profile(
                     actor_user_id=admin["id"],
+                    expected_actor_auth_version=_auth_version(ready_db, admin["id"]),
                     target_user_id=admin_b["id"],
                     display_name="Denied Admin Rename",
                 ),
@@ -507,17 +556,20 @@ def _run_checks() -> None:
                 governance.UserGovernancePolicyDenied,
                 lambda: governance.update_user_profile(
                     actor_user_id=admin["id"],
+                    expected_actor_auth_version=_auth_version(ready_db, admin["id"]),
                     target_user_id=super_a["id"],
                     display_name="Denied Super Rename By Admin",
                 ),
             )
             governance.update_user_profile(
                 actor_user_id=super_a["id"],
+                expected_actor_auth_version=_auth_version(ready_db, super_a["id"]),
                 target_user_id=admin_b["id"],
                 display_name="Admin B Renamed",
             )
             governance.update_user_profile(
                 actor_user_id=super_a["id"],
+                expected_actor_auth_version=_auth_version(ready_db, super_a["id"]),
                 target_user_id=super_a["id"],
                 display_name="Super A Renamed",
             )
@@ -525,6 +577,7 @@ def _run_checks() -> None:
                 governance.UserGovernancePolicyDenied,
                 lambda: governance.update_user_profile(
                     actor_user_id=super_a["id"],
+                    expected_actor_auth_version=_auth_version(ready_db, super_a["id"]),
                     target_user_id=super_b["id"],
                     display_name="Denied Super Rename",
                 ),
@@ -542,13 +595,19 @@ def _run_checks() -> None:
                     governance.UserGovernancePolicyDenied,
                     lambda actor_id=actor_id, target=target: governance.deny_online_role_change(
                         actor_user_id=actor_id,
+                        expected_actor_auth_version=_auth_version(ready_db, actor_id),
                         target_user_id=target["id"],
+                        role_field_present=False,
+                        requested_role=None,
+                        is_admin_field_present=False,
+                        requested_is_admin=None,
                     ),
                 )
                 assert _user_row(ready_db, target["id"]) == before
 
             ordinary_created = governance.create_ordinary_user(
                 actor_user_id=admin["id"],
+                expected_actor_auth_version=_auth_version(ready_db, admin["id"]),
                 username="created-user",
                 password="created-user-password",
                 display_name="Created User",
@@ -569,6 +628,7 @@ def _run_checks() -> None:
                     lambda username=username, requested_is_admin=requested_is_admin,
                     role_present=role_present, requested_role=requested_role: governance.create_ordinary_user(
                         actor_user_id=admin["id"],
+                        expected_actor_auth_version=_auth_version(ready_db, admin["id"]),
                         username=username,
                         password="must-not-be-stored",
                         display_name=username,
@@ -587,27 +647,37 @@ def _run_checks() -> None:
 
             # Session-revoke policy primitive is not exposed as an API.
             assert governance.check_session_revoke_policy(
-                actor_user_id=admin["id"], target_user_id=user_a["id"]
+                actor_user_id=admin["id"],
+                expected_actor_auth_version=_auth_version(ready_db, admin["id"]),
+                target_user_id=user_a["id"],
             )["target_role"] == ROLE_USER
             _assert_raises(
                 governance.UserGovernancePolicyDenied,
                 lambda: governance.check_session_revoke_policy(
-                    actor_user_id=admin["id"], target_user_id=admin_b["id"]
+                    actor_user_id=admin["id"],
+                    expected_actor_auth_version=_auth_version(ready_db, admin["id"]),
+                    target_user_id=admin_b["id"],
                 ),
             )
             _assert_raises(
                 governance.UserGovernancePolicyDenied,
                 lambda: governance.check_session_revoke_policy(
-                    actor_user_id=admin["id"], target_user_id=super_a["id"]
+                    actor_user_id=admin["id"],
+                    expected_actor_auth_version=_auth_version(ready_db, admin["id"]),
+                    target_user_id=super_a["id"],
                 ),
             )
             assert governance.check_session_revoke_policy(
-                actor_user_id=super_a["id"], target_user_id=admin_b["id"]
+                actor_user_id=super_a["id"],
+                expected_actor_auth_version=_auth_version(ready_db, super_a["id"]),
+                target_user_id=admin_b["id"],
             )["target_role"] == ROLE_ADMIN
             _assert_raises(
                 governance.UserGovernancePolicyDenied,
                 lambda: governance.check_session_revoke_policy(
-                    actor_user_id=super_a["id"], target_user_id=super_b["id"]
+                    actor_user_id=super_a["id"],
+                    expected_actor_auth_version=_auth_version(ready_db, super_a["id"]),
+                    target_user_id=super_b["id"],
                 ),
             )
 
@@ -686,6 +756,7 @@ def _run_checks() -> None:
                     governance.UserGovernanceUnavailable,
                     lambda: governance.reset_user_password(
                         actor_user_id=admin["id"],
+                        expected_actor_auth_version=_auth_version(ready_db, admin["id"]),
                         target_user_id=atomic_target["id"],
                         new_password="atomic-new-password",
                         reason="temporary atomicity test",
@@ -695,6 +766,7 @@ def _run_checks() -> None:
                     governance.UserGovernanceUnavailable,
                     lambda: governance.reset_user_password(
                         actor_user_id=admin["id"],
+                        expected_actor_auth_version=_auth_version(ready_db, admin["id"]),
                         target_user_id=super_a["id"],
                         new_password="denied-atomic-password",
                         reason="temporary denied atomicity test",
@@ -704,6 +776,389 @@ def _run_checks() -> None:
                 governance.append_security_audit_event = original_append
             assert _user_row(ready_db, atomic_target["id"]) == before_atomic
             assert _usage_count(ready_db) == usage_before_atomic
+
+            # N. main.users writes fail closed on silent no-ops and post-write tampering.
+            integrity_target = _add_ready_user(
+                ready_db, username="integrity-target", role=ROLE_USER
+            )
+
+            def install_users_trigger(name: str, definition: str) -> None:
+                conn = sqlite3.connect(ready_db)
+                try:
+                    conn.execute(definition)
+                    conn.commit()
+                finally:
+                    conn.close()
+
+            def drop_users_trigger(name: str) -> None:
+                conn = sqlite3.connect(ready_db)
+                try:
+                    conn.execute(f"DROP TRIGGER main.{name}")
+                    conn.commit()
+                finally:
+                    conn.close()
+
+            before_create_audit = _audit_count(ready_db)
+            before_create_usage = _usage_count(ready_db)
+            install_users_trigger(
+                "sec1c0_ignore_create",
+                """
+                CREATE TRIGGER sec1c0_ignore_create
+                BEFORE INSERT ON users
+                WHEN NEW.username = 'integrity-ignored-create'
+                BEGIN
+                    SELECT RAISE(IGNORE);
+                END
+                """,
+            )
+            try:
+                _assert_raises(
+                    governance.UserGovernanceIntegrityError,
+                    lambda: governance.create_ordinary_user(
+                        actor_user_id=admin["id"],
+                        expected_actor_auth_version=_auth_version(ready_db, admin["id"]),
+                        username="integrity-ignored-create",
+                        password="temporary-integrity-password",
+                        display_name="Ignored Create",
+                        requested_is_admin=False,
+                        role_field_present=False,
+                    ),
+                )
+            finally:
+                drop_users_trigger("sec1c0_ignore_create")
+            conn = sqlite3.connect(ready_db)
+            assert conn.execute(
+                "SELECT 1 FROM main.users WHERE username = 'integrity-ignored-create'"
+            ).fetchone() is None
+            conn.close()
+            assert _audit_count(ready_db) == before_create_audit
+            assert _usage_count(ready_db) == before_create_usage
+
+            install_users_trigger(
+                "sec1c0_ignore_create_api",
+                """
+                CREATE TRIGGER sec1c0_ignore_create_api
+                BEFORE INSERT ON users
+                WHEN NEW.username = 'integrity-ignored-create-api'
+                BEGIN
+                    SELECT RAISE(IGNORE);
+                END
+                """,
+            )
+            try:
+                asyncio.run(
+                    _assert_http_status(
+                        admin_api.create_user(
+                            FakeRequest(
+                                _principal(admin),
+                                {
+                                    "username": "integrity-ignored-create-api",
+                                    "password": "temporary-integrity-api-password",
+                                    "display_name": "Ignored API Create",
+                                    "is_admin": False,
+                                },
+                            )
+                        ),
+                        409,
+                    )
+                )
+            finally:
+                drop_users_trigger("sec1c0_ignore_create_api")
+            assert _usage_count(ready_db) == before_create_usage
+
+            integrity_cases = (
+                (
+                    "sec1c0_ignore_password",
+                    "BEFORE UPDATE OF password_hash ON users",
+                    lambda: governance.reset_user_password(
+                        actor_user_id=admin["id"],
+                        expected_actor_auth_version=_auth_version(ready_db, admin["id"]),
+                        target_user_id=integrity_target["id"],
+                        new_password="ignored-password-update",
+                        reason="temporary integrity password",
+                    ),
+                ),
+                (
+                    "sec1c0_ignore_active",
+                    "BEFORE UPDATE OF is_active ON users",
+                    lambda: governance.set_user_active(
+                        actor_user_id=admin["id"],
+                        expected_actor_auth_version=_auth_version(ready_db, admin["id"]),
+                        target_user_id=integrity_target["id"],
+                        is_active=False,
+                        reason="temporary integrity active",
+                    ),
+                ),
+                (
+                    "sec1c0_ignore_delete",
+                    "BEFORE UPDATE OF is_active ON users",
+                    lambda: governance.soft_delete_user(
+                        actor_user_id=admin["id"],
+                        expected_actor_auth_version=_auth_version(ready_db, admin["id"]),
+                        target_user_id=integrity_target["id"],
+                        confirm_username="integrity-target",
+                        reason="temporary integrity delete",
+                    ),
+                ),
+                (
+                    "sec1c0_ignore_profile",
+                    "BEFORE UPDATE OF display_name ON users",
+                    lambda: governance.update_user_profile(
+                        actor_user_id=admin["id"],
+                        expected_actor_auth_version=_auth_version(ready_db, admin["id"]),
+                        target_user_id=integrity_target["id"],
+                        display_name="Ignored Profile",
+                    ),
+                ),
+            )
+            for trigger_name, trigger_event, call in integrity_cases:
+                before_target = _user_row(ready_db, integrity_target["id"])
+                before_audit = _audit_count(ready_db)
+                install_users_trigger(
+                    trigger_name,
+                    f"""
+                    CREATE TRIGGER {trigger_name}
+                    {trigger_event}
+                    WHEN OLD.id = '{integrity_target["id"]}'
+                    BEGIN
+                        SELECT RAISE(IGNORE);
+                    END
+                    """,
+                )
+                try:
+                    _assert_raises(governance.UserGovernanceIntegrityError, call)
+                finally:
+                    drop_users_trigger(trigger_name)
+                assert _user_row(ready_db, integrity_target["id"]) == before_target
+                assert _audit_count(ready_db) == before_audit
+
+            before_tamper = _user_row(ready_db, integrity_target["id"])
+            before_tamper_audit = _audit_count(ready_db)
+            install_users_trigger(
+                "sec1c0_tamper_target",
+                f"""
+                CREATE TRIGGER sec1c0_tamper_target
+                AFTER UPDATE OF password_hash ON users
+                WHEN NEW.id = '{integrity_target["id"]}'
+                BEGIN
+                    UPDATE users SET role = 'admin', is_admin = 1 WHERE id = NEW.id;
+                END
+                """,
+            )
+            try:
+                _assert_raises(
+                    governance.UserGovernanceIntegrityError,
+                    lambda: governance.reset_user_password(
+                        actor_user_id=admin["id"],
+                        expected_actor_auth_version=_auth_version(ready_db, admin["id"]),
+                        target_user_id=integrity_target["id"],
+                        new_password="tampered-password-update",
+                        reason="temporary target tamper",
+                    ),
+                )
+            finally:
+                drop_users_trigger("sec1c0_tamper_target")
+            assert _user_row(ready_db, integrity_target["id"]) == before_tamper
+            assert _audit_count(ready_db) == before_tamper_audit
+
+            before_actor_tamper = _user_row(ready_db, integrity_target["id"])
+            before_admin_tamper = _user_row(ready_db, admin["id"])
+            install_users_trigger(
+                "sec1c0_tamper_actor",
+                f"""
+                CREATE TRIGGER sec1c0_tamper_actor
+                AFTER UPDATE OF display_name ON users
+                WHEN NEW.id = '{integrity_target["id"]}'
+                BEGIN
+                    UPDATE users SET auth_version = auth_version + 1
+                    WHERE id = '{admin["id"]}';
+                END
+                """,
+            )
+            try:
+                _assert_raises(
+                    governance.UserGovernanceIntegrityError,
+                    lambda: governance.update_user_profile(
+                        actor_user_id=admin["id"],
+                        expected_actor_auth_version=_auth_version(ready_db, admin["id"]),
+                        target_user_id=integrity_target["id"],
+                        display_name="Actor Tamper",
+                    ),
+                )
+            finally:
+                drop_users_trigger("sec1c0_tamper_actor")
+            assert _user_row(ready_db, integrity_target["id"]) == before_actor_tamper
+            assert _user_row(ready_db, admin["id"]) == before_admin_tamper
+
+            # N2. The governance transaction rejects a principal revoked after middleware.
+            stale_actor = _add_ready_user(ready_db, username="stale-admin", role=ROLE_ADMIN)
+            stale_target = _add_ready_user(ready_db, username="stale-target", role=ROLE_USER)
+            conn = sqlite3.connect(ready_db)
+            conn.execute(
+                "UPDATE main.users SET auth_version = 2 WHERE id = ?",
+                (stale_actor["id"],),
+            )
+            conn.commit()
+            conn.close()
+            stale_before = _user_row(ready_db, stale_target["id"])
+            stale_calls = (
+                lambda: governance.reset_user_password(
+                    actor_user_id=stale_actor["id"],
+                    expected_actor_auth_version=1,
+                    target_user_id=stale_target["id"],
+                    new_password="stale-password",
+                    reason="temporary stale password",
+                ),
+                lambda: governance.set_user_active(
+                    actor_user_id=stale_actor["id"],
+                    expected_actor_auth_version=1,
+                    target_user_id=stale_target["id"],
+                    is_active=False,
+                    reason="temporary stale active",
+                ),
+                lambda: governance.soft_delete_user(
+                    actor_user_id=stale_actor["id"],
+                    expected_actor_auth_version=1,
+                    target_user_id=stale_target["id"],
+                    confirm_username="stale-target",
+                    reason="temporary stale delete",
+                ),
+                lambda: governance.update_user_profile(
+                    actor_user_id=stale_actor["id"],
+                    expected_actor_auth_version=1,
+                    target_user_id=stale_target["id"],
+                    display_name="Stale Rename",
+                ),
+                lambda: governance.create_ordinary_user(
+                    actor_user_id=stale_actor["id"],
+                    expected_actor_auth_version=1,
+                    username="stale-create",
+                    password="stale-create-password",
+                    display_name="Stale Create",
+                    requested_is_admin=False,
+                    role_field_present=False,
+                ),
+                lambda: governance.deny_online_role_change(
+                    actor_user_id=stale_actor["id"],
+                    expected_actor_auth_version=1,
+                    target_user_id=stale_target["id"],
+                    role_field_present=True,
+                    requested_role=ROLE_ADMIN,
+                    is_admin_field_present=True,
+                    requested_is_admin=True,
+                ),
+                lambda: governance.check_session_revoke_policy(
+                    actor_user_id=stale_actor["id"],
+                    expected_actor_auth_version=1,
+                    target_user_id=stale_target["id"],
+                ),
+            )
+            for call in stale_calls:
+                _assert_raises(governance.UserGovernanceStaleSession, call)
+            assert _user_row(ready_db, stale_target["id"]) == stale_before
+            stale_denied = _latest_audit(ready_db, "security.authorization.denied")
+            assert stale_denied["actor_user_id"] == stale_actor["id"]
+            assert json.loads(stale_denied["context_json"])["policy_code"] == "stale_actor_auth_version"
+            governance.update_user_profile(
+                actor_user_id=stale_actor["id"],
+                expected_actor_auth_version=2,
+                target_user_id=stale_target["id"],
+                display_name="Fresh Rename",
+            )
+            fresh_create = governance.create_ordinary_user(
+                actor_user_id=stale_actor["id"],
+                expected_actor_auth_version=2,
+                username="fresh-after-stale",
+                password="fresh-create-password",
+                display_name="Fresh Create",
+                requested_is_admin=False,
+                role_field_present=False,
+            )
+            assert _user_row(ready_db, fresh_create["id"])["role"] == ROLE_USER
+
+            # N3. Active ordinary users enter the policy layer and produce denied audit.
+            user_actor_version = _auth_version(ready_db, user_b["id"])
+            ordinary_user_denials = (
+                (
+                    "L2",
+                    lambda: governance.reset_user_password(
+                        actor_user_id=user_b["id"],
+                        expected_actor_auth_version=user_actor_version,
+                        target_user_id=user_a["id"],
+                        new_password="ordinary-user-denied",
+                        reason="temporary ordinary denial",
+                    ),
+                ),
+                (
+                    "L2",
+                    lambda: governance.set_user_active(
+                        actor_user_id=user_b["id"],
+                        expected_actor_auth_version=user_actor_version,
+                        target_user_id=user_a["id"],
+                        is_active=False,
+                        reason="temporary ordinary denial",
+                    ),
+                ),
+                (
+                    "L2",
+                    lambda: governance.soft_delete_user(
+                        actor_user_id=user_b["id"],
+                        expected_actor_auth_version=user_actor_version,
+                        target_user_id=user_a["id"],
+                        confirm_username="user-a",
+                        reason="temporary ordinary denial",
+                    ),
+                ),
+                (
+                    "L2",
+                    lambda: governance.update_user_profile(
+                        actor_user_id=user_b["id"],
+                        expected_actor_auth_version=user_actor_version,
+                        target_user_id=user_a["id"],
+                        display_name="Denied Ordinary Profile",
+                    ),
+                ),
+                (
+                    "L3",
+                    lambda: governance.deny_online_role_change(
+                        actor_user_id=user_b["id"],
+                        expected_actor_auth_version=user_actor_version,
+                        target_user_id=user_a["id"],
+                        role_field_present=True,
+                        requested_role=ROLE_SUPER_ADMIN,
+                        is_admin_field_present=False,
+                        requested_is_admin=None,
+                    ),
+                ),
+                (
+                    "L3",
+                    lambda: governance.check_session_revoke_policy(
+                        actor_user_id=user_b["id"],
+                        expected_actor_auth_version=user_actor_version,
+                        target_user_id=super_a["id"],
+                    ),
+                ),
+                (
+                    "L2",
+                    lambda: governance.create_ordinary_user(
+                        actor_user_id=user_b["id"],
+                        expected_actor_auth_version=user_actor_version,
+                        username="ordinary-user-create-denied",
+                        password="ordinary-user-create-password",
+                        display_name="Denied Create",
+                        requested_is_admin=False,
+                        role_field_present=False,
+                    ),
+                ),
+            )
+            before_ordinary_target = _user_row(ready_db, user_a["id"])
+            for expected_risk, call in ordinary_user_denials:
+                _assert_raises(governance.UserGovernancePolicyDenied, call)
+                denied = _latest_audit(ready_db, "security.authorization.denied")
+                assert denied["actor_role"] == ROLE_USER
+                assert denied["risk_level"] == expected_risk
+                assert "ordinary-user-denied" not in denied["context_json"]
+            assert _user_row(ready_db, user_a["id"]) == before_ordinary_target
 
             # O. Legacy mutators cannot bypass READY protections.
             direct_target = _add_ready_user(
@@ -751,6 +1206,7 @@ def _run_checks() -> None:
                     governance.UserGovernancePolicyDenied,
                     lambda: governance.reset_user_password(
                         actor_user_id=admin["id"],
+                        expected_actor_auth_version=_auth_version(ready_db, admin["id"]),
                         target_user_id=temp_target["id"],
                         new_password="temp-shadow-password",
                         reason="temporary shadow test",
@@ -795,6 +1251,88 @@ def _run_checks() -> None:
             assert "sql" not in json.dumps(api_denied.detail).lower()
             assert "password_hash" not in json.dumps(api_denied.detail).lower()
             assert str(ready_db).lower() not in json.dumps(api_denied.detail).lower()
+
+            # READY APIs pass the verified principal version and do not trust stale snapshots.
+            stale_principal = _principal({**stale_actor, "auth_version": 1})
+            stale_api_before = _user_row(ready_db, stale_target["id"])
+            stale_api = asyncio.run(
+                _assert_http_status(
+                    admin_api.reset_password(
+                        stale_target["id"],
+                        FakeRequest(
+                            stale_principal,
+                            {
+                                "password": "api-stale-password",
+                                "reason": "temporary stale API request",
+                            },
+                        ),
+                    ),
+                    401,
+                )
+            )
+            stale_api_detail = json.dumps(stale_api.detail).lower()
+            assert "sql" not in stale_api_detail
+            assert "password" not in stale_api_detail
+            assert str(ready_db).lower() not in stale_api_detail
+            assert _user_row(ready_db, stale_target["id"]) == stale_api_before
+            missing_version_principal = dict(stale_principal)
+            missing_version_principal.pop("auth_version")
+            asyncio.run(
+                _assert_http_status(
+                    admin_api.update_user_profile(
+                        stale_target["id"],
+                        FakeRequest(missing_version_principal, {"display_name": "No Version"}),
+                    ),
+                    401,
+                )
+            )
+            bool_version_principal = {**stale_principal, "auth_version": True}
+            asyncio.run(
+                _assert_http_status(
+                    admin_api.update_user_profile(
+                        stale_target["id"],
+                        FakeRequest(bool_version_principal, {"display_name": "Bool Version"}),
+                    ),
+                    401,
+                )
+            )
+
+            ordinary_api_principal = _principal(
+                {**user_b, "auth_version": _auth_version(ready_db, user_b["id"])}
+            )
+            asyncio.run(
+                _assert_http_status(
+                    admin_api.create_user(
+                        FakeRequest(
+                            ordinary_api_principal,
+                            {
+                                "username": "ordinary-api-create-denied",
+                                "password": "ordinary-api-password",
+                                "display_name": "Ordinary API Denied",
+                                "is_admin": False,
+                            },
+                        )
+                    ),
+                    403,
+                )
+            )
+            denied = _latest_audit(ready_db, "security.authorization.denied")
+            assert denied["actor_role"] == ROLE_USER and denied["risk_level"] == "L2"
+
+            role_before = _user_row(ready_db, user_a["id"])
+            asyncio.run(
+                _assert_http_status(
+                    admin_api.update_user_role(
+                        user_a["id"],
+                        FakeRequest(_principal(admin), {"role": ROLE_SUPER_ADMIN}),
+                    ),
+                    403,
+                )
+            )
+            role_denied = _latest_audit(ready_db, "security.authorization.denied")
+            assert role_denied["risk_level"] == "L3"
+            assert _user_row(ready_db, user_a["id"]) == role_before
+
             asyncio.run(
                 _assert_http_status(
                     admin_api.update_user_role(
@@ -888,7 +1426,12 @@ def _run_checks() -> None:
             self_password_response = asyncio.run(
                 admin_api.change_my_password(
                     FakeRequest(
-                        _principal(user_a),
+                        _principal(
+                            {
+                                **user_a,
+                                "auth_version": _auth_version(ready_db, user_a["id"]),
+                            }
+                        ),
                         {
                             "old_password": "replacement-password-a",
                             "new_password": "self-service-password",

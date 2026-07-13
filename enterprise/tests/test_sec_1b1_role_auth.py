@@ -489,6 +489,7 @@ def _run_checks() -> None:
         )
         governance.update_user_profile(
             actor_user_id=default_admin["id"],
+            expected_actor_auth_version=edb.get_user_by_id(default_admin["id"])["auth_version"],
             target_user_id=user["id"],
             display_name="Renamed User",
         )
@@ -498,6 +499,7 @@ def _run_checks() -> None:
 
         governance.reset_user_password(
             actor_user_id=default_admin["id"],
+            expected_actor_auth_version=edb.get_user_by_id(default_admin["id"])["auth_version"],
             target_user_id=user["id"],
             new_password="new-password-user",
             reason="temporary SEC-1B1 password reset",
@@ -556,6 +558,7 @@ def _run_checks() -> None:
         before_disable_version = edb.get_user_by_id(user["id"])["auth_version"]
         governance.set_user_active(
             actor_user_id=default_admin["id"],
+            expected_actor_auth_version=edb.get_user_by_id(default_admin["id"])["auth_version"],
             target_user_id=user["id"],
             is_active=False,
             reason="temporary SEC-1B1 disable",
@@ -565,6 +568,7 @@ def _run_checks() -> None:
         assert disabled["auth_version"] == before_disable_version + 1
         governance.set_user_active(
             actor_user_id=default_admin["id"],
+            expected_actor_auth_version=edb.get_user_by_id(default_admin["id"])["auth_version"],
             target_user_id=user["id"],
             is_active=True,
             reason="temporary SEC-1B1 enable",
@@ -578,6 +582,7 @@ def _run_checks() -> None:
         stable_version = enabled["auth_version"]
         governance.set_user_active(
             actor_user_id=default_admin["id"],
+            expected_actor_auth_version=edb.get_user_by_id(default_admin["id"])["auth_version"],
             target_user_id=user["id"],
             is_active=True,
             reason="temporary SEC-1B1 repeated enable",
