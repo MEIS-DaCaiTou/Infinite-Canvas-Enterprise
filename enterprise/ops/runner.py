@@ -35,6 +35,9 @@ if __package__ in {None, ""}:
         sys.path.insert(0, str(_REPOSITORY_ROOT))
 
 from enterprise.ops.release_validation import validate_release
+from enterprise.ops.update.errors import OnlineUpdateError
+from enterprise.ops.update.providers import GitHubReleasesProvider, LocalFixtureProvider
+from enterprise.ops.update.service import OnlineUpdateService
 
 
 DEFAULT_ARTIFACT_DIR = "ops_artifacts"
@@ -883,6 +886,60 @@ def build_upgrade_steps(maintenance_window: str | None) -> list[dict[str, Any]]:
     ]
 
 
+OPS3_COMMANDS = {
+    "check-update",
+    "fetch-release",
+    "stage-release",
+    "prepare-online-update",
+}
+
+
+def _online_update_service(args: argparse.Namespace) -> OnlineUpdateService:
+    if args.provider == "github-releases":
+        provider = GitHubReleasesProvider()
+    elif args.provider == "local-fixture":
+        if not args.fixture:
+            raise OnlineUpdateError("local fixture provider requires a fixture file")
+        provider = LocalFixtureProvider(args.fixture)
+    else:
+        raise OnlineUpdateError("online update provider is not supported")
+    return OnlineUpdateService(app_root=args.app_root, workspace=args.workspace, provider=provider)
+
+
+def command_check_update(args: argparse.Namespace) -> dict[str, Any]:
+    return _online_update_service(args).check_update(allow_prerelease=args.allow_prerelease)
+
+
+def command_fetch_release(args: argparse.Namespace) -> dict[str, Any]:
+    return _online_update_service(args).fetch_release(
+        allow_prerelease=args.allow_prerelease,
+        release_id=args.release_id or None,
+    )
+
+
+def _offline_online_update_service(args: argparse.Namespace) -> OnlineUpdateService:
+    # Staging and planning never make network calls; a local provider preserves
+    # the shared service constructor without creating a GitHub client.
+    provider = LocalFixtureProvider(getattr(args, "fixture", "") or "missing-fixture.json")
+    return OnlineUpdateService(app_root=args.app_root, workspace=args.workspace, provider=provider)
+
+
+def command_stage_release(args: argparse.Namespace) -> dict[str, Any]:
+    return _offline_online_update_service(args).stage_release(
+        manifest_path=args.manifest,
+        archive_path=args.archive,
+    )
+
+
+def command_prepare_online_update(args: argparse.Namespace) -> dict[str, Any]:
+    return _offline_online_update_service(args).prepare_online_update(
+        stage_report_path=args.stage_report,
+        backup_manifest_path=args.backup_manifest or None,
+        data_check_report_path=args.data_check_report or None,
+        maintenance_window=args.maintenance_window,
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ops-runner", description="Infinite Canvas Enterprise OPS-2A toolkit")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -924,10 +981,45 @@ def build_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--maintenance-window", default="", help="Planned maintenance window text.")
     prepare.set_defaults(handler=command_prepare_upgrade)
 
+    def add_online_update_common(subparser: argparse.ArgumentParser, *, provider: bool) -> None:
+        subparser.add_argument("--app-root", type=Path, default=Path.cwd(), help="Application root read-only input.")
+        subparser.add_argument("--workspace", type=Path, required=True, help="Existing OPS workspace outside the application root.")
+        if provider:
+            subparser.add_argument("--provider", choices=("github-releases", "local-fixture"), default="github-releases")
+            subparser.add_argument("--fixture", default="", help="Local fixture JSON; only used with local-fixture.")
+
+    check_update = subparsers.add_parser("check-update", help="Check a trusted provider without downloading a package.")
+    add_online_update_common(check_update, provider=True)
+    check_update.add_argument("--allow-prerelease", action="store_true", help="Include trusted prereleases explicitly.")
+    check_update.set_defaults(handler=command_check_update)
+
+    fetch_release = subparsers.add_parser("fetch-release", help="Download a verified release into the OPS workspace.")
+    add_online_update_common(fetch_release, provider=True)
+    fetch_release.add_argument("--allow-prerelease", action="store_true", help="Include trusted prereleases explicitly.")
+    fetch_release.add_argument("--release-id", default="", help="Optional trusted provider release identifier.")
+    fetch_release.set_defaults(handler=command_fetch_release)
+
+    stage_release = subparsers.add_parser("stage-release", help="Safely extract a fetched release into a new workspace staging directory.")
+    add_online_update_common(stage_release, provider=False)
+    stage_release.add_argument("--manifest", required=True, help="Workspace-relative or workspace-contained manifest path.")
+    stage_release.add_argument("--archive", required=True, help="Workspace-relative or workspace-contained archive path.")
+    stage_release.set_defaults(handler=command_stage_release)
+
+    prepare_online_update = subparsers.add_parser("prepare-online-update", help="Write a non-executing online-update plan.")
+    add_online_update_common(prepare_online_update, provider=False)
+    prepare_online_update.add_argument("--stage-report", required=True, help="Successful stage-release report JSON.")
+    prepare_online_update.add_argument("--backup-manifest", default="", help="Existing executed backup manifest JSON.")
+    prepare_online_update.add_argument("--data-check-report", default="", help="Existing data-check report JSON.")
+    prepare_online_update.add_argument("--maintenance-window", default="", help="Optional reviewed maintenance-window text.")
+    prepare_online_update.set_defaults(handler=command_prepare_online_update)
+
     return parser
 
 
 def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
+    if args.command in OPS3_COMMANDS:
+        report = args.handler(args)
+        return (2 if report.get("status") in {"fail", "blocked"} else 0), report
     app_root = args.app_root.resolve()
     job_id = args.job_id or make_job_id(args.command)
     log_file = resolve_path(app_root, args.log_file)
@@ -956,7 +1048,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         code, report = run(args)
     except Exception as exc:
-        print(f"{args.command} failed: {exc}", file=sys.stderr)
+        if args.command in OPS3_COMMANDS:
+            message = exc.public_message if isinstance(exc, OnlineUpdateError) else "Online update preparation failed"
+            print(f"{args.command} failed: {message}", file=sys.stderr)
+        else:
+            print(f"{args.command} failed: {exc}", file=sys.stderr)
         return 1
     report_path = report.get("_report_path", "")
     status = report.get("status", "")
