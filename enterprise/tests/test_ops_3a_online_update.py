@@ -63,12 +63,20 @@ def make_archive(path: Path, entries: dict[str, bytes]) -> bytes:
     return path.read_bytes()
 
 
-def make_manifest(archive: bytes, *, version: str = "2026.07.7", file_count: int = 3) -> dict:
+def make_manifest(
+    archive: bytes,
+    *,
+    version: str = "2026.07.7",
+    file_count: int = 3,
+    minimum_current_version: str = "2026.07.6",
+    maximum_current_version: str = "",
+    source_tree: str = "b" * 40,
+) -> dict:
     return {
         "schema_version": "ops-release-manifest-v1",
         "release_version": version,
         "source_commit": COMMIT,
-        "source_tree": "b" * 40,
+        "source_tree": source_tree,
         "generated_at": "2026-07-14T00:00:00Z",
         "archive": {
             "filename": f"Infinite-Canvas-Enterprise-release-{COMMIT}.zip",
@@ -77,8 +85,8 @@ def make_manifest(archive: bytes, *, version: str = "2026.07.7", file_count: int
         },
         "package": {"file_count": file_count, "root_prefix": ROOT_PREFIX},
         "compatibility": {
-            "minimum_current_version": "2026.07.6",
-            "maximum_current_version": "",
+            "minimum_current_version": minimum_current_version,
+            "maximum_current_version": maximum_current_version,
             "requires_database_migration": False,
             "migration_ids": [],
         },
@@ -140,10 +148,26 @@ def sha256_file(path: Path) -> str:
 
 
 def source_journal_mode(path: Path) -> str:
-    with sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True) as connection:
-        row = connection.execute("PRAGMA main.journal_mode").fetchone()
-    assert row and isinstance(row[0], str)
-    return row[0].casefold()
+    header = path.read_bytes()[:100]
+    assert header[:16] == b"SQLite format 3\x00" and header[18] == header[19]
+    return "wal" if header[18] == 2 else "delete"
+
+
+def set_journal_header(path: Path, mode: str) -> None:
+    version = {"delete": 1, "wal": 2}[mode]
+    payload = bytearray(path.read_bytes())
+    assert len(payload) >= 100 and payload[:16] == b"SQLite format 3\x00"
+    payload[18] = version
+    payload[19] = version
+    path.write_bytes(payload)
+
+
+def directory_fingerprints(path: Path) -> dict[str, str]:
+    return {
+        child.name: f"{child.stat().st_size}:{sha256_file(child)}"
+        for child in sorted(path.iterdir())
+        if child.is_file()
+    }
 
 
 def write_formal_backup(app_root: Path, manifest_path: Path) -> dict:
@@ -297,10 +321,18 @@ def verify_http_and_download() -> None:
 class StaticGitHubClient:
     def __init__(self, payload: object) -> None:
         self.payload = payload
+        self.request_headers: list[dict[str, str]] = []
 
     def read_json(self, _url: str, *, maximum_bytes: int, headers: dict[str, str]) -> object:
         assert maximum_bytes > 0 and headers["Accept"]
+        self.request_headers.append(dict(headers))
         return self.payload
+
+
+class LoopbackGitHubProvider(GitHubReleasesProvider):
+    """Test-only trusted provider shape with loopback asset endpoints."""
+
+    url_policy = UrlPolicy(frozenset(), allow_loopback_http=True)
 
 
 def verify_github_release_filtering() -> None:
@@ -332,6 +364,111 @@ def verify_github_release_filtering() -> None:
         "invalid_or_incomplete_release_skipped",
         "invalid_or_incomplete_release_skipped",
     )
+    with tempfile.TemporaryDirectory(prefix="ice-ops3a-provider-diagnostics-") as raw:
+        root = Path(raw)
+        app_root, workspace = root / "app", root / "workspace"
+        make_app(app_root)
+        workspace.mkdir()
+        invalid_client = StaticGitHubClient(
+            [{"id": 3, "tag_name": "v2026.07.8", "draft": False, "prerelease": False, "assets": []}]
+        )
+        invalid_provider = GitHubReleasesProvider(http_client=invalid_client)
+        invalid_service = OnlineUpdateService(app_root=app_root, workspace=workspace, provider=invalid_provider)
+        invalid_check = invalid_service.check_update()
+        invalid_fetch = invalid_service.fetch_release()
+        for report in (invalid_check, invalid_fetch):
+            assert report["status"] == "blocked"
+            assert report["provider_outcome"] == "all_provider_records_skipped"
+            assert report["provider_diagnostic_count"] == 1
+            assert report["provider_diagnostics"] == ["invalid_or_incomplete_release_skipped"]
+
+        historical = dict(valid)
+        historical.update({"id": 76, "tag_name": "v2026.07.6"})
+        historical_provider = GitHubReleasesProvider(http_client=StaticGitHubClient([historical]))
+        historical_service = OnlineUpdateService(app_root=app_root, workspace=workspace, provider=historical_provider)
+        historical_check = historical_service.check_update()
+        assert historical_check["status"] == "pass"
+        assert historical_check["provider_outcome"] == "valid_records_no_newer_eligible_release"
+        assert historical_check["provider_diagnostic_count"] == 0
+
+
+def verify_private_github_asset_authorization() -> None:
+    """Private GitHub assets receive transient auth only on their initial origin."""
+    with tempfile.TemporaryDirectory(prefix="ice-ops3a-private-release-") as raw, LocalServer() as server:
+        root = Path(raw)
+        app_root, workspace = root / "app", root / "workspace"
+        make_app(app_root)
+        workspace.mkdir()
+        archive = make_archive(
+            root / "private-release.zip",
+            {
+                f"{ROOT_PREFIX}/VERSION": b"2026.07.7\n",
+                f"{ROOT_PREFIX}/main.py": b"# release\n",
+                f"{ROOT_PREFIX}/enterprise/__init__.py": b"",
+            },
+        )
+        manifest = make_manifest(archive)
+        archive_name = manifest["archive"]["filename"]
+        FixtureHandler.request_headers = {}
+        FixtureHandler.responses = {
+            "/private-manifest": (200, {}, json.dumps(manifest, sort_keys=True).encode("utf-8")),
+            f"/private/{archive_name}": (302, {"Location": f"http://localhost:{server.server.server_port}/signed/{archive_name}"}, b""),
+            f"/signed/{archive_name}": (200, {}, archive),
+            "/fixture-manifest": (200, {}, json.dumps(manifest, sort_keys=True).encode("utf-8")),
+            f"/fixture/{archive_name}": (200, {}, archive),
+        }
+        metadata_payload = [
+            {
+                "id": 91,
+                "tag_name": "v2026.07.7",
+                "draft": False,
+                "prerelease": False,
+                "published_at": "2026-07-14T00:00:00Z",
+                "assets": [
+                    {"name": "ops-release-manifest-v1.json", "browser_download_url": f"{server.base_url}/private-manifest"},
+                    {"name": archive_name, "browser_download_url": f"{server.base_url}/private/{archive_name}"},
+                ],
+            }
+        ]
+        metadata_client = StaticGitHubClient(metadata_payload)
+        provider = LoopbackGitHubProvider(http_client=metadata_client)
+        previous_token = os.environ.get("GITHUB_TOKEN")
+        token = "private-fixture-token"
+        try:
+            os.environ["GITHUB_TOKEN"] = token
+            service = OnlineUpdateService(app_root=app_root, workspace=workspace, provider=provider)
+            fetched = service.fetch_release()
+            assert fetched["status"] == "pass"
+            assert metadata_client.request_headers[0]["Authorization"] == f"Bearer {token}"
+            assert FixtureHandler.request_headers["/private-manifest"]["authorization"] == f"Bearer {token}"
+            assert FixtureHandler.request_headers[f"/private/{archive_name}"]["authorization"] == f"Bearer {token}"
+            signed_headers = FixtureHandler.request_headers[f"/signed/{archive_name}"]
+            assert "authorization" not in signed_headers and "cookie" not in signed_headers
+            serialized = json.dumps(fetched) + (workspace / "jobs.jsonl").read_text(encoding="utf-8")
+            assert token not in serialized
+
+            fixture = root / "local-releases.json"
+            local_record = fixture_record(server)
+            local_record["manifest_url"] = f"{server.base_url}/fixture-manifest"
+            local_record["archive_url"] = f"{server.base_url}/fixture/{archive_name}"
+            write_json(fixture, {"releases": [local_record]})
+            local_app, local_workspace = root / "local-app", root / "local-workspace"
+            make_app(local_app)
+            local_workspace.mkdir()
+            local_service = OnlineUpdateService(
+                app_root=local_app,
+                workspace=local_workspace,
+                provider=LocalFixtureProvider(fixture),
+            )
+            local_check = local_service.check_update()
+            assert local_check["status"] == "pass", local_check
+            assert "authorization" not in FixtureHandler.request_headers["/fixture-manifest"]
+            assert local_service.provider.release_request_headers(local_service.provider.list_releases()[0]) == {}
+        finally:
+            if previous_token is None:
+                os.environ.pop("GITHUB_TOKEN", None)
+            else:
+                os.environ["GITHUB_TOKEN"] = previous_token
 
 
 def verify_zip_defences() -> None:
@@ -413,20 +550,39 @@ def verify_service_and_cli() -> None:
         check = service.check_update()
         assert check["status"] == "pass" and check["target_version"] == "2026.07.7"
         assert check["state"] == "metadata_ready" and check["finished_at"]
+        assert check["source_tree"] == manifest["source_tree"]
+        assert check["provider_diagnostic_count"] == 0 and check["provider_diagnostics"] == []
         same_release = fixture_record(server, version="2026.07.6", release_id="76")
         write_json(fixture, {"releases": [same_release, draft, prerelease, normal]})
         same_fetch = service.fetch_release(release_id="76")
         assert same_fetch["status"] == "blocked" and not list((workspace / "downloads").glob("*"))
+        older_release = fixture_record(server, version="2026.07.5", release_id="75")
+        write_json(fixture, {"releases": [older_release, draft, prerelease, normal]})
+        older_fetch = service.fetch_release(release_id="75")
+        assert older_fetch["status"] == "blocked" and not list((workspace / "downloads").glob("*"))
         write_json(fixture, {"releases": [draft, prerelease, normal]})
+        incompatible_fetch_manifest = make_manifest(archive, minimum_current_version="2026.07.7")
+        FixtureHandler.responses["/manifest"] = (200, {}, json.dumps(incompatible_fetch_manifest, sort_keys=True).encode("utf-8"))
+        assert service.fetch_release()["status"] == "blocked"
+        FixtureHandler.responses["/manifest"] = (200, {}, manifest_bytes)
         fetched = service.fetch_release()
-        assert fetched["status"] == "pass" and fetched["state"] == "verifying"
+        assert fetched["status"] == "pass" and fetched["state"] == "verifying" and fetched["source_tree"] == manifest["source_tree"]
         assert (workspace / fetched["archive_path"]).exists()
         (app_root / "VERSION").write_text("2026.07.7\n", encoding="utf-8")
         same_stage = service.stage_release(manifest_path=fetched["manifest_path"], archive_path=fetched["archive_path"])
         assert same_stage["status"] == "blocked"
         (app_root / "VERSION").write_text("2026.07.6\n", encoding="utf-8")
+        incompatible_min_path = workspace / "downloads" / "incompatible-min.json"
+        incompatible_max_path = workspace / "downloads" / "incompatible-max.json"
+        write_json(incompatible_min_path, incompatible_fetch_manifest)
+        write_json(
+            incompatible_max_path,
+            make_manifest(archive, minimum_current_version="2026.07.1", maximum_current_version="2026.07.5"),
+        )
+        assert service.stage_release(manifest_path=incompatible_min_path, archive_path=fetched["archive_path"])["status"] == "blocked"
+        assert service.stage_release(manifest_path=incompatible_max_path, archive_path=fetched["archive_path"])["status"] == "blocked"
         staged = service.stage_release(manifest_path=fetched["manifest_path"], archive_path=fetched["archive_path"])
-        assert staged["status"] == "pass" and staged["state"] == "staged"
+        assert staged["status"] == "pass" and staged["state"] == "staged" and staged["source_tree"] == manifest["source_tree"]
         assert (workspace / staged["staging_path"]).is_dir()
         backup = root / "backup-manifest.json"
         data_check = root / "data-check.json"
@@ -444,6 +600,8 @@ def verify_service_and_cli() -> None:
         assert evidence["stage_report"]["sha256"] == sha256_file(workspace / staged["report_paths"][0])
         assert evidence["backup_manifest"]["sha256"] == sha256_file(backup)
         assert evidence["data_check_report"]["sha256"] == sha256_file(data_check)
+        assert plan["source_tree"] == manifest["source_tree"]
+        assert evidence["release_manifest"]["source_tree"] == manifest["source_tree"]
         assert all(item.startswith("No ") for item in plan["not_executed"])
         assert "operator-review" not in json.dumps(plan)
         forged_stage_payload = json.loads((workspace / staged["report_paths"][0]).read_text(encoding="utf-8"))
@@ -451,6 +609,34 @@ def verify_service_and_cli() -> None:
         forged_stage_path = workspace / "reports" / "forged-stage-report.json"
         write_json(forged_stage_path, forged_stage_payload)
         assert service.prepare_online_update(stage_report_path=forged_stage_path, backup_manifest_path=backup, data_check_report_path=data_check)["status"] == "blocked"
+        missing_tree_payload = json.loads((workspace / staged["report_paths"][0]).read_text(encoding="utf-8"))
+        missing_tree_payload.pop("source_tree")
+        missing_tree_path = workspace / "reports" / "missing-source-tree.json"
+        write_json(missing_tree_path, missing_tree_payload)
+        assert service.prepare_online_update(stage_report_path=missing_tree_path, backup_manifest_path=backup, data_check_report_path=data_check)["status"] == "blocked"
+        stage_tree_tampered = json.loads((workspace / staged["report_paths"][0]).read_text(encoding="utf-8"))
+        stage_tree_tampered["source_tree"] = "c" * 40
+        stage_tree_tampered_path = workspace / "reports" / "tampered-source-tree.json"
+        write_json(stage_tree_tampered_path, stage_tree_tampered)
+        assert service.prepare_online_update(stage_report_path=stage_tree_tampered_path, backup_manifest_path=backup, data_check_report_path=data_check)["status"] == "blocked"
+        manifest_tree_tampered = dict(manifest)
+        manifest_tree_tampered["source_tree"] = "c" * 40
+        manifest_tree_path = workspace / "downloads" / "tampered-source-tree-manifest.json"
+        write_json(manifest_tree_path, manifest_tree_tampered)
+        manifest_tree_report = json.loads((workspace / staged["report_paths"][0]).read_text(encoding="utf-8"))
+        manifest_tree_report["manifest_path"] = "downloads/tampered-source-tree-manifest.json"
+        manifest_tree_report["manifest_sha256"] = sha256_file(manifest_tree_path)
+        manifest_tree_report_path = workspace / "reports" / "tampered-manifest-source-tree.json"
+        write_json(manifest_tree_report_path, manifest_tree_report)
+        assert service.prepare_online_update(stage_report_path=manifest_tree_report_path, backup_manifest_path=backup, data_check_report_path=data_check)["status"] == "blocked"
+        incompatible_plan_path = workspace / "downloads" / "incompatible-plan-manifest.json"
+        write_json(incompatible_plan_path, incompatible_fetch_manifest)
+        incompatible_plan_report = json.loads((workspace / staged["report_paths"][0]).read_text(encoding="utf-8"))
+        incompatible_plan_report["manifest_path"] = "downloads/incompatible-plan-manifest.json"
+        incompatible_plan_report["manifest_sha256"] = sha256_file(incompatible_plan_path)
+        incompatible_plan_report_path = workspace / "reports" / "incompatible-plan-stage.json"
+        write_json(incompatible_plan_report_path, incompatible_plan_report)
+        assert service.prepare_online_update(stage_report_path=incompatible_plan_report_path, backup_manifest_path=backup, data_check_report_path=data_check)["status"] == "blocked"
         outside_stage_report = root / "forged-stage-report.json"
         write_json(outside_stage_report, staged)
         outside_stage = service.prepare_online_update(
@@ -488,6 +674,47 @@ def verify_service_and_cli() -> None:
             write_json(data_check, invalid_data)
             assert service.prepare_online_update(stage_report_path=workspace / staged["report_paths"][0], backup_manifest_path=backup, data_check_report_path=data_check)["status"] == "blocked"
             write_data_check(app_root, data_check)
+        source_database = app_root / "data" / "enterprise.db"
+        original_database = source_database.read_bytes()
+        wal_sidecar = Path(f"{source_database}-wal")
+        shm_sidecar = Path(f"{source_database}-shm")
+        try:
+            set_journal_header(source_database, "wal")
+            wal_sidecar.write_bytes(b"fixture-wal")
+            shm_sidecar.write_bytes(b"fixture-shm")
+            wal_backup = json.loads(backup.read_text(encoding="utf-8"))
+            wal_backup["source_database_size_bytes"] = source_database.stat().st_size
+            wal_backup["source_database_sha256"] = sha256_file(source_database)
+            wal_backup["source_database_journal_mode"] = "wal"
+            write_json(backup, wal_backup)
+            before_database_sha256 = sha256_file(source_database)
+            before_directory = directory_fingerprints(source_database.parent)
+            wal_plan = service.prepare_online_update(
+                stage_report_path=workspace / staged["report_paths"][0],
+                backup_manifest_path=backup,
+                data_check_report_path=data_check,
+            )
+            assert wal_plan["status"] == "pass"
+            assert wal_plan["input_evidence"]["backup_manifest"]["source_database_journal_mode"] == "wal"
+            assert wal_plan["input_evidence"]["backup_manifest"]["source_database_sidecars"]["wal"]["present"] is True
+            assert wal_plan["input_evidence"]["backup_manifest"]["source_database_sidecars"]["shm"]["present"] is True
+            assert sha256_file(source_database) == before_database_sha256
+            assert directory_fingerprints(source_database.parent) == before_directory
+            mismatch_backup = dict(wal_backup)
+            mismatch_backup["source_database_journal_mode"] = "delete"
+            write_json(backup, mismatch_backup)
+            assert service.prepare_online_update(
+                stage_report_path=workspace / staged["report_paths"][0],
+                backup_manifest_path=backup,
+                data_check_report_path=data_check,
+            )["status"] == "blocked"
+        finally:
+            source_database.write_bytes(original_database)
+            for sidecar in (wal_sidecar, shm_sidecar):
+                if sidecar.exists():
+                    sidecar.unlink()
+            write_formal_backup(app_root, backup)
+        assert "sqlite3.connect" not in (ROOT / "enterprise" / "ops" / "update" / "service.py").read_text(encoding="utf-8")
         blocked = service.prepare_online_update(
             stage_report_path=workspace / staged["report_paths"][0],
             backup_manifest_path=None,
@@ -600,6 +827,7 @@ def run_all() -> None:
     verify_versions_and_manifest()
     verify_http_and_download()
     verify_github_release_filtering()
+    verify_private_github_asset_authorization()
     verify_zip_defences()
     verify_service_and_cli()
     verify_job_redaction()

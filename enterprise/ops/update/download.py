@@ -7,6 +7,7 @@ import os
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Mapping
 
 from enterprise.ops.update.errors import ReleaseDownloadError
 from enterprise.ops.update.http_client import SafeHttpClient
@@ -30,6 +31,7 @@ def atomic_download(
     maximum_bytes: int,
     expected_size_bytes: int | None = None,
     expected_sha256: str | None = None,
+    headers: Mapping[str, str] | None = None,
 ) -> DownloadResult:
     """Stream to a job-owned temporary file, verify, then atomically publish once."""
     if destination.exists():
@@ -50,7 +52,7 @@ def atomic_download(
     received = 0
     try:
         with temporary.open("xb") as handle:
-            for response, advertised_size in client.stream(url, maximum_bytes=maximum_bytes):
+            for response, advertised_size in client.stream(url, maximum_bytes=maximum_bytes, headers=headers):
                 if expected_size_bytes is not None and advertised_size is not None and advertised_size != expected_size_bytes:
                     raise ReleaseDownloadError("release response size does not match the manifest")
                 while True:

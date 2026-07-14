@@ -71,6 +71,14 @@ and incomplete GitHub release records are skipped as bounded redacted provider
 diagnostics, so they cannot suppress a later complete candidate. Prereleases
 remain excluded by default and require an explicit local CLI flag.
 
+`GITHUB_TOKEN`, when supplied, is held only in the GitHub provider's transient
+in-memory request headers. It authenticates GitHub metadata and the initial
+manifest/archive asset request for private releases. It is not persisted in a
+URL, report, JSONL event, or exception. Redirects crossing an origin remove
+`Authorization`, `Cookie`, `Proxy-Authorization`, and supported credential-like
+headers before a signed asset request is made. The local fixture provider never
+uses that token.
+
 ## Commands
 
 Run the directly executed local runner with a pre-created workspace outside the
@@ -101,6 +109,11 @@ It records the report paths and SHA-256 values in the plan, then reconstructs
 the evidence before planning: the stage report, manifest, archive, staging
 directory, file count, staged file bytes, and shared validation result must
 still agree. A report is never an authority to skip artifact validation.
+`source_commit` and `source_tree` are independently bound in check, fetch,
+stage, staged-evidence reconstruction, and the final plan. The release must be
+strictly newer and within its declared compatibility interval at fetch, stage,
+and plan reconstruction time; a stale or forged staged report cannot bypass
+those checks.
 
 The backup manifest must be `kind=backup-manifest`, bind to the selected app
 root, name `data/enterprise.db`, prove a fresh executed SQLite backup, and bind
@@ -115,6 +128,10 @@ forged, mismatched, or mutated evidence produces a blocked plan.
   redirected request is sent.
 - Metadata/archive sizes and timeouts are bounded. Archives stream to a
   job-owned temporary file, then size and SHA-256 must pass before publication.
+- `prepare-online-update` does not open SQLite at all. It reads only the fixed
+  SQLite header write/read-version bytes and `enterprise.db-wal`,
+  `enterprise.db-shm`, and `enterprise.db-journal` metadata, so preparation
+  cannot create sidecars, checkpoint, delete sidecars, or modify the database.
 - ZIP policy rejects traversal, absolute/drive/UNC/mixed-separator paths,
   alternate data streams, control characters, trailing dots/spaces, Windows
   device names, symlink/reparse entries, NFC/case-folded normalized duplicates,
@@ -124,14 +141,20 @@ forged, mismatched, or mutated evidence produces a blocked plan.
   remain hard policy failures.
 - Persisted job fields use validated scalar evidence; remote bodies,
   credentials, and arbitrary prior-report warning text are not written.
+- Check and fetch reports expose only bounded generic provider diagnostics. They
+  distinguish no returned records, all returned records being invalid or
+  incomplete, visibility filtering, and valid records with no newer candidate;
+  no URL, response body, asset name, header, or provider exception is reported.
 
 ## Validation
 
 `enterprise/tests/test_ops_3a_online_update.py` covers the provider, manifest,
-bounded loopback HTTP and cross-origin credential stripping, atomic download,
-Windows ZIP defences, staging revalidation, evidence-bound plans, version
-downgrade blocking, backup/data-check proof validation, jobs, and direct-runner
-compatibility entirely in temporary directories. Existing
+private-release initial asset authentication and cross-origin credential
+stripping, atomic download, Windows ZIP defences, staging revalidation,
+source-tree and compatibility-bound plans, read-only SQLite-header/sidecar
+evidence, provider diagnostic outcomes, version downgrade blocking,
+backup/data-check proof validation, jobs, and direct-runner compatibility
+entirely in temporary directories. Existing
 `test_ops_runner.py` and `test_ops_windows_wrappers.py` remain regression
 coverage. No test opens this checkout's `data/enterprise.db` or writes a
 repository runtime path.

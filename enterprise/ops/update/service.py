@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -33,6 +32,9 @@ MAX_ARCHIVE_BYTES = 512 * 1024 * 1024
 MAX_INPUT_REPORT_BYTES = 4 * 1024 * 1024
 MAX_DATABASE_BYTES = 64 * 1024 * 1024 * 1024
 MAX_BACKUP_AGE_SECONDS = 24 * 60 * 60
+MAX_PROVIDER_DIAGNOSTICS = 16
+SQLITE_HEADER_SIZE = 100
+SQLITE_HEADER_MAGIC = b"SQLite format 3\x00"
 NOT_EXECUTED = (
     "No production files were replaced.",
     "No services were stopped or started.",
@@ -42,6 +44,7 @@ NOT_EXECUTED = (
 )
 LOWER_SHA1 = re.compile(r"^[0-9a-f]{40}$")
 LOWER_SHA256 = re.compile(r"^[0-9a-f]{64}$")
+PROVIDER_DIAGNOSTIC_CODE = re.compile(r"^[a-z0-9_]{1,96}$")
 
 
 def _read_bounded_bytes(path: Path, *, maximum_bytes: int) -> bytes:
@@ -126,6 +129,12 @@ def _required_sha256(value: object, label: str) -> str:
     return value
 
 
+def _required_sha1(value: object, label: str) -> str:
+    if not isinstance(value, str) or not LOWER_SHA1.fullmatch(value):
+        raise OnlineUpdateValidationError(f"{label} is invalid")
+    return value
+
+
 def _required_workspace_relative(value: object, label: str, *, prefix: str | None = None) -> str:
     text = _required_text(value, label, maximum=512)
     if "\\" in text or text.startswith("/") or ".." in Path(text).parts:
@@ -156,9 +165,8 @@ def _stage_evidence(report: dict[str, Any]) -> dict[str, object]:
         target_version = str(parse_version(report.get("target_version")))
     except ValueError as exc:
         raise OnlineUpdateValidationError("staged release target version is invalid") from exc
-    source_commit = report.get("source_commit")
-    if not isinstance(source_commit, str) or not LOWER_SHA1.fullmatch(source_commit):
-        raise OnlineUpdateValidationError("staged release source commit is invalid")
+    source_commit = _required_sha1(report.get("source_commit"), "staged release source commit")
+    source_tree = _required_sha1(report.get("source_tree"), "staged release source tree")
     manifest_sha256 = _required_sha256(report.get("manifest_sha256"), "staged release manifest SHA256")
     archive_sha256 = _required_sha256(report.get("archive_sha256"), "staged release archive SHA256")
     staging_path = _required_workspace_relative(report.get("staging_path"), "staging path", prefix="staging/")
@@ -183,6 +191,7 @@ def _stage_evidence(report: dict[str, Any]) -> dict[str, object]:
     return {
         "target_version": target_version,
         "source_commit": source_commit,
+        "source_tree": source_tree,
         "manifest_sha256": manifest_sha256,
         "archive_sha256": archive_sha256,
         "archive_size_bytes": _required_nonnegative_int(report.get("archive_size_bytes"), "archive size"),
@@ -211,6 +220,13 @@ class OnlineUpdateService:
         self.workspace = ensure_workspace(workspace, app_root=self.app_root)
         self.provider = provider
         self.http_client = http_client or SafeHttpClient(provider.url_policy)
+        self._provider_context: dict[str, object] = {
+            "provider_record_count": 0,
+            "provider_valid_record_count": 0,
+            "provider_diagnostic_count": 0,
+            "provider_diagnostics": [],
+            "provider_outcome": "not_queried",
+        }
 
     def _run_job(self, job_type: str, callback: Callable[[UpdateJob], str]) -> dict[str, Any]:
         job = UpdateJob(job_type=job_type, workspace=self.workspace)
@@ -266,6 +282,7 @@ class OnlineUpdateService:
         release_id: str | None = None,
     ) -> ReleaseMetadata | None:
         releases = self.provider.list_releases()
+        self._provider_context = self._provider_report_context(releases)
         visible = [
             release
             for release in releases
@@ -278,17 +295,48 @@ class OnlineUpdateService:
                 raise OnlineUpdateValidationError("requested release is unavailable")
             if compare_versions(current_version, matches[0].version) != "newer":
                 raise UpdatePlanBlockedError("requested release is not newer than the current application version")
+            self._provider_context["provider_outcome"] = "newer_eligible_release_selected"
             return matches[0]
         candidates = [release for release in visible if compare_versions(current_version, release.version) == "newer"]
         if not candidates:
+            if not releases and self._provider_context["provider_record_count"]:
+                self._provider_context["provider_outcome"] = "all_provider_records_skipped"
+            elif not releases:
+                self._provider_context["provider_outcome"] = "provider_returned_no_records"
+            elif not visible:
+                self._provider_context["provider_outcome"] = "valid_records_not_eligible_by_visibility"
+            else:
+                self._provider_context["provider_outcome"] = "valid_records_no_newer_eligible_release"
             return None
+        self._provider_context["provider_outcome"] = "newer_eligible_release_selected"
         return max(candidates, key=lambda release: parse_version(release.version))
 
     def _read_manifest(self, metadata: ReleaseMetadata) -> tuple[bytes, ReleaseManifest]:
-        data = self.http_client.read_bytes(metadata.manifest_url, maximum_bytes=MAX_MANIFEST_BYTES)
+        data = self.http_client.read_bytes(
+            metadata.manifest_url,
+            maximum_bytes=MAX_MANIFEST_BYTES,
+            headers=self.provider.release_request_headers(metadata),
+        )
         manifest = parse_release_manifest_bytes(data)
         self._bind_manifest(metadata, manifest)
         return data, manifest
+
+    def _provider_report_context(self, releases: list[ReleaseMetadata]) -> dict[str, object]:
+        record_count = getattr(self.provider, "record_count", len(releases))
+        diagnostics = getattr(self.provider, "diagnostics", ())
+        if type(record_count) is not int or record_count < 0:
+            raise OnlineUpdateValidationError("trusted provider record count is invalid")
+        if type(diagnostics) is not tuple or len(diagnostics) > MAX_PROVIDER_DIAGNOSTICS:
+            raise OnlineUpdateValidationError("trusted provider diagnostics are invalid")
+        if any(type(code) is not str or not PROVIDER_DIAGNOSTIC_CODE.fullmatch(code) for code in diagnostics):
+            raise OnlineUpdateValidationError("trusted provider diagnostics are invalid")
+        return {
+            "provider_record_count": record_count,
+            "provider_valid_record_count": len(releases),
+            "provider_diagnostic_count": len(diagnostics),
+            "provider_diagnostics": list(diagnostics),
+            "provider_outcome": "provider_records_loaded",
+        }
 
     def _workspace_input_path(self, value: str | Path) -> Path:
         candidate = Path(value)
@@ -325,8 +373,14 @@ class OnlineUpdateService:
         if manifest_sha256 != evidence["manifest_sha256"]:
             raise OnlineUpdateValidationError("staged release manifest evidence no longer matches")
         manifest = parse_release_manifest_bytes(manifest_data)
-        if manifest.release_version != evidence["target_version"] or manifest.source_commit != evidence["source_commit"]:
+        if (
+            manifest.release_version != evidence["target_version"]
+            or manifest.source_commit != evidence["source_commit"]
+            or manifest.source_tree != evidence["source_tree"]
+        ):
             raise OnlineUpdateValidationError("staged release manifest evidence no longer matches")
+        if not self._compatible(current_version, manifest):
+            raise UpdatePlanBlockedError("staged release compatibility does not include the current version")
         if (
             manifest.compatibility.requires_database_migration != evidence["migration_required"]
             or list(manifest.compatibility.migration_ids) != evidence["migration_ids"]
@@ -393,7 +447,7 @@ class OnlineUpdateService:
                 raise OnlineUpdateValidationError("backup manifest source database fingerprint does not match")
             if source_sha256 != _required_sha256(manifest.get("source_database_sha256"), "backup source database SHA256"):
                 raise OnlineUpdateValidationError("backup manifest source database fingerprint does not match")
-            journal_mode = self._journal_mode(source_path)
+            journal_mode, sidecars = self._sqlite_journal_evidence(source_path)
             if _required_text(manifest.get("source_database_journal_mode"), "backup source database journal mode", maximum=32) != journal_mode:
                 raise OnlineUpdateValidationError("backup manifest source database journal mode does not match")
             backup_dir = self._input_directory(_required_text(manifest.get("backup_dir"), "backup directory", maximum=4096), "backup directory")
@@ -421,6 +475,7 @@ class OnlineUpdateService:
             "source_database_size_bytes": source_size,
             "source_database_sha256": source_sha256,
             "source_database_journal_mode": journal_mode,
+            "source_database_sidecars": sidecars,
             "sqlite_backup_path": backup_path.as_posix(),
             "sqlite_backup_size_bytes": backup_size,
             "sqlite_backup_sha256": backup_sha256,
@@ -461,15 +516,41 @@ class OnlineUpdateService:
         return path
 
     @staticmethod
-    def _journal_mode(database_path: Path) -> str:
+    def _sqlite_journal_evidence(database_path: Path) -> tuple[str, dict[str, dict[str, object]]]:
+        """Read SQLite journal bytes and sidecar metadata without opening SQLite.
+
+        Opening even a URI ``mode=ro`` connection can create WAL/SHM state on
+        some SQLite configurations. Preparation therefore reads only the fixed
+        database header and lstat metadata for existing sidecars.
+        """
         try:
-            with sqlite3.connect(f"{database_path.as_uri()}?mode=ro", uri=True) as connection:
-                row = connection.execute("PRAGMA main.journal_mode").fetchone()
-        except sqlite3.Error as exc:
+            if not database_path.is_file() or database_path.is_symlink():
+                raise OSError("database input is not a regular file")
+            with database_path.open("rb") as handle:
+                header = handle.read(SQLITE_HEADER_SIZE)
+        except OSError as exc:
             raise OnlineUpdateValidationError("source database journal mode is unavailable") from exc
-        if not row or not isinstance(row[0], str) or not row[0]:
+        if len(header) != SQLITE_HEADER_SIZE or header[:16] != SQLITE_HEADER_MAGIC:
             raise OnlineUpdateValidationError("source database journal mode is unavailable")
-        return row[0].casefold()
+        write_version, read_version = header[18], header[19]
+        if write_version != read_version or write_version not in {1, 2}:
+            raise OnlineUpdateValidationError("source database journal mode is unavailable")
+        mode = "wal" if write_version == 2 else "delete"
+        sidecars: dict[str, dict[str, object]] = {}
+        for suffix, label in (("-wal", "wal"), ("-shm", "shm"), ("-journal", "journal")):
+            path = Path(f"{database_path}{suffix}")
+            try:
+                try:
+                    stat_result = path.lstat()
+                except FileNotFoundError:
+                    sidecars[label] = {"present": False, "size_bytes": 0}
+                    continue
+                if path.is_symlink() or not path.is_file():
+                    raise OSError("sidecar input is not a regular file")
+                sidecars[label] = {"present": True, "size_bytes": stat_result.st_size}
+            except OSError as exc:
+                raise OnlineUpdateValidationError("source database sidecar state is unavailable") from exc
+        return mode, sidecars
 
     @staticmethod
     def _bind_manifest(metadata: ReleaseMetadata, manifest: ReleaseManifest) -> None:
@@ -504,10 +585,11 @@ class OnlineUpdateService:
                     "metadata_ready",
                     current_version=current,
                     target_version="",
-                    relation="same_or_newer_not_available",
+                    relation="no_newer_eligible_release",
                     update_available=False,
+                    **self._provider_context,
                 )
-                return "pass"
+                return "blocked" if self._provider_context["provider_outcome"] == "all_provider_records_skipped" else "pass"
             data, manifest = self._read_manifest(target)
             compatible = self._compatible(current, manifest)
             job.transition(
@@ -519,10 +601,12 @@ class OnlineUpdateService:
                 compatibility_satisfied=compatible,
                 release=_metadata_summary(target),
                 source_commit=manifest.source_commit,
+                source_tree=manifest.source_tree,
                 manifest_sha256=hashlib.sha256(data).hexdigest(),
                 archive_sha256=manifest.archive.sha256,
                 archive_size_bytes=manifest.archive.size_bytes,
                 migration_required=manifest.compatibility.requires_database_migration,
+                **self._provider_context,
             )
             return "pass"
 
@@ -545,16 +629,32 @@ class OnlineUpdateService:
                 release_id=release_id,
             )
             if target is None:
-                raise OnlineUpdateValidationError("no newer eligible release is available")
-            job.transition("metadata_ready", current_version=current, target_version=target.version, release=_metadata_summary(target))
+                job.transition(
+                    "metadata_ready",
+                    current_version=current,
+                    target_version="",
+                    relation="no_newer_eligible_release",
+                    update_available=False,
+                    **self._provider_context,
+                )
+                return "blocked"
+            job.transition(
+                "metadata_ready",
+                current_version=current,
+                target_version=target.version,
+                release=_metadata_summary(target),
+                **self._provider_context,
+            )
             job.transition("downloading")
             download_dir = workspace_child(self.workspace, self.workspace / "downloads" / job.job_id)
             manifest_path = download_dir / "ops-release-manifest-v1.json"
+            asset_headers = self.provider.release_request_headers(target)
             manifest_download = atomic_download(
                 self.http_client,
                 url=target.manifest_url,
                 destination=manifest_path,
                 maximum_bytes=MAX_MANIFEST_BYTES,
+                headers=asset_headers,
             )
             manifest = parse_release_manifest_bytes(manifest_path.read_bytes())
             self._bind_manifest(target, manifest)
@@ -570,12 +670,14 @@ class OnlineUpdateService:
                 maximum_bytes=MAX_ARCHIVE_BYTES,
                 expected_size_bytes=manifest.archive.size_bytes,
                 expected_sha256=manifest.archive.sha256,
+                headers=asset_headers,
             )
             job.transition(
                 "verifying",
                 current_version=current,
                 target_version=target.version,
                 source_commit=manifest.source_commit,
+                source_tree=manifest.source_tree,
                 manifest_sha256=manifest_download.sha256,
                 archive_sha256=archive_download.sha256,
                 archive_size_bytes=archive_download.size_bytes,
@@ -601,6 +703,8 @@ class OnlineUpdateService:
             current = self._current_version(None)
             if compare_versions(current, manifest.release_version) != "newer":
                 raise UpdatePlanBlockedError("release manifest is not newer than the current application version")
+            if not self._compatible(current, manifest):
+                raise UpdatePlanBlockedError("release compatibility does not include the current version")
             size, digest = _sha256_file(archive_file, maximum_bytes=MAX_ARCHIVE_BYTES)
             if archive_file.name != manifest.archive.filename or size != manifest.archive.size_bytes or digest != manifest.archive.sha256:
                 raise ReleaseDownloadError("staged release archive no longer matches its manifest")
@@ -612,6 +716,7 @@ class OnlineUpdateService:
                 current_version=current,
                 target_version=manifest.release_version,
                 source_commit=manifest.source_commit,
+                source_tree=manifest.source_tree,
                 manifest_sha256=hashlib.sha256(manifest_data).hexdigest(),
                 archive_sha256=digest,
                 archive_size_bytes=size,
@@ -674,6 +779,7 @@ class OnlineUpdateService:
                 current_version=current,
                 target_version="" if staged is None else staged["target_version"],
                 source_commit="" if staged is None else staged["source_commit"],
+                source_tree="" if staged is None else staged["source_tree"],
                 manifest_sha256="" if staged is None else staged["manifest_sha256"],
                 archive_sha256="" if staged is None else staged["archive_sha256"],
                 archive_size_bytes=0 if staged is None else staged["archive_size_bytes"],
@@ -698,6 +804,8 @@ class OnlineUpdateService:
                     "release_manifest": {} if staged is None else {
                         "path": staged["manifest_path"],
                         "sha256": staged["manifest_sha256"],
+                        "source_commit": staged["source_commit"],
+                        "source_tree": staged["source_tree"],
                     },
                     "release_archive": {} if staged is None else {
                         "path": staged["archive_path"],

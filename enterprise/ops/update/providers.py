@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Mapping, Protocol
 
 from enterprise.ops.update.errors import ReleaseProviderError
 from enterprise.ops.update.http_client import SafeHttpClient, UrlPolicy
@@ -35,9 +35,14 @@ class ReleaseProvider(Protocol):
 
     name: str
     url_policy: UrlPolicy
+    diagnostics: tuple[str, ...]
+    record_count: int
 
     def list_releases(self) -> list[ReleaseMetadata]:
         """Return trusted release metadata in provider order."""
+
+    def release_request_headers(self, metadata: ReleaseMetadata) -> Mapping[str, str]:
+        """Return transient headers for one trusted release asset request."""
 
 
 def _required_text(value: object, label: str, maximum: int = 16 * 1024) -> str:
@@ -112,6 +117,8 @@ class LocalFixtureProvider:
     def __init__(self, fixture_path: str | os.PathLike[str], *, repository: str = DEFAULT_GITHUB_REPOSITORY) -> None:
         self.fixture_path = Path(fixture_path)
         self.repository = repository
+        self.diagnostics: tuple[str, ...] = ()
+        self.record_count = 0
 
     def list_releases(self) -> list[ReleaseMetadata]:
         try:
@@ -125,6 +132,7 @@ class LocalFixtureProvider:
         records = payload.get("releases") if type(payload) is dict else None
         if type(records) is not list or len(records) > 100:
             raise ReleaseProviderError("local release fixture records are invalid")
+        self.record_count = len(records)
         return [
             normalize_release_metadata(
                 record,
@@ -134,6 +142,11 @@ class LocalFixtureProvider:
             )
             for record in records
         ]
+
+    def release_request_headers(self, metadata: ReleaseMetadata) -> Mapping[str, str]:
+        if metadata.provider != self.name or metadata.repository != self.repository:
+            raise ReleaseProviderError("release metadata is not owned by this provider")
+        return {}
 
 
 class GitHubReleasesProvider:
@@ -153,6 +166,8 @@ class GitHubReleasesProvider:
         self.repository = repository
         self.http_client = http_client or SafeHttpClient(self.url_policy)
         self.diagnostics: tuple[str, ...] = ()
+        self.record_count = 0
+        self._asset_request_headers: dict[str, str] = {}
 
     def list_releases(self) -> list[ReleaseMetadata]:
         url = f"https://api.github.com/repos/{self.repository}/releases?per_page=50"
@@ -160,9 +175,15 @@ class GitHubReleasesProvider:
         token = os.environ.get("GITHUB_TOKEN")
         if token:
             headers["Authorization"] = f"Bearer {token}"
+        # This mapping is held only by the provider instance. It is supplied to
+        # trusted initial asset requests and never enters metadata, reports,
+        # logs, URLs, or exceptions. SafeHttpClient strips it on any redirect
+        # that crosses an origin boundary.
+        self._asset_request_headers = {"Authorization": headers["Authorization"]} if "Authorization" in headers else {}
         payload = self.http_client.read_json(url, maximum_bytes=MAX_GITHUB_METADATA_BYTES, headers=headers)
         if type(payload) is not list or len(payload) > 50:
             raise ReleaseProviderError("GitHub release metadata is invalid")
+        self.record_count = len(payload)
         releases: list[ReleaseMetadata] = []
         diagnostics: list[str] = []
 
@@ -211,6 +232,11 @@ class GitHubReleasesProvider:
                 skip("invalid_or_incomplete_release_skipped")
         self.diagnostics = tuple(diagnostics)
         return releases
+
+    def release_request_headers(self, metadata: ReleaseMetadata) -> Mapping[str, str]:
+        if metadata.provider != self.name or metadata.repository != self.repository:
+            raise ReleaseProviderError("release metadata is not owned by this provider")
+        return dict(self._asset_request_headers)
 
 
 def _tag_to_version(value: object) -> str:
