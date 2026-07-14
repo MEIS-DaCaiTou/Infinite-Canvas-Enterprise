@@ -22,12 +22,22 @@ import subprocess
 import sys
 import time
 import uuid
-import zipfile
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
+
+# The OPS runner is intentionally supported as a directly executed file.
+if __package__ in {None, ""}:
+    _REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+    if str(_REPOSITORY_ROOT) not in sys.path:
+        sys.path.insert(0, str(_REPOSITORY_ROOT))
+
+from enterprise.ops.release_validation import validate_release
+from enterprise.ops.update.errors import OnlineUpdateError
+from enterprise.ops.update.providers import GitHubReleasesProvider, LocalFixtureProvider
+from enterprise.ops.update.service import OnlineUpdateService
 
 
 DEFAULT_ARTIFACT_DIR = "ops_artifacts"
@@ -78,33 +88,6 @@ BACKUP_IGNORE_NAMES = {
 
 SQLITE_BACKUP_METHOD = "sqlite3.Connection.backup"
 SQLITE_RUNTIME_NAMES = {"enterprise.db", "enterprise.db-wal", "enterprise.db-shm"}
-
-RELEASE_FORBIDDEN_PREFIXES = (
-    "assets/",
-    "output/",
-    "data/",
-    "python/",
-    "logs/",
-    "ops_artifacts/",
-    "ops_backups/",
-)
-
-RELEASE_FORBIDDEN_EXACT = {
-    ".env",
-    "enterprise.env",
-    "history.json",
-    "API/.env",
-    "data/enterprise.db",
-}
-
-RELEASE_FORBIDDEN_NAME_FRAGMENTS = (
-    "auth.json",
-    "cookie",
-    "token",
-)
-
-IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
-
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -798,113 +781,6 @@ def command_validate_release(args: argparse.Namespace, job_id: str, logger: OpsJ
     return report
 
 
-def validate_release(release_path: Path, job_id: str) -> dict[str, Any]:
-    critical: list[str] = []
-    warnings: list[str] = []
-    entries: list[str] = []
-    total_bytes = 0
-    if not release_path.exists():
-        critical.append(f"release path missing: {release_path}")
-    elif release_path.is_dir():
-        for file_path in iter_files(release_path):
-            rel = rel_posix(release_path, file_path)
-            entries.append(rel)
-            try:
-                total_bytes += file_path.stat().st_size
-            except OSError:
-                pass
-    elif zipfile.is_zipfile(release_path):
-        with zipfile.ZipFile(release_path) as archive:
-            for info in archive.infolist():
-                if info.is_dir():
-                    continue
-                entries.append(normalize_release_entry(info.filename))
-                total_bytes += int(info.file_size)
-    else:
-        critical.append(f"release path is not a directory or zip file: {release_path}")
-
-    forbidden = [entry for entry in entries if release_forbidden_reason(entry)]
-    if forbidden:
-        critical.append(f"{len(forbidden)} forbidden runtime or secret paths found in release")
-    if entries and not has_release_app_signal(entries):
-        warnings.append("release does not appear to include VERSION/main.py/enterprise app files")
-    if entries and not has_manifest_signal(entries):
-        warnings.append("release manifest/checksums not found")
-    status = "fail" if critical else "warn" if warnings else "pass"
-    return {
-        "kind": "release-validation-report",
-        "job_id": job_id,
-        "status": status,
-        "generated_at": utc_now(),
-        "release_path": release_path.as_posix(),
-        "file_count": len(entries),
-        "total_bytes": total_bytes,
-        "forbidden_path_count": len(forbidden),
-        "forbidden_path_samples": safe_sample(forbidden),
-        "findings": {"critical": critical, "warnings": warnings},
-        "note": "Read-only release validation. No files were modified.",
-    }
-
-
-def release_forbidden_reason(entry: str) -> str:
-    normalized = normalize_release_entry(entry)
-    if is_unsafe_release_entry_path(normalized):
-        return "unsafe-path"
-    normalized = normalized.lstrip("/")
-    lower = normalized.lower()
-    parts = lower.split("/")
-    basename = parts[-1] if parts else lower
-    candidate_roots = path_suffix_candidates(lower)
-    for candidate in candidate_roots:
-        if candidate in {item.lower() for item in RELEASE_FORBIDDEN_EXACT}:
-            return "exact"
-        if any(candidate.startswith(prefix.lower()) for prefix in RELEASE_FORBIDDEN_PREFIXES):
-            return "prefix"
-    if basename == ".env" or (basename.endswith(".env") and not basename.endswith(".env.example")):
-        return "env"
-    if any(fragment in lower for fragment in RELEASE_FORBIDDEN_NAME_FRAGMENTS):
-        return "credential-name"
-    if any(fragment in lower for fragment in ("/output/", "\\output\\")) and Path(lower).suffix in IMAGE_SUFFIXES:
-        return "runtime-output"
-    return ""
-
-
-def normalize_release_entry(entry: str) -> str:
-    raw = entry.replace("\\", "/")
-    return raw[2:] if raw.startswith("./") else raw
-
-
-def is_unsafe_release_entry_path(entry: str) -> bool:
-    normalized = entry.replace("\\", "/")
-    parts = normalized.split("/")
-    if normalized.startswith("//"):
-        return True
-    if normalized.startswith("/"):
-        return True
-    if len(normalized) >= 3 and normalized[1] == ":" and normalized[0].isalpha() and normalized[2] == "/":
-        return True
-    return any(part == ".." for part in parts)
-
-
-def path_suffix_candidates(path: str) -> list[str]:
-    parts = [part for part in path.split("/") if part]
-    candidates = ["/".join(parts[index:]) for index in range(len(parts))]
-    return candidates or [path]
-
-
-def has_release_app_signal(entries: list[str]) -> bool:
-    normalized = [normalize_release_entry(entry).lstrip("/") for entry in entries]
-    has_version = any(entry == "VERSION" or entry.endswith("/VERSION") for entry in normalized)
-    has_main = any(entry == "main.py" or entry.endswith("/main.py") for entry in normalized)
-    has_enterprise = any(entry.startswith("enterprise/") or "/enterprise/" in entry for entry in normalized)
-    return has_version and has_main and has_enterprise
-
-
-def has_manifest_signal(entries: list[str]) -> bool:
-    lower = [normalize_release_entry(entry).lower().lstrip("/") for entry in entries]
-    return any("manifest" in entry for entry in lower) or any(entry.endswith("checksums.txt") for entry in lower)
-
-
 def command_prepare_upgrade(args: argparse.Namespace, job_id: str, logger: OpsJobLogger) -> dict[str, Any]:
     app_root = args.app_root.resolve()
     output_dir = resolve_path(app_root, args.output_dir)
@@ -1010,6 +886,60 @@ def build_upgrade_steps(maintenance_window: str | None) -> list[dict[str, Any]]:
     ]
 
 
+OPS3_COMMANDS = {
+    "check-update",
+    "fetch-release",
+    "stage-release",
+    "prepare-online-update",
+}
+
+
+def _online_update_service(args: argparse.Namespace) -> OnlineUpdateService:
+    if args.provider == "github-releases":
+        provider = GitHubReleasesProvider()
+    elif args.provider == "local-fixture":
+        if not args.fixture:
+            raise OnlineUpdateError("local fixture provider requires a fixture file")
+        provider = LocalFixtureProvider(args.fixture)
+    else:
+        raise OnlineUpdateError("online update provider is not supported")
+    return OnlineUpdateService(app_root=args.app_root, workspace=args.workspace, provider=provider)
+
+
+def command_check_update(args: argparse.Namespace) -> dict[str, Any]:
+    return _online_update_service(args).check_update(allow_prerelease=args.allow_prerelease)
+
+
+def command_fetch_release(args: argparse.Namespace) -> dict[str, Any]:
+    return _online_update_service(args).fetch_release(
+        allow_prerelease=args.allow_prerelease,
+        release_id=args.release_id or None,
+    )
+
+
+def _offline_online_update_service(args: argparse.Namespace) -> OnlineUpdateService:
+    # Staging and planning never make network calls; a local provider preserves
+    # the shared service constructor without creating a GitHub client.
+    provider = LocalFixtureProvider(getattr(args, "fixture", "") or "missing-fixture.json")
+    return OnlineUpdateService(app_root=args.app_root, workspace=args.workspace, provider=provider)
+
+
+def command_stage_release(args: argparse.Namespace) -> dict[str, Any]:
+    return _offline_online_update_service(args).stage_release(
+        manifest_path=args.manifest,
+        archive_path=args.archive,
+    )
+
+
+def command_prepare_online_update(args: argparse.Namespace) -> dict[str, Any]:
+    return _offline_online_update_service(args).prepare_online_update(
+        stage_report_path=args.stage_report,
+        backup_manifest_path=args.backup_manifest or None,
+        data_check_report_path=args.data_check_report or None,
+        maintenance_window=args.maintenance_window,
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ops-runner", description="Infinite Canvas Enterprise OPS-2A toolkit")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -1051,10 +981,45 @@ def build_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--maintenance-window", default="", help="Planned maintenance window text.")
     prepare.set_defaults(handler=command_prepare_upgrade)
 
+    def add_online_update_common(subparser: argparse.ArgumentParser, *, provider: bool) -> None:
+        subparser.add_argument("--app-root", type=Path, default=Path.cwd(), help="Application root read-only input.")
+        subparser.add_argument("--workspace", type=Path, required=True, help="Existing OPS workspace outside the application root.")
+        if provider:
+            subparser.add_argument("--provider", choices=("github-releases", "local-fixture"), default="github-releases")
+            subparser.add_argument("--fixture", default="", help="Local fixture JSON; only used with local-fixture.")
+
+    check_update = subparsers.add_parser("check-update", help="Check a trusted provider without downloading a package.")
+    add_online_update_common(check_update, provider=True)
+    check_update.add_argument("--allow-prerelease", action="store_true", help="Include trusted prereleases explicitly.")
+    check_update.set_defaults(handler=command_check_update)
+
+    fetch_release = subparsers.add_parser("fetch-release", help="Download a verified release into the OPS workspace.")
+    add_online_update_common(fetch_release, provider=True)
+    fetch_release.add_argument("--allow-prerelease", action="store_true", help="Include trusted prereleases explicitly.")
+    fetch_release.add_argument("--release-id", default="", help="Optional trusted provider release identifier.")
+    fetch_release.set_defaults(handler=command_fetch_release)
+
+    stage_release = subparsers.add_parser("stage-release", help="Safely extract a fetched release into a new workspace staging directory.")
+    add_online_update_common(stage_release, provider=False)
+    stage_release.add_argument("--manifest", required=True, help="Workspace-relative or workspace-contained manifest path.")
+    stage_release.add_argument("--archive", required=True, help="Workspace-relative or workspace-contained archive path.")
+    stage_release.set_defaults(handler=command_stage_release)
+
+    prepare_online_update = subparsers.add_parser("prepare-online-update", help="Write a non-executing online-update plan.")
+    add_online_update_common(prepare_online_update, provider=False)
+    prepare_online_update.add_argument("--stage-report", required=True, help="Successful stage-release report JSON.")
+    prepare_online_update.add_argument("--backup-manifest", default="", help="Existing executed backup manifest JSON.")
+    prepare_online_update.add_argument("--data-check-report", default="", help="Existing data-check report JSON.")
+    prepare_online_update.add_argument("--maintenance-window", default="", help="Optional reviewed maintenance-window text.")
+    prepare_online_update.set_defaults(handler=command_prepare_online_update)
+
     return parser
 
 
 def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
+    if args.command in OPS3_COMMANDS:
+        report = args.handler(args)
+        return (2 if report.get("status") in {"fail", "blocked"} else 0), report
     app_root = args.app_root.resolve()
     job_id = args.job_id or make_job_id(args.command)
     log_file = resolve_path(app_root, args.log_file)
@@ -1083,7 +1048,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         code, report = run(args)
     except Exception as exc:
-        print(f"{args.command} failed: {exc}", file=sys.stderr)
+        if args.command in OPS3_COMMANDS:
+            message = exc.public_message if isinstance(exc, OnlineUpdateError) else "Online update preparation failed"
+            print(f"{args.command} failed: {message}", file=sys.stderr)
+        else:
+            print(f"{args.command} failed: {exc}", file=sys.stderr)
         return 1
     report_path = report.get("_report_path", "")
     status = report.get("status", "")
