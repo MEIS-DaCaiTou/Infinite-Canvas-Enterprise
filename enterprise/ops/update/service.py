@@ -240,16 +240,31 @@ class OnlineUpdateService:
             report = job.write_report(status=status)
         except UpdatePlanBlockedError as exc:
             job.fail(exc)
-            job.append_log("blocked", code=exc.code, message=exc.public_message)
+            job.append_log(
+                "blocked",
+                code=exc.code,
+                detail_code=exc.detail_code,
+                message=exc.public_message,
+            )
             report = job.write_report(status="blocked")
         except OnlineUpdateError as exc:
             job.fail(exc)
-            job.append_log("failed", code=exc.code, message=exc.public_message)
+            job.append_log(
+                "failed",
+                code=exc.code,
+                detail_code=exc.detail_code,
+                message=exc.public_message,
+            )
             report = job.write_report(status="fail")
         except Exception:
             error = OnlineUpdateError()
             job.fail(error)
-            job.append_log("failed", code=error.code, message=error.public_message)
+            job.append_log(
+                "failed",
+                code=error.code,
+                detail_code=error.detail_code,
+                message=error.public_message,
+            )
             report = job.write_report(status="fail")
         report["_report_path"] = str(self.workspace / job.report_paths[-1])
         return report
@@ -714,8 +729,16 @@ class OnlineUpdateService:
             if not self._compatible(current, manifest):
                 raise UpdatePlanBlockedError("release compatibility does not include the current version")
             size, digest = _sha256_file(archive_file, maximum_bytes=MAX_ARCHIVE_BYTES)
-            if archive_file.name != manifest.archive.filename or size != manifest.archive.size_bytes or digest != manifest.archive.sha256:
-                raise ReleaseDownloadError("staged release archive no longer matches its manifest")
+            if archive_file.name != manifest.archive.filename or size != manifest.archive.size_bytes:
+                raise ReleaseDownloadError(
+                    "staged release archive no longer matches its manifest",
+                    detail_code="RELEASE_ACTUAL_SIZE_MISMATCH",
+                )
+            if digest != manifest.archive.sha256:
+                raise ReleaseDownloadError(
+                    "staged release archive no longer matches its manifest",
+                    detail_code="RELEASE_SHA256_MISMATCH",
+                )
             staging_path = workspace_child(self.workspace, self.workspace / "staging" / job.job_id)
             staged = stage_release_archive(archive_file, manifest, staging_path=staging_path, job_id=job.job_id)
             validation = staged.validation_report

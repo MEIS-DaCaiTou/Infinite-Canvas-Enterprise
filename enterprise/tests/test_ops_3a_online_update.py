@@ -246,11 +246,11 @@ def run_cli(app_root: Path, workspace: Path, *args: str, expect: int = 0) -> dic
     return json.loads(report_path.read_text(encoding="utf-8"))
 
 
-def expect_error(error_type: type[Exception], callable_object, *args, **kwargs) -> None:
+def expect_error(error_type: type[Exception], callable_object, *args, **kwargs) -> Exception:
     try:
         callable_object(*args, **kwargs)
-    except error_type:
-        return
+    except error_type as exc:
+        return exc
     raise AssertionError(f"expected {error_type.__name__}")
 
 
@@ -278,8 +278,12 @@ def verify_versions_and_manifest() -> None:
 
 def verify_http_and_download() -> None:
     github = GitHubReleasesProvider()
-    expect_error(ReleaseDownloadError, github.url_policy.validate, "http://api.github.com/releases")
-    expect_error(ReleaseDownloadError, github.url_policy.validate, "https://example.invalid/release")
+    assert expect_error(
+        ReleaseDownloadError, github.url_policy.validate, "http://api.github.com/releases"
+    ).detail_code == "RELEASE_REDIRECT_REJECTED"
+    assert expect_error(
+        ReleaseDownloadError, github.url_policy.validate, "https://example.invalid/release"
+    ).detail_code == "RELEASE_REDIRECT_REJECTED"
     with LocalServer() as server, tempfile.TemporaryDirectory(prefix="ice-ops3a-http-") as raw:
         FixtureHandler.request_headers = {}
         FixtureHandler.responses = {
@@ -300,14 +304,14 @@ def verify_http_and_download() -> None:
             expected_sha256=sha256(b"payload"),
         )
         assert result.size_bytes == 7 and result.redirect_count == 0 and result.path.exists()
-        expect_error(ReleaseDownloadError, atomic_download, client, url=f"{server.base_url}/bytes", destination=result.path, maximum_bytes=32)
-        expect_error(ReleaseDownloadError, client.read_bytes, f"{server.base_url}/redirect", maximum_bytes=32)
-        expect_error(ReleaseDownloadError, client.read_bytes, f"{server.base_url}/oversized", maximum_bytes=32)
-        expect_error(ReleaseDownloadError, atomic_download, client, url=f"{server.base_url}/bytes", destination=Path(raw) / "bad.zip", maximum_bytes=32, expected_sha256="0" * 64)
-        expect_error(ReleaseDownloadError, atomic_download, client, url=f"{server.base_url}/bytes", destination=Path(raw) / "bad-size.zip", maximum_bytes=32, expected_size_bytes=8)
+        assert expect_error(ReleaseDownloadError, atomic_download, client, url=f"{server.base_url}/bytes", destination=result.path, maximum_bytes=32).detail_code == "RELEASE_DESTINATION_EXISTS"
+        assert expect_error(ReleaseDownloadError, client.read_bytes, f"{server.base_url}/redirect", maximum_bytes=32).detail_code == "RELEASE_REDIRECT_REJECTED"
+        assert expect_error(ReleaseDownloadError, client.read_bytes, f"{server.base_url}/oversized", maximum_bytes=32).detail_code == "RELEASE_ADVERTISED_SIZE_MISMATCH"
+        assert expect_error(ReleaseDownloadError, atomic_download, client, url=f"{server.base_url}/bytes", destination=Path(raw) / "bad.zip", maximum_bytes=32, expected_sha256="0" * 64).detail_code == "RELEASE_SHA256_MISMATCH"
+        assert expect_error(ReleaseDownloadError, atomic_download, client, url=f"{server.base_url}/bytes", destination=Path(raw) / "bad-size.zip", maximum_bytes=32, expected_size_bytes=8).detail_code == "RELEASE_ADVERTISED_SIZE_MISMATCH"
         assert not (Path(raw) / "bad.zip").exists()
         assert not list(Path(raw).glob("*.part"))
-        expect_error(ReleaseDownloadError, client.read_bytes, f"{server.base_url}/slow", maximum_bytes=32)
+        assert expect_error(ReleaseDownloadError, client.read_bytes, f"{server.base_url}/slow", maximum_bytes=32).detail_code == "RELEASE_READ_TIMEOUT"
         redirected, redirect_count = client.read_bytes_with_redirect_count(
             f"{server.base_url}/redirect-cross-host",
             maximum_bytes=32,
@@ -317,6 +321,26 @@ def verify_http_and_download() -> None:
         redirected_headers = FixtureHandler.request_headers["/redirect-target"]
         assert "authorization" not in redirected_headers and "cookie" not in redirected_headers
         assert redirected_headers["x-trace"] == "preserved"
+
+        # The old part-file shape repeated the long archive filename and could
+        # cross the Windows MAX_PATH boundary while the final path was valid.
+        long_name = f"Infinite-Canvas-Enterprise-release-{'a' * 40}.zip"
+        padding_length = 225 - len(str(Path(raw))) - 2 - len(long_name)
+        assert padding_length > 0
+        long_parent = Path(raw) / ("p" * padding_length)
+        long_destination = long_parent / long_name
+        old_part = long_destination.with_name(f".{long_destination.name}.{'b' * 32}.part")
+        assert len(str(long_destination)) == 225 and len(str(old_part)) >= 260
+        long_path_result = atomic_download(
+            client,
+            url=f"{server.base_url}/bytes",
+            destination=long_destination,
+            maximum_bytes=32,
+            expected_size_bytes=7,
+            expected_sha256=sha256(b"payload"),
+        )
+        assert long_path_result.path == long_destination and long_destination.read_bytes() == b"payload"
+        assert not list(long_parent.glob("*.part"))
 
 
 class StaticGitHubClient:
@@ -503,6 +527,8 @@ def verify_private_github_asset_authorization() -> None:
             blocked_workspace.mkdir()
             blocked = OnlineUpdateService(app_root=app_root, workspace=blocked_workspace, provider=provider).fetch_release()
             assert blocked["status"] == "fail"
+            assert blocked["failure_detail_code"] == "RELEASE_REDIRECT_REJECTED", blocked
+            assert '"detail_code": "RELEASE_REDIRECT_REJECTED"' in (blocked_workspace / "jobs.jsonl").read_text(encoding="utf-8")
             assert "example.invalid" not in json.dumps(blocked)
 
             # Asset metadata size is independent evidence and must bind the

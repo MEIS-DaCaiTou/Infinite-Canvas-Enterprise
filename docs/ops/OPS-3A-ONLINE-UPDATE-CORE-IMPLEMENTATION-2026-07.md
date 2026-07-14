@@ -141,6 +141,9 @@ forged, mismatched, or mutated evidence produces a blocked plan.
   redirected request is sent.
 - Metadata/archive sizes and timeouts are bounded. Archives stream to a
   job-owned temporary file, then size and SHA-256 must pass before publication.
+  The same-directory temporary name is fixed-length and does not repeat the
+  potentially long archive filename, avoiding Windows path inflation while
+  preserving same-volume atomic publication and no-overwrite behavior.
 - `prepare-online-update` does not open SQLite at all. It reads only the fixed
   SQLite header write/read-version bytes and `enterprise.db-wal`,
   `enterprise.db-shm`, and `enterprise.db-journal` metadata, so preparation
@@ -154,6 +157,11 @@ forged, mismatched, or mutated evidence produces a blocked plan.
   remain hard policy failures.
 - Persisted job fields use validated scalar evidence; remote bodies,
   credentials, and arbitrary prior-report warning text are not written.
+- Handled release-download failures expose only a fixed
+  `failure_detail_code` in the JSON report and JSONL job event. Detail codes
+  distinguish request, redirect, advertised-size, read-timeout, final-size,
+  SHA-256, local-I/O, destination, and atomic-publication failures without
+  persisting exception text, URLs, hosts, headers, or response bodies.
 - Check and fetch reports expose only bounded generic provider diagnostics. They
   distinguish no returned records, all returned records being invalid or
   incomplete, visibility filtering, and valid records with no newer candidate;

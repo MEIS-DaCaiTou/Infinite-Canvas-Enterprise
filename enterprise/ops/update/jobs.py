@@ -143,6 +143,7 @@ class UpdateJob:
     fields: dict[str, Any] = field(default_factory=dict)
     report_paths: list[str] = field(default_factory=list)
     failure_code: str = ""
+    failure_detail_code: str = ""
     failure_message: str = ""
 
     def transition(self, state: str, **fields: Any) -> None:
@@ -167,6 +168,7 @@ class UpdateJob:
         self.updated_at = utc_now()
         self.finished_at = self.updated_at
         self.failure_code = error.code
+        self.failure_detail_code = error.detail_code
         self.failure_message = error.public_message
 
     def snapshot(self, *, status: str) -> dict[str, Any]:
@@ -182,6 +184,7 @@ class UpdateJob:
             **_safe_json_value(self.fields),
             "report_paths": list(self.report_paths),
             "failure_code": self.failure_code,
+            "failure_detail_code": self.failure_detail_code,
             "failure_message": self.failure_message,
         }
 

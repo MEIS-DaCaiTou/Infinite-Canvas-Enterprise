@@ -29,25 +29,31 @@ class UrlPolicy:
 
     def validate(self, url: object) -> str:
         if not isinstance(url, str) or not url or url != url.strip():
-            raise ReleaseDownloadError("release URL is invalid")
+            raise ReleaseDownloadError("release URL is invalid", detail_code="RELEASE_REDIRECT_REJECTED")
         parsed = urlparse(url)
         host = (parsed.hostname or "").casefold()
         if parsed.username or parsed.password or parsed.fragment or not host:
-            raise ReleaseDownloadError("release URL is invalid")
+            raise ReleaseDownloadError("release URL is invalid", detail_code="RELEASE_REDIRECT_REJECTED")
         try:
             port = parsed.port
         except ValueError as exc:
-            raise ReleaseDownloadError("release URL is invalid") from exc
+            raise ReleaseDownloadError("release URL is invalid", detail_code="RELEASE_REDIRECT_REJECTED") from exc
         local_fixture_url = self.allow_loopback_http and parsed.scheme == "http" and host in LOOPBACK_HOSTS
         if port is not None and not local_fixture_url and port != 443:
-            raise ReleaseDownloadError("release URL is not an approved HTTPS source")
+            raise ReleaseDownloadError(
+                "release URL is not an approved HTTPS source",
+                detail_code="RELEASE_REDIRECT_REJECTED",
+            )
         if parsed.scheme == "https" and host in self.allowed_hosts:
             return url
         if (
             local_fixture_url
         ):
             return url
-        raise ReleaseDownloadError("release URL is not an approved HTTPS source")
+        raise ReleaseDownloadError(
+            "release URL is not an approved HTTPS source",
+            detail_code="RELEASE_REDIRECT_REJECTED",
+        )
 
 
 class _ValidatedRedirectHandler(HTTPRedirectHandler):
@@ -59,7 +65,10 @@ class _ValidatedRedirectHandler(HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
         self._redirect_count += 1
         if self._redirect_count > MAX_REDIRECTS:
-            raise ReleaseDownloadError("release redirect limit exceeded")
+            raise ReleaseDownloadError(
+                "release redirect limit exceeded",
+                detail_code="RELEASE_REDIRECT_REJECTED",
+            )
         redirect_url = urljoin(req.full_url, newurl)
         self._policy.validate(redirect_url)
         redirected = super().redirect_request(req, fp, code, msg, headers, redirect_url)
@@ -95,7 +104,10 @@ def _content_length(headers: Mapping[str, str]) -> int | None:
     if raw is None:
         return None
     if not raw.isascii() or not raw.isdecimal():
-        raise ReleaseDownloadError("release content length is invalid")
+        raise ReleaseDownloadError(
+            "release content length is invalid",
+            detail_code="RELEASE_ADVERTISED_SIZE_MISMATCH",
+        )
     return int(raw)
 
 
@@ -127,12 +139,35 @@ class SafeHttpClient:
         request = Request(url, headers=request_headers, method="GET")
         try:
             response = opener.open(request, timeout=self.timeout_seconds)
-        except (HTTPError, URLError, socket.timeout, TimeoutError) as exc:
-            raise ReleaseDownloadError("trusted release source request failed") from exc
+        except (socket.timeout, TimeoutError) as exc:
+            raise ReleaseDownloadError(
+                "trusted release source request failed",
+                detail_code="RELEASE_READ_TIMEOUT",
+            ) from exc
+        except HTTPError as exc:
+            raise ReleaseDownloadError(
+                "trusted release source request failed",
+                detail_code="RELEASE_HTTP_REQUEST_FAILED",
+            ) from exc
+        except URLError as exc:
+            detail_code = (
+                "RELEASE_READ_TIMEOUT"
+                if isinstance(exc.reason, (socket.timeout, TimeoutError))
+                else "RELEASE_HTTP_REQUEST_FAILED"
+            )
+            raise ReleaseDownloadError("trusted release source request failed", detail_code=detail_code) from exc
+        except OSError as exc:
+            raise ReleaseDownloadError(
+                "trusted release source request failed",
+                detail_code="RELEASE_HTTP_REQUEST_FAILED",
+            ) from exc
         expected_length = _content_length(response.headers)
         if expected_length is not None and expected_length > maximum_bytes:
             response.close()
-            raise ReleaseDownloadError("trusted release response exceeds its size limit")
+            raise ReleaseDownloadError(
+                "trusted release response exceeds its size limit",
+                detail_code="RELEASE_ADVERTISED_SIZE_MISMATCH",
+            )
 
         class _ResponseIterator:
             def __iter__(self) -> Iterator[tuple[Any, int | None, int]]:
@@ -185,11 +220,25 @@ class SafeHttpClient:
         redirect_count = 0
         for response, _content_size, redirect_count in self.stream(url, maximum_bytes=maximum_bytes, headers=headers):
             while True:
-                chunk = response.read(min(64 * 1024, maximum_bytes - received + 1))
+                try:
+                    chunk = response.read(min(64 * 1024, maximum_bytes - received + 1))
+                except (socket.timeout, TimeoutError) as exc:
+                    raise ReleaseDownloadError(
+                        "trusted release source request failed",
+                        detail_code="RELEASE_READ_TIMEOUT",
+                    ) from exc
+                except OSError as exc:
+                    raise ReleaseDownloadError(
+                        "trusted release source request failed",
+                        detail_code="RELEASE_HTTP_REQUEST_FAILED",
+                    ) from exc
                 if not chunk:
                     break
                 received += len(chunk)
                 if received > maximum_bytes:
-                    raise ReleaseDownloadError("trusted release response exceeds its size limit")
+                    raise ReleaseDownloadError(
+                        "trusted release response exceeds its size limit",
+                        detail_code="RELEASE_ACTUAL_SIZE_MISMATCH",
+                    )
                 chunks.append(chunk)
         return b"".join(chunks), redirect_count

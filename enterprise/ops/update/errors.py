@@ -8,6 +8,7 @@ class OnlineUpdateError(RuntimeError):
 
     code = "ONLINE_UPDATE_FAILED"
     public_message = "Online update preparation failed"
+    detail_code = ""
 
     def __init__(self, message: str | None = None) -> None:
         super().__init__(message or self.public_message)
@@ -31,6 +32,33 @@ class ReleaseProviderError(OnlineUpdateError):
 class ReleaseDownloadError(OnlineUpdateError):
     code = "RELEASE_DOWNLOAD_FAILED"
     public_message = "Release download validation failed"
+
+    _DETAIL_CODES = frozenset(
+        {
+            "RELEASE_DOWNLOAD_UNCLASSIFIED",
+            "RELEASE_DOWNLOAD_INPUT_INVALID",
+            "RELEASE_DESTINATION_EXISTS",
+            "RELEASE_HTTP_REQUEST_FAILED",
+            "RELEASE_REDIRECT_REJECTED",
+            "RELEASE_ADVERTISED_SIZE_MISMATCH",
+            "RELEASE_READ_TIMEOUT",
+            "RELEASE_ACTUAL_SIZE_MISMATCH",
+            "RELEASE_SHA256_MISMATCH",
+            "RELEASE_ATOMIC_PUBLICATION_FAILED",
+            "RELEASE_LOCAL_IO_FAILED",
+        }
+    )
+
+    def __init__(
+        self,
+        message: str | None = None,
+        *,
+        detail_code: str = "RELEASE_DOWNLOAD_UNCLASSIFIED",
+    ) -> None:
+        if detail_code not in self._DETAIL_CODES:
+            raise ValueError("release download detail code is invalid")
+        self.detail_code = detail_code
+        super().__init__(message)
 
 
 class ReleaseStagingError(OnlineUpdateError):
