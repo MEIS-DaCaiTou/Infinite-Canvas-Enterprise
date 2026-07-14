@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any, Mapping, Protocol
+from typing import Literal, Mapping, Protocol
+from urllib.parse import urlparse
 
 from enterprise.ops.update.errors import ReleaseProviderError
 from enterprise.ops.update.http_client import SafeHttpClient, UrlPolicy
@@ -25,6 +26,10 @@ GITHUB_ALLOWED_HOSTS = frozenset(
     }
 )
 GITHUB_MANIFEST_ASSET = "ops-release-manifest-v1.json"
+GITHUB_METADATA_ACCEPT = "application/vnd.github+json"
+GITHUB_ASSET_ACCEPT = "application/octet-stream"
+GITHUB_API_VERSION = "2022-11-28"
+GITHUB_USER_AGENT = "Infinite-Canvas-Enterprise-OPS-3A"
 MAX_GITHUB_METADATA_BYTES = 1024 * 1024
 MAX_FIXTURE_BYTES = 1024 * 1024
 MAX_PROVIDER_DIAGNOSTICS = 16
@@ -41,8 +46,13 @@ class ReleaseProvider(Protocol):
     def list_releases(self) -> list[ReleaseMetadata]:
         """Return trusted release metadata in provider order."""
 
-    def release_request_headers(self, metadata: ReleaseMetadata) -> Mapping[str, str]:
-        """Return transient headers for one trusted release asset request."""
+    def release_asset_request_headers(
+        self,
+        metadata: ReleaseMetadata,
+        *,
+        asset_kind: Literal["manifest", "archive"],
+    ) -> Mapping[str, str]:
+        """Return transient headers for one trusted manifest or archive request."""
 
 
 def _required_text(value: object, label: str, maximum: int = 16 * 1024) -> str:
@@ -68,6 +78,20 @@ def _normalized_version(tag_name: str, value: object) -> str:
     if tag_name not in {version, f"v{version}"}:
         raise ReleaseProviderError("release tag and version differ")
     return version
+
+
+def _optional_positive_int(value: object, label: str) -> int | None:
+    if value is None:
+        return None
+    if type(value) is not int or value < 1:
+        raise ReleaseProviderError(f"{label} is invalid")
+    return value
+
+
+def _optional_asset_name(value: object, label: str) -> str | None:
+    if value is None:
+        return None
+    return _required_text(value, label, maximum=512)
 
 
 def normalize_release_metadata(
@@ -100,6 +124,10 @@ def normalize_release_metadata(
         manifest_url=_required_text(payload.get("manifest_url"), "manifest URL", maximum=2048),
         archive_url=_required_text(payload.get("archive_url"), "archive URL", maximum=2048),
         release_notes=str(payload.get("release_notes") or ""),
+        manifest_asset_name=_optional_asset_name(payload.get("manifest_asset_name"), "manifest asset name"),
+        archive_asset_name=_optional_asset_name(payload.get("archive_asset_name"), "archive asset name"),
+        manifest_asset_size_bytes=_optional_positive_int(payload.get("manifest_asset_size_bytes"), "manifest asset size"),
+        archive_asset_size_bytes=_optional_positive_int(payload.get("archive_asset_size_bytes"), "archive asset size"),
     )
     if len(metadata.release_notes) > 16 * 1024:
         raise ReleaseProviderError("release notes exceed their size limit")
@@ -143,9 +171,16 @@ class LocalFixtureProvider:
             for record in records
         ]
 
-    def release_request_headers(self, metadata: ReleaseMetadata) -> Mapping[str, str]:
+    def release_asset_request_headers(
+        self,
+        metadata: ReleaseMetadata,
+        *,
+        asset_kind: Literal["manifest", "archive"],
+    ) -> Mapping[str, str]:
         if metadata.provider != self.name or metadata.repository != self.repository:
             raise ReleaseProviderError("release metadata is not owned by this provider")
+        if asset_kind not in {"manifest", "archive"}:
+            raise ReleaseProviderError("release asset kind is invalid")
         return {}
 
 
@@ -154,6 +189,11 @@ class GitHubReleasesProvider:
 
     name = "github-releases"
     url_policy = UrlPolicy(GITHUB_ALLOWED_HOSTS)
+    # These are deliberately fixed in the production provider. The loopback
+    # fixture subclass overrides them only to exercise the same repository and
+    # asset-path checks without making Internet requests in tests.
+    asset_api_scheme = "https"
+    asset_api_host = "api.github.com"
 
     def __init__(
         self,
@@ -171,7 +211,7 @@ class GitHubReleasesProvider:
 
     def list_releases(self) -> list[ReleaseMetadata]:
         url = f"https://api.github.com/repos/{self.repository}/releases?per_page=50"
-        headers = {"Accept": "application/vnd.github+json", "User-Agent": "Infinite-Canvas-Enterprise-OPS-3A"}
+        headers = {"Accept": GITHUB_METADATA_ACCEPT, "User-Agent": GITHUB_USER_AGENT}
         token = os.environ.get("GITHUB_TOKEN")
         if token:
             headers["Authorization"] = f"Bearer {token}"
@@ -204,8 +244,8 @@ class GitHubReleasesProvider:
                 assets = release.get("assets")
                 if type(assets) is not list:
                     raise ReleaseProviderError("GitHub release assets are invalid")
-                manifest_asset = _single_asset(assets, exact_name=GITHUB_MANIFEST_ASSET)
-                archive_asset = _single_asset(assets, suffix=".zip")
+                manifest_asset = self._release_asset(assets, exact_name=GITHUB_MANIFEST_ASSET)
+                archive_asset = self._release_asset(assets, suffix=".zip")
                 releases.append(
                     normalize_release_metadata(
                         {
@@ -216,8 +256,14 @@ class GitHubReleasesProvider:
                             "prerelease": release.get("prerelease"),
                             "draft": release.get("draft"),
                             "published_at": release.get("published_at"),
-                            "manifest_url": manifest_asset["browser_download_url"],
-                            "archive_url": archive_asset["browser_download_url"],
+                            # Browser download URLs are not the private-release
+                            # fetch path. Use the repository-bound asset REST API.
+                            "manifest_url": manifest_asset["api_url"],
+                            "archive_url": archive_asset["api_url"],
+                            "manifest_asset_name": manifest_asset["name"],
+                            "archive_asset_name": archive_asset["name"],
+                            "manifest_asset_size_bytes": manifest_asset["size_bytes"],
+                            "archive_asset_size_bytes": archive_asset["size_bytes"],
                             "release_notes": release.get("body") or "",
                         },
                         provider=self.name,
@@ -233,28 +279,77 @@ class GitHubReleasesProvider:
         self.diagnostics = tuple(diagnostics)
         return releases
 
-    def release_request_headers(self, metadata: ReleaseMetadata) -> Mapping[str, str]:
+    def release_asset_request_headers(
+        self,
+        metadata: ReleaseMetadata,
+        *,
+        asset_kind: Literal["manifest", "archive"],
+    ) -> Mapping[str, str]:
         if metadata.provider != self.name or metadata.repository != self.repository:
             raise ReleaseProviderError("release metadata is not owned by this provider")
-        return dict(self._asset_request_headers)
+        if asset_kind not in {"manifest", "archive"}:
+            raise ReleaseProviderError("release asset kind is invalid")
+        expected_url = metadata.manifest_url if asset_kind == "manifest" else metadata.archive_url
+        self._validate_asset_api_url(expected_url, asset_id=None)
+        return {
+            "Accept": GITHUB_ASSET_ACCEPT,
+            "X-GitHub-Api-Version": GITHUB_API_VERSION,
+            "User-Agent": GITHUB_USER_AGENT,
+            **self._asset_request_headers,
+        }
+
+    def _release_asset(self, assets: list[object], *, exact_name: str = "", suffix: str = "") -> dict[str, object]:
+        matches = [
+            asset
+            for asset in assets
+            if type(asset) is dict
+            and isinstance(asset.get("name"), str)
+            and ((exact_name and asset["name"] == exact_name) or (suffix and asset["name"].endswith(suffix)))
+        ]
+        if len(matches) != 1:
+            raise ReleaseProviderError("GitHub release assets are ambiguous or incomplete")
+        asset = matches[0]
+        asset_id = asset.get("id")
+        if type(asset_id) is not int or asset_id < 0:
+            raise ReleaseProviderError("GitHub release asset identifier is invalid")
+        if "state" in asset and asset["state"] != "uploaded":
+            raise ReleaseProviderError("GitHub release asset state is invalid")
+        api_url = self._validate_asset_api_url(asset.get("url"), asset_id=asset_id)
+        browser_url = asset.get("browser_download_url")
+        if browser_url is not None and not isinstance(browser_url, str):
+            raise ReleaseProviderError("GitHub release browser asset metadata is invalid")
+        return {
+            "id": asset_id,
+            "name": asset["name"],
+            "api_url": api_url,
+            "size_bytes": _optional_positive_int(asset.get("size"), "GitHub release asset size"),
+        }
+
+    def _validate_asset_api_url(self, value: object, *, asset_id: int | None) -> str:
+        url = _required_text(value, "GitHub release asset API URL", maximum=2048)
+        try:
+            parsed = urlparse(url)
+            port = parsed.port
+        except ValueError as exc:
+            raise ReleaseProviderError("GitHub release asset API URL is invalid") from exc
+        expected_prefix = f"/repos/{self.repository}/releases/assets/"
+        if (
+            parsed.scheme != self.asset_api_scheme
+            or (parsed.hostname or "").casefold() != self.asset_api_host
+            or (self.asset_api_scheme == "https" and port not in {None, 443})
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+            or not parsed.path.startswith(expected_prefix)
+        ):
+            raise ReleaseProviderError("GitHub release asset API URL is invalid")
+        raw_id = parsed.path[len(expected_prefix):]
+        if not raw_id.isascii() or not raw_id.isdecimal() or (asset_id is not None and raw_id != str(asset_id)):
+            raise ReleaseProviderError("GitHub release asset API URL is invalid")
+        return self.url_policy.validate(url)
 
 
 def _tag_to_version(value: object) -> str:
     tag = _required_text(value, "release tag", maximum=128)
     return tag[1:] if tag.startswith("v") else tag
-
-
-def _single_asset(assets: list[object], *, exact_name: str = "", suffix: str = "") -> dict[str, Any]:
-    matches = [
-        asset
-        for asset in assets
-        if type(asset) is dict
-        and isinstance(asset.get("name"), str)
-        and ((exact_name and asset["name"] == exact_name) or (suffix and asset["name"].endswith(suffix)))
-    ]
-    if len(matches) != 1:
-        raise ReleaseProviderError("GitHub release assets are ambiguous or incomplete")
-    asset = matches[0]
-    if not isinstance(asset.get("browser_download_url"), str):
-        raise ReleaseProviderError("GitHub release asset URL is invalid")
-    return asset

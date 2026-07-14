@@ -311,15 +311,17 @@ class OnlineUpdateService:
         self._provider_context["provider_outcome"] = "newer_eligible_release_selected"
         return max(candidates, key=lambda release: parse_version(release.version))
 
-    def _read_manifest(self, metadata: ReleaseMetadata) -> tuple[bytes, ReleaseManifest]:
-        data = self.http_client.read_bytes(
+    def _read_manifest(self, metadata: ReleaseMetadata) -> tuple[bytes, ReleaseManifest, int]:
+        data, redirect_count = self.http_client.read_bytes_with_redirect_count(
             metadata.manifest_url,
             maximum_bytes=MAX_MANIFEST_BYTES,
-            headers=self.provider.release_request_headers(metadata),
+            headers=self.provider.release_asset_request_headers(metadata, asset_kind="manifest"),
         )
+        if metadata.manifest_asset_size_bytes is not None and len(data) != metadata.manifest_asset_size_bytes:
+            raise ReleaseManifestError("release manifest does not match its GitHub asset metadata")
         manifest = parse_release_manifest_bytes(data)
         self._bind_manifest(metadata, manifest)
-        return data, manifest
+        return data, manifest, redirect_count
 
     def _provider_report_context(self, releases: list[ReleaseMetadata]) -> dict[str, object]:
         record_count = getattr(self.provider, "record_count", len(releases))
@@ -556,9 +558,11 @@ class OnlineUpdateService:
     def _bind_manifest(metadata: ReleaseMetadata, manifest: ReleaseManifest) -> None:
         if manifest.release_version != metadata.version:
             raise ReleaseManifestError("release manifest version does not bind provider metadata")
-        archive_name = unquote(Path(urlparse(metadata.archive_url).path).name)
+        archive_name = metadata.archive_asset_name or unquote(Path(urlparse(metadata.archive_url).path).name)
         if archive_name != manifest.archive.filename:
             raise ReleaseManifestError("release manifest archive does not bind provider metadata")
+        if metadata.archive_asset_size_bytes is not None and metadata.archive_asset_size_bytes != manifest.archive.size_bytes:
+            raise ReleaseManifestError("release archive does not match its GitHub asset metadata")
 
     @staticmethod
     def _compatible(current_version: str, manifest: ReleaseManifest) -> bool:
@@ -590,7 +594,7 @@ class OnlineUpdateService:
                     **self._provider_context,
                 )
                 return "blocked" if self._provider_context["provider_outcome"] == "all_provider_records_skipped" else "pass"
-            data, manifest = self._read_manifest(target)
+            data, manifest, manifest_redirect_count = self._read_manifest(target)
             compatible = self._compatible(current, manifest)
             job.transition(
                 "metadata_ready",
@@ -603,6 +607,7 @@ class OnlineUpdateService:
                 source_commit=manifest.source_commit,
                 source_tree=manifest.source_tree,
                 manifest_sha256=hashlib.sha256(data).hexdigest(),
+                manifest_redirect_count=manifest_redirect_count,
                 archive_sha256=manifest.archive.sha256,
                 archive_size_bytes=manifest.archive.size_bytes,
                 migration_required=manifest.compatibility.requires_database_migration,
@@ -648,13 +653,13 @@ class OnlineUpdateService:
             job.transition("downloading")
             download_dir = workspace_child(self.workspace, self.workspace / "downloads" / job.job_id)
             manifest_path = download_dir / "ops-release-manifest-v1.json"
-            asset_headers = self.provider.release_request_headers(target)
+            manifest_headers = self.provider.release_asset_request_headers(target, asset_kind="manifest")
             manifest_download = atomic_download(
                 self.http_client,
                 url=target.manifest_url,
                 destination=manifest_path,
                 maximum_bytes=MAX_MANIFEST_BYTES,
-                headers=asset_headers,
+                headers=manifest_headers,
             )
             manifest = parse_release_manifest_bytes(manifest_path.read_bytes())
             self._bind_manifest(target, manifest)
@@ -663,6 +668,7 @@ class OnlineUpdateService:
             if not self._compatible(current, manifest):
                 raise UpdatePlanBlockedError("release compatibility does not include the current version")
             archive_path = download_dir / manifest.archive.filename
+            archive_headers = self.provider.release_asset_request_headers(target, asset_kind="archive")
             archive_download = atomic_download(
                 self.http_client,
                 url=target.archive_url,
@@ -670,7 +676,7 @@ class OnlineUpdateService:
                 maximum_bytes=MAX_ARCHIVE_BYTES,
                 expected_size_bytes=manifest.archive.size_bytes,
                 expected_sha256=manifest.archive.sha256,
-                headers=asset_headers,
+                headers=archive_headers,
             )
             job.transition(
                 "verifying",
@@ -679,8 +685,10 @@ class OnlineUpdateService:
                 source_commit=manifest.source_commit,
                 source_tree=manifest.source_tree,
                 manifest_sha256=manifest_download.sha256,
+                manifest_redirect_count=manifest_download.redirect_count,
                 archive_sha256=archive_download.sha256,
                 archive_size_bytes=archive_download.size_bytes,
+                archive_redirect_count=archive_download.redirect_count,
                 manifest_path=workspace_relative(self.workspace, manifest_path),
                 archive_path=workspace_relative(self.workspace, archive_path),
                 release=_metadata_summary(target),

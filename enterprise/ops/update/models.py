@@ -20,6 +20,10 @@ class ReleaseMetadata:
     manifest_url: str
     archive_url: str
     release_notes: str
+    manifest_asset_name: str | None = None
+    archive_asset_name: str | None = None
+    manifest_asset_size_bytes: int | None = None
+    archive_asset_size_bytes: int | None = None
 
 
 @dataclass(frozen=True)

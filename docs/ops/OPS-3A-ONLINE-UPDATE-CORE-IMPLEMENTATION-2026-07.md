@@ -79,6 +79,19 @@ URL, report, JSONL event, or exception. Redirects crossing an origin remove
 headers before a signed asset request is made. The local fixture provider never
 uses that token.
 
+GitHub assets are downloaded from the trusted release metadata object's
+repository-bound `assets[].url` REST endpoint, never from
+`browser_download_url`. The endpoint must be the fixed repository's
+`https://api.github.com/repos/<owner>/<repo>/releases/assets/<nonnegative-id>`
+path; the asset must have the exact manifest name or be the sole ZIP, be
+`uploaded` when a state is supplied, and bind its supplied size to the release
+manifest. Metadata uses `application/vnd.github+json`; initial asset API
+requests use `application/octet-stream`, `X-GitHub-Api-Version: 2022-11-28`,
+and the fixed OPS user agent. On a same-origin redirect those necessary headers
+remain available; an origin change strips credentials before the allowlisted
+redirect target is requested. Reports may include a numeric redirect count but
+never a request URL, token, cookie, header, or signed URL.
+
 ## Commands
 
 Run the directly executed local runner with a pre-created workspace outside the
@@ -149,8 +162,10 @@ forged, mismatched, or mutated evidence produces a blocked plan.
 ## Validation
 
 `enterprise/tests/test_ops_3a_online_update.py` covers the provider, manifest,
-private-release initial asset authentication and cross-origin credential
-stripping, atomic download, Windows ZIP defences, staging revalidation,
+repository-bound GitHub Asset API paths, metadata/asset-specific request
+headers, private-release initial asset authentication, direct `200` and
+cross-origin `302` asset handling with credential stripping, atomic download,
+Windows ZIP defences, staging revalidation,
 source-tree and compatibility-bound plans, read-only SQLite-header/sidecar
 evidence, provider diagnostic outcomes, version downgrade blocking,
 backup/data-check proof validation, jobs, and direct-runner compatibility

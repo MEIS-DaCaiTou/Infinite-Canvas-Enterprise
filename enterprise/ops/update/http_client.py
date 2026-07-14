@@ -114,7 +114,7 @@ class SafeHttpClient:
         *,
         maximum_bytes: int,
         headers: Mapping[str, str] | None = None,
-    ) -> Iterator[tuple[Any, int | None]]:
+    ) -> Iterator[tuple[Any, int | None, int]]:
         """Yield one bounded response; callers must consume it with a context manager."""
         if type(maximum_bytes) is not int or maximum_bytes < 1:
             raise ValueError("maximum_bytes must be a positive integer")
@@ -135,9 +135,9 @@ class SafeHttpClient:
             raise ReleaseDownloadError("trusted release response exceeds its size limit")
 
         class _ResponseIterator:
-            def __iter__(self) -> Iterator[tuple[Any, int | None]]:
+            def __iter__(self) -> Iterator[tuple[Any, int | None, int]]:
                 try:
-                    yield response, expected_length
+                    yield response, expected_length, redirect_handler._redirect_count
                 finally:
                     response.close()
 
@@ -165,9 +165,25 @@ class SafeHttpClient:
         headers: Mapping[str, str] | None = None,
     ) -> bytes:
         """Read a bounded small document such as metadata or a manifest."""
+        data, _redirect_count = self.read_bytes_with_redirect_count(
+            url,
+            maximum_bytes=maximum_bytes,
+            headers=headers,
+        )
+        return data
+
+    def read_bytes_with_redirect_count(
+        self,
+        url: str,
+        *,
+        maximum_bytes: int,
+        headers: Mapping[str, str] | None = None,
+    ) -> tuple[bytes, int]:
+        """Read a bounded document and return only its redirect count as evidence."""
         chunks: list[bytes] = []
         received = 0
-        for response, _content_size in self.stream(url, maximum_bytes=maximum_bytes, headers=headers):
+        redirect_count = 0
+        for response, _content_size, redirect_count in self.stream(url, maximum_bytes=maximum_bytes, headers=headers):
             while True:
                 chunk = response.read(min(64 * 1024, maximum_bytes - received + 1))
                 if not chunk:
@@ -176,4 +192,4 @@ class SafeHttpClient:
                 if received > maximum_bytes:
                     raise ReleaseDownloadError("trusted release response exceeds its size limit")
                 chunks.append(chunk)
-        return b"".join(chunks)
+        return b"".join(chunks), redirect_count

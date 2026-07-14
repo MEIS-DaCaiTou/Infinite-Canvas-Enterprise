@@ -21,6 +21,7 @@ class DownloadResult:
     path: Path
     size_bytes: int
     sha256: str
+    redirect_count: int
 
 
 def atomic_download(
@@ -50,9 +51,10 @@ def atomic_download(
     temporary = destination.with_name(f".{destination.name}.{uuid.uuid4().hex}.part")
     digest = hashlib.sha256()
     received = 0
+    redirect_count = 0
     try:
         with temporary.open("xb") as handle:
-            for response, advertised_size in client.stream(url, maximum_bytes=maximum_bytes, headers=headers):
+            for response, advertised_size, redirect_count in client.stream(url, maximum_bytes=maximum_bytes, headers=headers):
                 if expected_size_bytes is not None and advertised_size is not None and advertised_size != expected_size_bytes:
                     raise ReleaseDownloadError("release response size does not match the manifest")
                 while True:
@@ -78,7 +80,12 @@ def atomic_download(
         except OSError as exc:
             raise ReleaseDownloadError("release download could not be atomically published") from exc
         temporary.unlink()
-        return DownloadResult(path=destination, size_bytes=received, sha256=actual_sha256)
+        return DownloadResult(
+            path=destination,
+            size_bytes=received,
+            sha256=actual_sha256,
+            redirect_count=redirect_count,
+        )
     except ReleaseDownloadError:
         raise
     except OSError as exc:

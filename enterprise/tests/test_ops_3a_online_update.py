@@ -299,7 +299,7 @@ def verify_http_and_download() -> None:
             expected_size_bytes=7,
             expected_sha256=sha256(b"payload"),
         )
-        assert result.size_bytes == 7 and result.path.exists()
+        assert result.size_bytes == 7 and result.redirect_count == 0 and result.path.exists()
         expect_error(ReleaseDownloadError, atomic_download, client, url=f"{server.base_url}/bytes", destination=result.path, maximum_bytes=32)
         expect_error(ReleaseDownloadError, client.read_bytes, f"{server.base_url}/redirect", maximum_bytes=32)
         expect_error(ReleaseDownloadError, client.read_bytes, f"{server.base_url}/oversized", maximum_bytes=32)
@@ -308,11 +308,12 @@ def verify_http_and_download() -> None:
         assert not (Path(raw) / "bad.zip").exists()
         assert not list(Path(raw).glob("*.part"))
         expect_error(ReleaseDownloadError, client.read_bytes, f"{server.base_url}/slow", maximum_bytes=32)
-        assert client.read_bytes(
+        redirected, redirect_count = client.read_bytes_with_redirect_count(
             f"{server.base_url}/redirect-cross-host",
             maximum_bytes=32,
             headers={"Authorization": "Bearer fixture", "Cookie": "fixture-cookie", "X-Trace": "preserved"},
-        ) == b"redirected"
+        )
+        assert redirected == b"redirected" and redirect_count == 1
         redirected_headers = FixtureHandler.request_headers["/redirect-target"]
         assert "authorization" not in redirected_headers and "cookie" not in redirected_headers
         assert redirected_headers["x-trace"] == "preserved"
@@ -333,11 +334,20 @@ class LoopbackGitHubProvider(GitHubReleasesProvider):
     """Test-only trusted provider shape with loopback asset endpoints."""
 
     url_policy = UrlPolicy(frozenset(), allow_loopback_http=True)
+    asset_api_scheme = "http"
+    asset_api_host = "127.0.0.1"
 
 
 def verify_github_release_filtering() -> None:
-    def asset(name: str) -> dict[str, str]:
-        return {"name": name, "browser_download_url": f"https://github.com/downloads/{name}"}
+    def asset(name: str, asset_id: int) -> dict[str, object]:
+        return {
+            "id": asset_id,
+            "name": name,
+            "url": f"https://api.github.com/repos/{DEFAULT_GITHUB_REPOSITORY}/releases/assets/{asset_id}",
+            "browser_download_url": f"https://github.com/downloads/{name}",
+            "state": "uploaded",
+            "size": 1,
+        }
 
     valid = {
         "id": 77,
@@ -345,25 +355,40 @@ def verify_github_release_filtering() -> None:
         "draft": False,
         "prerelease": False,
         "published_at": "2026-07-14T00:00:00Z",
-        "assets": [asset("ops-release-manifest-v1.json"), asset("release.zip")],
+        "assets": [asset("ops-release-manifest-v1.json", 701), asset("release.zip", 702)],
     }
     provider = GitHubReleasesProvider(
         http_client=StaticGitHubClient(
             [
                 {"id": 1, "tag_name": "v2025.13.1", "draft": True},
                 {"id": 2, "tag_name": "historical-tag", "draft": False, "prerelease": False, "assets": []},
-                {"id": 3, "tag_name": "v2026.07.8", "draft": False, "prerelease": False, "assets": [asset("release.zip")]},
+                {"id": 3, "tag_name": "v2026.07.8", "draft": False, "prerelease": False, "assets": [asset("release.zip", 703)]},
                 valid,
             ]
         )
     )
     releases = provider.list_releases()
     assert [release.release_id for release in releases] == ["77"]
+    assert releases[0].manifest_url.endswith("/releases/assets/701")
+    assert releases[0].archive_url.endswith("/releases/assets/702")
+    assert releases[0].manifest_asset_name == "ops-release-manifest-v1.json"
+    assert releases[0].archive_asset_size_bytes == 1
+    assert provider.release_asset_request_headers(releases[0], asset_kind="manifest")["Accept"] == "application/octet-stream"
+    assert provider.http_client.request_headers[0]["Accept"] == "application/vnd.github+json"
     assert provider.diagnostics == (
         "draft_release_skipped",
         "invalid_or_incomplete_release_skipped",
         "invalid_or_incomplete_release_skipped",
     )
+    for broken_url in (
+        "https://api.github.com/repos/other/repository/releases/assets/701",
+        f"https://api.github.com/repos/{DEFAULT_GITHUB_REPOSITORY}/releases/assets/799",
+    ):
+        malformed = dict(valid)
+        malformed["assets"] = [dict(valid["assets"][0], url=broken_url), valid["assets"][1]]
+        malformed_provider = GitHubReleasesProvider(http_client=StaticGitHubClient([malformed]))
+        assert malformed_provider.list_releases() == []
+        assert malformed_provider.diagnostics == ("invalid_or_incomplete_release_skipped",)
     with tempfile.TemporaryDirectory(prefix="ice-ops3a-provider-diagnostics-") as raw:
         root = Path(raw)
         app_root, workspace = root / "app", root / "workspace"
@@ -409,10 +434,12 @@ def verify_private_github_asset_authorization() -> None:
         )
         manifest = make_manifest(archive)
         archive_name = manifest["archive"]["filename"]
+        manifest_api_path = f"/repos/{DEFAULT_GITHUB_REPOSITORY}/releases/assets/9101"
+        archive_api_path = f"/repos/{DEFAULT_GITHUB_REPOSITORY}/releases/assets/9102"
         FixtureHandler.request_headers = {}
         FixtureHandler.responses = {
-            "/private-manifest": (200, {}, json.dumps(manifest, sort_keys=True).encode("utf-8")),
-            f"/private/{archive_name}": (302, {"Location": f"http://localhost:{server.server.server_port}/signed/{archive_name}"}, b""),
+            manifest_api_path: (200, {}, json.dumps(manifest, sort_keys=True).encode("utf-8")),
+            archive_api_path: (302, {"Location": f"http://localhost:{server.server.server_port}/signed/{archive_name}"}, b""),
             f"/signed/{archive_name}": (200, {}, archive),
             "/fixture-manifest": (200, {}, json.dumps(manifest, sort_keys=True).encode("utf-8")),
             f"/fixture/{archive_name}": (200, {}, archive),
@@ -425,8 +452,22 @@ def verify_private_github_asset_authorization() -> None:
                 "prerelease": False,
                 "published_at": "2026-07-14T00:00:00Z",
                 "assets": [
-                    {"name": "ops-release-manifest-v1.json", "browser_download_url": f"{server.base_url}/private-manifest"},
-                    {"name": archive_name, "browser_download_url": f"{server.base_url}/private/{archive_name}"},
+                    {
+                        "id": 9101,
+                        "name": "ops-release-manifest-v1.json",
+                        "url": f"{server.base_url}{manifest_api_path}",
+                        "browser_download_url": "https://github.com/browser-manifest-unused",
+                        "state": "uploaded",
+                        "size": len(json.dumps(manifest, sort_keys=True).encode("utf-8")),
+                    },
+                    {
+                        "id": 9102,
+                        "name": archive_name,
+                        "url": f"{server.base_url}{archive_api_path}",
+                        "browser_download_url": "https://github.com/browser-archive-unused",
+                        "state": "uploaded",
+                        "size": len(archive),
+                    },
                 ],
             }
         ]
@@ -439,13 +480,44 @@ def verify_private_github_asset_authorization() -> None:
             service = OnlineUpdateService(app_root=app_root, workspace=workspace, provider=provider)
             fetched = service.fetch_release()
             assert fetched["status"] == "pass"
+            assert fetched["manifest_redirect_count"] == 0
+            assert fetched["archive_redirect_count"] == 1
+            assert metadata_client.request_headers[0]["Accept"] == "application/vnd.github+json"
             assert metadata_client.request_headers[0]["Authorization"] == f"Bearer {token}"
-            assert FixtureHandler.request_headers["/private-manifest"]["authorization"] == f"Bearer {token}"
-            assert FixtureHandler.request_headers[f"/private/{archive_name}"]["authorization"] == f"Bearer {token}"
+            manifest_headers = FixtureHandler.request_headers[manifest_api_path]
+            archive_headers = FixtureHandler.request_headers[archive_api_path]
+            for headers in (manifest_headers, archive_headers):
+                assert headers["authorization"] == f"Bearer {token}"
+                assert headers["accept"] == "application/octet-stream"
+                assert headers["x-github-api-version"] == "2022-11-28"
+                assert headers["user-agent"] == "Infinite-Canvas-Enterprise-OPS-3A"
             signed_headers = FixtureHandler.request_headers[f"/signed/{archive_name}"]
             assert "authorization" not in signed_headers and "cookie" not in signed_headers
             serialized = json.dumps(fetched) + (workspace / "jobs.jsonl").read_text(encoding="utf-8")
             assert token not in serialized
+            assert (workspace / fetched["manifest_path"]).read_bytes() == json.dumps(manifest, sort_keys=True).encode("utf-8")
+
+            # The trusted API endpoint may not redirect to an unapproved host.
+            FixtureHandler.responses[archive_api_path] = (302, {"Location": "http://example.invalid/blocked"}, b"")
+            blocked_workspace = root / "blocked-workspace"
+            blocked_workspace.mkdir()
+            blocked = OnlineUpdateService(app_root=app_root, workspace=blocked_workspace, provider=provider).fetch_release()
+            assert blocked["status"] == "fail"
+            assert "example.invalid" not in json.dumps(blocked)
+
+            # Asset metadata size is independent evidence and must bind the
+            # archive size declared by the signed manifest.
+            bad_size_payload = json.loads(json.dumps(metadata_payload))
+            bad_size_payload[0]["assets"][1]["size"] = len(archive) + 1
+            FixtureHandler.responses[archive_api_path] = (200, {}, archive)
+            size_workspace = root / "size-workspace"
+            size_workspace.mkdir()
+            size_checked = OnlineUpdateService(
+                app_root=app_root,
+                workspace=size_workspace,
+                provider=LoopbackGitHubProvider(http_client=StaticGitHubClient(bad_size_payload)),
+            ).fetch_release()
+            assert size_checked["status"] == "fail"
 
             fixture = root / "local-releases.json"
             local_record = fixture_record(server)
@@ -463,7 +535,9 @@ def verify_private_github_asset_authorization() -> None:
             local_check = local_service.check_update()
             assert local_check["status"] == "pass", local_check
             assert "authorization" not in FixtureHandler.request_headers["/fixture-manifest"]
-            assert local_service.provider.release_request_headers(local_service.provider.list_releases()[0]) == {}
+            assert local_service.provider.release_asset_request_headers(
+                local_service.provider.list_releases()[0], asset_kind="manifest"
+            ) == {}
         finally:
             if previous_token is None:
                 os.environ.pop("GITHUB_TOKEN", None)
