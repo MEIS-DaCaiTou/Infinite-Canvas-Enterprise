@@ -218,6 +218,7 @@ def verify_http_and_download() -> None:
         expect_error(ReleaseDownloadError, client.read_bytes, f"{server.base_url}/redirect", maximum_bytes=32)
         expect_error(ReleaseDownloadError, client.read_bytes, f"{server.base_url}/oversized", maximum_bytes=32)
         expect_error(ReleaseDownloadError, atomic_download, client, url=f"{server.base_url}/bytes", destination=Path(raw) / "bad.zip", maximum_bytes=32, expected_sha256="0" * 64)
+        expect_error(ReleaseDownloadError, atomic_download, client, url=f"{server.base_url}/bytes", destination=Path(raw) / "bad-size.zip", maximum_bytes=32, expected_size_bytes=8)
         assert not (Path(raw) / "bad.zip").exists()
         assert not list(Path(raw).glob("*.part"))
         expect_error(ReleaseDownloadError, client.read_bytes, f"{server.base_url}/slow", maximum_bytes=32)
@@ -233,12 +234,23 @@ def verify_zip_defences() -> None:
             expect_error(ReleaseStagingError, inspect_zip_archive, root / f"unsafe-{index}.zip", manifest)
         duplicate = make_archive(root / "duplicate.zip", {f"{ROOT_PREFIX}/Foo": b"a", f"{ROOT_PREFIX}/foo": b"b"})
         expect_error(ReleaseStagingError, inspect_zip_archive, root / "duplicate.zip", parse_release_manifest(make_manifest(duplicate, file_count=2)))
+        directory_root = root / "directory-root.zip"
+        with zipfile.ZipFile(directory_root, "w") as archive_file:
+            archive_file.writestr(f"{ROOT_PREFIX}/", b"")
+            archive_file.writestr(f"{ROOT_PREFIX}/VERSION", b"2026.07.7\n")
+        assert len(inspect_zip_archive(directory_root, parse_release_manifest(make_manifest(directory_root.read_bytes(), file_count=1)))) == 1
         symlink = root / "symlink.zip"
         with zipfile.ZipFile(symlink, "w") as archive_file:
             info = zipfile.ZipInfo(f"{ROOT_PREFIX}/link")
             info.external_attr = (stat.S_IFLNK | 0o777) << 16
             archive_file.writestr(info, b"target")
         expect_error(ReleaseStagingError, inspect_zip_archive, symlink, parse_release_manifest(make_manifest(symlink.read_bytes(), file_count=1)))
+        reparse = root / "reparse.zip"
+        with zipfile.ZipFile(reparse, "w") as archive_file:
+            info = zipfile.ZipInfo(f"{ROOT_PREFIX}/junction")
+            info.external_attr = 0x0400
+            archive_file.writestr(info, b"x")
+        expect_error(ReleaseStagingError, inspect_zip_archive, reparse, parse_release_manifest(make_manifest(reparse.read_bytes(), file_count=1)))
         bomb = make_archive(root / "bomb.zip", {f"{ROOT_PREFIX}/large.txt": b"0" * 4096})
         expect_error(ReleaseStagingError, inspect_zip_archive, root / "bomb.zip", parse_release_manifest(make_manifest(bomb, file_count=1)), max_compression_ratio=1)
 
@@ -270,6 +282,7 @@ def verify_service_and_cli() -> None:
         write_json(fixture, {"releases": [draft, prerelease, normal]})
         provider = LocalFixtureProvider(fixture)
         service = OnlineUpdateService(app_root=app_root, workspace=workspace, provider=provider)
+        expect_error(OnlineUpdateValidationError, OnlineUpdateService, app_root=app_root, workspace=app_root / "invalid-workspace", provider=provider)
         check = service.check_update()
         assert check["status"] == "pass" and check["target_version"] == "2026.07.7"
         assert check["state"] == "metadata_ready" and check["finished_at"]
@@ -282,7 +295,7 @@ def verify_service_and_cli() -> None:
         backup = root / "backup-manifest.json"
         data_check = root / "data-check.json"
         write_json(backup, {"status": "pass", "dry_run": False, "sqlite_backup_status": "success"})
-        write_json(data_check, {"kind": "data-check-report", "status": "warn", "warnings": ["sample"]})
+        write_json(data_check, {"kind": "data-check-report", "status": "warn", "warnings": ["do-not-persist"]})
         plan = service.prepare_online_update(
             stage_report_path=workspace / staged["report_paths"][0],
             backup_manifest_path=backup,
@@ -291,6 +304,7 @@ def verify_service_and_cli() -> None:
         )
         assert plan["status"] == "pass" and plan["state"] == "planned"
         assert all(item.startswith("No ") for item in plan["not_executed"])
+        assert "do-not-persist" not in json.dumps(plan)
         blocked = service.prepare_online_update(
             stage_report_path=workspace / staged["report_paths"][0],
             backup_manifest_path=None,
@@ -311,15 +325,58 @@ def verify_service_and_cli() -> None:
             str(fixture),
         )
         assert cli_check["status"] == "pass" and cli_check["target_version"] == "2026.07.7"
+        cli_fetch = run_cli(
+            app_root,
+            workspace,
+            "fetch-release",
+            "--provider",
+            "local-fixture",
+            "--fixture",
+            str(fixture),
+        )
+        assert cli_fetch["status"] == "pass"
+        cli_stage = run_cli(
+            app_root,
+            workspace,
+            "stage-release",
+            "--manifest",
+            cli_fetch["manifest_path"],
+            "--archive",
+            cli_fetch["archive_path"],
+        )
+        assert cli_stage["status"] == "pass" and cli_stage["state"] == "staged"
+        cli_plan = run_cli(
+            app_root,
+            workspace,
+            "prepare-online-update",
+            "--stage-report",
+            str(workspace / cli_stage["report_paths"][0]),
+            "--backup-manifest",
+            str(backup),
+            "--data-check-report",
+            str(data_check),
+        )
+        assert cli_plan["status"] == "pass" and cli_plan["state"] == "planned"
         assert not (app_root / "ops_artifacts").exists()
+
+        runtime_archive = make_archive(root / "runtime-release.zip", {f"{ROOT_PREFIX}/data/enterprise.db": b"runtime"})
+        runtime_manifest = make_manifest(runtime_archive, file_count=1)
+        runtime_manifest_path = workspace / "runtime-manifest.json"
+        runtime_archive_path = workspace / runtime_manifest["archive"]["filename"]
+        write_json(runtime_manifest_path, runtime_manifest)
+        runtime_archive_path.write_bytes(runtime_archive)
+        staging_before = sorted((workspace / "staging").iterdir())
+        runtime_stage = service.stage_release(manifest_path=runtime_manifest_path, archive_path=runtime_archive_path)
+        assert runtime_stage["status"] == "fail"
+        assert sorted((workspace / "staging").iterdir()) == staging_before
 
 
 def verify_job_redaction() -> None:
     with tempfile.TemporaryDirectory(prefix="ice-ops3a-job-") as raw:
         workspace = Path(raw)
         job = UpdateJob("check-update", workspace)
-        job.transition("checking", token="nope")
-        job.transition("metadata_ready", cookie="nope")
+        job.transition("checking", **{"token": "nope"})
+        job.transition("metadata_ready", **{"cookie": "nope"})
         job.complete()
         report = job.write_report(status="pass")
         job.append_log("tested", authorization="nope", nested={"api_key": "nope"})

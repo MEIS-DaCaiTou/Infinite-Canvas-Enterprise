@@ -100,12 +100,24 @@ OPS-2B 文档见：`docs/ops/OPS-2B-WINDOWS-OPS-WRAPPER-2026-07.md`。
 
 ## 5. OPS-3 边界
 
+### OPS-3A Online Update Core
+
+OPS-3A repository implementation is in Draft PR #77. It adds a fixed trusted
+release-provider boundary, strict manifest validation, bounded download, safe
+staging, structured local preparation jobs, and a non-executing online-update
+plan. Its implementation tests use local workspaces only.
+
+OPS-3A does not execute a production check, download, staging operation, or
+upgrade. It does not implement `apply-upgrade`, rollback, restore, service
+lifecycle control, database migration apply, a web OPS API, or an Update Center
+UI. Those actions remain separately gated follow-up work.
+
+Implementation details: `docs/ops/OPS-3A-ONLINE-UPDATE-CORE-IMPLEMENTATION-2026-07.md`.
+
 OPS-3 规划：
 
-- Update Center 页面接入 OPS job。
-- 后端白名单 OPS API。
-- apply-upgrade。
-- rollback。
+- OPS-3B: controlled `apply-upgrade` and rollback design after separate review.
+- OPS-3C: Update Center page and allowlisted backend OPS API.
 - 维护窗口确认。
 - 二次确认。
 - audit log。
