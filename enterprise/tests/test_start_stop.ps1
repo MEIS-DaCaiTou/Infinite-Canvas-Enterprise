@@ -1,21 +1,11 @@
 param(
-    [string]$Root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path,
-    [switch]$StopExisting
+    [string]$Root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 )
 
 $ErrorActionPreference = "Stop"
 
 function Get-EnterpriseListeners {
     Get-NetTCPConnection -LocalPort 8000,3001 -State Listen -ErrorAction SilentlyContinue
-}
-
-function Stop-EnterpriseListeners {
-    $listeners = Get-EnterpriseListeners
-    foreach ($processId in ($listeners | Select-Object -ExpandProperty OwningProcess -Unique)) {
-        Write-Host "Stopping existing listener PID $processId"
-        Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
-    }
-    Start-Sleep -Seconds 2
 }
 
 function Wait-Health {
@@ -37,14 +27,7 @@ function Wait-Health {
 Set-Location $Root
 
 if (Get-EnterpriseListeners) {
-    if (-not $StopExisting) {
-        throw "Ports 8000/3001 are already in use. Re-run with -StopExisting to verify a clean lifecycle."
-    }
-    Stop-EnterpriseListeners
-}
-
-if (Get-EnterpriseListeners) {
-    throw "Ports 8000/3001 are still in use after stop attempt."
+    throw "Ports 8000/3001 are already in use. This test refuses to stop an existing process."
 }
 
 $python = Join-Path $Root "python\python.exe"
@@ -56,7 +39,7 @@ Remove-Item $outLog,$errLog -ErrorAction SilentlyContinue
 
 Write-Host "Starting launcher..."
 $launcher = Start-Process -FilePath $python `
-    -ArgumentList @((Join-Path $Root "enterprise\launcher.py"), "--no-browser") `
+    -ArgumentList @("-m", "enterprise.runtime.cli", "start", "--app-root", $Root) `
     -WorkingDirectory $Root `
     -RedirectStandardOutput $outLog `
     -RedirectStandardError $errLog `
@@ -74,10 +57,8 @@ try {
     if (-not ($ports | Where-Object { $_.LocalPort -eq 3001 })) { throw "Port 3001 is not listening." }
     Write-Host "[PASS] Ports 8000 and 3001 are listening."
 } finally {
-    if ($launcher -and -not $launcher.HasExited) {
-        Write-Host "Stopping launcher PID $($launcher.Id)..."
-        Stop-Process -Id $launcher.Id -Force -ErrorAction SilentlyContinue
-    }
+    Write-Host "Requesting controlled runtime stop..."
+    & $python -m enterprise.runtime.cli stop --app-root $Root
 }
 
 Start-Sleep -Seconds 5

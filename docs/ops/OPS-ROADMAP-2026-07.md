@@ -128,11 +128,22 @@ OPS-3 才开始接入网页 Update Center。网页端只能调用白名单 OPS A
 
 OPS-3 后置于 OPS-2A / OPS-2B 生产侧 dry-run 验证和必要的 OPS-L1 / OPS-D1 设计确认。
 
+### STAB-1 / OPS-L1 Supervisor Foundation
+
+STAB-1 repository implementation is in Draft PR #78.  It adds a local-only,
+role-isolated `3001`/`8000` supervisor, persistent redacted logs, atomic
+runtime state, fixed lifecycle CLI and Windows Job Object ownership.  Its
+tests use temporary fixture processes and random local ports only.  It does not
+install a Windows Service, execute a production lifecycle command, implement
+remote process control, or add OPS-3B update apply/rollback capability.
+
+Implementation details: `docs/ops/STAB-1-SUPERVISOR-LOGGING-IMPLEMENTATION-2026-07.md`.
+
 ## 6. OPS-L 边界
 
 | 阶段 | 目标 |
 | --- | --- |
-| OPS-L1 | 本地日志：access / app / error / security / ops job JSONL。 |
+| OPS-L1 | 本地日志：access / app / error / security / ops job JSONL；STAB-1 Draft PR #78 增加 runtime supervisor/child/health/crash 持久日志基础。 |
 | OPS-L2 | 远程日志推送，必须脱敏。 |
 | OPS-L3 | 后台日志查询。 |
 | OPS-L4 | 集中日志平台适配。 |
