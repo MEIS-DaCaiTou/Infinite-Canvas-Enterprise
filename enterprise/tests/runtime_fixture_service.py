@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import signal
+import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -19,8 +21,6 @@ class Handler(BaseHTTPRequestHandler):
         if self.role == "upstream" and self.path == "/api/app-info":
             payload = {"version": "fixture"}
         elif self.role == "gateway" and self.path == "/enterprise/health":
-            from pathlib import Path
-
             upstream_down = bool(self.upstream_down_file) and Path(self.upstream_down_file).exists()
             payload = {
                 "status": "degraded" if upstream_down else "ok",
@@ -53,6 +53,9 @@ def main() -> int:
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--emit-secret", action="store_true")
     parser.add_argument("--upstream-down-file", default="")
+    parser.add_argument("--runtime-stop-file", required=True)
+    parser.add_argument("--shutdown-marker", required=True)
+    parser.add_argument("--ignore-runtime-stop", action="store_true")
     args = parser.parse_args()
     Handler.role = args.role
     Handler.upstream_down_file = args.upstream_down_file
@@ -61,17 +64,23 @@ def main() -> int:
         fixture_token = "fixture" + "-marker"
         print("Authorization: " + "Bearer " + fixture_token, flush=True)
 
-    def stop(_signum: int, _frame: object) -> None:
-        # ``shutdown()`` from the serving main thread deadlocks.  The fixture
-        # only needs to prove that the supervisor can request a clean child
-        # exit, so leave ``serve_forever`` through its normal process boundary.
-        raise SystemExit(0)
+    stop_file = Path(args.runtime_stop_file)
+    marker = Path(args.shutdown_marker)
 
-    signal.signal(signal.SIGTERM, stop)
-    if hasattr(signal, "SIGBREAK"):
-        signal.signal(signal.SIGBREAK, stop)
+    def watch_stop() -> None:
+        while not stop_file.is_file():
+            time.sleep(0.05)
+        if args.ignore_runtime_stop:
+            return
+        server.shutdown()
+
+    watcher = threading.Thread(target=watch_stop, daemon=True)
+    watcher.start()
     server.serve_forever(poll_interval=0.1)
     server.server_close()
+    if stop_file.is_file():
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text("graceful_shutdown\n", encoding="utf-8")
     return 0
 
 

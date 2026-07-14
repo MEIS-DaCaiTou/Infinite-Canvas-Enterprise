@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import signal
 import subprocess
 import sys
 import time
@@ -47,6 +46,8 @@ class ManagedProcess:
     stderr_pump: StreamPump | None = None
     graceful_stop_requested: bool = False
     forced_stop: bool = False
+    shutdown_file: Path | None = None
+    shutdown_marker: Path | None = None
     _exit_callback: Callable[[int], None] | None = field(default=None, repr=False)
 
     def poll(self) -> int | None:
@@ -64,22 +65,41 @@ def bundled_python(app_root: Path) -> str:
     return str(candidate.resolve()) if candidate.is_file() else str(Path(sys.executable).resolve())
 
 
-def default_commands(app_root: Path, *, upstream_port: int, gateway_port: int, python_executable: str | None = None) -> dict[str, CommandSpec]:
+def default_commands(
+    app_root: Path,
+    *,
+    upstream_port: int,
+    gateway_port: int,
+    python_executable: str | None = None,
+    fixture_child_wrapper: bool = False,
+) -> dict[str, CommandSpec]:
     executable = python_executable or bundled_python(app_root)
+    if fixture_child_wrapper:
+        fixture = app_root / "enterprise" / "tests" / "runtime_fixture_service.py"
+        return {
+            role: CommandSpec(
+                role=role,
+                arguments=(executable, str(fixture), "--role", role, "--port", str(port)),
+                host="127.0.0.1",
+                port=port,
+            )
+            for role, port in (("upstream", upstream_port), ("gateway", gateway_port))
+        }
     return {
         "upstream": CommandSpec(
             role="upstream",
             arguments=(
                 executable,
                 "-m",
-                "uvicorn",
-                "main:app",
+                "enterprise.runtime.child",
+                "--role",
+                "upstream",
+                "--app-root",
+                str(app_root),
                 "--host",
                 "127.0.0.1",
                 "--port",
                 str(upstream_port),
-                "--log-level",
-                "warning",
             ),
             host="127.0.0.1",
             port=upstream_port,
@@ -89,14 +109,15 @@ def default_commands(app_root: Path, *, upstream_port: int, gateway_port: int, p
             arguments=(
                 executable,
                 "-m",
-                "uvicorn",
-                "enterprise.gateway:app",
+                "enterprise.runtime.child",
+                "--role",
+                "gateway",
+                "--app-root",
+                str(app_root),
                 "--host",
                 "0.0.0.0",
                 "--port",
                 str(gateway_port),
-                "--log-level",
-                "warning",
             ),
             host="127.0.0.1",
             port=gateway_port,
@@ -104,14 +125,29 @@ def default_commands(app_root: Path, *, upstream_port: int, gateway_port: int, p
     }
 
 
-def start_process(spec: CommandSpec, *, app_root: Path, logs: RuntimeLogs, foreground: bool) -> ManagedProcess:
+def start_process(
+    spec: CommandSpec,
+    *,
+    app_root: Path,
+    logs: RuntimeLogs,
+    foreground: bool,
+    shutdown_file: Path,
+    shutdown_marker: Path,
+) -> ManagedProcess:
     stdout_log, stderr_log = logs.stream_pumps(spec.role)
+    shutdown_file.parent.mkdir(parents=True, exist_ok=True)
+    for path in (shutdown_file, shutdown_marker):
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+    arguments = [*spec.arguments, "--runtime-stop-file", str(shutdown_file), "--shutdown-marker", str(shutdown_marker)]
     flags = 0
     if os.name == "nt":
         flags = subprocess.CREATE_NEW_PROCESS_GROUP
     try:
         process = subprocess.Popen(
-            list(spec.arguments),
+            arguments,
             cwd=str(app_root),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
@@ -135,6 +171,8 @@ def start_process(spec: CommandSpec, *, app_root: Path, logs: RuntimeLogs, foreg
         identity=identity,
         parent_pid=os.getpid(),
         started_monotonic=time.monotonic(),
+        shutdown_file=shutdown_file,
+        shutdown_marker=shutdown_marker,
     )
     if process.stdout is not None:
         managed.stdout_pump = StreamPump(process.stdout, stdout_log, mirror=foreground)
@@ -157,28 +195,32 @@ def owned_process_is_current(managed: ManagedProcess) -> bool:
 
 
 def graceful_stop(managed: ManagedProcess, *, timeout_seconds: float = 10.0) -> str:
-    """Stop only the process we started and whose identity is still unchanged."""
+    """Request a wrapper-owned Uvicorn shutdown without signaling a console."""
     if managed.poll() is not None:
         managed.close_pumps()
         return "already_exited"
     if not owned_process_is_current(managed):
         raise ProcessControlError("runtime process ownership could not be verified")
+    if managed.shutdown_file is None:
+        raise ProcessControlError("runtime child has no graceful shutdown channel")
     managed.graceful_stop_requested = True
     try:
-        if os.name == "nt":
-            # Do not broadcast CTRL_BREAK_EVENT from a GUI/PowerShell-hosted
-            # service process: Windows can deliver it to the host console as
-            # well as an intended child group.  Popen.terminate targets the
-            # verified child PID only; the Job Object remains the bounded
-            # fallback for an owned tree that does not exit.
-            managed.process.terminate()
-        else:
-            managed.process.send_signal(signal.SIGTERM)
+        with managed.shutdown_file.open("x", encoding="utf-8", newline="") as handle:
+            handle.write("stop\n")
+            handle.flush()
+            os.fsync(handle.fileno())
         managed.process.wait(timeout=timeout_seconds)
         managed.close_pumps()
-        return "graceful_stop"
+        return "graceful_shutdown"
     except subprocess.TimeoutExpired:
-        return "timeout"
+        return "graceful_timeout"
+    except FileExistsError:
+        try:
+            managed.process.wait(timeout=timeout_seconds)
+            managed.close_pumps()
+            return "graceful_shutdown"
+        except subprocess.TimeoutExpired:
+            return "graceful_timeout"
 
 
 def force_stop(managed: ManagedProcess, *, timeout_seconds: float = 5.0) -> str:

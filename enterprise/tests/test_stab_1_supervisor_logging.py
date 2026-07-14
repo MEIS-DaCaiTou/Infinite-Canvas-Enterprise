@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 import argparse
+import contextlib
+import io
 import os
 import socket
 import subprocess
@@ -16,20 +18,23 @@ import sys
 import tempfile
 import threading
 import time
+import ctypes
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from enterprise.runtime.control import inspect_runtime, validate_runtime_root
+from enterprise.runtime.control import RuntimeControlError, RuntimeController, inspect_runtime, validate_runtime_root
 from enterprise.runtime.health import tcp_check
-from enterprise.runtime.logging import RotatingTextLog
-from enterprise.runtime.ownership import pid_exists
+from enterprise.runtime.logging import RotatingTextLog, RuntimeLogs, StreamPump, redact_text
+from enterprise.runtime.ownership import ProcessIdentity, pid_exists, port_identities, process_identity
 from enterprise.runtime.process import CommandSpec, exit_code_snapshot
 from enterprise.runtime.state import RuntimeStateStore, initial_state
 from enterprise.runtime.supervisor import RuntimeSupervisor, SupervisorConfig
+import enterprise.runtime.ownership as runtime_ownership
 
 
 def free_port() -> int:
@@ -38,7 +43,14 @@ def free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-def fixture_spec(role: str, port: int, *, emit_secret: bool = False, upstream_down_file: Path | None = None) -> CommandSpec:
+def fixture_spec(
+    role: str,
+    port: int,
+    *,
+    emit_secret: bool = False,
+    upstream_down_file: Path | None = None,
+    ignore_runtime_stop: bool = False,
+) -> CommandSpec:
     arguments = [
         sys.executable,
         str(ROOT / "enterprise" / "tests" / "runtime_fixture_service.py"),
@@ -51,10 +63,18 @@ def fixture_spec(role: str, port: int, *, emit_secret: bool = False, upstream_do
         arguments.append("--emit-secret")
     if upstream_down_file is not None:
         arguments.extend(("--upstream-down-file", str(upstream_down_file)))
+    if ignore_runtime_stop:
+        arguments.append("--ignore-runtime-stop")
     return CommandSpec(role=role, arguments=tuple(arguments), host="127.0.0.1", port=port)
 
 
-def build_supervisor(runtime_root: Path, *, max_restarts: int = 5, emit_secret: bool = False) -> RuntimeSupervisor:
+def build_supervisor(
+    runtime_root: Path,
+    *,
+    max_restarts: int = 5,
+    emit_secret: bool = False,
+    ignore_upstream_stop: bool = False,
+) -> RuntimeSupervisor:
     upstream_port = free_port()
     gateway_port = free_port()
     upstream_down_file = runtime_root.parent / "fixture-upstream-down"
@@ -73,7 +93,12 @@ def build_supervisor(runtime_root: Path, *, max_restarts: int = 5, emit_secret: 
         log_max_bytes=64 * 1024,
         log_backups=2,
         command_specs={
-            "upstream": fixture_spec("upstream", upstream_port, emit_secret=emit_secret),
+            "upstream": fixture_spec(
+                "upstream",
+                upstream_port,
+                emit_secret=emit_secret,
+                ignore_runtime_stop=ignore_upstream_stop,
+            ),
             "gateway": fixture_spec("gateway", gateway_port, upstream_down_file=upstream_down_file),
         },
     )
@@ -83,6 +108,10 @@ def build_supervisor(runtime_root: Path, *, max_restarts: int = 5, emit_secret: 
 
 
 def start_supervisor(supervisor: RuntimeSupervisor) -> threading.Thread:
+    if supervisor.store.read_lock() is None:
+        owner = process_identity(os.getpid())
+        assert owner is not None
+        assert supervisor.store.reserve_lock(instance_id=supervisor.instance_id, owner=owner)
     thread = threading.Thread(target=supervisor.run, daemon=True)
     thread.start()
     return thread
@@ -98,9 +127,185 @@ def wait_for(predicate, *, seconds: float = 15.0, message: str = "condition time
 
 
 def stop_supervisor(supervisor: RuntimeSupervisor, thread: threading.Thread) -> None:
-    supervisor.store.submit_command(command="stop", supervisor_instance_id=supervisor.instance_id)
+    supervisor.store.submit_command(
+        command="stop",
+        supervisor_instance_id=supervisor.instance_id,
+        expected_state_generation=supervisor.state["state_generation"],
+    )
     thread.join(timeout=15)
     assert not thread.is_alive(), "supervisor did not stop"
+
+
+def run_cli(command: str, *, runtime_root: Path, upstream_port: int, gateway_port: int, timeout: float = 25.0) -> dict[str, object]:
+    output_path = runtime_root.parent / f"cli-{command}-{time.time_ns()}.jsonl"
+    arguments = [
+        sys.executable,
+        "-m",
+        "enterprise.runtime.cli",
+        command,
+        "--app-root",
+        str(ROOT),
+        "--runtime-root",
+        str(runtime_root),
+        "--upstream-port",
+        str(upstream_port),
+        "--gateway-port",
+        str(gateway_port),
+        "--fixture-child-wrapper",
+    ]
+    with output_path.open("x", encoding="utf-8", newline="") as handle:
+        result = subprocess.run(
+            arguments,
+            cwd=ROOT,
+            text=True,
+            stdout=handle,
+            stderr=handle,
+            timeout=timeout,
+            shell=False,
+        )
+    output = output_path.read_text(encoding="utf-8", errors="replace")
+    output_path.unlink()
+    assert result.returncode == 0, f"runtime CLI {command} failed"
+    payload = json.loads(next(line for line in reversed(output.splitlines()) if line.startswith("{")))
+    assert type(payload) is dict
+    return payload
+
+
+def _write_lifecycle_report(path: Path, payload: dict[str, object]) -> None:
+    temporary = path.with_name(f"lifecycle-{time.time_ns()}.tmp")
+    encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    with temporary.open("x", encoding="utf-8", newline="") as handle:
+        handle.write(encoded)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary, path)
+
+
+def _worker_flags() -> int:
+    if os.name != "nt":
+        return 0
+    return subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS | subprocess.CREATE_BREAKAWAY_FROM_JOB
+
+
+def _run_cli_lifecycle_stop_worker(
+    *,
+    runtime_root: Path,
+    upstream_port: int,
+    gateway_port: int,
+    report_path: Path,
+    phase_worker_identity: ProcessIdentity,
+) -> int:
+    try:
+        wait_for(
+            lambda: not runtime_ownership.same_process(
+                phase_worker_identity, process_identity(phase_worker_identity.pid)
+            ),
+            seconds=20,
+            message="CLI lifecycle phase worker remained alive",
+        )
+        stopped = run_cli("stop", runtime_root=runtime_root, upstream_port=upstream_port, gateway_port=gateway_port, timeout=45)
+        ack = stopped.get("ack")
+        if stopped.get("result") != "stopped" or type(ack) is not dict:
+            raise AssertionError("controlled stop did not return a completion acknowledgement")
+        required = {
+            "result": "stopped",
+            "owned_pid_release_complete": True,
+            "supervisor_exit_confirmed": True,
+            "upstream_port_release": "released",
+            "gateway_port_release": "released",
+            "foreign_listener_detected": False,
+        }
+        if any(ack.get(key) != value for key, value in required.items()):
+            raise AssertionError("controlled stop acknowledgement is incomplete")
+        if not all(item.get("graceful_marker_present") is True for item in ack.get("child_stop_results", [])):
+            raise AssertionError("graceful child shutdown markers are missing")
+        if tcp_check("127.0.0.1", upstream_port).ok or tcp_check("127.0.0.1", gateway_port).ok:
+            raise AssertionError("controlled stop left a fixture listener")
+        if (runtime_root / "runtime-supervisor.lock").exists():
+            raise AssertionError("controlled stop left an instance lock")
+        if list((runtime_root / "control").glob("cmd-*.json")) or list((runtime_root / "control").glob("ack-*.json")):
+            raise AssertionError("controlled stop left a control request or acknowledgement")
+        _write_lifecycle_report(report_path, {"result": "pass"})
+        return 0
+    except Exception as exc:
+        _write_lifecycle_report(report_path, {"result": "fail", "phase": type(exc).__name__})
+        return 2
+
+
+def _run_cli_lifecycle_phase_worker(
+    *, runtime_root: Path, upstream_port: int, gateway_port: int, report_path: Path
+) -> int:
+    phase = "start"
+    try:
+        started = run_cli("start", runtime_root=runtime_root, upstream_port=upstream_port, gateway_port=gateway_port)
+        if started.get("result") != "started":
+            raise AssertionError("short-lived start CLI did not report started")
+        store = RuntimeStateStore(runtime_root)
+        state = store.read_state()
+        if state is None or state.get("state") != "healthy":
+            raise AssertionError("service host did not survive short-lived start CLI")
+        upstream_before = state["upstream"]["pid"]
+        gateway_before = state["gateway"]["pid"]
+        if not isinstance(upstream_before, int) or not isinstance(gateway_before, int):
+            raise AssertionError("healthy roles have no PID")
+        phase = "status"
+        if run_cli("status", runtime_root=runtime_root, upstream_port=upstream_port, gateway_port=gateway_port).get("state") != "healthy":
+            raise AssertionError("status was not healthy")
+        phase = "health"
+        if run_cli("health", runtime_root=runtime_root, upstream_port=upstream_port, gateway_port=gateway_port).get("state") != "healthy":
+            raise AssertionError("health was not healthy")
+        phase = "restart"
+        restarted = run_cli("restart", runtime_root=runtime_root, upstream_port=upstream_port, gateway_port=gateway_port, timeout=45)
+        ack = restarted.get("ack")
+        if restarted.get("result") != "restarted" or type(ack) is not dict:
+            raise AssertionError("restart did not return a completion acknowledgement")
+        if ack.get("upstream_before_pid") != upstream_before or ack.get("gateway_before_pid") != gateway_before:
+            raise AssertionError("restart acknowledgement has incorrect prior PID generations")
+        if (
+            ack.get("upstream_after_pid") == upstream_before
+            and ack.get("upstream_after_process_created_at") == ack.get("upstream_before_process_created_at")
+        ) or (
+            ack.get("gateway_after_pid") == gateway_before
+            and ack.get("gateway_after_process_created_at") == ack.get("gateway_before_process_created_at")
+        ):
+            raise AssertionError("restart did not replace both roles")
+        phase = "stop_worker"
+        identity = process_identity(os.getpid())
+        if identity is None:
+            raise AssertionError("lifecycle worker identity is unavailable")
+        arguments = [
+            sys.executable,
+            str(Path(__file__).resolve()),
+            "--cli-stop-worker",
+            "--runtime-root",
+            str(runtime_root),
+            "--upstream-port",
+            str(upstream_port),
+            "--gateway-port",
+            str(gateway_port),
+            "--report-path",
+            str(report_path),
+            "--phase-worker-pid",
+            str(identity.pid),
+            "--phase-worker-created-at",
+            str(identity.created_at),
+            "--phase-worker-executable",
+            identity.executable,
+        ]
+        subprocess.Popen(
+            arguments,
+            cwd=ROOT,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=_worker_flags(),
+            close_fds=True,
+            shell=False,
+        )
+        return 0
+    except Exception as exc:
+        _write_lifecycle_report(report_path, {"result": "fail", "phase": phase, "error_type": type(exc).__name__})
+        return 2
 
 
 def test_role_isolation_and_stop() -> None:
@@ -166,7 +371,11 @@ def test_crash_loop_and_explicit_stop() -> None:
         assert supervisor.roles["upstream"].state == "crash_loop"
         events = (Path(raw) / "runtime" / "crash-events.jsonl").read_text(encoding="utf-8").splitlines()
         assert any(json.loads(line)["state"] == "crash_loop" for line in events)
-        supervisor.store.submit_command(command="restart", supervisor_instance_id=supervisor.instance_id)
+        supervisor.store.submit_command(
+            command="restart",
+            supervisor_instance_id=supervisor.instance_id,
+            expected_state_generation=supervisor.state["state_generation"],
+        )
         wait_for(lambda: supervisor.state["state"] == "healthy", seconds=12, message="explicit restart did not clear crash loop")
         stop_supervisor(supervisor, thread)
 
@@ -201,14 +410,31 @@ def test_start_gate_and_atomic_state() -> None:
             raise AssertionError("runtime data path was accepted")
         store = RuntimeStateStore(runtime_root)
         store.initialize()
-        state = initial_state(instance_id="fixture", supervisor_pid=999999, mode="service-host")
+        identity = process_identity(os.getpid())
+        assert identity is not None
+        state = initial_state(instance_id="fixture", supervisor=identity, mode="service-host")
         state["state"] = "stopped"
         store.write_state(state)
         assert store.read_state() == state
         assert not list(runtime_root.glob("*.tmp"))
 
         port = free_port()
-        foreign = subprocess.Popen([sys.executable, str(ROOT / "enterprise" / "tests" / "runtime_fixture_service.py"), "--role", "upstream", "--port", str(port)])
+        foreign_stop = root / "foreign-stop.request"
+        foreign_marker = root / "foreign-stop.complete"
+        foreign = subprocess.Popen(
+            [
+                sys.executable,
+                str(ROOT / "enterprise" / "tests" / "runtime_fixture_service.py"),
+                "--role",
+                "upstream",
+                "--port",
+                str(port),
+                "--runtime-stop-file",
+                str(foreign_stop),
+                "--shutdown-marker",
+                str(foreign_marker),
+            ]
+        )
         try:
             config = SupervisorConfig(
                 app_root=ROOT,
@@ -221,7 +447,7 @@ def test_start_gate_and_atomic_state() -> None:
             wait_for(lambda: inspect_runtime(config)["start_disposition"] in {"upstream_only", "foreign_port_occupant"})
             assert inspect_runtime(config)["start_disposition"] in {"upstream_only", "foreign_port_occupant"}
         finally:
-            foreign.terminate()
+            foreign_stop.write_text("stop\n", encoding="utf-8")
             foreign.wait(timeout=5)
 
 
@@ -240,12 +466,324 @@ def test_static_runtime_boundary() -> None:
     assert "taskkill" not in stop_script.lower()
 
 
+def test_lock_cleanup_identity_and_early_failure_paths() -> None:
+    with tempfile.TemporaryDirectory(prefix="ice-stab1-lock-") as raw:
+        root = Path(raw)
+        runtime_root = root / "runtime"
+        supervisor = build_supervisor(runtime_root)
+        owner = process_identity(os.getpid())
+        assert owner is not None
+        assert supervisor.store.reserve_lock(instance_id=supervisor.instance_id, owner=owner)
+        with patch.object(supervisor.logs, "write", side_effect=OSError("fixture log failure")):
+            assert supervisor.run() == 2
+        assert not supervisor.store.lock_path.exists()
+        assert not port_identities(supervisor.config.upstream_port)
+        assert not port_identities(supervisor.config.gateway_port)
+
+        failing = build_supervisor(runtime_root)
+        owner = process_identity(os.getpid())
+        assert owner is not None
+        assert failing.store.reserve_lock(instance_id=failing.instance_id, owner=owner)
+        failing.commands["upstream"] = CommandSpec(
+            role="upstream",
+            arguments=(str(root / "missing-python.exe"), "-c", "pass"),
+            host="127.0.0.1",
+            port=failing.config.upstream_port,
+        )
+        assert failing.run() == 2
+        assert not failing.store.lock_path.exists()
+
+        store = RuntimeStateStore(runtime_root)
+        stale = ProcessIdentity(pid=999999, created_at=1, executable="C:\\missing.exe")
+        assert store.reserve_lock(instance_id="stale-reserved", owner=stale)
+        lock = store.read_lock()
+        assert lock is not None
+        lock["created_at"] = "2000-01-01T00:00:00.000Z"
+        lock["updated_at"] = lock["created_at"]
+        store.lock_path.write_text(json.dumps(lock), encoding="utf-8")
+        controller = RuntimeController(supervisor.config)
+        assert controller._clear_stale_if_safe(inspect_runtime(supervisor.config))
+        assert not store.lock_path.exists()
+
+        assert store.reserve_lock(instance_id="stale-adopted", owner=stale)
+        adopted = store.read_lock()
+        assert adopted is not None
+        adopted.update(
+            {
+                "lock_phase": "adopted",
+                "supervisor_pid": 999998,
+                "supervisor_process_created_at": 1,
+                "supervisor_executable": "C:\\missing-supervisor.exe",
+                "created_at": "2000-01-01T00:00:00.000Z",
+                "updated_at": "2000-01-01T00:00:00.000Z",
+            }
+        )
+        store.lock_path.write_text(json.dumps(adopted), encoding="utf-8")
+        assert controller._clear_stale_if_safe(inspect_runtime(supervisor.config))
+        assert not store.lock_path.exists()
+
+        identity = process_identity(os.getpid())
+        assert identity is not None
+        state = initial_state(instance_id="reused", supervisor=identity, mode="service-host")
+        state["supervisor_process_created_at"] = identity.created_at + 1
+        state["state"] = "starting"
+        store.write_state(state)
+        snapshot = inspect_runtime(supervisor.config)
+        assert snapshot["supervisor_identity_current"] is False
+        assert snapshot["start_disposition"] == "stale_runtime_state"
+
+        class ExitedHost:
+            def poll(self) -> int:
+                return 1
+
+        stopped_snapshot = {"start_disposition": "stopped"}
+        startup_snapshot = {"start_disposition": "startup_in_progress", "state": "starting", "runtime_state": None}
+        with patch("enterprise.runtime.control.inspect_runtime", side_effect=(stopped_snapshot, startup_snapshot)), patch(
+            "enterprise.runtime.control.subprocess.Popen", return_value=ExitedHost()
+        ):
+            try:
+                controller.start(wait_seconds=5)
+            except RuntimeControlError:
+                pass
+            else:
+                raise AssertionError("exited service host was accepted")
+        assert not store.lock_path.exists()
+
+        timeout_host = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], shell=False)
+        startup_snapshots = [stopped_snapshot] + [startup_snapshot] * 30
+        try:
+            with patch("enterprise.runtime.control.inspect_runtime", side_effect=startup_snapshots), patch(
+                "enterprise.runtime.control.subprocess.Popen", return_value=timeout_host
+            ):
+                try:
+                    controller.start(wait_seconds=5)
+                except RuntimeControlError:
+                    pass
+                else:
+                    raise AssertionError("startup timeout was accepted")
+            assert timeout_host.poll() is not None
+            assert not store.lock_path.exists()
+        finally:
+            if timeout_host.poll() is None:
+                timeout_host.kill()
+                timeout_host.wait(timeout=5)
+
+
+def test_redaction_and_windows_identity_declarations() -> None:
+    with tempfile.TemporaryDirectory(prefix="ice-stab1-redact-") as raw:
+        root = Path(raw)
+        secret = "fixture-secret-unlabelled"
+        logs = RuntimeLogs(root, secret_values=(secret,))
+        payload = (
+            "Authorization: Bearer bearer-value\\n"
+            "Cookie: session=cookie-value\\n"
+            "https://example.invalid/a?token=query-token&access_token=access&refresh_token=refresh&signature=sig-value\\n"
+            "https://example.invalid/a?X-Amz-Credential=amz-credential-value&X-Amz-Signature=amz-signed-value&X-Amz-Security-Token=amz-security-value\\n"
+            '{"credential":"json-credential","auth":"json-auth","session":"json-session"}\\n'
+            + secret
+        )
+        logs.write("supervisor.log", "fixture", traceback=payload)
+        logs.crash_event(detail=payload)
+        logs.stream_pumps("upstream")[0].write(payload)
+        logs.stream_pumps("gateway")[1].write(payload)
+        mirrored = io.StringIO()
+        upstream_stdout, _ = logs.stream_pumps("upstream")
+        with contextlib.redirect_stdout(mirrored):
+            pump = StreamPump(io.StringIO(secret + "\n"), upstream_stdout, mirror=True)
+            pump.start()
+            pump.join()
+        assert secret not in mirrored.getvalue()
+        assert "[REDACTED]" in mirrored.getvalue()
+        state = initial_state(instance_id="redaction", supervisor=process_identity(os.getpid()) or ProcessIdentity(1, 1, "python"), mode="foreground")
+        RuntimeStateStore(root).write_state(state)
+        combined = "\n".join(path.read_text(encoding="utf-8") for path in root.rglob("*") if path.is_file())
+        for value in (
+            "bearer-value",
+            "cookie-value",
+            "query-token",
+            "access",
+            "refresh",
+            "sig-value",
+            "amz-credential-value",
+            "amz-signed-value",
+            "amz-security-value",
+            "json-credential",
+            "json-auth",
+            "json-session",
+            secret,
+        ):
+            assert value not in combined
+        assert "[REDACTED]" in combined
+        assert "query-token" not in redact_text("?token=query-token")
+    assert process_identity(-1) is None
+    if os.name == "nt":
+        assert runtime_ownership._kernel32.OpenProcess.argtypes is not None
+        assert runtime_ownership._kernel32.WaitForSingleObject.argtypes is not None
+        assert runtime_ownership._kernel32.GetProcessTimes.argtypes is not None
+        assert runtime_ownership._kernel32.QueryFullProcessImageNameW.argtypes is not None
+        assert ctypes.sizeof(ctypes.c_void_p) == ctypes.sizeof(runtime_ownership.wintypes.HANDLE)
+        runtime_ownership.process_identity(4)
+
+
+def test_forced_job_termination_and_stop_during_backoff() -> None:
+    with tempfile.TemporaryDirectory(prefix="ice-stab1-stop-") as raw:
+        supervisor = build_supervisor(Path(raw) / "runtime", max_restarts=2, ignore_upstream_stop=True)
+        thread = start_supervisor(supervisor)
+        wait_for(lambda: supervisor.state["state"] == "healthy")
+        request_id = supervisor.store.submit_command(
+            command="stop",
+            supervisor_instance_id=supervisor.instance_id,
+            expected_state_generation=supervisor.state["state_generation"],
+        )
+        thread.join(timeout=20)
+        assert not thread.is_alive()
+        ack = supervisor.store.read_ack(request_id, instance_id=supervisor.instance_id)
+        assert ack is not None and ack["job_termination_required"] is True
+        assert ack["owned_pid_release_complete"] is True
+        assert any(item["result"] == "graceful_timeout" for item in ack["child_stop_results"])
+        assert not pid_exists(ack["upstream_before_pid"])
+
+
+def test_instance_bound_command_acknowledgements() -> None:
+    with tempfile.TemporaryDirectory(prefix="ice-stab1-ack-") as raw:
+        supervisor = build_supervisor(Path(raw) / "runtime")
+        thread = start_supervisor(supervisor)
+        try:
+            wait_for(lambda: supervisor.state["state"] == "healthy")
+            generation = supervisor.state["state_generation"]
+            upstream_pid = supervisor.roles["upstream"].process.process.pid  # type: ignore[union-attr]
+            rejected_request = supervisor.store.submit_command(
+                command="restart",
+                supervisor_instance_id=supervisor.instance_id,
+                expected_state_generation=generation - 1,
+            )
+            wait_for(
+                lambda: supervisor.store.read_ack(rejected_request, instance_id=supervisor.instance_id) is not None,
+                message="stale command acknowledgement was not written",
+            )
+            rejected = supervisor.store.read_ack(rejected_request, instance_id=supervisor.instance_id)
+            assert rejected is not None and rejected["result"] == "rejected_stale_generation"
+            assert supervisor.roles["upstream"].process is not None
+            assert supervisor.roles["upstream"].process.process.pid == upstream_pid
+
+            current_generation = supervisor.state["state_generation"]
+            accepted_request = supervisor.store.submit_command(
+                command="restart",
+                supervisor_instance_id=supervisor.instance_id,
+                expected_state_generation=current_generation,
+            )
+            wait_for(
+                lambda: (supervisor.store.read_ack(accepted_request, instance_id=supervisor.instance_id) or {}).get("result")
+                == "restarted",
+                seconds=15,
+                message="current-generation restart acknowledgement was not written",
+            )
+            accepted = supervisor.store.read_ack(accepted_request, instance_id=supervisor.instance_id)
+            assert accepted is not None
+            assert accepted["upstream_before_pid"] == upstream_pid
+            assert accepted["upstream_after_pid"] != upstream_pid
+        finally:
+            if thread.is_alive():
+                stop_supervisor(supervisor, thread)
+
+
+def test_stop_during_startup_backoff_and_crash_loop() -> None:
+    with tempfile.TemporaryDirectory(prefix="ice-stab1-stop-startup-") as raw:
+        supervisor = build_supervisor(Path(raw) / "runtime")
+        thread = start_supervisor(supervisor)
+        wait_for(lambda: supervisor.roles["upstream"].process is not None, message="upstream did not begin startup")
+        # A real controller only submits an instance-bound command after the
+        # supervisor has atomically published its current state generation.
+        wait_for(
+            lambda: supervisor.state["state"] == "starting" and supervisor.state["state_generation"] >= 1,
+            message="startup state was not published",
+        )
+        stop_supervisor(supervisor, thread)
+        assert supervisor.state["state"] == "stopped"
+        assert not tcp_check("127.0.0.1", supervisor.config.upstream_port).ok
+
+    with tempfile.TemporaryDirectory(prefix="ice-stab1-stop-backoff-") as raw:
+        supervisor = build_supervisor(Path(raw) / "runtime")
+        thread = start_supervisor(supervisor)
+        wait_for(lambda: supervisor.state["state"] == "healthy")
+        managed = supervisor.roles["upstream"].process
+        assert managed is not None
+        managed.process.kill()
+        wait_for(lambda: supervisor.roles["upstream"].state == "restarting", message="upstream did not enter backoff")
+        stop_supervisor(supervisor, thread)
+        time.sleep(1.2)
+        assert supervisor.roles["upstream"].process is None
+        assert supervisor.state["state"] == "stopped"
+
+    with tempfile.TemporaryDirectory(prefix="ice-stab1-stop-crash-") as raw:
+        supervisor = build_supervisor(Path(raw) / "runtime", max_restarts=1)
+        thread = start_supervisor(supervisor)
+        wait_for(lambda: supervisor.state["state"] == "healthy")
+        managed = supervisor.roles["upstream"].process
+        assert managed is not None
+        managed.process.kill()
+        wait_for(lambda: supervisor.roles["upstream"].state == "crash_loop", message="upstream did not enter crash loop")
+        stop_supervisor(supervisor, thread)
+        assert supervisor.state["state"] == "stopped"
+        assert not tcp_check("127.0.0.1", supervisor.config.gateway_port).ok
+
+
+def test_real_cli_lifecycle_and_acknowledgements() -> None:
+    """Exercise actual lifecycle CLI calls across two short-lived sessions."""
+    with tempfile.TemporaryDirectory(prefix="ice-stab1-cli-") as raw:
+        runtime_root = Path(raw) / "runtime"
+        upstream_port = free_port()
+        gateway_port = free_port()
+        report_path = Path(raw) / "lifecycle-report.json"
+        worker = subprocess.Popen(
+            [
+                sys.executable,
+                str(Path(__file__).resolve()),
+                "--cli-phase-worker",
+                "--runtime-root",
+                str(runtime_root),
+                "--upstream-port",
+                str(upstream_port),
+                "--gateway-port",
+                str(gateway_port),
+                "--report-path",
+                str(report_path),
+            ],
+            cwd=ROOT,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=_worker_flags(),
+            close_fds=True,
+            shell=False,
+        )
+        worker.wait(timeout=60)
+        if worker.returncode != 0:
+            failure = json.loads(report_path.read_text(encoding="utf-8")) if report_path.is_file() else {}
+            raise AssertionError(f"CLI lifecycle phase worker failed: {failure.get('phase', 'unreported')}")
+        wait_for(lambda: report_path.is_file(), seconds=60, message="CLI lifecycle stop worker produced no report")
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        assert report == {"result": "pass"}, "CLI lifecycle worker failed"
+        assert not tcp_check("127.0.0.1", upstream_port).ok
+        assert not tcp_check("127.0.0.1", gateway_port).ok
+        assert not (runtime_root / "runtime-supervisor.lock").exists()
+        assert not list((runtime_root / "control").glob("cmd-*.json"))
+        assert not list((runtime_root / "control").glob("ack-*.json"))
+
+
 CASES = {
     "role-isolation": test_role_isolation_and_stop,
     "crash-loop": test_crash_loop_and_explicit_stop,
     "logging-state": test_logs_state_rotation_and_secret_redaction,
     "start-gate": test_start_gate_and_atomic_state,
     "static-boundary": test_static_runtime_boundary,
+    "lock-lifecycle": test_lock_cleanup_identity_and_early_failure_paths,
+    "redaction": test_redaction_and_windows_identity_declarations,
+    "forced-stop": test_forced_job_termination_and_stop_during_backoff,
+    "command-ack": test_instance_bound_command_acknowledgements,
+    "stop-transitions": test_stop_during_startup_backoff_and_crash_loop,
+    "cli-lifecycle": test_real_cli_lifecycle_and_acknowledgements,
+    "windows-smoke": lambda: test_windows_process_smoke(),
     "detached-host": lambda: test_detached_service_host_lifecycle(),
 }
 
@@ -305,7 +843,11 @@ def test_windows_process_smoke() -> None:
                     seconds=8,
                 )
         assert supervisor.roles["gateway"].process is not None
-        supervisor.store.submit_command(command="restart", supervisor_instance_id=supervisor.instance_id)
+        supervisor.store.submit_command(
+            command="restart",
+            supervisor_instance_id=supervisor.instance_id,
+            expected_state_generation=supervisor.state["state_generation"],
+        )
         wait_for(lambda: supervisor.state["state"] == "healthy", seconds=12)
 
         rotating = RotatingTextLog(root / "rotation.log", max_bytes=64 * 1024, backups=2)
@@ -360,7 +902,11 @@ def test_detached_service_host_lifecycle() -> None:
             assert pid_exists(upstream_pid) and pid_exists(gateway_pid)
             # The launching test continues after the detached host has taken
             # ownership; no input(), browser, or foreground window is involved.
-            store.submit_command(command="stop", supervisor_instance_id=state["supervisor_instance_id"])
+            store.submit_command(
+                command="stop",
+                supervisor_instance_id=state["supervisor_instance_id"],
+                expected_state_generation=state["state_generation"],
+            )
             host.wait(timeout=15)
             assert tcp_check("127.0.0.1", upstream_port).ok is False
             assert tcp_check("127.0.0.1", gateway_port).ok is False
@@ -375,12 +921,64 @@ def run_all() -> None:
     test_windows_process_smoke()
     test_start_gate_and_atomic_state()
     test_static_runtime_boundary()
+    test_lock_cleanup_identity_and_early_failure_paths()
+    test_redaction_and_windows_identity_declarations()
+    test_forced_job_termination_and_stop_during_backoff()
+    test_instance_bound_command_acknowledgements()
+    test_stop_during_startup_backoff_and_crash_loop()
+    test_real_cli_lifecycle_and_acknowledgements()
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--case", choices=tuple(CASES))
+    parser.add_argument("--cli-phase-worker", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--cli-stop-worker", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--runtime-root", help=argparse.SUPPRESS)
+    parser.add_argument("--upstream-port", type=int, help=argparse.SUPPRESS)
+    parser.add_argument("--gateway-port", type=int, help=argparse.SUPPRESS)
+    parser.add_argument("--report-path", help=argparse.SUPPRESS)
+    parser.add_argument("--phase-worker-pid", type=int, help=argparse.SUPPRESS)
+    parser.add_argument("--phase-worker-created-at", type=int, help=argparse.SUPPRESS)
+    parser.add_argument("--phase-worker-executable", help=argparse.SUPPRESS)
     arguments = parser.parse_args()
+    if arguments.cli_phase_worker:
+        if not all((arguments.runtime_root, arguments.upstream_port, arguments.gateway_port, arguments.report_path)):
+            raise SystemExit(2)
+        raise SystemExit(
+            _run_cli_lifecycle_phase_worker(
+                runtime_root=Path(arguments.runtime_root),
+                upstream_port=arguments.upstream_port,
+                gateway_port=arguments.gateway_port,
+                report_path=Path(arguments.report_path),
+            )
+        )
+    if arguments.cli_stop_worker:
+        if not all(
+            (
+                arguments.runtime_root,
+                arguments.upstream_port,
+                arguments.gateway_port,
+                arguments.report_path,
+                arguments.phase_worker_pid,
+                arguments.phase_worker_created_at,
+                arguments.phase_worker_executable,
+            )
+        ):
+            raise SystemExit(2)
+        raise SystemExit(
+            _run_cli_lifecycle_stop_worker(
+                runtime_root=Path(arguments.runtime_root),
+                upstream_port=arguments.upstream_port,
+                gateway_port=arguments.gateway_port,
+                report_path=Path(arguments.report_path),
+                phase_worker_identity=ProcessIdentity(
+                    pid=arguments.phase_worker_pid,
+                    created_at=arguments.phase_worker_created_at,
+                    executable=arguments.phase_worker_executable,
+                ),
+            )
+        )
     if arguments.case:
         CASES[arguments.case]()
     else:

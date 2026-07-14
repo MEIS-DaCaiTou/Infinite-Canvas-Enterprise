@@ -95,10 +95,11 @@ class ProcessJob:
             raise JobObjectError("child process could not be assigned to the service Job Object")
 
     def terminate(self, exit_code: int = 1) -> None:
-        if self._handle is not None:
-            self._kernel32.TerminateJobObject(self._handle, int(exit_code))
+        if self._handle is not None and not self._kernel32.TerminateJobObject(self._handle, int(exit_code)):
+            raise JobObjectError("owned Job Object could not be terminated")
 
     def close(self) -> None:
         if self._handle is not None:
-            self._kernel32.CloseHandle(self._handle)
+            if not self._kernel32.CloseHandle(self._handle):
+                raise JobObjectError("owned Job Object could not be closed")
             self._handle = None

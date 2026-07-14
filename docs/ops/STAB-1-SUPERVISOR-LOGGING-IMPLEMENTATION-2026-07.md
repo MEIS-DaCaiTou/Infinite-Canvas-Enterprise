@@ -15,10 +15,10 @@ production host was started, changed, or validated.
 | Module | Responsibility |
 | --- | --- |
 | `supervisor.py` | Per-role state machine, health recovery, backoff, crash-loop and controlled shutdown. |
-| `process.py` | Fixed uvicorn command arrays, child launch, stream pumps and owned-only termination. |
+| `process.py` / `child.py` | Fixed command arrays, an internal Uvicorn wrapper, child launch, stream pumps and owned-only shutdown. |
 | `health.py` | Bounded TCP, upstream `/api/app-info` and gateway `/enterprise/health` checks. |
 | `logging.py` | Rotated persistent files, JSONL events and secret redaction. |
-| `state.py` | Atomic `runtime-state.json`, instance lock and instance-bound local command files. |
+| `state.py` | Atomic `runtime-state.json`, two-phase instance lock and instance-bound command/ack files. |
 | `ownership.py` | PID, creation time, executable-path and port listener identity checks. |
 | `windows.py` | Service-host-owned Windows Job Object with kill-on-close cleanup. |
 | `control.py` / `cli.py` | Fixed local `start`, `stop`, `restart`, `status` and `health` commands. |
@@ -27,6 +27,13 @@ The public CLI accepts no arbitrary child command, shell expression, network
 control request or upgrade operation.  Its control channel is a runtime-root
 command file bound to the current `supervisor_instance_id`; it does not open a
 new listener port.
+
+`start` first writes a `reserved` lock containing the launcher's PID, creation
+time and executable identity.  The service host can adopt only that fresh,
+matching reservation into `adopted`.  Both the lock and state persist the full
+supervisor identity.  Stale-lock cleanup additionally requires no live matching
+supervisor or child, no project listener, and either an expired startup grace
+period or an explicitly stopped/failed state.
 
 ## Modes and local commands
 
@@ -64,6 +71,13 @@ entry point.  A stop first validates the current state instance and child
 identity, then asks the supervisor to stop its own gateway and upstream.  It
 never terminates a foreign port listener.  A second stop is idempotent.
 
+Control requests and acknowledgements are per-instance JSON files under the
+runtime root.  Requests carry a random ID, the fixed command, the instance ID,
+issue time and expected state generation.  Completion ACKs bind that request
+to the accepting instance and record before/after generation plus role PID
+generations.  `restart` returns only after both roles have new identities and
+are healthy; `stop` returns only after its ACK and supervisor exit verification.
+
 ## State machine and recovery
 
 The supervisor state is one of `starting`, `healthy`, `degraded`,
@@ -98,10 +112,18 @@ creation time, executable path, parent PID, role and instance ID.  PID reuse
 therefore cannot turn a normal stop into a kill of an unrelated process.
 
 The service host creates the Windows Job Object, attaches only its fixed
-upstream and gateway children, and configures kill-on-close.  A supervisor
-exit therefore cleans its own descendants; normal role health recovery still
-operates role by role.  Forced termination is used only after a bounded
-graceful-stop timeout and only after ownership revalidation.
+upstream and gateway children, and configures kill-on-close.  The normal stop
+path writes each wrapper's instance-local stop file; the wrapper sets
+`uvicorn.Server.should_exit`, allowing the application shutdown lifecycle and
+stream flushing to finish.  Only after the bounded graceful timeout does the
+supervisor terminate its own Job Object.  If a nested Job leaves a direct child
+alive, a narrow fallback targets only that child after PID, creation-time and
+executable identity revalidation.  It never targets a foreign listener.
+
+The final stop ACK is emitted after child shutdown, Job closure, owned-PID
+verification and port-release checks.  It records child results, whether Job
+termination was required, owned PID release, per-port release and foreign
+listener detection.
 
 ## Logs and state
 
@@ -133,8 +155,11 @@ unsigned 32-bit hexadecimal exit code.  Native Windows failures such as
 recover from; STAB-1 does not claim to fix their CPython or system root cause.
 
 Authorization values, Bearer tokens, cookies, API keys, JWTs, passwords,
-secrets, `GITHUB_TOKEN`, environment-value assignments and matching traceback
-content are redacted before file or console output.  `runtime-state.json` is
+secrets, `GITHUB_TOKEN`, `token`, `access_token`, `refresh_token`, `id_token`,
+and signed URL credential/signature parameters in query, JSON or traceback
+content are redacted before file or console output.  Configured exact secret
+values can also be replaced in memory without being persisted in state,
+exceptions or logger representations.  `runtime-state.json` is
 atomically published using a short same-directory temporary filename and
 `os.replace`, and contains no command line, environment value, database data,
 token or user data.  Its role shape is:
@@ -152,13 +177,14 @@ token or user data.  Its role shape is:
 
 ## Test coverage and boundaries
 
-`enterprise/tests/test_stab_1_supervisor_logging.py` uses a temporary runtime
-root, random local fixture ports and short-lived HTTP fixture children.  It
-covers healthy startup, independent upstream/gateway restart, crash-loop,
-manual stop, child cleanup, persistent logs, rotation, redaction, atomic state
-publication, port-gate classification and static no-shell/no-browser checks.
-It never starts the production `3001`/`8000` application or opens a production
-database.
+`enterprise/tests/test_stab_1_supervisor_logging.py` and parameterized
+`test_start_stop.ps1` use a temporary runtime root, random local fixture ports
+and short-lived HTTP fixture children.  They cover independent role restart,
+crash-loop, lock adoption/stale cleanup, completion ACKs, graceful wrapper
+markers, owned-child fallback after Job termination, persistent logs, extended
+redaction, atomic state publication, port gates and static no-shell/no-browser
+checks.  They never start the production `3001`/`8000` application or open a
+production database.
 
 Still not implemented: Windows Service/NSSM/WinSW installation, remote/web
 process control, arbitrary commands, apply-upgrade, rollback/restore, database

@@ -12,6 +12,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from enterprise.runtime.process import CommandSpec
+from enterprise.runtime.ownership import process_identity
+from enterprise.runtime.state import RuntimeStateStore
 from enterprise.runtime.supervisor import RuntimeSupervisor, SupervisorConfig
 
 
@@ -50,7 +52,11 @@ def main() -> int:
         backoff_seconds=(1,),
         command_specs=commands,
     )
-    return RuntimeSupervisor(config).run()
+    supervisor = RuntimeSupervisor(config)
+    owner = process_identity(supervisor.supervisor_identity.pid)
+    if owner is None or not RuntimeStateStore(config.runtime_root).reserve_lock(instance_id=supervisor.instance_id, owner=owner):
+        return 2
+    return supervisor.run()
 
 
 if __name__ == "__main__":

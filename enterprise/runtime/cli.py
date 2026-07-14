@@ -26,12 +26,15 @@ def _config(args: argparse.Namespace, *, mode: str) -> SupervisorConfig:
         from enterprise.config import GATEWAY_PORT, UPSTREAM_PORT
     except Exception:
         GATEWAY_PORT, UPSTREAM_PORT = 8000, 3001
+    upstream_port = args.upstream_port if args.upstream_port is not None else UPSTREAM_PORT
+    gateway_port = args.gateway_port if args.gateway_port is not None else GATEWAY_PORT
     return SupervisorConfig(
         app_root=app_root,
         runtime_root=runtime_root,
         mode=mode,
-        upstream_port=UPSTREAM_PORT,
-        gateway_port=GATEWAY_PORT,
+        upstream_port=upstream_port,
+        gateway_port=gateway_port,
+        fixture_child_wrapper=bool(args.fixture_child_wrapper),
     )
 
 
@@ -42,6 +45,9 @@ def build_parser() -> argparse.ArgumentParser:
         item = subparsers.add_parser(name)
         item.add_argument("--app-root", default=str(ROOT))
         item.add_argument("--runtime-root", default=str(default_runtime_root()))
+        item.add_argument("--upstream-port", type=int)
+        item.add_argument("--gateway-port", type=int)
+        item.add_argument("--fixture-child-wrapper", action="store_true", help=argparse.SUPPRESS)
         if name == "service-host":
             item.add_argument("--instance-id", required=True)
     return parser

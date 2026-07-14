@@ -6,6 +6,7 @@ import ctypes
 import os
 import subprocess
 from dataclasses import asdict, dataclass
+from ctypes import wintypes
 from pathlib import Path
 from typing import Any
 
@@ -25,8 +26,27 @@ if os.name == "nt":
     _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
     _SYNCHRONIZE = 0x00100000
 
-    class _FILETIME(ctypes.Structure):
-        _fields_ = (("dwLowDateTime", ctypes.c_uint32), ("dwHighDateTime", ctypes.c_uint32))
+    _kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    _kernel32.OpenProcess.restype = wintypes.HANDLE
+    _kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+    _kernel32.WaitForSingleObject.restype = wintypes.DWORD
+    _kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    _kernel32.CloseHandle.restype = wintypes.BOOL
+    _kernel32.GetProcessTimes.argtypes = (
+        wintypes.HANDLE,
+        ctypes.POINTER(wintypes.FILETIME),
+        ctypes.POINTER(wintypes.FILETIME),
+        ctypes.POINTER(wintypes.FILETIME),
+        ctypes.POINTER(wintypes.FILETIME),
+    )
+    _kernel32.GetProcessTimes.restype = wintypes.BOOL
+    _kernel32.QueryFullProcessImageNameW.argtypes = (
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        wintypes.LPWSTR,
+        ctypes.POINTER(wintypes.DWORD),
+    )
+    _kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
 
 
 def _filetime_to_ticks(value: Any) -> int:
@@ -74,10 +94,10 @@ def process_identity(pid: object) -> ProcessIdentity | None:
     if not handle:
         return None
     try:
-        created = _FILETIME()
-        exited = _FILETIME()
-        kernel = _FILETIME()
-        user = _FILETIME()
+        created = wintypes.FILETIME()
+        exited = wintypes.FILETIME()
+        kernel = wintypes.FILETIME()
+        user = wintypes.FILETIME()
         if not _kernel32.GetProcessTimes(handle, ctypes.byref(created), ctypes.byref(exited), ctypes.byref(kernel), ctypes.byref(user)):
             return None
         size = ctypes.c_uint32(32768)
