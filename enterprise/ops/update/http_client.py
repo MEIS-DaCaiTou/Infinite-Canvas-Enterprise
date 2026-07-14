@@ -15,6 +15,9 @@ from enterprise.ops.update.errors import ReleaseDownloadError, ReleaseProviderEr
 
 MAX_REDIRECTS = 3
 LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
+SENSITIVE_REDIRECT_HEADERS = frozenset(
+    {"authorization", "cookie", "proxy-authorization", "x-api-key", "x-auth-token", "x-access-token"}
+)
 
 
 @dataclass(frozen=True)
@@ -59,7 +62,32 @@ class _ValidatedRedirectHandler(HTTPRedirectHandler):
             raise ReleaseDownloadError("release redirect limit exceeded")
         redirect_url = urljoin(req.full_url, newurl)
         self._policy.validate(redirect_url)
-        return super().redirect_request(req, fp, code, msg, headers, redirect_url)
+        redirected = super().redirect_request(req, fp, code, msg, headers, redirect_url)
+        if redirected is not None and _redirect_crosses_origin(req.full_url, redirect_url):
+            _strip_sensitive_headers(redirected)
+        return redirected
+
+
+def _redirect_crosses_origin(source_url: str, destination_url: str) -> bool:
+    source = urlparse(source_url)
+    destination = urlparse(destination_url)
+    return (
+        source.scheme.casefold(),
+        (source.hostname or "").casefold(),
+        source.port,
+    ) != (
+        destination.scheme.casefold(),
+        (destination.hostname or "").casefold(),
+        destination.port,
+    )
+
+
+def _strip_sensitive_headers(request: Request) -> None:
+    """Remove credentials copied by urllib before an origin-changing redirect."""
+    for mapping in (request.headers, request.unredirected_hdrs):
+        for key in tuple(mapping):
+            if key.casefold() in SENSITIVE_REDIRECT_HEADERS:
+                del mapping[key]
 
 
 def _content_length(headers: Mapping[str, str]) -> int | None:

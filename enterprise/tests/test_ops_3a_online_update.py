@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sqlite3
 import stat
 import subprocess
 import sys
@@ -87,8 +88,10 @@ def make_manifest(archive: bytes, *, version: str = "2026.07.7", file_count: int
 
 class FixtureHandler(BaseHTTPRequestHandler):
     responses: ClassVar[dict[str, tuple[int, dict[str, str], bytes]]] = {}
+    request_headers: ClassVar[dict[str, dict[str, str]]] = {}
 
     def do_GET(self) -> None:  # noqa: N802
+        self.request_headers[self.path] = {key.casefold(): value for key, value in self.headers.items()}
         status, headers, body = self.responses.get(self.path, (404, {}, b""))
         if self.path == "/slow":
             time.sleep(2)
@@ -125,6 +128,62 @@ def make_app(root: Path) -> None:
     root.mkdir(parents=True)
     (root / "VERSION").write_text("2026.07.6\n", encoding="utf-8")
     (root / "main.py").write_text("# app\n", encoding="utf-8")
+    database_path = root / "data" / "enterprise.db"
+    database_path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("CREATE TABLE user_canvas_map (user_id TEXT NOT NULL, canvas_id TEXT NOT NULL)")
+        connection.execute("INSERT INTO user_canvas_map (user_id, canvas_id) VALUES (?, ?)", ("user-1", "canvas-1"))
+
+
+def sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def source_journal_mode(path: Path) -> str:
+    with sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True) as connection:
+        row = connection.execute("PRAGMA main.journal_mode").fetchone()
+    assert row and isinstance(row[0], str)
+    return row[0].casefold()
+
+
+def write_formal_backup(app_root: Path, manifest_path: Path) -> dict:
+    source_path = app_root / "data" / "enterprise.db"
+    backup_dir = manifest_path.parent / "formal-backup"
+    backup_path = backup_dir / "app" / "data" / "enterprise.db"
+    backup_path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(f"{source_path.resolve().as_uri()}?mode=ro", uri=True) as source, sqlite3.connect(backup_path) as target:
+        source.backup(target)
+    payload = {
+        "kind": "backup-manifest",
+        "backup_id": "temporary-formal-backup",
+        "status": "pass",
+        "dry_run": False,
+        "generated_at": "2026-07-14T00:00:00Z",
+        "copied_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "app_root": app_root.resolve().as_posix(),
+        "backup_dir": backup_dir.resolve().as_posix(),
+        "sqlite_backup_status": "success",
+        "sqlite_backup_path": backup_path.resolve().as_posix(),
+        "source_database_relative_path": "data/enterprise.db",
+        "source_database_size_bytes": source_path.stat().st_size,
+        "source_database_sha256": sha256_file(source_path),
+        "source_database_journal_mode": source_journal_mode(source_path),
+        "sqlite_backup_size_bytes": backup_path.stat().st_size,
+        "sqlite_backup_sha256": sha256_file(backup_path),
+    }
+    write_json(manifest_path, payload)
+    return payload
+
+
+def write_data_check(app_root: Path, report_path: Path, *, status: str = "warn") -> dict:
+    payload = {
+        "kind": "data-check-report",
+        "status": status,
+        "app_root": app_root.resolve().as_posix(),
+        "findings": {"critical": [], "warnings": ["operator-review"] if status == "warn" else []},
+    }
+    write_json(report_path, payload)
+    return payload
 
 
 def fixture_record(server: LocalServer, *, version: str = "2026.07.7", release_id: str = "77", draft: bool = False, prerelease: bool = False) -> dict:
@@ -198,9 +257,12 @@ def verify_http_and_download() -> None:
     expect_error(ReleaseDownloadError, github.url_policy.validate, "http://api.github.com/releases")
     expect_error(ReleaseDownloadError, github.url_policy.validate, "https://example.invalid/release")
     with LocalServer() as server, tempfile.TemporaryDirectory(prefix="ice-ops3a-http-") as raw:
+        FixtureHandler.request_headers = {}
         FixtureHandler.responses = {
             "/bytes": (200, {}, b"payload"),
             "/redirect": (302, {"Location": "http://example.invalid/blocked"}, b""),
+            "/redirect-cross-host": (302, {"Location": f"http://localhost:{server.server.server_port}/redirect-target"}, b""),
+            "/redirect-target": (200, {}, b"redirected"),
             "/oversized": (200, {"Content-Length": "999"}, b"small"),
             "/slow": (200, {}, b"late"),
         }
@@ -222,10 +284,70 @@ def verify_http_and_download() -> None:
         assert not (Path(raw) / "bad.zip").exists()
         assert not list(Path(raw).glob("*.part"))
         expect_error(ReleaseDownloadError, client.read_bytes, f"{server.base_url}/slow", maximum_bytes=32)
+        assert client.read_bytes(
+            f"{server.base_url}/redirect-cross-host",
+            maximum_bytes=32,
+            headers={"Authorization": "Bearer fixture", "Cookie": "fixture-cookie", "X-Trace": "preserved"},
+        ) == b"redirected"
+        redirected_headers = FixtureHandler.request_headers["/redirect-target"]
+        assert "authorization" not in redirected_headers and "cookie" not in redirected_headers
+        assert redirected_headers["x-trace"] == "preserved"
+
+
+class StaticGitHubClient:
+    def __init__(self, payload: object) -> None:
+        self.payload = payload
+
+    def read_json(self, _url: str, *, maximum_bytes: int, headers: dict[str, str]) -> object:
+        assert maximum_bytes > 0 and headers["Accept"]
+        return self.payload
+
+
+def verify_github_release_filtering() -> None:
+    def asset(name: str) -> dict[str, str]:
+        return {"name": name, "browser_download_url": f"https://github.com/downloads/{name}"}
+
+    valid = {
+        "id": 77,
+        "tag_name": "v2026.07.7",
+        "draft": False,
+        "prerelease": False,
+        "published_at": "2026-07-14T00:00:00Z",
+        "assets": [asset("ops-release-manifest-v1.json"), asset("release.zip")],
+    }
+    provider = GitHubReleasesProvider(
+        http_client=StaticGitHubClient(
+            [
+                {"id": 1, "tag_name": "v2025.13.1", "draft": True},
+                {"id": 2, "tag_name": "historical-tag", "draft": False, "prerelease": False, "assets": []},
+                {"id": 3, "tag_name": "v2026.07.8", "draft": False, "prerelease": False, "assets": [asset("release.zip")]},
+                valid,
+            ]
+        )
+    )
+    releases = provider.list_releases()
+    assert [release.release_id for release in releases] == ["77"]
+    assert provider.diagnostics == (
+        "draft_release_skipped",
+        "invalid_or_incomplete_release_skipped",
+        "invalid_or_incomplete_release_skipped",
+    )
 
 
 def verify_zip_defences() -> None:
-    unsafe_entries = ("../x", "/x", "C:/x", "//server/share/x", f"{ROOT_PREFIX}\\..\\x")
+    unsafe_entries = (
+        "../x",
+        "/x",
+        "C:/x",
+        "//server/share/x",
+        f"{ROOT_PREFIX}\\..\\x",
+        f"{ROOT_PREFIX}/VERSION:alternate-stream",
+        f"{ROOT_PREFIX}/CON.txt",
+        f"{ROOT_PREFIX}/aux/file",
+        f"{ROOT_PREFIX}/trailing-dot.",
+        f"{ROOT_PREFIX}/trailing-space ",
+        f"{ROOT_PREFIX}/control\x1f-character",
+    )
     with tempfile.TemporaryDirectory(prefix="ice-ops3a-zip-") as raw:
         root = Path(raw)
         for index, name in enumerate(unsafe_entries):
@@ -234,6 +356,11 @@ def verify_zip_defences() -> None:
             expect_error(ReleaseStagingError, inspect_zip_archive, root / f"unsafe-{index}.zip", manifest)
         duplicate = make_archive(root / "duplicate.zip", {f"{ROOT_PREFIX}/Foo": b"a", f"{ROOT_PREFIX}/foo": b"b"})
         expect_error(ReleaseStagingError, inspect_zip_archive, root / "duplicate.zip", parse_release_manifest(make_manifest(duplicate, file_count=2)))
+        unicode_collision = make_archive(
+            root / "unicode-collision.zip",
+            {f"{ROOT_PREFIX}/caf\u00e9.txt": b"a", f"{ROOT_PREFIX}/cafe\u0301.txt": b"b"},
+        )
+        expect_error(ReleaseStagingError, inspect_zip_archive, root / "unicode-collision.zip", parse_release_manifest(make_manifest(unicode_collision, file_count=2)))
         directory_root = root / "directory-root.zip"
         with zipfile.ZipFile(directory_root, "w") as archive_file:
             archive_file.writestr(f"{ROOT_PREFIX}/", b"")
@@ -286,16 +413,25 @@ def verify_service_and_cli() -> None:
         check = service.check_update()
         assert check["status"] == "pass" and check["target_version"] == "2026.07.7"
         assert check["state"] == "metadata_ready" and check["finished_at"]
+        same_release = fixture_record(server, version="2026.07.6", release_id="76")
+        write_json(fixture, {"releases": [same_release, draft, prerelease, normal]})
+        same_fetch = service.fetch_release(release_id="76")
+        assert same_fetch["status"] == "blocked" and not list((workspace / "downloads").glob("*"))
+        write_json(fixture, {"releases": [draft, prerelease, normal]})
         fetched = service.fetch_release()
         assert fetched["status"] == "pass" and fetched["state"] == "verifying"
         assert (workspace / fetched["archive_path"]).exists()
+        (app_root / "VERSION").write_text("2026.07.7\n", encoding="utf-8")
+        same_stage = service.stage_release(manifest_path=fetched["manifest_path"], archive_path=fetched["archive_path"])
+        assert same_stage["status"] == "blocked"
+        (app_root / "VERSION").write_text("2026.07.6\n", encoding="utf-8")
         staged = service.stage_release(manifest_path=fetched["manifest_path"], archive_path=fetched["archive_path"])
         assert staged["status"] == "pass" and staged["state"] == "staged"
         assert (workspace / staged["staging_path"]).is_dir()
         backup = root / "backup-manifest.json"
         data_check = root / "data-check.json"
-        write_json(backup, {"status": "pass", "dry_run": False, "sqlite_backup_status": "success"})
-        write_json(data_check, {"kind": "data-check-report", "status": "warn", "warnings": ["do-not-persist"]})
+        write_formal_backup(app_root, backup)
+        write_data_check(app_root, data_check)
         plan = service.prepare_online_update(
             stage_report_path=workspace / staged["report_paths"][0],
             backup_manifest_path=backup,
@@ -303,8 +439,55 @@ def verify_service_and_cli() -> None:
             maintenance_window="03:00-04:00",
         )
         assert plan["status"] == "pass" and plan["state"] == "planned"
+        evidence = plan["input_evidence"]
+        assert evidence["stage_report"]["path"].startswith("reports/")
+        assert evidence["stage_report"]["sha256"] == sha256_file(workspace / staged["report_paths"][0])
+        assert evidence["backup_manifest"]["sha256"] == sha256_file(backup)
+        assert evidence["data_check_report"]["sha256"] == sha256_file(data_check)
         assert all(item.startswith("No ") for item in plan["not_executed"])
-        assert "do-not-persist" not in json.dumps(plan)
+        assert "operator-review" not in json.dumps(plan)
+        forged_stage_payload = json.loads((workspace / staged["report_paths"][0]).read_text(encoding="utf-8"))
+        forged_stage_payload["migration_required"] = True
+        forged_stage_path = workspace / "reports" / "forged-stage-report.json"
+        write_json(forged_stage_path, forged_stage_payload)
+        assert service.prepare_online_update(stage_report_path=forged_stage_path, backup_manifest_path=backup, data_check_report_path=data_check)["status"] == "blocked"
+        outside_stage_report = root / "forged-stage-report.json"
+        write_json(outside_stage_report, staged)
+        outside_stage = service.prepare_online_update(
+            stage_report_path=outside_stage_report,
+            backup_manifest_path=backup,
+            data_check_report_path=data_check,
+        )
+        assert outside_stage["status"] == "blocked"
+        (app_root / "VERSION").write_text("2026.07.7\n", encoding="utf-8")
+        same_plan = service.prepare_online_update(
+            stage_report_path=workspace / staged["report_paths"][0],
+            backup_manifest_path=backup,
+            data_check_report_path=data_check,
+        )
+        assert same_plan["status"] == "blocked"
+        (app_root / "VERSION").write_text("2026.07.6\n", encoding="utf-8")
+        for field, value in (
+            ("kind", "wrong-kind"),
+            ("app_root", "/not-the-app-root"),
+            ("source_database_size_bytes", 0),
+            ("source_database_sha256", "0" * 64),
+            ("source_database_journal_mode", "wal"),
+            ("sqlite_backup_size_bytes", 0),
+            ("sqlite_backup_sha256", "0" * 64),
+            ("copied_at", "2000-01-01T00:00:00Z"),
+        ):
+            invalid_backup = json.loads(backup.read_text(encoding="utf-8"))
+            invalid_backup[field] = value
+            write_json(backup, invalid_backup)
+            assert service.prepare_online_update(stage_report_path=workspace / staged["report_paths"][0], backup_manifest_path=backup, data_check_report_path=data_check)["status"] == "blocked"
+            write_formal_backup(app_root, backup)
+        for field, value in (("kind", "wrong-kind"), ("status", "fail"), ("app_root", "/not-the-app-root")):
+            invalid_data = json.loads(data_check.read_text(encoding="utf-8"))
+            invalid_data[field] = value
+            write_json(data_check, invalid_data)
+            assert service.prepare_online_update(stage_report_path=workspace / staged["report_paths"][0], backup_manifest_path=backup, data_check_report_path=data_check)["status"] == "blocked"
+            write_data_check(app_root, data_check)
         blocked = service.prepare_online_update(
             stage_report_path=workspace / staged["report_paths"][0],
             backup_manifest_path=None,
@@ -359,6 +542,34 @@ def verify_service_and_cli() -> None:
         assert cli_plan["status"] == "pass" and cli_plan["state"] == "planned"
         assert not (app_root / "ops_artifacts").exists()
 
+        staged_version = workspace / staged["staging_path"] / ROOT_PREFIX / "VERSION"
+        staged_version.write_text("2026.07.999\n", encoding="utf-8")
+        content_tampered_stage = service.prepare_online_update(
+            stage_report_path=workspace / staged["report_paths"][0],
+            backup_manifest_path=backup,
+            data_check_report_path=data_check,
+        )
+        assert content_tampered_stage["status"] == "blocked"
+        staged_version.write_text("2026.07.7\n", encoding="utf-8")
+        (workspace / staged["staging_path"] / "extra-file").write_text("tampered", encoding="utf-8")
+        tampered_stage = service.prepare_online_update(
+            stage_report_path=workspace / staged["report_paths"][0],
+            backup_manifest_path=backup,
+            data_check_report_path=data_check,
+        )
+        assert tampered_stage["status"] == "blocked"
+        (workspace / staged["staging_path"] / "extra-file").unlink()
+        staged_archive = workspace / staged["archive_path"]
+        staged_manifest = workspace / staged["manifest_path"]
+        original_archive = staged_archive.read_bytes()
+        original_manifest = staged_manifest.read_bytes()
+        staged_archive.write_bytes(b"archive-tampered")
+        assert service.prepare_online_update(stage_report_path=workspace / staged["report_paths"][0], backup_manifest_path=backup, data_check_report_path=data_check)["status"] == "blocked"
+        staged_archive.write_bytes(original_archive)
+        staged_manifest.write_bytes(b"manifest-tampered")
+        assert service.prepare_online_update(stage_report_path=workspace / staged["report_paths"][0], backup_manifest_path=backup, data_check_report_path=data_check)["status"] == "blocked"
+        staged_manifest.write_bytes(original_manifest)
+
         runtime_archive = make_archive(root / "runtime-release.zip", {f"{ROOT_PREFIX}/data/enterprise.db": b"runtime"})
         runtime_manifest = make_manifest(runtime_archive, file_count=1)
         runtime_manifest_path = workspace / "runtime-manifest.json"
@@ -388,6 +599,7 @@ def verify_job_redaction() -> None:
 def run_all() -> None:
     verify_versions_and_manifest()
     verify_http_and_download()
+    verify_github_release_filtering()
     verify_zip_defences()
     verify_service_and_cli()
     verify_job_redaction()

@@ -104,8 +104,9 @@ OPS-2B 文档见：`docs/ops/OPS-2B-WINDOWS-OPS-WRAPPER-2026-07.md`。
 
 OPS-3A repository implementation is in Draft PR #77. It adds a fixed trusted
 release-provider boundary, strict manifest validation, bounded download, safe
-staging, structured local preparation jobs, and a non-executing online-update
-plan. Its implementation tests use local workspaces only.
+Windows-aware staging, evidence-bound local preparation jobs, and a
+non-executing online-update plan. Its implementation tests use local workspaces
+only.
 
 OPS-3A does not execute a production check, download, staging operation, or
 upgrade. It does not implement `apply-upgrade`, rollback, restore, service

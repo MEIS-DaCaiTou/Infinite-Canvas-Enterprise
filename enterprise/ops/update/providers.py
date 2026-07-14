@@ -27,6 +27,7 @@ GITHUB_ALLOWED_HOSTS = frozenset(
 GITHUB_MANIFEST_ASSET = "ops-release-manifest-v1.json"
 MAX_GITHUB_METADATA_BYTES = 1024 * 1024
 MAX_FIXTURE_BYTES = 1024 * 1024
+MAX_PROVIDER_DIAGNOSTICS = 16
 
 
 class ReleaseProvider(Protocol):
@@ -151,6 +152,7 @@ class GitHubReleasesProvider:
             raise ReleaseProviderError("GitHub repository is not approved")
         self.repository = repository
         self.http_client = http_client or SafeHttpClient(self.url_policy)
+        self.diagnostics: tuple[str, ...] = ()
 
     def list_releases(self) -> list[ReleaseMetadata]:
         url = f"https://api.github.com/repos/{self.repository}/releases?per_page=50"
@@ -162,33 +164,52 @@ class GitHubReleasesProvider:
         if type(payload) is not list or len(payload) > 50:
             raise ReleaseProviderError("GitHub release metadata is invalid")
         releases: list[ReleaseMetadata] = []
+        diagnostics: list[str] = []
+
+        def skip(code: str) -> None:
+            if len(diagnostics) < MAX_PROVIDER_DIAGNOSTICS:
+                diagnostics.append(code)
+
         for release in payload:
             if type(release) is not dict:
-                raise ReleaseProviderError("GitHub release metadata is invalid")
-            assets = release.get("assets")
-            if type(assets) is not list:
-                raise ReleaseProviderError("GitHub release assets are invalid")
-            manifest_asset = _single_asset(assets, exact_name=GITHUB_MANIFEST_ASSET)
-            archive_asset = _single_asset(assets, suffix=".zip")
-            releases.append(
-                normalize_release_metadata(
-                    {
-                        "repository": self.repository,
-                        "release_id": release.get("id"),
-                        "tag_name": release.get("tag_name"),
-                        "version": _tag_to_version(release.get("tag_name")),
-                        "prerelease": release.get("prerelease"),
-                        "draft": release.get("draft"),
-                        "published_at": release.get("published_at"),
-                        "manifest_url": manifest_asset["browser_download_url"],
-                        "archive_url": archive_asset["browser_download_url"],
-                        "release_notes": release.get("body") or "",
-                    },
-                    provider=self.name,
-                    repository=self.repository,
-                    url_policy=self.url_policy,
+                skip("invalid_release_record_skipped")
+                continue
+            # Drafts are never visible update candidates. Skip them before
+            # checking assets so an incomplete draft cannot block valid history.
+            if release.get("draft") is True:
+                skip("draft_release_skipped")
+                continue
+            try:
+                assets = release.get("assets")
+                if type(assets) is not list:
+                    raise ReleaseProviderError("GitHub release assets are invalid")
+                manifest_asset = _single_asset(assets, exact_name=GITHUB_MANIFEST_ASSET)
+                archive_asset = _single_asset(assets, suffix=".zip")
+                releases.append(
+                    normalize_release_metadata(
+                        {
+                            "repository": self.repository,
+                            "release_id": release.get("id"),
+                            "tag_name": release.get("tag_name"),
+                            "version": _tag_to_version(release.get("tag_name")),
+                            "prerelease": release.get("prerelease"),
+                            "draft": release.get("draft"),
+                            "published_at": release.get("published_at"),
+                            "manifest_url": manifest_asset["browser_download_url"],
+                            "archive_url": archive_asset["browser_download_url"],
+                            "release_notes": release.get("body") or "",
+                        },
+                        provider=self.name,
+                        repository=self.repository,
+                        url_policy=self.url_policy,
+                    )
                 )
-            )
+            except ReleaseProviderError:
+                # A bad historical or incomplete release is not trusted, but it
+                # cannot make later complete releases unavailable. Diagnostics
+                # deliberately carry only bounded generic codes.
+                skip("invalid_or_incomplete_release_skipped")
+        self.diagnostics = tuple(diagnostics)
         return releases
 
 

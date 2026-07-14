@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import unquote, urlparse
@@ -22,13 +24,15 @@ from enterprise.ops.update.jobs import UpdateJob, ensure_workspace, workspace_ch
 from enterprise.ops.update.manifest import parse_release_manifest_bytes
 from enterprise.ops.update.models import ReleaseManifest, ReleaseMetadata
 from enterprise.ops.update.providers import ReleaseProvider
-from enterprise.ops.update.staging import stage_release_archive
+from enterprise.ops.update.staging import stage_release_archive, verify_staged_release_directory
 from enterprise.ops.update.versions import compare_versions, parse_version
 
 
 MAX_MANIFEST_BYTES = 512 * 1024
 MAX_ARCHIVE_BYTES = 512 * 1024 * 1024
 MAX_INPUT_REPORT_BYTES = 4 * 1024 * 1024
+MAX_DATABASE_BYTES = 64 * 1024 * 1024 * 1024
+MAX_BACKUP_AGE_SECONDS = 24 * 60 * 60
 NOT_EXECUTED = (
     "No production files were replaced.",
     "No services were stopped or started.",
@@ -116,6 +120,34 @@ def _required_nonnegative_int(value: object, label: str) -> int:
     return value
 
 
+def _required_sha256(value: object, label: str) -> str:
+    if not isinstance(value, str) or not LOWER_SHA256.fullmatch(value):
+        raise OnlineUpdateValidationError(f"{label} is invalid")
+    return value
+
+
+def _required_workspace_relative(value: object, label: str, *, prefix: str | None = None) -> str:
+    text = _required_text(value, label, maximum=512)
+    if "\\" in text or text.startswith("/") or ".." in Path(text).parts:
+        raise OnlineUpdateValidationError(f"{label} is invalid")
+    if prefix is not None and not text.startswith(prefix):
+        raise OnlineUpdateValidationError(f"{label} is invalid")
+    return text
+
+
+def _parse_utc_timestamp(value: object, label: str) -> datetime:
+    text = _required_text(value, label, maximum=64)
+    if not text.endswith("Z"):
+        raise OnlineUpdateValidationError(f"{label} is invalid")
+    try:
+        parsed = datetime.fromisoformat(text[:-1] + "+00:00")
+    except ValueError as exc:
+        raise OnlineUpdateValidationError(f"{label} is invalid") from exc
+    if parsed.tzinfo is None:
+        raise OnlineUpdateValidationError(f"{label} is invalid")
+    return parsed.astimezone(timezone.utc)
+
+
 def _stage_evidence(report: dict[str, Any]) -> dict[str, object]:
     """Allow only validated scalar evidence from a prior staging report into a plan."""
     if report.get("kind") != "online-update-job-report" or report.get("status") != "pass" or report.get("state") != "staged":
@@ -125,17 +157,13 @@ def _stage_evidence(report: dict[str, Any]) -> dict[str, object]:
     except ValueError as exc:
         raise OnlineUpdateValidationError("staged release target version is invalid") from exc
     source_commit = report.get("source_commit")
-    manifest_sha256 = report.get("manifest_sha256")
-    archive_sha256 = report.get("archive_sha256")
     if not isinstance(source_commit, str) or not LOWER_SHA1.fullmatch(source_commit):
         raise OnlineUpdateValidationError("staged release source commit is invalid")
-    if not isinstance(manifest_sha256, str) or not LOWER_SHA256.fullmatch(manifest_sha256):
-        raise OnlineUpdateValidationError("staged release manifest SHA256 is invalid")
-    if not isinstance(archive_sha256, str) or not LOWER_SHA256.fullmatch(archive_sha256):
-        raise OnlineUpdateValidationError("staged release archive SHA256 is invalid")
-    staging_path = _required_text(report.get("staging_path"), "staging path", maximum=512)
-    if "\\" in staging_path or staging_path.startswith("/") or ".." in Path(staging_path).parts or not staging_path.startswith("staging/"):
-        raise OnlineUpdateValidationError("staged release path is invalid")
+    manifest_sha256 = _required_sha256(report.get("manifest_sha256"), "staged release manifest SHA256")
+    archive_sha256 = _required_sha256(report.get("archive_sha256"), "staged release archive SHA256")
+    staging_path = _required_workspace_relative(report.get("staging_path"), "staging path", prefix="staging/")
+    manifest_path = _required_workspace_relative(report.get("manifest_path"), "staged manifest path", prefix="downloads/")
+    archive_path = _required_workspace_relative(report.get("archive_path"), "staged archive path", prefix="downloads/")
     release_validation = report.get("release_validation")
     if type(release_validation) is not dict or release_validation.get("status") not in {"pass", "warn"}:
         raise OnlineUpdateValidationError("staged release validation evidence is invalid")
@@ -158,6 +186,8 @@ def _stage_evidence(report: dict[str, Any]) -> dict[str, object]:
         "manifest_sha256": manifest_sha256,
         "archive_sha256": archive_sha256,
         "archive_size_bytes": _required_nonnegative_int(report.get("archive_size_bytes"), "archive size"),
+        "manifest_path": manifest_path,
+        "archive_path": archive_path,
         "staging_path": staging_path,
         "staging_file_count": _required_nonnegative_int(report.get("staging_file_count"), "staging file count"),
         "release_validation": validation_summary,
@@ -192,6 +222,10 @@ class OnlineUpdateService:
             job.complete()
             job.append_log("finished", status=status)
             report = job.write_report(status=status)
+        except UpdatePlanBlockedError as exc:
+            job.fail(exc)
+            job.append_log("blocked", code=exc.code, message=exc.public_message)
+            report = job.write_report(status="blocked")
         except OnlineUpdateError as exc:
             job.fail(exc)
             job.append_log("failed", code=exc.code, message=exc.public_message)
@@ -242,6 +276,8 @@ class OnlineUpdateService:
             matches = [release for release in visible if release.release_id == identifier]
             if len(matches) != 1:
                 raise OnlineUpdateValidationError("requested release is unavailable")
+            if compare_versions(current_version, matches[0].version) != "newer":
+                raise UpdatePlanBlockedError("requested release is not newer than the current application version")
             return matches[0]
         candidates = [release for release in visible if compare_versions(current_version, release.version) == "newer"]
         if not candidates:
@@ -259,6 +295,181 @@ class OnlineUpdateService:
         if not candidate.is_absolute():
             candidate = self.workspace / candidate
         return workspace_child(self.workspace, candidate)
+
+    @staticmethod
+    def _input_path(value: str | Path) -> Path:
+        if not isinstance(value, (str, Path)):
+            raise OnlineUpdateValidationError("online update evidence file is unavailable")
+        try:
+            path = Path(value).resolve(strict=True)
+        except OSError as exc:
+            raise OnlineUpdateValidationError("online update evidence file is unavailable") from exc
+        if not path.is_file():
+            raise OnlineUpdateValidationError("online update evidence file is unavailable")
+        return path
+
+    def _stage_evidence_from_report(self, value: str | Path, *, current_version: str, job_id: str) -> dict[str, object]:
+        """Rebuild staging evidence from current workspace artifacts, never report scalars."""
+        report_path = self._workspace_input_path(value)
+        report_size, report_sha256 = _sha256_file(report_path, maximum_bytes=MAX_INPUT_REPORT_BYTES)
+        report = _read_json_file(report_path)
+        evidence = _stage_evidence(report)
+        if compare_versions(current_version, str(evidence["target_version"])) != "newer":
+            raise UpdatePlanBlockedError("staged release is not newer than the current application version")
+
+        manifest_path = self._workspace_input_path(str(evidence["manifest_path"]))
+        archive_path = self._workspace_input_path(str(evidence["archive_path"]))
+        staging_path = self._workspace_input_path(str(evidence["staging_path"]))
+        manifest_data = _read_bounded_bytes(manifest_path, maximum_bytes=MAX_MANIFEST_BYTES)
+        manifest_sha256 = hashlib.sha256(manifest_data).hexdigest()
+        if manifest_sha256 != evidence["manifest_sha256"]:
+            raise OnlineUpdateValidationError("staged release manifest evidence no longer matches")
+        manifest = parse_release_manifest_bytes(manifest_data)
+        if manifest.release_version != evidence["target_version"] or manifest.source_commit != evidence["source_commit"]:
+            raise OnlineUpdateValidationError("staged release manifest evidence no longer matches")
+        if (
+            manifest.compatibility.requires_database_migration != evidence["migration_required"]
+            or list(manifest.compatibility.migration_ids) != evidence["migration_ids"]
+        ):
+            raise OnlineUpdateValidationError("staged release migration evidence no longer matches")
+        archive_size, archive_sha256 = _sha256_file(archive_path, maximum_bytes=MAX_ARCHIVE_BYTES)
+        if (
+            archive_path.name != manifest.archive.filename
+            or archive_size != manifest.archive.size_bytes
+            or archive_sha256 != manifest.archive.sha256
+            or archive_size != evidence["archive_size_bytes"]
+            or archive_sha256 != evidence["archive_sha256"]
+        ):
+            raise OnlineUpdateValidationError("staged release archive evidence no longer matches")
+        staged = verify_staged_release_directory(
+            archive_path,
+            manifest,
+            staging_path=staging_path,
+            job_id=job_id,
+        )
+        validation = staged.validation_report
+        fresh_summary = {
+            "status": validation["status"],
+            "file_count": validation["file_count"],
+            "forbidden_path_count": validation["forbidden_path_count"],
+            "critical_count": len(validation["findings"]["critical"]),
+            "warning_count": len(validation["findings"]["warnings"]),
+        }
+        if (
+            staged.file_count != evidence["staging_file_count"]
+            or fresh_summary != evidence["release_validation"]
+        ):
+            raise OnlineUpdateValidationError("staged release directory evidence no longer matches")
+        return {
+            **evidence,
+            "manifest": manifest,
+            "stage_report_path": workspace_relative(self.workspace, report_path),
+            "stage_report_size_bytes": report_size,
+            "stage_report_sha256": report_sha256,
+            "manifest_path": workspace_relative(self.workspace, manifest_path),
+            "archive_path": workspace_relative(self.workspace, archive_path),
+            "staging_path": workspace_relative(self.workspace, staging_path),
+            "staging_file_count": staged.file_count,
+            "staging_total_bytes": staged.total_bytes,
+            "release_validation": fresh_summary,
+        }
+
+    def _validate_backup_manifest(self, value: str | Path) -> dict[str, object]:
+        path = self._input_path(value)
+        size, digest = _sha256_file(path, maximum_bytes=MAX_INPUT_REPORT_BYTES)
+        manifest = _read_json_file(path)
+        try:
+            if manifest.get("kind") != "backup-manifest" or manifest.get("dry_run") is not False or manifest.get("status") != "pass":
+                raise OnlineUpdateValidationError("backup manifest is not an executed successful backup")
+            if manifest.get("sqlite_backup_status") != "success":
+                raise OnlineUpdateValidationError("backup manifest does not prove SQLite backup success")
+            if _required_text(manifest.get("app_root"), "backup app root", maximum=4096) != self.app_root.as_posix():
+                raise OnlineUpdateValidationError("backup manifest app root does not match")
+            if _required_text(manifest.get("source_database_relative_path"), "backup source database path") != "data/enterprise.db":
+                raise OnlineUpdateValidationError("backup manifest source database path is invalid")
+            source_path = self.app_root / "data" / "enterprise.db"
+            source_size, source_sha256 = _sha256_file(source_path, maximum_bytes=MAX_DATABASE_BYTES)
+            if source_size != _required_nonnegative_int(manifest.get("source_database_size_bytes"), "backup source database size"):
+                raise OnlineUpdateValidationError("backup manifest source database fingerprint does not match")
+            if source_sha256 != _required_sha256(manifest.get("source_database_sha256"), "backup source database SHA256"):
+                raise OnlineUpdateValidationError("backup manifest source database fingerprint does not match")
+            journal_mode = self._journal_mode(source_path)
+            if _required_text(manifest.get("source_database_journal_mode"), "backup source database journal mode", maximum=32) != journal_mode:
+                raise OnlineUpdateValidationError("backup manifest source database journal mode does not match")
+            backup_dir = self._input_directory(_required_text(manifest.get("backup_dir"), "backup directory", maximum=4096), "backup directory")
+            backup_path = self._input_path(_required_text(manifest.get("sqlite_backup_path"), "backup SQLite path", maximum=4096))
+            expected_backup = (backup_dir / "app" / "data" / "enterprise.db").resolve(strict=True)
+            if backup_path != expected_backup:
+                raise OnlineUpdateValidationError("backup manifest SQLite backup path is invalid")
+            backup_size, backup_sha256 = _sha256_file(backup_path, maximum_bytes=MAX_DATABASE_BYTES)
+            if backup_size != _required_nonnegative_int(manifest.get("sqlite_backup_size_bytes"), "backup SQLite size"):
+                raise OnlineUpdateValidationError("backup manifest SQLite backup fingerprint does not match")
+            if backup_sha256 != _required_sha256(manifest.get("sqlite_backup_sha256"), "backup SQLite SHA256"):
+                raise OnlineUpdateValidationError("backup manifest SQLite backup fingerprint does not match")
+            copied_at = _parse_utc_timestamp(manifest.get("copied_at"), "backup copied time")
+            age_seconds = (datetime.now(timezone.utc) - copied_at).total_seconds()
+            if age_seconds < -300 or age_seconds > MAX_BACKUP_AGE_SECONDS:
+                raise OnlineUpdateValidationError("backup manifest is outside the permitted freshness window")
+        except OnlineUpdateValidationError:
+            raise
+        return {
+            "path": path.as_posix(),
+            "size_bytes": size,
+            "sha256": digest,
+            "backup_id": _required_text(manifest.get("backup_id"), "backup identifier"),
+            "source_database_relative_path": "data/enterprise.db",
+            "source_database_size_bytes": source_size,
+            "source_database_sha256": source_sha256,
+            "source_database_journal_mode": journal_mode,
+            "sqlite_backup_path": backup_path.as_posix(),
+            "sqlite_backup_size_bytes": backup_size,
+            "sqlite_backup_sha256": backup_sha256,
+            "copied_at": manifest["copied_at"],
+        }
+
+    def _validate_data_check_report(self, value: str | Path) -> dict[str, object]:
+        path = self._input_path(value)
+        size, digest = _sha256_file(path, maximum_bytes=MAX_INPUT_REPORT_BYTES)
+        report = _read_json_file(path)
+        if (
+            report.get("kind") != "data-check-report"
+            or report.get("status") not in {"pass", "warn"}
+            or _required_text(report.get("app_root"), "data-check app root", maximum=4096) != self.app_root.as_posix()
+        ):
+            raise OnlineUpdateValidationError("data-check report is not usable")
+        warnings = report.get("findings", {}).get("warnings", []) if type(report.get("findings")) is dict else []
+        if type(warnings) is not list:
+            raise OnlineUpdateValidationError("data-check report is not usable")
+        return {
+            "path": path.as_posix(),
+            "size_bytes": size,
+            "sha256": digest,
+            "status": report["status"],
+            "warning_count": len(warnings),
+        }
+
+    @staticmethod
+    def _input_directory(value: object, label: str) -> Path:
+        if not isinstance(value, str) or not value:
+            raise OnlineUpdateValidationError(f"{label} is invalid")
+        try:
+            path = Path(value).resolve(strict=True)
+        except OSError as exc:
+            raise OnlineUpdateValidationError(f"{label} is invalid") from exc
+        if not path.is_dir():
+            raise OnlineUpdateValidationError(f"{label} is invalid")
+        return path
+
+    @staticmethod
+    def _journal_mode(database_path: Path) -> str:
+        try:
+            with sqlite3.connect(f"{database_path.as_uri()}?mode=ro", uri=True) as connection:
+                row = connection.execute("PRAGMA main.journal_mode").fetchone()
+        except sqlite3.Error as exc:
+            raise OnlineUpdateValidationError("source database journal mode is unavailable") from exc
+        if not row or not isinstance(row[0], str) or not row[0]:
+            raise OnlineUpdateValidationError("source database journal mode is unavailable")
+        return row[0].casefold()
 
     @staticmethod
     def _bind_manifest(metadata: ReleaseMetadata, manifest: ReleaseManifest) -> None:
@@ -347,6 +558,8 @@ class OnlineUpdateService:
             )
             manifest = parse_release_manifest_bytes(manifest_path.read_bytes())
             self._bind_manifest(target, manifest)
+            if compare_versions(current, manifest.release_version) != "newer":
+                raise UpdatePlanBlockedError("release manifest is not newer than the current application version")
             if not self._compatible(current, manifest):
                 raise UpdatePlanBlockedError("release compatibility does not include the current version")
             archive_path = download_dir / manifest.archive.filename
@@ -385,6 +598,9 @@ class OnlineUpdateService:
             if len(manifest_data) < 2:
                 raise ReleaseManifestError("staged release manifest is invalid")
             manifest = parse_release_manifest_bytes(manifest_data)
+            current = self._current_version(None)
+            if compare_versions(current, manifest.release_version) != "newer":
+                raise UpdatePlanBlockedError("release manifest is not newer than the current application version")
             size, digest = _sha256_file(archive_file, maximum_bytes=MAX_ARCHIVE_BYTES)
             if archive_file.name != manifest.archive.filename or size != manifest.archive.size_bytes or digest != manifest.archive.sha256:
                 raise ReleaseDownloadError("staged release archive no longer matches its manifest")
@@ -393,11 +609,14 @@ class OnlineUpdateService:
             validation = staged.validation_report
             job.transition(
                 "staged",
+                current_version=current,
                 target_version=manifest.release_version,
                 source_commit=manifest.source_commit,
                 manifest_sha256=hashlib.sha256(manifest_data).hexdigest(),
                 archive_sha256=digest,
                 archive_size_bytes=size,
+                manifest_path=workspace_relative(self.workspace, manifest_file),
+                archive_path=workspace_relative(self.workspace, archive_file),
                 staging_path=workspace_relative(self.workspace, staged.staging_path),
                 staging_file_count=staged.file_count,
                 staging_total_bytes=staged.total_bytes,
@@ -425,32 +644,34 @@ class OnlineUpdateService:
     ) -> dict[str, Any]:
         """Compose a non-executing plan from validated local preparation evidence."""
         def action(job: UpdateJob) -> str:
-            stage_report = _read_json_file(Path(stage_report_path))
             blockers: list[str] = []
+            current = self._current_version(None)
             try:
-                staged = _stage_evidence(stage_report)
-            except OnlineUpdateValidationError:
+                staged = self._stage_evidence_from_report(stage_report_path, current_version=current, job_id=job.job_id)
+            except OnlineUpdateError:
                 staged = None
                 blockers.append("A successful staged release report is required")
             backup = None
             if backup_manifest_path is None:
                 blockers.append("An executed backup manifest is required")
             else:
-                backup = _read_json_file(Path(backup_manifest_path))
-                if backup.get("dry_run") is not False or backup.get("status") != "pass" or backup.get("sqlite_backup_status") != "success":
+                try:
+                    backup = self._validate_backup_manifest(backup_manifest_path)
+                except OnlineUpdateError:
                     blockers.append("The backup manifest does not prove a successful executed SQLite backup")
             data_check = None
             if data_check_report_path is None:
                 blockers.append("A data-check report is required")
             else:
-                data_check = _read_json_file(Path(data_check_report_path))
-                if data_check.get("kind") != "data-check-report" or data_check.get("status") not in {"pass", "warn"}:
+                try:
+                    data_check = self._validate_data_check_report(data_check_report_path)
+                except OnlineUpdateError:
                     blockers.append("The data-check report is not usable")
             if maintenance_window and (maintenance_window != maintenance_window.strip() or len(maintenance_window) > 256):
                 blockers.append("The maintenance window text is invalid")
             job.transition(
                 "planned",
-                current_version=self._current_version(None),
+                current_version=current,
                 target_version="" if staged is None else staged["target_version"],
                 source_commit="" if staged is None else staged["source_commit"],
                 manifest_sha256="" if staged is None else staged["manifest_sha256"],
@@ -458,15 +679,39 @@ class OnlineUpdateService:
                 archive_size_bytes=0 if staged is None else staged["archive_size_bytes"],
                 staging_path="" if staged is None else staged["staging_path"],
                 staging_file_count=0 if staged is None else staged["staging_file_count"],
+                staging_total_bytes=0 if staged is None else staged["staging_total_bytes"],
                 release_validation={} if staged is None else staged["release_validation"],
                 migration_required=False if staged is None else staged["migration_required"],
                 migration_ids=[] if staged is None else staged["migration_ids"],
-                backup_verified=not any("backup" in blocker.lower() for blocker in blockers),
-                data_check_status="" if data_check is None else data_check.get("status", ""),
+                backup_verified=backup is not None,
+                data_check_status="" if data_check is None else data_check["status"],
                 maintenance_window=maintenance_window,
                 blockers=blockers,
-                warnings=[] if data_check is None or data_check.get("status") != "warn" else ["Data-check warnings require operator review"],
-                data_check_warning_count=0 if data_check is None or type(data_check.get("warnings")) is not list else len(data_check["warnings"]),
+                warnings=[] if data_check is None or data_check["status"] != "warn" else ["Data-check warnings require operator review"],
+                data_check_warning_count=0 if data_check is None else data_check["warning_count"],
+                input_evidence={
+                    "stage_report": {} if staged is None else {
+                        "path": staged["stage_report_path"],
+                        "size_bytes": staged["stage_report_size_bytes"],
+                        "sha256": staged["stage_report_sha256"],
+                    },
+                    "release_manifest": {} if staged is None else {
+                        "path": staged["manifest_path"],
+                        "sha256": staged["manifest_sha256"],
+                    },
+                    "release_archive": {} if staged is None else {
+                        "path": staged["archive_path"],
+                        "size_bytes": staged["archive_size_bytes"],
+                        "sha256": staged["archive_sha256"],
+                    },
+                    "staging_directory": {} if staged is None else {
+                        "path": staged["staging_path"],
+                        "file_count": staged["staging_file_count"],
+                        "total_bytes": staged["staging_total_bytes"],
+                    },
+                    "backup_manifest": {} if backup is None else backup,
+                    "data_check_report": {} if data_check is None else data_check,
+                },
                 app_root_fingerprint=self._app_root_fingerprint(),
                 not_executed=list(NOT_EXECUTED),
             )
