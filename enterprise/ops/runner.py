@@ -22,12 +22,19 @@ import subprocess
 import sys
 import time
 import uuid
-import zipfile
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
+
+# The OPS runner is intentionally supported as a directly executed file.
+if __package__ in {None, ""}:
+    _REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+    if str(_REPOSITORY_ROOT) not in sys.path:
+        sys.path.insert(0, str(_REPOSITORY_ROOT))
+
+from enterprise.ops.release_validation import validate_release
 
 
 DEFAULT_ARTIFACT_DIR = "ops_artifacts"
@@ -78,33 +85,6 @@ BACKUP_IGNORE_NAMES = {
 
 SQLITE_BACKUP_METHOD = "sqlite3.Connection.backup"
 SQLITE_RUNTIME_NAMES = {"enterprise.db", "enterprise.db-wal", "enterprise.db-shm"}
-
-RELEASE_FORBIDDEN_PREFIXES = (
-    "assets/",
-    "output/",
-    "data/",
-    "python/",
-    "logs/",
-    "ops_artifacts/",
-    "ops_backups/",
-)
-
-RELEASE_FORBIDDEN_EXACT = {
-    ".env",
-    "enterprise.env",
-    "history.json",
-    "API/.env",
-    "data/enterprise.db",
-}
-
-RELEASE_FORBIDDEN_NAME_FRAGMENTS = (
-    "auth.json",
-    "cookie",
-    "token",
-)
-
-IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
-
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -796,113 +776,6 @@ def command_validate_release(args: argparse.Namespace, job_id: str, logger: OpsJ
     logger.event("report_written", report_path=report_path.as_posix(), status=report["status"])
     report["_report_path"] = report_path.as_posix()
     return report
-
-
-def validate_release(release_path: Path, job_id: str) -> dict[str, Any]:
-    critical: list[str] = []
-    warnings: list[str] = []
-    entries: list[str] = []
-    total_bytes = 0
-    if not release_path.exists():
-        critical.append(f"release path missing: {release_path}")
-    elif release_path.is_dir():
-        for file_path in iter_files(release_path):
-            rel = rel_posix(release_path, file_path)
-            entries.append(rel)
-            try:
-                total_bytes += file_path.stat().st_size
-            except OSError:
-                pass
-    elif zipfile.is_zipfile(release_path):
-        with zipfile.ZipFile(release_path) as archive:
-            for info in archive.infolist():
-                if info.is_dir():
-                    continue
-                entries.append(normalize_release_entry(info.filename))
-                total_bytes += int(info.file_size)
-    else:
-        critical.append(f"release path is not a directory or zip file: {release_path}")
-
-    forbidden = [entry for entry in entries if release_forbidden_reason(entry)]
-    if forbidden:
-        critical.append(f"{len(forbidden)} forbidden runtime or secret paths found in release")
-    if entries and not has_release_app_signal(entries):
-        warnings.append("release does not appear to include VERSION/main.py/enterprise app files")
-    if entries and not has_manifest_signal(entries):
-        warnings.append("release manifest/checksums not found")
-    status = "fail" if critical else "warn" if warnings else "pass"
-    return {
-        "kind": "release-validation-report",
-        "job_id": job_id,
-        "status": status,
-        "generated_at": utc_now(),
-        "release_path": release_path.as_posix(),
-        "file_count": len(entries),
-        "total_bytes": total_bytes,
-        "forbidden_path_count": len(forbidden),
-        "forbidden_path_samples": safe_sample(forbidden),
-        "findings": {"critical": critical, "warnings": warnings},
-        "note": "Read-only release validation. No files were modified.",
-    }
-
-
-def release_forbidden_reason(entry: str) -> str:
-    normalized = normalize_release_entry(entry)
-    if is_unsafe_release_entry_path(normalized):
-        return "unsafe-path"
-    normalized = normalized.lstrip("/")
-    lower = normalized.lower()
-    parts = lower.split("/")
-    basename = parts[-1] if parts else lower
-    candidate_roots = path_suffix_candidates(lower)
-    for candidate in candidate_roots:
-        if candidate in {item.lower() for item in RELEASE_FORBIDDEN_EXACT}:
-            return "exact"
-        if any(candidate.startswith(prefix.lower()) for prefix in RELEASE_FORBIDDEN_PREFIXES):
-            return "prefix"
-    if basename == ".env" or (basename.endswith(".env") and not basename.endswith(".env.example")):
-        return "env"
-    if any(fragment in lower for fragment in RELEASE_FORBIDDEN_NAME_FRAGMENTS):
-        return "credential-name"
-    if any(fragment in lower for fragment in ("/output/", "\\output\\")) and Path(lower).suffix in IMAGE_SUFFIXES:
-        return "runtime-output"
-    return ""
-
-
-def normalize_release_entry(entry: str) -> str:
-    raw = entry.replace("\\", "/")
-    return raw[2:] if raw.startswith("./") else raw
-
-
-def is_unsafe_release_entry_path(entry: str) -> bool:
-    normalized = entry.replace("\\", "/")
-    parts = normalized.split("/")
-    if normalized.startswith("//"):
-        return True
-    if normalized.startswith("/"):
-        return True
-    if len(normalized) >= 3 and normalized[1] == ":" and normalized[0].isalpha() and normalized[2] == "/":
-        return True
-    return any(part == ".." for part in parts)
-
-
-def path_suffix_candidates(path: str) -> list[str]:
-    parts = [part for part in path.split("/") if part]
-    candidates = ["/".join(parts[index:]) for index in range(len(parts))]
-    return candidates or [path]
-
-
-def has_release_app_signal(entries: list[str]) -> bool:
-    normalized = [normalize_release_entry(entry).lstrip("/") for entry in entries]
-    has_version = any(entry == "VERSION" or entry.endswith("/VERSION") for entry in normalized)
-    has_main = any(entry == "main.py" or entry.endswith("/main.py") for entry in normalized)
-    has_enterprise = any(entry.startswith("enterprise/") or "/enterprise/" in entry for entry in normalized)
-    return has_version and has_main and has_enterprise
-
-
-def has_manifest_signal(entries: list[str]) -> bool:
-    lower = [normalize_release_entry(entry).lower().lstrip("/") for entry in entries]
-    return any("manifest" in entry for entry in lower) or any(entry.endswith("checksums.txt") for entry in lower)
 
 
 def command_prepare_upgrade(args: argparse.Namespace, job_id: str, logger: OpsJobLogger) -> dict[str, Any]:
