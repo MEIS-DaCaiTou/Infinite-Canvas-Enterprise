@@ -133,8 +133,11 @@ OPS-3 后置于 OPS-2A / OPS-2B 生产侧 dry-run 验证和必要的 OPS-L1 / OP
 STAB-1 repository implementation is in Draft PR #78.  It adds a local-only,
 role-isolated `3001`/`8000` supervisor, persistent redacted logs, atomic
 runtime state, full process identity, generation-bound command acknowledgements,
-graceful child shutdown and Windows Job Object ownership.  Its
-tests use temporary fixture processes and random local ports only.  It does not
+graceful child shutdown and Windows Job Object ownership.  Its fixture tests
+use temporary processes and random local ports only.  An isolated development
+device run has proved real upstream/gateway startup and both health endpoints,
+but the restart-to-second-stop completion ACK / host-exit sequence remains
+blocked; the PR must stay Draft until that evidence is closed.  It does not
 install a Windows Service, execute a production lifecycle command, implement
 remote process control, or add OPS-3B update apply/rollback capability.
 

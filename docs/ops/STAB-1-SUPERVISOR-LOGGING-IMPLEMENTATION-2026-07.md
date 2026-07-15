@@ -16,6 +16,7 @@ production host was started, changed, or validated.
 | --- | --- |
 | `supervisor.py` | Per-role state machine, health recovery, backoff, crash-loop and controlled shutdown. |
 | `process.py` / `child.py` | Fixed command arrays, an internal Uvicorn wrapper, child launch, stream pumps and owned-only shutdown. |
+| `host.py` | Fixed absolute service-host bootstrap for the bundled Python when a detached child does not inherit an importable project root. |
 | `health.py` | Bounded TCP, upstream `/api/app-info` and gateway `/enterprise/health` checks. |
 | `logging.py` | Rotated persistent files, JSONL events and secret redaction. |
 | `state.py` | Atomic `runtime-state.json`, two-phase instance lock and instance-bound command/ack files. |
@@ -23,7 +24,9 @@ production host was started, changed, or validated.
 | `windows.py` | Service-host-owned Windows Job Object with kill-on-close cleanup. |
 | `control.py` / `cli.py` | Fixed local `start`, `stop`, `restart`, `status` and `health` commands. |
 
-The public CLI accepts no arbitrary child command, shell expression, network
+Both host and child bootstrap paths use fixed absolute repository scripts rather
+than relying on `-m enterprise...` module discovery in a detached bundled-Python
+process.  The public CLI accepts no arbitrary child command, shell expression, network
 control request or upgrade operation.  Its control channel is a runtime-root
 command file bound to the current `supervisor_instance_id`; it does not open a
 new listener port.
@@ -77,6 +80,13 @@ issue time and expected state generation.  Completion ACKs bind that request
 to the accepting instance and record before/after generation plus role PID
 generations.  `restart` returns only after both roles have new identities and
 are healthy; `stop` returns only after its ACK and supervisor exit verification.
+CLI exit status is stable: successful `start`, idempotent `start`, completed or
+idempotent `stop`, and completed `restart` return zero.  Structured control
+failures return two.  `status` returns zero after a successful read even when
+the reported state is unhealthy; `health` returns zero only for verified healthy
+roles.  A second stop cannot infer completion from `state=stopped` alone: it
+also requires the supervisor identity, owned descendants, owned listeners,
+adopted lock, and active stop command/ACK to be absent.
 
 ## State machine and recovery
 
@@ -104,6 +114,12 @@ healthy/unhealthy complete instance, gateway-only, upstream-only, stale state,
 owned orphan and foreign occupant.  Half instances and foreign occupants are
 blocked and are never auto-killed.  A stale lock is cleared only after stored
 PIDs are gone and both ports are free.
+
+Port inspection preserves raw listener PIDs even when process identity lookup
+is unavailable.  An unresolved PID or a failed port inspection is a fail-closed
+startup disposition, not an empty port.  Status exposes the stable unresolved
+classification, while stop never claims the port was released until the raw
+listener set is empty.
 
 ## Ownership and Windows cleanup
 
@@ -158,8 +174,11 @@ Authorization values, Bearer tokens, cookies, API keys, JWTs, passwords,
 secrets, `GITHUB_TOKEN`, `token`, `access_token`, `refresh_token`, `id_token`,
 and signed URL credential/signature parameters in query, JSON or traceback
 content are redacted before file or console output.  Configured exact secret
-values can also be replaced in memory without being persisted in state,
-exceptions or logger representations.  `runtime-state.json` is
+values are collected only from explicit configuration fields such as
+`JWT_SECRET` and `ADMIN_PASSWORD`, filtered, deduplicated and passed as an
+in-memory tuple.  They are excluded from `SupervisorConfig` representations
+and are never persisted in state, control files, exceptions or logger
+representations.  `runtime-state.json` is
 atomically published using a short same-directory temporary filename and
 `os.replace`, and contains no command line, environment value, database data,
 token or user data.  Its role shape is:
@@ -182,9 +201,18 @@ token or user data.  Its role shape is:
 and short-lived HTTP fixture children.  They cover independent role restart,
 crash-loop, lock adoption/stale cleanup, completion ACKs, graceful wrapper
 markers, owned-child fallback after Job termination, persistent logs, extended
-redaction, atomic state publication, port gates and static no-shell/no-browser
-checks.  They never start the production `3001`/`8000` application or open a
-production database.
+redaction, CLI exit results, concurrent-stop quiescence, unresolved listener
+gates, atomic state publication, port gates and static no-shell/no-browser
+checks.  They never start a production application or open a production
+database.
+
+The isolated development-device real-application probe used bundled Python,
+temporary runtime/database roots and non-production ports.  It verified
+`main.app`, `enterprise.gateway.app`, the internal child/host wrappers, Uvicorn,
+`/api/app-info`, and `/enterprise/health` startup.  It also exposed a remaining
+restart-to-second-stop completion ACK / host-exit failure.  That is a release
+blocker: this document does not claim a successful full lifecycle smoke, a
+production rollout, or a fix for a native Windows/CPython crash root cause.
 
 Still not implemented: Windows Service/NSSM/WinSW installation, remote/web
 process control, arbitrary commands, apply-upgrade, rollback/restore, database
