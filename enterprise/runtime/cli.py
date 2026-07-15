@@ -122,8 +122,11 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         return run(args)
-    except (RuntimeControlError, RuntimeStartBlocked):
-        _write({"status": "blocked", "code": getattr(sys.exc_info()[1], "code", "RUNTIME_CONTROL_ERROR")})
+    except (RuntimeControlError, RuntimeStartBlocked) as exc:
+        payload: dict[str, object] = {"status": "blocked", "code": getattr(exc, "code", "RUNTIME_CONTROL_ERROR")}
+        if isinstance(exc, RuntimeControlError):
+            payload.update(exc.public_details)
+        _write(payload)
         return 2
     except ValueError:
         _write({"status": "blocked", "code": "RUNTIME_INPUT_INVALID"})

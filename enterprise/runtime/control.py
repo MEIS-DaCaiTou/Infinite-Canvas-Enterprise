@@ -20,6 +20,37 @@ from .supervisor import RuntimeStartBlocked, SupervisorConfig
 class RuntimeControlError(RuntimeError):
     code = "RUNTIME_CONTROL_ERROR"
 
+    def __init__(self, message: str, *, public_details: dict[str, object] | None = None) -> None:
+        super().__init__(message)
+        self.public_details = dict(public_details or {})
+
+
+class RuntimeServiceHostStartupError(RuntimeControlError):
+    """A detached host exited before the controller observed healthy state."""
+
+    code = "RUNTIME_SERVICE_HOST_EARLY_EXIT"
+
+    def __init__(self, *, exit_code: int, failure_category: str) -> None:
+        super().__init__(
+            "runtime service host did not become healthy",
+            public_details={
+                "host_exit_code": exit_code,
+                "bootstrap_failure_category": failure_category,
+            },
+        )
+
+
+_BOOTSTRAP_FAILURE_NAME = "service-host-bootstrap.failure"
+_BOOTSTRAP_FAILURE_CATEGORIES = frozenset(
+    {
+        "host_entry_unavailable",
+        "host_import_failed",
+        "host_entry_failed",
+        "service_host_nonzero_exit",
+        "module_not_found",
+    }
+)
+
 
 def default_runtime_root() -> Path:
     base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
@@ -41,6 +72,42 @@ def validate_runtime_root(app_root: Path, runtime_root: Path) -> Path:
     if any(_inside(root, item) for item in forbidden):
         raise RuntimeControlError("runtime root must be outside application and runtime-data directories")
     return root
+
+
+def _bootstrap_failure_path(runtime_root: Path) -> Path:
+    return runtime_root / _BOOTSTRAP_FAILURE_NAME
+
+
+def _prepare_bootstrap_failure_path(runtime_root: Path) -> Path:
+    """Reserve a single-use safe failure marker without opening an inherited handle."""
+    path = _bootstrap_failure_path(runtime_root)
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        raise RuntimeControlError("runtime service host bootstrap capture could not be prepared") from exc
+    return path
+
+
+def _bootstrap_failure_category(path: Path) -> str:
+    """Read a host-authored fixed category without retaining raw stderr."""
+    try:
+        category = path.read_text(encoding="ascii", errors="strict").strip()
+    except (OSError, UnicodeError):
+        return "bootstrap_output_empty"
+    return category if category in _BOOTSTRAP_FAILURE_CATEGORIES else "bootstrap_output_unclassified"
+
+
+def _discard_bootstrap_failure(path: Path) -> None:
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        # The marker is only an optional, bounded diagnostic.  A later startup
+        # removes it after the old host has exited.
+        pass
 
 
 def _identity_from_mapping(value: object, *, pid_key: str, created_key: str, executable_key: str) -> ProcessIdentity | None:
@@ -218,13 +285,20 @@ class RuntimeController:
         if not self.store.reserve_lock(instance_id=instance_id, owner=owner):
             raise RuntimeStartBlocked("runtime startup is already in progress")
         host: subprocess.Popen[bytes] | None = None
+        bootstrap_path: Path | None = None
         try:
-            RuntimeLogs(self.config.runtime_root).write(
+            RuntimeLogs(self.config.runtime_root, secret_values=self.config.secret_values).write(
                 "launcher.log", "background_start_requested", supervisor_instance_id=instance_id, mode="service-host"
             )
+            bootstrap_path = _prepare_bootstrap_failure_path(self.config.runtime_root)
+            host_entry = self.config.app_root / "enterprise" / "runtime" / "host.py"
+            if not host_entry.is_file():
+                self.store.release_lock(instance_id)
+                _discard_bootstrap_failure(bootstrap_path)
+                raise RuntimeServiceHostStartupError(exit_code=2, failure_category="host_entry_unavailable")
             arguments = [
                 bundled_python(self.config.app_root),
-                str(self.config.app_root / "enterprise" / "runtime" / "host.py"),
+                str(host_entry),
                 "service-host",
                 "--app-root",
                 str(self.config.app_root),
@@ -236,6 +310,8 @@ class RuntimeController:
                 str(self.config.upstream_port),
                 "--gateway-port",
                 str(self.config.gateway_port),
+                "--bootstrap-failure-path",
+                str(bootstrap_path),
             ]
             if self.config.fixture_child_wrapper:
                 arguments.append("--fixture-child-wrapper")
@@ -259,8 +335,12 @@ class RuntimeController:
                 close_fds=True,
                 shell=False,
             )
+        except RuntimeServiceHostStartupError:
+            raise
         except (OSError, RuntimeError) as exc:
             self.store.release_lock(instance_id)
+            if bootstrap_path is not None:
+                _discard_bootstrap_failure(bootstrap_path)
             raise RuntimeControlError("runtime service host could not be started") from exc
         deadline = time.monotonic() + wait_seconds
         while time.monotonic() < deadline:
@@ -272,12 +352,35 @@ class RuntimeController:
                 and state.get("supervisor_instance_id") == instance_id
                 and current.get("supervisor_identity_current") is True
             ):
+                if bootstrap_path is not None:
+                    _discard_bootstrap_failure(bootstrap_path)
                 return {"result": "started", "status": current}
-            if host.poll() is not None:
+            host_exit_code = host.poll()
+            if host_exit_code is not None:
                 lock = self.store.read_lock()
                 if lock and lock.get("supervisor_instance_id") == instance_id and lock.get("lock_phase") == "reserved":
                     self.store.release_lock(instance_id)
-                raise RuntimeControlError("runtime service host did not become healthy")
+                failure_category = (
+                    _bootstrap_failure_category(bootstrap_path)
+                    if bootstrap_path is not None
+                    else "bootstrap_capture_unavailable"
+                )
+                if bootstrap_path is not None:
+                    _discard_bootstrap_failure(bootstrap_path)
+                try:
+                    RuntimeLogs(self.config.runtime_root, secret_values=self.config.secret_values).write(
+                        "launcher.log",
+                        "service_host_bootstrap_failure",
+                        supervisor_instance_id=instance_id,
+                        host_exit_code=host_exit_code,
+                        bootstrap_failure_category=failure_category,
+                    )
+                except OSError:
+                    pass
+                raise RuntimeServiceHostStartupError(
+                    exit_code=host_exit_code,
+                    failure_category=failure_category,
+                )
             time.sleep(0.25)
         lock = self.store.read_lock()
         if host.poll() is None:
@@ -285,6 +388,8 @@ class RuntimeController:
         lock = self.store.read_lock()
         if host.poll() is not None and lock and lock.get("supervisor_instance_id") == instance_id:
             self.store.release_lock(instance_id)
+        if bootstrap_path is not None:
+            _discard_bootstrap_failure(bootstrap_path)
         raise RuntimeControlError("runtime service host startup timed out")
 
     def _stop_is_fully_quiescent(self, snapshot: dict[str, Any]) -> bool:

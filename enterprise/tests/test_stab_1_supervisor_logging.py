@@ -29,7 +29,13 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from enterprise.runtime import cli as runtime_cli
-from enterprise.runtime.control import RuntimeControlError, RuntimeController, inspect_runtime, validate_runtime_root
+from enterprise.runtime.control import (
+    RuntimeControlError,
+    RuntimeController,
+    RuntimeServiceHostStartupError,
+    inspect_runtime,
+    validate_runtime_root,
+)
 from enterprise.runtime.health import tcp_check
 from enterprise.runtime.logging import RotatingTextLog, RuntimeLogs, StreamPump, redact_text
 from enterprise.runtime.ownership import PortListenerSnapshot, ProcessIdentity, inspect_port_listeners, pid_exists, port_identities, process_identity
@@ -242,6 +248,8 @@ def _run_cli_lifecycle_phase_worker(
         started = run_cli("start", runtime_root=runtime_root, upstream_port=upstream_port, gateway_port=gateway_port)
         if started.get("result") != "started":
             raise AssertionError("short-lived start CLI did not report started")
+        if (runtime_root / "service-host-bootstrap.failure").exists():
+            raise AssertionError("healthy service host retained bootstrap failure marker")
         store = RuntimeStateStore(runtime_root)
         state = store.read_state()
         if state is None or state.get("state") != "healthy":
@@ -468,6 +476,11 @@ def test_static_runtime_boundary() -> None:
     for script in (stop_script, start_script, restart_script, status_script, foreground_script):
         assert "enterprise.runtime.cli" in script
         assert "exit /b %errorlevel%" in script.lower()
+        # ``%~dp0`` carries a trailing backslash.  Passing it directly inside
+        # a quoted Windows argument escapes the final quote for Python's argv
+        # parser, so the launcher must use the same-directory ``.`` form.
+        assert 'set "APP_ROOT=%~dp0."' in script
+        assert '--app-root "%APP_ROOT%"' in script
     assert "taskkill" not in stop_script.lower()
     commands = default_commands(ROOT, upstream_port=13001, gateway_port=18000)
     for command in commands.values():
@@ -477,6 +490,15 @@ def test_static_runtime_boundary() -> None:
         assert "-m" not in command.arguments
     host_entry = (ROOT / "enterprise" / "runtime" / "host.py").read_text(encoding="utf-8")
     assert "sys.path.insert" in host_entry and "enterprise.runtime.cli" in host_entry
+    host_help = subprocess.run(
+        [sys.executable, str(ROOT / "enterprise" / "runtime" / "host.py"), "--help"],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        timeout=10,
+        shell=False,
+    )
+    assert host_help.returncode == 0, host_help.stderr
     child_entry = ROOT / "enterprise" / "runtime" / "child.py"
     child_help = subprocess.run(
         [sys.executable, str(child_entry), "--help"],
@@ -568,6 +590,20 @@ def test_cli_exit_code_contract() -> None:
                 runtime_cli, "inspect_runtime", return_value=unhealthy
             ), contextlib.redirect_stdout(io.StringIO()):
                 assert runtime_cli.run(args) == 2
+
+    output = io.StringIO()
+    with patch.object(
+        runtime_cli,
+        "run",
+        side_effect=RuntimeServiceHostStartupError(exit_code=2, failure_category="module_not_found"),
+    ), contextlib.redirect_stdout(output):
+        assert runtime_cli.main(["start"]) == 2
+    assert json.loads(output.getvalue()) == {
+        "status": "blocked",
+        "code": "RUNTIME_SERVICE_HOST_EARLY_EXIT",
+        "host_exit_code": 2,
+        "bootstrap_failure_category": "module_not_found",
+    }
 
 
 def test_unresolved_listener_is_fail_closed() -> None:
@@ -711,16 +747,29 @@ def test_lock_cleanup_identity_and_early_failure_paths() -> None:
 
         stopped_snapshot = {"start_disposition": "stopped"}
         startup_snapshot = {"start_disposition": "startup_in_progress", "state": "starting", "runtime_state": None}
+        def exited_host_with_bootstrap(arguments: list[str], **_kwargs: object) -> ExitedHost:
+            marker = Path(arguments[arguments.index("--bootstrap-failure-path") + 1])
+            marker.write_text("module_not_found\n", encoding="ascii")
+            return ExitedHost()
+
         with patch("enterprise.runtime.control.inspect_runtime", side_effect=(stopped_snapshot, startup_snapshot)), patch(
-            "enterprise.runtime.control.subprocess.Popen", return_value=ExitedHost()
+            "enterprise.runtime.control.subprocess.Popen", side_effect=exited_host_with_bootstrap
         ):
             try:
                 controller.start(wait_seconds=5)
-            except RuntimeControlError:
-                pass
+            except RuntimeServiceHostStartupError as exc:
+                assert exc.code == "RUNTIME_SERVICE_HOST_EARLY_EXIT"
+                assert exc.public_details == {
+                    "host_exit_code": 1,
+                    "bootstrap_failure_category": "module_not_found",
+                }
             else:
                 raise AssertionError("exited service host was accepted")
         assert not store.lock_path.exists()
+        assert not (runtime_root / "service-host-bootstrap.failure").exists()
+        launcher_log = (runtime_root / "launcher.log").read_text(encoding="utf-8")
+        assert "service_host_bootstrap_failure" in launcher_log
+        assert "module_not_found" in launcher_log
 
         timeout_host = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], shell=False)
         startup_snapshots = [stopped_snapshot] + [startup_snapshot] * 30
