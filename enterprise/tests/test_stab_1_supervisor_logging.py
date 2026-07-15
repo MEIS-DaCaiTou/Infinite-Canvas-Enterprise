@@ -622,7 +622,7 @@ def test_stopped_state_requires_full_quiescence() -> None:
 
         state["supervisor_pid"] = 999999
         state["supervisor_process_created_at"] = 1
-        state["supervisor_executable"] = "C:\\missing.exe"
+        state["supervisor_executable"] = "<test-missing-executable>"
         controller.store.write_state(state)
         with patch("enterprise.runtime.control.inspect_port_listeners", side_effect=(clear_upstream, clear_gateway) * 4):
             completed = controller.send_command("stop", wait_seconds=0)
@@ -657,7 +657,7 @@ def test_lock_cleanup_identity_and_early_failure_paths() -> None:
         assert not failing.store.lock_path.exists()
 
         store = RuntimeStateStore(runtime_root)
-        stale = ProcessIdentity(pid=999999, created_at=1, executable="C:\\missing.exe")
+        stale = ProcessIdentity(pid=999999, created_at=1, executable="<test-missing-executable>")
         assert store.reserve_lock(instance_id="stale-reserved", owner=stale)
         lock = store.read_lock()
         assert lock is not None
@@ -676,7 +676,7 @@ def test_lock_cleanup_identity_and_early_failure_paths() -> None:
                 "lock_phase": "adopted",
                 "supervisor_pid": 999998,
                 "supervisor_process_created_at": 1,
-                "supervisor_executable": "C:\\missing-supervisor.exe",
+                "supervisor_executable": "<test-missing-supervisor>",
                 "created_at": "2000-01-01T00:00:00.000Z",
                 "updated_at": "2000-01-01T00:00:00.000Z",
             }
