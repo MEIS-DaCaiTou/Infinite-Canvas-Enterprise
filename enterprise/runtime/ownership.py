@@ -21,6 +21,34 @@ class ProcessIdentity:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class PortListenerSnapshot:
+    """Raw listener evidence without treating an unqueryable PID as absent."""
+
+    port: int
+    listener_pids: tuple[int, ...]
+    resolved_identities: tuple[ProcessIdentity, ...]
+    unresolved_listener_pids: tuple[int, ...]
+    inspection_failed: bool = False
+
+    @property
+    def has_listeners(self) -> bool:
+        return bool(self.listener_pids)
+
+    @property
+    def is_empty(self) -> bool:
+        return not self.inspection_failed and not self.listener_pids
+
+    def snapshot(self) -> dict[str, Any]:
+        return {
+            "port": self.port,
+            "listener_pids": list(self.listener_pids),
+            "resolved_identities": [identity.snapshot() for identity in self.resolved_identities],
+            "unresolved_listener_pids": list(self.unresolved_listener_pids),
+            "inspection_failed": self.inspection_failed,
+        }
+
+
 if os.name == "nt":
     _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
@@ -119,12 +147,12 @@ def same_process(expected: ProcessIdentity | None, actual: ProcessIdentity | Non
     )
 
 
-def listening_port_pids(port: int) -> set[int]:
+def inspect_port_listeners(port: int) -> PortListenerSnapshot:
     """Inspect TCP listeners through one fixed OS command, never a shell string."""
     if type(port) is not int or port < 1 or port > 65535:
         raise ValueError("port is invalid")
     if os.name != "nt":
-        return set()
+        return PortListenerSnapshot(port, (), (), (), False)
     try:
         result = subprocess.run(
             ["netstat", "-ano", "-p", "tcp"],
@@ -135,7 +163,9 @@ def listening_port_pids(port: int) -> set[int]:
             shell=False,
         )
     except (OSError, subprocess.SubprocessError):
-        return set()
+        return PortListenerSnapshot(port, (), (), (), True)
+    if getattr(result, "returncode", 0) != 0:
+        return PortListenerSnapshot(port, (), (), (), True)
     found: set[int] = set()
     marker = f":{port}"
     for raw_line in result.stdout.splitlines():
@@ -149,8 +179,22 @@ def listening_port_pids(port: int) -> set[int]:
             found.add(int(fields[-1]))
         except ValueError:
             continue
-    return found
+    pids = tuple(sorted(found))
+    resolved: list[ProcessIdentity] = []
+    unresolved: list[int] = []
+    for pid in pids:
+        identity = process_identity(pid)
+        if identity is None:
+            unresolved.append(pid)
+        else:
+            resolved.append(identity)
+    return PortListenerSnapshot(port, pids, tuple(resolved), tuple(unresolved), False)
+
+
+def listening_port_pids(port: int) -> set[int]:
+    """Compatibility view of listener PIDs; callers needing safety use snapshots."""
+    return set(inspect_port_listeners(port).listener_pids)
 
 
 def port_identities(port: int) -> list[ProcessIdentity]:
-    return [identity for pid in listening_port_pids(port) if (identity := process_identity(pid)) is not None]
+    return list(inspect_port_listeners(port).resolved_identities)

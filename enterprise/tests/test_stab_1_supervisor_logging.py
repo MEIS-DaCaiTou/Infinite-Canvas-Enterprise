@@ -19,6 +19,7 @@ import tempfile
 import threading
 import time
 import ctypes
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -27,13 +28,14 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from enterprise.runtime import cli as runtime_cli
 from enterprise.runtime.control import RuntimeControlError, RuntimeController, inspect_runtime, validate_runtime_root
 from enterprise.runtime.health import tcp_check
 from enterprise.runtime.logging import RotatingTextLog, RuntimeLogs, StreamPump, redact_text
-from enterprise.runtime.ownership import ProcessIdentity, pid_exists, port_identities, process_identity
+from enterprise.runtime.ownership import PortListenerSnapshot, ProcessIdentity, inspect_port_listeners, pid_exists, port_identities, process_identity
 from enterprise.runtime.process import CommandSpec, exit_code_snapshot
 from enterprise.runtime.state import RuntimeStateStore, initial_state
-from enterprise.runtime.supervisor import RuntimeSupervisor, SupervisorConfig
+from enterprise.runtime.supervisor import RuntimeStartBlocked, RuntimeSupervisor, SupervisorConfig
 import enterprise.runtime.ownership as runtime_ownership
 
 
@@ -460,10 +462,163 @@ def test_static_runtime_boundary() -> None:
     assert exit_code_snapshot(-1073741819) == (-1073741819, "0xC0000005")
     stop_script = (ROOT / "停止企业版.bat").read_text(encoding="utf-8")
     start_script = (ROOT / "启动企业版.bat").read_text(encoding="utf-8")
+    restart_script = (ROOT / "重启企业版.bat").read_text(encoding="utf-8")
+    status_script = (ROOT / "查看企业版状态.bat").read_text(encoding="utf-8")
     foreground_script = (ROOT / "启动企业版前台.bat").read_text(encoding="utf-8")
-    for script in (stop_script, start_script, foreground_script):
+    for script in (stop_script, start_script, restart_script, status_script, foreground_script):
         assert "enterprise.runtime.cli" in script
+        assert "exit /b %errorlevel%" in script.lower()
     assert "taskkill" not in stop_script.lower()
+
+
+def _cli_args(command: str, runtime_root: Path) -> argparse.Namespace:
+    return argparse.Namespace(
+        command=command,
+        app_root=str(ROOT),
+        runtime_root=str(runtime_root),
+        upstream_port=free_port(),
+        gateway_port=free_port(),
+        fixture_child_wrapper=True,
+        instance_id="fixture-instance",
+    )
+
+
+def _run_cli_with_result(command: str, result: str) -> tuple[int, dict[str, object]]:
+    with tempfile.TemporaryDirectory(prefix="ice-stab1-cli-result-") as raw:
+        runtime_root = Path(raw) / "runtime"
+        config = SupervisorConfig(app_root=ROOT, runtime_root=runtime_root, mode="service-host")
+        args = _cli_args(command, runtime_root)
+        output = io.StringIO()
+        with patch.object(runtime_cli, "_config", return_value=config), patch.object(
+            runtime_cli, "RuntimeController"
+        ) as controller_type, contextlib.redirect_stdout(output):
+            controller = controller_type.return_value
+            if command == "start":
+                controller.start.return_value = {"result": result}
+            elif command == "stop":
+                controller.send_command.return_value = {"result": result}
+            elif command == "restart":
+                controller.send_command.return_value = {"result": result}
+            else:
+                raise AssertionError("unsupported test command")
+            exit_code = runtime_cli.run(args)
+        return exit_code, json.loads(output.getvalue())
+
+
+def test_cli_exit_code_contract() -> None:
+    for command, result in (
+        ("start", "started"),
+        ("start", "already_running"),
+        ("stop", "stopped"),
+        ("stop", "already_stopped"),
+        ("restart", "restarted"),
+    ):
+        exit_code, payload = _run_cli_with_result(command, result)
+        assert exit_code == 0 and payload["result"] == result
+    for command, result in (
+        ("stop", "stop_incomplete"),
+        ("stop", "foreign_port_occupant"),
+        ("stop", "unresolved_port_occupant"),
+        ("restart", "not_running"),
+        ("restart", "rejected_busy"),
+    ):
+        exit_code, payload = _run_cli_with_result(command, result)
+        assert exit_code == 2 and payload["result"] == result
+
+    with tempfile.TemporaryDirectory(prefix="ice-stab1-cli-health-") as raw:
+        args = _cli_args("status", Path(raw) / "runtime")
+        config = SupervisorConfig(app_root=ROOT, runtime_root=Path(raw) / "runtime", mode="service-host")
+        for state in ("healthy", "degraded", "crash_loop"):
+            snapshot = {
+                "state": state,
+                "upstream_health": {"ok": state == "healthy"},
+                "gateway_health": {"ok": state == "healthy"},
+            }
+            with patch.object(runtime_cli, "_config", return_value=config), patch.object(
+                runtime_cli, "inspect_runtime", return_value=snapshot
+            ), contextlib.redirect_stdout(io.StringIO()):
+                assert runtime_cli.run(args) == 0
+        args.command = "health"
+        healthy = {"state": "healthy", "upstream_health": {"ok": True}, "gateway_health": {"ok": True}}
+        with patch.object(runtime_cli, "_config", return_value=config), patch.object(
+            runtime_cli, "inspect_runtime", return_value=healthy
+        ), contextlib.redirect_stdout(io.StringIO()):
+            assert runtime_cli.run(args) == 0
+        for state in ("degraded", "crash_loop", "stopped"):
+            unhealthy = {"state": state, "upstream_health": {"ok": False}, "gateway_health": {"ok": False}}
+            with patch.object(runtime_cli, "_config", return_value=config), patch.object(
+                runtime_cli, "inspect_runtime", return_value=unhealthy
+            ), contextlib.redirect_stdout(io.StringIO()):
+                assert runtime_cli.run(args) == 2
+
+
+def test_unresolved_listener_is_fail_closed() -> None:
+    with tempfile.TemporaryDirectory(prefix="ice-stab1-unresolved-") as raw:
+        root = Path(raw)
+        upstream_port, gateway_port = free_port(), free_port()
+        config = SupervisorConfig(app_root=ROOT, runtime_root=root / "runtime", mode="service-host", upstream_port=upstream_port, gateway_port=gateway_port)
+        unresolved = PortListenerSnapshot(upstream_port, (12345,), (), (12345,), False)
+        clear = PortListenerSnapshot(gateway_port, (), (), (), False)
+        with patch("enterprise.runtime.control.inspect_port_listeners", side_effect=(unresolved, clear)):
+            snapshot = inspect_runtime(config)
+        assert snapshot["start_disposition"] == "unresolved_port_occupant"
+        assert snapshot["upstream_listener"]["unresolved_listener_pids"] == [12345]
+
+        controller = RuntimeController(config)
+        with patch("enterprise.runtime.control.inspect_port_listeners", side_effect=(unresolved, clear)), patch(
+            "enterprise.runtime.control.subprocess.Popen"
+        ) as popen:
+            try:
+                controller.start()
+            except RuntimeStartBlocked:
+                pass
+            else:
+                raise AssertionError("unresolved listener was accepted as a free port")
+            popen.assert_not_called()
+        with patch("enterprise.runtime.control.inspect_port_listeners", side_effect=(unresolved, clear)):
+            stopped = controller.send_command("stop", wait_seconds=0)
+        assert stopped["result"] == "unresolved_port_occupant"
+
+        result = type("Netstat", (), {"stdout": "", "returncode": 1})()
+        with patch.object(runtime_ownership.subprocess, "run", return_value=result):
+            failed = inspect_port_listeners(upstream_port)
+        assert failed.inspection_failed is True and failed.listener_pids == ()
+
+        netstat = type("Netstat", (), {"stdout": f"  TCP    0.0.0.0:{upstream_port}    0.0.0.0:0    LISTENING    23456\n", "returncode": 0})()
+        with patch.object(runtime_ownership.subprocess, "run", return_value=netstat), patch.object(
+            runtime_ownership, "process_identity", return_value=None
+        ):
+            raw_snapshot = inspect_port_listeners(upstream_port)
+        assert raw_snapshot.listener_pids == (23456,)
+        assert raw_snapshot.unresolved_listener_pids == (23456,)
+
+
+def test_stopped_state_requires_full_quiescence() -> None:
+    with tempfile.TemporaryDirectory(prefix="ice-stab1-stop-race-") as raw:
+        root = Path(raw)
+        config = SupervisorConfig(app_root=ROOT, runtime_root=root / "runtime", mode="service-host", upstream_port=free_port(), gateway_port=free_port())
+        controller = RuntimeController(config)
+        identity = process_identity(os.getpid())
+        assert identity is not None
+        state = initial_state(instance_id="fixture-stop-race", supervisor=identity, mode="service-host")
+        state["state"] = "stopped"
+        controller.store.write_state(state)
+        clear_upstream = PortListenerSnapshot(config.upstream_port, (), (), (), False)
+        clear_gateway = PortListenerSnapshot(config.gateway_port, (), (), (), False)
+        with patch("enterprise.runtime.control.inspect_port_listeners", side_effect=(clear_upstream, clear_gateway) * 8), patch.object(
+            controller.store, "submit_command"
+        ) as submit:
+            result = controller.send_command("stop", wait_seconds=0)
+        assert result["result"] == "stop_in_progress"
+        submit.assert_not_called()
+
+        state["supervisor_pid"] = 999999
+        state["supervisor_process_created_at"] = 1
+        state["supervisor_executable"] = "C:\\missing.exe"
+        controller.store.write_state(state)
+        with patch("enterprise.runtime.control.inspect_port_listeners", side_effect=(clear_upstream, clear_gateway) * 4):
+            completed = controller.send_command("stop", wait_seconds=0)
+        assert completed["result"] == "already_stopped"
 
 
 def test_lock_cleanup_identity_and_early_failure_paths() -> None:
@@ -625,6 +780,57 @@ def test_redaction_and_windows_identity_declarations() -> None:
         runtime_ownership.process_identity(4)
 
 
+def test_cli_config_exact_secret_wiring() -> None:
+    """The real CLI config path supplies explicit values only to log redaction."""
+    with tempfile.TemporaryDirectory(prefix="ice-stab1-cli-secrets-") as raw:
+        root = Path(raw)
+        runtime_root = root / "runtime"
+        values_path = root / "fixture-values.txt"
+        values_path.write_text("stab1-config-jwt-value\nstab1-config-admin-password\n", encoding="utf-8")
+        args = _cli_args("start", runtime_root)
+        args.upstream_port = free_port()
+        args.gateway_port = free_port()
+        import enterprise.config as enterprise_config
+
+        with patch.object(enterprise_config, "JWT_SECRET", "stab1-config-jwt-value"), patch.object(
+            enterprise_config, "ADMIN_PASSWORD", "stab1-config-admin-password"
+        ):
+            cli_config = runtime_cli._config(args, mode="service-host")
+        assert len(cli_config.secret_values) == 2
+        assert "stab1-config" not in repr(cli_config)
+
+        upstream = fixture_spec("upstream", args.upstream_port)
+        upstream = replace(upstream, arguments=(*upstream.arguments, "--emit-values-file", str(values_path)))
+        gateway = fixture_spec("gateway", args.gateway_port)
+        config = replace(cli_config, command_specs={"upstream": upstream, "gateway": gateway})
+        supervisor = RuntimeSupervisor(config)
+        thread = start_supervisor(supervisor)
+        try:
+            wait_for(lambda: supervisor.state["state"] == "healthy")
+            wait_for(lambda: "[REDACTED]" in (runtime_root / "upstream.stdout.log").read_text(encoding="utf-8"))
+            stop_supervisor(supervisor, thread)
+        finally:
+            if thread.is_alive():
+                stop_supervisor(supervisor, thread)
+
+        foreground = RuntimeLogs(root / "foreground", foreground=True, secret_values=cli_config.secret_values)
+        mirrored = io.StringIO()
+        destination, _ = foreground.stream_pumps("upstream")
+        with contextlib.redirect_stdout(mirrored):
+            pump = StreamPump(io.StringIO("stab1-config-jwt-value\n"), destination, mirror=True)
+            pump.start()
+            pump.join()
+        assert "stab1-config" not in mirrored.getvalue()
+        assert "[REDACTED]" in mirrored.getvalue()
+
+        for path in list(runtime_root.rglob("*")) + list((root / "foreground").rglob("*")):
+            if not path.is_file() or path == values_path:
+                continue
+            content = path.read_text(encoding="utf-8", errors="replace")
+            assert "stab1-config-jwt-value" not in content
+            assert "stab1-config-admin-password" not in content
+
+
 def test_forced_job_termination_and_stop_during_backoff() -> None:
     with tempfile.TemporaryDirectory(prefix="ice-stab1-stop-") as raw:
         supervisor = build_supervisor(Path(raw) / "runtime", max_restarts=2, ignore_upstream_stop=True)
@@ -777,8 +983,12 @@ CASES = {
     "logging-state": test_logs_state_rotation_and_secret_redaction,
     "start-gate": test_start_gate_and_atomic_state,
     "static-boundary": test_static_runtime_boundary,
+    "cli-exit-codes": test_cli_exit_code_contract,
+    "unresolved-listener": test_unresolved_listener_is_fail_closed,
+    "stop-race": test_stopped_state_requires_full_quiescence,
     "lock-lifecycle": test_lock_cleanup_identity_and_early_failure_paths,
     "redaction": test_redaction_and_windows_identity_declarations,
+    "cli-secret-wiring": test_cli_config_exact_secret_wiring,
     "forced-stop": test_forced_job_termination_and_stop_during_backoff,
     "command-ack": test_instance_bound_command_acknowledgements,
     "stop-transitions": test_stop_during_startup_backoff_and_crash_loop,
@@ -921,8 +1131,12 @@ def run_all() -> None:
     test_windows_process_smoke()
     test_start_gate_and_atomic_state()
     test_static_runtime_boundary()
+    test_cli_exit_code_contract()
+    test_unresolved_listener_is_fail_closed()
+    test_stopped_state_requires_full_quiescence()
     test_lock_cleanup_identity_and_early_failure_paths()
     test_redaction_and_windows_identity_declarations()
+    test_cli_config_exact_secret_wiring()
     test_forced_job_termination_and_stop_during_backoff()
     test_instance_bound_command_acknowledgements()
     test_stop_during_startup_backoff_and_crash_loop()

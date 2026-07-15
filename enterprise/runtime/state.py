@@ -347,6 +347,36 @@ class RuntimeStateStore:
             except OSError:
                 continue
 
+    def has_pending_control(
+        self,
+        instance_id: str,
+        *,
+        command: str | None = None,
+        pending_only: bool = False,
+    ) -> bool:
+        """Return whether an instance still owns a control document.
+
+        ``pending_only`` deliberately ignores completed acknowledgement files;
+        a completed stop ACK must not make a fully exited instance look active.
+        """
+        if not isinstance(instance_id, str) or not instance_id or not self.control_root.exists():
+            return False
+        for path in self.control_root.glob("*.json"):
+            if pending_only and not path.name.startswith("cmd-"):
+                continue
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, json.JSONDecodeError):
+                continue
+            if (
+                type(payload) is dict
+                and payload.get("schema_version") == STATE_SCHEMA
+                and payload.get("supervisor_instance_id") == instance_id
+                and (command is None or payload.get("command") == command)
+            ):
+                return True
+        return False
+
 
 def initial_state(*, instance_id: str, supervisor: ProcessIdentity, mode: str) -> dict[str, Any]:
     if mode not in {"foreground", "service-host"}:
@@ -373,6 +403,10 @@ def initial_state(*, instance_id: str, supervisor: ProcessIdentity, mode: str) -
         "mode": mode,
         "state": "starting",
         "state_generation": 0,
+        "active_control_request": None,
+        "active_control_command": None,
+        "active_control_request_id": None,
+        "stop_phase": None,
         "started_at": now,
         "updated_at": now,
         "upstream": dict(role),

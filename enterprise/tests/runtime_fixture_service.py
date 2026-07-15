@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -52,6 +53,7 @@ def main() -> int:
     parser.add_argument("--role", choices=("upstream", "gateway"), required=True)
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--emit-secret", action="store_true")
+    parser.add_argument("--emit-values-file", default="")
     parser.add_argument("--upstream-down-file", default="")
     parser.add_argument("--runtime-stop-file", required=True)
     parser.add_argument("--shutdown-marker", required=True)
@@ -63,6 +65,13 @@ def main() -> int:
     if args.emit_secret:
         fixture_token = "fixture" + "-marker"
         print("Authorization: " + "Bearer " + fixture_token, flush=True)
+    if args.emit_values_file:
+        values = [line for line in Path(args.emit_values_file).read_text(encoding="utf-8").splitlines() if line]
+        for value in values:
+            print(value, flush=True)
+            print("traceback value=" + value, file=sys.stderr, flush=True)
+            print("http://fixture.invalid/path?access_token=" + value, flush=True)
+            print(json.dumps({"credential": value}), flush=True)
 
     stop_file = Path(args.runtime_stop_file)
     marker = Path(args.shutdown_marker)

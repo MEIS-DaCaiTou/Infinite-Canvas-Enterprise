@@ -13,6 +13,26 @@ from .supervisor import RuntimeStartBlocked, RuntimeSupervisor, SupervisorConfig
 
 ROOT = Path(__file__).resolve().parents[2]
 
+_COMMAND_SUCCESS_RESULTS = {
+    "start": frozenset({"started", "already_running"}),
+    "stop": frozenset({"stopped", "already_stopped"}),
+    "restart": frozenset({"restarted"}),
+}
+
+
+def _configured_secret_values() -> tuple[str, ...]:
+    """Return only explicit configuration secrets for in-memory log redaction."""
+    try:
+        from enterprise import config as enterprise_config
+    except Exception:
+        return ()
+    values: list[str] = []
+    for name in ("JWT_SECRET", "ADMIN_PASSWORD"):
+        value = getattr(enterprise_config, name, None)
+        if isinstance(value, str) and len(value.strip()) >= 8 and value not in values:
+            values.append(value)
+    return tuple(values)
+
 
 def _paths(args: argparse.Namespace) -> tuple[Path, Path]:
     app_root = Path(args.app_root).resolve()
@@ -34,6 +54,7 @@ def _config(args: argparse.Namespace, *, mode: str) -> SupervisorConfig:
         mode=mode,
         upstream_port=upstream_port,
         gateway_port=gateway_port,
+        secret_values=_configured_secret_values(),
         fixture_child_wrapper=bool(args.fixture_child_wrapper),
     )
 
@@ -57,6 +78,19 @@ def _write(payload: dict[str, object]) -> None:
     print(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
 
 
+def _command_exit_code(command: str, payload: dict[str, object]) -> int:
+    result = payload.get("result")
+    return 0 if result in _COMMAND_SUCCESS_RESULTS[command] else 2
+
+
+def _health_exit_code(snapshot: dict[str, object]) -> int:
+    if snapshot.get("state") != "healthy":
+        return 2
+    upstream = snapshot.get("upstream_health")
+    gateway = snapshot.get("gateway_health")
+    return 0 if type(upstream) is dict and type(gateway) is dict and upstream.get("ok") is True and gateway.get("ok") is True else 2
+
+
 def run(args: argparse.Namespace) -> int:
     if args.command == "service-host":
         return RuntimeSupervisor(_config(args, mode="service-host"), instance_id=args.instance_id).run()
@@ -65,20 +99,23 @@ def run(args: argparse.Namespace) -> int:
     config = _config(args, mode="service-host")
     controller = RuntimeController(config)
     if args.command == "start":
-        _write(controller.start())
-        return 0
+        payload = controller.start()
+        _write(payload)
+        return _command_exit_code("start", payload)
     if args.command == "stop":
-        _write(controller.send_command("stop"))
-        return 0
+        payload = controller.send_command("stop")
+        _write(payload)
+        return _command_exit_code("stop", payload)
     if args.command == "restart":
-        _write(controller.send_command("restart", wait_seconds=90))
-        return 0
+        payload = controller.send_command("restart", wait_seconds=90)
+        _write(payload)
+        return _command_exit_code("restart", payload)
     snapshot = inspect_runtime(config)
     if args.command == "status":
         _write(snapshot)
         return 0
     _write(snapshot)
-    return 0 if snapshot["state"] == "healthy" else 2
+    return _health_exit_code(snapshot)
 
 
 def main(argv: list[str] | None = None) -> int:

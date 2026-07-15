@@ -93,7 +93,7 @@ class RotatingTextLog:
         self.path = path
         self.max_bytes = max_bytes
         self.backups = backups
-        self._secret_values = tuple(value for value in secret_values if isinstance(value, str) and value)
+        self.__secret_values = tuple(value for value in secret_values if isinstance(value, str) and value)
         self._lock = threading.Lock()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.touch(exist_ok=True)
@@ -130,7 +130,7 @@ class RotatingTextLog:
 
     def sanitize(self, value: object) -> str:
         """Apply this log's in-memory secret set without exposing it."""
-        return redact_text(value, secret_values=self._secret_values)
+        return redact_text(value, secret_values=self.__secret_values)
 
 
 class StreamPump:
@@ -188,13 +188,13 @@ class RuntimeLogs:
         self.root = root
         self.root.mkdir(parents=True, exist_ok=True)
         self.foreground = foreground
-        self._secret_values = tuple(value for value in secret_values if isinstance(value, str) and value)
+        self.__secret_values = tuple(value for value in secret_values if isinstance(value, str) and value)
         self._logs = {
             name: RotatingTextLog(
                 self.root / name,
                 max_bytes=max_bytes,
                 backups=backups,
-                secret_values=self._secret_values,
+                secret_values=self.__secret_values,
             )
             for name in (
                 "launcher.log",
@@ -209,7 +209,7 @@ class RuntimeLogs:
         }
 
     def write(self, name: str, event: str, **fields: Any) -> None:
-        payload = {"ts": utc_now(), "event": event, **redact_value(fields, secret_values=self._secret_values)}
+        payload = {"ts": utc_now(), "event": event, **redact_value(fields, secret_values=self.__secret_values)}
         self._logs[name].write(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
 
     def stream_pumps(self, role: str) -> tuple[RotatingTextLog, RotatingTextLog]:

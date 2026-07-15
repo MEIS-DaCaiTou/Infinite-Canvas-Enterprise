@@ -14,7 +14,7 @@ from typing import Any
 
 from .health import HealthResult, gateway_health, tcp_check, upstream_health
 from .logging import RuntimeLogs, utc_now
-from .ownership import ProcessIdentity, port_identities, process_identity, same_process
+from .ownership import ProcessIdentity, inspect_port_listeners, process_identity, same_process
 from .process import (
     CommandSpec,
     ManagedProcess,
@@ -57,7 +57,7 @@ class SupervisorConfig:
     log_max_bytes: int = 10 * 1024 * 1024
     log_backups: int = 5
     command_specs: dict[str, CommandSpec] | None = None
-    secret_values: tuple[str, ...] = ()
+    secret_values: tuple[str, ...] = field(default=(), repr=False, compare=False)
     fixture_child_wrapper: bool = False
 
     def __post_init__(self) -> None:
@@ -206,9 +206,15 @@ class RuntimeSupervisor:
     def _inspect_start_gate(self) -> str:
         """Classify state/ports without terminating any process."""
         existing = self.store.read_state()
-        upstream = port_identities(self.config.upstream_port)
-        gateway = port_identities(self.config.gateway_port)
-        if not upstream and not gateway:
+        upstream_snapshot = inspect_port_listeners(self.config.upstream_port)
+        gateway_snapshot = inspect_port_listeners(self.config.gateway_port)
+        if upstream_snapshot.inspection_failed or gateway_snapshot.inspection_failed:
+            return "port_inspection_failed"
+        if upstream_snapshot.unresolved_listener_pids or gateway_snapshot.unresolved_listener_pids:
+            return "unresolved_port_occupant"
+        upstream = upstream_snapshot.resolved_identities
+        gateway = gateway_snapshot.resolved_identities
+        if not upstream_snapshot.has_listeners and not gateway_snapshot.has_listeners:
             if existing:
                 if existing.get("state") == "stopped":
                     return "stale_runtime_state"
@@ -221,8 +227,8 @@ class RuntimeSupervisor:
                     return "startup_in_progress"
                 return "stale_runtime_state"
             return "stopped"
-        if bool(upstream) != bool(gateway):
-            return "upstream_only" if upstream else "gateway_only"
+        if upstream_snapshot.has_listeners != gateway_snapshot.has_listeners:
+            return "upstream_only" if upstream_snapshot.has_listeners else "gateway_only"
         if existing:
             state_upstream = self._identity_from_state(existing.get("upstream"))
             state_gateway = self._identity_from_state(existing.get("gateway"))
@@ -540,6 +546,11 @@ class RuntimeSupervisor:
                 if self._stop_request is None:
                     self._stop_request = command
                     self._stopping = True
+                    self.state["active_control_request"] = command["request_id"]
+                    self.state["active_control_command"] = "stop"
+                    self.state["active_control_request_id"] = command["request_id"]
+                    self.state["stop_phase"] = "requested"
+                    self._persist_state()
             elif value == "restart" and self._restart_request is None and self._restart_in_progress is None:
                 self._restart_request = command
             else:
@@ -624,16 +635,24 @@ class RuntimeSupervisor:
     def _wait_for_port_release(self, port: int, expected: ProcessIdentity | None) -> tuple[str, bool]:
         deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline:
-            listeners = port_identities(port)
-            if not listeners:
+            listeners = inspect_port_listeners(port)
+            if listeners.inspection_failed:
+                return "port_inspection_failed", True
+            if listeners.unresolved_listener_pids:
+                return "unresolved_port_occupant", True
+            if not listeners.has_listeners:
                 return "released", False
-            if expected is None or all(not same_process(expected, item) for item in listeners):
+            if expected is None or all(not same_process(expected, item) for item in listeners.resolved_identities):
                 return "foreign_port_occupant", True
             time.sleep(0.1)
-        listeners = port_identities(port)
-        if not listeners:
+        listeners = inspect_port_listeners(port)
+        if listeners.inspection_failed:
+            return "port_inspection_failed", True
+        if listeners.unresolved_listener_pids:
+            return "unresolved_port_occupant", True
+        if not listeners.has_listeners:
             return "released", False
-        if expected is None or all(not same_process(expected, item) for item in listeners):
+        if expected is None or all(not same_process(expected, item) for item in listeners.resolved_identities):
             return "foreign_port_occupant", True
         return "owned_listener_remaining", False
 
@@ -646,10 +665,17 @@ class RuntimeSupervisor:
         expected = {
             role: self.roles[role].process.identity if self.roles[role].process is not None else None for role in ROLES
         }
+        self._stopping = True
+        self.state["stop_phase"] = "stopping_children"
+        self._persist_state()
         child_results, job_termination_required = self._stop_children(reason=reason)
+        self.state["stop_phase"] = "closing_job"
+        self._persist_state()
         if self._job is not None:
             self._job.close()
             self._job = None
+        self.state["stop_phase"] = "verifying_pids"
+        self._persist_state()
         for role in ROLES:
             runtime = self.roles[role]
             if runtime.process is not None:
@@ -660,13 +686,13 @@ class RuntimeSupervisor:
             runtime.state = "stopped"
             runtime.health = "unknown"
             runtime.restart_at = None
+        self.state["stop_phase"] = "verifying_ports"
+        self._persist_state()
         upstream_release, upstream_foreign = self._wait_for_port_release(self.config.upstream_port, expected["upstream"])
         gateway_release, gateway_foreign = self._wait_for_port_release(self.config.gateway_port, expected["gateway"])
         owned_pid_release_complete = all(
             identity is None or not same_process(identity, process_identity(identity.pid)) for identity in expected.values()
         )
-        self._stopping = False
-        self._persist_state()
         report = {
             "child_stop_results": child_results,
             "job_termination_required": job_termination_required,
@@ -677,11 +703,19 @@ class RuntimeSupervisor:
             "foreign_listener_detected": upstream_foreign or gateway_foreign,
         }
         result = "foreign_port_occupant" if report["foreign_listener_detected"] else "stopped"
+        if "unresolved_port_occupant" in {upstream_release, gateway_release}:
+            result = "unresolved_port_occupant"
+        elif "port_inspection_failed" in {upstream_release, gateway_release}:
+            result = "stop_incomplete"
         if not owned_pid_release_complete or "owned_listener_remaining" in {upstream_release, gateway_release}:
             result = "stop_incomplete"
+        self.state["stop_phase"] = "publishing_ack"
+        self._persist_state()
         if request is not None:
             after = {**self._command_snapshot(), "stop_report": report}
             self._ack(request, result=result, before=before, after=after)
+        self.state["stop_phase"] = "exiting_supervisor"
+        self._persist_state()
         self._log("supervisor_stop_completed", reason=reason, result=result, **report)
         return report
 
@@ -729,6 +763,19 @@ class RuntimeSupervisor:
                 except Exception:
                     pass
                 self._job = None
+            # The stop acknowledgement has already been durably published.
+            # Leave a final stopped state without an active request while this
+            # process is still alive; controllers still require the full
+            # supervisor identity to disappear before reporting completion.
+            self._stopping = False
+            self.state["active_control_request"] = None
+            self.state["active_control_command"] = None
+            self.state["active_control_request_id"] = None
+            self.state["stop_phase"] = None
+            try:
+                self._persist_state()
+            except Exception:
+                pass
             if self._acquired:
                 self.store.release_lock(self.instance_id)
             try:

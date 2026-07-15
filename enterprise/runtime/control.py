@@ -11,7 +11,7 @@ from typing import Any
 
 from .health import gateway_health, tcp_check, upstream_health
 from .logging import RuntimeLogs
-from .ownership import ProcessIdentity, port_identities, process_identity, same_process
+from .ownership import ProcessIdentity, PortListenerSnapshot, inspect_port_listeners, process_identity, same_process
 from .process import bundled_python
 from .state import STARTUP_LOCK_GRACE_SECONDS, RuntimeStateStore
 from .supervisor import RuntimeStartBlocked, SupervisorConfig
@@ -71,13 +71,31 @@ def _current(identity: ProcessIdentity | None) -> bool:
     return identity is not None and same_process(identity, process_identity(identity.pid))
 
 
-def _role_owned_by_state(state: dict[str, Any] | None, role: str, identities: list[ProcessIdentity]) -> bool:
+def _role_owned_by_state(state: dict[str, Any] | None, role: str, identities: tuple[ProcessIdentity, ...]) -> bool:
     expected = _identity_from_role(state.get(role)) if state else None
     return expected is not None and any(same_process(expected, identity) for identity in identities)
 
 
 def _state_has_owned_child(state: dict[str, Any] | None) -> bool:
     return bool(state) and any(_current(_identity_from_role(state.get(role))) for role in ("upstream", "gateway"))
+
+
+def _port_snapshots(config: SupervisorConfig) -> tuple[PortListenerSnapshot, PortListenerSnapshot]:
+    return inspect_port_listeners(config.upstream_port), inspect_port_listeners(config.gateway_port)
+
+
+def _ports_are_confirmed_clear(upstream: PortListenerSnapshot, gateway: PortListenerSnapshot) -> bool:
+    return upstream.is_empty and gateway.is_empty
+
+
+def _port_failure_result(upstream: PortListenerSnapshot, gateway: PortListenerSnapshot) -> str | None:
+    if upstream.inspection_failed or gateway.inspection_failed:
+        return "port_inspection_failed"
+    if upstream.unresolved_listener_pids or gateway.unresolved_listener_pids:
+        return "unresolved_port_occupant"
+    if upstream.has_listeners or gateway.has_listeners:
+        return "foreign_port_occupant"
+    return None
 
 
 def inspect_runtime(config: SupervisorConfig) -> dict[str, Any]:
@@ -89,9 +107,13 @@ def inspect_runtime(config: SupervisorConfig) -> dict[str, Any]:
     supervisor = _supervisor_identity_from_state(state)
     supervisor_current = _current(supervisor)
     owned_child_current = _state_has_owned_child(state)
-    upstream_listeners = port_identities(config.upstream_port)
-    gateway_listeners = port_identities(config.gateway_port)
-    if not upstream_listeners and not gateway_listeners:
+    upstream_listener, gateway_listener = _port_snapshots(config)
+    upstream_listeners = upstream_listener.resolved_identities
+    gateway_listeners = gateway_listener.resolved_identities
+    port_failure = _port_failure_result(upstream_listener, gateway_listener)
+    if port_failure in {"port_inspection_failed", "unresolved_port_occupant"}:
+        disposition = port_failure
+    elif not upstream_listener.has_listeners and not gateway_listener.has_listeners:
         if state and (supervisor_current or owned_child_current):
             disposition = "startup_in_progress" if state.get("state") in {"starting", "stopped"} else "owned_orphan_process"
         elif lock and lock.get("lock_phase") in {"reserved", "adopted"}:
@@ -100,8 +122,8 @@ def inspect_runtime(config: SupervisorConfig) -> dict[str, Any]:
             disposition = "stale_runtime_state"
         else:
             disposition = "stopped"
-    elif bool(upstream_listeners) != bool(gateway_listeners):
-        disposition = "upstream_only" if upstream_listeners else "gateway_only"
+    elif upstream_listener.has_listeners != gateway_listener.has_listeners:
+        disposition = "upstream_only" if upstream_listener.has_listeners else "gateway_only"
     elif (
         state
         and supervisor_current
@@ -126,6 +148,8 @@ def inspect_runtime(config: SupervisorConfig) -> dict[str, Any]:
         "lock_age_seconds": lock_age,
         "supervisor_identity_current": supervisor_current,
         "owned_child_current": owned_child_current,
+        "upstream_listener": upstream_listener.snapshot(),
+        "gateway_listener": gateway_listener.snapshot(),
         "upstream_tcp": upstream_tcp,
         "gateway_tcp": gateway_tcp,
         "upstream_health": upstream_result,
@@ -146,7 +170,8 @@ class RuntimeController:
         supervisor = self.store.lock_supervisor_identity(lock)
         owner_current = _current(owner)
         supervisor_current = _current(supervisor)
-        no_project_ports = not port_identities(self.config.upstream_port) and not port_identities(self.config.gateway_port)
+        upstream_listener, gateway_listener = _port_snapshots(self.config)
+        no_project_ports = _ports_are_confirmed_clear(upstream_listener, gateway_listener)
         no_owned_child = not bool(snapshot.get("owned_child_current"))
         age = snapshot.get("lock_age_seconds")
         state = snapshot.get("runtime_state")
@@ -263,11 +288,69 @@ class RuntimeController:
             self.store.release_lock(instance_id)
         raise RuntimeControlError("runtime service host startup timed out")
 
+    def _stop_is_fully_quiescent(self, snapshot: dict[str, Any]) -> bool:
+        state = snapshot.get("runtime_state")
+        if type(state) is dict and state.get("state") not in {"stopped", None}:
+            return False
+        upstream_listener, gateway_listener = _port_snapshots(self.config)
+        if not _ports_are_confirmed_clear(upstream_listener, gateway_listener):
+            return False
+        if snapshot.get("supervisor_identity_current") or snapshot.get("owned_child_current"):
+            return False
+        lock = snapshot.get("lock")
+        if type(lock) is dict and lock.get("lock_phase") in {"reserved", "adopted"}:
+            return False
+        instance_id = state.get("supervisor_instance_id") if type(state) is dict else None
+        if isinstance(instance_id, str) and instance_id and self.store.has_pending_control(
+            instance_id, command="stop", pending_only=True
+        ):
+            return False
+        if type(state) is dict and (
+            state.get("active_control_command") == "stop"
+            or state.get("stop_phase") not in {None, ""}
+        ):
+            return False
+        return True
+
+    def _wait_for_existing_stop(self, *, instance_id: str | None, wait_seconds: int) -> dict[str, Any]:
+        deadline = time.monotonic() + wait_seconds
+        while time.monotonic() < deadline:
+            current = inspect_runtime(self.config)
+            if self._stop_is_fully_quiescent(current):
+                return {"result": "stopped", "joined_existing_stop": True, "status": current}
+            disposition = current.get("start_disposition")
+            if disposition in {"unresolved_port_occupant", "port_inspection_failed", "foreign_port_occupant"}:
+                return {"result": disposition, "status": current}
+            if isinstance(instance_id, str) and instance_id:
+                state = current.get("runtime_state")
+                active_id = state.get("active_control_request_id") if type(state) is dict else None
+                if isinstance(active_id, str) and active_id:
+                    ack = self.store.read_ack(active_id, instance_id=instance_id)
+                    if ack is not None and ack.get("result") in {"foreign_port_occupant", "stop_incomplete"}:
+                        return {"result": ack["result"], "ack": ack, "status": current}
+            time.sleep(0.2)
+        return {"result": "stop_in_progress", "status": inspect_runtime(self.config)}
+
     def send_command(self, command: str, *, wait_seconds: int = 60) -> dict[str, Any]:
+        if command not in {"stop", "restart"}:
+            raise RuntimeControlError("runtime command is invalid")
         snapshot = inspect_runtime(self.config)
         state = snapshot.get("runtime_state")
-        if not state or snapshot["state"] == "stopped":
-            return {"result": "already_stopped" if command == "stop" else "not_running", "status": snapshot}
+        disposition = snapshot.get("start_disposition")
+        if command == "stop":
+            if self._stop_is_fully_quiescent(snapshot):
+                return {"result": "already_stopped", "status": snapshot}
+            if type(state) is not dict:
+                return {"result": str(disposition or "unresolved_port_occupant"), "status": snapshot}
+            instance_id = state.get("supervisor_instance_id")
+            if snapshot.get("state") == "stopped" or state.get("active_control_command") == "stop":
+                return self._wait_for_existing_stop(
+                    instance_id=instance_id if isinstance(instance_id, str) else None,
+                    wait_seconds=wait_seconds,
+                )
+        elif not state or snapshot["state"] == "stopped":
+            return {"result": "not_running", "status": snapshot}
+
         instance_id = state.get("supervisor_instance_id") if type(state) is dict else None
         generation = state.get("state_generation") if type(state) is dict else None
         if (
@@ -277,7 +360,7 @@ class RuntimeController:
             or generation < 0
             or not snapshot.get("supervisor_identity_current")
         ):
-            raise RuntimeControlError("runtime service ownership is unavailable")
+            return {"result": "ownership_unavailable", "status": snapshot}
         request_id = self.store.submit_command(
             command=command,
             supervisor_instance_id=instance_id,
@@ -293,7 +376,7 @@ class RuntimeController:
                     if current["state"] == "healthy" and current.get("supervisor_identity_current"):
                         self.store.remove_ack(request_id, instance_id=instance_id)
                         return {"result": "restarted", "ack": ack, "status": current}
-                if command == "stop" and result in {"stopped", "foreign_port_occupant", "stop_incomplete"}:
+                if command == "stop" and result in {"stopped", "foreign_port_occupant", "unresolved_port_occupant", "stop_incomplete"}:
                     current = inspect_runtime(self.config)
                     if not current.get("supervisor_identity_current"):
                         final_ack = dict(ack)
@@ -301,6 +384,7 @@ class RuntimeController:
                         self.store.remove_ack(request_id, instance_id=instance_id)
                         return {"result": result, "ack": final_ack, "status": current}
                 if isinstance(result, str) and result.startswith("rejected_"):
-                    raise RuntimeControlError("runtime control command was rejected")
+                    self.store.remove_ack(request_id, instance_id=instance_id)
+                    return {"result": result, "ack": ack, "status": inspect_runtime(self.config)}
             time.sleep(0.2)
-        raise RuntimeControlError("runtime control command timed out")
+        return {"result": "control_timeout", "status": inspect_runtime(self.config)}
