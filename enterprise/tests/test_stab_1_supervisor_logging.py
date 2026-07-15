@@ -33,7 +33,7 @@ from enterprise.runtime.control import RuntimeControlError, RuntimeController, i
 from enterprise.runtime.health import tcp_check
 from enterprise.runtime.logging import RotatingTextLog, RuntimeLogs, StreamPump, redact_text
 from enterprise.runtime.ownership import PortListenerSnapshot, ProcessIdentity, inspect_port_listeners, pid_exists, port_identities, process_identity
-from enterprise.runtime.process import CommandSpec, exit_code_snapshot
+from enterprise.runtime.process import CommandSpec, default_commands, exit_code_snapshot
 from enterprise.runtime.state import RuntimeStateStore, initial_state
 from enterprise.runtime.supervisor import RuntimeStartBlocked, RuntimeSupervisor, SupervisorConfig
 import enterprise.runtime.ownership as runtime_ownership
@@ -469,6 +469,12 @@ def test_static_runtime_boundary() -> None:
         assert "enterprise.runtime.cli" in script
         assert "exit /b %errorlevel%" in script.lower()
     assert "taskkill" not in stop_script.lower()
+    commands = default_commands(ROOT, upstream_port=13001, gateway_port=18000)
+    for command in commands.values():
+        assert command.arguments[1].endswith("enterprise\\runtime\\child.py") or command.arguments[1].endswith(
+            "enterprise/runtime/child.py"
+        )
+        assert "-m" not in command.arguments
 
 
 def _cli_args(command: str, runtime_root: Path) -> argparse.Namespace:

@@ -85,13 +85,13 @@ def default_commands(
             )
             for role, port in (("upstream", upstream_port), ("gateway", gateway_port))
         }
+    child_wrapper = app_root / "enterprise" / "runtime" / "child.py"
     return {
         "upstream": CommandSpec(
             role="upstream",
             arguments=(
                 executable,
-                "-m",
-                "enterprise.runtime.child",
+                str(child_wrapper),
                 "--role",
                 "upstream",
                 "--app-root",
@@ -108,8 +108,7 @@ def default_commands(
             role="gateway",
             arguments=(
                 executable,
-                "-m",
-                "enterprise.runtime.child",
+                str(child_wrapper),
                 "--role",
                 "gateway",
                 "--app-root",
