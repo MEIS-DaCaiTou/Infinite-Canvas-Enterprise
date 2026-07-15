@@ -224,8 +224,7 @@ class RuntimeController:
             )
             arguments = [
                 bundled_python(self.config.app_root),
-                "-m",
-                "enterprise.runtime.cli",
+                str(self.config.app_root / "enterprise" / "runtime" / "host.py"),
                 "service-host",
                 "--app-root",
                 str(self.config.app_root),

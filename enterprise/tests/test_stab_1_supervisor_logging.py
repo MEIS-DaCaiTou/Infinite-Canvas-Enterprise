@@ -475,6 +475,8 @@ def test_static_runtime_boundary() -> None:
             "enterprise/runtime/child.py"
         )
         assert "-m" not in command.arguments
+    host_entry = (ROOT / "enterprise" / "runtime" / "host.py").read_text(encoding="utf-8")
+    assert "sys.path.insert" in host_entry and "enterprise.runtime.cli" in host_entry
 
 
 def _cli_args(command: str, runtime_root: Path) -> argparse.Namespace:
