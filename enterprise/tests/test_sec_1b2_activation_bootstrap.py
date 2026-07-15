@@ -19,6 +19,8 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from enterprise.tests.resource_lifecycle import assert_sqlite_files_releasable
+
 os.environ.setdefault("JWT_SECRET", "sec-1b2-temporary-secret-at-least-32-bytes")
 os.environ.setdefault("ADMIN_USERNAME", "admin")
 os.environ.setdefault("ADMIN_PASSWORD", "temporary-admin-password")
@@ -110,10 +112,14 @@ def _legacy_database(path: Path, *, include_null_is_admin_user: bool = False) ->
 
 def _manifest(tmp: Path, source_db: Path, *, now_ms: int, **changes) -> Path:
     backup_db = tmp / f"backup-{len(list(tmp.glob('backup-*.db')))}.db"
-    with sqlite3.connect(source_db) as source_conn:
+    source_conn = sqlite3.connect(source_db)
+    backup_conn = sqlite3.connect(backup_db)
+    try:
         source_journal_mode = str(source_conn.execute("PRAGMA main.journal_mode").fetchone()[0]).casefold()
-        with sqlite3.connect(backup_db) as backup_conn:
-            source_conn.backup(backup_conn)
+        source_conn.backup(backup_conn)
+    finally:
+        backup_conn.close()
+        source_conn.close()
     payload = {
         "kind": "backup-manifest",
         "backup_id": "temporary-backup",
@@ -1584,6 +1590,9 @@ def _run_checks() -> None:
                 )
             )
             assert "--confirm-session-impact-reviewed" in execute_help
+            released = assert_sqlite_files_releasable(tmp, unlink=True)
+            assert released
+            assert not any(path.name.casefold().endswith((".db", ".db-wal", ".db-shm")) for path in tmp.rglob("*"))
         finally:
             edb.DB_PATH = original_db_path
             auth.JWT_SECRET = original_jwt_secret

@@ -1,21 +1,16 @@
 param(
     [string]$Root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path,
-    [switch]$StopExisting
+    [string]$RuntimeRoot = "",
+    [int]$UpstreamPort = 3001,
+    [int]$GatewayPort = 8000,
+    [switch]$FixtureChildWrapper,
+    [switch]$CleanupRuntimeRoot
 )
 
 $ErrorActionPreference = "Stop"
 
 function Get-EnterpriseListeners {
-    Get-NetTCPConnection -LocalPort 8000,3001 -State Listen -ErrorAction SilentlyContinue
-}
-
-function Stop-EnterpriseListeners {
-    $listeners = Get-EnterpriseListeners
-    foreach ($processId in ($listeners | Select-Object -ExpandProperty OwningProcess -Unique)) {
-        Write-Host "Stopping existing listener PID $processId"
-        Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
-    }
-    Start-Sleep -Seconds 2
+    Get-NetTCPConnection -LocalPort $UpstreamPort,$GatewayPort -State Listen -ErrorAction SilentlyContinue
 }
 
 function Wait-Health {
@@ -23,7 +18,7 @@ function Wait-Health {
 
     for ($i = 0; $i -lt $Seconds; $i++) {
         try {
-            $res = Invoke-RestMethod -Uri "http://127.0.0.1:8000/enterprise/health" -TimeoutSec 2
+            $res = Invoke-RestMethod -Uri "http://127.0.0.1:$GatewayPort/enterprise/health" -TimeoutSec 2
             if ($res.status -eq "ok" -and $res.gateway -eq "ok" -and $res.upstream -eq "ok") {
                 return $true
             }
@@ -34,64 +29,94 @@ function Wait-Health {
     return $false
 }
 
-Set-Location $Root
+function Invoke-RuntimeCli {
+    param(
+        [string[]]$Arguments,
+        [string]$Operation
+    )
 
-if (Get-EnterpriseListeners) {
-    if (-not $StopExisting) {
-        throw "Ports 8000/3001 are already in use. Re-run with -StopExisting to verify a clean lifecycle."
+    $operationOut = Join-Path $env:TEMP ("infinite_canvas_enterprise_{0}_{1}.out.log" -f $Operation,[guid]::NewGuid().ToString("N"))
+    $operationErr = Join-Path $env:TEMP ("infinite_canvas_enterprise_{0}_{1}.err.log" -f $Operation,[guid]::NewGuid().ToString("N"))
+    try {
+        $process = Start-Process -FilePath $python `
+            -ArgumentList $Arguments `
+            -WorkingDirectory $Root `
+            -RedirectStandardOutput $operationOut `
+            -RedirectStandardError $operationErr `
+            -WindowStyle Hidden `
+            -PassThru
+        $process.WaitForExit(65000) | Out-Null
+        if (-not $process.HasExited -or [int]$process.ExitCode -ne 0) {
+            throw ("The {0} CLI did not complete successfully (exit={1}, exited={2})." -f $Operation,$process.ExitCode,$process.HasExited)
+        }
+    } finally {
+        Remove-Item $operationOut,$operationErr -ErrorAction SilentlyContinue
     }
-    Stop-EnterpriseListeners
+}
+
+Set-Location $Root
+if ([string]::IsNullOrWhiteSpace($RuntimeRoot)) {
+    $RuntimeRoot = Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "InfiniteCanvasEnterprise\runtime"
 }
 
 if (Get-EnterpriseListeners) {
-    throw "Ports 8000/3001 are still in use after stop attempt."
+    throw "Requested test ports are already in use. This test refuses to stop an existing process."
 }
 
 $python = Join-Path $Root "python\python.exe"
 if (-not (Test-Path $python)) { $python = "python" }
+$startArgs = @("-m", "enterprise.runtime.cli", "start", "--app-root", $Root, "--runtime-root", $RuntimeRoot, "--upstream-port", $UpstreamPort, "--gateway-port", $GatewayPort)
+$restartArgs = @("-m", "enterprise.runtime.cli", "restart", "--app-root", $Root, "--runtime-root", $RuntimeRoot, "--upstream-port", $UpstreamPort, "--gateway-port", $GatewayPort)
+$stopArgs = @("-m", "enterprise.runtime.cli", "stop", "--app-root", $Root, "--runtime-root", $RuntimeRoot, "--upstream-port", $UpstreamPort, "--gateway-port", $GatewayPort)
+if ($FixtureChildWrapper) {
+    $startArgs += "--fixture-child-wrapper"
+    $restartArgs += "--fixture-child-wrapper"
+    $stopArgs += "--fixture-child-wrapper"
+}
 
-$outLog = Join-Path $env:TEMP "infinite_canvas_enterprise_launcher.out.log"
-$errLog = Join-Path $env:TEMP "infinite_canvas_enterprise_launcher.err.log"
-Remove-Item $outLog,$errLog -ErrorAction SilentlyContinue
-
-Write-Host "Starting launcher..."
-$launcher = Start-Process -FilePath $python `
-    -ArgumentList @((Join-Path $Root "enterprise\launcher.py"), "--no-browser") `
-    -WorkingDirectory $Root `
-    -RedirectStandardOutput $outLog `
-    -RedirectStandardError $errLog `
-    -WindowStyle Hidden `
-    -PassThru
+$serviceStarted = $false
+$serviceStopped = $false
 
 try {
+    Write-Host "Starting service-host through the fixed CLI..."
+    Invoke-RuntimeCli -Arguments $startArgs -Operation "start"
     if (-not (Wait-Health -Seconds 60)) {
         throw "Health did not become ok within 60 seconds."
     }
-    Write-Host "[PASS] Health became ok."
+    $serviceStarted = $true
+    Write-Host "[PASS] Start CLI exited and the detached service-host became healthy."
 
-    $ports = Get-EnterpriseListeners
-    if (-not ($ports | Where-Object { $_.LocalPort -eq 8000 })) { throw "Port 8000 is not listening." }
-    if (-not ($ports | Where-Object { $_.LocalPort -eq 3001 })) { throw "Port 3001 is not listening." }
-    Write-Host "[PASS] Ports 8000 and 3001 are listening."
+    $beforeUpstreamPid = @(Get-EnterpriseListeners | Where-Object { $_.LocalPort -eq $UpstreamPort } | Select-Object -First 1 -ExpandProperty OwningProcess)[0]
+    $beforeGatewayPid = @(Get-EnterpriseListeners | Where-Object { $_.LocalPort -eq $GatewayPort } | Select-Object -First 1 -ExpandProperty OwningProcess)[0]
+    if ($null -eq $beforeUpstreamPid -or $null -eq $beforeGatewayPid) { throw "Expected runtime listeners were not present before restart." }
+    Invoke-RuntimeCli -Arguments $restartArgs -Operation "restart"
+    if (-not (Wait-Health -Seconds 60)) { throw "Controlled restart did not complete." }
+    $afterUpstreamPid = @(Get-EnterpriseListeners | Where-Object { $_.LocalPort -eq $UpstreamPort } | Select-Object -First 1 -ExpandProperty OwningProcess)[0]
+    $afterGatewayPid = @(Get-EnterpriseListeners | Where-Object { $_.LocalPort -eq $GatewayPort } | Select-Object -First 1 -ExpandProperty OwningProcess)[0]
+    if ($null -eq $afterUpstreamPid -or $null -eq $afterGatewayPid) { throw "Expected runtime listeners were not present after restart." }
+    if ($beforeUpstreamPid -eq $afterUpstreamPid) { throw "Upstream PID did not change after restart." }
+    if ($beforeGatewayPid -eq $afterGatewayPid) { throw "Gateway PID did not change after restart." }
+    Write-Host "[PASS] Restart completion changed both role PID generations."
+
+    Invoke-RuntimeCli -Arguments $stopArgs -Operation "stop"
+    $serviceStopped = $true
+    Start-Sleep -Milliseconds 500
+    if (Get-EnterpriseListeners) {
+        throw "Requested project ports are still listening after controlled stop."
+    }
+    Write-Host "[PASS] Controlled stop released both requested ports."
 } finally {
-    if ($launcher -and -not $launcher.HasExited) {
-        Write-Host "Stopping launcher PID $($launcher.Id)..."
-        Stop-Process -Id $launcher.Id -Force -ErrorAction SilentlyContinue
+    if ($serviceStarted -and -not $serviceStopped) {
+        try {
+            Invoke-RuntimeCli -Arguments $stopArgs -Operation "cleanup-stop"
+            $serviceStopped = $true
+        } catch {
+            $serviceStopped = $false
+        }
+    }
+    if ($CleanupRuntimeRoot -and $serviceStopped -and (Test-Path -LiteralPath $RuntimeRoot)) {
+        Remove-Item -LiteralPath $RuntimeRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
 
-Start-Sleep -Seconds 5
-
-if (Get-EnterpriseListeners) {
-    Get-EnterpriseListeners | Select-Object LocalAddress,LocalPort,OwningProcess | Format-Table -AutoSize
-    Write-Host ""
-    Write-Host "Launcher stdout:"
-    if (Test-Path $outLog) { Get-Content $outLog }
-    Write-Host ""
-    Write-Host "Launcher stderr:"
-    if (Test-Path $errLog) { Get-Content $errLog }
-    throw "Ports 8000/3001 are still listening after launcher stop."
-}
-
-Write-Host "[PASS] Ports 8000 and 3001 were released after launcher stop."
 Write-Host "Lifecycle test passed."
