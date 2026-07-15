@@ -99,7 +99,7 @@ def _bootstrap_failure_category(path: Path) -> str:
     return category if category in _BOOTSTRAP_FAILURE_CATEGORIES else "bootstrap_output_unclassified"
 
 
-def _discard_bootstrap_failure(path: Path) -> None:
+def _discard_bootstrap_failure(path: Path, *, logs: RuntimeLogs | None = None) -> None:
     try:
         path.unlink()
     except FileNotFoundError:
@@ -107,7 +107,15 @@ def _discard_bootstrap_failure(path: Path) -> None:
     except OSError:
         # The marker is only an optional, bounded diagnostic.  A later startup
         # removes it after the old host has exited.
-        pass
+        if logs is not None:
+            try:
+                logs.write(
+                    "launcher.log",
+                    "service_host_bootstrap_cleanup_failed",
+                    failure_category="bootstrap_marker_cleanup_failed",
+                )
+            except OSError:
+                pass
 
 
 def _identity_from_mapping(value: object, *, pid_key: str, created_key: str, executable_key: str) -> ProcessIdentity | None:
@@ -286,15 +294,16 @@ class RuntimeController:
             raise RuntimeStartBlocked("runtime startup is already in progress")
         host: subprocess.Popen[bytes] | None = None
         bootstrap_path: Path | None = None
+        logs = RuntimeLogs(self.config.runtime_root, secret_values=self.config.secret_values)
         try:
-            RuntimeLogs(self.config.runtime_root, secret_values=self.config.secret_values).write(
+            logs.write(
                 "launcher.log", "background_start_requested", supervisor_instance_id=instance_id, mode="service-host"
             )
             bootstrap_path = _prepare_bootstrap_failure_path(self.config.runtime_root)
             host_entry = self.config.app_root / "enterprise" / "runtime" / "host.py"
             if not host_entry.is_file():
                 self.store.release_lock(instance_id)
-                _discard_bootstrap_failure(bootstrap_path)
+                _discard_bootstrap_failure(bootstrap_path, logs=logs)
                 raise RuntimeServiceHostStartupError(exit_code=2, failure_category="host_entry_unavailable")
             arguments = [
                 bundled_python(self.config.app_root),
@@ -340,7 +349,7 @@ class RuntimeController:
         except (OSError, RuntimeError) as exc:
             self.store.release_lock(instance_id)
             if bootstrap_path is not None:
-                _discard_bootstrap_failure(bootstrap_path)
+                _discard_bootstrap_failure(bootstrap_path, logs=logs)
             raise RuntimeControlError("runtime service host could not be started") from exc
         deadline = time.monotonic() + wait_seconds
         while time.monotonic() < deadline:
@@ -353,7 +362,7 @@ class RuntimeController:
                 and current.get("supervisor_identity_current") is True
             ):
                 if bootstrap_path is not None:
-                    _discard_bootstrap_failure(bootstrap_path)
+                    _discard_bootstrap_failure(bootstrap_path, logs=logs)
                 return {"result": "started", "status": current}
             host_exit_code = host.poll()
             if host_exit_code is not None:
@@ -366,9 +375,9 @@ class RuntimeController:
                     else "bootstrap_capture_unavailable"
                 )
                 if bootstrap_path is not None:
-                    _discard_bootstrap_failure(bootstrap_path)
+                    _discard_bootstrap_failure(bootstrap_path, logs=logs)
                 try:
-                    RuntimeLogs(self.config.runtime_root, secret_values=self.config.secret_values).write(
+                    logs.write(
                         "launcher.log",
                         "service_host_bootstrap_failure",
                         supervisor_instance_id=instance_id,
@@ -389,7 +398,7 @@ class RuntimeController:
         if host.poll() is not None and lock and lock.get("supervisor_instance_id") == instance_id:
             self.store.release_lock(instance_id)
         if bootstrap_path is not None:
-            _discard_bootstrap_failure(bootstrap_path)
+            _discard_bootstrap_failure(bootstrap_path, logs=logs)
         raise RuntimeControlError("runtime service host startup timed out")
 
     def _stop_is_fully_quiescent(self, snapshot: dict[str, Any]) -> bool:

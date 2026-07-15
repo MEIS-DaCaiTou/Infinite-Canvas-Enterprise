@@ -33,6 +33,7 @@ from enterprise.runtime.control import (
     RuntimeControlError,
     RuntimeController,
     RuntimeServiceHostStartupError,
+    _discard_bootstrap_failure,
     inspect_runtime,
     validate_runtime_root,
 )
@@ -489,26 +490,44 @@ def test_static_runtime_boundary() -> None:
         )
         assert "-m" not in command.arguments
     host_entry = (ROOT / "enterprise" / "runtime" / "host.py").read_text(encoding="utf-8")
+    assert "_remove_runtime_script_directory" in host_entry
     assert "sys.path.insert" in host_entry and "enterprise.runtime.cli" in host_entry
-    host_help = subprocess.run(
-        [sys.executable, str(ROOT / "enterprise" / "runtime" / "host.py"), "--help"],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        timeout=10,
-        shell=False,
-    )
-    assert host_help.returncode == 0, host_help.stderr
     child_entry = ROOT / "enterprise" / "runtime" / "child.py"
-    child_help = subprocess.run(
-        [sys.executable, str(child_entry), "--help"],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        timeout=10,
-        shell=False,
-    )
-    assert child_help.returncode == 0, child_help.stderr
+    for entry in (child_entry, ROOT / "enterprise" / "runtime" / "host.py"):
+        with tempfile.TemporaryDirectory(prefix="ice-stab1-logging-origin-") as raw:
+            probe_root = Path(raw)
+            probe_output = probe_root / "logging-origin.txt"
+            (probe_root / "sitecustomize.py").write_text(
+                "import atexit\n"
+                "import os\n"
+                "def _record_logging_origin():\n"
+                "    import logging\n"
+                "    output = os.environ.get('ICE_STAB1_LOGGING_ORIGIN')\n"
+                "    if output and getattr(logging, '__file__', None):\n"
+                "        try:\n"
+                "            with open(output, 'x', encoding='utf-8') as handle:\n"
+                "                handle.write(logging.__file__)\n"
+                "        except OSError:\n"
+                "            pass\n"
+                "atexit.register(_record_logging_origin)\n",
+                encoding="utf-8",
+            )
+            environment = os.environ.copy()
+            environment["PYTHONPATH"] = str(probe_root)
+            environment["ICE_STAB1_LOGGING_ORIGIN"] = str(probe_output)
+            direct = subprocess.run(
+                [sys.executable, str(entry), "--help"],
+                cwd=ROOT,
+                env=environment,
+                text=True,
+                capture_output=True,
+                timeout=10,
+                shell=False,
+            )
+            assert direct.returncode == 0, direct.stderr
+            assert probe_output.is_file(), f"{entry.name} did not import top-level logging"
+            logging_origin = Path(probe_output.read_text(encoding="utf-8").strip()).resolve()
+            assert logging_origin != (ROOT / "enterprise" / "runtime" / "logging.py").resolve()
 
 
 def _cli_args(command: str, runtime_root: Path) -> argparse.Namespace:
@@ -791,6 +810,28 @@ def test_lock_cleanup_identity_and_early_failure_paths() -> None:
                 timeout_host.wait(timeout=5)
 
 
+def test_bootstrap_marker_cleanup_failure_is_observable() -> None:
+    with tempfile.TemporaryDirectory(prefix="ice-stab1-bootstrap-marker-") as raw:
+        runtime_root = Path(raw)
+        marker = runtime_root / "service-host-bootstrap.failure"
+        marker.write_text("host_import_failed\n", encoding="ascii")
+        logs = RuntimeLogs(runtime_root)
+        original_unlink = Path.unlink
+
+        def reject_marker_unlink(path: Path, *args: object, **kwargs: object) -> None:
+            if path == marker:
+                raise OSError("fixture cleanup failure")
+            original_unlink(path, *args, **kwargs)
+
+        with patch.object(Path, "unlink", reject_marker_unlink):
+            _discard_bootstrap_failure(marker, logs=logs)
+        assert marker.is_file()
+        launcher_log = (runtime_root / "launcher.log").read_text(encoding="utf-8")
+        assert "service_host_bootstrap_cleanup_failed" in launcher_log
+        assert "bootstrap_marker_cleanup_failed" in launcher_log
+        assert "fixture cleanup failure" not in launcher_log
+
+
 def test_redaction_and_windows_identity_declarations() -> None:
     with tempfile.TemporaryDirectory(prefix="ice-stab1-redact-") as raw:
         root = Path(raw)
@@ -1054,6 +1095,7 @@ CASES = {
     "unresolved-listener": test_unresolved_listener_is_fail_closed,
     "stop-race": test_stopped_state_requires_full_quiescence,
     "lock-lifecycle": test_lock_cleanup_identity_and_early_failure_paths,
+    "bootstrap-marker-cleanup": test_bootstrap_marker_cleanup_failure_is_observable,
     "redaction": test_redaction_and_windows_identity_declarations,
     "cli-secret-wiring": test_cli_config_exact_secret_wiring,
     "forced-stop": test_forced_job_termination_and_stop_during_backoff,
@@ -1213,6 +1255,7 @@ def run_all() -> None:
     test_unresolved_listener_is_fail_closed()
     test_stopped_state_requires_full_quiescence()
     test_lock_cleanup_identity_and_early_failure_paths()
+    test_bootstrap_marker_cleanup_failure_is_observable()
     test_redaction_and_windows_identity_declarations()
     test_cli_config_exact_secret_wiring()
     test_forced_job_termination_and_stop_during_backoff()
