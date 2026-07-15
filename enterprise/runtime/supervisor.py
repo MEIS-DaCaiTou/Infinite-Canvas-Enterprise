@@ -25,7 +25,7 @@ from .process import (
     graceful_stop,
     start_process,
 )
-from .state import STARTUP_LOCK_GRACE_SECONDS, RuntimeStateStore, initial_state
+from .state import STARTUP_LOCK_GRACE_SECONDS, RuntimeStateError, RuntimeStateStore, initial_state
 from .windows import JobObjectError, ProcessJob
 
 
@@ -39,6 +39,21 @@ class RuntimeSupervisorError(RuntimeError):
 
 class RuntimeStartBlocked(RuntimeSupervisorError):
     code = "RUNTIME_START_BLOCKED"
+
+
+def _failure_category(error: Exception) -> str:
+    """Return a stable, non-sensitive supervisor failure category."""
+    if isinstance(error, RuntimeStateError):
+        return "state_publication_failed"
+    if isinstance(error, JobObjectError):
+        return "job_object_failed"
+    if isinstance(error, ProcessControlError):
+        return "child_process_failed"
+    if isinstance(error, RuntimeStartBlocked):
+        return "startup_blocked"
+    if isinstance(error, OSError):
+        return "os_error"
+    return "internal"
 
 
 @dataclass(frozen=True)
@@ -749,9 +764,9 @@ class RuntimeSupervisor:
         except KeyboardInterrupt:
             self._best_effort_failure_cleanup("foreground_interrupt")
             return_code = 0
-        except Exception:
+        except Exception as exc:
             try:
-                self._log("supervisor_unhandled_failure", failure_category="internal")
+                self._log("supervisor_unhandled_failure", failure_category=_failure_category(exc))
             except Exception:
                 pass
             self._best_effort_failure_cleanup("supervisor_failure")

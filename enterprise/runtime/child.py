@@ -2,11 +2,32 @@
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+
+def _remove_runtime_script_directory() -> None:
+    """Prevent the sibling runtime ``logging.py`` from shadowing stdlib logging."""
+    runtime_directory = Path(__file__).resolve().parent
+    filtered: list[str] = []
+    for entry in sys.path:
+        if not entry:
+            filtered.append(entry)
+            continue
+        try:
+            if Path(entry).resolve() == runtime_directory:
+                continue
+        except OSError:
+            pass
+        filtered.append(entry)
+    sys.path[:] = filtered
+
+
+_remove_runtime_script_directory()
+
 import argparse
 import asyncio
 import importlib
-import sys
-from pathlib import Path
 
 
 def _load_application(role: str, app_root: Path):
