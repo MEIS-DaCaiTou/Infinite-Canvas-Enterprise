@@ -135,11 +135,12 @@ role-isolated `3001`/`8000` supervisor, persistent redacted logs, atomic
 runtime state, full process identity, generation-bound command acknowledgements,
 graceful child shutdown and Windows Job Object ownership.  Its fixture tests
 use temporary processes and random local ports only.  An isolated development
-device run has proved real upstream/gateway startup and both health endpoints,
-but the restart-to-second-stop completion ACK / host-exit sequence remains
-blocked; the PR must stay Draft until that evidence is closed.  It does not
-install a Windows Service, execute a production lifecycle command, implement
-remote process control, or add OPS-3B update apply/rollback capability.
+device run with temporary roots, database, ports and dependencies verified
+real upstream/gateway startup, endpoint health, restart-to-stop ACK/host exit,
+idempotent stop, start-to-stop reuse and independent role recovery.  `PyJWT`
+is now declared because `enterprise.auth` imports `jwt`.  The PR remains Draft;
+this does not install a Windows Service, execute a production lifecycle command,
+implement remote process control, or add OPS-3B update apply/rollback capability.
 
 Implementation details: `docs/ops/STAB-1-SUPERVISOR-LOGGING-IMPLEMENTATION-2026-07.md`.
 

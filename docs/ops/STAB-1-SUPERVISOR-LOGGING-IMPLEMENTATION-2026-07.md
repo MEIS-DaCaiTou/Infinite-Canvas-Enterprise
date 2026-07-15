@@ -206,13 +206,17 @@ gates, atomic state publication, port gates and static no-shell/no-browser
 checks.  They never start a production application or open a production
 database.
 
-The isolated development-device real-application probe used bundled Python,
-temporary runtime/database roots and non-production ports.  It verified
-`main.app`, `enterprise.gateway.app`, the internal child/host wrappers, Uvicorn,
-`/api/app-info`, and `/enterprise/health` startup.  It also exposed a remaining
-restart-to-second-stop completion ACK / host-exit failure.  That is a release
-blocker: this document does not claim a successful full lifecycle smoke, a
-production rollout, or a fix for a native Windows/CPython crash root cause.
+The isolated development-device real-application probe uses a temporary
+runtime/database root, non-production ports and a disposable copy of bundled
+Python.  Its first attempt established that `enterprise.auth` imports `jwt`
+while the install manifest omitted `PyJWT`; `requirements.txt` now declares
+that direct dependency.  With the isolated dependency in place, the probe
+verified `main.app`, `enterprise.gateway.app`, the internal child/host wrappers,
+Uvicorn, `/api/app-info`, `/enterprise/health`, restart ACK/PID generations,
+stop ACK/supervisor exit, port release, idempotent stop, start-to-stop reuse,
+and independent upstream/gateway recovery.  This is development-device
+evidence only: it is not a production rollout, Windows Service installation,
+or a claimed fix for a native Windows/CPython crash root cause.
 
 Still not implemented: Windows Service/NSSM/WinSW installation, remote/web
 process control, arbitrary commands, apply-upgrade, rollback/restore, database

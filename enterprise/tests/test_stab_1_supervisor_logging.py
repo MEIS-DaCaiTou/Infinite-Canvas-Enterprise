@@ -583,7 +583,7 @@ def test_unresolved_listener_is_fail_closed() -> None:
             else:
                 raise AssertionError("unresolved listener was accepted as a free port")
             popen.assert_not_called()
-        with patch("enterprise.runtime.control.inspect_port_listeners", side_effect=(unresolved, clear)):
+        with patch("enterprise.runtime.control.inspect_port_listeners", side_effect=(unresolved, clear) * 2):
             stopped = controller.send_command("stop", wait_seconds=0)
         assert stopped["result"] == "unresolved_port_occupant"
 
@@ -1003,6 +1003,7 @@ CASES = {
     "cli-lifecycle": test_real_cli_lifecycle_and_acknowledgements,
     "windows-smoke": lambda: test_windows_process_smoke(),
     "detached-host": lambda: test_detached_service_host_lifecycle(),
+    "dependency-manifest": lambda: test_auth_jwt_dependency_is_declared(),
 }
 
 
@@ -1135,7 +1136,17 @@ def test_detached_service_host_lifecycle() -> None:
                 host.wait(timeout=5)
 
 
+def test_auth_jwt_dependency_is_declared() -> None:
+    """The enterprise gateway's direct JWT import must be installable from the manifest."""
+    auth_source = (ROOT / "enterprise" / "auth.py").read_text(encoding="utf-8")
+    requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
+    declared = {line.strip().split("=", 1)[0].split("[", 1)[0].casefold() for line in requirements if line.strip()}
+    assert "import jwt" in auth_source
+    assert "pyjwt" in declared
+
+
 def run_all() -> None:
+    test_auth_jwt_dependency_is_declared()
     test_windows_process_smoke()
     test_start_gate_and_atomic_state()
     test_static_runtime_boundary()

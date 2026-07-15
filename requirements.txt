@@ -2,6 +2,7 @@ fastapi
 uvicorn
 requests
 pydantic
+PyJWT
 python-multipart
 httpx
 pillow
