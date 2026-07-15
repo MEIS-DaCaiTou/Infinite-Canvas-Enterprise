@@ -41,6 +41,7 @@ from enterprise.ops.update.providers import DEFAULT_GITHUB_REPOSITORY, GitHubRel
 from enterprise.ops.update.service import OnlineUpdateService
 from enterprise.ops.update.staging import inspect_zip_archive
 from enterprise.ops.update.versions import compare_versions, parse_version
+from enterprise.tests.resource_lifecycle import assert_file_releasable, assert_sqlite_files_releasable
 
 
 COMMIT = "a" * 40
@@ -138,9 +139,13 @@ def make_app(root: Path) -> None:
     (root / "main.py").write_text("# app\n", encoding="utf-8")
     database_path = root / "data" / "enterprise.db"
     database_path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(database_path) as connection:
+    connection = sqlite3.connect(database_path)
+    try:
         connection.execute("CREATE TABLE user_canvas_map (user_id TEXT NOT NULL, canvas_id TEXT NOT NULL)")
         connection.execute("INSERT INTO user_canvas_map (user_id, canvas_id) VALUES (?, ?)", ("user-1", "canvas-1"))
+        connection.commit()
+    finally:
+        connection.close()
 
 
 def sha256_file(path: Path) -> str:
@@ -175,8 +180,13 @@ def write_formal_backup(app_root: Path, manifest_path: Path) -> dict:
     backup_dir = manifest_path.parent / "formal-backup"
     backup_path = backup_dir / "app" / "data" / "enterprise.db"
     backup_path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(f"{source_path.resolve().as_uri()}?mode=ro", uri=True) as source, sqlite3.connect(backup_path) as target:
+    source = sqlite3.connect(f"{source_path.resolve().as_uri()}?mode=ro", uri=True)
+    target = sqlite3.connect(backup_path)
+    try:
         source.backup(target)
+    finally:
+        target.close()
+        source.close()
     payload = {
         "kind": "backup-manifest",
         "backup_id": "temporary-formal-backup",
@@ -923,6 +933,38 @@ def verify_job_redaction() -> None:
         expect_error(OnlineUpdateValidationError, job.transition, "downloading")
 
 
+def verify_fixture_resource_release() -> None:
+    """Fixture SQLite files and the local HTTP server release immediately on Windows."""
+    with tempfile.TemporaryDirectory(prefix="online-update-resource-release-") as raw:
+        root = Path(raw)
+        app_root, workspace = root / "app", root / "workspace"
+        make_app(app_root)
+        workspace.mkdir()
+        fixture_path = root / "empty-releases.json"
+        write_json(fixture_path, {"releases": []})
+        backup_manifest = root / "backup.json"
+        backup = write_formal_backup(app_root, backup_manifest)
+        source_database = app_root / "data" / "enterprise.db"
+        backup_database = Path(str(backup["sqlite_backup_path"]))
+        service = OnlineUpdateService(app_root=app_root, workspace=workspace, provider=LocalFixtureProvider(fixture_path))
+        assert service.check_update()["kind"] == "online-update-job-report"
+        job = UpdateJob("check-update", workspace)
+        job.complete()
+        job.write_report(status="pass")
+        with LocalServer() as server:
+            FixtureHandler.responses = {"/resource": (200, {}, b"resource")}
+            SafeHttpClient(UrlPolicy(frozenset(), allow_loopback_http=True)).read_bytes(
+                f"{server.base_url}/resource",
+                maximum_bytes=1024,
+            )
+        assert not server.thread.is_alive()
+        assert_file_releasable(source_database)
+        assert_file_releasable(backup_database)
+        released = assert_sqlite_files_releasable(root, unlink=True)
+        assert source_database in released and backup_database in released
+        assert not any(path.name.casefold().endswith((".db", ".db-wal", ".db-shm")) for path in root.rglob("*"))
+
+
 def run_all() -> None:
     verify_versions_and_manifest()
     verify_http_and_download()
@@ -931,6 +973,7 @@ def run_all() -> None:
     verify_zip_defences()
     verify_service_and_cli()
     verify_job_redaction()
+    verify_fixture_resource_release()
 
 
 if __name__ == "__main__":
