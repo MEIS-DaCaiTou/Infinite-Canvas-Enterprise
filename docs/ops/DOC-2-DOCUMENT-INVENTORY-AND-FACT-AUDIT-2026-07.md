@@ -29,7 +29,7 @@ C 和 G 项已在本轮同步；E 项保留文件并增加替代关系。H 为 0
 
 ## 当前事实核验
 
-- 当前 main：`396cccc68d63bd16393a2cb72d24e4a48fcf47cb`。
+- DOC-2 审计输入 main：`396cccc68d63bd16393a2cb72d24e4a48fcf47cb`；当前 repository HEAD 始终以 GitHub `main` 为准。
 - PR #77 已合并，merge commit `1430e2d7389c66d82d8f93d3c306451a22a51d3c`。
 - PR #78 已合并，merge commit `a00a2fd2807b41a9fee3c267ee1116986b52fd7e`。
 - PR #79 已合并，merge commit `396cccc68d63bd16393a2cb72d24e4a48fcf47cb`。
@@ -45,7 +45,7 @@ C 和 G 项已在本轮同步；E 项保留文件并增加替代关系。H 为 0
 | `新手运行与使用教程.md` | 上游用户教程 | B | 上游功能参考 | `README.md` 负责企业入口 | 保留 |
 | `运行说明.txt` | 上游简短运行说明 | B | 上游历史入口 | `README.md` | 保留 |
 | `AGENT_CONTEXT.md` | 旧 Agent 当前上下文 | E | `2026-07-08` / `73a645f` | `docs/README.md`、CURRENT_PROJECT_STATUS | 标记 superseded |
-| `ARCHITECTURE.md` | 当前运行架构摘要 | C | `a095ce2e` | 本文件 + ADR-ENV-001 | 更新到当前 main/runtime |
+| `ARCHITECTURE.md` | 当前运行架构摘要 | C | `a095ce2e` | 本文件 + ADR-ENV-001 | 更新到最后一次核对的 runtime 事实 |
 | `CODE_BOUNDARIES.md` | 代码与数据边界 | A | 当前边界 | ADR-ENV-003/004 | 增加 ENV 决策链接 |
 | `CODEX_WORKFLOW.md` | Agent / PR 工作流 | B | 当前工作流 | `docs/README.md` | 保留 |
 | `DEVELOPMENT_PLAN.md` | 旧阶段计划 | E | 3G / U-2 时代 | 当前 roadmap | 标记 superseded |
@@ -111,17 +111,17 @@ C 和 G 项已在本轮同步；E 项保留文件并增加替代关系。H 为 0
 | --- | --- | --- |
 | `docs/README.md` | A | 文档事实源与导航 |
 | 本文 | A | 全量清单、分类和处理记录 |
-| `docs/decisions/ADR-ENV-001-...md` | A | 模块化单体决策 |
-| `docs/decisions/ADR-ENV-002-...md` | A | Python runtime / provenance 决策 |
-| `docs/decisions/ADR-ENV-003-...md` | A | 不可变 Release / static 决策 |
-| `docs/decisions/ADR-ENV-004-...md` | A | 路径根与版本目录决策 |
-| `docs/decisions/ADR-ENV-005-...md` | A | 正式入口和自检决策 |
-| `docs/decisions/ADR-OPS-006-...md` | A | Manifest v2 与数据库回滚决策 |
+| [ADR-ENV-001](../decisions/ADR-ENV-001-MODULAR-MONOLITH-MIDTERM-ARCHITECTURE-2026-07.md) | A | 模块化单体决策 |
+| [ADR-ENV-002](../decisions/ADR-ENV-002-WINDOWS-PYTHON-RUNTIME-PROVENANCE-2026-07.md) | A | Python runtime / provenance 决策 |
+| [ADR-ENV-003](../decisions/ADR-ENV-003-IMMUTABLE-RELEASE-STATIC-CACHE-2026-07.md) | A | 不可变 Release / static 决策 |
+| [ADR-ENV-004](../decisions/ADR-ENV-004-PATH-ROOTS-AND-RELEASE-DIRECTORY-2026-07.md) | A | 路径根与版本目录决策 |
+| [ADR-ENV-005](../decisions/ADR-ENV-005-RUNTIME-ENTRYPOINT-SELF-CHECK-MODES-2026-07.md) | A | 正式入口和自检决策 |
+| [ADR-OPS-006](../decisions/ADR-OPS-006-RELEASE-MANIFEST-V2-DATABASE-ROLLBACK-2026-07.md) | A | Manifest v2 与数据库回滚决策 |
 
 ## 过期和冲突事实处理摘要
 
 1. PR #77、#78、#79 状态统一为已合并，并记录 merge commit。
-2. `396cccc...` 成为当前文档事实基线；`a095ce2e`、`73a645f` 等只保留历史语义。
+2. `396cccc...` 是 DOC-2 审计输入和最后一次代码事实核对基线；长期事实源通过 GitHub `main` 解析当前 HEAD，避免 PR 合并即过期。
 3. Windows supervisor、角色独立恢复、lifecycle CLI、日志、state、Job Object 和 service-host hotfix 记录为仓库已实现，但不写成生产已切换。
 4. ENV-1、Manifest v2、OPS-3B、Windows Service、Linux deployment、PostgreSQL、Redis、durable queue 和多实例继续标为未实现。
 5. CPython `0xC0000005` 仅记录可观测和恢复边界，不声明根因已解决。
@@ -139,6 +139,13 @@ C 和 G 项已在本轮同步；E 项保留文件并增加替代关系。H 为 0
 | CPython `0xC0000005` | 只描述证据记录与恢复边界，不声明根因已解决 | 当前边界 |
 | production migrated / 正式 Release 已发布 | 当前事实源明确否定 | 当前边界 |
 | system Python 正式运行 / 复制开发目录部署 | ADR 明确禁止作为正式契约 | 已决策未实施 |
+
+## PR #80 审查收口
+
+1. 长期事实源不再把 `396cccc...` 永久称为当前 main；ADR 和本审计继续保留固定事实基线。
+2. ADR-ENV-002 已区分当前 PATH / `sys.executable` 回退与 portable-release 项目内 Python fail-closed 目标；ENV-1B1C 仍未实施。
+3. ADR-ENV-004 首阶段保留现有 `%LOCALAPPDATA%\InfiniteCanvasEnterprise\runtime`，不引入双 runtime 根，因此本阶段不定义 legacy migration。
+4. 架构摘要和本审计中的 ADR 省略路径已改为真实索引链接或完整文件名。
 
 ## 仍需后续实现而非文档决策的问题
 

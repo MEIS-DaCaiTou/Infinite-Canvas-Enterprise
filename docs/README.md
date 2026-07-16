@@ -1,7 +1,9 @@
 # Infinite Canvas Enterprise 文档索引与事实源
 
 更新时间：2026-07-16
-当前文档事实基线：`main@396cccc68d63bd16393a2cb72d24e4a48fcf47cb`
+最后一次代码事实核对基线：`main@396cccc68d63bd16393a2cb72d24e4a48fcf47cb`
+
+当前 repository HEAD：以 GitHub `main` 分支为准；文档专用 PR #80 不改变运行时代码事实。
 
 本索引用于避免当前事实、目标架构、历史实施记录和未来规划相互覆盖。新任务应先读取当前事实源，再按任务域读取 ADR 和专项文档。
 

@@ -60,7 +60,7 @@ Every upstream sync PR must state:
 
 - Upstream repository: `hero8152/Infinite-Canvas`
 - Current enterprise upstream baseline: `2026.07.6`
-- Current documented enterprise baseline: `396cccc68d63bd16393a2cb72d24e4a48fcf47cb`
+- Last verified enterprise code baseline: `396cccc68d63bd16393a2cb72d24e4a48fcf47cb`; resolve the current repository HEAD from GitHub `main`.
 - Last controlled upstream target commit: `f1dd6834a72f3e7ff8340be05a84347d931e9cb9`
 
 U-1 documented that the enterprise repository had no usable merge-base for a normal upstream merge. U-2 therefore used a controlled, patch-style sync to the fixed upstream target `f1dd6834a72f3e7ff8340be05a84347d931e9cb9`, not a direct merge, rebase, or broad cherry-pick.

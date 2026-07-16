@@ -1,7 +1,8 @@
 # Infinite-Canvas-Enterprise 企业架构蓝图（2026-07）
 
 更新时间：2026-07-16
-代码核对基线：`main@396cccc68d63bd16393a2cb72d24e4a48fcf47cb`
+最后一次代码事实核对基线：`main@396cccc68d63bd16393a2cb72d24e4a48fcf47cb`
+当前 repository HEAD 以 GitHub `main` 为准；文档专用 PR #80 不改变运行时代码事实。
 
 中期架构形态由 [ADR-ENV-001](../decisions/ADR-ENV-001-MODULAR-MONOLITH-MIDTERM-ARCHITECTURE-2026-07.md) 决定；本文件只提供当前运行架构摘要。
 

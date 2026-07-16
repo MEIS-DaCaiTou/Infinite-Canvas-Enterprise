@@ -2,7 +2,7 @@
 
 本文档描述当前企业多用户版 Infinite Canvas 的运行架构和主要模块职责。
 
-> 当前事实源：本文件保留 `main@396cccc68d63bd16393a2cb72d24e4a48fcf47cb` 的快速运行架构说明。正式决策见 `docs/decisions/ADR-ENV-001-...` 至 `ADR-ENV-005-...` 和 `ADR-OPS-006-...`，文档导航见 `docs/README.md`。当前统一定位是“已投入生产的企业安全增强型单机模块化单体”；规划中的 ENV-1 正式运行时、Manifest v2、OPS-3B、Docker、PostgreSQL、Redis、对象存储、restore 和 rollback 尚未实现。
+> 最后一次代码事实核对基线：`main@396cccc68d63bd16393a2cb72d24e4a48fcf47cb`。当前 repository HEAD 以 GitHub `main` 为准；文档专用 PR #80 不改变运行时代码事实。正式决策和实际文件链接见 [ADR 索引](docs/README.md)。当前统一定位是“已投入生产的企业安全增强型单机模块化单体”；规划中的 ENV-1 正式运行时、Manifest v2、OPS-3B、Docker、PostgreSQL、Redis、对象存储、restore 和 rollback 尚未实现。
 
 ---
 

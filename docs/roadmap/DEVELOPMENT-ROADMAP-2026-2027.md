@@ -1,7 +1,9 @@
 # Infinite-Canvas-Enterprise 开发路线图（2026-2027）
 
 更新时间：2026-07-16
-当前事实基线：`main@396cccc68d63bd16393a2cb72d24e4a48fcf47cb`
+最后一次代码事实核对基线：`main@396cccc68d63bd16393a2cb72d24e4a48fcf47cb`
+
+当前 repository HEAD 以 GitHub `main` 为准；文档专用 PR #80 不改变运行时代码事实。
 
 当前实施事实以 [CURRENT_PROJECT_STATUS](../CURRENT_PROJECT_STATUS.md) 为准；架构决策以 [ADR 索引](../README.md) 为准。本文负责阶段顺序，不重复定义实现状态。
 

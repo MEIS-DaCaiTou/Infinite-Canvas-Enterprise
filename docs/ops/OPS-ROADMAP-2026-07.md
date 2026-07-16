@@ -1,6 +1,6 @@
 # OPS 路线图（2026-07）
 
-当前事实基线：`main@396cccc68d63bd16393a2cb72d24e4a48fcf47cb`。OPS-3A 与 STAB-1 / OPS-L1 已合并；OPS-3B 尚未开始，并后置于不可变 Release、路径根、Runtime evidence、Manifest v2、DATA-1 和 restore rehearsal。完整顺序以 [总体路线图](../roadmap/DEVELOPMENT-ROADMAP-2026-2027.md) 为准。
+最后一次代码事实核对基线：`main@396cccc68d63bd16393a2cb72d24e4a48fcf47cb`；当前 repository HEAD 以 GitHub `main` 为准。文档专用 PR #80 不改变运行时代码事实。OPS-3A 与 STAB-1 / OPS-L1 已合并；OPS-3B 尚未开始，并后置于不可变 Release、路径根、Runtime evidence、Manifest v2、DATA-1 和 restore rehearsal。完整顺序以 [总体路线图](../roadmap/DEVELOPMENT-ROADMAP-2026-2027.md) 为准。
 
 ## 1. OPS 总目标
 

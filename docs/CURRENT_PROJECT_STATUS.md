@@ -5,7 +5,9 @@
 ## 1. 当前主线与运行事实
 
 - 企业版仓库：`MEIS-DaCaiTou/Infinite-Canvas-Enterprise`
-- 当前 main：`396cccc68d63bd16393a2cb72d24e4a48fcf47cb`
+- `current_main`：以仓库 GitHub `main` HEAD 为准。
+- `last_verified_code_baseline`：`396cccc68d63bd16393a2cb72d24e4a48fcf47cb`。
+- DOC-2 / PR #80：仅同步文档，不改变运行时代码事实。
 - OPS-3A：PR #77 已合并，merge commit `1430e2d7389c66d82d8f93d3c306451a22a51d3c`。
 - STAB-1 / OPS-L1：PR #78 已合并，merge commit `a00a2fd2807b41a9fee3c267ee1116986b52fd7e`。
 - Runtime service-host 启动修复：PR #79 已合并，merge commit `396cccc68d63bd16393a2cb72d24e4a48fcf47cb`。
@@ -174,7 +176,7 @@ git rev-parse HEAD
 git status --short --untracked-files=all
 ```
 
-从最新 main 开始新任务；`396cccc68d63bd16393a2cb72d24e4a48fcf47cb` 是 DOC-2 当前事实基线，`a095ce2e` 只作为 ARCH-2A 历史核对基线。main 前进后先读取 `docs/README.md`、本文件、当前 ADR 和最近 PR。
+从 GitHub 最新 `main` 开始新任务；`396cccc68d63bd16393a2cb72d24e4a48fcf47cb` 是 DOC-2 审计输入和最后一次代码事实核对基线，`a095ce2e` 只作为 ARCH-2A 历史核对基线。main 前进后先读取 `docs/README.md`、本文件、当前 ADR 和最近 PR。
 
 每个新任务必须：
 

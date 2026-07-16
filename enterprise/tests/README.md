@@ -30,7 +30,7 @@ Before adding or changing scripts, read:
 - `UPDATE_TEST_LOG.md` records the actual result after each upstream update test pass.
 - `../../ENTERPRISE_ISOLATION_MATRIX.md` is the data-domain and API permission source of truth for Task 3G follow-up isolation tests.
 - `../../ENTERPRISE_PERMISSION_DESIGN.md` defines page permissions, administrator switches, phased delivery, and the A/B/admin acceptance contract.
-- `../../PROJECT_HANDOFF_FOR_NEW_AGENT.md` records the current main handoff state, PR #18-#24 timeline, and the next recommended Task 3G sequence for a new Codex conversation.
+- `../../PROJECT_HANDOFF_FOR_NEW_AGENT.md` is a superseded historical handoff that preserves the PR #18-#24 and Task 3G context. Current navigation and implementation facts come from `../../docs/README.md` and `../../docs/CURRENT_PROJECT_STATUS.md`.
 
 Run scripts from the project root unless a script says otherwise.
 

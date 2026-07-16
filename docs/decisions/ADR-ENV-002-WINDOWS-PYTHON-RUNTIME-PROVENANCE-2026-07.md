@@ -7,9 +7,18 @@
 
 ## 背景
 
-Windows 当前依赖项目内 Python。历史 `python.zip` 可以构建 CPython 3.10.11 x64、ABI `cp310` 的企业候选运行时，并已在隔离开发环境完成生命周期验证，但候选验证不等于来源、依赖和归档均已形成可重复的正式供应链。
+上游交付设计优先使用项目内 Python，但当前企业版还没有实现 portable-release 的解释器 fail-closed 契约。历史 `python.zip` 可以构建 CPython 3.10.11 x64、ABI `cp310` 的企业候选运行时，并已在隔离开发环境完成生命周期验证，但候选验证不等于来源、依赖和归档均已形成可重复的正式供应链。
 
 Python 3.10 的官方支持计划于 2026 年 10 月结束，因此 3.10.11 只能作为上游兼容过渡基线，不能被定义为长期企业运行时。
+
+## 当前实现事实
+
+- 当前开发主目录的 `python/` 为空，不包含 `python.exe`。
+- 当前 Windows lifecycle `.bat` 先查找 `python\python.exe`，缺失时静默回退 PATH 中的 `python`。
+- `enterprise/runtime/process.py` 当前在项目解释器缺失时回退 `sys.executable`。
+- 因此当前正式入口尚不能证明所有角色使用 Release 绑定解释器，也不是 fail closed。
+- ENV-1B1C 尚未实施；在此之前不能把目标契约描述成当前行为。
+- `development` 模式继续允许显式选择系统 Python，但其结果不能替代 portable-release 验证。
 
 ## 决策
 
@@ -50,5 +59,6 @@ archive_provenance_verified
 ## 后果
 
 - 不能直接把历史 ZIP 或当前 `python/` 复制为正式环境。
+- 当前 PATH / `sys.executable` 回退继续被记录为待 ENV-1B1C 关闭的兼容行为，不是已接受的 portable-release 终态。
 - 正式 Release 构建需要可重复、离线、同 ABI 的依赖输入。
 - Python 版本升级必须通过上游、企业 Gateway、runtime、OPS 和功能回归，不因短期兼容而无限期停留在 3.10.11。

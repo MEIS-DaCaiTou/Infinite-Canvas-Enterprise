@@ -1,6 +1,6 @@
 # Infinite Canvas Enterprise
 
-Current documentation baseline: `main@396cccc68d63bd16393a2cb72d24e4a48fcf47cb` (PR #79 merged). See [`docs/README.md`](docs/README.md) for the authoritative documentation index and [`docs/CURRENT_PROJECT_STATUS.md`](docs/CURRENT_PROJECT_STATUS.md) for implemented/not-implemented facts.
+Last code-fact verification baseline: `main@396cccc68d63bd16393a2cb72d24e4a48fcf47cb` (PR #79 merged). The current repository HEAD is always the GitHub `main` branch; documentation-only PR #80 does not change runtime code facts. See [`docs/README.md`](docs/README.md) for the authoritative documentation index and [`docs/CURRENT_PROJECT_STATUS.md`](docs/CURRENT_PROJECT_STATUS.md) for implemented/not-implemented facts.
 
 Infinite Canvas Enterprise is the enterprise multi-user edition built on top of the upstream open-source project [hero8152/Infinite-Canvas](https://github.com/hero8152/Infinite-Canvas).
 
@@ -101,7 +101,7 @@ Changes to upstream-covered files are allowed only for controlled upstream syncs
 
 ## Upstream Synchronization
 
-Current enterprise main baseline: `396cccc68d63bd16393a2cb72d24e4a48fcf47cb`
+Last verified enterprise code baseline: `396cccc68d63bd16393a2cb72d24e4a48fcf47cb`
 
 Current upstream baseline: `2026.07.6`
 
@@ -194,7 +194,7 @@ Startup/stop lifecycle tests may interrupt the running service. Run them only wh
 - Enterprise gateway: `0.0.0.0:8000`
 - Internal upstream: `127.0.0.1:3001`
 - Current upstream baseline: `2026.07.6`
-- Current main baseline: `396cccc68d63bd16393a2cb72d24e4a48fcf47cb`
+- Last verified code baseline: `396cccc68d63bd16393a2cb72d24e4a48fcf47cb`; resolve current HEAD from GitHub `main`.
 - OPS-3A, STAB-1 / OPS-L1 and the detached service-host startup fix are merged; this does not mean production has switched runtimes or that OPS-3B is implemented.
 - Enterprise tests live in `enterprise/tests/`
 - Runtime data and secrets must stay out of Git
