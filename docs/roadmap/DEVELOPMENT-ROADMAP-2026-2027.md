@@ -1,7 +1,9 @@
 # Infinite-Canvas-Enterprise 开发路线图（2026-2027）
 
-更新时间：2026-07-11
-ARCH-2A 代码核对基线（PR #69 合并后）：`a095ce2eb9ef9afda356cb6f20b6c38851f52b1d`
+更新时间：2026-07-16
+当前事实基线：`main@396cccc68d63bd16393a2cb72d24e4a48fcf47cb`
+
+当前实施事实以 [CURRENT_PROJECT_STATUS](../CURRENT_PROJECT_STATUS.md) 为准；架构决策以 [ADR 索引](../README.md) 为准。本文负责阶段顺序，不重复定义实现状态。
 
 ## 1. 路线原则
 
@@ -32,26 +34,39 @@ ARCH-2A 代码核对基线（PR #69 合并后）：`a095ce2eb9ef9afda356cb6f20b6
 | SEC-1F0 | 仓库实现与临时数据库验证完成，PR #73 | 最小强制安全审计 Schema、append-only writer、显式 migration 和 fail closed；生产 Schema 未激活，在线操作未接线。 |
 | SEC-1C0 | 仓库实现与临时数据库验证完成，PR #74 | 首次 bootstrap 前的角色层级保护、READY 原子审计、在线角色关闭和最后 active super_admin helper；生产 migration 未激活。 |
 | SEC-1B2 | 仓库实现与临时数据库验证完成，PR #75 | 本机受控 activation plan、正式备份与指纹门禁、不可变 bootstrap marker、生命周期检查和原子首次 bootstrap；生产 activation 未执行。 |
+| OPS-3A | 已合并，PR #77 | 在线更新检查、下载、验证、staging 和 prepare plan；不包含 apply / rollback。 |
+| STAB-1 / OPS-L1 | 已合并，PR #78 | Windows supervisor、角色独立恢复、lifecycle CLI、持久日志、runtime state 和 Job Object。 |
+| Runtime service-host hotfix | 已合并，PR #79 | detached host / child 脚本路径隔离和启动失败证据；不代表生产已切换。 |
 
 OPS-2A / OPS-2B 已进入 main，项目负责人已在生产侧人工完成 dry-run 和一次单独确认的正式备份。该事实不代表 restore、upgrade、apply-upgrade 或 rollback 已实现，也不代表生产已经升级。当前 `check-data` 仍有 warn，数据未被自动修复。
 
 ## 3. 当前阶段
 
-ARCH-2A 架构评估与演进方向文档同步已完成，由 PR #70 承载。完成 ARCH-2A 只代表架构共识、目标原则和 P0 / P1 / P2 / P3 路线同步完成。
+当前阶段为 **ENV-1B0：架构决策冻结和文档事实同步**。正常上游功能同步在 ENV-1 期间冻结；紧急安全漏洞修复可以单独评估并受控引入。
 
-ARCH-2A 完成不代表以下事项已经实施：
+ENV-1 正式路线按以下顺序执行，后项不能绕过前项门禁：
 
-- P0 security fix。
-- policy / repository / service 重构。
-- schema migration。
-- Docker / 1Panel。
-- PostgreSQL、Redis 或对象存储。
-- apply-upgrade、restore 或 rollback executor。
-- 自动 owner-map 修复。
+0. ENV-1B0：架构决策冻结和文档事实同步。
+1. ENV-1B1A：完整 APP_ROOT 写入审计与 static 构建期哈希。
+2. ENV-1B2P：Python 核心、依赖层、archive provenance 分层证据。
+3. ENV-1B1B：路径根、版本目录和 `current-release.json`。
+4. ENV-1B1C：所有正式入口和内部进程 fail closed。
+5. ENV-1B2：可重复 Runtime、依赖锁、`pip check`、SBOM、自检，并验证受支持的新 Python 版本。
+6. OPS Release Manifest v2。
+7. ENV-1B3：干净 Windows VM、无系统 Python、非管理员、中文/空格/长路径、低磁盘、重启、损坏 DLL/manifest、杀毒软件和 APP_ROOT 只读验证。
+8. 发布首个不可变 Windows Release。
+9. DATA-1：Repository、schema version、migration history、owner reconciliation 和数据库回滚兼容。
+10. ARCH-3：Route Registry、Policy、Application Service、Repository、Upstream Adapter 按业务域渐进抽取。
+11. PERF-1 / OBS-1。
+12. OPS-3B：apply / switch / health / rollback / restore。
+13. Linux 单服务器适配。
+14. PostgreSQL、对象存储、queue、Redis 和多实例按真实需求引入。
 
-SEC-1A 已完成 ADR 决策；SEC-1B1、SEC-1F0、SEC-1C0 和 SEC-1B2 已完成仓库实现及临时数据库验证，分别由 PR #72、#73、#74 和 #75 承载。这不代表任何 production migration 已激活、super_admin 已创建，或 Capability / Step-up 已实现。当前生产仍为 LEGACY；SEC-1B2 activation 只能在项目负责人批准的受控维护窗口内按 runbook 人工执行，不能由代码合并、startup 或网页入口自动触发；每个后续安全事项继续使用独立 Issue、独立分支和独立 Draft PR。
+以上除第 0 项外均为未实施工作。OPS-3B、Linux、PostgreSQL、Redis、durable queue、多实例、Windows Service 和正式 Windows Runtime Release 当前都不是已实现能力。
 
-## 4. 近期路线
+## 4. 历史拆解参考
+
+本节保留 ENV-1B0 之前的 ARCH / SEC / DATA / OPS 拆解语境，不再决定当前执行顺序；当前顺序只以上一节为准。
 
 ### 4.1 ARCH-2A：已完成的架构评估与方向同步
 

@@ -2,6 +2,8 @@
 
 本文档是本仓库的最高层项目定位文档。后续 Codex、开发者或维护者接手任何任务时，必须先确认本文档中的方向没有被偏离。
 
+当前实施事实、路线和架构决策分别以 [`docs/CURRENT_PROJECT_STATUS.md`](docs/CURRENT_PROJECT_STATUS.md)、[`docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md`](docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md) 和 [`docs/README.md`](docs/README.md) 为准；本章程不复制易过期的 commit / PR 状态。
+
 ---
 
 ## 1. 项目唯一方向

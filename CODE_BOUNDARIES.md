@@ -2,6 +2,8 @@
 
 本文档定义本仓库的修改边界。Codex 和开发者每次任务开始前都必须阅读，并据此判断哪些文件可以修改。
 
+当前 Release / 路径边界由 [ADR-ENV-003](docs/decisions/ADR-ENV-003-IMMUTABLE-RELEASE-STATIC-CACHE-2026-07.md) 和 [ADR-ENV-004](docs/decisions/ADR-ENV-004-PATH-ROOTS-AND-RELEASE-DIRECTORY-2026-07.md) 决定：正式 `APP_ROOT` 必须最终只读，运行数据、日志、runtime state、缓存、临时文件和更新证据不得继续默认写入版本目录。本约束目前是已接受但尚未实施的 ENV-1 决策。
+
 ---
 
 ## 1. 优先允许修改

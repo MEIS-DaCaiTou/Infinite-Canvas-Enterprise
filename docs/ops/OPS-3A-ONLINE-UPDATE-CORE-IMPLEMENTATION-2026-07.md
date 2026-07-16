@@ -1,8 +1,10 @@
 # OPS-3A: Online Update Core Implementation (2026-07)
 
+Status: merged by PR #77 at `1430e2d7389c66d82d8f93d3c306451a22a51d3c`. This records repository implementation only; no production check, fetch, stage or upgrade is implied.
+
 ## Scope
 
-Draft PR #77 implements trusted release preparation only. It was validated only
+PR #77 implemented trusted release preparation only. It was validated only
 with temporary directories, temporary SQLite data, and loopback HTTP fixtures.
 It does not mean any production release has been checked, fetched, staged, or
 applied.

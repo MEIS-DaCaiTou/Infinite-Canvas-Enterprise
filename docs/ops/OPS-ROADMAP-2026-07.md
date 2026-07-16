@@ -1,5 +1,7 @@
 # OPS 路线图（2026-07）
 
+当前事实基线：`main@396cccc68d63bd16393a2cb72d24e4a48fcf47cb`。OPS-3A 与 STAB-1 / OPS-L1 已合并；OPS-3B 尚未开始，并后置于不可变 Release、路径根、Runtime evidence、Manifest v2、DATA-1 和 restore rehearsal。完整顺序以 [总体路线图](../roadmap/DEVELOPMENT-ROADMAP-2026-2027.md) 为准。
+
 ## 1. OPS 总目标
 
 OPS 目标是将生产运维从人工复制和手动命令，演进为：
@@ -102,7 +104,8 @@ OPS-2B 文档见：`docs/ops/OPS-2B-WINDOWS-OPS-WRAPPER-2026-07.md`。
 
 ### OPS-3A Online Update Core
 
-OPS-3A repository implementation is in Draft PR #77. It adds a fixed trusted
+OPS-3A repository implementation was merged by PR #77 at
+`1430e2d7389c66d82d8f93d3c306451a22a51d3c`. It adds a fixed trusted
 release-provider boundary, strict manifest validation, bounded download, safe
 Windows-aware staging, evidence-bound local preparation jobs, and a
 non-executing online-update plan. Its implementation tests use local workspaces
@@ -130,7 +133,10 @@ OPS-3 后置于 OPS-2A / OPS-2B 生产侧 dry-run 验证和必要的 OPS-L1 / OP
 
 ### STAB-1 / OPS-L1 Supervisor Foundation
 
-STAB-1 repository implementation is in Draft PR #78.  It adds a local-only,
+STAB-1 repository implementation was merged by PR #78 at
+`a00a2fd2807b41a9fee3c267ee1116986b52fd7e`; PR #79 at
+`396cccc68d63bd16393a2cb72d24e4a48fcf47cb` fixed detached service-host
+startup. The implementation adds a local-only,
 role-isolated `3001`/`8000` supervisor, persistent redacted logs, atomic
 runtime state, full process identity, generation-bound command acknowledgements,
 graceful child shutdown and Windows Job Object ownership.  Its fixture tests
@@ -138,8 +144,8 @@ use temporary processes and random local ports only.  An isolated development
 device run with temporary roots, database, ports and dependencies verified
 real upstream/gateway startup, endpoint health, restart-to-stop ACK/host exit,
 idempotent stop, start-to-stop reuse and independent role recovery.  `PyJWT`
-is now declared because `enterprise.auth` imports `jwt`.  The PR remains Draft;
-this does not install a Windows Service, execute a production lifecycle command,
+is now declared because `enterprise.auth` imports `jwt`. This does not install
+a Windows Service, execute a production lifecycle command,
 implement remote process control, or add OPS-3B update apply/rollback capability.
 
 Implementation details: `docs/ops/STAB-1-SUPERVISOR-LOGGING-IMPLEMENTATION-2026-07.md`.
@@ -148,12 +154,12 @@ Implementation details: `docs/ops/STAB-1-SUPERVISOR-LOGGING-IMPLEMENTATION-2026-
 
 | 阶段 | 目标 |
 | --- | --- |
-| OPS-L1 | 本地日志：access / app / error / security / ops job JSONL；STAB-1 Draft PR #78 增加 runtime supervisor/child/health/crash 持久日志基础。 |
+| OPS-L1 | 本地日志：STAB-1 PR #78 已增加 supervisor / child / health / crash 持久日志基础；完整 access / app / error / security 统一体系仍未完成。 |
 | OPS-L2 | 远程日志推送，必须脱敏。 |
 | OPS-L3 | 后台日志查询。 |
 | OPS-L4 | 集中日志平台适配。 |
 
-当前已有 `usage_logs` 审计表，但完整本地日志和远程推送仍是后续规划。
+当前已有 `usage_logs` 审计表和 Windows runtime 持久日志；跨业务域统一 access / app / error / security 日志以及远程推送仍是后续规划。
 
 OPS-L1 / OPS-D1 设计可与 OPS-2A 生产侧 dry-run 验证并行推进。
 

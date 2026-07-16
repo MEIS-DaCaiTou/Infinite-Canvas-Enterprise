@@ -1,7 +1,9 @@
 # Infinite Canvas Enterprise · 项目定位与后续开发范围锁定
 
+> **当前维护说明（2026-07-16）：** 本文保留 3G / U-2 阶段范围历史。当前实施事实以 [`docs/CURRENT_PROJECT_STATUS.md`](docs/CURRENT_PROJECT_STATUS.md) 为准，执行顺序以 [`docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md`](docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md) 为准，架构决策以 [`docs/README.md`](docs/README.md) 的 ADR 索引为准。当前主线是 ENV-1B0，尚未开始 ENV-1B1A 或 OPS-3B。
+
 更新时间：2026-07-08
-适用对象：ChatGPT 主对话、Codex、后续 Agent、人工审核者。  
+适用对象：ChatGPT 主对话、Codex、后续 Agent、人工审核者。
 状态：项目方向与后续开发范围已由项目负责人审核确认，后续任务不得偏离本文。
 
 ---
@@ -60,7 +62,9 @@ data / assets / output / static / workflows
 
 ---
 
-## 2. 当前真实基线
+## 2. 2026-07-08 历史基线
+
+本节保留 DOC-1 时点证据，不再表示当前 main；当前值见文首链接的事实源。
 
 依据 PR #60、#61、#62 合并后的主线状态，当前稳定开发基线为：
 

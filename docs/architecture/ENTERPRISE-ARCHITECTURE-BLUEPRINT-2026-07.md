@@ -1,7 +1,9 @@
 # Infinite-Canvas-Enterprise 企业架构蓝图（2026-07）
 
-更新时间：2026-07-10
-代码核对基线：`main@a095ce2eb9ef9afda356cb6f20b6c38851f52b1d`
+更新时间：2026-07-16
+代码核对基线：`main@396cccc68d63bd16393a2cb72d24e4a48fcf47cb`
+
+中期架构形态由 [ADR-ENV-001](../decisions/ADR-ENV-001-MODULAR-MONOLITH-MIDTERM-ARCHITECTURE-2026-07.md) 决定；本文件只提供当前运行架构摘要。
 
 ## 1. 项目定位
 
@@ -47,7 +49,7 @@ ARCH-2A 的详细代码事实、风险判断、技术决策表和阶段路线见
 - `3001` 仅本机访问。
 - 企业层通过 gateway / interceptors / db / admin_api 实现登录、鉴权、权限、owner 映射和响应过滤。
 - 企业 WebSocket 层对已知敏感事件执行 owner / task / resource 可见性治理。
-- Windows 生产由 `enterprise/launcher.py` 拉起上游和 gateway 双进程。
+- 仓库已实现 `enterprise/runtime/` Windows supervisor，通过 service-host 独立监督 upstream 和 gateway；该事实不代表生产已经切换到新 supervisor。
 - 默认尽量不直接修改上游覆盖区。
 
 这个架构适合当前“单机无限画布小规模企业多用户化”的阶段目标。它用较小侵入保留上游功能，同时在企业入口处补上登录、隔离和审计。
@@ -63,8 +65,9 @@ ARCH-2A 的详细代码事实、风险判断、技术决策表和阶段路线见
 | `enterprise/db.py` | SQLite 企业数据库；用户、owner map、feature flags、user overrides、usage_logs、审计和 soft delete 相关数据访问。 |
 | `enterprise/ws.py` | 企业 WebSocket connection registry、已知敏感事件过滤和按用户合成事件；当前仍是单进程内存状态。 |
 | `enterprise/admin_api.py` | 管理员 API；用户管理、delete-impact、soft delete、feature override 清理、项目 / 画布 / 对话 / 历史归属管理、审计日志查询。 |
-| `enterprise/launcher.py` | 当前 Windows bat 启动入口；负责拉起 `main.py:3001` 和 `enterprise.gateway:8000` 双进程，并打印局域网访问地址。 |
-| `enterprise/ops/` | OPS-2A inventory、check-data、backup、validate-release、prepare-upgrade 和 job JSONL；不执行 upgrade / rollback。 |
+| `enterprise/runtime/` | Windows service-host、子进程监督、角色独立恢复、退避 / crash-loop、健康检查、持久日志、runtime state、Job Object 和固定 lifecycle CLI。 |
+| `enterprise/launcher.py` | 保留兼容入口；正式生命周期事实由 `enterprise/runtime/` 负责。 |
+| `enterprise/ops/` | OPS-2A/2B 与 OPS-3A：inventory、data check、backup、release check/fetch/stage/prepare、报告和 job JSONL；不执行 apply / rollback。 |
 | `tools/ops/windows/` | OPS-2B Windows bundled Python 直调 runner 的 dry-run / backup execute 封装。 |
 | `enterprise-static/` | 企业登录页、管理员页面、操作日志页面和个人中心等企业静态资源。 |
 
@@ -81,12 +84,14 @@ ARCH-2A 的详细代码事实、风险判断、技术决策表和阶段路线见
 - 项目、画布、对话、资源、历史、任务、素材对象隔离基础。
 - 已知敏感 WebSocket 事件治理。
 - 管理 API、企业管理前端和基础 audit。
-- OPS-2A 工具与 OPS-2B Windows wrapper。
+- OPS-2A / OPS-2B、OPS-3A 在线更新核心。
+- Windows supervisor、upstream / gateway 独立恢复、固定 lifecycle CLI、持久日志、runtime state 和 Job Object。
+- PyJWT 依赖声明与 detached service-host 启动修复。
 
 ### 当前部分实现
 
-- 受控更新入口：有入口治理和 plan 工具，没有 apply-upgrade / rollback 执行器。
-- 日志：有 usage audit、OPS job JSONL 和进程输出，没有完整 access / app / error / security / metrics 体系。
+- 受控更新入口：可 check / fetch / stage / prepare，没有 apply-upgrade / rollback 执行器。
+- 日志：runtime 持久日志、crash event、usage audit 和 OPS job JSONL 已有；统一 access / security / metrics 和集中检索仍未完成。
 - 数据治理：有 check-data 报告，没有自动修复，也不允许自动修复生产 owner map。
 - 依赖与部署：有 Windows bundled Python 运行方式，没有完整依赖锁、Dockerfile 或 Compose。
 
@@ -97,6 +102,8 @@ ARCH-2A 的详细代码事实、风险判断、技术决策表和阶段路线见
 - schema version、migration runner、restore rehearsal 和人工 rollback 闭环。
 - 真正流式代理和正式负载测试基线。
 - Docker / 1Panel 单机生产化。
+- ENV-1 路径根、不可变 Release、可信 Windows Runtime 和正式入口契约。
+- OPS Release Manifest v2 与 OPS-3B apply / switch / rollback / restore。
 
 ### 长期目标
 
@@ -190,11 +197,11 @@ ARCH-2A 的详细代码事实、风险判断、技术决策表和阶段路线见
 
 ## 8. 受控更新与 OPS 架构
 
-当前已有企业版受控更新入口，并通过 `system_update` feature flag 管理系统更新入口。普通用户默认不应触达高风险更新路径。
+当前已有企业版受控更新入口和 OPS-3A check / fetch / stage / prepare 能力，并通过 `system_update` feature flag 管理系统更新入口。普通用户默认不应触达高风险更新路径。
 
 当前代码中管理员会 bypass feature flag，且 `ENTERPRISE_UPDATE_ENABLED` 默认开启；该语义已列入 ARCH-2B / SEC-1 P0 复核范围，不能把现状描述为高危更新审批闭环已经完成。
 
-后续应把更新入口演进为 Update Center：
+OPS-3B 和后续 Update Center 尚未实现。后续入口必须：
 
 - 只展示计划驱动的 OPS job。
 - 只调用白名单 OPS API。
@@ -220,13 +227,14 @@ Update Center 应成为管理员触发和查看 OPS job 的入口，而不是直
 - `usage_logs` 企业审计表。
 - 部分管理员操作写入 audit。
 - 登录、用户管理、权限开关、归属管理、素材库关键代管操作等已有审计覆盖。
-- 启动器 / 网关主要通过 print / uvicorn warning 输出运行信息。
+- Windows runtime 的 launcher / supervisor / child stdout / stderr / health / crash-event 持久日志与轮转、脱敏。
+- `runtime-state.json` 与稳定 lifecycle 状态。
 
 ### 当前不足
 
 - 无完整 access log。
 - 无统一 app log。
-- 无结构化 error log。
+- 尚无跨业务域统一结构化 error log。
 - 无 security log。
 - OPS-2A 已有 job JSONL，但尚未形成与 access / app / error / security log 统一关联的完整体系。
 - 无远程日志推送。

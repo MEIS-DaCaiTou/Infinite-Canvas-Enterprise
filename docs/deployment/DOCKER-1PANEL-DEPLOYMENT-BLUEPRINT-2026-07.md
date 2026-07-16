@@ -1,5 +1,7 @@
 # Docker / 1Panel 部署蓝图（2026-07）
 
+> **状态：规划，未实现。** 当前没有可用于正式部署的 Dockerfile、Compose、Linux systemd 或 1Panel 安装能力。路径根和运行模式先遵循 [ADR-ENV-004](../decisions/ADR-ENV-004-PATH-ROOTS-AND-RELEASE-DIRECTORY-2026-07.md) 与 [ADR-ENV-005](../decisions/ADR-ENV-005-RUNTIME-ENTRYPOINT-SELF-CHECK-MODES-2026-07.md)；本蓝图不得作为已支持声明。
+
 ## 1. 当前结论
 
 当前项目还不是 Docker-ready。

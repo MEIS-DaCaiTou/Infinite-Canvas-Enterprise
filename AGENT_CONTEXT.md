@@ -1,5 +1,7 @@
 # 无限画布企业版 · Agent 当前上下文入口
 
+> **已被替代的历史入口。** 本文保留 2026-07-08 交接语境，不再作为当前事实源。新任务从 [`docs/README.md`](docs/README.md) 开始，并以 [`docs/CURRENT_PROJECT_STATUS.md`](docs/CURRENT_PROJECT_STATUS.md) 核验当前 main 和实施边界。
+
 > 给后续 Codex / Agent 的第一阅读文件。上下文压缩、换线程、长期维护恢复时，先按本文阅读顺序恢复项目方向，再执行当前 Issue。
 
 更新时间：2026-07-08
