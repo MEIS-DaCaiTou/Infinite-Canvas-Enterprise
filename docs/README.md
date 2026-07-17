@@ -1,6 +1,6 @@
 # Infinite Canvas Enterprise 文档索引与事实源
 
-更新时间：2026-07-16
+更新时间：2026-07-17
 最后一次代码事实核对基线：`main@396cccc68d63bd16393a2cb72d24e4a48fcf47cb`
 
 当前 repository HEAD：以 GitHub `main` 分支为准；文档专用 PR #80 不改变运行时代码事实。
@@ -15,12 +15,13 @@
 | 当前运行架构摘要 | [../ARCHITECTURE.md](../ARCHITECTURE.md) | 只写当前拓扑和职责 |
 | 中长期路线 | [roadmap/DEVELOPMENT-ROADMAP-2026-2027.md](./roadmap/DEVELOPMENT-ROADMAP-2026-2027.md) | 明确已完成、已决策未实施和规划 |
 | OPS 路线 | [ops/OPS-ROADMAP-2026-07.md](./ops/OPS-ROADMAP-2026-07.md) | 不把 prepare 写成 apply |
+| 生产部署路线 | [ADR-OPS-007](./decisions/ADR-OPS-007-GREENFIELD-PRODUCTION-BASELINE-AND-LEGACY-NON-MIGRATION-2026-07.md) | Greenfield 新生产与旧生产非迁移的权威决策 |
 | 代码和数据边界 | [../CODE_BOUNDARIES.md](../CODE_BOUNDARIES.md) | 上游覆盖区和禁止提交范围 |
 | 上游同步 | [upstream/SYNC_POLICY.md](./upstream/SYNC_POLICY.md) | 固定 commit、差异和回归 |
 | 测试清单 | [../enterprise/tests/README.md](../enterprise/tests/README.md) | 与当前测试文件同步 |
 | 文档审计 | [ops/DOC-2-DOCUMENT-INVENTORY-AND-FACT-AUDIT-2026-07.md](./ops/DOC-2-DOCUMENT-INVENTORY-AND-FACT-AUDIT-2026-07.md) | 记录分类、替代关系和处理结果 |
 
-## 架构与 ENV ADR
+## 架构、ENV 与 OPS ADR
 
 - [ADR-ENV-001：中期总体架构形态](./decisions/ADR-ENV-001-MODULAR-MONOLITH-MIDTERM-ARCHITECTURE-2026-07.md)
 - [ADR-ENV-002：Windows Python 运行时与来源证据](./decisions/ADR-ENV-002-WINDOWS-PYTHON-RUNTIME-PROVENANCE-2026-07.md)
@@ -28,9 +29,10 @@
 - [ADR-ENV-004：路径根与版本目录](./decisions/ADR-ENV-004-PATH-ROOTS-AND-RELEASE-DIRECTORY-2026-07.md)
 - [ADR-ENV-005：正式入口、自检和执行模式](./decisions/ADR-ENV-005-RUNTIME-ENTRYPOINT-SELF-CHECK-MODES-2026-07.md)
 - [ADR-OPS-006：Release Manifest v2 与数据库回滚](./decisions/ADR-OPS-006-RELEASE-MANIFEST-V2-DATABASE-ROLLBACK-2026-07.md)
+- [ADR-OPS-007：全新生产基线部署与旧生产非迁移](./decisions/ADR-OPS-007-GREENFIELD-PRODUCTION-BASELINE-AND-LEGACY-NON-MIGRATION-2026-07.md)（当前生产路线权威决策）
 - [ADR SEC-1A：超级管理员与高风险治理](./decisions/ADR-SEC-1A-SUPER-ADMIN-CAPABILITY-GOVERNANCE-2026-07.md)
 
-ADR 的 `Accepted` 只表示决策冻结，不表示对应能力已经实现或生产已经采用。
+ADR 的 `Accepted` 只表示决策冻结，不表示对应能力已经实现或生产已经采用。ADR-OPS-007 已冻结 Greenfield 全新生产路线，但新生产尚未部署，Fresh Install Bootstrap 尚未实现，旧生产也未因该决策停止或删除。
 
 ## 专项参考
 

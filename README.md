@@ -6,6 +6,8 @@ Infinite Canvas Enterprise is the enterprise multi-user edition built on top of 
 
 This repository is not a new standalone canvas product. Its only long-term direction is to make Infinite Canvas safe and maintainable for teams, LAN deployments, and server environments with enterprise authentication, authorization, ownership, and audit controls.
 
+Future production follows a Greenfield route: the project will first form an approved Production Baseline, then deploy with a clean environment, new database, new accounts, new configuration, and re-entered credentials. The legacy production system remains a retirement candidate and is not a migration or in-place upgrade source; it has not been stopped or deleted. See [ADR-OPS-007](docs/decisions/ADR-OPS-007-GREENFIELD-PRODUCTION-BASELINE-AND-LEGACY-NON-MIGRATION-2026-07.md) and the [development roadmap](docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md).
+
 ## Core Capabilities
 
 - Enterprise login authentication with JWT Cookie sessions.
@@ -196,5 +198,7 @@ Startup/stop lifecycle tests may interrupt the running service. Run them only wh
 - Current upstream baseline: `2026.07.6`
 - Last verified code baseline: `396cccc68d63bd16393a2cb72d24e4a48fcf47cb`; resolve current HEAD from GitHub `main`.
 - OPS-3A, STAB-1 / OPS-L1 and the detached service-host startup fix are merged; this does not mean production has switched runtimes or that OPS-3B is implemented.
+- The new Greenfield production environment has not been deployed, and Fresh Install Bootstrap is not implemented.
+- Legacy production data, accounts, configuration, credentials, and runtime state will not be migrated to the new production baseline.
 - Enterprise tests live in `enterprise/tests/`
 - Runtime data and secrets must stay out of Git

@@ -1,6 +1,6 @@
 # Infinite-Canvas-Enterprise 开发路线图（2026-2027）
 
-更新时间：2026-07-16
+更新时间：2026-07-17
 最后一次代码事实核对基线：`main@396cccc68d63bd16393a2cb72d24e4a48fcf47cb`
 
 当前 repository HEAD 以 GitHub `main` 为准；文档专用 PR #80 不改变运行时代码事实。
@@ -9,9 +9,9 @@
 
 ## 1. 路线原则
 
-当前系统定位是“已投入生产的企业安全增强型单机模块化单体”。总体路线保持：
+当前仓库架构定位是“企业安全增强型单机模块化单体”。旧生产仍运行历史版本并已定义为待退役遗留系统；当前仓库基线继续开发，未来新生产采用 Greenfield 全新部署。该决策以 [ADR-OPS-007](../decisions/ADR-OPS-007-GREENFIELD-PRODUCTION-BASELINE-AND-LEGACY-NON-MIGRATION-2026-07.md) 为准。总体路线调整为：
 
-> 先稳固安全和数据一致性，再建立恢复、性能和可观测性，随后推进单机生产化，最后扩大到多实例、多服务器和团队协作。
+> 先形成可维护、可恢复、可持续升级的 Production Baseline，再在干净环境全新部署；旧生产不作为迁移输入或原地升级目标。
 
 当前继续采用“上游主应用 + enterprise gateway + enterprise data + OPS”的模块化单体，不立即微服务化。任何未来规划都不能写成当前已经支持的能力。
 
@@ -40,13 +40,13 @@
 | STAB-1 / OPS-L1 | 已合并，PR #78 | Windows supervisor、角色独立恢复、lifecycle CLI、持久日志、runtime state 和 Job Object。 |
 | Runtime service-host hotfix | 已合并，PR #79 | detached host / child 脚本路径隔离和启动失败证据；不代表生产已切换。 |
 
-OPS-2A / OPS-2B 已进入 main，项目负责人已在生产侧人工完成 dry-run 和一次单独确认的正式备份。该事实不代表 restore、upgrade、apply-upgrade 或 rollback 已实现，也不代表生产已经升级。当前 `check-data` 仍有 warn，数据未被自动修复。
+OPS-2A / OPS-2B 已进入 main，项目负责人曾在旧生产侧人工完成 dry-run 和一次单独确认的正式备份。这些是历史运维事实，不代表 restore、upgrade、apply-upgrade 或 rollback 已实现，也不再作为旧到新迁移输入。旧生产 `check-data` warning 和其中的 unowned、orphan map、missing file 不再阻塞新生产基线；旧数据仍未被自动修复或删除。
 
 ## 3. 当前阶段
 
 当前阶段为 **ENV-1B0：架构决策冻结和文档事实同步**。正常上游功能同步在 ENV-1 期间冻结；紧急安全漏洞修复可以单独评估并受控引入。
 
-ENV-1 正式路线按以下顺序执行，后项不能绕过前项门禁：
+Greenfield Production Baseline 路线按以下顺序执行，后项不能绕过前项门禁：
 
 0. ENV-1B0：架构决策冻结和文档事实同步。
 1. ENV-1B1A：完整 APP_ROOT 写入审计与 static 构建期哈希。
@@ -56,15 +56,20 @@ ENV-1 正式路线按以下顺序执行，后项不能绕过前项门禁：
 5. ENV-1B2：可重复 Runtime、依赖锁、`pip check`、SBOM、自检，并验证受支持的新 Python 版本。
 6. OPS Release Manifest v2。
 7. ENV-1B3：干净 Windows VM、无系统 Python、非管理员、中文/空格/长路径、低磁盘、重启、损坏 DLL/manifest、杀毒软件和 APP_ROOT 只读验证。
-8. 发布首个不可变 Windows Release。
-9. DATA-1：Repository、schema version、migration history、owner reconciliation 和数据库回滚兼容。
-10. ARCH-3：Route Registry、Policy、Application Service、Repository、Upstream Adapter 按业务域渐进抽取。
-11. PERF-1 / OBS-1。
-12. OPS-3B：apply / switch / health / rollback / restore。
-13. Linux 单服务器适配。
-14. PostgreSQL、对象存储、queue、Redis 和多实例按真实需求引入。
+8. 形成首个不可变 Windows Release Candidate；Release Candidate 不等于 Production Baseline。
+9. DATA-1：Repository、schema version、migration history、新版本 migration compatibility、数据完整性和数据库回滚基础；不迁移或修复旧生产数据。
+10. Fresh Install Bootstrap：面向空环境建立目标 Schema、mandatory audit、首个 `super_admin` 和不可变 lifecycle marker。
+11. 在干净 Windows 环境完成全新安装与初始化验收。
+12. 收口 ARCH-3、P0 安全、PERF-1 / OBS-1、浏览器回归和真实 Provider 成功链路。
+13. 使用全新基线数据完成正式 backup、restore rehearsal，以及 Release Candidate 之间的升级、rollback / restore 演练；这些基线资格演练不表示 OPS-3B 已实现。
+14. 由项目负责人批准 Production Baseline。
+15. 在生产设备使用全新数据库、账号、配置和凭据执行 Greenfield 部署，并完成新生产业务验收。
+16. 新生产验收通过后，由项目负责人另行决定旧生产停止、归档或删除。
+17. OPS-3B：只在新生产基线已部署并形成第一代新生产数据后，为后续 Release 实现 apply / switch / health / rollback / restore。
+18. Linux 单服务器适配。
+19. PostgreSQL、对象存储、queue、Redis 和多实例按真实需求引入。
 
-以上除第 0 项外均为未实施工作。OPS-3B、Linux、PostgreSQL、Redis、durable queue、多实例、Windows Service 和正式 Windows Runtime Release 当前都不是已实现能力。
+以上除第 0 项外均为未实施工作。Fresh Install Bootstrap、新生产部署、OPS-3B、Linux、PostgreSQL、Redis、durable queue、多实例、Windows Service、正式 Windows Runtime Release 和 Production Baseline 当前都不是已实现能力。
 
 ## 4. 历史拆解参考
 
@@ -85,10 +90,10 @@ SEC-1A 只完成 ADR。后续按独立 Issue / Draft PR 实施：
 | 任务 | 范围 | 状态 |
 | --- | --- | --- |
 | SEC-1A | user / admin / super_admin、Capability、L0–L3、Step-up、bootstrap 和高风险治理 ADR | ADR 决策完成；未实现代码 |
-| SEC-1B1 | `role`、`auth_version`、migration、JWT 当前状态加载和旧 Token 撤销的实现与临时数据库验证；不激活生产 migration | 仓库实现完成，PR #72；生产未激活 |
-| SEC-1F0 | 最小强制安全审计 schema、append-only 写入、bootstrap / role change / break-glass catalog、敏感字段禁记、fail closed 和临时数据库测试 | 仓库实现完成，PR #73；生产未激活，在线操作未接线 |
-| SEC-1C0 | 首次 bootstrap 前的 super_admin 过渡保护：admin 不得影响 super_admin、禁止自行提权、正常在线事务不得将 active super_admin 降为零；不实现完整 Capability | 仓库实现完成，PR #74；生产未激活 |
-| SEC-1B2 | 加固 main-Schema 查询、受控 migration activation 与本机首次 super_admin bootstrap；实施 plan、备份门禁、生命周期和原子 runner | 仓库实现完成，PR #75；生产 activation 未执行，生产仍为 LEGACY |
+| SEC-1B1 | `role`、`auth_version`、migration、JWT 当前状态加载和旧 Token 撤销的实现与临时数据库验证 | 仓库实现完成，PR #72；不在旧生产执行 migration |
+| SEC-1F0 | 最小强制安全审计 schema、append-only 写入、bootstrap / role change / break-glass catalog、敏感字段禁记、fail closed 和临时数据库测试 | 仓库实现完成，PR #73；不在旧生产 activation，在线操作未接线 |
+| SEC-1C0 | 首次 bootstrap 前的 super_admin 过渡保护：admin 不得影响 super_admin、禁止自行提权、正常在线事务不得将 active super_admin 降为零；不实现完整 Capability | 仓库实现完成，PR #74；不在旧生产 activation |
+| SEC-1B2 | 面向现有 active admin 的受控 migration activation 与本机首次 super_admin bootstrap；实施 plan、备份门禁、生命周期和原子 runner | 仓库实现完成，PR #75；代码保留但不在旧生产执行，也不是 Fresh Install Bootstrap |
 | SEC-1C | Capability 后端门禁、最后超级管理员保护、防自我提权、admin 不得影响 super_admin | 未实现 |
 | SEC-1D | Step-up Authentication、单次 Operation Token、replay protection、CSRF / Origin | 未实现 |
 | SEC-1E | 管理后台角色治理、高风险警告、二次认证 UI 和浏览器回归 | 未实现 |
@@ -97,25 +102,25 @@ SEC-1A 只完成 ADR。后续按独立 Issue / Draft PR 实施：
 
 其它 P0 安全事项继续独立拆分：HTTP 未分类 route 默认拒绝、WebSocket 未知 event 默认拒绝、Secure Cookie、登录限流、`next` URL 校验、企业静态路径 containment、生产错误脱敏和依赖锁定。SEC-1A 的详细决策见 [ADR SEC-1A](../decisions/ADR-SEC-1A-SUPER-ADMIN-CAPABILITY-GOVERNANCE-2026-07.md)。
 
-### 4.3 DATA-1：数据一致性与 migration 基础设计
+### 4.3 DATA-1：新生产数据一致性与 migration 基础设计
 
 - repository 接口。
 - schema version。
 - migration history。
 - SQLite `busy_timeout`、索引和约束复核。
-- owner reconciliation 报告与人工修复计划。
+- 新生产数据完整性报告与受控 reconciliation 机制。
 - 临时数据库 dry-run、备份和回滚测试。
 
-不自动修复生产 owner map，不直接修改生产数据库。
+DATA-1 服务于全新数据库和未来新版本 migration，不导入旧生产数据，不创建旧 owner map 修复任务，也不直接修改任何生产数据库。
 
-### 4.4 OPS 恢复演练
+### 4.4 Production Baseline 恢复演练
 
-- 核对已执行 backup manifest。
+- 使用 Fresh Install Bootstrap 创建的全新基线数据核对 executed backup manifest。
 - 在隔离副本中做 restore rehearsal。
 - 验证 SQLite、JSON、assets / output、env 和启动链路。
 - 记录人工 rollback 决策点与恢复时间。
 
-已有 backup 不等于 restore 已完成。restore rehearsal 通过前，不接入网页 apply-upgrade。
+旧生产已有 backup 只保留历史证据，不作为新基线恢复输入。新基线 backup 不等于 restore 已完成；restore rehearsal 通过前，不接入网页 apply-upgrade。
 
 ### 4.5 OBS-1 / OPS-L1：日志与可观测性基础
 
@@ -180,14 +185,15 @@ SEC-1A 只完成 ADR。后续按独立 Issue / Draft PR 实施：
 
 建议顺序：
 
-1. release builder。
-2. release validator 增强。
-3. backup restore rehearsal。
-4. 人工维护窗口 upgrade rehearsal。
-5. 人工 rollback 验证。
-6. 最后才评估 Update Center 的 apply-upgrade。
+1. release builder 与 release validator 增强。
+2. Fresh Install Bootstrap 和干净环境安装验收。
+3. 使用新基线数据完成 backup / restore rehearsal。
+4. 在非生产基线候选之间完成人工 upgrade、rollback / restore rehearsal。
+5. 项目负责人批准并 Greenfield 部署 Production Baseline。
+6. 新生产形成第一代数据后，再实施 OPS-3B 以服务后续 Release。
+7. 最后才评估 Update Center 的 apply-upgrade。
 
-`prepare-upgrade` 只生成 plan。OPS-3 / OPS-4 不得被描述为当前已实现；网页端未来也只能调用白名单、计划驱动、可审计的 OPS API，不能执行任意 shell。
+`prepare-upgrade` 只生成 plan。OPS-3B 不用于旧生产原地升级，OPS-3 / OPS-4 不得被描述为当前已实现；网页端未来也只能调用白名单、计划驱动、可审计的 OPS API，不能执行任意 shell。
 
 ## 8. 自动化测试路线
 
@@ -211,7 +217,9 @@ SEC-1A 只完成 ADR。后续按独立 Issue / Draft PR 实施：
 | --- | --- |
 | ARCH-3 | P0 默认拒绝策略和关键会话安全已建立，现有 A/B/admin 回归可运行。 |
 | DATA-1 migration 实现 | schema / backup / rollback 设计通过，临时数据库测试可重复。 |
-| OPS 正式升级演练 | executed backup、restore rehearsal、release validation 和 data-check 已人工复核。 |
+| Fresh Install Bootstrap | 目标 Schema、mandatory audit、首个 super_admin、本机交互和重复执行拒绝设计通过；不得复用 SEC-1B2 的现有 admin 前提。 |
+| Production Baseline 资格演练 | 使用全新基线数据的 executed backup、restore rehearsal、release validation 和 data-check 已人工复核；旧生产 warning 不作为输入。 |
+| OPS-3B | 新生产 Production Baseline 已部署并形成第一代新生产数据，且 Manifest v2、DATA-1、正式 backup、restore rehearsal 和 migration compatibility 已完成。 |
 | Docker / 1Panel | volume、日志、healthcheck、backup / restore 和 WebSocket 验收方案已明确。 |
 | PostgreSQL 正式迁移 | repository、schema version、导入校验、维护窗口和回滚演练完成。 |
 | 多实例 / 多服务器 | session、queue、realtime、shared storage 和集中可观测性完成。 |

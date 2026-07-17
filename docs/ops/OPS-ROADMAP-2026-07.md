@@ -1,6 +1,8 @@
 # OPS 路线图（2026-07）
 
-最后一次代码事实核对基线：`main@396cccc68d63bd16393a2cb72d24e4a48fcf47cb`；当前 repository HEAD 以 GitHub `main` 为准。文档专用 PR #80 不改变运行时代码事实。OPS-3A 与 STAB-1 / OPS-L1 已合并；OPS-3B 尚未开始，并后置于不可变 Release、路径根、Runtime evidence、Manifest v2、DATA-1 和 restore rehearsal。完整顺序以 [总体路线图](../roadmap/DEVELOPMENT-ROADMAP-2026-2027.md) 为准。
+更新时间：2026-07-17
+
+最后一次代码事实核对基线：`main@396cccc68d63bd16393a2cb72d24e4a48fcf47cb`；当前 repository HEAD 以 GitHub `main` 为准。文档专用 PR #80 不改变运行时代码事实。OPS-3A 与 STAB-1 / OPS-L1 已合并；OPS-3B 尚未开始，并后置于不可变 Release、路径根、Runtime evidence、Manifest v2、DATA-1 和 restore rehearsal。生产路线以 [ADR-OPS-007](../decisions/ADR-OPS-007-GREENFIELD-PRODUCTION-BASELINE-AND-LEGACY-NON-MIGRATION-2026-07.md) 为准：不原地升级或迁移旧生产，OPS-3B 只服务新生产基线后的版本迭代。完整顺序以 [总体路线图](../roadmap/DEVELOPMENT-ROADMAP-2026-2027.md) 为准。
 
 ## 1. OPS 总目标
 
@@ -52,19 +54,19 @@ OPS-2A 实现与命令说明见：`docs/ops/OPS-2A-PRODUCTION-OPS-TOOLKIT-2026-0
 
 OPS-2A 已进入 main 不代表生产已升级，不代表 `apply-upgrade` / `rollback` 已实现，也不代表 Docker / 1Panel / PostgreSQL 已实现。
 
-## 3. OPS-2A 合并后生产侧 dry-run 验证
+## 3. OPS-2A / OPS-2B 旧生产历史验证
 
-下一步不是生产升级，而是生产侧只读 / 非破坏性试运行验证：
+项目负责人曾在旧生产本地人工完成以下只读 / 非破坏性试运行：
 
 1. `inventory`
 2. `check-data`
 3. `backup` dry-run
 
-本阶段只收集报告和确认工具能在生产侧读取当前状态。生产命令必须由项目负责人在生产主机人工执行，Codex 不直接访问生产主机。
+这些结果证明当时工具可以读取旧生产状态；旧生产盘点、`check-data` warning 和正式备份继续作为历史运维证据保存，但不再是旧到新迁移输入或 Production Baseline 门禁。旧生产不再执行原地升级。任何生产命令仍只能由项目负责人在生产主机人工执行，Codex 不直接访问生产主机。
 
-`backup --execute` 需要单独确认，不在 OPS-2A 合并后状态同步 PR 中触发。
+项目负责人随后已单独确认并在旧生产本地完成一次 `backup --execute`；成功仅证明当次历史备份命令成功，不代表 restore 可用，也不授权将该备份导入新生产。
 
-`validate-release` / `prepare-upgrade` 需要 release 包、backup manifest、data-check report 等前置输入，不会自动执行生产升级。
+`validate-release` / `prepare-upgrade` 需要 release 包、backup manifest、data-check report 等前置输入，不会自动执行生产升级；未来新生产必须使用其自身的新基线证据，不能复用旧生产报告或备份。
 
 仍禁止：
 
@@ -78,7 +80,7 @@ OPS-2A 已进入 main 不代表生产已升级，不代表 `apply-upgrade` / `ro
 
 ## 4. OPS-2B Windows 封装边界
 
-OPS-2B 目标是把生产侧 OPS-2A 命令封装成稳定的 Windows PowerShell wrapper，降低复制粘贴、多行反引号和系统 `python` 缺失带来的人工操作风险。
+OPS-2B 已将生产侧 OPS-2A 命令封装成稳定的 Windows PowerShell wrapper，降低复制粘贴、多行反引号和系统 `python` 缺失带来的人工操作风险。它在旧生产的历史执行不授权迁移、升级或修复旧数据。
 
 OPS-2B 实现：
 
@@ -120,7 +122,7 @@ Implementation details: `docs/ops/OPS-3A-ONLINE-UPDATE-CORE-IMPLEMENTATION-2026-
 
 OPS-3 规划：
 
-- OPS-3B: controlled `apply-upgrade` and rollback design after separate review.
+- OPS-3B：在 Greenfield Production Baseline 已部署并形成第一代新生产数据后，为后续 Release 提供 controlled `apply-upgrade`、switch、health、rollback 和 restore；不用于旧生产原地升级。
 - OPS-3C: Update Center page and allowlisted backend OPS API.
 - 维护窗口确认。
 - 二次确认。
@@ -129,7 +131,19 @@ OPS-3 规划：
 
 OPS-3 才开始接入网页 Update Center。网页端只能调用白名单 OPS API，不得执行任意 shell。
 
-OPS-3 后置于 OPS-2A / OPS-2B 生产侧 dry-run 验证和必要的 OPS-L1 / OPS-D1 设计确认。
+OPS-3B 后置于不可变 Release、Manifest v2、DATA-1、Fresh Install Bootstrap、正式 backup、restore rehearsal、migration compatibility、Runtime lifecycle 验证和 Greenfield Production Baseline 部署。旧生产 OPS-2A / OPS-2B 结果只保留历史证据，不能满足这些门禁。
+
+### Greenfield 新生产 OPS 边界
+
+Production Baseline 获批前必须在干净 Windows 环境使用全新数据库、账号和配置完成：
+
+- Fresh Install Bootstrap；该能力尚未实现，SEC-1B2 不能替代。
+- 首次启动、status / health 与业务验收。
+- 针对全新基线数据的正式 backup execute 和 restore rehearsal。
+- Release Candidate 之间的升级、rollback / restore 演练。
+- 配置、数据库、JSON、资源和启动链路恢复验证。
+
+这些是尚未完成的基线资格门禁，不表示新生产已经部署。新生产业务验收通过后，旧生产的停止、归档或删除仍需项目负责人单独授权。
 
 ### STAB-1 / OPS-L1 Supervisor Foundation
 
@@ -189,7 +203,7 @@ OPS-D 不应跳过 OPS 备份、日志和回滚设计。容器化不是绕过数
 - 管理员确认后执行。
 - 不自动永久删除。
 
-生产数据治理应先报告、再确认、再执行。任何归属修复、隔离、归档或删除都必须可审计。
+新生产的数据治理仍应先报告、再确认、再执行。任何归属修复、隔离、归档或删除都必须可审计。上述能力不得默认扩展为旧数据导入、旧 owner map 修复或旧数据库升级；除非项目负责人通过新决策明确授权，不为待退役旧生产创建此类任务。
 
 ## 9. OPS 与安全边界
 
@@ -207,4 +221,4 @@ OPS 安全边界：
 
 OPS 能力上线后仍必须保持 Draft PR、主对话复核和项目负责人验收流程。
 
-OPS-4 生产升级演练后置于生产侧 dry-run 验证、备份策略确认和回滚方案复核。
+OPS-4 / 后续升级演练使用 Greenfield 新基线数据，后置于 Fresh Install Bootstrap、正式备份、restore rehearsal 和回滚方案复核；旧生产 dry-run 不再构成上线输入。
