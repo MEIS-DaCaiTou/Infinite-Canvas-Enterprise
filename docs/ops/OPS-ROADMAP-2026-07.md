@@ -2,7 +2,7 @@
 
 更新时间：2026-07-17
 
-最后一次代码事实核对基线：`main@396cccc68d63bd16393a2cb72d24e4a48fcf47cb`；当前 repository HEAD 以 GitHub `main` 为准。文档专用 PR #80 不改变运行时代码事实。OPS-3A 与 STAB-1 / OPS-L1 已合并；OPS-3B 尚未开始，并后置于不可变 Release、路径根、Runtime evidence、Manifest v2、DATA-1 和 restore rehearsal。生产路线以 [ADR-OPS-007](../decisions/ADR-OPS-007-GREENFIELD-PRODUCTION-BASELINE-AND-LEGACY-NON-MIGRATION-2026-07.md) 为准：不原地升级或迁移旧生产，OPS-3B 只服务新生产基线后的版本迭代。完整顺序以 [总体路线图](../roadmap/DEVELOPMENT-ROADMAP-2026-2027.md) 为准。
+最后一次代码事实核对基线：`main@396cccc68d63bd16393a2cb72d24e4a48fcf47cb`；当前 repository HEAD 以 GitHub `main` 为准。文档专用 PR #80 不改变运行时代码事实。OPS-3A 与 STAB-1 / OPS-L1 已合并；OPS-3B 尚未开始，并后置于不可变 Release、路径根、Runtime evidence、Manifest v2、DATA-1 和 restore rehearsal。生产路线以 [ADR-OPS-007](../decisions/ADR-OPS-007-GREENFIELD-PRODUCTION-BASELINE-AND-LEGACY-NON-MIGRATION-2026-07.md) 为准：不原地升级或迁移旧生产；OPS-3B 仓库实现和隔离演练是 Production Baseline 前置门禁，首次真实生产执行则只服务 Greenfield 新生产部署后的版本迭代。完整顺序以 [总体路线图](../roadmap/DEVELOPMENT-ROADMAP-2026-2027.md) 为准。
 
 ## 1. OPS 总目标
 
@@ -122,16 +122,16 @@ Implementation details: `docs/ops/OPS-3A-ONLINE-UPDATE-CORE-IMPLEMENTATION-2026-
 
 OPS-3 规划：
 
-- OPS-3B：在 Greenfield Production Baseline 已部署并形成第一代新生产数据后，为后续 Release 提供 controlled `apply-upgrade`、switch、health、rollback 和 restore；不用于旧生产原地升级。
-- OPS-3C: Update Center page and allowlisted backend OPS API.
+- OPS-3B：在 Production Baseline 批准前完成 repository implementation，并使用 Fresh Install Bootstrap 建立的全新隔离数据完成 controlled `apply-upgrade`、switch、health、rollback 和 restore 演练；不用于旧生产原地升级。
+- OPS-3C：在 Production Baseline 后单独实现 Update Center page and allowlisted backend OPS API；不是首次生产部署前置条件。
 - 维护窗口确认。
 - 二次确认。
 - audit log。
 - job log 展示。
 
-OPS-3 才开始接入网页 Update Center。网页端只能调用白名单 OPS API，不得执行任意 shell。
+OPS-3C 才开始接入网页 Update Center。网页端只能调用白名单 OPS API，不得执行任意 shell。
 
-OPS-3B 后置于不可变 Release、Manifest v2、DATA-1、Fresh Install Bootstrap、正式 backup、restore rehearsal、migration compatibility、Runtime lifecycle 验证和 Greenfield Production Baseline 部署。旧生产 OPS-2A / OPS-2B 结果只保留历史证据，不能满足这些门禁。
+OPS-3B 仓库实现后置于不可变 Release、Manifest v2、DATA-1、Fresh Install Bootstrap、正式 backup、restore rehearsal、migration compatibility 和 Runtime lifecycle 验证，但必须在 Production Baseline 批准前完成。旧生产 OPS-2A / OPS-2B 结果只保留历史证据，不能满足这些门禁。
 
 ### Greenfield 新生产 OPS 边界
 
@@ -140,10 +140,11 @@ Production Baseline 获批前必须在干净 Windows 环境使用全新数据库
 - Fresh Install Bootstrap；该能力尚未实现，SEC-1B2 不能替代。
 - 首次启动、status / health 与业务验收。
 - 针对全新基线数据的正式 backup execute 和 restore rehearsal。
-- Release Candidate 之间的升级、rollback / restore 演练。
+- OPS-3B repository implementation。
+- 使用 Fresh Install Bootstrap 建立的全新隔离数据，完成 Release Candidate 之间的 apply / switch / health / rollback / restore 演练。
 - 配置、数据库、JSON、资源和启动链路恢复验证。
 
-这些是尚未完成的基线资格门禁，不表示新生产已经部署。新生产业务验收通过后，旧生产的停止、归档或删除仍需项目负责人单独授权。
+这些是尚未完成的开发或隔离环境基线资格门禁，不表示新生产已经部署或发生生产执行。Production Baseline 获批时必须已经具备经过验证的持续升级和失败恢复能力。OPS-3B 的首次真实生产执行只能发生在 Greenfield 新生产部署后，并由项目负责人在生产设备本地执行；新生产业务验收通过后，旧生产的停止、归档或删除仍需项目负责人单独授权。
 
 ### STAB-1 / OPS-L1 Supervisor Foundation
 

@@ -304,8 +304,8 @@ Update Center 应成为管理员触发和查看 OPS job 的入口，而不是直
 | P0 | ARCH-2B / SEC-1 | 会话撤销、JWT 角色同步、HTTP / WebSocket 未分类默认拒绝、更新开关语义、Secure Cookie、CSRF、登录限流、next URL、静态路径 containment、错误脱敏和依赖锁。 |
 | P1 | ENV-1 / DATA-1 / Fresh Install Bootstrap | 不可变 Release、可信 Runtime、目标 Schema、未来版本 migration 和空环境首次安全初始化；不迁移旧生产。 |
 | P1 | ARCH-3 / PERF-1 / OBS-1 | policy 渐进拆分、真流式代理、性能基线和本地可观测性。 |
-| P1 / P2 | Production Baseline 资格门禁 | 干净安装、正式 backup、restore rehearsal、候选版本升级和 rollback / restore 演练。 |
-| P2 | OPS-3B / OPS-4 | 新生产基线部署并形成第一代数据后的持续 Release 迭代；Update Center apply-upgrade 最后考虑。 |
+| P1 / P2 | Production Baseline 资格门禁 | 干净安装、正式 backup、restore rehearsal、OPS-3B 仓库实现，以及使用全新隔离数据的 apply / switch / health / rollback / restore 演练。 |
+| P2 | OPS-3B 真实生产执行 / OPS-3C / OPS-4 | OPS-3B 首次真实生产执行只发生在 Greenfield 新生产部署后的正式 Release 迭代；Update Center 后置且不是首次部署前置。 |
 | P2 | OPS-D1 | Docker / 1Panel 单机生产化。 |
 | P3 | DATA-2 / SCALE-1 / TEAM-1 | PostgreSQL、Redis、对象存储、多实例、多服务器、团队协作 ACL、高可用与灾备。 |
 

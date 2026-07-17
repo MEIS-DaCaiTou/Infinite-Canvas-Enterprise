@@ -168,19 +168,24 @@ OPS-3B 不再用于将旧生产版本升级为新架构。
 
 OPS-3B 的正式定位调整为：
 
-> 在全新生产基线版已经部署并形成第一代新生产数据之后，为后续正式 Release 提供计划驱动的 apply、版本切换、健康验证、rollback 和 restore 能力。
+> OPS-3B 的仓库实现和隔离环境演练是 Production Baseline 批准前的强制门禁；首次真实生产执行只发生在 Greenfield 新生产部署以后。
 
-任何 OPS-3B 实现仍必须后置于：
+OPS-3B 的仓库实现仍必须后置于：
 
 - 不可变 APP_ROOT；
 - 路径根和版本目录；
 - Release-bound Runtime；
 - Manifest v2；
 - DATA-1；
+- Fresh Install Bootstrap；
 - 正式备份；
 - restore rehearsal；
 - 数据库 migration compatibility；
 - Runtime Supervisor lifecycle 验证。
+
+仓库实现完成后，必须在干净 Windows 环境使用 Fresh Install Bootstrap 建立的全新隔离数据，完成计划驱动的 apply、版本切换、health、rollback 和 restore 演练。该过程属于开发或隔离验证，不是生产执行；Production Baseline 获批时必须已经具备经过验证的持续升级和失败恢复能力。
+
+OPS-3B 不得用于旧生产。OPS-3B 的首次真实生产执行只能发生在 Greenfield 新生产部署以后，并且只能由项目负责人在生产设备本地执行。OPS-3C / Update Center 可以在 Production Baseline 后作为独立任务实施，网页 Update Center 不是首次生产部署的前置条件。
 
 ## 4. 生产基线版最低准入条件
 
@@ -221,8 +226,10 @@ OPS-3B 的正式定位调整为：
 
 - Runtime start、stop、restart、status 和 health 通过；
 - 日志、状态、备份、缓存和配置位于 Release 目录之外；
-- 至少完成一次新基线 Release 之间的受控升级演练；
-- 升级失败后的 rollback 或 restore 路径通过；
+- OPS-3B 仓库实现已经完成；
+- 在干净 Windows 环境使用 Fresh Install Bootstrap 建立的全新隔离数据，至少完成一次新基线 Release 之间的 apply、版本切换和 health 演练；
+- 升级失败后的 rollback 和 restore 路径通过；
+- 上述演练属于开发或隔离验证，不是生产执行；
 - 不需要直接在生产目录执行 `git pull`、`checkout` 或覆盖复制；
 - 项目负责人确认该版本已具备后续持续维护和迭代条件。
 
@@ -271,7 +278,9 @@ OPS-3B 的正式定位调整为：
 2. 不得创建旧数据导入、旧 owner map 自动修复或旧数据库升级任务，除非项目负责人通过新决策明确授权。
 3. Fresh Install Bootstrap 必须作为独立设计和实现任务。
 4. 生产基线必须明确区分 Release Candidate、开发验证和正式 Production Baseline。
-5. 每个相关任务必须标明：
+5. OPS-3B 的仓库实现和隔离环境演练必须在 Production Baseline 批准前完成；其首次真实生产执行只能在 Greenfield 新生产部署后由项目负责人在生产设备本地执行。
+6. OPS-3C / Update Center 可以在 Production Baseline 后独立实施，不得列为首次生产部署前置条件。
+7. 每个相关任务必须标明：
 
    - 是否修改代码；
    - 是否改变 Schema；
@@ -279,8 +288,8 @@ OPS-3B 的正式定位调整为：
    - 是否创建或迁移数据；
    - 是否具备 rollback 或 restore；
    - 当前能力是否已经实现。
-6. 任何涉及生产的命令只能由项目负责人在生产设备本地执行。
-7. Codex、ChatGPT 和其它 Agent 不得连接、控制或操作生产设备。
+8. 任何涉及生产的命令只能由项目负责人在生产设备本地执行。
+9. Codex、ChatGPT 和其它 Agent 不得连接、控制或操作生产设备。
 
 ## 7. 对 PR 审查的约束
 
@@ -293,6 +302,8 @@ OPS-3B 的正式定位调整为：
 - 是否把 Fresh Install Bootstrap 描述为已实现；
 - 是否把 SEC-1B2 描述为新生产空环境初始化能力；
 - 是否保留未来新版本 migration、backup、restore 和 rollback 治理；
+- 是否错误地把 OPS-3B 仓库实现和隔离演练放到 Production Baseline 批准后；
+- 是否错误地把 OPS-3C / Update Center 列为首次生产部署前置；
 - 是否未经授权增加生产停止、删除或数据销毁步骤；
 - 是否保持 Draft，并等待项目负责人决定 Ready 和合并。
 
@@ -307,7 +318,7 @@ OPS-3B 的正式定位调整为：
 - 新数据库可以从第一天采用目标 Schema 和安全审计；
 - Release、Runtime、路径和数据边界可以按正式架构设计；
 - 生产验收标准更清晰；
-- 后续升级治理只需服务于新基线后的版本演进。
+- 升级治理只服务于新生产基线形成及其后续版本演进，不服务旧生产。
 
 ### 成本和风险
 

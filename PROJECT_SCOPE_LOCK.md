@@ -17,10 +17,13 @@
 1. 不得默认新增旧生产数据导入、账号迁移、配置 / 凭据复制、旧 owner map reconciliation、旧数据库升级或旧运行状态迁移。
 2. 不在旧生产执行 SEC-1B1、SEC-1F0 或 SEC-1B2 activation。SEC-1B2 代码仍是仓库实现和设计输入，不得描述为已废弃。
 3. SEC-1B2 要求现有 active admin，不是空环境 Fresh Install Bootstrap；Fresh Install Bootstrap 尚未实现，必须由未来独立任务和独立 Draft PR 承载。
-4. DATA-1、未来新版本 migration、backup、restore rehearsal、rollback 和 OPS-3B 继续保留，但只服务新生产基线形成和后续版本迭代。
-5. 旧生产 `check-data` warning 不再阻塞新生产基线，也不得据此自动修复或删除旧数据。
-6. 旧生产停止、归档或删除只能在新生产验收后由项目负责人另行明确授权；本文不授权任何生产操作。
-7. 任何改变“旧生产非迁移”决策的任务都必须重新获得项目负责人批准，并以新的正式决策记录，不得由普通 PR 或 Agent 自行扩大范围。
+4. DATA-1、未来新版本 migration、backup、restore rehearsal、rollback 和 OPS-3B 继续保留，但只服务新生产基线形成和后续版本迭代；OPS-3B 不得用于旧生产。
+5. OPS-3B 仓库实现和隔离环境演练是 Production Baseline 批准前的强制门禁：必须使用 Fresh Install Bootstrap 建立的全新隔离数据，在干净 Windows 环境完成 apply / switch / health / rollback / restore 演练；这不是生产执行。
+6. OPS-3B 的首次真实生产执行只能发生在 Greenfield 新生产部署以后，并由项目负责人在生产设备本地执行。
+7. OPS-3C / Update Center 可以在 Production Baseline 后单独实施，不得作为首次生产部署前置条件。
+8. 旧生产 `check-data` warning 不再阻塞新生产基线，也不得据此自动修复或删除旧数据。
+9. 旧生产停止、归档或删除只能在新生产验收后由项目负责人另行明确授权；本文不授权任何生产操作。
+10. 任何改变“旧生产非迁移”决策的任务都必须重新获得项目负责人批准，并以新的正式决策记录，不得由普通 PR 或 Agent 自行扩大范围。
 
 ---
 

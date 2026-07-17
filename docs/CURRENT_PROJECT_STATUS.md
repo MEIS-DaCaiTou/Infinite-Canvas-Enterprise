@@ -135,12 +135,15 @@ ARCH-2A、SEC-1A、SEC-1B1、SEC-1F0、SEC-1C0 和 SEC-1B2 仓库实现已完成
 5. 独立设计、实现并验证尚不存在的 Fresh Install Bootstrap。
 6. 在干净 Windows 环境完成全新安装与初始化验收。
 7. 收口 P0 安全、ARCH-3、PERF-1 / OBS-1、浏览器回归和真实 Provider 验收。
-8. 使用全新基线数据完成正式 backup、restore rehearsal，以及新 Release 之间的升级、rollback / restore 演练。
-9. 由项目负责人明确批准 Production Baseline。
-10. 在生产设备使用全新数据库、账号、配置和凭据进行 Greenfield 部署；新生产尚未部署。
-11. 完成新生产业务验收后，再由项目负责人单独决定旧生产停止、归档或删除。
-12. OPS-3B 仅服务于新生产基线部署并形成第一代新生产数据后的持续 Release 迭代；当前尚未开始。
-13. Linux 单服务器后置；PostgreSQL、对象存储、queue、Redis 和多实例按真实需求引入。
+8. 使用全新基线数据完成正式 backup 和 restore rehearsal。
+9. 完成 OPS-3B 仓库实现；OPS-3B 不用于旧生产，当前尚未开始。
+10. 在干净 Windows 环境使用 Fresh Install Bootstrap 建立的全新隔离数据，完成 apply / switch / health / rollback / restore 演练；这是开发或隔离验证，不是生产执行。
+11. 由项目负责人确认已经具备经过验证的持续升级和失败恢复能力，并明确批准 Production Baseline。
+12. 在生产设备使用全新数据库、账号、配置和凭据进行 Greenfield 部署；新生产尚未部署。
+13. 后续正式 Release 才进入新生产版本迭代；OPS-3B 的首次真实生产执行只能发生在 Greenfield 新生产部署以后，并由项目负责人在生产设备本地执行。
+14. 完成新生产业务验收后，再由项目负责人单独决定旧生产停止、归档或删除。
+15. OPS-3C / Update Center 可在 Production Baseline 后独立实施，不是首次生产部署前置条件。
+16. Linux 单服务器后置；PostgreSQL、对象存储、queue、Redis 和多实例按真实需求引入。
 
 3G-8 浏览器级自动化回归、3G-6 外部 provider 成功链路补验和长期协作 ACL 仍保留，但不得挤占 P0 安全与数据一致性优先级。
 
