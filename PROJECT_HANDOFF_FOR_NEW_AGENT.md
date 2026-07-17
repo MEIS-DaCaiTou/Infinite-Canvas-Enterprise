@@ -1,5 +1,7 @@
 # Infinite Canvas Enterprise 新智能体交接包
 
+> **已被替代的历史交接。** 本文保留 2026-07-08 的阶段证据，不再提供当前 HEAD 或任务顺序。新 Agent 应从 [`docs/README.md`](docs/README.md) 和 [`docs/CURRENT_PROJECT_STATUS.md`](docs/CURRENT_PROJECT_STATUS.md) 开始。
+
 更新时间：2026-07-08
 
 > 本文用于在新的 Codex 对话窗口中无缝接手本项目。新智能体应先读本文，再读 `docs/CURRENT_PROJECT_STATUS.md`、`PROJECT_SCOPE_LOCK.md`、`AGENT_CONTEXT.md`、`DEVELOPMENT_PLAN.md`、`ENTERPRISE_ISOLATION_MATRIX.md` 和当前任务 Issue。

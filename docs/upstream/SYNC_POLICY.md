@@ -2,6 +2,10 @@
 
 This repository follows [hero8152/Infinite-Canvas](https://github.com/hero8152/Infinite-Canvas) while maintaining an enterprise multi-user layer.
 
+## ENV-1 Change Freeze
+
+Normal upstream feature synchronization is frozen while ENV-1 establishes immutable releases, path roots, runtime provenance, and fail-closed entrypoints. A critical upstream security fix may be evaluated separately and introduced through a narrowly scoped, reviewed sync. The exception does not permit unrelated feature drift or bypass ENV validation gates.
+
 ## Homepage Boundary
 
 The root `README.md` is the Enterprise project entry point.
@@ -56,7 +60,7 @@ Every upstream sync PR must state:
 
 - Upstream repository: `hero8152/Infinite-Canvas`
 - Current enterprise upstream baseline: `2026.07.6`
-- Current stable enterprise commit: `73a645f2bdded5df5c7109903c8b57eab9e3c459`
+- Last verified enterprise code baseline: `396cccc68d63bd16393a2cb72d24e4a48fcf47cb`; resolve the current repository HEAD from GitHub `main`.
 - Last controlled upstream target commit: `f1dd6834a72f3e7ff8340be05a84347d931e9cb9`
 
 U-1 documented that the enterprise repository had no usable merge-base for a normal upstream merge. U-2 therefore used a controlled, patch-style sync to the fixed upstream target `f1dd6834a72f3e7ff8340be05a84347d931e9cb9`, not a direct merge, rebase, or broad cherry-pick.

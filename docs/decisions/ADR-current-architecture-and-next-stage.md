@@ -1,6 +1,8 @@
 # ADR: Infinite Canvas Enterprise 当前架构评估与下一阶段演进决策
 
-状态：Accepted
+> **状态：Superseded。** 当前架构形态由 [ADR-ENV-001](./ADR-ENV-001-MODULAR-MONOLITH-MIDTERM-ARCHITECTURE-2026-07.md) 决定，当前阶段顺序见 [开发路线图](../roadmap/DEVELOPMENT-ROADMAP-2026-2027.md)。本文保留 2026-07-08 的历史判断。
+
+原状态：Accepted
 
 日期：2026-07-08
 

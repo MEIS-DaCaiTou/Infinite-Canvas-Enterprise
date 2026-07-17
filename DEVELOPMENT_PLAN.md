@@ -1,5 +1,7 @@
 # 无限画布企业版 · 后续开发规划
 
+> **已被替代的历史计划。** 本文保留 3G / U-2 阶段记录。当前执行顺序只以 [`docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md`](docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md) 为准，当前事实见 [`docs/CURRENT_PROJECT_STATUS.md`](docs/CURRENT_PROJECT_STATUS.md)。
+
 更新时间：2026-07-08
 
 > 当前路线入口：本文件保留历史阶段规划和已完成任务记录。自 `main@a095ce2eb9ef9afda356cb6f20b6c38851f52b1d` 起，当前架构事实、P0 / P1 / P2 / P3 顺序分别以 `docs/architecture/ARCH-2A-ARCHITECTURE-ASSESSMENT-AND-EVOLUTION-2026-07.md` 和 `docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md` 为准。ARCH-2A 仅同步文档，未实施安全整改、模块重构、数据库迁移或部署变更。

@@ -1,8 +1,29 @@
 # Infinite Canvas Enterprise · 项目定位与后续开发范围锁定
 
-更新时间：2026-07-08
-适用对象：ChatGPT 主对话、Codex、后续 Agent、人工审核者。  
+> **当前维护说明（2026-07-17）：** 本文保留 3G / U-2 阶段范围历史。当前实施事实以 [`docs/CURRENT_PROJECT_STATUS.md`](docs/CURRENT_PROJECT_STATUS.md) 为准，执行顺序以 [`docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md`](docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md) 为准，架构决策以 [`docs/README.md`](docs/README.md) 的 ADR 索引为准。生产路线由 [`ADR-OPS-007`](docs/decisions/ADR-OPS-007-GREENFIELD-PRODUCTION-BASELINE-AND-LEGACY-NON-MIGRATION-2026-07.md) 强制约束。当前主线是 ENV-1B0，尚未开始 ENV-1B1A、Fresh Install Bootstrap 或 OPS-3B。
+
+更新时间：2026-07-17
+适用对象：ChatGPT 主对话、Codex、后续 Agent、人工审核者。
 状态：项目方向与后续开发范围已由项目负责人审核确认，后续任务不得偏离本文。
+
+---
+
+## 0. Greenfield 生产路线硬边界
+
+项目负责人已决定：未来新生产使用干净环境、全新数据库、全新账号、全新配置和重新设置的凭据进行 Greenfield 部署。旧生产继续存在但定义为待退役遗留系统；该定义不表示旧服务已停止、旧目录已归档或旧数据已删除。
+
+后续 Codex、ChatGPT、Agent、任务拆解和 PR 审查必须遵守：
+
+1. 不得默认新增旧生产数据导入、账号迁移、配置 / 凭据复制、旧 owner map reconciliation、旧数据库升级或旧运行状态迁移。
+2. 不在旧生产执行 SEC-1B1、SEC-1F0 或 SEC-1B2 activation。SEC-1B2 代码仍是仓库实现和设计输入，不得描述为已废弃。
+3. SEC-1B2 要求现有 active admin，不是空环境 Fresh Install Bootstrap；Fresh Install Bootstrap 尚未实现，必须由未来独立任务和独立 Draft PR 承载。
+4. DATA-1、未来新版本 migration、backup、restore rehearsal、rollback 和 OPS-3B 继续保留，但只服务新生产基线形成和后续版本迭代；OPS-3B 不得用于旧生产。
+5. OPS-3B 仓库实现和隔离环境演练是 Production Baseline 批准前的强制门禁：必须使用 Fresh Install Bootstrap 建立的全新隔离数据，在干净 Windows 环境完成 apply / switch / health / rollback / restore 演练；这不是生产执行。
+6. OPS-3B 的首次真实生产执行只能发生在 Greenfield 新生产部署以后，并由项目负责人在生产设备本地执行。
+7. OPS-3C / Update Center 可以在 Production Baseline 后单独实施，不得作为首次生产部署前置条件。
+8. 旧生产 `check-data` warning 不再阻塞新生产基线，也不得据此自动修复或删除旧数据。
+9. 旧生产停止、归档或删除只能在新生产验收后由项目负责人另行明确授权；本文不授权任何生产操作。
+10. 任何改变“旧生产非迁移”决策的任务都必须重新获得项目负责人批准，并以新的正式决策记录，不得由普通 PR 或 Agent 自行扩大范围。
 
 ---
 
@@ -60,7 +81,9 @@ data / assets / output / static / workflows
 
 ---
 
-## 2. 当前真实基线
+## 2. 2026-07-08 历史基线
+
+本节保留 DOC-1 时点证据，不再表示当前 main；当前值见文首链接的事实源。
 
 依据 PR #60、#61、#62 合并后的主线状态，当前稳定开发基线为：
 

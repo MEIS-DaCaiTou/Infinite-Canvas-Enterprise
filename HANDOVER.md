@@ -1,6 +1,8 @@
 # 无限画布企业版 · Codex 项目交接文档
 
-> **写给接手的 AI Agent（Codex）**  
+> **已被替代的历史交接。** 本文中的 launcher、启动命令和运行状态仅反映早期实现。当前入口是 [`docs/README.md`](docs/README.md)，运行事实见 [`ARCHITECTURE.md`](ARCHITECTURE.md) 和 [`docs/CURRENT_PROJECT_STATUS.md`](docs/CURRENT_PROJECT_STATUS.md)。
+
+> **写给接手的 AI Agent（Codex）**
 > 阅读顺序：先读本文档，再读 `ENTERPRISE_DOCS.md`。本文档是**现状速览**，`ENTERPRISE_DOCS.md` 是**完整开发规范**。
 
 ---

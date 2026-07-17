@@ -1,8 +1,12 @@
 # Infinite Canvas Enterprise
 
+Last code-fact verification baseline: `main@396cccc68d63bd16393a2cb72d24e4a48fcf47cb` (PR #79 merged). The current repository HEAD is always the GitHub `main` branch; documentation-only PR #80 does not change runtime code facts. See [`docs/README.md`](docs/README.md) for the authoritative documentation index and [`docs/CURRENT_PROJECT_STATUS.md`](docs/CURRENT_PROJECT_STATUS.md) for implemented/not-implemented facts.
+
 Infinite Canvas Enterprise is the enterprise multi-user edition built on top of the upstream open-source project [hero8152/Infinite-Canvas](https://github.com/hero8152/Infinite-Canvas).
 
 This repository is not a new standalone canvas product. Its only long-term direction is to make Infinite Canvas safe and maintainable for teams, LAN deployments, and server environments with enterprise authentication, authorization, ownership, and audit controls.
+
+Future production follows a Greenfield route: the project will first form an approved Production Baseline, then deploy with a clean environment, new database, new accounts, new configuration, and re-entered credentials. The legacy production system remains a retirement candidate and is not a migration or in-place upgrade source; it has not been stopped or deleted. See [ADR-OPS-007](docs/decisions/ADR-OPS-007-GREENFIELD-PRODUCTION-BASELINE-AND-LEGACY-NON-MIGRATION-2026-07.md) and the [development roadmap](docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md).
 
 ## Core Capabilities
 
@@ -57,7 +61,7 @@ Common paths:
 - Health check: `/enterprise/health`
 - Login page: `/enterprise/login`
 
-The enterprise launcher starts both services:
+The local Windows runtime supervisor starts and independently supervises both services:
 
 - Enterprise gateway: `0.0.0.0:8000`
 - Internal upstream: `127.0.0.1:3001`
@@ -66,17 +70,13 @@ The enterprise launcher starts both services:
 
 Before any development or maintenance task, read these documents first:
 
-1. `PROJECT_SCOPE_LOCK.md`
-2. `PROJECT_HANDOFF_FOR_NEW_AGENT.md`
-3. `docs/CURRENT_PROJECT_STATUS.md`
-4. `PROJECT_CHARTER.md`
-5. `AGENT_CONTEXT.md`
-6. `ARCHITECTURE.md`
-7. `CODE_BOUNDARIES.md`
-8. `CODEX_WORKFLOW.md`
-9. `DEVELOPMENT_PLAN.md`
-10. `ENTERPRISE_DOCS.md`
-11. The current GitHub Issue text
+1. `docs/README.md`
+2. `docs/CURRENT_PROJECT_STATUS.md`
+3. `ARCHITECTURE.md`
+4. `PROJECT_SCOPE_LOCK.md`
+5. `CODE_BOUNDARIES.md`
+6. The ADRs and task-specific documents linked by `docs/README.md`
+7. The current GitHub Issue text
 
 This is mandatory because the enterprise layer and upstream layer have different ownership and update rules.
 
@@ -103,7 +103,7 @@ Changes to upstream-covered files are allowed only for controlled upstream syncs
 
 ## Upstream Synchronization
 
-Current stable enterprise baseline: `73a645f2bdded5df5c7109903c8b57eab9e3c459`
+Last verified enterprise code baseline: `396cccc68d63bd16393a2cb72d24e4a48fcf47cb`
 
 Current upstream baseline: `2026.07.6`
 
@@ -135,7 +135,7 @@ Update governance:
 - Normal users must not see or trigger one-click update, update-to-version prompts, rollback, or update connectivity checks.
 - Update-related upstream APIs are protected by the enterprise gateway and require administrator permission.
 - Administrators may use the update entry only as an Enterprise controlled maintenance capability.
-- The gateway keeps upstream auto-restart disabled for update requests so the Enterprise `3001/8000` process model remains controlled by the Enterprise launcher.
+- The gateway keeps upstream auto-restart disabled for update requests so the Enterprise `3001/8000` process model remains controlled by the runtime supervisor.
 
 ## Upstream README
 
@@ -196,6 +196,9 @@ Startup/stop lifecycle tests may interrupt the running service. Run them only wh
 - Enterprise gateway: `0.0.0.0:8000`
 - Internal upstream: `127.0.0.1:3001`
 - Current upstream baseline: `2026.07.6`
-- Current stable main baseline: `73a645f2bdded5df5c7109903c8b57eab9e3c459`
+- Last verified code baseline: `396cccc68d63bd16393a2cb72d24e4a48fcf47cb`; resolve current HEAD from GitHub `main`.
+- OPS-3A, STAB-1 / OPS-L1 and the detached service-host startup fix are merged; this does not mean production has switched runtimes or that OPS-3B is implemented.
+- The new Greenfield production environment has not been deployed, and Fresh Install Bootstrap is not implemented.
+- Legacy production data, accounts, configuration, credentials, and runtime state will not be migrated to the new production baseline.
 - Enterprise tests live in `enterprise/tests/`
 - Runtime data and secrets must stay out of Git

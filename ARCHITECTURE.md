@@ -1,12 +1,12 @@
 # 无限画布企业版 · 架构说明
 
-本文档描述当前企业多用户版 Infinite Canvas 的运行架构和主要模块职责。
+本文档描述当前仓库已实现的 Infinite Canvas 企业多用户运行架构和主要模块职责；它不证明相同仓库基线已经部署到生产。
 
-> 当前事实源：本文件保留快速运行架构说明。基于 `main@a095ce2eb9ef9afda356cb6f20b6c38851f52b1d` 的完整评估、风险与 P0 / P1 / P2 / P3 演进方向见 `docs/architecture/ARCH-2A-ARCHITECTURE-ASSESSMENT-AND-EVOLUTION-2026-07.md`。当前统一定位是“已投入生产的企业安全增强型单机模块化单体”；规划中的 Docker、PostgreSQL、Redis、对象存储、apply-upgrade、restore 和 rollback 尚未实现。
+> 最后一次代码事实核对基线：`main@396cccc68d63bd16393a2cb72d24e4a48fcf47cb`。当前 repository HEAD 以 GitHub `main` 为准；文档专用 PR #80 不改变运行时代码事实。正式决策和实际文件链接见 [ADR 索引](docs/README.md)。当前仓库定位是“企业安全增强型单机模块化单体”；规划中的 ENV-1 正式运行时、Manifest v2、Fresh Install Bootstrap、OPS-3B、Docker、PostgreSQL、Redis、对象存储、restore 和 rollback 尚未实现。
 
 ---
 
-## 1. 总体架构
+## 1. 当前仓库总体架构
 
 ```text
 局域网/服务器用户浏览器
@@ -29,9 +29,21 @@ main.py
 
 企业层独立数据
 data/enterprise.db
+
+Windows 本地生命周期控制
+enterprise/runtime supervisor
+  +-- upstream 独立健康、重启和日志
+  +-- gateway 独立健康、重启和日志
+  +-- runtime-state / lock / command-ACK / Job Object
 ```
 
 企业网关是对外入口。上游 Infinite Canvas 只在本机内部端口运行，不直接暴露给局域网用户。
+
+### 部署状态边界
+
+- 旧生产仍运行历史版本，现定义为待退役遗留系统；本任务未停止、归档或删除旧生产。
+- 当前仓库继续形成 Production Baseline，不应把仓库合并或开发设备验证描述为生产采用。
+- 未来新生产按 [ADR-OPS-007](docs/decisions/ADR-OPS-007-GREENFIELD-PRODUCTION-BASELINE-AND-LEGACY-NON-MIGRATION-2026-07.md) 使用干净环境、全新数据库、全新账号和全新配置进行 Greenfield 部署；新生产尚未部署，旧生产数据不迁移。
 
 ---
 
@@ -123,18 +135,25 @@ data/enterprise.db
 
 ---
 
-## 8. 启动与测试
+## 8. Runtime、启动与测试
 
 关键文件：
 
 - `启动企业版.bat`
 - `停止企业版.bat`
-- `enterprise/launcher.py`
+- `重启企业版.bat`
+- `查看企业版状态.bat`
+- `启动企业版前台.bat`
+- `enterprise/runtime/cli.py`
+- `enterprise/runtime/supervisor.py`
+- `enterprise/runtime/control.py`
 - `enterprise/tests/diagnose.ps1`
 - `enterprise/tests/smoke.ps1`
 - `enterprise/tests/test_start_stop.ps1`
 
-启动器负责同时管理内部上游和企业网关。测试脚本统一放在 `enterprise/tests/`，不得散落到项目根目录或上游目录。
+PR #78 已将生命周期迁移到本地 supervisor：upstream 与 gateway 独立监督，持久化脱敏日志和 runtime state，并通过完整进程 identity、generation-bound command/ACK、优雅 child shutdown 与 Windows Job Object 进行受控停止。PR #79 修复 detached service-host 的直接脚本导入和启动早期诊断。仓库实现已合并不代表生产服务已切换，也不代表安装了 Windows Service。
+
+测试脚本统一放在 `enterprise/tests/`，不得散落到项目根目录或上游目录。
 
 ---
 
@@ -150,4 +169,3 @@ data/enterprise.db
 - `VERSION`
 
 企业层应尽量不侵入这些文件。上游更新后，应保留企业层目录和文档，重新运行诊断、冒烟和手工清单。
-

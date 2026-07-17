@@ -1,5 +1,7 @@
 # STAB-1 / OPS-L1: Supervisor and Persistent Logging Implementation (2026-07)
 
+Status: merged by PR #78 at `a00a2fd2807b41a9fee3c267ee1116986b52fd7e`; detached service-host startup was subsequently fixed by PR #79 at `396cccc68d63bd16393a2cb72d24e4a48fcf47cb`. These repository facts do not mean production switched supervisors or installed a Windows Service.
+
 ## Scope
 
 STAB-1 moves the enterprise `3001` upstream and `8000` gateway lifecycle out
