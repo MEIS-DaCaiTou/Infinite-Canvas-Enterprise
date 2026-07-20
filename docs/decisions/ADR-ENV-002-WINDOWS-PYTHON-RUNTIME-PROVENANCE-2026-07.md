@@ -55,7 +55,9 @@ archive_provenance_verified=false
 production_approved=false
 ```
 
-core 为 `true` 的依据是固定 commit 的 34 个 Git 核心、source archive 对应 34 文件、候选实际核心和受控 `python310._pth` 变换均逐项绑定，候选解释器身份与检查前后树摘要一致。dependency 为 `false`，因为 lock / 30-wheel SHA-256 闭合虽通过，但现有 machine manifest 缺少可独立验证的 offline rebuild attestation 和 `pip check`。archive 为 `false`，因为历史 source `python.zip` 不是 assembled candidate archive，而后者明确未生成。外部人工报告不能单独提升任何层。
+core 为 `true` 的依据是固定 commit 的 34 个 Git 核心、source archive 对应 34 文件、候选实际核心和受控 `python310._pth` 变换均逐项绑定，候选解释器身份与检查前后树摘要一致。dependency 为 `false`：lock / 30-wheel SHA-256 闭合通过，实际 33 个 distribution 等于 30 个 lock 项加固定 bootstrap allowlist（`pip`、`setuptools`、`wheel`），但现有证据缺少独立 rebuild attestation 和独立 pip-check report。archive 为 `false`，因为历史 source `python.zip` 不是 assembled candidate archive，且没有独立 archive build record。外部人工报告或 Runtime manifest 内的 `offline`、`pip_check_passed`、`build_process_record_sha256` 等自声明不能单独提升任何层。
+
+ENV-1B2P 的 future true-path 必须将 rebuild attestation、pip-check report 和 archive build record 作为显式独立输入；Runtime manifest 只提供 filename / SHA-256 绑定，验证器必须重算 artifact 哈希并核对候选树、安装闭包、lock、wheelhouse、ABI、commit、命令退出结果和 archive 内容。artifact 缺失为 `insufficient`；已提供但哈希或内容冲突为 `failed_integrity`。
 
 该复核证据的 enterprise commit 为历史 `396cccc`，当前代码基线为 `a53885b`；证据内部没有 commit 冲突，但没有重跑 PR #81 合并后的完整应用生命周期。ENV-1B2P 合并前，上述实现和机器结论只属于当前 Draft PR；无论是否合并，均不得标记 `production_approved=true`。
 

@@ -55,13 +55,16 @@ overall_classification=partially_verified
 
 - 支持 `enterprise-windows-runtime-manifest-v1`、`env-1b2a-wheelhouse-sha256-v1`、`name==version` dependency lock 和 ZIP 目录流式检查。
 - source Runtime archive 与未来 assembled candidate archive 使用不同参数和证据角色，source `python.zip` 不能冒充完整候选归档。
+- installed distributions 必须等于 lock 加代码内固定 bootstrap allowlist；allowlist 仅为 `pip`、`setuptools`、`wheel`，实际出现项及版本单独写入报告，manifest 不能动态扩展。正式 ENV-1B2 仍应锁定全部交付 distribution。
+- dependency true-path 只接受独立 `env-1b2p-dependency-rebuild-attestation-v1` 和 `env-1b2p-pip-check-report-v1` artifact。manifest 仅以 filename / SHA-256 绑定，验证器重新计算哈希、安装闭包摘要、Runtime/wheelhouse 树摘要及 commit/ABI 关联；manifest 内 `offline`、`pip_check_passed` 等自声明不具提升权。
+- archive true-path 额外要求独立 `env-1b2p-archive-build-record-v1`，并重新验证实际 build record 哈希、builder 身份、完整文件清单摘要、候选树、依赖证据和 output archive 绑定。任意格式正确的 64 位字符串不能替代实际 artifact。
 - 路径绝对化；输入根、祖先和树内 symlink / junction / reparse fail closed；manifest、lock 和 ZIP 路径拒绝绝对路径、逃逸、ADS、Windows 设备名、大小写归一重复和 symlink 条目。
 - 大文件分块 SHA-256；ZIP 直接读取目录和流，不解压到正式目录。
 - 候选解释器只使用显式 `python.exe`、清理后的环境、`PYTHONDONTWRITEBYTECODE=1`、参数数组、`shell=False` 和超时；不导入项目业务代码。
 - 报告只含 basename、哈希、大小、计数和稳定错误码；不含本机绝对路径、环境变量值、secret 或 traceback。
 - 报告使用全新目标和同目录临时文件原子发布；失败不会留下 `result=pass`。
 
-报告 schema 为 `env-1b2p-runtime-provenance-report-v1`，verifier version 为 `env-1b2p-runtime-provenance-verifier-v1`。
+自声明提升补正后的报告 schema 为 `env-1b2p-runtime-provenance-report-v2`，verifier version 为 `env-1b2p-runtime-provenance-verifier-v2`。
 
 ## 5. 三层真实结果
 
@@ -84,16 +87,16 @@ overall_classification=partially_verified
 
 - lock 中 30 个精确版本与 wheel manifest 的 30 个 package/version 双向闭合。
 - wheelhouse 无缺失、额外 wheel 或 SHA-256 差异；全部 tag 与 `cp310-win_amd64` 或 pure-Python 兼容。
-- 候选解释器读取的 30 个锁定分发版本全部匹配。
+- 候选解释器读取到 33 个 distribution：30 个锁定分发版本全部匹配，额外 `pip==26.1.1`、`setuptools==82.0.1`、`wheel==0.47.0` 精确落入固定 bootstrap allowlist；无其它未锁定项，`candidate-installed-exact-closure=pass`。
 - manifest 对 lock 和 wheel manifest 的 SHA-256 绑定一致；验证前后 wheelhouse 树摘要一致。
 
-仍不足以提升为 `true`：现有 machine manifest 没有可独立验证的 offline rebuild attestation，也没有 `pip check` 结果。历史 Markdown 声称曾使用 `--no-index --no-deps --force-reinstall`，但外部人工报告只能作为附件，不能单独替代机器证据、完整安装闭包和 `pip check`。本任务没有重建依赖或补造这些证据。
+仍不足以提升为 `true`：现有证据没有独立 dependency rebuild attestation，也没有独立 pip-check report。现有 machine manifest 与历史 Markdown 中的 `offline`、`pip_check_passed`、`--no-index --no-deps --force-reinstall` 等字段或陈述均处于同一信任域，只能作为线索，不能提升层级。future true-path 必须提供两个独立 artifact，由 manifest 绑定其实际 SHA-256，并同时绑定 Runtime tree、lock、wheelhouse manifest/tree、Python/ABI、enterprise/upstream commit、实际安装闭包、命令分类和退出结果。本任务没有生成或补写这些证据。
 
 ### 5.3 Complete Archive：insufficient
 
 `archive_provenance_verified=false`。已验证 source `python.zip` 的唯一身份、完整 SHA-256、3,724 个 central-directory 条目（其中 3,287 个普通文件）的安全 ZIP 结构和 34 个核心文件绑定；但该文件是 source Runtime archive，不是依赖重建后的 assembled candidate archive。
 
-历史 manifest 和报告明确记录 candidate Runtime ZIP 未生成，因此缺少：完整候选归档、逐文件 full manifest、candidate archive build process provenance，以及归档与已验证依赖层的绑定。孤立 source archive hash、可解压或可启动均不能提升本字段。
+历史 manifest 和报告明确记录 candidate Runtime ZIP 未生成，因此缺少：完整候选归档、逐文件 full manifest、独立 archive build record，以及归档与已验证依赖层的绑定。future true-path 要求实际 build record 文件由 manifest 以 filename/SHA-256 绑定，且 record 内容逐项绑定 builder、commits、Python/ABI、Runtime/wheelhouse 树、lock、full inventory 和 output archive；孤立 source archive hash、任意 `build_process_record_sha256` 字符串、可解压或可启动均不能提升本字段。
 
 ## 6. 当前证据限制
 
