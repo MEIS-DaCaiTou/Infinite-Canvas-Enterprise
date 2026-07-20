@@ -21,6 +21,8 @@
 6. development 模式不写源码，可使用 `no-cache`、ETag 或统一内存响应策略。
 7. 验证必须覆盖全部 HTML 路由和静态文件服务路径，不得只验证根页面。
 
+ENV-1B1A Draft 实现对第 3 项采用以下确定性细化：独立 CSS 的 `url(...)` 和 `@import` 形成 dependency-first 依赖图，叶子资源按实际 source 字节哈希，CSS 按传递转换后的 output 字节哈希；HTML 引用 HTML 统一使用 `SHA-256(builder_version + NUL + source_tree_digest)`，避免用仍会被改写的 source HTML 单文件哈希代表 output。CSS import cycle、缺失、逃逸和 reparse 均 fail closed。该 builder 尚未接入完整 Release、Manifest 或 activation。
+
 ## ENV-1B1A 写入审计范围
 
 必须定位并迁出 APP_ROOT 的写入至少包括：
@@ -45,7 +47,7 @@
 - Git 工作区不因启动而产生静态变化。
 - ENV-1B1A 不修改正式 Python 运行时。
 
-当前 ENV-1B1A Draft PR 只关闭 static 构建期转换和源码树不变门禁，并形成其它写入的审计清单。导入/启动/健康/重启/停止的 APP_ROOT 全树不变和真实只读生命周期仍被数据、配置、上传、startup migration、legacy update、bytecode 等写入阻塞，不得因 static 子门禁通过而宣称本 ADR 已完整实施。
+当前 ENV-1B1A Draft PR 只关闭 static 构建期转换和源码树不变门禁，并形成 Git tracked 写入 site fingerprint 到 W01-W40 的审计清单和漂移门禁。该静态分析不能证明绝对不存在未知写入。导入/启动/健康/重启/停止的 APP_ROOT 全树不变和真实只读生命周期仍被数据、配置、上传、startup migration、legacy update、bytecode 等写入阻塞，不得因 static 子门禁通过而宣称本 ADR 已完整实施。
 
 ## 后果
 

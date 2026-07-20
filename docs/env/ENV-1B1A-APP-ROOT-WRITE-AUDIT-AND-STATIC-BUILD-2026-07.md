@@ -8,7 +8,7 @@
 
 ## 1. 结论
 
-本任务关闭一个明确 blocker：`main.py` 不再在 import、FastAPI startup 或 HTML 响应阶段按版本和 mtime 改写 `static/*.html`。静态缓存参数改由显式 Release staging builder 根据被引用文件的实际字节生成完整小写 SHA-256；builder 只接受显式 source、全新 output 和 report 路径。
+本任务关闭一个明确 blocker：`main.py` 不再在 import、FastAPI startup 或 HTML 响应阶段按版本和 mtime 改写 `static/*.html`。静态缓存参数改由显式 Release staging builder 生成：本地叶子资源使用实际文件字节的完整小写 SHA-256，CSS 使用传递依赖处理后的 output SHA-256，HTML 引用 HTML 使用统一确定性 build ID；builder 只接受显式 source、全新 output 和 report 路径。
 
 这不等于 APP_ROOT 已只读。审计识别出 40 个功能写入流；只有 static 自修改和新 builder 边界在 ENV-1B1A 内关闭，其余数据、配置、上传、生成结果、启动 migration、legacy update、重启脚本、OPS 默认路径、bytecode 等仍是 ENV-1B1B / ENV-1B1C 或后续阶段 blocker。正式不可变 Release、Release-bound Python 和 Production Baseline 均未形成。
 
@@ -19,9 +19,10 @@
 1. Python AST 检查 write-mode `open` / `Path.open`、`write_text`、`write_bytes`、目录和删除/移动 API、`json.dump`、SQLite、临时文件、图片保存、解压、下载和日志构造。
 2. PowerShell / Batch / JavaScript 受控文本检查 `Out-File`、content cmdlet、文件操作、transcript、下载目标、重定向和浏览器 local storage。
 3. 从入口、caller、路径常量和触发条件追到实际目标；区分磁盘写入、内存序列化、浏览器客户端缓存和只读打开。
-4. `enterprise.release.app_root_audit` 固化生产符号与脚本 inventory；测试验证文件/符号仍存在，并在新生产符号出现明显写入时要求更新本审计。
+4. `enterprise.release.app_root_audit` 只接收 Git tracked 文件集，排除 test fixture 和浏览器静态页面后，对每个生产写入 site 记录相对文件、qualified symbol、operation 和规范化调用 SHA-256 fingerprint，再映射到 W01-W40。
+5. 冻结 manifest digest 覆盖所有 site fingerprint 和 Wxx；在既有 symbol 或脚本中新增、删除或改变写入也会漂移。每个 Wxx 另有必须存在的文件/符号锚点；读取失败、Unicode decode error 和 Python `SyntaxError` 均 fail closed。
 
-当前提交的结构扫描覆盖 628 个候选调用点，其中包含临时测试写入和浏览器缓存调用；经调用链归并后形成下表 40 个功能写入流。数量较大的 AST 命中不是 628 个独立 APP_ROOT blocker。
+当前 Git tracked 输入共 308 个文件：78 个 Python / PowerShell / Batch / JavaScript 文件进入生产扫描，230 个非候选或明确 test/static 客户端文件被分类排除；检测到 295 个 write site，295 个均映射到 W01-W40，parse failure、uncovered site 和 stale mapping 均为 0。调用链归并后仍是下表 40 个功能写入流；295 个 AST/脚本命中不是 295 个独立 APP_ROOT blocker。该静态分析是可重复漂移门禁，不能证明绝对不存在动态或未知写入。
 
 ## 3. 写入流清单
 
@@ -127,14 +128,16 @@
 
 1. source、output、report 都必须显式提供；output 必须不存在，不能等于 source 或位于 source 内，report 不能位于 source/output 内。
 2. source tree 的 symlink 和 Windows reparse point fail closed；引用解析绝对化后必须仍在 source root。
-3. 先逐字节复制到全新 staging，再递归处理所有 HTML；`src`、`data-src`、`href`、`poster` 和 CSS `url()` 中的本地 JS/CSS/HTML/图片/字体纳入哈希。
-4. HTTP(S)、`data:`、`blob:`、`mailto:`、`javascript:` 和协议相对 URL 不修改；应用绝对路由也不当作 static 文件。
-5. 资源 SHA 为实际 source 文件字节的完整 64 字符小写 SHA-256。已有所有 `v` 参数被移除后规范追加一个 `v=<sha256>`；其它 query 和 fragment 原样保留。
-6. tree digest 只由稳定排序后的相对路径和文件字节构成；不使用时钟、mtime、ctime、随机数或本机路径。
-7. report schema 为 `env-1b1a-static-build-report-v1`，builder version 为 `env-1b1a-static-builder-v1`；字段稳定排序、UTF-8、无绝对路径和时间戳。
-8. 明确本地资源缺失、路径逃逸、reparse、非 UTF-8 HTML、已存在 output/report 都 fail closed。失败不留下成功 report，并清理本次新建的 output。
+3. 先逐字节复制到全新 staging；递归扫描全部 CSS 的 `url(...)`、`@import url(...)`、`@import "..."` 和 `@import '...'`，按 CSS 所在目录或 `/static/` 根解析引用，生成稳定依赖图并以 dependency-first 顺序处理。
+4. CSS import cycle、缺失资源、路径逃逸和 reparse/symlink 均 fail closed；本地图片、字体、SVG 等叶子资源使用 source 文件实际 SHA-256，被 import 的 CSS 使用转换后 output SHA-256，因此字体变化会传递到 CSS 以及引用该 CSS 的 HTML。
+5. 随后递归处理所有 HTML；`src`、`data-src`、`href`、`poster` 和内联 CSS `url()` 中的本地 JS/CSS/HTML/图片/字体纳入版本处理。HTML 引用 HTML 不使用源 HTML 单文件哈希，而统一使用 `SHA-256(builder_version + NUL + source_tree_digest)`；HTML 相互引用不形成依赖循环。
+6. HTTP(S)、`data:`、`blob:`、`mailto:`、`javascript:` 和协议相对 URL 不修改；应用绝对路由也不当作 static 文件。
+7. 已有所有 `v` 参数被移除后规范追加一个 `v=<64-char-sha256>`；其它 query 和 fragment 原样保留。
+8. tree digest 只由稳定排序后的相对路径和文件字节构成；HTML build ID 只由固定 builder version 和 source tree digest 构成；不使用时钟、mtime、ctime、随机数或本机路径。
+9. report schema 为 `env-1b1a-static-build-report-v2`，builder version 为 `env-1b1a-static-builder-v2`；字段稳定排序、UTF-8、无绝对路径和时间戳。
+10. 明确本地资源缺失、CSS import cycle、路径逃逸、reparse、非 UTF-8 HTML/CSS、已存在 output/report 都 fail closed。失败不留下成功 report，并清理本次新建的 output。
 
-报告字段包括 schema/builder version、source/output tree digest、HTML 数量、static resource 数量、modified HTML、每个资源相对路径和 SHA-256、unresolved references、skipped external URL 数量、result 和 warnings。
+报告字段包括 schema/builder version、source/output tree digest、HTML/CSS 数量、`html_version_policy`、`html_build_id`、CSS dependency order/import edges、modified HTML/CSS、每个资源相对路径、source SHA-256、实际版本 SHA-256 与 version policy、unresolved references、skipped external URL 数量、result 和 warnings。真实仓库验收固定覆盖 `index.html -> vendor/css/fonts.css -> vendor/fonts/*.ttf`，10 个 TTF 均进入 resources。
 
 ## 6. `main.py` 最小上游覆盖补丁
 
@@ -153,7 +156,7 @@
 
 - 启动和 HTML response 不再生成 static `v` 参数。
 - static build 在显式 staging 中完成，source 不变且输出/报告确定。
-- 写入 inventory、结构扫描和维护测试形成。
+- 写入 inventory、Git tracked fingerprint manifest、W01-W40 锚点和 fail-closed 漂移测试形成；这仍不是对未知写入绝对不存在的证明。
 
 ### ENV-1B1B 尚未开始
 
