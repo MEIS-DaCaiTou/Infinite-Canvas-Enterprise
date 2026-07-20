@@ -1,6 +1,6 @@
 # ENV-1B1A：APP_ROOT 写入审计与确定性 Static 构建
 
-- 状态：Draft PR 实现；尚未进入 `main`
+- 状态：已由 PR #81 完成并合并
 - 审计日期：2026-07-20
 - 起始代码基线：`main@be5573ae416b4ce81f8cc26ae282868a7efa7672`
 - 决策依据：[ADR-ENV-003](../decisions/ADR-ENV-003-IMMUTABLE-RELEASE-STATIC-CACHE-2026-07.md)、[ADR-ENV-004](../decisions/ADR-ENV-004-PATH-ROOTS-AND-RELEASE-DIRECTORY-2026-07.md)、[ADR-ENV-005](../decisions/ADR-ENV-005-RUNTIME-ENTRYPOINT-SELF-CHECK-MODES-2026-07.md)
@@ -170,10 +170,11 @@
 - `__pycache__` / bytecode 尚未在 portable-release 中 fail closed 或迁到 `CACHE_ROOT`。
 - `_self_restart.*` legacy 路径和正式入口替代尚未处理。
 
-### ENV-1B2P / ENV-1B2 尚未开始
+### ENV-1B2P 当前 Draft / 完整 ENV-1B2 尚未开始
 
 - `get-pip.py`、系统 Python 和 `sys.executable` 不是正式 Runtime 证据。
-- 本任务没有下载、安装或修改 Python Runtime、lock、wheelhouse、SBOM 或 archive provenance。
+- ENV-1B2P 当前 Draft 只读核验仓库外既有证据，结果为 core `true`、dependency `false`、archive `false`、`production_approved=false`；它没有下载、安装、重建或修改 Python Runtime、lock、wheelhouse、SBOM 或 archive。
+- 分层证据详见 [ENV-1B2P 实施与证据文档](./ENV-1B2P-WINDOWS-RUNTIME-PROVENANCE-EVIDENCE-2026-07.md)；完整 ENV-1B2 仍未开始。
 
 ### 其它后续
 

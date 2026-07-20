@@ -2,12 +2,13 @@
 
 - 状态：Accepted
 - 决策日期：2026-07-16
-- 事实基线：`main@396cccc68d63bd16393a2cb72d24e4a48fcf47cb`
-- 实施状态：ENV-1B1A 当前在 Draft PR 中实现 static 子门禁；完整 APP_ROOT 只读仍待 ENV-1B1B / ENV-1B1C
+- 决策事实基线：`main@396cccc68d63bd16393a2cb72d24e4a48fcf47cb`
+- 当前实施核对基线：`main@a53885b026a6c2440acb0fbde72d6571ff6f7723`
+- 实施状态：ENV-1B1A 已由 PR #81 合并实现 static 子门禁；完整 APP_ROOT 只读仍待 ENV-1B1B / ENV-1B1C
 
 ## 背景
 
-上游启动当前会同步 HTML 中的 `?v=` 参数并改写受版本管理的 `static/*.html`。候选运行时生命周期验证因此留下 13 个静态文件变化，阻止 APP_ROOT 被视为不可变 Release。
+历史上游启动会同步 HTML 中的 `?v=` 参数并改写受版本管理的 `static/*.html`；2026-07-15 候选运行时生命周期验证因此留下 13 个静态文件变化。ENV-1B1A 已在当前 `main` 移除该行为，但这不能改写历史验证结果，也不足以单独证明 APP_ROOT 已不可变。
 
 只修复 `static/` 仍不足以证明 APP_ROOT 可只读；上游还可能写入数据、资源、配置、日志、重启脚本、缓存和临时文件。
 
@@ -21,7 +22,7 @@
 6. development 模式不写源码，可使用 `no-cache`、ETag 或统一内存响应策略。
 7. 验证必须覆盖全部 HTML 路由和静态文件服务路径，不得只验证根页面。
 
-ENV-1B1A Draft 实现对第 3 项采用以下确定性细化：独立 CSS 的 `url(...)` 和 `@import` 形成 dependency-first 依赖图，叶子资源按实际 source 字节哈希，CSS 按传递转换后的 output 字节哈希；HTML 引用 HTML 统一使用 `SHA-256(builder_version + NUL + source_tree_digest)`，避免用仍会被改写的 source HTML 单文件哈希代表 output。CSS import cycle、缺失、逃逸和 reparse 均 fail closed。该 builder 尚未接入完整 Release、Manifest 或 activation。
+ENV-1B1A 合并实现对第 3 项采用以下确定性细化：独立 CSS 的 `url(...)` 和 `@import` 形成 dependency-first 依赖图，叶子资源按实际 source 字节哈希，CSS 按传递转换后的 output 字节哈希；HTML 引用 HTML 统一使用 `SHA-256(builder_version + NUL + source_tree_digest)`，避免用仍会被改写的 source HTML 单文件哈希代表 output。CSS import cycle、缺失、逃逸和 reparse 均 fail closed。该 builder 尚未接入完整 Release、Manifest 或 activation。
 
 ## ENV-1B1A 写入审计范围
 
@@ -47,7 +48,7 @@ ENV-1B1A Draft 实现对第 3 项采用以下确定性细化：独立 CSS 的 `u
 - Git 工作区不因启动而产生静态变化。
 - ENV-1B1A 不修改正式 Python 运行时。
 
-当前 ENV-1B1A Draft PR 只关闭 static 构建期转换和源码树不变门禁，并形成 Git tracked 写入 site fingerprint 到 W01-W40 的审计清单和漂移门禁。该静态分析不能证明绝对不存在未知写入。导入/启动/健康/重启/停止的 APP_ROOT 全树不变和真实只读生命周期仍被数据、配置、上传、startup migration、legacy update、bytecode 等写入阻塞，不得因 static 子门禁通过而宣称本 ADR 已完整实施。
+已合并的 ENV-1B1A 只关闭 static 构建期转换和源码树不变门禁，并形成 Git tracked 写入 site fingerprint 到 W01-W40 的审计清单和漂移门禁。该静态分析不能证明绝对不存在未知写入。导入/启动/健康/重启/停止的 APP_ROOT 全树不变和真实只读生命周期仍被数据、配置、上传、startup migration、legacy update、bytecode 等写入阻塞，不得因 static 子门禁通过而宣称本 ADR 已完整实施。ENV-1B2P 的 Runtime 文件证据验证也不替代这些 APP_ROOT 生命周期门禁。
 
 ## 后果
 
