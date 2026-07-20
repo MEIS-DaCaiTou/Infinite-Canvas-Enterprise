@@ -2,7 +2,7 @@
 
 更新时间：2026-07-17
 
-最后一次代码事实核对基线：`main@396cccc68d63bd16393a2cb72d24e4a48fcf47cb`；当前 repository HEAD 以 GitHub `main` 为准。文档专用 PR #80 不改变运行时代码事实。OPS-3A 与 STAB-1 / OPS-L1 已合并；OPS-3B 尚未开始，并后置于不可变 Release、路径根、Runtime evidence、Manifest v2、DATA-1 和 restore rehearsal。生产路线以 [ADR-OPS-007](../decisions/ADR-OPS-007-GREENFIELD-PRODUCTION-BASELINE-AND-LEGACY-NON-MIGRATION-2026-07.md) 为准：不原地升级或迁移旧生产；OPS-3B 仓库实现和隔离演练是 Production Baseline 前置门禁，首次真实生产执行则只服务 Greenfield 新生产部署后的版本迭代。完整顺序以 [总体路线图](../roadmap/DEVELOPMENT-ROADMAP-2026-2027.md) 为准。
+最后一次代码事实核对基线：`main@be5573ae416b4ce81f8cc26ae282868a7efa7672`；当前 repository HEAD 以 GitHub `main` 为准。PR #80 已合并；ENV-1B1A 当前只在 Draft PR 分支实现 static staging builder 和写入审计，完整不可变 Release 仍未形成。OPS-3A 与 STAB-1 / OPS-L1 已合并；OPS-3B 尚未开始，并后置于不可变 Release、路径根、Runtime evidence、Manifest v2、DATA-1 和 restore rehearsal。生产路线以 [ADR-OPS-007](../decisions/ADR-OPS-007-GREENFIELD-PRODUCTION-BASELINE-AND-LEGACY-NON-MIGRATION-2026-07.md) 为准：不原地升级或迁移旧生产；OPS-3B 仓库实现和隔离演练是 Production Baseline 前置门禁，首次真实生产执行则只服务 Greenfield 新生产部署后的版本迭代。完整顺序以 [总体路线图](../roadmap/DEVELOPMENT-ROADMAP-2026-2027.md) 为准。
 
 ## 1. OPS 总目标
 
