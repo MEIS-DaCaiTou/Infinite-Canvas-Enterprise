@@ -14,7 +14,15 @@ from pathlib import Path
 import pytest
 
 from enterprise.release import static_build
-from enterprise.release.app_root_audit import missing_audit_anchors, uncovered_write_sites
+from enterprise.release.app_root_audit import (
+    EXPECTED_SITE_MANIFEST_DIGEST,
+    AuditMapping,
+    FlowAnchor,
+    audit_repository,
+    evaluate_scan,
+    scan_tracked_files,
+    validate_flow_anchors,
+)
 from enterprise.release.static_build import StaticBuildError, build_static_tree
 
 
@@ -65,6 +73,50 @@ def _write_fixture(root: Path) -> Path:
 <a href="mailto:test@example.invalid">mail</a>
 <a href="javascript:void(0)">script</a>
 """,
+        encoding="utf-8",
+        newline="",
+    )
+    return source
+
+
+def _write_css_fixture(root: Path) -> Path:
+    source = root / "css-source"
+    for directory in ("css/theme", "fonts", "images", "js"):
+        (source / directory).mkdir(parents=True, exist_ok=True)
+    (source / "fonts/site.ttf").write_bytes(b"font-v1")
+    (source / "images/background.png").write_bytes(b"background-v1")
+    (source / "images/icon.svg").write_bytes(b"<svg></svg>\n")
+    (source / "js/unrelated.js").write_bytes(b"console.log('unrelated');\n")
+    (source / "css/app.css").write_text(
+        """@import url('theme/fonts.css');
+@import "print.css" screen;
+body { background: url('../images/background.png?theme=dark#hero'); }
+.external { background: url(https://example.invalid/remote.png); }
+.protocol { background: url(//cdn.example.invalid/remote.png); }
+.data { background: url(data:image/png;base64,AAAA); }
+.blob { background: url(blob:fixture); }
+""",
+        encoding="utf-8",
+        newline="",
+    )
+    (source / "css/print.css").write_text(
+        "@import 'theme/colors.css';\n@media print { body { color: black; } }\n",
+        encoding="utf-8",
+        newline="",
+    )
+    (source / "css/theme/colors.css").write_text(
+        ":root { --brand: #123456; }\n", encoding="utf-8", newline=""
+    )
+    (source / "css/theme/fonts.css").write_text(
+        """@font-face { src: url('../../fonts/site.ttf?v=old#font') format('truetype'); }
+.icon { background: url('/static/images/icon.svg'); }
+""",
+        encoding="utf-8",
+        newline="",
+    )
+    (source / "index.html").write_text(
+        '<link href="css/app.css?v=legacy" rel="stylesheet">\n'
+        '<script src="js/unrelated.js"></script>\n',
         encoding="utf-8",
         newline="",
     )
@@ -164,11 +216,169 @@ def test_content_change_is_scoped(tmp_path: Path) -> None:
 
     assert before["js/app.js"] != after["js/app.js"]
     assert before["css/site.css"] == after["css/site.css"]
+    assert baseline_report["html_build_id"] != changed_report["html_build_id"]
     assert (baseline_output / "index.html").read_bytes() != (changed_output / "index.html").read_bytes()
     assert (baseline_output / "nested/page.html").read_bytes() != (changed_output / "nested/page.html").read_bytes()
+    assert f"nested/page.html?v={baseline_report['html_build_id']}" in (
+        baseline_output / "index.html"
+    ).read_text(encoding="utf-8")
+    assert f"nested/page.html?v={changed_report['html_build_id']}" in (
+        changed_output / "index.html"
+    ).read_text(encoding="utf-8")
     assert (baseline_output / "nested/unrelated.html").read_bytes() == (
         changed_output / "nested/unrelated.html"
     ).read_bytes()
+
+
+def test_css_import_graph_transitively_hashes_fonts_images_and_external_urls(tmp_path: Path) -> None:
+    source = _write_css_fixture(tmp_path)
+    output, _, report = _build(tmp_path, source, "css")
+    resources = {item["path"]: item for item in report["resources"]}
+
+    assert {
+        "css/app.css",
+        "css/print.css",
+        "css/theme/colors.css",
+        "css/theme/fonts.css",
+        "fonts/site.ttf",
+        "images/background.png",
+        "images/icon.svg",
+        "js/unrelated.js",
+    } <= resources.keys()
+    assert resources["fonts/site.ttf"]["sha256"] == _sha256(b"font-v1")
+    assert resources["images/background.png"]["sha256"] == _sha256(b"background-v1")
+    assert resources["css/app.css"]["version_policy"] == "transformed-css-sha256"
+    assert report["css_dependency_order"].index("css/theme/fonts.css") < report[
+        "css_dependency_order"
+    ].index("css/app.css")
+    assert report["css_dependency_order"].index("css/theme/colors.css") < report[
+        "css_dependency_order"
+    ].index("css/print.css")
+    assert report["css_dependency_order"].index("css/print.css") < report[
+        "css_dependency_order"
+    ].index("css/app.css")
+    assert report["css_transitive_resource_count"] >= 6
+
+    app_css = (output / "css/app.css").read_text(encoding="utf-8")
+    fonts_css = (output / "css/theme/fonts.css").read_text(encoding="utf-8")
+    html = (output / "index.html").read_text(encoding="utf-8")
+    assert f"theme/fonts.css?v={resources['css/theme/fonts.css']['sha256']}" in app_css
+    assert f"print.css?v={resources['css/print.css']['sha256']}" in app_css
+    assert f"../images/background.png?theme=dark&v={resources['images/background.png']['sha256']}#hero" in app_css
+    assert f"../../fonts/site.ttf?v={resources['fonts/site.ttf']['sha256']}#font" in fonts_css
+    assert f"/static/images/icon.svg?v={resources['images/icon.svg']['sha256']}" in fonts_css
+    assert "url(https://example.invalid/remote.png)" in app_css
+    assert "url(//cdn.example.invalid/remote.png)" in app_css
+    assert "url(data:image/png;base64,AAAA)" in app_css
+    assert "url(blob:fixture)" in app_css
+    assert f"css/app.css?v={resources['css/app.css']['sha256']}" in html
+
+
+def test_css_leaf_change_propagates_to_css_and_html_only(tmp_path: Path) -> None:
+    baseline_root = tmp_path / "baseline-css"
+    changed_root = tmp_path / "changed-css"
+    baseline_root.mkdir()
+    changed_root.mkdir()
+    baseline_source = _write_css_fixture(baseline_root)
+    changed_source = changed_root / "source"
+    shutil.copytree(baseline_source, changed_source)
+    (changed_source / "fonts/site.ttf").write_bytes(b"font-v2")
+
+    baseline_output, _, baseline_report = _build(baseline_root, baseline_source, "release")
+    changed_output, _, changed_report = _build(changed_root, changed_source, "release")
+    before = {item["path"]: item["sha256"] for item in baseline_report["resources"]}
+    after = {item["path"]: item["sha256"] for item in changed_report["resources"]}
+
+    assert before["fonts/site.ttf"] != after["fonts/site.ttf"]
+    assert before["css/theme/fonts.css"] != after["css/theme/fonts.css"]
+    assert before["css/app.css"] != after["css/app.css"]
+    assert before["images/background.png"] == after["images/background.png"]
+    assert before["js/unrelated.js"] == after["js/unrelated.js"]
+    assert (baseline_output / "css/theme/fonts.css").read_bytes() != (
+        changed_output / "css/theme/fonts.css"
+    ).read_bytes()
+    assert (baseline_output / "css/app.css").read_bytes() != (
+        changed_output / "css/app.css"
+    ).read_bytes()
+    assert (baseline_output / "index.html").read_bytes() != (
+        changed_output / "index.html"
+    ).read_bytes()
+
+
+def test_css_import_cycle_fails_closed_with_stable_sanitized_code(tmp_path: Path) -> None:
+    source = _write_css_fixture(tmp_path)
+    (source / "css/theme/colors.css").write_text(
+        "@import '../print.css';\n", encoding="utf-8", newline=""
+    )
+    before = _tree_bytes(source)
+    output = tmp_path / "cycle-output"
+    report = tmp_path / "cycle-report.json"
+    with pytest.raises(StaticBuildError, match="css-import-cycle") as error:
+        build_static_tree(source, output, report)
+    assert error.value.code == "css-import-cycle"
+    assert str(tmp_path) not in str(error.value)
+    assert not output.exists()
+    assert not report.exists()
+    assert _tree_bytes(source) == before
+
+
+@pytest.mark.parametrize(
+    ("url", "expected_code"),
+    [
+        ("../images/missing.png", "local-resource-unresolved"),
+        ("../../outside.png", "reference-escapes-source"),
+    ],
+)
+def test_css_missing_or_escaping_resource_fails_closed(
+    tmp_path: Path, url: str, expected_code: str
+) -> None:
+    source = _write_css_fixture(tmp_path)
+    (source / "css/app.css").write_text(
+        f"body {{ background: url('{url}'); }}\n", encoding="utf-8", newline=""
+    )
+    if expected_code == "reference-escapes-source":
+        (tmp_path / "outside.png").write_bytes(b"outside")
+    before = _tree_bytes(source)
+    with pytest.raises(StaticBuildError, match=expected_code):
+        build_static_tree(source, tmp_path / "bad-output", tmp_path / "bad-report.json")
+    assert _tree_bytes(source) == before
+
+
+def test_html_cycles_use_one_deterministic_build_id(tmp_path: Path) -> None:
+    source = tmp_path / "html-cycle-source"
+    (source / "nested").mkdir(parents=True)
+    (source / "js").mkdir()
+    (source / "a.html").write_text(
+        '<a href="nested/b.html">B</a>\n', encoding="utf-8", newline=""
+    )
+    (source / "nested/b.html").write_text(
+        '<a href="../a.html">A</a><script src="../js/app.js"></script>\n',
+        encoding="utf-8",
+        newline="",
+    )
+    (source / "js/app.js").write_bytes(b"app-v1")
+    output, _, report = _build(tmp_path, source, "cycle")
+    build_id = report["html_build_id"]
+    assert report["html_version_policy"] == "builder-version-and-source-tree-sha256-v1"
+    assert f"nested/b.html?v={build_id}" in (output / "a.html").read_text(encoding="utf-8")
+    assert f"../a.html?v={build_id}" in (output / "nested/b.html").read_text(encoding="utf-8")
+
+
+def test_html_build_id_includes_builder_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first_root = tmp_path / "first-builder"
+    second_root = tmp_path / "second-builder"
+    first_root.mkdir()
+    second_root.mkdir()
+    first_source = _write_fixture(first_root)
+    second_source = second_root / "source"
+    shutil.copytree(first_source, second_source)
+    _, _, first_report = _build(first_root, first_source, "release")
+    monkeypatch.setattr(static_build, "BUILDER_VERSION", "env-1b1a-static-builder-test-version")
+    _, _, second_report = _build(second_root, second_source, "release")
+    assert first_report["source_tree_digest"] == second_report["source_tree_digest"]
+    assert first_report["html_build_id"] != second_report["html_build_id"]
 
 
 def test_source_tree_is_unchanged_on_success_and_repeated_build(tmp_path: Path) -> None:
@@ -288,6 +498,20 @@ def test_repository_static_tree_builds_only_in_temporary_staging(tmp_path: Path)
     assert report["result"] == "pass"
     assert report["html_file_count"] >= 1
     assert report["static_resource_count"] >= 1
+    resource_paths = {item["path"] for item in report["resources"]}
+    assert "vendor/css/fonts.css" in resource_paths
+    assert {
+        "vendor/fonts/inter-1.ttf",
+        "vendor/fonts/inter-2.ttf",
+        "vendor/fonts/inter-3.ttf",
+        "vendor/fonts/inter-4.ttf",
+        "vendor/fonts/inter-5.ttf",
+        "vendor/fonts/jetbrains-mono-6.ttf",
+        "vendor/fonts/jetbrains-mono-7.ttf",
+        "vendor/fonts/space-grotesk-8.ttf",
+        "vendor/fonts/space-grotesk-9.ttf",
+        "vendor/fonts/space-grotesk-10.ttf",
+    } <= resource_paths
     assert _tree_bytes(source) == before
 
 
@@ -345,5 +569,144 @@ def test_main_no_longer_contains_runtime_static_version_sync() -> None:
 
 
 def test_app_root_write_audit_anchors_and_structural_coverage() -> None:
-    assert missing_audit_anchors(REPO_ROOT) == []
-    assert uncovered_write_sites(REPO_ROOT) == []
+    result = audit_repository(REPO_ROOT)
+    assert result.ok, {
+        "statistics": result.statistics,
+        "parse_failures": result.scan.parse_failures,
+        "uncovered": result.uncovered_sites,
+        "stale": result.stale_mappings,
+        "missing_anchors": result.missing_flow_anchors,
+        "invalid_flows": result.invalid_flow_ids,
+    }
+    assert result.site_manifest_digest == EXPECTED_SITE_MANIFEST_DIGEST
+    assert result.statistics["scanned_files"] >= 1
+    assert result.statistics["excluded_files"] >= 1
+    assert result.statistics["detected_sites"] == result.statistics["mapped_sites"]
+    assert result.statistics["detected_sites"] >= 1
+    assert result.statistics["parse_failures"] == 0
+    assert result.statistics["uncovered_sites"] == 0
+    assert result.statistics["stale_audit_mappings"] == 0
+
+
+def _evaluate_fixture_audit(
+    root: Path,
+    tracked_files: tuple[str, ...],
+    mappings: tuple[AuditMapping, ...],
+    anchors: tuple[FlowAnchor, ...],
+):
+    scan = scan_tracked_files(root, tracked_files)
+    missing = validate_flow_anchors(root, anchors)
+    required = frozenset(anchor.flow_id for anchor in anchors)
+    return evaluate_scan(
+        scan,
+        mappings,
+        anchors,
+        required_flow_ids=required,
+        missing_flow_anchors=missing,
+    )
+
+
+def test_audit_new_write_in_existing_symbol_fails(tmp_path: Path) -> None:
+    source = tmp_path / "module.py"
+    source.write_text(
+        "def audited():\n    open('one.txt', 'w').close()\n",
+        encoding="utf-8",
+        newline="",
+    )
+    mapping = (AuditMapping("module.py", "audited", "open-write", 1, "W01"),)
+    anchors = (FlowAnchor("W01", "module.py", "audited"),)
+    baseline = _evaluate_fixture_audit(tmp_path, ("module.py",), mapping, anchors)
+    assert baseline.ok
+
+    source.write_text(
+        "def audited():\n"
+        "    open('one.txt', 'w').close()\n"
+        "    open('two.txt', 'w').close()\n",
+        encoding="utf-8",
+        newline="",
+    )
+    drifted = _evaluate_fixture_audit(tmp_path, ("module.py",), mapping, anchors)
+    assert not drifted.ok
+    assert len(drifted.uncovered_sites) == 1
+    assert len(drifted.stale_mappings) == 1
+    assert drifted.uncovered_sites[0].symbol == "audited"
+
+
+def test_audit_new_write_in_existing_script_fails(tmp_path: Path) -> None:
+    script = tmp_path / "runner.ps1"
+    script.write_text("'one' | Set-Content one.txt\n", encoding="utf-8", newline="")
+    mapping = (AuditMapping("runner.ps1", "<script>", "script-write", 1, "W01"),)
+    anchors = (FlowAnchor("W01", "runner.ps1"),)
+    baseline = _evaluate_fixture_audit(tmp_path, ("runner.ps1",), mapping, anchors)
+    assert baseline.ok
+
+    script.write_text(
+        "'one' | Set-Content one.txt\n' two' | Add-Content two.txt\n",
+        encoding="utf-8",
+        newline="",
+    )
+    drifted = _evaluate_fixture_audit(tmp_path, ("runner.ps1",), mapping, anchors)
+    assert not drifted.ok
+    assert len(drifted.uncovered_sites) == 1
+    assert len(drifted.stale_mappings) == 1
+
+
+def test_audit_python_syntax_error_fails_closed(tmp_path: Path) -> None:
+    source = tmp_path / "broken.py"
+    source.write_text("def broken(:\n    pass\n", encoding="utf-8", newline="")
+    anchors = (FlowAnchor("W01", "broken.py", "broken"),)
+    result = _evaluate_fixture_audit(tmp_path, ("broken.py",), (), anchors)
+    assert not result.ok
+    assert result.scan.parse_failures[0].code == "python-syntax-error"
+    assert result.missing_flow_anchors
+
+
+def test_audit_unmapped_site_and_stale_mapping_fail(tmp_path: Path) -> None:
+    source = tmp_path / "module.py"
+    source.write_text(
+        "def audited():\n    open('one.txt', 'w').close()\n",
+        encoding="utf-8",
+        newline="",
+    )
+    anchors = (FlowAnchor("W01", "module.py", "audited"),)
+    unmapped = _evaluate_fixture_audit(tmp_path, ("module.py",), (), anchors)
+    assert not unmapped.ok
+    assert len(unmapped.uncovered_sites) == 1
+
+    stale_mapping = (
+        AuditMapping("module.py", "audited", "open-write", 1, "W01"),
+        AuditMapping("module.py", "audited", "write_text", 1, "W01"),
+    )
+    stale = _evaluate_fixture_audit(tmp_path, ("module.py",), stale_mapping, anchors)
+    assert not stale.ok
+    assert any("write_text" in item for item in stale.stale_mappings)
+
+
+def test_audit_missing_required_wxx_anchor_fails(tmp_path: Path) -> None:
+    source = tmp_path / "module.py"
+    source.write_text("def anchor():\n    return 1\n", encoding="utf-8", newline="")
+    scan = scan_tracked_files(tmp_path, ("module.py",))
+    anchors = (FlowAnchor("W01", "module.py", "anchor"),)
+    result = evaluate_scan(
+        scan,
+        (),
+        anchors,
+        required_flow_ids=frozenset({"W01", "W02"}),
+        missing_flow_anchors=validate_flow_anchors(tmp_path, anchors),
+    )
+    assert not result.ok
+    assert "W02:missing-flow-anchor-declaration" in result.stale_mappings
+
+
+def test_audit_uses_explicit_tracked_files_not_untracked_noise(tmp_path: Path) -> None:
+    tracked = tmp_path / "tracked.py"
+    tracked.write_text("def stable():\n    return 1\n", encoding="utf-8", newline="")
+    untracked = tmp_path / "untracked.py"
+    untracked.write_text(
+        "def noisy():\n    open('noise.txt', 'w').close()\n",
+        encoding="utf-8",
+        newline="",
+    )
+    scan = scan_tracked_files(tmp_path, ("tracked.py",))
+    assert scan.scanned_files == ("tracked.py",)
+    assert scan.sites == ()
