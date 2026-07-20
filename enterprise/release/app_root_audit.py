@@ -508,6 +508,7 @@ _OTHER_FLOW_BY_SYMBOL: dict[tuple[str, str], str] = {
     ("enterprise/ops/update/jobs.py", "UpdateJob.append_log"): "W30",
     ("enterprise/ops/update/jobs.py", "_atomic_json_create"): "W32",
     ("enterprise/ops/update/staging.py", "stage_release_archive"): "W33",
+    ("enterprise/release/runtime_provenance.py", "_atomic_write_report"): "W40",
     ("enterprise/release/static_build.py", "_atomic_write_report"): "W40",
     ("enterprise/release/static_build.py", "_copy_tree"): "W40",
     ("enterprise/release/static_build.py", "build_static_tree"): "W40",
@@ -562,7 +563,7 @@ def _flow_for_operation(file: str, symbol: str) -> str:
 # every mapped site as (file, symbol, operation, normalized-call fingerprint,
 # Wxx flow). Line numbers are deliberately excluded, while duplicate identical
 # calls remain duplicate records. Any added/removed/changed call drifts it.
-EXPECTED_SITE_MANIFEST_DIGEST = "785568dbf5f75da92390fcbee036163e1a0d7abcac9b725774b769c2acc0a7f5"
+EXPECTED_SITE_MANIFEST_DIGEST = "fb96d3f19b25e6118a67bc42460db3225b9d72729447c643ec3efd00ff7ed61c"
 
 FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W01", "main.py", "startup_event"),

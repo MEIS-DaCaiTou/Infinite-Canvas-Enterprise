@@ -19,10 +19,14 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Mapping, Sequence
 
 
-SCHEMA_VERSION = "env-1b2p-runtime-provenance-report-v1"
-VERIFIER_VERSION = "env-1b2p-runtime-provenance-verifier-v1"
+SCHEMA_VERSION = "env-1b2p-runtime-provenance-report-v2"
+VERIFIER_VERSION = "env-1b2p-runtime-provenance-verifier-v2"
 RUNTIME_MANIFEST_SCHEMA = "enterprise-windows-runtime-manifest-v1"
 WHEELHOUSE_MANIFEST_SCHEMA = "env-1b2a-wheelhouse-sha256-v1"
+DEPENDENCY_REBUILD_ATTESTATION_SCHEMA = "env-1b2p-dependency-rebuild-attestation-v1"
+PIP_CHECK_REPORT_SCHEMA = "env-1b2p-pip-check-report-v1"
+ARCHIVE_BUILD_RECORD_SCHEMA = "env-1b2p-archive-build-record-v1"
+BOOTSTRAP_DISTRIBUTION_ALLOWLIST = frozenset({"pip", "setuptools", "wheel"})
 FIXED_UPSTREAM_REPOSITORY = "hero8152/Infinite-Canvas"
 FIXED_UPSTREAM_COMMIT = "f1dd6834a72f3e7ff8340be05a84347d931e9cb9"
 FIXED_UPSTREAM_VERSION = "2026.07.6"
@@ -224,6 +228,18 @@ def _tree_inventory(root: Path) -> tuple[dict[str, FileRecord], str, int]:
     return records, digest.hexdigest(), total_size
 
 
+def _records_digest(records: Mapping[str, FileRecord]) -> str:
+    digest = hashlib.sha256()
+    for relative in sorted(records):
+        record = records[relative]
+        encoded = relative.encode("utf-8")
+        digest.update(len(encoded).to_bytes(8, "big"))
+        digest.update(encoded)
+        digest.update(record.size_bytes.to_bytes(8, "big"))
+        digest.update(bytes.fromhex(record.sha256))
+    return digest.hexdigest()
+
+
 def _load_json(path: Path, expected_schema: str) -> dict[str, Any]:
     try:
         if path.stat().st_size > _MAX_JSON_BYTES:
@@ -254,6 +270,46 @@ def _artifact(path: Path, artifact_type: str, *, schema_version: str | None = No
     if schema_version:
         item["schema_version"] = schema_version
     return item
+
+
+def _load_bound_json_artifact(
+    *,
+    path: Path | None,
+    expected_schema: str,
+    binding: Mapping[str, object] | None,
+    filename_field: str,
+    sha256_field: str,
+    artifact_type: str,
+    binding_check: str,
+    content_check: str,
+    missing_gap: str,
+    state: _EvidenceState,
+    artifacts: list[dict[str, object]],
+) -> dict[str, Any] | None:
+    if path is None:
+        state.check(binding_check, "insufficient")
+        state.check(content_check, "insufficient")
+        state.gaps.add(missing_gap)
+        return None
+
+    artifact = _artifact(path, artifact_type)
+    artifacts.append(artifact)
+    binding_ok = (
+        binding is not None
+        and binding.get(filename_field) == path.name
+        and binding.get(sha256_field) == artifact["sha256"]
+    )
+    state.check(binding_check, "pass" if binding_ok else "fail")
+    if not binding_ok:
+        state.check(content_check, "insufficient")
+        return None
+    try:
+        value = _load_json(path, expected_schema)
+    except ProvenanceVerificationError:
+        state.check(content_check, "fail")
+        return None
+    artifact["schema_version"] = expected_schema
+    return value
 
 
 def _normalized_name(value: str) -> str:
@@ -624,22 +680,67 @@ def _installed_distributions(probe: Mapping[str, object]) -> dict[str, str]:
     return dict(sorted(result.items()))
 
 
+def _installed_closure_digest(installed: Mapping[str, str]) -> str:
+    payload = [{"name": name, "version": installed[name]} for name in sorted(installed)]
+    return _sha256_bytes(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+
+
 def _verify_dependency_layer(
     *,
     manifest: Mapping[str, object],
     dependency_lock: Path | None,
     wheelhouse_manifest_path: Path | None,
     wheelhouse_root: Path | None,
+    rebuild_attestation_path: Path | None,
+    pip_check_report_path: Path | None,
+    runtime_tree_digest: str,
+    enterprise_commit: str,
+    upstream_commit: str,
     probe: Mapping[str, object],
     state: _EvidenceState,
     artifacts: list[dict[str, object]],
-) -> tuple[bool, dict[str, int]]:
+) -> tuple[bool, dict[str, int], dict[str, object]]:
     counts = {"locked_dependencies": 0, "wheelhouse_files": 0}
+    context: dict[str, object] = {}
+    manifest_dependency_value = manifest.get("dependency_lock")
+    manifest_dependency = manifest_dependency_value if type(manifest_dependency_value) is dict else None
+    rebuild_attestation = _load_bound_json_artifact(
+        path=rebuild_attestation_path,
+        expected_schema=DEPENDENCY_REBUILD_ATTESTATION_SCHEMA,
+        binding=manifest_dependency,
+        filename_field="rebuild_attestation_filename",
+        sha256_field="rebuild_attestation_sha256",
+        artifact_type="dependency_rebuild_attestation",
+        binding_check="dependency-rebuild-attestation-binding",
+        content_check="dependency-rebuild-attestation-content",
+        missing_gap="dependency-rebuild-attestation-missing",
+        state=state,
+        artifacts=artifacts,
+    )
+    pip_check_report = _load_bound_json_artifact(
+        path=pip_check_report_path,
+        expected_schema=PIP_CHECK_REPORT_SCHEMA,
+        binding=manifest_dependency,
+        filename_field="pip_check_report_filename",
+        sha256_field="pip_check_report_sha256",
+        artifact_type="pip_check_report",
+        binding_check="pip-check-report-binding",
+        content_check="pip-check-report-content",
+        missing_gap="pip-check-report-missing",
+        state=state,
+        artifacts=artifacts,
+    )
+    state.check("manifest-self-declared-dependency-evidence-non-authoritative", "pass")
+
     supplied = (dependency_lock is not None, wheelhouse_manifest_path is not None, wheelhouse_root is not None)
     if not all(supplied):
         state.check("dependency-evidence-complete", "insufficient")
         state.gaps.add("dependency-lock-wheelhouse-evidence-incomplete")
-        return False, counts
+        if rebuild_attestation is not None:
+            state.check("dependency-rebuild-attestation-content", "insufficient")
+        if pip_check_report is not None:
+            state.check("pip-check-report-content", "insufficient")
+        return False, counts, context
 
     assert dependency_lock is not None and wheelhouse_manifest_path is not None and wheelhouse_root is not None
     lock_packages = _parse_lock(dependency_lock)
@@ -694,20 +795,20 @@ def _verify_dependency_layer(
     wheel_digest = hashlib.sha256()
     for relative, path in actual_files:
         basename = PurePosixPath(relative).name
-        wheelhouse_size += path.stat().st_size
-        record = declared.get(basename)
-        if record is None:
-            hash_ok = False
-            continue
         actual_hash = _sha256_file(path)
         actual_size = path.stat().st_size
-        hash_ok &= actual_hash == record.get("sha256") and actual_size == record.get("size_bytes")
-        tags_ok &= _wheel_is_cp310_win_amd64(basename)
+        wheelhouse_size += actual_size
         encoded = relative.encode("utf-8")
         wheel_digest.update(len(encoded).to_bytes(8, "big"))
         wheel_digest.update(encoded)
         wheel_digest.update(actual_size.to_bytes(8, "big"))
         wheel_digest.update(bytes.fromhex(actual_hash))
+        record = declared.get(basename)
+        if record is None:
+            hash_ok = False
+            continue
+        hash_ok &= actual_hash == record.get("sha256") and actual_size == record.get("size_bytes")
+        tags_ok &= _wheel_is_cp310_win_amd64(basename)
     lock_closure_ok = lock_packages == dict(sorted(declared_packages.items()))
     declared_summary_ok = (
         wheel_manifest.get("target_python_abi") == "cp310"
@@ -716,9 +817,8 @@ def _verify_dependency_layer(
         and wheel_manifest.get("invalid_wheel_count") == 0
         and all(item.get("compatible_with_cpython_310_win_amd64") is True for item in declared.values())
     )
-    manifest_dependency = manifest.get("dependency_lock")
     binding_ok = (
-        type(manifest_dependency) is dict
+        manifest_dependency is not None
         and manifest_dependency.get("filename") == dependency_lock.name
         and manifest_dependency.get("sha256") == _sha256_file(dependency_lock)
         and manifest_dependency.get("wheelhouse_manifest_filename") == wheelhouse_manifest_path.name
@@ -727,47 +827,93 @@ def _verify_dependency_layer(
         and manifest_dependency.get("invalid_wheel_count") == 0
     )
     installed = _installed_distributions(probe)
-    installed_ok = all(installed.get(name) == version for name, version in lock_packages.items())
+    missing_installed = set(lock_packages) - set(installed)
+    version_mismatches = {
+        name for name in set(installed) & set(lock_packages) if installed[name] != lock_packages[name]
+    }
+    installed_extras = set(installed) - set(lock_packages)
+    installed_ok = (
+        not missing_installed
+        and not version_mismatches
+        and installed_extras <= BOOTSTRAP_DISTRIBUTION_ALLOWLIST
+    )
+    bootstrap_distributions = [
+        {"name": name, "version": installed[name]} for name in sorted(installed_extras)
+    ]
+    installed_closure_digest = _installed_closure_digest(installed)
+    wheelhouse_tree_digest = wheel_digest.hexdigest()
 
     state.check("dependency-lock-wheel-manifest-closure", "pass" if lock_closure_ok else "fail", count=len(lock_packages))
     state.check("wheelhouse-bidirectional-closure", "pass" if closure_ok else "fail", count=len(actual_files))
     state.check("wheelhouse-sha256", "pass" if hash_ok else "fail", count=len(actual_files))
     state.check("wheel-tags-cp310-win-amd64", "pass" if tags_ok and declared_summary_ok else "fail", count=len(actual_files))
     state.check("runtime-manifest-dependency-binding", "pass" if binding_ok else "fail")
-    state.check("candidate-installed-locked-versions", "pass" if installed_ok else "fail", count=len(lock_packages))
+    state.check("candidate-installed-exact-closure", "pass" if installed_ok else "fail", count=len(installed))
 
     artifacts.append(
         {
             "artifact_type": "wheelhouse",
             "basename": wheelhouse_root.name,
-            "sha256": wheel_digest.hexdigest(),
+            "sha256": wheelhouse_tree_digest,
             "size_bytes": wheelhouse_size,
             "declared_identifier": f"{len(actual_files)}-file-tree",
         }
     )
-    counts.update({"locked_dependencies": len(lock_packages), "wheelhouse_files": len(actual_files)})
-
-    rebuild = manifest.get("dependency_rebuild_evidence")
-    rebuild_ok = (
-        type(rebuild) is dict
-        and rebuild.get("source_lock_sha256") == _sha256_file(dependency_lock)
-        and rebuild.get("wheelhouse_manifest_sha256") == _sha256_file(wheelhouse_manifest_path)
-        and rebuild.get("offline") is True
-        and rebuild.get("network_download_count") == 0
-        and rebuild.get("pip_check_passed") is True
-        and rebuild.get("unrecorded_site_packages") == []
-        and rebuild.get("installed_closure_matches_manifest") is True
+    counts.update(
+        {
+            "bootstrap_distributions": len(bootstrap_distributions),
+            "locked_dependencies": len(lock_packages),
+            "wheelhouse_files": len(actual_files),
+        }
     )
-    if rebuild_ok:
-        state.check("dependency-offline-rebuild-and-pip-check", "pass")
-    else:
-        state.check("dependency-offline-rebuild-and-pip-check", "insufficient")
-        state.gaps.update(
-            {
-                "dependency-rebuild-attestation-not-machine-verifiable",
-                "pip-check-evidence-missing",
-            }
+
+    lock_sha256 = _sha256_file(dependency_lock)
+    wheel_manifest_sha256 = _sha256_file(wheelhouse_manifest_path)
+    expected_independent_binding: dict[str, object] = {
+        "runtime_tree_sha256": runtime_tree_digest,
+        "dependency_lock_sha256": lock_sha256,
+        "wheelhouse_manifest_sha256": wheel_manifest_sha256,
+        "wheelhouse_tree_sha256": wheelhouse_tree_digest,
+        "python_version": manifest.get("python_version"),
+        "python_abi": manifest.get("python_abi"),
+        "enterprise_commit": enterprise_commit,
+        "upstream_commit": upstream_commit,
+        "installed_closure_sha256": installed_closure_digest,
+    }
+    rebuild_ok = False
+    if rebuild_attestation is not None:
+        rebuild_ok = all(rebuild_attestation.get(key) == value for key, value in expected_independent_binding.items())
+        rebuild_ok = bool(
+            rebuild_ok
+            and rebuild_attestation.get("rebuild_command_classification") == "offline-locked-wheelhouse"
+            and rebuild_attestation.get("network_download_count") == 0
+            and rebuild_attestation.get("exit_code") == 0
+            and rebuild_attestation.get("result") == "pass"
         )
+        state.check("dependency-rebuild-attestation-content", "pass" if rebuild_ok else "fail")
+
+    pip_check_ok = False
+    if pip_check_report is not None:
+        pip_check_ok = all(pip_check_report.get(key) == value for key, value in expected_independent_binding.items())
+        pip_check_ok = bool(
+            pip_check_ok
+            and pip_check_report.get("command_identity") == "python-minus-m-pip-check"
+            and pip_check_report.get("exit_code") == 0
+            and pip_check_report.get("broken_requirements") == []
+            and pip_check_report.get("result") == "pass"
+        )
+        state.check("pip-check-report-content", "pass" if pip_check_ok else "fail")
+
+    context.update(
+        {
+            "dependency_lock_sha256": lock_sha256,
+            "bootstrap_distributions": bootstrap_distributions,
+            "installed_closure_sha256": installed_closure_digest,
+            "runtime_tree_sha256": runtime_tree_digest,
+            "wheelhouse_manifest_sha256": wheel_manifest_sha256,
+            "wheelhouse_tree_sha256": wheelhouse_tree_digest,
+        }
+    )
     return bool(
         lock_closure_ok
         and closure_ok
@@ -777,7 +923,8 @@ def _verify_dependency_layer(
         and binding_ok
         and installed_ok
         and rebuild_ok
-    ), counts
+        and pip_check_ok
+    ), counts, context
 
 
 def _manifest_full_inventory(manifest: Mapping[str, object]) -> dict[str, FileRecord] | None:
@@ -810,22 +957,42 @@ def _verify_archive_layer(
     manifest: Mapping[str, object],
     archive_path: Path | None,
     archive_records: Mapping[str, FileRecord] | None,
+    archive_build_record_path: Path | None,
     runtime_records: Mapping[str, FileRecord],
     core_verified: bool,
     dependency_verified: bool,
+    dependency_context: Mapping[str, object],
     enterprise_commit: str,
+    upstream_commit: str,
     state: _EvidenceState,
+    artifacts: list[dict[str, object]],
 ) -> bool:
+    formal_value = manifest.get("archive_provenance")
+    formal = formal_value if type(formal_value) is dict else None
+    build_record = _load_bound_json_artifact(
+        path=archive_build_record_path,
+        expected_schema=ARCHIVE_BUILD_RECORD_SCHEMA,
+        binding=formal,
+        filename_field="archive_build_record_filename",
+        sha256_field="archive_build_record_sha256",
+        artifact_type="archive_build_record",
+        binding_check="archive-build-record-binding",
+        content_check="archive-build-record-content",
+        missing_gap="archive-build-record-missing",
+        state=state,
+        artifacts=artifacts,
+    )
     if archive_path is None or archive_records is None:
         state.check("archive-evidence-present", "insufficient")
         state.gaps.add("candidate-runtime-archive-missing")
+        if build_record is not None:
+            state.check("archive-build-record-content", "insufficient")
         return False
 
     state.check("archive-safe-entry-structure", "pass", count=len(archive_records))
 
-    formal = manifest.get("archive_provenance")
     full_inventory = _manifest_full_inventory(manifest)
-    if type(formal) is not dict or full_inventory is None:
+    if formal is None or full_inventory is None:
         state.check("assembled-archive-manifest-binding", "insufficient")
         state.gaps.update(
             {
@@ -834,6 +1001,8 @@ def _verify_archive_layer(
                 "archive-build-process-provenance-missing",
             }
         )
+        if build_record is not None:
+            state.check("archive-build-record-content", "insufficient")
         return False
 
     root_prefix_value = formal.get("root_prefix")
@@ -845,17 +1014,14 @@ def _verify_archive_layer(
     runtime_match = set(runtime_records) == set(full_inventory) and all(
         _records_equal(runtime_records.get(relative), record) for relative, record in full_inventory.items()
     )
+    archive_sha256 = _sha256_file(archive_path)
     identity_ok = (
         formal.get("artifact_role") == "assembled_candidate_runtime"
-        and formal.get("archive_sha256") == _sha256_file(archive_path)
+        and formal.get("archive_sha256") == archive_sha256
         and formal.get("upstream_commit") == FIXED_UPSTREAM_COMMIT
         and formal.get("enterprise_commit") == enterprise_commit
         and formal.get("python_version") == manifest.get("python_version")
         and formal.get("python_abi") == manifest.get("python_abi")
-        and isinstance(formal.get("builder_version"), str)
-        and bool(formal.get("builder_version"))
-        and isinstance(formal.get("build_process_record_sha256"), str)
-        and _SHA256_RE.fullmatch(str(formal.get("build_process_record_sha256"))) is not None
         and formal.get("post_build_changes_detected") is False
     )
     dependency = manifest.get("dependency_lock")
@@ -864,6 +1030,34 @@ def _verify_archive_layer(
         and formal.get("dependency_lock_sha256") == dependency.get("sha256")
         and formal.get("wheelhouse_manifest_sha256") == dependency.get("wheelhouse_manifest_sha256")
     )
+    full_inventory_digest = _records_digest(full_inventory)
+    runtime_tree_digest = _records_digest(runtime_records)
+    build_record_ok = False
+    if build_record is not None:
+        expected_build_binding: dict[str, object] = {
+            "enterprise_commit": enterprise_commit,
+            "upstream_commit": upstream_commit,
+            "python_version": manifest.get("python_version"),
+            "python_abi": manifest.get("python_abi"),
+            "runtime_tree_sha256": runtime_tree_digest,
+            "dependency_lock_sha256": dependency_context.get("dependency_lock_sha256"),
+            "wheelhouse_manifest_sha256": dependency_context.get("wheelhouse_manifest_sha256"),
+            "wheelhouse_tree_sha256": dependency_context.get("wheelhouse_tree_sha256"),
+            "full_file_inventory_sha256": full_inventory_digest,
+            "output_archive_sha256": archive_sha256,
+            "output_archive_entry_count": len(archive_records),
+        }
+        build_record_ok = all(build_record.get(key) == value for key, value in expected_build_binding.items())
+        build_record_ok = bool(
+            build_record_ok
+            and isinstance(build_record.get("builder_identifier"), str)
+            and bool(build_record.get("builder_identifier"))
+            and isinstance(build_record.get("builder_version"), str)
+            and bool(build_record.get("builder_version"))
+            and build_record.get("build_result") == "pass"
+            and build_record.get("post_build_changes_detected") is False
+        )
+        state.check("archive-build-record-content", "pass" if build_record_ok else "fail")
     state.check("assembled-archive-file-inventory", "pass" if inventory_match else "fail", count=len(archive_runtime))
     state.check("assembled-archive-runtime-match", "pass" if runtime_match else "fail", count=len(runtime_records))
     state.check("assembled-archive-build-provenance", "pass" if identity_ok and dependency_binding_ok else "fail")
@@ -877,6 +1071,7 @@ def _verify_archive_layer(
         and runtime_match
         and identity_ok
         and dependency_binding_ok
+        and build_record_ok
         and core_verified
         and dependency_verified
     )
@@ -927,7 +1122,10 @@ def verify_runtime_provenance(
     dependency_lock: Path | str | None = None,
     wheelhouse_manifest: Path | str | None = None,
     wheelhouse: Path | str | None = None,
+    dependency_rebuild_attestation: Path | str | None = None,
+    pip_check_report: Path | str | None = None,
     archive: Path | str | None = None,
+    archive_build_record: Path | str | None = None,
     source_runtime_archive: Path | str | None = None,
     external_validation_report: Path | str | None = None,
     upstream_core_archive: Path | str | None = None,
@@ -944,7 +1142,12 @@ def verify_runtime_provenance(
     dependency_lock_path = _resolve_optional_file(dependency_lock, "dependency_lock")
     wheel_manifest_path = _resolve_optional_file(wheelhouse_manifest, "wheelhouse_manifest")
     wheelhouse_root = _resolve_optional_directory(wheelhouse, "wheelhouse")
+    rebuild_attestation_path = _resolve_optional_file(
+        dependency_rebuild_attestation, "dependency_rebuild_attestation"
+    )
+    pip_check_report_path = _resolve_optional_file(pip_check_report, "pip_check_report")
     archive_path = _resolve_optional_file(archive, "archive")
+    archive_build_record_path = _resolve_optional_file(archive_build_record, "archive_build_record")
     source_archive_path = _resolve_optional_file(source_runtime_archive, "source_runtime_archive")
     external_report_path = _resolve_optional_file(external_validation_report, "external_validation_report")
     upstream_archive_path = _resolve_optional_file(upstream_core_archive, "upstream_core_archive")
@@ -960,7 +1163,10 @@ def verify_runtime_provenance(
             manifest_path,
             dependency_lock_path,
             wheel_manifest_path,
+            rebuild_attestation_path,
+            pip_check_report_path,
             archive_path,
+            archive_build_record_path,
             source_archive_path,
             external_report_path,
             upstream_archive_path,
@@ -1039,11 +1245,16 @@ def verify_runtime_provenance(
         state=state,
     )
     core_verified = bool(core_verified and source_identity_ok)
-    dependency_verified, dependency_counts = _verify_dependency_layer(
+    dependency_verified, dependency_counts, dependency_context = _verify_dependency_layer(
         manifest=manifest,
         dependency_lock=dependency_lock_path,
         wheelhouse_manifest_path=wheel_manifest_path,
         wheelhouse_root=wheelhouse_root,
+        rebuild_attestation_path=rebuild_attestation_path,
+        pip_check_report_path=pip_check_report_path,
+        runtime_tree_digest=runtime_digest_before,
+        enterprise_commit=enterprise_commit,
+        upstream_commit=upstream_commit,
         probe=probe,
         state=state,
         artifacts=artifacts,
@@ -1052,11 +1263,15 @@ def verify_runtime_provenance(
         manifest=manifest,
         archive_path=archive_path,
         archive_records=archive_records,
+        archive_build_record_path=archive_build_record_path,
         runtime_records=runtime_records_before,
         core_verified=core_verified,
         dependency_verified=dependency_verified,
+        dependency_context=dependency_context,
         enterprise_commit=enterprise_commit,
+        upstream_commit=upstream_commit,
         state=state,
+        artifacts=artifacts,
     )
 
     unchanged_files = all((path.stat().st_size, _sha256_file(path)) == snapshot for path, snapshot in input_snapshots.items())
@@ -1109,6 +1324,8 @@ def verify_runtime_provenance(
         "architecture": manifest.get("architecture"),
         "archive_provenance_verified": archive_verified,
         "artifacts": sorted(artifacts, key=lambda item: (str(item["artifact_type"]), str(item["basename"]))),
+        "bootstrap_distribution_allowlist": sorted(BOOTSTRAP_DISTRIBUTION_ALLOWLIST),
+        "bootstrap_distributions": dependency_context.get("bootstrap_distributions", []),
         "candidate_id": _sha256_bytes(candidate_material),
         "checks": sorted(state.checks, key=lambda item: str(item["id"])),
         "core_runtime_provenance_verified": core_verified,
@@ -1117,6 +1334,7 @@ def verify_runtime_provenance(
         "enterprise_commit": enterprise_commit,
         "evidence_enterprise_commit": evidence_enterprise_commit,
         "evidence_gaps": sorted(state.gaps),
+        "installed_closure_sha256": dependency_context.get("installed_closure_sha256"),
         "overall_classification": classification,
         "production_approved": False,
         "python_implementation": probe.get("implementation"),

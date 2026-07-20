@@ -48,6 +48,9 @@ class Fixture:
     upstream_archive: Path
     external_report: Path
     target_archive: Path | None
+    rebuild_attestation: Path | None
+    pip_check_report: Path | None
+    archive_build_record: Path | None
     probe: dict[str, object]
 
 
@@ -57,7 +60,13 @@ def _write_zip(path: Path, entries: dict[str, bytes]) -> None:
             archive.writestr(name, entries[name])
 
 
-def _build_fixture(tmp_path: Path, *, rebuild: bool = False, formal_archive: bool = False) -> Fixture:
+def _build_fixture(
+    tmp_path: Path,
+    *,
+    independent_dependency: bool = False,
+    formal_archive: bool = False,
+    build_record: bool = False,
+) -> Fixture:
     runtime = tmp_path / "candidate-runtime"
     runtime.mkdir()
     upstream_content: dict[str, bytes] = {}
@@ -153,18 +162,56 @@ def _build_fixture(tmp_path: Path, *, rebuild: bool = False, formal_archive: boo
             "size_bytes": source_archive.stat().st_size,
         },
     }
-    if rebuild:
-        manifest_payload["dependency_rebuild_evidence"] = {
-            "installed_closure_matches_manifest": True,
+    runtime_tree_digest = provenance._tree_inventory(runtime)[1]
+    wheelhouse_tree_digest = provenance._tree_inventory(wheelhouse)[1]
+    installed_closure_digest = provenance._installed_closure_digest({"alpha": "1.0", "native": "2.0"})
+    dependency_binding = manifest_payload["dependency_lock"]
+    assert isinstance(dependency_binding, dict)
+    independent_common: dict[str, object] = {
+        "dependency_lock_sha256": provenance._sha256_file(lock),
+        "enterprise_commit": ENTERPRISE_COMMIT,
+        "installed_closure_sha256": installed_closure_digest,
+        "python_abi": "cp310",
+        "python_version": "3.10.11",
+        "runtime_tree_sha256": runtime_tree_digest,
+        "upstream_commit": provenance.FIXED_UPSTREAM_COMMIT,
+        "wheelhouse_manifest_sha256": provenance._sha256_file(wheel_manifest),
+        "wheelhouse_tree_sha256": wheelhouse_tree_digest,
+    }
+    rebuild_attestation: Path | None = None
+    pip_check_report: Path | None = None
+    if independent_dependency:
+        rebuild_attestation = tmp_path / "dependency-rebuild-attestation.json"
+        rebuild_payload = {
+            **independent_common,
+            "exit_code": 0,
             "network_download_count": 0,
-            "offline": True,
-            "pip_check_passed": True,
-            "source_lock_sha256": provenance._sha256_file(lock),
-            "unrecorded_site_packages": [],
-            "wheelhouse_manifest_sha256": provenance._sha256_file(wheel_manifest),
+            "rebuild_command_classification": "offline-locked-wheelhouse",
+            "result": "pass",
+            "schema_version": provenance.DEPENDENCY_REBUILD_ATTESTATION_SCHEMA,
         }
+        rebuild_attestation.write_text(json.dumps(rebuild_payload, sort_keys=True), encoding="utf-8")
+        pip_check_report = tmp_path / "pip-check-report.json"
+        pip_payload = {
+            **independent_common,
+            "broken_requirements": [],
+            "command_identity": "python-minus-m-pip-check",
+            "exit_code": 0,
+            "result": "pass",
+            "schema_version": provenance.PIP_CHECK_REPORT_SCHEMA,
+        }
+        pip_check_report.write_text(json.dumps(pip_payload, sort_keys=True), encoding="utf-8")
+        dependency_binding.update(
+            {
+                "pip_check_report_filename": pip_check_report.name,
+                "pip_check_report_sha256": provenance._sha256_file(pip_check_report),
+                "rebuild_attestation_filename": rebuild_attestation.name,
+                "rebuild_attestation_sha256": provenance._sha256_file(rebuild_attestation),
+            }
+        )
 
     target_archive: Path | None = None
+    archive_build_record: Path | None = None
     if formal_archive:
         target_archive = tmp_path / "candidate-runtime.zip"
         _write_zip(target_archive, {f"runtime/{name}": content for name, content in candidate_content.items()})
@@ -172,8 +219,6 @@ def _build_fixture(tmp_path: Path, *, rebuild: bool = False, formal_archive: boo
         manifest_payload["archive_provenance"] = {
             "archive_sha256": provenance._sha256_file(target_archive),
             "artifact_role": "assembled_candidate_runtime",
-            "build_process_record_sha256": "0" * 64,
-            "builder_version": "fixture-builder-v1",
             "dependency_lock_sha256": provenance._sha256_file(lock),
             "enterprise_commit": ENTERPRISE_COMMIT,
             "post_build_changes_detected": False,
@@ -183,6 +228,42 @@ def _build_fixture(tmp_path: Path, *, rebuild: bool = False, formal_archive: boo
             "upstream_commit": provenance.FIXED_UPSTREAM_COMMIT,
             "wheelhouse_manifest_sha256": provenance._sha256_file(wheel_manifest),
         }
+        if build_record:
+            archive_records = provenance._zip_inventory(target_archive)[0]
+            file_records = {
+                str(item["path"]): provenance.FileRecord(
+                    str(item["path"]), str(item["sha256"]), int(item["size_bytes"])
+                )
+                for item in files
+            }
+            archive_build_record = tmp_path / "archive-build-record.json"
+            build_payload = {
+                "build_result": "pass",
+                "builder_identifier": "fixture-runtime-archive-builder",
+                "builder_version": "fixture-builder-v1",
+                "dependency_lock_sha256": provenance._sha256_file(lock),
+                "enterprise_commit": ENTERPRISE_COMMIT,
+                "full_file_inventory_sha256": provenance._records_digest(file_records),
+                "output_archive_entry_count": len(archive_records),
+                "output_archive_sha256": provenance._sha256_file(target_archive),
+                "post_build_changes_detected": False,
+                "python_abi": "cp310",
+                "python_version": "3.10.11",
+                "runtime_tree_sha256": runtime_tree_digest,
+                "schema_version": provenance.ARCHIVE_BUILD_RECORD_SCHEMA,
+                "upstream_commit": provenance.FIXED_UPSTREAM_COMMIT,
+                "wheelhouse_manifest_sha256": provenance._sha256_file(wheel_manifest),
+                "wheelhouse_tree_sha256": wheelhouse_tree_digest,
+            }
+            archive_build_record.write_text(json.dumps(build_payload, sort_keys=True), encoding="utf-8")
+            archive_binding = manifest_payload["archive_provenance"]
+            assert isinstance(archive_binding, dict)
+            archive_binding.update(
+                {
+                    "archive_build_record_filename": archive_build_record.name,
+                    "archive_build_record_sha256": provenance._sha256_file(archive_build_record),
+                }
+            )
 
     manifest = tmp_path / "runtime-manifest.json"
     manifest.write_text(json.dumps(manifest_payload, sort_keys=True), encoding="utf-8")
@@ -193,7 +274,6 @@ def _build_fixture(tmp_path: Path, *, rebuild: bool = False, formal_archive: boo
         "distributions": [
             {"name": "alpha", "version": "1.0"},
             {"name": "native", "version": "2.0"},
-            {"name": "pip", "version": "26.1.1"},
         ],
         "executable_basename": "python.exe",
         "implementation": "CPython",
@@ -216,6 +296,9 @@ def _build_fixture(tmp_path: Path, *, rebuild: bool = False, formal_archive: boo
         upstream_archive,
         external_report,
         target_archive,
+        rebuild_attestation,
+        pip_check_report,
+        archive_build_record,
         probe,
     )
 
@@ -227,7 +310,10 @@ def _verify(fixture: Fixture, **overrides: object) -> dict[str, object]:
         "dependency_lock": fixture.lock,
         "wheelhouse_manifest": fixture.wheel_manifest,
         "wheelhouse": fixture.wheelhouse,
+        "dependency_rebuild_attestation": fixture.rebuild_attestation,
+        "pip_check_report": fixture.pip_check_report,
         "archive": fixture.target_archive,
+        "archive_build_record": fixture.archive_build_record,
         "source_runtime_archive": fixture.source_archive,
         "external_validation_report": fixture.external_report,
         "upstream_core_archive": fixture.upstream_archive,
@@ -241,6 +327,22 @@ def _verify(fixture: Fixture, **overrides: object) -> dict[str, object]:
 
 def _check(report: dict[str, object], identifier: str) -> dict[str, object]:
     return next(item for item in report["checks"] if item["id"] == identifier)  # type: ignore[index]
+
+
+def _rewrite_bound_artifact(
+    fixture: Fixture,
+    artifact: Path,
+    *,
+    manifest_section: str,
+    manifest_sha256_field: str,
+    updates: dict[str, object],
+) -> None:
+    payload = json.loads(artifact.read_text(encoding="utf-8"))
+    payload.update(updates)
+    artifact.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+    manifest = json.loads(fixture.manifest.read_text(encoding="utf-8"))
+    manifest[manifest_section][manifest_sha256_field] = provenance._sha256_file(artifact)
+    fixture.manifest.write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
 
 
 def test_complete_core_runtime_matches_fixed_upstream(tmp_path: Path) -> None:
@@ -304,18 +406,156 @@ def test_unsupported_manifest_schema_fails_closed(tmp_path: Path) -> None:
 
 
 def test_lock_and_wheelhouse_bidirectional_closure(tmp_path: Path) -> None:
-    report = _verify(_build_fixture(tmp_path, rebuild=True))
+    report = _verify(_build_fixture(tmp_path, independent_dependency=True))
     assert _check(report, "dependency-lock-wheel-manifest-closure")["status"] == "pass"
     assert _check(report, "wheelhouse-bidirectional-closure")["status"] == "pass"
+    assert _check(report, "candidate-installed-exact-closure")["status"] == "pass"
     assert report["dependency_layer_rebuilt_and_verified"] is True
 
 
+def test_unlocked_distribution_fails_exact_installed_closure(tmp_path: Path) -> None:
+    fixture = _build_fixture(tmp_path, independent_dependency=True)
+    fixture.probe["distributions"].append({"name": "rogue", "version": "1.0"})  # type: ignore[union-attr]
+    report = _verify(fixture)
+    assert _check(report, "candidate-installed-exact-closure")["status"] == "fail"
+    assert report["dependency_layer_rebuilt_and_verified"] is False
+    assert report["overall_classification"] == "failed_integrity"
+
+
+def test_fixed_bootstrap_distribution_allowlist_is_reported(tmp_path: Path) -> None:
+    fixture = _build_fixture(tmp_path)
+    fixture.probe["distributions"].append({"name": "pip", "version": "26.1.1"})  # type: ignore[union-attr]
+    report = _verify(fixture)
+    assert _check(report, "candidate-installed-exact-closure")["status"] == "pass"
+    assert report["bootstrap_distribution_allowlist"] == ["pip", "setuptools", "wheel"]
+    assert report["bootstrap_distributions"] == [{"name": "pip", "version": "26.1.1"}]
+
+
+def test_manifest_pip_check_boolean_cannot_elevate_dependency(tmp_path: Path) -> None:
+    fixture = _build_fixture(tmp_path)
+    payload = json.loads(fixture.manifest.read_text(encoding="utf-8"))
+    payload["dependency_rebuild_evidence"] = {"pip_check_passed": True}
+    fixture.manifest.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+    report = _verify(fixture)
+    assert report["dependency_layer_rebuilt_and_verified"] is False
+    assert _check(report, "dependency-rebuild-attestation-binding")["status"] == "insufficient"
+
+
+def test_manifest_offline_boolean_cannot_elevate_dependency(tmp_path: Path) -> None:
+    fixture = _build_fixture(tmp_path)
+    payload = json.loads(fixture.manifest.read_text(encoding="utf-8"))
+    payload["dependency_rebuild_evidence"] = {"network_download_count": 0, "offline": True}
+    fixture.manifest.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+    report = _verify(fixture)
+    assert report["dependency_layer_rebuilt_and_verified"] is False
+    assert _check(report, "pip-check-report-binding")["status"] == "insufficient"
+
+
+def test_missing_independent_rebuild_attestation_is_insufficient(tmp_path: Path) -> None:
+    fixture = _build_fixture(tmp_path, independent_dependency=True)
+    report = _verify(fixture, dependency_rebuild_attestation=None)
+    assert report["dependency_layer_rebuilt_and_verified"] is False
+    assert _check(report, "dependency-rebuild-attestation-binding")["status"] == "insufficient"
+    assert report["result"] == "pass"
+
+
+def test_missing_independent_pip_check_report_is_insufficient(tmp_path: Path) -> None:
+    fixture = _build_fixture(tmp_path, independent_dependency=True)
+    report = _verify(fixture, pip_check_report=None)
+    assert report["dependency_layer_rebuilt_and_verified"] is False
+    assert _check(report, "pip-check-report-binding")["status"] == "insufficient"
+    assert report["result"] == "pass"
+
+
+def test_rebuild_attestation_hash_mismatch_fails_integrity(tmp_path: Path) -> None:
+    fixture = _build_fixture(tmp_path, independent_dependency=True)
+    assert fixture.rebuild_attestation is not None
+    fixture.rebuild_attestation.write_text(
+        fixture.rebuild_attestation.read_text(encoding="utf-8") + "\n", encoding="utf-8"
+    )
+    report = _verify(fixture)
+    assert _check(report, "dependency-rebuild-attestation-binding")["status"] == "fail"
+    assert report["overall_classification"] == "failed_integrity"
+
+
+def test_pip_check_report_hash_mismatch_fails_integrity(tmp_path: Path) -> None:
+    fixture = _build_fixture(tmp_path, independent_dependency=True)
+    assert fixture.pip_check_report is not None
+    fixture.pip_check_report.write_text(
+        fixture.pip_check_report.read_text(encoding="utf-8") + "\n", encoding="utf-8"
+    )
+    report = _verify(fixture)
+    assert _check(report, "pip-check-report-binding")["status"] == "fail"
+    assert report["overall_classification"] == "failed_integrity"
+
+
+def test_rebuild_attestation_runtime_tree_mismatch_fails_integrity(tmp_path: Path) -> None:
+    fixture = _build_fixture(tmp_path, independent_dependency=True)
+    assert fixture.rebuild_attestation is not None
+    _rewrite_bound_artifact(
+        fixture,
+        fixture.rebuild_attestation,
+        manifest_section="dependency_lock",
+        manifest_sha256_field="rebuild_attestation_sha256",
+        updates={"runtime_tree_sha256": "0" * 64},
+    )
+    report = _verify(fixture)
+    assert _check(report, "dependency-rebuild-attestation-content")["status"] == "fail"
+    assert report["overall_classification"] == "failed_integrity"
+
+
+def test_pip_check_nonzero_exit_fails_integrity(tmp_path: Path) -> None:
+    fixture = _build_fixture(tmp_path, independent_dependency=True)
+    assert fixture.pip_check_report is not None
+    _rewrite_bound_artifact(
+        fixture,
+        fixture.pip_check_report,
+        manifest_section="dependency_lock",
+        manifest_sha256_field="pip_check_report_sha256",
+        updates={"exit_code": 1, "result": "fail"},
+    )
+    report = _verify(fixture)
+    assert _check(report, "pip-check-report-content")["status"] == "fail"
+    assert report["overall_classification"] == "failed_integrity"
+
+
+def test_pip_check_broken_requirements_fail_integrity(tmp_path: Path) -> None:
+    fixture = _build_fixture(tmp_path, independent_dependency=True)
+    assert fixture.pip_check_report is not None
+    _rewrite_bound_artifact(
+        fixture,
+        fixture.pip_check_report,
+        manifest_section="dependency_lock",
+        manifest_sha256_field="pip_check_report_sha256",
+        updates={"broken_requirements": ["alpha requires missing"]},
+    )
+    report = _verify(fixture)
+    assert _check(report, "pip-check-report-content")["status"] == "fail"
+    assert report["overall_classification"] == "failed_integrity"
+
+
 def test_nested_platform_wheelhouse_is_closed_by_basename(tmp_path: Path) -> None:
-    fixture = _build_fixture(tmp_path, rebuild=True)
+    fixture = _build_fixture(tmp_path, independent_dependency=True)
     leaf = fixture.wheelhouse / "windows-x64" / "cp310"
     leaf.mkdir(parents=True)
     for wheel in list(fixture.wheelhouse.glob("*.whl")):
         wheel.replace(leaf / wheel.name)
+    tree_digest = provenance._tree_inventory(fixture.wheelhouse)[1]
+    assert fixture.rebuild_attestation is not None and fixture.pip_check_report is not None
+    _rewrite_bound_artifact(
+        fixture,
+        fixture.rebuild_attestation,
+        manifest_section="dependency_lock",
+        manifest_sha256_field="rebuild_attestation_sha256",
+        updates={"wheelhouse_tree_sha256": tree_digest},
+    )
+    _rewrite_bound_artifact(
+        fixture,
+        fixture.pip_check_report,
+        manifest_section="dependency_lock",
+        manifest_sha256_field="pip_check_report_sha256",
+        updates={"wheelhouse_tree_sha256": tree_digest},
+    )
     report = _verify(fixture)
     assert report["dependency_layer_rebuilt_and_verified"] is True
     assert _check(report, "wheelhouse-unchanged")["status"] == "pass"
@@ -354,18 +594,79 @@ def test_wheel_tag_compatibility(filename: str, expected: bool) -> None:
 
 
 def test_formal_candidate_archive_can_be_verified(tmp_path: Path) -> None:
-    report = _verify(_build_fixture(tmp_path, rebuild=True, formal_archive=True))
+    report = _verify(
+        _build_fixture(tmp_path, independent_dependency=True, formal_archive=True, build_record=True)
+    )
     assert report["archive_provenance_verified"] is True
     assert report["overall_classification"] == "verified"
+    assert _check(report, "archive-build-record-binding")["status"] == "pass"
+    assert _check(report, "archive-build-record-content")["status"] == "pass"
+
+
+def test_legacy_zero_build_process_hash_without_artifact_cannot_verify_archive(tmp_path: Path) -> None:
+    fixture = _build_fixture(tmp_path, independent_dependency=True, formal_archive=True)
+    payload = json.loads(fixture.manifest.read_text(encoding="utf-8"))
+    payload["archive_provenance"]["build_process_record_sha256"] = "0" * 64
+    fixture.manifest.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+    report = _verify(fixture)
+    assert report["archive_provenance_verified"] is False
+    assert _check(report, "archive-build-record-binding")["status"] == "insufficient"
+    assert report["result"] == "pass"
+
+
+def test_missing_archive_build_record_is_insufficient(tmp_path: Path) -> None:
+    fixture = _build_fixture(tmp_path, independent_dependency=True, formal_archive=True)
+    report = _verify(fixture)
+    assert report["archive_provenance_verified"] is False
+    assert _check(report, "archive-build-record-content")["status"] == "insufficient"
+    assert report["result"] == "pass"
+
+
+def test_archive_build_record_hash_mismatch_fails_integrity(tmp_path: Path) -> None:
+    fixture = _build_fixture(tmp_path, independent_dependency=True, formal_archive=True, build_record=True)
+    assert fixture.archive_build_record is not None
+    fixture.archive_build_record.write_text(
+        fixture.archive_build_record.read_text(encoding="utf-8") + "\n", encoding="utf-8"
+    )
+    report = _verify(fixture)
+    assert _check(report, "archive-build-record-binding")["status"] == "fail"
+    assert report["overall_classification"] == "failed_integrity"
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "output_archive_sha256",
+        "runtime_tree_sha256",
+        "dependency_lock_sha256",
+        "wheelhouse_manifest_sha256",
+        "wheelhouse_tree_sha256",
+    ],
+)
+def test_archive_build_record_content_mismatch_fails_integrity(tmp_path: Path, field: str) -> None:
+    fixture = _build_fixture(tmp_path, independent_dependency=True, formal_archive=True, build_record=True)
+    assert fixture.archive_build_record is not None
+    _rewrite_bound_artifact(
+        fixture,
+        fixture.archive_build_record,
+        manifest_section="archive_provenance",
+        manifest_sha256_field="archive_build_record_sha256",
+        updates={field: "0" * 64},
+    )
+    report = _verify(fixture)
+    assert _check(report, "archive-build-record-content")["status"] == "fail"
+    assert report["overall_classification"] == "failed_integrity"
 
 
 def test_archive_inventory_matches_manifest(tmp_path: Path) -> None:
-    report = _verify(_build_fixture(tmp_path, rebuild=True, formal_archive=True))
+    report = _verify(
+        _build_fixture(tmp_path, independent_dependency=True, formal_archive=True, build_record=True)
+    )
     assert _check(report, "assembled-archive-file-inventory")["status"] == "pass"
 
 
 def test_archive_missing_manifest_file_fails_integrity(tmp_path: Path) -> None:
-    fixture = _build_fixture(tmp_path, rebuild=True, formal_archive=True)
+    fixture = _build_fixture(tmp_path, independent_dependency=True, formal_archive=True, build_record=True)
     assert fixture.target_archive is not None
     entries = {f"runtime/{name}": (fixture.runtime / name).read_bytes() for name in provenance.UPSTREAM_CORE_FILES[:-1]}
     _write_zip(fixture.target_archive, entries)
@@ -373,7 +674,7 @@ def test_archive_missing_manifest_file_fails_integrity(tmp_path: Path) -> None:
 
 
 def test_archive_extra_file_fails_integrity(tmp_path: Path) -> None:
-    fixture = _build_fixture(tmp_path, rebuild=True, formal_archive=True)
+    fixture = _build_fixture(tmp_path, independent_dependency=True, formal_archive=True, build_record=True)
     assert fixture.target_archive is not None
     with zipfile.ZipFile(fixture.target_archive, "a") as archive:
         archive.writestr("runtime/extra.dll", b"extra")
@@ -413,11 +714,13 @@ def test_isolated_archive_hash_does_not_verify_provenance(tmp_path: Path) -> Non
 def test_missing_rebuild_and_pip_check_keeps_dependency_false(tmp_path: Path) -> None:
     report = _verify(_build_fixture(tmp_path))
     assert report["dependency_layer_rebuilt_and_verified"] is False
-    assert "pip-check-evidence-missing" in report["evidence_gaps"]
+    assert "pip-check-report-missing" in report["evidence_gaps"]
 
 
 def test_production_approval_is_always_false(tmp_path: Path) -> None:
-    report = _verify(_build_fixture(tmp_path, rebuild=True, formal_archive=True))
+    report = _verify(
+        _build_fixture(tmp_path, independent_dependency=True, formal_archive=True, build_record=True)
+    )
     assert report["production_approved"] is False
 
 
@@ -425,6 +728,8 @@ def test_report_contains_no_absolute_input_path(tmp_path: Path) -> None:
     report = _verify(_build_fixture(tmp_path))
     encoded = json.dumps(report, sort_keys=True)
     assert str(tmp_path) not in encoded
+    assert "traceback" not in encoded.casefold()
+    assert "secret" not in encoded.casefold()
     assert all("\\" not in str(item.get("basename")) for item in report["artifacts"])  # type: ignore[union-attr]
 
 
@@ -443,12 +748,24 @@ def test_mtime_changes_do_not_change_report(tmp_path: Path) -> None:
 
 
 def test_verification_does_not_modify_inputs(tmp_path: Path) -> None:
-    fixture = _build_fixture(tmp_path)
+    fixture = _build_fixture(tmp_path, independent_dependency=True, formal_archive=True, build_record=True)
     before = provenance._tree_inventory(fixture.runtime)[1]
+    wheelhouse_before = provenance._tree_inventory(fixture.wheelhouse)[1]
     source_before = provenance._sha256_file(fixture.source_archive)
+    independent_files = [
+        fixture.rebuild_attestation,
+        fixture.pip_check_report,
+        fixture.archive_build_record,
+        fixture.target_archive,
+    ]
+    independent_before = {
+        path: provenance._sha256_file(path) for path in independent_files if path is not None
+    }
     _verify(fixture)
     assert provenance._tree_inventory(fixture.runtime)[1] == before
+    assert provenance._tree_inventory(fixture.wheelhouse)[1] == wheelhouse_before
     assert provenance._sha256_file(fixture.source_archive) == source_before
+    assert all(provenance._sha256_file(path) == digest for path, digest in independent_before.items())
 
 
 def test_failure_report_never_claims_success() -> None:
@@ -567,3 +884,15 @@ def test_artifacts_use_basename_and_digest_only(tmp_path: Path) -> None:
             "declared_identifier",
         }
         assert "/" not in artifact["basename"] and "\\" not in artifact["basename"]
+
+
+def test_independent_artifacts_are_reported_with_fixed_schemas(tmp_path: Path) -> None:
+    fixture = _build_fixture(tmp_path, independent_dependency=True, formal_archive=True, build_record=True)
+    report = _verify(fixture)
+    artifacts = {item["artifact_type"]: item for item in report["artifacts"]}  # type: ignore[union-attr]
+    assert (
+        artifacts["dependency_rebuild_attestation"]["schema_version"]
+        == provenance.DEPENDENCY_REBUILD_ATTESTATION_SCHEMA
+    )
+    assert artifacts["pip_check_report"]["schema_version"] == provenance.PIP_CHECK_REPORT_SCHEMA
+    assert artifacts["archive_build_record"]["schema_version"] == provenance.ARCHIVE_BUILD_RECORD_SCHEMA

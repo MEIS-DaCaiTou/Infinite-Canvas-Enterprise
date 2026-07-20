@@ -28,7 +28,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--dependency-lock", type=Path)
     parser.add_argument("--wheelhouse-manifest", type=Path)
     parser.add_argument("--wheelhouse", type=Path)
+    parser.add_argument("--dependency-rebuild-attestation", type=Path)
+    parser.add_argument("--pip-check-report", type=Path)
     parser.add_argument("--archive", type=Path)
+    parser.add_argument("--archive-build-record", type=Path)
     parser.add_argument("--source-runtime-archive", type=Path)
     parser.add_argument("--external-validation-report", type=Path)
     parser.add_argument("--upstream-core-archive", type=Path)
@@ -54,7 +57,10 @@ def main(argv: list[str] | None = None) -> int:
                 args.runtime_manifest,
                 args.dependency_lock,
                 args.wheelhouse_manifest,
+                args.dependency_rebuild_attestation,
+                args.pip_check_report,
                 args.archive,
+                args.archive_build_record,
                 args.source_runtime_archive,
                 args.external_validation_report,
                 args.upstream_core_archive,
@@ -71,7 +77,10 @@ def main(argv: list[str] | None = None) -> int:
             dependency_lock=args.dependency_lock,
             wheelhouse_manifest=args.wheelhouse_manifest,
             wheelhouse=args.wheelhouse,
+            dependency_rebuild_attestation=args.dependency_rebuild_attestation,
+            pip_check_report=args.pip_check_report,
             archive=args.archive,
+            archive_build_record=args.archive_build_record,
             source_runtime_archive=args.source_runtime_archive,
             external_validation_report=args.external_validation_report,
             upstream_core_archive=args.upstream_core_archive,
