@@ -3,7 +3,7 @@
 - 状态：Accepted
 - 决策日期：2026-07-16
 - 事实基线：`main@396cccc68d63bd16393a2cb72d24e4a48fcf47cb`
-- 实施状态：已决策，ENV-1B1A 尚未开始
+- 实施状态：ENV-1B1A 当前在 Draft PR 中实现 static 子门禁；完整 APP_ROOT 只读仍待 ENV-1B1B / ENV-1B1C
 
 ## 背景
 
@@ -44,6 +44,8 @@
 - 构建期静态转换具备确定性，相同输入得到相同输出。
 - Git 工作区不因启动而产生静态变化。
 - ENV-1B1A 不修改正式 Python 运行时。
+
+当前 ENV-1B1A Draft PR 只关闭 static 构建期转换和源码树不变门禁，并形成其它写入的审计清单。导入/启动/健康/重启/停止的 APP_ROOT 全树不变和真实只读生命周期仍被数据、配置、上传、startup migration、legacy update、bytecode 等写入阻塞，不得因 static 子门禁通过而宣称本 ADR 已完整实施。
 
 ## 后果
 

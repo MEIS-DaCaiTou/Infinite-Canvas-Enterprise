@@ -1,6 +1,6 @@
 # Infinite Canvas Enterprise · 项目定位与后续开发范围锁定
 
-> **当前维护说明（2026-07-17）：** 本文保留 3G / U-2 阶段范围历史。当前实施事实以 [`docs/CURRENT_PROJECT_STATUS.md`](docs/CURRENT_PROJECT_STATUS.md) 为准，执行顺序以 [`docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md`](docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md) 为准，架构决策以 [`docs/README.md`](docs/README.md) 的 ADR 索引为准。生产路线由 [`ADR-OPS-007`](docs/decisions/ADR-OPS-007-GREENFIELD-PRODUCTION-BASELINE-AND-LEGACY-NON-MIGRATION-2026-07.md) 强制约束。当前主线是 ENV-1B0，尚未开始 ENV-1B1A、Fresh Install Bootstrap 或 OPS-3B。
+> **当前维护说明（2026-07-20）：** 本文保留 3G / U-2 阶段范围历史。当前实施事实以 [`docs/CURRENT_PROJECT_STATUS.md`](docs/CURRENT_PROJECT_STATUS.md) 为准，执行顺序以 [`docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md`](docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md) 为准，架构决策以 [`docs/README.md`](docs/README.md) 的 ADR 索引为准。生产路线由 [`ADR-OPS-007`](docs/decisions/ADR-OPS-007-GREENFIELD-PRODUCTION-BASELINE-AND-LEGACY-NON-MIGRATION-2026-07.md) 强制约束。ENV-1B0 已由 PR #80 完成并合并；ENV-1B1A 当前只在 Draft PR 分支实现，尚未进入 `main`。ENV-1B1B、ENV-1B1C、ENV-1B2P、Fresh Install Bootstrap 和 OPS-3B 均未开始。
 
 更新时间：2026-07-17
 适用对象：ChatGPT 主对话、Codex、后续 Agent、人工审核者。

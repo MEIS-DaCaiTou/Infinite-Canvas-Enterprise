@@ -1,8 +1,8 @@
 # Infinite-Canvas-Enterprise 企业架构蓝图（2026-07）
 
 更新时间：2026-07-17
-最后一次代码事实核对基线：`main@396cccc68d63bd16393a2cb72d24e4a48fcf47cb`
-当前 repository HEAD 以 GitHub `main` 为准；文档专用 PR #80 不改变运行时代码事实。
+最后一次代码事实核对基线：`main@be5573ae416b4ce81f8cc26ae282868a7efa7672`
+当前 repository HEAD 以 GitHub `main` 为准；PR #80 已合并。ENV-1B1A 当前只在 Draft PR 分支实现 static staging builder 和写入审计，完整 APP_ROOT 只读与正式不可变 Release 尚未形成。
 
 中期架构形态由 [ADR-ENV-001](../decisions/ADR-ENV-001-MODULAR-MONOLITH-MIDTERM-ARCHITECTURE-2026-07.md) 决定；Greenfield 生产路线由 [ADR-OPS-007](../decisions/ADR-OPS-007-GREENFIELD-PRODUCTION-BASELINE-AND-LEGACY-NON-MIGRATION-2026-07.md) 决定。本文件只提供当前仓库架构摘要和目标方向。
 
