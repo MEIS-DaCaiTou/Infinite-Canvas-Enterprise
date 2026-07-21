@@ -1,6 +1,6 @@
 # ENV-1B1A：APP_ROOT 写入审计与确定性 Static 构建
 
-- 状态：Draft PR 实现；尚未进入 `main`
+- 状态：已由 PR #81 完成并合并
 - 审计日期：2026-07-20
 - 起始代码基线：`main@be5573ae416b4ce81f8cc26ae282868a7efa7672`
 - 决策依据：[ADR-ENV-003](../decisions/ADR-ENV-003-IMMUTABLE-RELEASE-STATIC-CACHE-2026-07.md)、[ADR-ENV-004](../decisions/ADR-ENV-004-PATH-ROOTS-AND-RELEASE-DIRECTORY-2026-07.md)、[ADR-ENV-005](../decisions/ADR-ENV-005-RUNTIME-ENTRYPOINT-SELF-CHECK-MODES-2026-07.md)
@@ -22,7 +22,7 @@
 4. `enterprise.release.app_root_audit` 只接收 Git tracked 文件集，排除 test fixture 和浏览器静态页面后，对每个生产写入 site 记录相对文件、qualified symbol、operation 和规范化调用 SHA-256 fingerprint，再映射到 W01-W40。
 5. 冻结 manifest digest 覆盖所有 site fingerprint 和 Wxx；在既有 symbol 或脚本中新增、删除或改变写入也会漂移。每个 Wxx 另有必须存在的文件/符号锚点；读取失败、Unicode decode error 和 Python `SyntaxError` 均 fail closed。
 
-当前 Git tracked 输入共 308 个文件：78 个 Python / PowerShell / Batch / JavaScript 文件进入生产扫描，230 个非候选或明确 test/static 客户端文件被分类排除；检测到 295 个 write site，295 个均映射到 W01-W40，parse failure、uncovered site 和 stale mapping 均为 0。调用链归并后仍是下表 40 个功能写入流；295 个 AST/脚本命中不是 295 个独立 APP_ROOT blocker。该静态分析是可重复漂移门禁，不能证明绝对不存在动态或未知写入。
+当前 Git tracked 输入共 313 个文件：80 个 Python / PowerShell / Batch / JavaScript 文件进入生产扫描，233 个非候选或明确 test/static 客户端文件被分类排除；检测到 298 个 write site，298 个均映射到 W01-W40，parse failure、uncovered site 和 stale mapping 均为 0。ENV-1B2P 的 `runtime_provenance._atomic_write_report` 作为调用者显式报告写入归入 W40，不表示 APP_ROOT 路径已迁移。调用链归并后仍是下表 40 个功能写入流；298 个 AST/脚本命中不是 298 个独立 APP_ROOT blocker。该静态分析是可重复漂移门禁，不能证明绝对不存在动态或未知写入。
 
 ## 3. 写入流清单
 
@@ -69,7 +69,7 @@
 | W37 | OPS-2A/2B Windows wrappers | 显式 output、report、job log；可为是 | backup / admin | 盘点、备份、日志；部分持久；可能 | 人工 PowerShell | `STAGING_ROOT` | 已识别；ENV-1B1B | caller 必须显式选择外部根；脚本扫描 |
 | W38 | shipped/browser tool JavaScript | browser `localStorage`、浏览器/UXP temp download；服务器 APP_ROOT 否 | foreground / normal business request | 客户端偏好和临时下载；否；可能 | browser/connector | `CACHE_ROOT` | 已分类；不是服务器 APP_ROOT blocker | 受控 JS 扫描；不得误计为 Python server 写入 |
 | W39 | Python import machinery | `__pycache__` / `.pyc`；默认可在 APP_ROOT | import / child | bytecode cache；否；否 | Python interpreter | `CACHE_ROOT` | 已识别；ENV-1B1C/B2 | 正式入口尚未禁止 APP_ROOT bytecode；生命周期门禁待做 |
-| W40 | `enterprise/release/static_build.py` | 调用者显式全新 output + report；否（正式要求） | release-build | staging static 与确定性报告；否；否 | `tools/build_release_static.py` | `STAGING_ROOT` | ENV-1B1A 新增并关闭边界 | source 只读、原子 report、失败清理、确定性测试 |
+| W40 | `enterprise/release/static_build.py`、`enterprise/release/runtime_provenance.py` | 调用者显式全新 output + report；否（正式要求） | release-build / evidence verification | staging static、确定性构建报告与脱敏 provenance 报告；否；否 | 显式 build / verifier CLI | `STAGING_ROOT` | static 边界已关闭；provenance report 已识别，正式根仍待 ENV-1B1B | source/evidence 只读、原子 report、失败清理、确定性测试 |
 
 ### 3.1 要求覆盖但当前无仓库写入器的项目
 
@@ -122,6 +122,7 @@
 实现位置：
 
 - `enterprise/release/static_build.py`：核心 builder。
+- `enterprise/release/runtime_provenance.py`：ENV-1B2P 只读证据验证与调用者显式报告写入；不接线正式 Release 入口。
 - `tools/build_release_static.py`：薄 CLI，只解析三个必填路径并返回稳定错误分类。
 
 构建规则：
@@ -170,10 +171,11 @@
 - `__pycache__` / bytecode 尚未在 portable-release 中 fail closed 或迁到 `CACHE_ROOT`。
 - `_self_restart.*` legacy 路径和正式入口替代尚未处理。
 
-### ENV-1B2P / ENV-1B2 尚未开始
+### ENV-1B2P 当前 Draft / 完整 ENV-1B2 尚未开始
 
 - `get-pip.py`、系统 Python 和 `sys.executable` 不是正式 Runtime 证据。
-- 本任务没有下载、安装或修改 Python Runtime、lock、wheelhouse、SBOM 或 archive provenance。
+- ENV-1B2P 当前 Draft 只读核验仓库外既有证据，结果为 core `true`、dependency `false`、archive `false`、`production_approved=false`；它没有下载、安装、重建或修改 Python Runtime、lock、wheelhouse、SBOM 或 archive。
+- 分层证据详见 [ENV-1B2P 实施与证据文档](./ENV-1B2P-WINDOWS-RUNTIME-PROVENANCE-EVIDENCE-2026-07.md)；完整 ENV-1B2 仍未开始。
 
 ### 其它后续
 

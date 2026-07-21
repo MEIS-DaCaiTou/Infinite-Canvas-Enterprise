@@ -2,8 +2,9 @@
 
 - 状态：Accepted
 - 决策日期：2026-07-16
-- 事实基线：`main@396cccc68d63bd16393a2cb72d24e4a48fcf47cb`
-- 实施状态：候选验证已完成，正式 Release 运行时尚未批准
+- 决策事实基线：`main@396cccc68d63bd16393a2cb72d24e4a48fcf47cb`
+- 当前实施核对基线：`main@a53885b026a6c2440acb0fbde72d6571ff6f7723`
+- 实施状态：历史候选验证已完成；ENV-1B2P 当前在 Draft PR 中形成分层复核，正式 Release 运行时尚未批准
 
 ## 背景
 
@@ -45,7 +46,20 @@ archive_provenance_verified
 - 本地 `python.zip` SHA-256 为 `d55f1deea7351f1e83168db5fd533b9740fcd0bc429a6c1fbc53bda135c33aa2`。
 - 候选运行时完成过 `start -> restart -> stop -> start -> stop` 隔离生命周期验证。
 
-因此当前结论是：核心解释器可绑定到固定上游提交；依赖层需要从锁文件和可信 wheelhouse 重建；完整 archive provenance 仍未验证。当前运行时不得标记 `production_approved=true`。
+ENV-1B2P 当前 Draft PR 使用标准库验证器对唯一外部候选重新执行只读核验，机器摘要见 [ENV-1B2P 实施与证据文档](../env/ENV-1B2P-WINDOWS-RUNTIME-PROVENANCE-EVIDENCE-2026-07.md)。结果保持严格分层：
+
+```text
+core_runtime_provenance_verified=true
+dependency_layer_rebuilt_and_verified=false
+archive_provenance_verified=false
+production_approved=false
+```
+
+core 为 `true` 的依据是固定 commit 的 34 个 Git 核心、source archive 对应 34 文件、候选实际核心和受控 `python310._pth` 变换均逐项绑定，候选解释器身份与检查前后树摘要一致。dependency 为 `false`：lock / 30-wheel SHA-256 闭合通过，实际 33 个 distribution 等于 30 个 lock 项加固定 bootstrap allowlist（`pip`、`setuptools`、`wheel`），但现有证据缺少独立 rebuild attestation 和独立 pip-check report。archive 为 `false`，因为历史 source `python.zip` 不是 assembled candidate archive，且没有独立 archive build record。外部人工报告或 Runtime manifest 内的 `offline`、`pip_check_passed`、`build_process_record_sha256` 等自声明不能单独提升任何层。
+
+ENV-1B2P 的 future true-path 必须将 rebuild attestation、pip-check report 和 archive build record 作为显式独立输入；Runtime manifest 只提供 filename / SHA-256 绑定，验证器必须重算 artifact 哈希并核对候选树、安装闭包、lock、wheelhouse、ABI、commit、命令退出结果和 archive 内容。assembled archive 的普通文件路径集合必须精确等于 `root_prefix` 下 full inventory 的展开集合，build record entry count 也必须等于该集合大小；root-prefix 外夹带文件、兄弟目录、第二个 Runtime 根和未声明 metadata 均为 `failed_integrity`，本阶段没有 metadata allowlist。artifact 缺失为 `insufficient`；已提供但哈希或内容冲突为 `failed_integrity`。
+
+该复核证据的 enterprise commit 为历史 `396cccc`，当前代码基线为 `a53885b`；证据内部没有 commit 冲突，但没有重跑 PR #81 合并后的完整应用生命周期。ENV-1B2P 合并前，上述实现和机器结论只属于当前 Draft PR；无论是否合并，均不得标记 `production_approved=true`。
 
 ## 正式证据要求
 
