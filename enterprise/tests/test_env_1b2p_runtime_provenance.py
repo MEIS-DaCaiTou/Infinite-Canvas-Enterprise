@@ -345,6 +345,24 @@ def _rewrite_bound_artifact(
     fixture.manifest.write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
 
 
+def _rebind_formal_archive(fixture: Fixture) -> None:
+    """Keep fixture bindings self-consistent after deliberately changing its ZIP."""
+    assert fixture.target_archive is not None
+    assert fixture.archive_build_record is not None
+    manifest = json.loads(fixture.manifest.read_text(encoding="utf-8"))
+    formal = manifest["archive_provenance"]
+    assert isinstance(formal, dict)
+    archive_hash = provenance._sha256_file(fixture.target_archive)
+    formal["archive_sha256"] = archive_hash
+
+    build_record = json.loads(fixture.archive_build_record.read_text(encoding="utf-8"))
+    build_record["output_archive_sha256"] = archive_hash
+    build_record["output_archive_entry_count"] = len(provenance._zip_inventory(fixture.target_archive)[0])
+    fixture.archive_build_record.write_text(json.dumps(build_record, sort_keys=True), encoding="utf-8")
+    formal["archive_build_record_sha256"] = provenance._sha256_file(fixture.archive_build_record)
+    fixture.manifest.write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
+
+
 def test_complete_core_runtime_matches_fixed_upstream(tmp_path: Path) -> None:
     report = _verify(_build_fixture(tmp_path))
     assert report["core_runtime_provenance_verified"] is True
@@ -601,6 +619,7 @@ def test_formal_candidate_archive_can_be_verified(tmp_path: Path) -> None:
     assert report["overall_classification"] == "verified"
     assert _check(report, "archive-build-record-binding")["status"] == "pass"
     assert _check(report, "archive-build-record-content")["status"] == "pass"
+    assert _check(report, "assembled-archive-global-inventory")["status"] == "pass"
 
 
 def test_legacy_zero_build_process_hash_without_artifact_cannot_verify_archive(tmp_path: Path) -> None:
@@ -678,7 +697,50 @@ def test_archive_extra_file_fails_integrity(tmp_path: Path) -> None:
     assert fixture.target_archive is not None
     with zipfile.ZipFile(fixture.target_archive, "a") as archive:
         archive.writestr("runtime/extra.dll", b"extra")
-    assert _verify(fixture)["result"] == "fail"
+    _rebind_formal_archive(fixture)
+    report = _verify(fixture)
+    assert _check(report, "assembled-archive-global-inventory")["status"] == "fail"
+    assert _check(report, "assembled-archive-file-inventory")["status"] == "fail"
+    assert report["result"] == "fail"
+
+
+@pytest.mark.parametrize(
+    "extra_path",
+    [
+        "unexpected.exe",
+        "metadata/unexpected.json",
+        "second-runtime/python.exe",
+    ],
+)
+def test_archive_root_prefix_outside_file_fails_closed_after_full_rebinding(
+    tmp_path: Path, extra_path: str
+) -> None:
+    fixture = _build_fixture(tmp_path, independent_dependency=True, formal_archive=True, build_record=True)
+    assert fixture.target_archive is not None
+    with zipfile.ZipFile(fixture.target_archive, "a") as archive:
+        archive.writestr(extra_path, b"unexpected")
+    _rebind_formal_archive(fixture)
+
+    report = _verify(fixture)
+    assert _check(report, "archive-build-record-binding")["status"] == "pass"
+    assert _check(report, "assembled-archive-build-provenance")["status"] == "pass"
+    assert _check(report, "assembled-archive-file-inventory")["status"] == "pass"
+    assert _check(report, "assembled-archive-global-inventory")["status"] == "fail"
+    assert report["archive_provenance_verified"] is False
+    assert report["overall_classification"] == "failed_integrity"
+
+
+def test_archive_build_record_entry_count_cannot_include_extra_file(tmp_path: Path) -> None:
+    fixture = _build_fixture(tmp_path, independent_dependency=True, formal_archive=True, build_record=True)
+    assert fixture.target_archive is not None
+    with zipfile.ZipFile(fixture.target_archive, "a") as archive:
+        archive.writestr("unexpected.exe", b"unexpected")
+    _rebind_formal_archive(fixture)
+
+    report = _verify(fixture)
+    assert _check(report, "archive-build-record-content")["status"] == "fail"
+    assert _check(report, "assembled-archive-global-inventory")["status"] == "fail"
+    assert report["overall_classification"] == "failed_integrity"
 
 
 def test_archive_path_escape_is_rejected(tmp_path: Path) -> None:

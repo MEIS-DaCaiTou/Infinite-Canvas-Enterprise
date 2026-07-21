@@ -20,7 +20,7 @@ from typing import Any, Iterable, Mapping, Sequence
 
 
 SCHEMA_VERSION = "env-1b2p-runtime-provenance-report-v2"
-VERIFIER_VERSION = "env-1b2p-runtime-provenance-verifier-v2"
+VERIFIER_VERSION = "env-1b2p-runtime-provenance-verifier-v3"
 RUNTIME_MANIFEST_SCHEMA = "enterprise-windows-runtime-manifest-v1"
 WHEELHOUSE_MANIFEST_SCHEMA = "env-1b2a-wheelhouse-sha256-v1"
 DEPENDENCY_REBUILD_ATTESTATION_SCHEMA = "env-1b2p-dependency-rebuild-attestation-v1"
@@ -1007,10 +1007,12 @@ def _verify_archive_layer(
 
     root_prefix_value = formal.get("root_prefix")
     root_prefix = _safe_relative_path(root_prefix_value, code="archive-root-prefix-invalid")
+    expected_archive_paths = {f"{root_prefix}/{relative}" for relative in full_inventory}
     archive_runtime = _zip_subtree(archive_records, root_prefix)
     inventory_match = set(archive_runtime) == set(full_inventory) and all(
         _records_equal(archive_runtime.get(relative), record) for relative, record in full_inventory.items()
     )
+    global_inventory_match = set(archive_records) == expected_archive_paths
     runtime_match = set(runtime_records) == set(full_inventory) and all(
         _records_equal(runtime_records.get(relative), record) for relative, record in full_inventory.items()
     )
@@ -1045,7 +1047,7 @@ def _verify_archive_layer(
             "wheelhouse_tree_sha256": dependency_context.get("wheelhouse_tree_sha256"),
             "full_file_inventory_sha256": full_inventory_digest,
             "output_archive_sha256": archive_sha256,
-            "output_archive_entry_count": len(archive_records),
+            "output_archive_entry_count": len(expected_archive_paths),
         }
         build_record_ok = all(build_record.get(key) == value for key, value in expected_build_binding.items())
         build_record_ok = bool(
@@ -1058,6 +1060,11 @@ def _verify_archive_layer(
             and build_record.get("post_build_changes_detected") is False
         )
         state.check("archive-build-record-content", "pass" if build_record_ok else "fail")
+    state.check(
+        "assembled-archive-global-inventory",
+        "pass" if global_inventory_match else "fail",
+        count=len(archive_records),
+    )
     state.check("assembled-archive-file-inventory", "pass" if inventory_match else "fail", count=len(archive_runtime))
     state.check("assembled-archive-runtime-match", "pass" if runtime_match else "fail", count=len(runtime_records))
     state.check("assembled-archive-build-provenance", "pass" if identity_ok and dependency_binding_ok else "fail")
@@ -1067,7 +1074,8 @@ def _verify_archive_layer(
     else:
         state.check("assembled-archive-dependency-layer", "pass")
     return bool(
-        inventory_match
+        global_inventory_match
+        and inventory_match
         and runtime_match
         and identity_ok
         and dependency_binding_ok
