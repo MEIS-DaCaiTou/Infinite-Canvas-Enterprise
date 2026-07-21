@@ -57,14 +57,14 @@ overall_classification=partially_verified
 - source Runtime archive 与未来 assembled candidate archive 使用不同参数和证据角色，source `python.zip` 不能冒充完整候选归档。
 - installed distributions 必须等于 lock 加代码内固定 bootstrap allowlist；allowlist 仅为 `pip`、`setuptools`、`wheel`，实际出现项及版本单独写入报告，manifest 不能动态扩展。正式 ENV-1B2 仍应锁定全部交付 distribution。
 - dependency true-path 只接受独立 `env-1b2p-dependency-rebuild-attestation-v1` 和 `env-1b2p-pip-check-report-v1` artifact。manifest 仅以 filename / SHA-256 绑定，验证器重新计算哈希、安装闭包摘要、Runtime/wheelhouse 树摘要及 commit/ABI 关联；manifest 内 `offline`、`pip_check_passed` 等自声明不具提升权。
-- archive true-path 额外要求独立 `env-1b2p-archive-build-record-v1`，并重新验证实际 build record 哈希、builder 身份、完整文件清单摘要、候选树、依赖证据和 output archive 绑定。任意格式正确的 64 位字符串不能替代实际 artifact。
+- archive true-path 额外要求独立 `env-1b2p-archive-build-record-v1`，并重新验证实际 build record 哈希、builder 身份、完整文件清单摘要、候选树、依赖证据和 output archive 绑定。assembled archive 的完整 ZIP 普通文件路径集合必须精确等于 `root_prefix/full_inventory` 展开集合；`root_prefix` 外文件、兄弟目录、第二个 Runtime 根或未声明 metadata 一律 fail closed，不存在 metadata allowlist。任意格式正确的 64 位字符串不能替代实际 artifact。
 - 路径绝对化；输入根、祖先和树内 symlink / junction / reparse fail closed；manifest、lock 和 ZIP 路径拒绝绝对路径、逃逸、ADS、Windows 设备名、大小写归一重复和 symlink 条目。
 - 大文件分块 SHA-256；ZIP 直接读取目录和流，不解压到正式目录。
 - 候选解释器只使用显式 `python.exe`、清理后的环境、`PYTHONDONTWRITEBYTECODE=1`、参数数组、`shell=False` 和超时；不导入项目业务代码。
 - 报告只含 basename、哈希、大小、计数和稳定错误码；不含本机绝对路径、环境变量值、secret 或 traceback。
 - 报告使用全新目标和同目录临时文件原子发布；失败不会留下 `result=pass`。
 
-自声明提升补正后的报告 schema 为 `env-1b2p-runtime-provenance-report-v2`，verifier version 为 `env-1b2p-runtime-provenance-verifier-v2`。
+报告 schema 保持 `env-1b2p-runtime-provenance-report-v2`；全局 archive inventory 闭包补正后的 verifier version 为 `env-1b2p-runtime-provenance-verifier-v3`。
 
 ## 5. 三层真实结果
 
@@ -96,7 +96,7 @@ overall_classification=partially_verified
 
 `archive_provenance_verified=false`。已验证 source `python.zip` 的唯一身份、完整 SHA-256、3,724 个 central-directory 条目（其中 3,287 个普通文件）的安全 ZIP 结构和 34 个核心文件绑定；但该文件是 source Runtime archive，不是依赖重建后的 assembled candidate archive。
 
-历史 manifest 和报告明确记录 candidate Runtime ZIP 未生成，因此缺少：完整候选归档、逐文件 full manifest、独立 archive build record，以及归档与已验证依赖层的绑定。future true-path 要求实际 build record 文件由 manifest 以 filename/SHA-256 绑定，且 record 内容逐项绑定 builder、commits、Python/ABI、Runtime/wheelhouse 树、lock、full inventory 和 output archive；孤立 source archive hash、任意 `build_process_record_sha256` 字符串、可解压或可启动均不能提升本字段。
+历史 manifest 和报告明确记录 candidate Runtime ZIP 未生成，因此缺少：完整候选归档、逐文件 full manifest、独立 archive build record，以及归档与已验证依赖层的绑定。future true-path 要求实际 build record 文件由 manifest 以 filename/SHA-256 绑定，且 record 内容逐项绑定 builder、commits、Python/ABI、Runtime/wheelhouse 树、lock、full inventory 和 output archive；build record 的 entry count 必须等于 full inventory 在 root prefix 下展开后的精确路径数。归档普通文件路径集合必须全局闭合，不能只比较 root prefix 子树；任何 root-prefix 外夹带文件均是完整性失败。孤立 source archive hash、任意 `build_process_record_sha256` 字符串、可解压或可启动均不能提升本字段。
 
 ## 6. 当前证据限制
 

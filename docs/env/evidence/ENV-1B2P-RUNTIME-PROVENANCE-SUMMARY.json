@@ -79,7 +79,7 @@
   "result": "pass",
   "schema_version": "env-1b2p-runtime-provenance-report-v2",
   "upstream_commit": "f1dd6834a72f3e7ff8340be05a84347d931e9cb9",
-  "verifier_version": "env-1b2p-runtime-provenance-verifier-v2",
+  "verifier_version": "env-1b2p-runtime-provenance-verifier-v3",
   "warnings": [
     "historical-evidence-enterprise-commit-differs-from-current-base",
     "python310-pth-is-declared-relative-app-root-transform"
