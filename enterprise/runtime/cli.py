@@ -43,14 +43,15 @@ def _paths(args: argparse.Namespace) -> tuple[Path, Path]:
 def _config(args: argparse.Namespace, *, mode: str) -> SupervisorConfig:
     app_root, runtime_root = _paths(args)
     try:
-        from enterprise.config import GATEWAY_PORT, UPSTREAM_PORT
+        from enterprise.config import GATEWAY_PORT, UPSTREAM_PORT, PATH_ROOTS
     except Exception:
-        GATEWAY_PORT, UPSTREAM_PORT = 8000, 3001
+        GATEWAY_PORT, UPSTREAM_PORT, PATH_ROOTS = 8000, 3001, None
     upstream_port = args.upstream_port if args.upstream_port is not None else UPSTREAM_PORT
     gateway_port = args.gateway_port if args.gateway_port is not None else GATEWAY_PORT
     return SupervisorConfig(
         app_root=app_root,
         runtime_root=runtime_root,
+        log_root=(PATH_ROOTS.LOG_ROOT / "runtime") if PATH_ROOTS is not None else None,
         mode=mode,
         upstream_port=upstream_port,
         gateway_port=gateway_port,

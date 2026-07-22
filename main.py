@@ -39,6 +39,19 @@ from fastapi.responses import FileResponse, Response, StreamingResponse, JSONRes
 from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
 
+# ENV-1B1B compatibility seam: main keeps legacy string constants below, but
+# their values come from a process-installed immutable PathRoots contract.
+# enterprise.config supplies only the development compatibility bootstrap;
+# portable tests must install roots before importing main.
+from enterprise.config import PATH_ROOTS as _CONFIG_PATH_ROOTS
+from enterprise.paths import get_path_roots, prepare_application_directories
+from enterprise.app_paths import AppPathLayout
+
+# Do not make `main.py` choose a profile.  The getter only accepts a process
+# root already installed by the caller (or the development compatibility
+# bootstrap performed by enterprise.config).
+PATH_ROOTS = get_path_roots()
+
 QUIET_ACCESS_PATHS = {
     "/api/queue_status",
     "/api/canvases",
@@ -181,6 +194,10 @@ MODELSCOPE_TREE_URL = "https://www.modelscope.ai/api/v1/studio/daniel8152/Infini
 async def startup_event():
     global GLOBAL_LOOP
     GLOBAL_LOOP = asyncio.get_running_loop()
+    prepare_application_directories(PATH_ROOTS)
+    # Configuration bootstrap is intentionally startup-scoped.  Importing the
+    # application must not create mutable files in either profile.
+    ensure_runtime_config_files()
     # 启动时整理资产库：给所有图片分组（含默认角色/场景）建好文件夹，并把根目录里的旧素材归整进去。
     try:
         await asyncio.to_thread(migrate_asset_library_into_dirs)
@@ -214,32 +231,34 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str = None):
 # --- 配置区域 ---
 
 CLIENT_ID = str(uuid.uuid4())
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-WORKFLOW_DIR = os.path.join(BASE_DIR, "workflows")
-WORKFLOW_PATH = os.path.join(WORKFLOW_DIR, "Z-Image.json")
-STATIC_DIR = os.path.join(BASE_DIR, "static")
+_PATH_LAYOUT = AppPathLayout(get_path_roots())
+BASE_DIR = _PATH_LAYOUT.BASE_DIR
+WORKFLOW_DIR = _PATH_LAYOUT.WORKFLOW_DIR
+SHIPPED_WORKFLOW_DIR = _PATH_LAYOUT.SHIPPED_WORKFLOW_DIR
+WORKFLOW_PATH = os.path.join(SHIPPED_WORKFLOW_DIR, "Z-Image.json")
+STATIC_DIR = _PATH_LAYOUT.STATIC_DIR
 STATIC_RUNNINGHUB_DIR = os.path.join(STATIC_DIR, "runninghub")
 STATIC_RUNNINGHUB_THUMBNAIL_DIR = os.path.join(STATIC_RUNNINGHUB_DIR, "thumbnails")
 STATIC_RUNNINGHUB_API_PROVIDERS_FILE = os.path.join(STATIC_RUNNINGHUB_DIR, "api_providers.json")
 STATIC_RUNNINGHUB_MODEL_REGISTRY_FILE = os.path.join(STATIC_RUNNINGHUB_DIR, "models_registry.json")
-OUTPUT_DIR = os.path.join(BASE_DIR, "output")
-ASSETS_DIR = os.path.join(BASE_DIR, "assets")
-OUTPUT_INPUT_DIR = os.path.join(ASSETS_DIR, "input")
-OUTPUT_OUTPUT_DIR = os.path.join(ASSETS_DIR, "output")
-ASSET_LIBRARY_DIR = os.path.join(ASSETS_DIR, "library")
-LOCAL_UPLOAD_DIR = os.path.join(ASSETS_DIR, "uploads")
-HISTORY_FILE = os.path.join(BASE_DIR, "history.json")
-API_ENV_FILE = os.path.join(BASE_DIR, "API", ".env")
-DATA_DIR = os.path.join(BASE_DIR, "data")
-CONVERSATION_DIR = os.path.join(DATA_DIR, "conversations")
-CANVAS_DIR = os.path.join(DATA_DIR, "canvases")
-MEDIA_PREVIEW_DIR = os.path.join(DATA_DIR, "media_previews")
-ASSET_LIBRARY_PATH = os.path.join(DATA_DIR, "asset_library.json")
-PROMPT_LIBRARY_PATH = os.path.join(DATA_DIR, "prompt_libraries.json")
-API_PROVIDERS_FILE = os.path.join(DATA_DIR, "api_providers.json")
-RUNNINGHUB_WORKFLOW_STORE_FILE = os.path.join(DATA_DIR, "runninghub_workflows.json")
-SHARED_FOLDERS_FILE = os.path.join(DATA_DIR, "shared_folders.json")
-GLOBAL_CONFIG_FILE = os.path.join(BASE_DIR, "global_config.json")
+OUTPUT_DIR = _PATH_LAYOUT.OUTPUT_DIR
+ASSETS_DIR = _PATH_LAYOUT.ASSETS_DIR
+OUTPUT_INPUT_DIR = _PATH_LAYOUT.OUTPUT_INPUT_DIR
+OUTPUT_OUTPUT_DIR = _PATH_LAYOUT.OUTPUT_OUTPUT_DIR
+ASSET_LIBRARY_DIR = _PATH_LAYOUT.ASSET_LIBRARY_DIR
+LOCAL_UPLOAD_DIR = _PATH_LAYOUT.LOCAL_UPLOAD_DIR
+HISTORY_FILE = _PATH_LAYOUT.HISTORY_FILE
+API_ENV_FILE = _PATH_LAYOUT.API_ENV_FILE
+DATA_DIR = _PATH_LAYOUT.DATA_DIR
+CONVERSATION_DIR = _PATH_LAYOUT.CONVERSATION_DIR
+CANVAS_DIR = _PATH_LAYOUT.CANVAS_DIR
+MEDIA_PREVIEW_DIR = _PATH_LAYOUT.MEDIA_PREVIEW_DIR
+ASSET_LIBRARY_PATH = _PATH_LAYOUT.ASSET_LIBRARY_PATH
+PROMPT_LIBRARY_PATH = _PATH_LAYOUT.PROMPT_LIBRARY_PATH
+API_PROVIDERS_FILE = _PATH_LAYOUT.API_PROVIDERS_FILE
+RUNNINGHUB_WORKFLOW_STORE_FILE = _PATH_LAYOUT.RUNNINGHUB_WORKFLOW_STORE_FILE
+SHARED_FOLDERS_FILE = _PATH_LAYOUT.SHARED_FOLDERS_FILE
+GLOBAL_CONFIG_FILE = _PATH_LAYOUT.GLOBAL_CONFIG_FILE
 CANVAS_TRASH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 LOCAL_IMAGE_IMPORT_MAX_BYTES = int(os.getenv("LOCAL_IMAGE_IMPORT_MAX_BYTES", str(50 * 1024 * 1024)))
 LOCAL_IMAGE_IMPORT_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
@@ -456,7 +475,6 @@ def ensure_runtime_config_files():
     """首次运行时提前创建配置目录，避免第一次保存 API Key 时才创建目录/文件。"""
     try:
         os.makedirs(os.path.dirname(API_ENV_FILE), exist_ok=True)
-        os.makedirs(DATA_DIR, exist_ok=True)
         if not os.path.exists(API_ENV_FILE):
             with open(API_ENV_FILE, "a", encoding="utf-8"):
                 pass
@@ -478,7 +496,6 @@ def load_env_file():
                 os.environ.setdefault(key, value)
     except Exception as e:
         print(f"加载 API/.env 失败: {e}")
-ensure_runtime_config_files()
 load_env_file()
 
 COMFYUI_INSTANCES = [s.strip() for s in os.getenv("COMFYUI_INSTANCES", "127.0.0.1:8188").split(",") if s.strip()]
@@ -1398,20 +1415,11 @@ def update_env_values(updates):
 
 BACKEND_LOCAL_LOAD = {addr: 0 for addr in COMFYUI_INSTANCES}
 
-os.makedirs(OUTPUT_DIR, exist_ok=True)
-os.makedirs(ASSETS_DIR, exist_ok=True)
-os.makedirs(OUTPUT_INPUT_DIR, exist_ok=True)
-os.makedirs(OUTPUT_OUTPUT_DIR, exist_ok=True)
-os.makedirs(ASSET_LIBRARY_DIR, exist_ok=True)
-os.makedirs(LOCAL_UPLOAD_DIR, exist_ok=True)
-os.makedirs(STATIC_DIR, exist_ok=True)
-os.makedirs(WORKFLOW_DIR, exist_ok=True)
-os.makedirs(CONVERSATION_DIR, exist_ok=True)
-os.makedirs(CANVAS_DIR, exist_ok=True)
-
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-app.mount("/output", StaticFiles(directory=OUTPUT_DIR), name="output")
-app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
+# External mutable roots are prepared by the explicit application capability
+# at startup.  Do not create them merely to satisfy an import-time mount.
+app.mount("/output", StaticFiles(directory=OUTPUT_DIR, check_dir=False), name="output")
+app.mount("/assets", StaticFiles(directory=ASSETS_DIR, check_dir=False), name="assets")
 
 # --- Pydantic 模型 ---
 
@@ -16287,20 +16295,43 @@ class WorkflowRunRequest(BaseModel):
     config: WorkflowConfig
     client_id: str = ""
 
-def workflow_path_from_name(name: str) -> str:
+def _workflow_path_in(root: str, name: str) -> str:
     if not WORKFLOW_NAME_RE.match(name):
         raise HTTPException(status_code=400, detail="Invalid workflow name")
-    path = os.path.abspath(os.path.join(WORKFLOW_DIR, *name.split("/")))
-    workflow_root = os.path.abspath(WORKFLOW_DIR)
+    path = os.path.abspath(os.path.join(root, *name.split("/")))
+    workflow_root = os.path.abspath(root)
     if os.path.commonpath([workflow_root, path]) != workflow_root:
         raise HTTPException(status_code=400, detail="Invalid workflow name")
     return path
 
+def user_workflow_path_from_name(name: str) -> str:
+    return _workflow_path_in(WORKFLOW_DIR, name)
+
+def shipped_workflow_path_from_name(name: str) -> str:
+    return _workflow_path_in(SHIPPED_WORKFLOW_DIR, name)
+
+def workflow_path_from_name(name: str) -> str:
+    """Read overlay: user workflow wins, otherwise shipped source is read-only."""
+    user_path = user_workflow_path_from_name(name)
+    return user_path if os.path.exists(user_path) else shipped_workflow_path_from_name(name)
+
 def workflow_config_path(name: str) -> str:
-    return workflow_path_from_name(name).replace(".json", ".config.json")
+    return user_workflow_path_from_name(name).replace(".json", ".config.json")
 
 def is_builtin_workflow(name: str) -> bool:
-    return "/" not in name and os.path.basename(name) in BUILTIN_WORKFLOWS
+    return os.path.isfile(shipped_workflow_path_from_name(name))
+
+def _copy_shipped_workflow_to_user(name: str) -> str:
+    user_path = user_workflow_path_from_name(name)
+    if os.path.exists(user_path):
+        return user_path
+    shipped_path = shipped_workflow_path_from_name(name)
+    if not os.path.isfile(shipped_path):
+        return user_path
+    os.makedirs(os.path.dirname(user_path), exist_ok=True)
+    with open(shipped_path, "rb") as source, open(user_path, "xb") as target:
+        shutil.copyfileobj(source, target)
+    return user_path
 
 def runninghub_workflow_store_path() -> str:
     return RUNNINGHUB_WORKFLOW_STORE_FILE
@@ -16735,32 +16766,32 @@ def save_comfyui_instances(payload: ComfyInstancesPayload):
 
 @app.get("/api/workflows")
 def list_workflows():
-    if not os.path.isdir(WORKFLOW_DIR):
-        return {"workflows": []}
-    items = []
-    for root, dirs, files in os.walk(WORKFLOW_DIR):
-        if os.path.abspath(root) == os.path.abspath(WORKFLOW_DIR):
-            dirs[:] = [d for d in dirs if d in {CUSTOM_WORKFLOW_FOLDER, LEGACY_CUSTOM_WORKFLOW_FOLDER}]
-        for fn in sorted(files):
-            if not fn.endswith(".json") or fn.endswith(".config.json"):
-                continue
-            rel = os.path.relpath(os.path.join(root, fn), WORKFLOW_DIR).replace("\\", "/")
-            if is_builtin_workflow(rel):
-                continue
-            cfg = {}
-            cfg_path = workflow_config_path(rel)
-            if os.path.exists(cfg_path):
-                try:
-                    with open(cfg_path, "r", encoding="utf-8") as f:
-                        cfg = json.load(f) or {}
-                except Exception:
-                    cfg = {}
-            items.append({
+    items_by_name = {}
+    for workflow_root, source in ((SHIPPED_WORKFLOW_DIR, "shipped"), (WORKFLOW_DIR, "user")):
+        if not os.path.isdir(workflow_root):
+            continue
+        for root, dirs, files in os.walk(workflow_root):
+            if os.path.abspath(root) == os.path.abspath(workflow_root):
+                dirs[:] = [d for d in dirs if d in {CUSTOM_WORKFLOW_FOLDER, LEGACY_CUSTOM_WORKFLOW_FOLDER}]
+            for fn in sorted(files):
+                if not fn.endswith(".json") or fn.endswith(".config.json"):
+                    continue
+                rel = os.path.relpath(os.path.join(root, fn), workflow_root).replace("\\", "/")
+                cfg = {}
+                cfg_path = workflow_config_path(rel)
+                if os.path.exists(cfg_path):
+                    try:
+                        with open(cfg_path, "r", encoding="utf-8") as f:
+                            cfg = json.load(f) or {}
+                    except Exception:
+                        cfg = {}
+                items_by_name[rel] = {
                 "name": rel,
                 "title": cfg.get("title") or fn.replace(".json", ""),
-                "builtin": False,
+                "builtin": source == "shipped" and not os.path.exists(user_workflow_path_from_name(rel)),
                 "field_count": len(cfg.get("fields") or []),
-            })
+                }
+    items = list(items_by_name.values())
     items.sort(key=lambda item: (0 if item["name"].startswith(f"{CUSTOM_WORKFLOW_FOLDER}/") else 1, item["title"]))
     return {"workflows": items}
 
@@ -16808,7 +16839,7 @@ def upload_workflow(payload: WorkflowUploadRequest):
 def save_workflow_config(name: str, payload: WorkflowConfig):
     if not WORKFLOW_NAME_RE.match(name):
         raise HTTPException(status_code=400, detail="Invalid workflow name")
-    workflow_path = workflow_path_from_name(name)
+    workflow_path = _copy_shipped_workflow_to_user(name)
     if not os.path.exists(workflow_path):
         raise HTTPException(status_code=404, detail="Workflow not found")
     cfg_path = workflow_config_path(name)
@@ -16820,9 +16851,9 @@ def save_workflow_config(name: str, payload: WorkflowConfig):
 def delete_workflow(name: str):
     if not WORKFLOW_NAME_RE.match(name):
         raise HTTPException(status_code=400, detail="Invalid workflow name")
-    if is_builtin_workflow(name):
-        raise HTTPException(status_code=400, detail="内置工作流不可删除")
-    workflow_path = workflow_path_from_name(name)
+    workflow_path = user_workflow_path_from_name(name)
+    if not os.path.exists(workflow_path) and is_builtin_workflow(name):
+        raise HTTPException(status_code=400, detail="BUILTIN_WORKFLOW_DELETE_FORBIDDEN")
     cfg_path = workflow_config_path(name)
     if not os.path.exists(workflow_path):
         raise HTTPException(status_code=404, detail="Workflow not found")

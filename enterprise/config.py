@@ -6,11 +6,28 @@ import os
 import sys
 from pathlib import Path
 
-# 项目根目录（enterprise/ 的上级）
-ROOT_DIR = Path(__file__).parent.parent
+from enterprise.paths import (
+    PathRootsError,
+    derive_development_path_roots,
+    get_path_roots,
+    install_path_roots_for_process,
+)
+
+# The development compatibility bootstrap is anchored at this source file, not
+# cwd.  Portable integration installs an explicit PathRoots instance before
+# importing this module, so it never falls back to repository-relative paths.
+try:
+    PATH_ROOTS = get_path_roots()
+except PathRootsError as exc:
+    if exc.code != "PATH_ROOTS_PROCESS_UNINITIALIZED":
+        raise
+    PATH_ROOTS = install_path_roots_for_process(derive_development_path_roots(Path(__file__).parent.parent))
+
+# Historical name retained for callers which use it as the application root.
+ROOT_DIR = PATH_ROOTS.APP_ROOT
 
 # 加载 enterprise.env
-_env_file = ROOT_DIR / "enterprise.env"
+_env_file = PATH_ROOTS.CONFIG_ROOT / "enterprise.env"
 if _env_file.exists():
     with open(_env_file, encoding="utf-8") as f:
         for line in f:
@@ -39,10 +56,10 @@ ADMIN_USERNAME: str = os.getenv("ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD: str = os.getenv("ADMIN_PASSWORD", DEFAULT_ADMIN_PASSWORD)
 
 # ── 数据库 ────────────────────────────────────────────────
-DB_PATH: str = os.getenv("DB_PATH", str(ROOT_DIR / "data" / "enterprise.db"))
+DB_PATH: str = os.getenv("DB_PATH", str(PATH_ROOTS.DATA_ROOT / "enterprise.db"))
 
 # ── 静态文件目录 ──────────────────────────────────────────
-ENTERPRISE_STATIC_DIR: Path = ROOT_DIR / "enterprise-static"
+ENTERPRISE_STATIC_DIR: Path = PATH_ROOTS.APP_ROOT / "enterprise-static"
 
 
 def _truthy(value: str | None) -> bool:

@@ -31,6 +31,7 @@ from enterprise.config import (
     ENTERPRISE_REPO_URL,
     ENTERPRISE_UPDATE_ENABLED,
     GATEWAY_PORT,
+    PATH_ROOTS,
     ROOT_DIR,
     UPSTREAM_PORT,
 )
@@ -64,10 +65,10 @@ _PROTECTED_LOCAL_RESOURCE_PREFIXES = (
     "/output/",
 )
 
-_CANVAS_DATA_DIR = Path(ROOT_DIR) / "data" / "canvases"
-_CONVERSATION_DATA_DIR = Path(ROOT_DIR) / "data" / "conversations"
-_HISTORY_FILE = Path(ROOT_DIR) / "history.json"
-_ASSET_LIBRARY_FILE = Path(ROOT_DIR) / "data" / "asset_library.json"
+_CANVAS_DATA_DIR = PATH_ROOTS.DATA_ROOT / "canvases"
+_CONVERSATION_DATA_DIR = PATH_ROOTS.DATA_ROOT / "conversations"
+_HISTORY_FILE = PATH_ROOTS.DATA_ROOT / "history.json"
+_ASSET_LIBRARY_FILE = PATH_ROOTS.DATA_ROOT / "asset_library.json"
 DEFAULT_PROJECT_ID = "default"
 
 _HISTORY_GENERATION_PATHS = {

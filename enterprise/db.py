@@ -12,7 +12,7 @@ import os
 import json
 from typing import Optional
 
-from enterprise.config import DB_PATH, ADMIN_USERNAME, ADMIN_PASSWORD, ROOT_DIR
+from enterprise.config import DB_PATH, ADMIN_USERNAME, ADMIN_PASSWORD, PATH_ROOTS, ROOT_DIR
 from enterprise.migrations.sec_1b1_role_auth import (
     ROLE_AUTH_READY,
     SCHEMA_LEGACY,
@@ -774,7 +774,7 @@ def assign_canvas_owner(canvas_id: str, user_id: str) -> None:
 # ── 项目归属映射 ──────────────────────────────────────────
 
 DEFAULT_PROJECT_ID = "default"
-CANVAS_DATA_DIR = os.path.join(str(ROOT_DIR), "data", "canvases")
+CANVAS_DATA_DIR = str(PATH_ROOTS.DATA_ROOT / "canvases")
 
 
 def _canvas_json_path(canvas_id: str) -> Optional[str]:
@@ -927,7 +927,7 @@ def project_exists(project_id: str) -> bool:
         return False
     if project_id == DEFAULT_PROJECT_ID:
         return True
-    path = os.path.join(str(ROOT_DIR), "data", "projects.json")
+    path = str(PATH_ROOTS.DATA_ROOT / "projects.json")
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -1014,7 +1014,7 @@ def assign_conversation_owner(conversation_id: str, user_id: str) -> None:
 
 
 def _conversation_root() -> str:
-    return os.path.join(str(ROOT_DIR), "data", "conversations")
+    return str(PATH_ROOTS.DATA_ROOT / "conversations")
 
 
 def list_conversation_records() -> list[dict]:

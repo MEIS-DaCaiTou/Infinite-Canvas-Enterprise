@@ -2,8 +2,8 @@
 
 - 状态：Accepted
 - 决策日期：2026-07-16
-- 事实基线：`main@396cccc68d63bd16393a2cb72d24e4a48fcf47cb`
-- 实施状态：契约已冻结，ENV-1B1B 尚未开始
+- 事实基线：`main@240f6a2b93268a415cddc3c9af9951f334c8e4e1`
+- 实施状态：契约已冻结；ENV-1B1B 实现当前仅在 Draft PR，尚未进入 `main`
 
 ## 决策
 
@@ -65,3 +65,12 @@ Junction 或快捷目录可以作为便利入口，但不是权威状态；junct
 - 版本切换不再与数据和配置覆盖绑定。
 - OPS-3B 可以基于 manifest 与权威状态文件执行明确切换。
 - 旧代码中的隐式 cwd、APP_ROOT 写入和绝对路径必须在 ENV-1B1A / B1B 中逐项迁移。
+
+## ENV-1B1B Draft 实施事实
+
+当前 Draft PR 提供 `PathRoots` 十四根模型、development/portable-release 显式 profile、两阶段
+portable 推导、containment/同卷/Windows 特殊路径/reparse 检查，以及按 application、runtime、
+OPS、install-state 分开的 directory prepare capability。它也提供 `STATE_ROOT/current-release.json`
+的严格 reader/writer/resolver（schema、固定字段、canonical JSON、residual `.new` 拒绝、fsync +
+`os.replace`）。这些实现不等于 activation、不选择解释器、不接线 launcher，且 legacy update、
+restart、bytecode 和其它 deferred 写入仍阻止完整只读 APP_ROOT。

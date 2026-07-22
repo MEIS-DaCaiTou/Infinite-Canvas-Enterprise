@@ -159,11 +159,11 @@
 - static build 在显式 staging 中完成，source 不变且输出/报告确定。
 - 写入 inventory、Git tracked fingerprint manifest、W01-W40 锚点和 fail-closed 漂移测试形成；这仍不是对未知写入绝对不存在的证明。
 
-### ENV-1B1B 尚未开始
+### ENV-1B1B 当前 Draft PR
 
-- 尚未实现集中 PathRoots，也未迁移 W02-W25、W27、W29-W31、W36-W37 的默认路径。
-- `assets/`、`output/`、`data/`、JSON、SQLite、配置、日志、OPS 默认输出仍可能写 APP_ROOT。
-- startup asset/upload migration 仍会写 APP_ROOT 中的持久目录。
+- 集中 PathRoots、current-release pointer 和 W02–W16、W18、W20–W21、W27、W29–W31 的核心默认路径迁移正在当前 Draft PR 实施；详见 [ENV-1B1B 实施记录](./ENV-1B1B-PATH-ROOTS-AND-CURRENT-RELEASE-IMPLEMENTATION-2026-07.md)。
+- legacy update W22/W23、self-restart W24/W25、第三方/installer/辅助脚本 W17/W35–W37 和 bytecode W39 仍未关闭；不能因此宣称完整 APP_ROOT 只读。
+- startup asset/upload migration 调用保留，但目标由 PathRoots 指向外部 UPLOAD_ROOT；此语义只在当前 Draft PR 中待审查。
 
 ### ENV-1B1C 尚未开始
 
@@ -171,15 +171,15 @@
 - `__pycache__` / bytecode 尚未在 portable-release 中 fail closed 或迁到 `CACHE_ROOT`。
 - `_self_restart.*` legacy 路径和正式入口替代尚未处理。
 
-### ENV-1B2P 当前 Draft / 完整 ENV-1B2 尚未开始
+### ENV-1B2P 已合并 / 完整 ENV-1B2 尚未开始
 
 - `get-pip.py`、系统 Python 和 `sys.executable` 不是正式 Runtime 证据。
-- ENV-1B2P 当前 Draft 只读核验仓库外既有证据，结果为 core `true`、dependency `false`、archive `false`、`production_approved=false`；它没有下载、安装、重建或修改 Python Runtime、lock、wheelhouse、SBOM 或 archive。
+- ENV-1B2P 已由 PR #82 合并；结论为 core `true`、dependency `false`、archive `false`、`production_approved=false`；它没有下载、安装、重建或修改 Python Runtime、lock、wheelhouse、SBOM 或 archive。
 - 分层证据详见 [ENV-1B2P 实施与证据文档](./ENV-1B2P-WINDOWS-RUNTIME-PROVENANCE-EVIDENCE-2026-07.md)；完整 ENV-1B2 仍未开始。
 
 ### 其它后续
 
 - legacy 原地 update/apply/rollback 与不可变 Release 冲突，需在 OPS-3B 的全新 Release 切换协议中处理；OPS-3B 当前未实现。
-- Manifest v2、`current-release.json`、Release 激活、Fresh Install Bootstrap、DATA-1、正式 backup/restore rehearsal 均未实施。
+- Manifest v2、Release 激活、Fresh Install Bootstrap、DATA-1、正式 backup/restore rehearsal 均未实施；`current-release.json` 原语只在 ENV-1B1B Draft PR 中，尚未进入 main 或接线 activation。
 
 因此当前 `full APP_ROOT immutable=false`、`formal Release created=false`、`Production Baseline=false`。

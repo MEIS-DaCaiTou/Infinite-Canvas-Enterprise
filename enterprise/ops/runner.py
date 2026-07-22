@@ -38,11 +38,14 @@ from enterprise.ops.release_validation import validate_release
 from enterprise.ops.update.errors import OnlineUpdateError
 from enterprise.ops.update.providers import GitHubReleasesProvider, LocalFixtureProvider
 from enterprise.ops.update.service import OnlineUpdateService
+from enterprise.config import PATH_ROOTS
 
 
-DEFAULT_ARTIFACT_DIR = "ops_artifacts"
-DEFAULT_BACKUP_DIR = "ops_backups"
-DEFAULT_LOG_FILE = "logs/ops/jobs.jsonl"
+# Defaults are anchored outside APP_ROOT.  Command-specific explicit targets
+# remain operation arguments and are not root overrides.
+DEFAULT_ARTIFACT_DIR = str(PATH_ROOTS.STAGING_ROOT / "reports")
+DEFAULT_BACKUP_DIR = str(PATH_ROOTS.BACKUP_ROOT)
+DEFAULT_LOG_FILE = str(PATH_ROOTS.LOG_ROOT / "ops" / "jobs.jsonl")
 SAMPLE_LIMIT = 20
 
 CRITICAL_RUNTIME_PATHS = (
@@ -945,7 +948,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     def add_common(subparser: argparse.ArgumentParser) -> None:
-        subparser.add_argument("--app-root", type=Path, default=Path.cwd(), help="Application root. Defaults to cwd.")
+        subparser.add_argument("--app-root", type=Path, default=PATH_ROOTS.APP_ROOT, help="Application root from PathRoots.")
         subparser.add_argument("--output-dir", default=DEFAULT_ARTIFACT_DIR, help="Directory for JSON reports.")
         subparser.add_argument("--log-file", default=DEFAULT_LOG_FILE, help="JSONL OPS job log path.")
         subparser.add_argument("--operator", default="", help="Optional operator name for local logs.")
@@ -982,7 +985,7 @@ def build_parser() -> argparse.ArgumentParser:
     prepare.set_defaults(handler=command_prepare_upgrade)
 
     def add_online_update_common(subparser: argparse.ArgumentParser, *, provider: bool) -> None:
-        subparser.add_argument("--app-root", type=Path, default=Path.cwd(), help="Application root read-only input.")
+        subparser.add_argument("--app-root", type=Path, default=PATH_ROOTS.APP_ROOT, help="Application root from PathRoots.")
         subparser.add_argument("--workspace", type=Path, required=True, help="Existing OPS workspace outside the application root.")
         if provider:
             subparser.add_argument("--provider", choices=("github-releases", "local-fixture"), default="github-releases")

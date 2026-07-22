@@ -464,6 +464,7 @@ _MAIN_FLOW_BY_SYMBOL.update(
         "shared_folders_save": "W10", "save_runninghub_workflow_store": "W10",
         "save_api_providers": "W11",
         "upload_workflow": "W12", "save_workflow_config": "W12", "delete_workflow": "W12",
+        "_copy_shipped_workflow_to_user": "W12",
         "make_workflow_library_item_from_bytes": "W12", "import_canvas_workflow": "W12",
         "_local_upload_item": "W13", "_write_local_upload_classification": "W13",
         "apimart_upload_file_payload": "W13", "apimart_upload_payload_from_bytes": "W13",
@@ -496,6 +497,12 @@ _OTHER_FLOW_BY_SYMBOL: dict[tuple[str, str], str] = {
     ("enterprise/db.py", "set_canvas_project"): "W09",
     ("enterprise/interceptors.py", "_write_history_records"): "W07",
     ("enterprise/interceptors.py", "normalize_resource_url"): "W13",
+    # Capability-scoped root preparation replaces import-time APP_ROOT mkdirs;
+    # it is audited as W02 until the per-flow runtime split is expanded.
+    ("enterprise/paths.py", "_create_and_check"): "W02",
+    # current-release is a STATE_ROOT primitive only (test/validation call
+    # sites in ENV-1B1B), classified with the existing state-control flow.
+    ("enterprise/release/current_release.py", "atomic_write_current_release"): "W24",
     ("enterprise/migrations/sec_1b1_role_auth.py", "_open_connection"): "W19",
     ("enterprise/migrations/sqlite_existing.py", "open_existing_sqlite"): "W19",
     ("enterprise/ops/runner.py", "append_jsonl"): "W30",
@@ -563,7 +570,7 @@ def _flow_for_operation(file: str, symbol: str) -> str:
 # every mapped site as (file, symbol, operation, normalized-call fingerprint,
 # Wxx flow). Line numbers are deliberately excluded, while duplicate identical
 # calls remain duplicate records. Any added/removed/changed call drifts it.
-EXPECTED_SITE_MANIFEST_DIGEST = "fb96d3f19b25e6118a67bc42460db3225b9d72729447c643ec3efd00ff7ed61c"
+EXPECTED_SITE_MANIFEST_DIGEST = "406aa718d7c8fd2cf49a846f563b92bd9b33ab34f609d9d721c0c5de528e2acb"
 
 FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W01", "main.py", "startup_event"),

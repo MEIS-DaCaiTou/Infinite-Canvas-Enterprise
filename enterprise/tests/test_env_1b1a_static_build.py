@@ -522,6 +522,13 @@ def _load_isolated_main(tmp_path: Path):
     static_root = _write_fixture(app_root)
     static_root.rename(app_root / "static")
     before = _tree_bytes(app_root / "static")
+    from enterprise.paths import (
+        _reset_path_roots_for_tests,
+        derive_development_path_roots,
+        install_path_roots_for_process,
+    )
+    _reset_path_roots_for_tests()
+    install_path_roots_for_process(derive_development_path_roots(app_root))
     module_name = f"env_1b1a_main_{uuid.uuid4().hex}"
     specification = importlib.util.spec_from_file_location(module_name, app_root / "main.py")
     assert specification and specification.loader
@@ -549,6 +556,11 @@ def test_main_import_and_fastapi_startup_do_not_modify_static(tmp_path: Path, mo
         "migrate_double_extension_uploads",
         "migrate_mislabeled_image_extensions",
     ]
+    # Restore a source-anchored development root for later tests.  The isolated
+    # main import above intentionally exercises explicit process installation.
+    from enterprise.paths import _reset_path_roots_for_tests, derive_development_path_roots, install_path_roots_for_process
+    _reset_path_roots_for_tests()
+    install_path_roots_for_process(derive_development_path_roots(REPO_ROOT))
 
 
 def test_main_no_longer_contains_runtime_static_version_sync() -> None:

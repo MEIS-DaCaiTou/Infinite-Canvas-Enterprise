@@ -61,6 +61,10 @@ class SupervisorConfig:
     app_root: Path
     runtime_root: Path
     mode: str
+    # ENV-1B1B keeps control state under RUNTIME_ROOT while allowing durable
+    # logs to live under the distinct LOG_ROOT.  None retains legacy test
+    # fixtures and does not alter interpreter/entrypoint selection.
+    log_root: Path | None = None
     upstream_port: int = 3001
     gateway_port: int = 8000
     startup_timeout_seconds: int = 60
@@ -120,7 +124,7 @@ class RuntimeSupervisor:
         self.instance_id = instance_id or uuid.uuid4().hex
         self.store = RuntimeStateStore(config.runtime_root)
         self.logs = RuntimeLogs(
-            config.runtime_root,
+            config.log_root or config.runtime_root,
             max_bytes=config.log_max_bytes,
             backups=config.log_backups,
             foreground=config.mode == "foreground",
