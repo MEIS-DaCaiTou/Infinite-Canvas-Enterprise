@@ -7,6 +7,10 @@ import sys
 import hashlib
 from pathlib import Path
 
+import pytest
+
+from enterprise.paths import PathRootsError, PortableRootInputs, derive_portable_path_roots
+
 
 def tree_digest(root: Path) -> str:
     records = []
@@ -111,3 +115,62 @@ print(json.dumps({
     assert tree_digest(app) == app_before
     assert tree_digest(app / "static") == static_before
     assert tree_digest(app / "workflows") == workflows_before
+
+
+def test_get_db_fails_closed_when_parent_becomes_reparse_after_creation(tmp_path: Path, monkeypatch):
+    from enterprise import db
+
+    roots = derive_portable_path_roots(PortableRootInputs(tmp_path / "install", tmp_path / "local"), "release-A")
+    database = roots.DATA_ROOT / "nested" / "enterprise.db"
+    monkeypatch.setattr(db, "PATH_ROOTS", roots)
+    monkeypatch.setattr(db, "DB_PATH", str(database))
+    original_check = db._assert_no_reparse
+    parent_checks = 0
+
+    def reject_parent_after_create(path: Path, label: str) -> None:
+        nonlocal parent_checks
+        if Path(path) == database.parent:
+            parent_checks += 1
+            if parent_checks == 2:
+                raise PathRootsError("PATH_REPARSE_FORBIDDEN", label)
+        original_check(path, label)
+
+    monkeypatch.setattr(db, "_assert_no_reparse", reject_parent_after_create)
+    monkeypatch.setattr(db.sqlite3, "connect", lambda *_, **__: (_ for _ in ()).throw(AssertionError("connect must not run")))
+    with pytest.raises(PathRootsError, match="PATH_REPARSE_FORBIDDEN"):
+        db.get_db()
+    assert database.parent.is_dir()
+
+
+def test_get_db_closes_connection_if_database_becomes_reparse_after_connect(tmp_path: Path, monkeypatch):
+    from enterprise import db
+
+    roots = derive_portable_path_roots(PortableRootInputs(tmp_path / "install", tmp_path / "local"), "release-A")
+    database = roots.DATA_ROOT / "enterprise.db"
+    monkeypatch.setattr(db, "PATH_ROOTS", roots)
+    monkeypatch.setattr(db, "DB_PATH", str(database))
+    original_check = db._assert_no_reparse
+    database_checks = 0
+
+    class FakeConnection:
+        closed = False
+        row_factory = None
+
+        def close(self) -> None:
+            self.closed = True
+
+    fake = FakeConnection()
+
+    def reject_database_after_connect(path: Path, label: str) -> None:
+        nonlocal database_checks
+        if Path(path) == database:
+            database_checks += 1
+            if database_checks == 4:
+                raise PathRootsError("PATH_REPARSE_FORBIDDEN", label)
+        original_check(path, label)
+
+    monkeypatch.setattr(db, "_assert_no_reparse", reject_database_after_connect)
+    monkeypatch.setattr(db.sqlite3, "connect", lambda *_, **__: fake)
+    with pytest.raises(PathRootsError, match="PATH_REPARSE_FORBIDDEN"):
+        db.get_db()
+    assert fake.closed is True

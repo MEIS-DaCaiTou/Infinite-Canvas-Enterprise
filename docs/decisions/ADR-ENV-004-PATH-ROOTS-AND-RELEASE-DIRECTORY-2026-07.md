@@ -44,7 +44,7 @@ Windows 当前 Release 的唯一权威事实为：
 STATE_ROOT/current-release.json
 ```
 
-最低内容包括 schema version、release ID、APP_ROOT 相对定位、manifest SHA-256、activated_at 和 previous release ID。状态使用同目录固定短临时文件、flush / fsync 和 `os.replace` 原子更新。
+最低内容包括 schema version、release ID、APP_ROOT 相对定位、manifest SHA-256、activated_at 和 previous release ID。状态使用同目录固定短临时文件、flush / fsync 和 `os.replace` 原子更新；replace 成功后应尽力同步 `STATE_ROOT` 目录，明确 unsupported 与 unexpected failure 分类，不以 unsupported 作为已验证耐久性结论。
 
 Junction 或快捷目录可以作为便利入口，但不是权威状态；junction 丢失或指向与 JSON 不一致时必须 fail closed。
 
@@ -76,6 +76,16 @@ capability。portable `DB_PATH`
 默认位于 `DATA_ROOT/enterprise.db`，相对值也以 `DATA_ROOT` 解析，绝对值必须 containment 通过。
 它也提供 `STATE_ROOT/current-release.json` 的严格 reader/writer/resolver（schema、固定字段、canonical
 JSON、residual `.new` 拒绝、替换前 identity 复核、仅清理本次排他创建且 identity 仍匹配的 temp、
-fsync + `os.replace`）。这些实现不等于
+fsync + `os.replace`）。
+
+C2 correction pass 补齐三项边界：database path 在返回前检查 `DATA_ROOT`、candidate parent 和
+已存在 candidate 文件本身，`get_db()` 在 parent 创建前后、connect 前和 connect 后重复 reparse
+检查并在连接后异常时关闭连接；portable OPS operation target 对 report/output、log、backup 和
+workspace 使用外部根锚定并拒绝 APP_ROOT、其它 release、UNC、device namespace、drive-relative、
+reparse escape 与 source/target overlap；current-release writer 在 replace 后尝试目录同步并保留
+unsupported / unexpected failure 的稳定分类。这些实现仍是 pre-use/post-create 加固，不声称消除全部
+Windows TOCTOU，也不引入 Release activation、跨进程锁或正式入口协议。
+
+这些实现不等于
 activation、不选择解释器、不接线 launcher，且 legacy update、restart、bytecode 和其它 deferred 写入
 仍阻止完整只读 APP_ROOT。

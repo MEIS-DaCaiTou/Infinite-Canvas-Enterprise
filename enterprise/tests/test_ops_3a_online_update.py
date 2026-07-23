@@ -18,6 +18,8 @@ import tempfile
 import threading
 import time
 import zipfile
+import contextlib
+import io
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import ClassVar
@@ -41,6 +43,8 @@ from enterprise.ops.update.providers import DEFAULT_GITHUB_REPOSITORY, GitHubRel
 from enterprise.ops.update.service import OnlineUpdateService
 from enterprise.ops.update.staging import inspect_zip_archive
 from enterprise.ops.update.versions import compare_versions, parse_version
+import enterprise.ops.runner as runner_module
+from enterprise.paths import PortableRootInputs, derive_portable_path_roots
 from enterprise.tests.resource_lifecycle import assert_file_releasable, assert_sqlite_files_releasable
 
 
@@ -254,6 +258,23 @@ def run_cli(app_root: Path, workspace: Path, *args: str, expect: int = 0) -> dic
     assert result.returncode == expect, result.stdout + result.stderr
     report_path = Path(result.stdout.strip().split(": ", 1)[1])
     return json.loads(report_path.read_text(encoding="utf-8"))
+
+
+def run_cli_in_process(app_root: Path, roots, *args: str, expect: int = 0) -> tuple[str, dict | None]:
+    old_roots = runner_module.PATH_ROOTS
+    runner_module.PATH_ROOTS = roots
+    stdout = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(stdout):
+            code = runner_module.main([*args, "--app-root", str(app_root)])
+    finally:
+        runner_module.PATH_ROOTS = old_roots
+    output = stdout.getvalue()
+    assert code == expect, output
+    if expect != 0:
+        return output, None
+    report_path = Path(output.strip().split(": ", 1)[1])
+    return output, json.loads(report_path.read_text(encoding="utf-8"))
 
 
 def expect_error(error_type: type[Exception], callable_object, *args, **kwargs) -> Exception:
@@ -919,6 +940,62 @@ def verify_service_and_cli() -> None:
         assert sorted((workspace / "staging").iterdir()) == staging_before
 
 
+def verify_portable_workspace_operation_targets() -> None:
+    with tempfile.TemporaryDirectory(prefix="ice-ops3a-portable-workspace-") as raw:
+        root = Path(raw)
+        roots = derive_portable_path_roots(PortableRootInputs(root / "install", root / "local"), "release-A")
+        make_app(roots.APP_ROOT)
+        fixture = root / "empty-releases.json"
+        write_json(fixture, {"releases": []})
+
+        workspace = roots.STAGING_ROOT / "workspace" / "relative-job"
+        workspace.mkdir(parents=True)
+        _, report = run_cli_in_process(
+            roots.APP_ROOT,
+            roots,
+            "check-update",
+            "--workspace",
+            "relative-job",
+            "--provider",
+            "local-fixture",
+            "--fixture",
+            str(fixture),
+        )
+        assert report is not None and report["kind"] == "online-update-job-report"
+        assert (workspace / "reports").is_dir()
+        assert not (roots.APP_ROOT / "ops_artifacts").exists()
+        assert not (roots.APP_ROOT / "logs").exists()
+
+        external_workspace = root / "external workspace"
+        external_workspace.mkdir()
+        _, external = run_cli_in_process(
+            roots.APP_ROOT,
+            roots,
+            "check-update",
+            "--workspace",
+            str(external_workspace),
+            "--provider",
+            "local-fixture",
+            "--fixture",
+            str(fixture),
+        )
+        assert external is not None and (external_workspace / "reports").is_dir()
+
+        for bad_workspace in (roots.APP_ROOT, roots.APP_ROOT / "ops-workspace", roots.INSTALL_ROOT):
+            run_cli_in_process(
+                roots.APP_ROOT,
+                roots,
+                "check-update",
+                "--workspace",
+                str(bad_workspace),
+                "--provider",
+                "local-fixture",
+                "--fixture",
+                str(fixture),
+                expect=1,
+            )
+
+
 def verify_job_redaction() -> None:
     with tempfile.TemporaryDirectory(prefix="ice-ops3a-job-") as raw:
         workspace = Path(raw)
@@ -972,6 +1049,7 @@ def run_all() -> None:
     verify_private_github_asset_authorization()
     verify_zip_defences()
     verify_service_and_cli()
+    verify_portable_workspace_operation_targets()
     verify_job_redaction()
     verify_fixture_resource_release()
 

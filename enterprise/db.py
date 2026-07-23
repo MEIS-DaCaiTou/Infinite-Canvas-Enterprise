@@ -13,7 +13,7 @@ import json
 from typing import Optional
 
 from enterprise.config import DB_PATH, ADMIN_USERNAME, ADMIN_PASSWORD, PATH_ROOTS, ROOT_DIR
-from enterprise.paths import resolve_database_path
+from enterprise.paths import _assert_no_reparse, resolve_database_path
 from enterprise.migrations.sec_1b1_role_auth import (
     ROLE_AUTH_READY,
     SCHEMA_LEGACY,
@@ -88,8 +88,20 @@ class SecureUserGovernanceRequiredError(RuntimeError):
 
 def get_db() -> sqlite3.Connection:
     database_path = resolve_database_path(PATH_ROOTS, DB_PATH)
+    _assert_no_reparse(PATH_ROOTS.DATA_ROOT, "DATA_ROOT")
+    _assert_no_reparse(database_path.parent, "DATA_ROOT")
+    _assert_no_reparse(database_path, "DATA_ROOT")
     os.makedirs(database_path.parent, exist_ok=True)
+    _assert_no_reparse(database_path.parent, "DATA_ROOT")
+    _assert_no_reparse(database_path, "DATA_ROOT")
+    _assert_no_reparse(database_path.parent, "DATA_ROOT")
+    _assert_no_reparse(database_path, "DATA_ROOT")
     conn = sqlite3.connect(database_path, check_same_thread=False)
+    try:
+        _assert_no_reparse(database_path, "DATA_ROOT")
+    except Exception:
+        conn.close()
+        raise
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     return conn

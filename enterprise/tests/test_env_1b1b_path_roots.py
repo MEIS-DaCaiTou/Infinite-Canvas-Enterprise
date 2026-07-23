@@ -23,8 +23,10 @@ from enterprise.paths import (
     prepare_ops_directories,
     prepare_runtime_directories,
     resolve_database_path,
+    resolve_operation_target,
     validate_common_path_roots,
     validate_development_path_roots,
+    validate_new_operation_directory,
     validate_portable_release_layout,
     validate_release_component,
 )
@@ -298,6 +300,86 @@ def test_database_reparse_ancestor_is_rejected_before_parent_creation(tmp_path: 
     with pytest.raises(PathRootsError, match="PATH_REPARSE_FORBIDDEN"):
         resolve_database_path(roots, "nested/enterprise.db")
     assert not (roots.DATA_ROOT / "nested").exists()
+
+
+def test_existing_database_file_reparse_metadata_is_rejected(tmp_path: Path, monkeypatch):
+    import enterprise.paths as paths_module
+
+    roots = portable(tmp_path)
+    database = roots.DATA_ROOT / "enterprise.db"
+    database.parent.mkdir(parents=True)
+    database.write_bytes(b"SQLite format 3\x00fixture")
+    original = paths_module.os.lstat
+
+    def marked_lstat(path):
+        if Path(path) == database:
+            return SimpleNamespace(st_mode=stat.S_IFREG, st_file_attributes=0x400)
+        return original(path)
+
+    monkeypatch.setattr(paths_module.os, "lstat", marked_lstat)
+    with pytest.raises(PathRootsError, match="PATH_REPARSE_FORBIDDEN"):
+        resolve_database_path(roots, database)
+
+
+def test_dangling_database_symlink_is_rejected_when_platform_allows_it(tmp_path: Path):
+    roots = portable(tmp_path)
+    database = roots.DATA_ROOT / "enterprise.db"
+    database.parent.mkdir(parents=True)
+    try:
+        database.symlink_to(roots.DATA_ROOT / "missing-target.db")
+    except OSError as exc:
+        pytest.skip(f"file symlink unavailable: {exc.__class__.__name__}")
+    with pytest.raises(PathRootsError, match="PATH_REPARSE_FORBIDDEN"):
+        resolve_database_path(roots, database)
+
+
+def test_portable_operation_targets_anchor_relative_values_and_reject_app_root_overlap(tmp_path: Path):
+    roots = portable(tmp_path)
+    assert resolve_operation_target(roots, "daily", "output", app_root=roots.APP_ROOT) == roots.STAGING_ROOT / "reports" / "daily"
+    assert resolve_operation_target(roots, "jobs.jsonl", "log", app_root=roots.APP_ROOT, target_type="file") == roots.LOG_ROOT / "ops" / "jobs.jsonl"
+    assert resolve_operation_target(roots, "snapshots", "backup", app_root=roots.APP_ROOT) == roots.BACKUP_ROOT / "snapshots"
+    workspace = roots.STAGING_ROOT / "workspace" / "job-a"
+    workspace.mkdir(parents=True)
+    assert resolve_operation_target(roots, "job-a", "workspace", app_root=roots.APP_ROOT, must_exist=True) == workspace
+    safe_external = tmp_path / "safe external" / "reports"
+    assert resolve_operation_target(roots, safe_external, "output", app_root=roots.APP_ROOT) == safe_external.resolve()
+
+    for target in (
+        roots.APP_ROOT,
+        roots.APP_ROOT / "ops_artifacts",
+        roots.RELEASE_ROOT / "release-B",
+        roots.INSTALL_ROOT,
+    ):
+        with pytest.raises(PathRootsError):
+            resolve_operation_target(roots, target, "output", app_root=roots.APP_ROOT)
+
+
+def test_portable_operation_targets_reject_special_reparse_and_existing_new_targets(tmp_path: Path, monkeypatch):
+    import enterprise.paths as paths_module
+
+    roots = portable(tmp_path)
+    for target in ("C:relative", "\\\\server\\share", "\\\\?\\C:\\device"):
+        with pytest.raises(PathRootsError):
+            resolve_operation_target(roots, target, "output", app_root=roots.APP_ROOT)
+
+    target = roots.STAGING_ROOT / "reports" / "marked"
+    target.mkdir(parents=True)
+    original = paths_module.os.lstat
+
+    def marked_lstat(path):
+        if Path(path) == target:
+            return SimpleNamespace(st_mode=stat.S_IFDIR, st_file_attributes=0x400)
+        return original(path)
+
+    monkeypatch.setattr(paths_module.os, "lstat", marked_lstat)
+    with pytest.raises(PathRootsError, match="PATH_REPARSE_FORBIDDEN"):
+        resolve_operation_target(roots, target, "output", app_root=roots.APP_ROOT)
+    monkeypatch.setattr(paths_module.os, "lstat", original)
+
+    existing = roots.BACKUP_ROOT / "existing"
+    existing.mkdir(parents=True)
+    with pytest.raises(PathRootsError, match="OPS_TARGET_EXISTS"):
+        validate_new_operation_directory(roots, existing, "backup", app_root=roots.APP_ROOT)
 
 
 def test_get_db_creates_only_a_data_root_parent_and_keeps_sqlite_sidecars_together(tmp_path: Path, monkeypatch):

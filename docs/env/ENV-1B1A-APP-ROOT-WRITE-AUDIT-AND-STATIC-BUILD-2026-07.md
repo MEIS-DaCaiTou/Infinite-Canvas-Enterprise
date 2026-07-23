@@ -24,7 +24,7 @@
 4. `enterprise.release.app_root_audit` 只接收 Git tracked 文件集，排除 test fixture 和浏览器静态页面后，对每个生产写入 site 记录相对文件、qualified symbol、operation 和规范化调用 SHA-256 fingerprint，再映射到 W01-W41。
 5. 冻结 manifest digest 覆盖所有 site fingerprint 和 Wxx；在既有 symbol 或脚本中新增、删除或改变写入也会漂移。每个 Wxx 另有必须存在的文件/符号锚点；读取失败、Unicode decode error 和 Python `SyntaxError` 均 fail closed。
 
-原始 ENV-1B1A 扫描的 40 个功能流是历史基线。当前 ENV-1B1B C1 重新扫描 Git tracked 输入后，83 个生产候选文件进入扫描、239 个文件被分类排除，检测到并映射 293 个 write site，parse failure、uncovered site 和 stale mapping 均为 0；冻结 site manifest SHA-256 为 `2220ebccfea0194d1bfe4c5720f6da134e30babc6a42d86259c0e665e888f0d0`。C1 新增 W41，将 current-release persistent-state primitive 从 W24 分离。ENV-1B2P 的 `runtime_provenance._atomic_write_report` 仍归入 W40，不表示 APP_ROOT 路径已迁移。该静态分析是可重复漂移门禁，不能证明绝对不存在动态或未知写入。
+原始 ENV-1B1A 扫描的 40 个功能流是历史基线。当前 ENV-1B1B C1/C2 重新扫描 Git tracked 输入后，83 个生产候选文件进入扫描、239 个文件被分类排除，检测到并映射 293 个 write site，parse failure、uncovered site 和 stale mapping 均为 0；冻结 site manifest SHA-256 为 `2220ebccfea0194d1bfe4c5720f6da134e30babc6a42d86259c0e665e888f0d0`。C1 新增 W41，将 current-release persistent-state primitive 从 W24 分离；C2 重新运行 audit 后统计和 digest 未变化。ENV-1B2P 的 `runtime_provenance._atomic_write_report` 仍归入 W40，不表示 APP_ROOT 路径已迁移。该静态分析是可重复漂移门禁，不能证明绝对不存在动态或未知写入。
 
 ## 3. 写入流清单
 
@@ -60,9 +60,9 @@
 | W26 | `enterprise/runtime/state.py`、control/process/child | PID、lock、state、command、ACK、shutdown marker；默认否 | service-host / foreground / child / stop | runtime 控制状态；否；可能 | runtime CLI/controller/supervisor | `RUNTIME_ROOT` | 已在现有 runtime root；ENV-1B1C 接线仍待做 | 默认 `%LOCALAPPDATA%` 且拒绝 APP_ROOT；runtime 测试 |
 | W27 | `enterprise/runtime/logging.py`、supervisor streams | launcher/upstream/gateway/health/crash logs；默认否 | service-host / child / crash handling | 脱敏日志；部分保留；可能 | supervisor/runtime host | `LOG_ROOT` | 当前实际位于 runtime root；ENV-1B1B | 正式 LOG_ROOT 尚未接线；runtime 测试 |
 | W28 | host bootstrap failure、graceful request/marker | runtime control 目录；默认否 | crash handling / stop / child | 失败与关闭证据；否；可能 | host/process/child | `RUNTIME_ROOT` | 已识别；ENV-1B1C | 入口统一和 Release identity 尚未完成；AST inventory |
-| W29 | `enterprise/ops/runner.py:write_json` | `ops_artifacts/` 默认相对 cwd；可为是 | admin | inventory/check/plan report；否；可能 | OPS CLI | `STAGING_ROOT` | 已识别；ENV-1B1B | 默认 cwd 可落 APP_ROOT 且旧报告可含绝对路径；AST/CLI defaults |
-| W30 | `append_jsonl`、update job log | `logs/ops/jobs.jsonl` 或 workspace；可为是 | admin / update | job log；部分保留；可能 | OPS runner/update service | `LOG_ROOT` | 已识别；ENV-1B1B | runner 默认相对 cwd；redaction 测试存在 |
-| W31 | OPS backup helpers | `ops_backups/` 默认相对 cwd；可为是 | backup | SQLite/JSON/assets backup；是；是 | OPS backup execute | `BACKUP_ROOT` | 已识别；ENV-1B1B | 默认路径仍可能在 APP_ROOT；备份测试 |
+| W29 | `enterprise/ops/runner.py:write_json` | portable operation target 相对 report 锚定 `STAGING_ROOT/reports`，development compatibility 仍保留；可为是 | admin | inventory/check/plan report；否；可能 | OPS CLI | `STAGING_ROOT` | partially_migrated；ENV-1B1B | C2 增加 APP_ROOT / RELEASE_ROOT / reparse / overlap fail-closed 测试；development 兼容路径仍非 portable 证据 |
+| W30 | `append_jsonl`、update job log | portable log 锚定 `LOG_ROOT/ops`，workspace 锚定 `STAGING_ROOT/workspace`，development compatibility 仍保留；可为是 | admin / update | job log；部分保留；可能 | OPS runner/update service | `LOG_ROOT` / `STAGING_ROOT` | partially_migrated；ENV-1B1B | C2 增加外部根成功与 APP_ROOT/reparse/overlap 拒绝；redaction 测试存在 |
+| W31 | OPS backup helpers | portable backup 锚定 `BACKUP_ROOT`，development compatibility 仍保留；可为是 | backup | SQLite/JSON/assets backup；是；是 | OPS backup execute | `BACKUP_ROOT` | partially_migrated；ENV-1B1B | C2 增加 backup root 外部锚定与 new-target fail-closed；完整 backup/restore rehearsal 仍未实施 |
 | W32 | `enterprise/ops/update/download.py`、jobs | 显式外部 workspace；否（校验要求） | update | archive part、job/report；否；可能 | OPS-3A service | `STAGING_ROOT` | 已实现 workspace 边界；正式根接线待 ENV-1B1B | 原子下载、redaction、containment 测试 |
 | W33 | `enterprise/ops/update/staging.py` | 显式 workspace staging；否（校验要求） | update | 解压 Release Candidate；否；否 | OPS-3A prepare | `STAGING_ROOT` | 已实现 fresh staging；OPS-3B 未实施 | ZIP 安全和全新目录测试 |
 | W34 | `enterprise/tests/**` fixtures | pytest / system temp；否 | test | 临时 DB、sidecar、日志、文件；否；测试 secret | test runner | `TEMP_ROOT` | 已隔离；持续验证 | scanner 将整个 tests 树分类为 test-only |
@@ -72,7 +72,7 @@
 | W38 | shipped/browser tool JavaScript | browser `localStorage`、浏览器/UXP temp download；服务器 APP_ROOT 否 | foreground / normal business request | 客户端偏好和临时下载；否；可能 | browser/connector | `CACHE_ROOT` | 已分类；不是服务器 APP_ROOT blocker | 受控 JS 扫描；不得误计为 Python server 写入 |
 | W39 | Python import machinery | `__pycache__` / `.pyc`；默认可在 APP_ROOT | import / child | bytecode cache；否；否 | Python interpreter | `CACHE_ROOT` | 已识别；ENV-1B1C/B2 | 正式入口尚未禁止 APP_ROOT bytecode；生命周期门禁待做 |
 | W40 | `enterprise/release/static_build.py`、`enterprise/release/runtime_provenance.py` | 调用者显式全新 output + report；否（正式要求） | release-build / evidence verification | staging static、确定性构建报告与脱敏 provenance 报告；否；否 | 显式 build / verifier CLI | `STAGING_ROOT` | static 边界已关闭；provenance report 已识别，正式根仍待 ENV-1B1B | source/evidence 只读、原子 report、失败清理、确定性测试 |
-| W41 | `enterprise/release/current_release.py:atomic_write_current_release` | `STATE_ROOT/current-release.json`；否 | test / validation state primitive | strict current-release pointer；是；否 | 当前仅测试/验证调用 | `STATE_ROOT` | C1 已实现状态原语；没有 activation call site | fixed `.new` exclusive create、owned-temp cleanup、atomic replace 测试 |
+| W41 | `enterprise/release/current_release.py:atomic_write_current_release` | `STATE_ROOT/current-release.json`；否 | test / validation state primitive | strict current-release pointer；是；否 | 当前仅测试/验证调用 | `STATE_ROOT` | C1/C2 已实现状态原语；没有 activation call site | fixed `.new` exclusive create、owned-temp cleanup、atomic replace、replace 后目录同步尝试测试 |
 
 ### 3.1 要求覆盖但当前无仓库写入器的项目
 
@@ -164,7 +164,7 @@
 
 ### ENV-1B1B 当前 Draft PR
 
-- 集中 PathRoots、current-release pointer 和 W02–W16、W18、W20–W21、W27、W29–W31 的核心默认路径迁移正在当前 Draft PR 实施；详见 [ENV-1B1B 实施记录](./ENV-1B1B-PATH-ROOTS-AND-CURRENT-RELEASE-IMPLEMENTATION-2026-07.md)。
+- 集中 PathRoots、current-release pointer 和 W02–W16、W18、W20–W21、W27、W29–W31 的核心路径边界正在当前 Draft PR 实施；C2 已补齐 DB file-level reparse、portable OPS operation-target fail-closed 和 current-release directory sync 证据，但 W29–W31 因 development compatibility 仍保留而继续标记为 partially_migrated。详见 [ENV-1B1B 实施记录](./ENV-1B1B-PATH-ROOTS-AND-CURRENT-RELEASE-IMPLEMENTATION-2026-07.md)。
 - legacy update W22/W23、self-restart W24/W25、第三方/installer/辅助脚本 W17/W35–W37 和 bytecode W39 仍未关闭；不能因此宣称完整 APP_ROOT 只读。
 - startup asset/upload migration 调用保留，但目标由 PathRoots 指向外部 UPLOAD_ROOT；此语义只在当前 Draft PR 中待审查。
 

@@ -19,14 +19,20 @@ import subprocess
 import sys
 import tempfile
 import zipfile
+import contextlib
+import io
+import stat
 from pathlib import Path
+from types import SimpleNamespace
 
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import enterprise.ops.runner as runner_module
 from enterprise.ops.runner import history_id_for_record, sha256_file
+from enterprise.paths import PortableRootInputs, derive_portable_path_roots
 
 
 def write_text(path: Path, text: str) -> None:
@@ -57,6 +63,25 @@ def run_ops(app_root: Path, *args: str, expect: int = 0) -> tuple[subprocess.Com
     report = json.loads(report_path.read_text(encoding="utf-8"))
     report["_report_path"] = str(report_path)
     return result, report
+
+
+def run_ops_in_process(app_root: Path, roots, *args: str, expect: int = 0) -> tuple[str, dict | None]:
+    old_roots = runner_module.PATH_ROOTS
+    runner_module.PATH_ROOTS = roots
+    stdout = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(stdout):
+            code = runner_module.main([*args, "--app-root", str(app_root)])
+    finally:
+        runner_module.PATH_ROOTS = old_roots
+    output = stdout.getvalue()
+    assert code == expect, output
+    if expect != 0:
+        return output, None
+    report_path = Path(output.strip().split(": ", 1)[1])
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["_report_path"] = str(report_path)
+    return output, report
 
 
 def create_sample_app(app_root: Path) -> dict[str, str]:
@@ -144,6 +169,106 @@ def create_sample_app(app_root: Path) -> dict[str, str]:
         "owned_history_id": history_id_for_record(owned_history),
         "missing_owner_history_id": history_id_for_record(missing_owner_history),
     }
+
+
+def verify_portable_operation_targets() -> None:
+    with tempfile.TemporaryDirectory(prefix="ice-ops-portable-targets-") as raw_tmp:
+        root = Path(raw_tmp)
+        roots = derive_portable_path_roots(PortableRootInputs(root / "install", root / "local"), "release-A")
+        create_sample_app(roots.APP_ROOT)
+
+        _, inventory = run_ops_in_process(
+            roots.APP_ROOT,
+            roots,
+            "inventory",
+            "--output-dir",
+            "inventory-output",
+            "--log-file",
+            "portable/jobs.jsonl",
+            "--job-id",
+            "portable-inventory",
+        )
+        assert inventory is not None
+        assert Path(inventory["_report_path"]).is_relative_to(roots.STAGING_ROOT / "reports")
+        assert (roots.LOG_ROOT / "ops" / "portable" / "jobs.jsonl").is_file()
+        assert not (roots.APP_ROOT / "ops_artifacts").exists()
+        assert not (roots.APP_ROOT / "logs").exists()
+
+        _, backup = run_ops_in_process(
+            roots.APP_ROOT,
+            roots,
+            "backup",
+            "--output-dir",
+            "backup-output",
+            "--log-file",
+            "backup/jobs.jsonl",
+            "--backup-root",
+            "snapshots",
+            "--backup-id",
+            "backup-id",
+            "--execute",
+        )
+        assert backup is not None
+        assert Path(backup["backup_dir"]).is_relative_to(roots.BACKUP_ROOT / "snapshots")
+        assert (Path(backup["backup_dir"]) / "backup-manifest.json").is_file()
+        assert not (roots.APP_ROOT / "ops_backups").exists()
+
+        external_report = root / "external reports"
+        _, external = run_ops_in_process(
+            roots.APP_ROOT,
+            roots,
+            "inventory",
+            "--output-dir",
+            str(external_report),
+            "--log-file",
+            str(root / "external logs" / "jobs.jsonl"),
+            "--job-id",
+            "portable-external",
+        )
+        assert external is not None
+        assert Path(external["_report_path"]).is_relative_to(external_report)
+
+        for bad_target in (roots.APP_ROOT, roots.APP_ROOT / "ops_artifacts", roots.RELEASE_ROOT / "release-B", roots.INSTALL_ROOT):
+            run_ops_in_process(
+                roots.APP_ROOT,
+                roots,
+                "inventory",
+                "--output-dir",
+                str(bad_target),
+                "--log-file",
+                "reject/jobs.jsonl",
+                "--job-id",
+                "reject-app-root",
+                expect=1,
+            )
+
+        import enterprise.paths as paths_module
+
+        marked = roots.STAGING_ROOT / "reports" / "marked"
+        marked.mkdir(parents=True)
+        original_lstat = paths_module.os.lstat
+
+        def marked_lstat(path):
+            if Path(path) == marked:
+                return SimpleNamespace(st_mode=stat.S_IFDIR, st_file_attributes=0x400)
+            return original_lstat(path)
+
+        paths_module.os.lstat = marked_lstat
+        try:
+            run_ops_in_process(
+                roots.APP_ROOT,
+                roots,
+                "inventory",
+                "--output-dir",
+                str(marked),
+                "--log-file",
+                "reject-reparse/jobs.jsonl",
+                "--job-id",
+                "reject-reparse",
+                expect=1,
+            )
+        finally:
+            paths_module.os.lstat = original_lstat
 
 
 def create_release(release_root: Path, forbidden: bool = False) -> None:
@@ -325,6 +450,7 @@ def run_all() -> None:
         logs = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
         assert any(item["event"] == "started" and item["command"] == "inventory" for item in logs)
         assert any(item["event"] == "finished" and item["command"] == "prepare-upgrade" for item in logs)
+    verify_portable_operation_targets()
 
 
 if __name__ == "__main__":

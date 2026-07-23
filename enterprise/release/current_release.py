@@ -5,6 +5,7 @@ import json
 import os
 import re
 import threading
+import errno
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -28,6 +29,8 @@ SCHEMA_VERSION = "env-1b1b-current-release-v1"
 MAX_BYTES = 16 * 1024
 FILENAME = "current-release.json"
 TEMP_FILENAME = "current-release.json.new"
+DIRECTORY_SYNC_VERIFIED = "synced"
+DIRECTORY_SYNC_UNSUPPORTED = "unsupported"
 _FIELDS = frozenset({"schema_version", "release_id", "app_root_relative", "manifest_sha256", "activated_at", "previous_release_id"})
 _SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 _writer_lock = threading.Lock()
@@ -135,6 +138,41 @@ def _owned_temp_still_present(path: Path, identity: tuple[int, int] | None) -> b
         return False
     except OSError:
         return False
+
+
+def _directory_sync_is_unsupported(exc: OSError) -> bool:
+    return exc.errno in {errno.EACCES, errno.EPERM, errno.EINVAL, getattr(errno, "ENOTSUP", 95)}
+
+
+def sync_state_root_directory(state_root: Path) -> str:
+    """Best-effort directory durability after pointer replacement.
+
+    ``unsupported`` is an explicit platform classification, not a verified
+    durable directory sync. Unexpected failures happen after ``os.replace`` may
+    already have made the new pointer authoritative; callers must re-read state
+    and must not attempt an automatic rollback here.
+    """
+    try:
+        _assert_no_reparse(state_root, "STATE_ROOT")
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        directory_fd = os.open(state_root, flags)
+    except OSError as exc:
+        if _directory_sync_is_unsupported(exc):
+            return DIRECTORY_SYNC_UNSUPPORTED
+        raise CurrentReleaseError("CURRENT_RELEASE_DIRECTORY_SYNC_FAILED") from exc
+    try:
+        try:
+            os.fsync(directory_fd)
+        except OSError as exc:
+            if _directory_sync_is_unsupported(exc):
+                return DIRECTORY_SYNC_UNSUPPORTED
+            raise CurrentReleaseError("CURRENT_RELEASE_DIRECTORY_SYNC_FAILED") from exc
+    finally:
+        try:
+            os.close(directory_fd)
+        except OSError:
+            pass
+    return DIRECTORY_SYNC_VERIFIED
 
 
 def read_current_release_from_state_root(state_root: Path, *, expected_manifest_sha256: str | None = None) -> CurrentRelease:
@@ -246,6 +284,7 @@ def atomic_write_current_release(roots: PathRoots, release: CurrentRelease, *, e
             if not _owned_temp_still_present(temporary, created_temp_identity):
                 raise CurrentReleaseError("CURRENT_RELEASE_TEMP_OWNERSHIP_LOST")
             os.replace(temporary, target)
+            sync_state_root_directory(roots.STATE_ROOT)
         except CurrentReleaseError:
             raise
         except PathRootsError as exc:

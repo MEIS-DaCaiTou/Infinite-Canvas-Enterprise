@@ -16,6 +16,8 @@ from enterprise.paths import (
 )
 from enterprise.release.current_release import (
     CROSS_PROCESS_LOCK,
+    DIRECTORY_SYNC_UNSUPPORTED,
+    DIRECTORY_SYNC_VERIFIED,
     MAX_BYTES,
     _file_identity,
     _owned_temp_still_present,
@@ -27,6 +29,7 @@ from enterprise.release.current_release import (
     read_current_release_from_state_root,
     resolve_current_app_root,
     resolve_portable_path_roots,
+    sync_state_root_directory,
 )
 
 
@@ -207,6 +210,48 @@ def test_replace_failure_preserves_old_pointer_and_cleans_own_temp(tmp_path: Pat
     with pytest.raises(CurrentReleaseError, match="CURRENT_RELEASE_WRITE_FAILED"):
         atomic_write_current_release(value, replacement)
     assert read_current_release(value) == old
+    assert not (value.STATE_ROOT / "current-release.json.new").exists()
+
+
+def test_writer_calls_directory_sync_after_replace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from enterprise.release import current_release as current_release_module
+
+    value = roots(tmp_path)
+    calls: list[Path] = []
+
+    def record_sync(path: Path) -> str:
+        calls.append(path)
+        return DIRECTORY_SYNC_VERIFIED
+
+    monkeypatch.setattr(current_release_module, "sync_state_root_directory", record_sync)
+    atomic_write_current_release(value, release())
+    assert calls == [value.STATE_ROOT]
+    assert read_current_release(value) == release()
+
+
+def test_directory_sync_reports_unsupported_without_claiming_verified(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    import errno
+
+    value = roots(tmp_path)
+    monkeypatch.setattr("enterprise.release.current_release.os.open", lambda *_: (_ for _ in ()).throw(OSError(errno.EINVAL, "unsupported")))
+    assert sync_state_root_directory(value.STATE_ROOT) == DIRECTORY_SYNC_UNSUPPORTED
+
+
+def test_directory_sync_failure_leaves_pointer_authoritative_for_reread(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    value = roots(tmp_path)
+    old = release()
+    atomic_write_current_release(value, old)
+    replacement = CurrentRelease(old.schema_version, "release-B", "releases/release-B", "b" * 64, old.activated_at, "release-A")
+    original_fsync = os.fsync
+    monkeypatch.setattr("enterprise.release.current_release.os.open", lambda *_: 12345)
+    monkeypatch.setattr(
+        "enterprise.release.current_release.os.fsync",
+        lambda fd: (_ for _ in ()).throw(OSError("unexpected sync failure")) if fd == 12345 else original_fsync(fd),
+    )
+    monkeypatch.setattr("enterprise.release.current_release.os.close", lambda *_: None)
+    with pytest.raises(CurrentReleaseError, match="CURRENT_RELEASE_DIRECTORY_SYNC_FAILED"):
+        atomic_write_current_release(value, replacement)
+    assert read_current_release(value) == replacement
     assert not (value.STATE_ROOT / "current-release.json.new").exists()
 
 

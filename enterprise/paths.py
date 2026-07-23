@@ -13,7 +13,7 @@ import stat
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Literal
 
 
 PATH_ROOTS_SCHEMA = "env-1b1b-path-roots-v1"
@@ -27,6 +27,7 @@ _ROOT_FIELDS = (
 _DERIVATION_TOKEN = object()
 _RELEASE_COMPONENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _WINDOWS_DEVICE_RE = re.compile(r"^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$", re.I)
+OperationTargetKind = Literal["output", "log", "backup", "workspace"]
 
 
 class PathRootsError(RuntimeError):
@@ -347,10 +348,109 @@ def resolve_database_path(roots: PathRoots, configured: str | Path | None) -> Pa
         raise PathRootsError("DB_PATH_DIRECTORY_INVALID", "DATA_ROOT")
     if roots.profile == PORTABLE_RELEASE_PROFILE and not _inside(candidate, roots.DATA_ROOT):
         raise PathRootsError("DB_PATH_OUTSIDE_DATA_ROOT", "DATA_ROOT")
-    try:
-        _assert_no_reparse(candidate.parent, "DATA_ROOT")
-    except PathRootsError:
-        raise
+    _assert_no_reparse(roots.DATA_ROOT, "DATA_ROOT")
+    _assert_no_reparse(candidate.parent, "DATA_ROOT")
+    _assert_no_reparse(candidate, "DATA_ROOT")
+    return candidate
+
+
+def _operation_relative_base(roots: PathRoots, kind: OperationTargetKind) -> Path:
+    if kind == "output":
+        return roots.STAGING_ROOT / "reports"
+    if kind == "log":
+        return roots.LOG_ROOT / "ops"
+    if kind == "backup":
+        return roots.BACKUP_ROOT
+    if kind == "workspace":
+        return roots.STAGING_ROOT / "workspace"
+    raise PathRootsError("OPS_TARGET_KIND_INVALID")
+
+
+def _assert_portable_operation_target_allowed(
+    roots: PathRoots,
+    candidate: Path,
+    *,
+    app_root: Path,
+    label: str,
+) -> None:
+    app_root = _normalise(app_root, "APP_ROOT")
+    _assert_no_reparse(candidate, label)
+    if (
+        _key(candidate) == _key(app_root)
+        or _inside(candidate, app_root)
+        or _inside(app_root, candidate)
+    ):
+        raise PathRootsError("OPS_TARGET_APP_ROOT_OVERLAP", label)
+    if _key(candidate) == _key(roots.RELEASE_ROOT) or _inside(candidate, roots.RELEASE_ROOT):
+        raise PathRootsError("OPS_TARGET_RELEASE_ROOT_FORBIDDEN", label)
+
+
+def resolve_operation_target(
+    roots: PathRoots,
+    value: str | Path,
+    kind: OperationTargetKind,
+    *,
+    app_root: Path | str | None = None,
+    target_type: Literal["directory", "file"] = "directory",
+    must_exist: bool = False,
+    must_be_new: bool = False,
+) -> Path:
+    """Resolve an OPS operation target without mutating ``PathRoots``.
+
+    Development keeps legacy command-line compatibility: relative operation
+    paths remain application-root relative. Portable-release commands anchor
+    relative targets to the corresponding external root and reject APP_ROOT,
+    RELEASE_ROOT, special Windows path forms, reparse escapes, and source/target
+    overlap. This is a pre-use check, not a Windows handle no-follow protocol.
+    """
+    validate_path_roots_for_use(roots)
+    raw = os.fspath(value)
+    if not raw:
+        raise PathRootsError("OPS_TARGET_EMPTY", kind)
+    _reject_windows_special(raw, kind)
+    supplied = Path(raw)
+    if not supplied.is_absolute():
+        if roots.profile == PORTABLE_RELEASE_PROFILE:
+            supplied = _operation_relative_base(roots, kind) / supplied
+        else:
+            supplied = Path(app_root) / supplied if app_root is not None else roots.APP_ROOT / supplied
+    candidate = _normalise(supplied, kind)
+    if target_type == "file" and candidate.name in {"", "."}:
+        raise PathRootsError("OPS_TARGET_FILE_INVALID", kind)
+    if roots.profile == PORTABLE_RELEASE_PROFILE:
+        _assert_portable_operation_target_allowed(
+            roots,
+            candidate.parent if target_type == "file" else candidate,
+            app_root=Path(app_root) if app_root is not None else roots.APP_ROOT,
+            label=kind,
+        )
+        _assert_no_reparse(candidate, kind)
+    else:
+        _assert_no_reparse(candidate.parent if target_type == "file" else candidate, kind)
+        _assert_no_reparse(candidate, kind)
+    if must_exist and not (candidate.is_file() if target_type == "file" else candidate.is_dir()):
+        raise PathRootsError("OPS_TARGET_MISSING", kind)
+    if must_be_new and candidate.exists():
+        raise PathRootsError("OPS_TARGET_EXISTS", kind)
+    return candidate
+
+
+def validate_new_operation_directory(
+    roots: PathRoots,
+    path: Path | str,
+    kind: OperationTargetKind,
+    *,
+    app_root: Path | str | None = None,
+) -> Path:
+    candidate = resolve_operation_target(
+        roots,
+        path,
+        kind,
+        app_root=app_root,
+        target_type="directory",
+        must_be_new=True,
+    )
+    _assert_no_reparse(candidate.parent, kind)
     return candidate
 
 
