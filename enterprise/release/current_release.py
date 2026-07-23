@@ -9,7 +9,7 @@ import errno
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from enterprise.paths import (
     PathRoots,
@@ -60,6 +60,12 @@ class CurrentRelease:
             "app_root_relative": self.app_root_relative, "manifest_sha256": self.manifest_sha256,
             "activated_at": self.activated_at, "previous_release_id": self.previous_release_id,
         }
+
+
+@dataclass(frozen=True)
+class CurrentReleaseWriteResult:
+    pointer_replaced: bool
+    directory_sync_status: Literal["synced", "unsupported"]
 
 
 def _pairs_no_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -140,8 +146,19 @@ def _owned_temp_still_present(path: Path, identity: tuple[int, int] | None) -> b
         return False
 
 
-def _directory_sync_is_unsupported(exc: OSError) -> bool:
-    return exc.errno in {errno.EACCES, errno.EPERM, errno.EINVAL, getattr(errno, "ENOTSUP", 95)}
+def _directory_sync_is_unsupported(exc: OSError, *, stage: str, platform_name: str | None = None) -> bool:
+    platform_name = os.name if platform_name is None else platform_name
+    errno_value = exc.errno
+    unsupported_errnos = {
+        errno.EINVAL,
+        getattr(errno, "ENOTSUP", 95),
+        getattr(errno, "EOPNOTSUPP", getattr(errno, "ENOTSUP", 95)),
+    }
+    if errno_value in unsupported_errnos:
+        return True
+    if platform_name == "nt" and stage == "open" and errno_value in {errno.EACCES, errno.EPERM}:
+        return True
+    return False
 
 
 def sync_state_root_directory(state_root: Path) -> str:
@@ -153,18 +170,21 @@ def sync_state_root_directory(state_root: Path) -> str:
     and must not attempt an automatic rollback here.
     """
     try:
-        _assert_no_reparse(state_root, "STATE_ROOT")
+        try:
+            _assert_no_reparse(state_root, "STATE_ROOT")
+        except PathRootsError as exc:
+            raise CurrentReleaseError("CURRENT_RELEASE_DIRECTORY_SYNC_FAILED") from exc
         flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
         directory_fd = os.open(state_root, flags)
     except OSError as exc:
-        if _directory_sync_is_unsupported(exc):
+        if _directory_sync_is_unsupported(exc, stage="open"):
             return DIRECTORY_SYNC_UNSUPPORTED
         raise CurrentReleaseError("CURRENT_RELEASE_DIRECTORY_SYNC_FAILED") from exc
     try:
         try:
             os.fsync(directory_fd)
         except OSError as exc:
-            if _directory_sync_is_unsupported(exc):
+            if _directory_sync_is_unsupported(exc, stage="fsync"):
                 return DIRECTORY_SYNC_UNSUPPORTED
             raise CurrentReleaseError("CURRENT_RELEASE_DIRECTORY_SYNC_FAILED") from exc
     finally:
@@ -255,7 +275,12 @@ def resolve_current_app_root(roots: PathRoots, *, expected_manifest_sha256: str 
     return candidate
 
 
-def atomic_write_current_release(roots: PathRoots, release: CurrentRelease, *, expected_manifest_sha256: str | None = None) -> None:
+def atomic_write_current_release(
+    roots: PathRoots,
+    release: CurrentRelease,
+    *,
+    expected_manifest_sha256: str | None = None,
+) -> CurrentReleaseWriteResult:
     try:
         validate_path_roots_for_use(roots)
     except PathRootsError as exc:
@@ -284,7 +309,8 @@ def atomic_write_current_release(roots: PathRoots, release: CurrentRelease, *, e
             if not _owned_temp_still_present(temporary, created_temp_identity):
                 raise CurrentReleaseError("CURRENT_RELEASE_TEMP_OWNERSHIP_LOST")
             os.replace(temporary, target)
-            sync_state_root_directory(roots.STATE_ROOT)
+            sync_status = sync_state_root_directory(roots.STATE_ROOT)
+            return CurrentReleaseWriteResult(True, sync_status)
         except CurrentReleaseError:
             raise
         except PathRootsError as exc:

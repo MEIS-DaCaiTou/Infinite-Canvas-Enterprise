@@ -24,7 +24,7 @@
 4. `enterprise.release.app_root_audit` 只接收 Git tracked 文件集，排除 test fixture 和浏览器静态页面后，对每个生产写入 site 记录相对文件、qualified symbol、operation 和规范化调用 SHA-256 fingerprint，再映射到 W01-W41。
 5. 冻结 manifest digest 覆盖所有 site fingerprint 和 Wxx；在既有 symbol 或脚本中新增、删除或改变写入也会漂移。每个 Wxx 另有必须存在的文件/符号锚点；读取失败、Unicode decode error 和 Python `SyntaxError` 均 fail closed。
 
-原始 ENV-1B1A 扫描的 40 个功能流是历史基线。当前 ENV-1B1B C1/C2 重新扫描 Git tracked 输入后，83 个生产候选文件进入扫描、239 个文件被分类排除，检测到并映射 293 个 write site，parse failure、uncovered site 和 stale mapping 均为 0；冻结 site manifest SHA-256 为 `2220ebccfea0194d1bfe4c5720f6da134e30babc6a42d86259c0e665e888f0d0`。C1 新增 W41，将 current-release persistent-state primitive 从 W24 分离；C2 重新运行 audit 后统计和 digest 未变化。ENV-1B2P 的 `runtime_provenance._atomic_write_report` 仍归入 W40，不表示 APP_ROOT 路径已迁移。该静态分析是可重复漂移门禁，不能证明绝对不存在动态或未知写入。
+原始 ENV-1B1A 扫描的 40 个功能流是历史基线。当前 ENV-1B1B C1/C2/C3 重新扫描 Git tracked 输入后，83 个生产候选文件进入扫描、239 个文件被分类排除，检测到并映射 293 个 write site，parse failure、uncovered site 和 stale mapping 均为 0；冻结 site manifest SHA-256 为 `2220ebccfea0194d1bfe4c5720f6da134e30babc6a42d86259c0e665e888f0d0`。C1 新增 W41，将 current-release persistent-state primitive 从 W24 分离；C2 和 C3 重新运行 audit 后统计和 digest 未变化。C3 的 workflow 同名上传修复仍归入既有 W12，不新增 W42。ENV-1B2P 的 `runtime_provenance._atomic_write_report` 仍归入 W40，不表示 APP_ROOT 路径已迁移。该静态分析是可重复漂移门禁，不能证明绝对不存在动态或未知写入。
 
 ## 3. 写入流清单
 
@@ -43,7 +43,7 @@
 | W09 | `main.py:save_canvas`、`save_projects`、`update_canvas_meta`、`delete_project`、`purge_canvas`；`enterprise/db.py:set_canvas_project` | `data/canvases/*.json` 及 trash；是 | normal business request / admin | 画布和归属；是；可能 | 画布/项目 API | `DATA_ROOT` | 已识别；ENV-1B1B | 多入口 JSON 更新；AST inventory |
 | W10 | `save_asset_library`、`save_prompt_libraries`、`shared_folders_save`、`save_runninghub_workflow_store` | `data/*.json`；是 | normal business request | 业务元数据；是；可能 | 素材、提示词、共享目录 API | `DATA_ROOT` | 已识别；ENV-1B1B | 多类持久 JSON 位于 APP_ROOT；AST inventory |
 | W11 | `save_api_providers`、`update_env_values` | `data/api_providers.json`、`API/.env`；是 | admin | provider 配置/凭据；是；是 | 设置 API | `CONFIG_ROOT` | 已识别；ENV-1B1B | 配置与 secret 需限制读取者；源码核对 |
-| W12 | `upload_workflow`、`save_workflow_config`、`delete_workflow`、workflow library helpers | `workflows/` 和 workflow JSON；是 | admin / normal business request | 用户工作流；是；可能 | workflow API | `DATA_ROOT` | 已识别；ENV-1B1B | 用户数据与上游 Release 模板混放；AST inventory |
+| W12 | `upload_workflow`、`save_workflow_config`、`delete_workflow`、workflow library helpers | shipped `workflows/` 只读，user override 位于 `DATA_ROOT/workflows`；shipped 为 APP、user 为否 | admin / normal business request | 用户工作流；是；可能 | workflow API | `DATA_ROOT` | partially_migrated；ENV-1B1B | C3 分离 read overlay 与 user-only write target；workflow library helpers 仍需后续按完整入口复核 |
 | W13 | upload/import helpers | `assets/input`、`assets/uploads`；是 | upload | 用户上传；是；可能 | upload / local import API | `UPLOAD_ROOT` | 已识别；ENV-1B1B | 用户文件位于版本目录；AST inventory |
 | W14 | asset library create/move/rename/delete/crop helpers | `assets/library`；是 | normal business request / admin | 素材文件和 caption；是；可能 | asset API | `UPLOAD_ROOT` | 已识别；ENV-1B1B | move/delete 与 owner 数据一致性；AST inventory |
 | W15 | download/generate/store helpers | `output/`、`assets/output`；是 | upload / generation | 生成结果；是；可能 | Provider / Comfy / RunningHub | `UPLOAD_ROOT` | 已识别；ENV-1B1B | 下载、临时替换、失败清理分散；AST inventory |

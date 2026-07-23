@@ -335,14 +335,15 @@ def resolve_database_path(roots: PathRoots, configured: str | Path | None) -> Pa
     """Resolve DB_PATH without allowing portable roots to escape DATA_ROOT."""
     validate_path_roots_for_use(roots)
     if configured is None:
-        return roots.DATA_ROOT / "enterprise.db"
-    raw = os.fspath(configured)
-    if not raw:
-        raise PathRootsError("DB_PATH_EMPTY", "DATA_ROOT")
-    _reject_windows_special(raw, "DATA_ROOT")
-    candidate = Path(raw)
-    if not candidate.is_absolute():
-        candidate = roots.DATA_ROOT / candidate
+        candidate = roots.DATA_ROOT / "enterprise.db"
+    else:
+        raw = os.fspath(configured)
+        if not raw:
+            raise PathRootsError("DB_PATH_EMPTY", "DATA_ROOT")
+        _reject_windows_special(raw, "DATA_ROOT")
+        candidate = Path(raw)
+        if not candidate.is_absolute():
+            candidate = roots.DATA_ROOT / candidate
     candidate = _normalise(candidate, "DATA_ROOT")
     if _key(candidate) == _key(roots.DATA_ROOT) or candidate.name in {"", "."}:
         raise PathRootsError("DB_PATH_DIRECTORY_INVALID", "DATA_ROOT")

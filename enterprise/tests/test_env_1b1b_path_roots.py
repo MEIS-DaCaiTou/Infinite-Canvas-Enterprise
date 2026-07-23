@@ -255,6 +255,7 @@ def test_post_create_reparse_check_fails_closed(tmp_path: Path, monkeypatch):
 def test_database_resolution_is_data_root_anchored_and_portable_fail_closed(tmp_path: Path):
     roots = portable(tmp_path)
     assert resolve_database_path(roots, None) == roots.DATA_ROOT / "enterprise.db"
+    assert resolve_database_path(roots, None) == resolve_database_path(roots, roots.DATA_ROOT / "enterprise.db")
     assert resolve_database_path(roots, "nested/database.db") == roots.DATA_ROOT / "nested" / "database.db"
     assert resolve_database_path(roots, roots.DATA_ROOT / "nested" / "absolute.db") == roots.DATA_ROOT / "nested" / "absolute.db"
     with pytest.raises(PathRootsError, match="DB_PATH_OUTSIDE_DATA_ROOT"):
@@ -273,6 +274,72 @@ def test_database_resolution_is_data_root_anchored_and_portable_fail_closed(tmp_
         resolve_database_path(roots, "\\\\server\\share\\enterprise.db")
     with pytest.raises(PathRootsError):
         resolve_database_path(roots, "\\\\?\\C:\\device\\enterprise.db")
+
+
+def test_default_database_resolution_uses_explicit_candidate_validation_branch(tmp_path: Path, monkeypatch):
+    import enterprise.paths as paths_module
+
+    roots = portable(tmp_path)
+    candidate = roots.DATA_ROOT / "enterprise.db"
+    seen: list[Path] = []
+    original = paths_module._assert_no_reparse
+
+    def record(path: Path, label: str) -> None:
+        seen.append(Path(path))
+        original(path, label)
+
+    monkeypatch.setattr(paths_module, "_assert_no_reparse", record)
+    assert resolve_database_path(roots, None) == candidate
+    assert roots.DATA_ROOT in seen
+    assert candidate.parent in seen
+    assert candidate in seen
+
+
+def test_default_database_reparse_metadata_is_rejected(tmp_path: Path, monkeypatch):
+    import enterprise.paths as paths_module
+
+    roots = portable(tmp_path)
+    database = roots.DATA_ROOT / "enterprise.db"
+    database.parent.mkdir(parents=True)
+    database.write_bytes(b"SQLite format 3\x00fixture")
+    original = paths_module.os.lstat
+
+    def marked_lstat(path):
+        if Path(path) == database:
+            return SimpleNamespace(st_mode=stat.S_IFREG, st_file_attributes=0x400)
+        return original(path)
+
+    monkeypatch.setattr(paths_module.os, "lstat", marked_lstat)
+    with pytest.raises(PathRootsError, match="PATH_REPARSE_FORBIDDEN"):
+        resolve_database_path(roots, None)
+
+
+def test_default_database_dangling_symlink_is_rejected_when_platform_allows_it(tmp_path: Path):
+    roots = portable(tmp_path)
+    database = roots.DATA_ROOT / "enterprise.db"
+    database.parent.mkdir(parents=True)
+    try:
+        database.symlink_to(roots.DATA_ROOT / "missing-default.db")
+    except OSError as exc:
+        pytest.skip(f"file symlink unavailable: {exc.__class__.__name__}")
+    with pytest.raises(PathRootsError, match="PATH_REPARSE_FORBIDDEN"):
+        resolve_database_path(roots, None)
+
+
+def test_default_database_parent_reparse_is_rejected(tmp_path: Path, monkeypatch):
+    import enterprise.paths as paths_module
+
+    roots = portable(tmp_path)
+    original = paths_module._assert_no_reparse
+
+    def reject_parent(path: Path, label: str) -> None:
+        if Path(path) == roots.DATA_ROOT:
+            raise PathRootsError("PATH_REPARSE_FORBIDDEN", label)
+        original(path, label)
+
+    monkeypatch.setattr(paths_module, "_assert_no_reparse", reject_parent)
+    with pytest.raises(PathRootsError, match="PATH_REPARSE_FORBIDDEN"):
+        resolve_database_path(roots, None)
 
 
 def test_development_relative_database_is_not_cwd_dependent(tmp_path: Path, monkeypatch):

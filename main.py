@@ -16319,7 +16319,7 @@ def workflow_config_path(name: str) -> str:
     return user_workflow_path_from_name(name).replace(".json", ".config.json")
 
 def is_builtin_workflow(name: str) -> bool:
-    return os.path.isfile(shipped_workflow_path_from_name(name))
+    return os.path.isfile(shipped_workflow_path_from_name(name)) and not os.path.exists(user_workflow_path_from_name(name))
 
 def _copy_shipped_workflow_to_user(name: str) -> str:
     user_path = user_workflow_path_from_name(name)
@@ -16830,7 +16830,7 @@ def upload_workflow(payload: WorkflowUploadRequest):
     custom_dir = os.path.join(WORKFLOW_DIR, CUSTOM_WORKFLOW_FOLDER)
     os.makedirs(custom_dir, exist_ok=True)
     stored_name = f"{CUSTOM_WORKFLOW_FOLDER}/{name}"
-    path = workflow_path_from_name(stored_name)
+    path = user_workflow_path_from_name(stored_name)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(payload.workflow, f, ensure_ascii=False, indent=2)
     return {"name": stored_name}
