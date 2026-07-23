@@ -3,7 +3,7 @@
 The scanner is deliberately a conservative maintenance control, not a proof
 that static analysis can discover every possible write. It combines Python AST
 inspection, focused script inspection, stable call fingerprints, frozen
-operation counts, and W01-W40 flow anchors.
+operation counts, and W01-W41 flow anchors.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Iterable, Sequence
 
 
-_FLOW_IDS = frozenset(f"W{number:02d}" for number in range(1, 41))
+_FLOW_IDS = frozenset(f"W{number:02d}" for number in range(1, 42))
 _SCANNED_SUFFIXES = frozenset({".bat", ".cmd", ".js", ".ps1", ".py"})
 _EXCLUDED_PREFIXES = ("enterprise/tests/", "enterprise-static/", "static/")
 _PATH_METHODS = frozenset(
@@ -464,6 +464,7 @@ _MAIN_FLOW_BY_SYMBOL.update(
         "shared_folders_save": "W10", "save_runninghub_workflow_store": "W10",
         "save_api_providers": "W11",
         "upload_workflow": "W12", "save_workflow_config": "W12", "delete_workflow": "W12",
+        "_copy_shipped_workflow_to_user": "W12",
         "make_workflow_library_item_from_bytes": "W12", "import_canvas_workflow": "W12",
         "_local_upload_item": "W13", "_write_local_upload_classification": "W13",
         "apimart_upload_file_payload": "W13", "apimart_upload_payload_from_bytes": "W13",
@@ -496,6 +497,12 @@ _OTHER_FLOW_BY_SYMBOL: dict[tuple[str, str], str] = {
     ("enterprise/db.py", "set_canvas_project"): "W09",
     ("enterprise/interceptors.py", "_write_history_records"): "W07",
     ("enterprise/interceptors.py", "normalize_resource_url"): "W13",
+    # Capability-scoped root preparation replaces import-time APP_ROOT mkdirs;
+    # it is audited as W02 until the per-flow runtime split is expanded.
+    ("enterprise/paths.py", "_create_and_check"): "W02",
+    # current-release is an independent STATE_ROOT persistence primitive.
+    # W24 remains exclusively the legacy self-restart lifecycle flow.
+    ("enterprise/release/current_release.py", "atomic_write_current_release"): "W41",
     ("enterprise/migrations/sec_1b1_role_auth.py", "_open_connection"): "W19",
     ("enterprise/migrations/sqlite_existing.py", "open_existing_sqlite"): "W19",
     ("enterprise/ops/runner.py", "append_jsonl"): "W30",
@@ -563,7 +570,7 @@ def _flow_for_operation(file: str, symbol: str) -> str:
 # every mapped site as (file, symbol, operation, normalized-call fingerprint,
 # Wxx flow). Line numbers are deliberately excluded, while duplicate identical
 # calls remain duplicate records. Any added/removed/changed call drifts it.
-EXPECTED_SITE_MANIFEST_DIGEST = "fb96d3f19b25e6118a67bc42460db3225b9d72729447c643ec3efd00ff7ed61c"
+EXPECTED_SITE_MANIFEST_DIGEST = "2220ebccfea0194d1bfe4c5720f6da134e30babc6a42d86259c0e665e888f0d0"
 
 FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W01", "main.py", "startup_event"),
@@ -606,6 +613,7 @@ FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W38", "tools/chrome-local-asset-importer/popup.js"),
     FlowAnchor("W39", "enterprise/runtime/child.py", "_serve"),
     FlowAnchor("W40", "enterprise/release/static_build.py", "build_static_tree"),
+    FlowAnchor("W41", "enterprise/release/current_release.py", "atomic_write_current_release"),
 )
 
 

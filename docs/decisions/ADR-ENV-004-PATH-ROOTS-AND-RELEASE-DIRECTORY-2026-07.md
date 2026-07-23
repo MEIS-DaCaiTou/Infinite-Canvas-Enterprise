@@ -2,8 +2,8 @@
 
 - 状态：Accepted
 - 决策日期：2026-07-16
-- 事实基线：`main@396cccc68d63bd16393a2cb72d24e4a48fcf47cb`
-- 实施状态：契约已冻结，ENV-1B1B 尚未开始
+- 事实基线：`main@240f6a2b93268a415cddc3c9af9951f334c8e4e1`
+- 实施状态：契约已冻结；ENV-1B1B 实现当前仅在 Draft PR，尚未进入 `main`
 
 ## 决策
 
@@ -44,7 +44,7 @@ Windows 当前 Release 的唯一权威事实为：
 STATE_ROOT/current-release.json
 ```
 
-最低内容包括 schema version、release ID、APP_ROOT 相对定位、manifest SHA-256、activated_at 和 previous release ID。状态使用同目录固定短临时文件、flush / fsync 和 `os.replace` 原子更新。
+最低内容包括 schema version、release ID、APP_ROOT 相对定位、manifest SHA-256、activated_at 和 previous release ID。状态使用同目录固定短临时文件、flush / fsync 和 `os.replace` 原子更新；replace 成功后应尽力同步 `STATE_ROOT` 目录，明确 unsupported 与 unexpected failure 分类，不以 unsupported 作为已验证耐久性结论。
 
 Junction 或快捷目录可以作为便利入口，但不是权威状态；junction 丢失或指向与 JSON 不一致时必须 fail closed。
 
@@ -65,3 +65,37 @@ Junction 或快捷目录可以作为便利入口，但不是权威状态；junct
 - 版本切换不再与数据和配置覆盖绑定。
 - OPS-3B 可以基于 manifest 与权威状态文件执行明确切换。
 - 旧代码中的隐式 cwd、APP_ROOT 写入和绝对路径必须在 ENV-1B1A / B1B 中逐项迁移。
+
+## ENV-1B1B Draft 实施事实
+
+当前 Draft PR 提供 `PathRoots` 十四根模型、development/portable-release 显式 profile、两阶段
+portable 推导、组件语义 containment/同卷/Windows 特殊路径/reparse 检查，以及按 application、runtime、
+OPS、install-state 分开的 directory prepare capability。C1 规定只有 factory-derived 且按 profile
+验证的 roots 才能 install 或触发 prepare；手工构造或 `dataclasses.replace` 派生的 roots 不具备写入
+capability。portable `DB_PATH`
+默认位于 `DATA_ROOT/enterprise.db`，相对值也以 `DATA_ROOT` 解析，绝对值必须 containment 通过。
+它也提供 `STATE_ROOT/current-release.json` 的严格 reader/writer/resolver（schema、固定字段、canonical
+JSON、residual `.new` 拒绝、替换前 identity 复核、仅清理本次排他创建且 identity 仍匹配的 temp、
+fsync + `os.replace`）。
+
+C2 correction pass 补齐三项边界：database path 在返回前检查 `DATA_ROOT`、candidate parent 和
+已存在 candidate 文件本身，`get_db()` 在 parent 创建前后、connect 前和 connect 后重复 reparse
+检查并在连接后异常时关闭连接；portable OPS operation target 对 report/output、log、backup 和
+workspace 使用外部根锚定并拒绝 APP_ROOT、其它 release、UNC、device namespace、drive-relative、
+reparse escape 与 source/target overlap；current-release writer 在 replace 后尝试目录同步并保留
+unsupported / unexpected failure 的稳定分类。这些实现仍是 pre-use/post-create 加固，不声称消除全部
+Windows TOCTOU，也不引入 Release activation、跨进程锁或正式入口协议。
+
+C3 correction pass 固化三个补充契约：workflow 读取 overlay 与写入目标分离，上传同名 workflow
+只创建 user override，shipped workflow tree 保持只读；`list_workflows()` 与 `get_workflow()` 在 user
+override 存在时一致返回 `builtin=false`，删除 override 后 shipped workflow 再次可见并返回
+`builtin=true`。`resolve_database_path(configured=None)` 不再早退，默认 `DATA_ROOT/enterprise.db`
+与显式 candidate 进入同一 normalise、root-equal、containment、DATA_ROOT / parent / candidate
+reparse 校验流程。`atomic_write_current_release()` 返回不可变、脱敏的 write result，区分
+`directory_sync_status=synced` 与 `unsupported`；`unsupported` 不等于 durability verified。目录同步阶段
+的 EACCES/EPERM 不被无条件视为 unsupported，replace 后 reparse 或其它 unexpected failure 统一为
+post-replace durability error，调用方必须 reread pointer，且不自动 rollback。
+
+这些实现不等于
+activation、不选择解释器、不接线 launcher，且 legacy update、restart、bytecode 和其它 deferred 写入
+仍阻止完整只读 APP_ROOT。

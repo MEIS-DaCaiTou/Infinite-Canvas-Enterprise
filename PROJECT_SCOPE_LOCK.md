@@ -1,6 +1,6 @@
 # Infinite Canvas Enterprise · 项目定位与后续开发范围锁定
 
-> **当前维护说明（2026-07-20）：** 本文保留 3G / U-2 阶段范围历史。当前实施事实以 [`docs/CURRENT_PROJECT_STATUS.md`](docs/CURRENT_PROJECT_STATUS.md) 为准，执行顺序以 [`docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md`](docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md) 为准，架构决策以 [`docs/README.md`](docs/README.md) 的 ADR 索引为准。生产路线由 [`ADR-OPS-007`](docs/decisions/ADR-OPS-007-GREENFIELD-PRODUCTION-BASELINE-AND-LEGACY-NON-MIGRATION-2026-07.md) 强制约束。ENV-1B0 已由 PR #80 完成并合并，ENV-1B1A 已由 PR #81 完成并合并；ENV-1B2P 当前只在 Draft PR 分支实施。ENV-1B1B、ENV-1B1C、完整 ENV-1B2、Fresh Install Bootstrap 和 OPS-3B 均未开始。
+> **当前维护说明（2026-07-22）：** 本文保留 3G / U-2 阶段范围历史。当前实施事实以 [`docs/CURRENT_PROJECT_STATUS.md`](docs/CURRENT_PROJECT_STATUS.md) 为准，执行顺序以 [`docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md`](docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md) 为准，架构决策以 [`docs/README.md`](docs/README.md) 的 ADR 索引为准。ENV-1B0、ENV-1B1A、ENV-1B2P 已分别由 PR #80、#81、#82 合并；ENV-1B1B 当前只在 Draft PR 分支实施。ENV-1B1C、完整 ENV-1B2、Fresh Install Bootstrap 和 OPS-3B 均未开始。
 
 更新时间：2026-07-17
 适用对象：ChatGPT 主对话、Codex、后续 Agent、人工审核者。
@@ -24,7 +24,8 @@
 8. 旧生产 `check-data` warning 不再阻塞新生产基线，也不得据此自动修复或删除旧数据。
 9. 旧生产停止、归档或删除只能在新生产验收后由项目负责人另行明确授权；本文不授权任何生产操作。
 10. 任何改变“旧生产非迁移”决策的任务都必须重新获得项目负责人批准，并以新的正式决策记录，不得由普通 PR 或 Agent 自行扩大范围。
-11. Runtime 来源证据必须分别记录 core、dependency 和 archive 结论；任一层通过不得自动提升其它层，也不得由 Agent 将 evidence verification 写成 `production_approved=true`。正式批准仍依赖后续 ENV-1B1B、ENV-1B1C、完整 ENV-1B2、Manifest v2、ENV-1B3 和 Release Candidate 门禁。
+11. Runtime 来源证据必须分别记录 core、dependency 和 archive 结论；任一层通过不得自动提升其它层，也不得由 Agent 将 evidence verification 写成 `production_approved=true`。ENV-1B2P 已合并但其 dependency/archive 仍为 false；正式批准仍依赖 ENV-1B1B、ENV-1B1C、完整 ENV-1B2、Manifest v2、ENV-1B3 和 Release Candidate 门禁。
+12. ENV-1B1B 只允许集中 PathRoots、严格 current-release pointer 和明确路径迁移；不得借此实施 activation、当前 Release 切换、PATH Python fallback、Manifest v2、Fresh Install Bootstrap 或 OPS-3B。
 
 ---
 

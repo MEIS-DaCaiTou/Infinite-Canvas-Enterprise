@@ -38,11 +38,15 @@ from enterprise.ops.release_validation import validate_release
 from enterprise.ops.update.errors import OnlineUpdateError
 from enterprise.ops.update.providers import GitHubReleasesProvider, LocalFixtureProvider
 from enterprise.ops.update.service import OnlineUpdateService
+from enterprise.config import PATH_ROOTS
+from enterprise.paths import resolve_operation_target, validate_new_operation_directory
 
 
-DEFAULT_ARTIFACT_DIR = "ops_artifacts"
-DEFAULT_BACKUP_DIR = "ops_backups"
-DEFAULT_LOG_FILE = "logs/ops/jobs.jsonl"
+# Defaults are anchored outside APP_ROOT.  Command-specific explicit targets
+# remain operation arguments and are not root overrides.
+DEFAULT_ARTIFACT_DIR = str(PATH_ROOTS.STAGING_ROOT / "reports")
+DEFAULT_BACKUP_DIR = str(PATH_ROOTS.BACKUP_ROOT)
+DEFAULT_LOG_FILE = str(PATH_ROOTS.LOG_ROOT / "ops" / "jobs.jsonl")
 SAMPLE_LIMIT = 20
 
 CRITICAL_RUNTIME_PATHS = (
@@ -106,6 +110,22 @@ def resolve_path(app_root: Path, value: str | Path) -> Path:
     if path.is_absolute():
         return path
     return app_root / path
+
+
+def resolve_output_dir(app_root: Path, value: str | Path) -> Path:
+    return resolve_operation_target(PATH_ROOTS, value, "output", app_root=app_root)
+
+
+def resolve_log_file(app_root: Path, value: str | Path) -> Path:
+    return resolve_operation_target(PATH_ROOTS, value, "log", app_root=app_root, target_type="file")
+
+
+def resolve_backup_root(app_root: Path, value: str | Path) -> Path:
+    return resolve_operation_target(PATH_ROOTS, value, "backup", app_root=app_root)
+
+
+def resolve_workspace(app_root: Path, value: str | Path) -> Path:
+    return resolve_operation_target(PATH_ROOTS, value, "workspace", app_root=app_root, must_exist=True)
 
 
 def rel_posix(root: Path, path: Path) -> str:
@@ -441,7 +461,7 @@ def collect_inventory(app_root: Path) -> dict[str, Any]:
 
 def command_inventory(args: argparse.Namespace, job_id: str, logger: OpsJobLogger) -> dict[str, Any]:
     app_root = args.app_root.resolve()
-    output_dir = resolve_path(app_root, args.output_dir)
+    output_dir = resolve_output_dir(app_root, args.output_dir)
     report = {
         "kind": "inventory-report",
         "job_id": job_id,
@@ -457,7 +477,7 @@ def command_inventory(args: argparse.Namespace, job_id: str, logger: OpsJobLogge
 
 def command_check_data(args: argparse.Namespace, job_id: str, logger: OpsJobLogger) -> dict[str, Any]:
     app_root = args.app_root.resolve()
-    output_dir = resolve_path(app_root, args.output_dir)
+    output_dir = resolve_output_dir(app_root, args.output_dir)
     critical: list[str] = []
     warnings: list[str] = []
 
@@ -604,10 +624,11 @@ def compare_resources(app_root: Path, conn: sqlite3.Connection, warnings: list[s
 
 def command_backup(args: argparse.Namespace, job_id: str, logger: OpsJobLogger) -> dict[str, Any]:
     app_root = args.app_root.resolve()
-    output_dir = resolve_path(app_root, args.output_dir)
-    backup_root = resolve_path(app_root, args.backup_root)
+    output_dir = resolve_output_dir(app_root, args.output_dir)
+    backup_root = resolve_backup_root(app_root, args.backup_root)
     backup_id = args.backup_id or f"{args.backup_type}-{compact_timestamp()}-{uuid.uuid4().hex[:8]}"
     backup_dir = backup_root / backup_id
+    validate_new_operation_directory(PATH_ROOTS, backup_dir, "backup", app_root=app_root)
     item_summaries = [backup_item_summary(app_root, rel_path) for rel_path in BACKUP_ITEMS]
     env_summaries = [env_file_summary(app_root, rel_path) for rel_path in REQUIRED_ENV_FILES]
     missing = [item["path"] for item in item_summaries if item["required"] and not item["exists"]]
@@ -770,7 +791,7 @@ def backup_sqlite_database(
 
 def command_validate_release(args: argparse.Namespace, job_id: str, logger: OpsJobLogger) -> dict[str, Any]:
     app_root = args.app_root.resolve()
-    output_dir = resolve_path(app_root, args.output_dir)
+    output_dir = resolve_output_dir(app_root, args.output_dir)
     release_path = resolve_path(app_root, args.release)
     report = validate_release(release_path, job_id)
     report["app_root"] = app_root.as_posix()
@@ -783,7 +804,7 @@ def command_validate_release(args: argparse.Namespace, job_id: str, logger: OpsJ
 
 def command_prepare_upgrade(args: argparse.Namespace, job_id: str, logger: OpsJobLogger) -> dict[str, Any]:
     app_root = args.app_root.resolve()
-    output_dir = resolve_path(app_root, args.output_dir)
+    output_dir = resolve_output_dir(app_root, args.output_dir)
     blockers: list[str] = []
     warnings: list[str] = []
     inputs: dict[str, Any] = {}
@@ -903,7 +924,9 @@ def _online_update_service(args: argparse.Namespace) -> OnlineUpdateService:
         provider = LocalFixtureProvider(args.fixture)
     else:
         raise OnlineUpdateError("online update provider is not supported")
-    return OnlineUpdateService(app_root=args.app_root, workspace=args.workspace, provider=provider)
+    app_root = args.app_root.resolve()
+    workspace = resolve_workspace(app_root, args.workspace)
+    return OnlineUpdateService(app_root=app_root, workspace=workspace, provider=provider)
 
 
 def command_check_update(args: argparse.Namespace) -> dict[str, Any]:
@@ -921,7 +944,9 @@ def _offline_online_update_service(args: argparse.Namespace) -> OnlineUpdateServ
     # Staging and planning never make network calls; a local provider preserves
     # the shared service constructor without creating a GitHub client.
     provider = LocalFixtureProvider(getattr(args, "fixture", "") or "missing-fixture.json")
-    return OnlineUpdateService(app_root=args.app_root, workspace=args.workspace, provider=provider)
+    app_root = args.app_root.resolve()
+    workspace = resolve_workspace(app_root, args.workspace)
+    return OnlineUpdateService(app_root=app_root, workspace=workspace, provider=provider)
 
 
 def command_stage_release(args: argparse.Namespace) -> dict[str, Any]:
@@ -945,7 +970,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     def add_common(subparser: argparse.ArgumentParser) -> None:
-        subparser.add_argument("--app-root", type=Path, default=Path.cwd(), help="Application root. Defaults to cwd.")
+        subparser.add_argument("--app-root", type=Path, default=PATH_ROOTS.APP_ROOT, help="Application root from PathRoots.")
         subparser.add_argument("--output-dir", default=DEFAULT_ARTIFACT_DIR, help="Directory for JSON reports.")
         subparser.add_argument("--log-file", default=DEFAULT_LOG_FILE, help="JSONL OPS job log path.")
         subparser.add_argument("--operator", default="", help="Optional operator name for local logs.")
@@ -982,7 +1007,7 @@ def build_parser() -> argparse.ArgumentParser:
     prepare.set_defaults(handler=command_prepare_upgrade)
 
     def add_online_update_common(subparser: argparse.ArgumentParser, *, provider: bool) -> None:
-        subparser.add_argument("--app-root", type=Path, default=Path.cwd(), help="Application root read-only input.")
+        subparser.add_argument("--app-root", type=Path, default=PATH_ROOTS.APP_ROOT, help="Application root from PathRoots.")
         subparser.add_argument("--workspace", type=Path, required=True, help="Existing OPS workspace outside the application root.")
         if provider:
             subparser.add_argument("--provider", choices=("github-releases", "local-fixture"), default="github-releases")
@@ -1022,7 +1047,7 @@ def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
         return (2 if report.get("status") in {"fail", "blocked"} else 0), report
     app_root = args.app_root.resolve()
     job_id = args.job_id or make_job_id(args.command)
-    log_file = resolve_path(app_root, args.log_file)
+    log_file = resolve_log_file(app_root, args.log_file)
     logger = OpsJobLogger(log_file, job_id, args.command, args.operator)
     logger.event("started", app_root=app_root.as_posix())
     started = time.time()
