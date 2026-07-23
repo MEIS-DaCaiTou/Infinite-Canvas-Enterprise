@@ -4,7 +4,9 @@
 - 审计日期：2026-07-20
 - 起始代码基线：`main@be5573ae416b4ce81f8cc26ae282868a7efa7672`
 - 决策依据：[ADR-ENV-003](../decisions/ADR-ENV-003-IMMUTABLE-RELEASE-STATIC-CACHE-2026-07.md)、[ADR-ENV-004](../decisions/ADR-ENV-004-PATH-ROOTS-AND-RELEASE-DIRECTORY-2026-07.md)、[ADR-ENV-005](../decisions/ADR-ENV-005-RUNTIME-ENTRYPOINT-SELF-CHECK-MODES-2026-07.md)
-- 生产影响：`production touched=false`
+- `production_device_touched_by_project_owner=true`（项目负责人确认的既有事实）
+- `production_device_touched_by_codex=false`
+- `production_modified_by_this_PR=false`
 
 ## 1. 结论
 
@@ -19,10 +21,10 @@
 1. Python AST 检查 write-mode `open` / `Path.open`、`write_text`、`write_bytes`、目录和删除/移动 API、`json.dump`、SQLite、临时文件、图片保存、解压、下载和日志构造。
 2. PowerShell / Batch / JavaScript 受控文本检查 `Out-File`、content cmdlet、文件操作、transcript、下载目标、重定向和浏览器 local storage。
 3. 从入口、caller、路径常量和触发条件追到实际目标；区分磁盘写入、内存序列化、浏览器客户端缓存和只读打开。
-4. `enterprise.release.app_root_audit` 只接收 Git tracked 文件集，排除 test fixture 和浏览器静态页面后，对每个生产写入 site 记录相对文件、qualified symbol、operation 和规范化调用 SHA-256 fingerprint，再映射到 W01-W40。
+4. `enterprise.release.app_root_audit` 只接收 Git tracked 文件集，排除 test fixture 和浏览器静态页面后，对每个生产写入 site 记录相对文件、qualified symbol、operation 和规范化调用 SHA-256 fingerprint，再映射到 W01-W41。
 5. 冻结 manifest digest 覆盖所有 site fingerprint 和 Wxx；在既有 symbol 或脚本中新增、删除或改变写入也会漂移。每个 Wxx 另有必须存在的文件/符号锚点；读取失败、Unicode decode error 和 Python `SyntaxError` 均 fail closed。
 
-当前 Git tracked 输入共 313 个文件：80 个 Python / PowerShell / Batch / JavaScript 文件进入生产扫描，233 个非候选或明确 test/static 客户端文件被分类排除；检测到 298 个 write site，298 个均映射到 W01-W40，parse failure、uncovered site 和 stale mapping 均为 0。ENV-1B2P 的 `runtime_provenance._atomic_write_report` 作为调用者显式报告写入归入 W40，不表示 APP_ROOT 路径已迁移。调用链归并后仍是下表 40 个功能写入流；298 个 AST/脚本命中不是 298 个独立 APP_ROOT blocker。该静态分析是可重复漂移门禁，不能证明绝对不存在动态或未知写入。
+原始 ENV-1B1A 扫描的 40 个功能流是历史基线。当前 ENV-1B1B C1 重新扫描 Git tracked 输入后，83 个生产候选文件进入扫描、239 个文件被分类排除，检测到并映射 293 个 write site，parse failure、uncovered site 和 stale mapping 均为 0；冻结 site manifest SHA-256 为 `2220ebccfea0194d1bfe4c5720f6da134e30babc6a42d86259c0e665e888f0d0`。C1 新增 W41，将 current-release persistent-state primitive 从 W24 分离。ENV-1B2P 的 `runtime_provenance._atomic_write_report` 仍归入 W40，不表示 APP_ROOT 路径已迁移。该静态分析是可重复漂移门禁，不能证明绝对不存在动态或未知写入。
 
 ## 3. 写入流清单
 
@@ -70,6 +72,7 @@
 | W38 | shipped/browser tool JavaScript | browser `localStorage`、浏览器/UXP temp download；服务器 APP_ROOT 否 | foreground / normal business request | 客户端偏好和临时下载；否；可能 | browser/connector | `CACHE_ROOT` | 已分类；不是服务器 APP_ROOT blocker | 受控 JS 扫描；不得误计为 Python server 写入 |
 | W39 | Python import machinery | `__pycache__` / `.pyc`；默认可在 APP_ROOT | import / child | bytecode cache；否；否 | Python interpreter | `CACHE_ROOT` | 已识别；ENV-1B1C/B2 | 正式入口尚未禁止 APP_ROOT bytecode；生命周期门禁待做 |
 | W40 | `enterprise/release/static_build.py`、`enterprise/release/runtime_provenance.py` | 调用者显式全新 output + report；否（正式要求） | release-build / evidence verification | staging static、确定性构建报告与脱敏 provenance 报告；否；否 | 显式 build / verifier CLI | `STAGING_ROOT` | static 边界已关闭；provenance report 已识别，正式根仍待 ENV-1B1B | source/evidence 只读、原子 report、失败清理、确定性测试 |
+| W41 | `enterprise/release/current_release.py:atomic_write_current_release` | `STATE_ROOT/current-release.json`；否 | test / validation state primitive | strict current-release pointer；是；否 | 当前仅测试/验证调用 | `STATE_ROOT` | C1 已实现状态原语；没有 activation call site | fixed `.new` exclusive create、owned-temp cleanup、atomic replace 测试 |
 
 ### 3.1 要求覆盖但当前无仓库写入器的项目
 
@@ -79,7 +82,7 @@
 
 ## 4. 分类统计
 
-40 个功能写入流按主要触发阶段计数：
+历史 40 个功能写入流按主要触发阶段计数；C1 的 W41 是独立 state primitive，未倒灌改写该历史分类表：
 
 | 主要阶段 | 数量 |
 | --- | ---: |
@@ -157,7 +160,7 @@
 
 - 启动和 HTML response 不再生成 static `v` 参数。
 - static build 在显式 staging 中完成，source 不变且输出/报告确定。
-- 写入 inventory、Git tracked fingerprint manifest、W01-W40 锚点和 fail-closed 漂移测试形成；这仍不是对未知写入绝对不存在的证明。
+- 写入 inventory、Git tracked fingerprint manifest、W01-W41 锚点和 fail-closed 漂移测试形成；这仍不是对未知写入绝对不存在的证明。
 
 ### ENV-1B1B 当前 Draft PR
 

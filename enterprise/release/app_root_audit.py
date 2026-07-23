@@ -3,7 +3,7 @@
 The scanner is deliberately a conservative maintenance control, not a proof
 that static analysis can discover every possible write. It combines Python AST
 inspection, focused script inspection, stable call fingerprints, frozen
-operation counts, and W01-W40 flow anchors.
+operation counts, and W01-W41 flow anchors.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Iterable, Sequence
 
 
-_FLOW_IDS = frozenset(f"W{number:02d}" for number in range(1, 41))
+_FLOW_IDS = frozenset(f"W{number:02d}" for number in range(1, 42))
 _SCANNED_SUFFIXES = frozenset({".bat", ".cmd", ".js", ".ps1", ".py"})
 _EXCLUDED_PREFIXES = ("enterprise/tests/", "enterprise-static/", "static/")
 _PATH_METHODS = frozenset(
@@ -500,9 +500,9 @@ _OTHER_FLOW_BY_SYMBOL: dict[tuple[str, str], str] = {
     # Capability-scoped root preparation replaces import-time APP_ROOT mkdirs;
     # it is audited as W02 until the per-flow runtime split is expanded.
     ("enterprise/paths.py", "_create_and_check"): "W02",
-    # current-release is a STATE_ROOT primitive only (test/validation call
-    # sites in ENV-1B1B), classified with the existing state-control flow.
-    ("enterprise/release/current_release.py", "atomic_write_current_release"): "W24",
+    # current-release is an independent STATE_ROOT persistence primitive.
+    # W24 remains exclusively the legacy self-restart lifecycle flow.
+    ("enterprise/release/current_release.py", "atomic_write_current_release"): "W41",
     ("enterprise/migrations/sec_1b1_role_auth.py", "_open_connection"): "W19",
     ("enterprise/migrations/sqlite_existing.py", "open_existing_sqlite"): "W19",
     ("enterprise/ops/runner.py", "append_jsonl"): "W30",
@@ -570,7 +570,7 @@ def _flow_for_operation(file: str, symbol: str) -> str:
 # every mapped site as (file, symbol, operation, normalized-call fingerprint,
 # Wxx flow). Line numbers are deliberately excluded, while duplicate identical
 # calls remain duplicate records. Any added/removed/changed call drifts it.
-EXPECTED_SITE_MANIFEST_DIGEST = "406aa718d7c8fd2cf49a846f563b92bd9b33ab34f609d9d721c0c5de528e2acb"
+EXPECTED_SITE_MANIFEST_DIGEST = "2220ebccfea0194d1bfe4c5720f6da134e30babc6a42d86259c0e665e888f0d0"
 
 FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W01", "main.py", "startup_event"),
@@ -613,6 +613,7 @@ FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W38", "tools/chrome-local-asset-importer/popup.js"),
     FlowAnchor("W39", "enterprise/runtime/child.py", "_serve"),
     FlowAnchor("W40", "enterprise/release/static_build.py", "build_static_tree"),
+    FlowAnchor("W41", "enterprise/release/current_release.py", "atomic_write_current_release"),
 )
 
 

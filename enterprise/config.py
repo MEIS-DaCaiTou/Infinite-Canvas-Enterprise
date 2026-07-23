@@ -11,6 +11,7 @@ from enterprise.paths import (
     derive_development_path_roots,
     get_path_roots,
     install_path_roots_for_process,
+    resolve_database_path,
 )
 
 # The development compatibility bootstrap is anchored at this source file, not
@@ -56,7 +57,7 @@ ADMIN_USERNAME: str = os.getenv("ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD: str = os.getenv("ADMIN_PASSWORD", DEFAULT_ADMIN_PASSWORD)
 
 # ── 数据库 ────────────────────────────────────────────────
-DB_PATH: str = os.getenv("DB_PATH", str(PATH_ROOTS.DATA_ROOT / "enterprise.db"))
+DB_PATH: str = str(resolve_database_path(PATH_ROOTS, os.getenv("DB_PATH")))
 
 # ── 静态文件目录 ──────────────────────────────────────────
 ENTERPRISE_STATIC_DIR: Path = PATH_ROOTS.APP_ROOT / "enterprise-static"

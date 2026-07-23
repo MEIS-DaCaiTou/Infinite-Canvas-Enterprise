@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import stat
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
 
@@ -23,6 +24,9 @@ _ROOT_FIELDS = (
     "UPLOAD_ROOT", "LOG_ROOT", "BACKUP_ROOT", "STATE_ROOT", "STAGING_ROOT",
     "RUNTIME_ROOT", "CACHE_ROOT", "TEMP_ROOT", "PYTHON_RUNTIME",
 )
+_DERIVATION_TOKEN = object()
+_RELEASE_COMPONENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_WINDOWS_DEVICE_RE = re.compile(r"^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$", re.I)
 
 
 class PathRootsError(RuntimeError):
@@ -62,11 +66,25 @@ def _key(path: Path) -> str:
 
 
 def _inside(child: Path, parent: Path, *, allow_equal: bool = False) -> bool:
+    """Containment using normalized path components, never string prefixes."""
     child_key, parent_key = _key(child), _key(parent)
-    if child_key == parent_key:
-        return allow_equal
-    prefix = parent_key.rstrip("\\") + "\\"
-    return child_key.startswith(prefix)
+    try:
+        common = _key(Path(os.path.commonpath((str(child), str(parent)))))
+    except ValueError:
+        return False
+    return common == parent_key and (allow_equal or child_key != parent_key)
+
+
+def validate_release_component(value: object) -> str:
+    """Validate a release directory component without importing state parsing."""
+    if not isinstance(value, str) or not value.isascii() or not _RELEASE_COMPONENT_RE.fullmatch(value):
+        raise PathRootsError("RELEASE_COMPONENT_INVALID", "APP_ROOT")
+    if value.endswith((".", " ")) or ".." in value:
+        raise PathRootsError("RELEASE_COMPONENT_INVALID", "APP_ROOT")
+    # The first basename component determines Windows device-name semantics.
+    if _WINDOWS_DEVICE_RE.fullmatch(value.split(".", 1)[0]):
+        raise PathRootsError("RELEASE_COMPONENT_DEVICE", "APP_ROOT")
+    return value
 
 
 def _assert_no_reparse(path: Path, label: str) -> None:
@@ -146,6 +164,10 @@ class PathRoots:
     legacy_app_relative_layout: bool = False
     release_validation_eligible: bool = False
     production_approval_eligible: bool = False
+    # ``init=False`` prevents callers (and ``dataclasses.replace``) from
+    # copying or supplying this private capability.  Only trusted derivation
+    # helpers can mark a fully derived value for use.
+    _derivation_token: object | None = field(default=None, init=False, repr=False, compare=False)
 
     @property
     def root_identity(self) -> str:
@@ -165,12 +187,17 @@ class PathRoots:
         }
 
 
+def _mark_trusted(roots: PathRoots) -> PathRoots:
+    object.__setattr__(roots, "_derivation_token", _DERIVATION_TOKEN)
+    return roots
+
+
 def derive_development_path_roots(code_root: Path | str | None = None) -> PathRoots:
     """Derive legacy-compatible development roots anchored at code, never cwd."""
     app_root = _normalise(code_root or Path(__file__).resolve().parents[1], "APP_ROOT")
     install = app_root.parent
     local = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
-    return PathRoots(
+    return _mark_trusted(PathRoots(
         INSTALL_ROOT=install, RELEASE_ROOT=install / "releases", APP_ROOT=app_root,
         CONFIG_ROOT=app_root, DATA_ROOT=app_root / "data", UPLOAD_ROOT=app_root,
         LOG_ROOT=app_root / "logs", BACKUP_ROOT=app_root / "ops_backups",
@@ -179,7 +206,7 @@ def derive_development_path_roots(code_root: Path | str | None = None) -> PathRo
         CACHE_ROOT=app_root / "data", TEMP_ROOT=Path(tempfile_root()),
         PYTHON_RUNTIME=app_root / "python", profile=DEVELOPMENT_PROFILE,
         legacy_app_relative_layout=True,
-    )
+    ))
 
 
 def tempfile_root() -> str:
@@ -190,17 +217,16 @@ def tempfile_root() -> str:
 def derive_portable_path_roots(inputs: PortableRootInputs, release_id: str) -> PathRoots:
     """Pure v1 portable layout derivation.  It performs no I/O."""
     layout = derive_portable_root_layout(inputs)
-    if not isinstance(release_id, str) or not release_id:
-        raise PathRootsError("RELEASE_ID_INVALID", "APP_ROOT")
+    release_id = validate_release_component(release_id)
     app = layout.RELEASE_ROOT / release_id
-    return PathRoots(
+    return _mark_trusted(PathRoots(
         INSTALL_ROOT=layout.INSTALL_ROOT, RELEASE_ROOT=layout.RELEASE_ROOT, APP_ROOT=app,
         CONFIG_ROOT=layout.CONFIG_ROOT, DATA_ROOT=layout.DATA_ROOT, UPLOAD_ROOT=layout.UPLOAD_ROOT,
         LOG_ROOT=layout.LOG_ROOT, BACKUP_ROOT=layout.BACKUP_ROOT, STATE_ROOT=layout.STATE_ROOT,
         STAGING_ROOT=layout.STAGING_ROOT, RUNTIME_ROOT=layout.RUNTIME_ROOT,
         CACHE_ROOT=layout.CACHE_ROOT, TEMP_ROOT=layout.TEMP_ROOT, PYTHON_RUNTIME=app / "python",
         profile=PORTABLE_RELEASE_PROFILE,
-    )
+    ))
 
 
 def derive_portable_root_layout(inputs: PortableRootInputs) -> PortableRootLayout:
@@ -267,15 +293,65 @@ def validate_common_path_roots(roots: PathRoots) -> None:
 def validate_development_path_roots(roots: PathRoots) -> None:
     if roots.profile != DEVELOPMENT_PROFILE or not roots.legacy_app_relative_layout:
         raise PathRootsError("PATH_DEVELOPMENT_PROFILE_INVALID")
+    if roots.release_validation_eligible or roots.production_approval_eligible:
+        raise PathRootsError("PATH_DEVELOPMENT_ELIGIBILITY_INVALID")
     validate_common_path_roots(roots)
 
 
 def validate_portable_release_layout(roots: PathRoots) -> None:
     if roots.profile != PORTABLE_RELEASE_PROFILE:
         raise PathRootsError("PATH_PORTABLE_PROFILE_INVALID")
-    validate_common_path_roots(roots)
+    validate_portable_path_roots(roots)
     if not roots.APP_ROOT.is_dir() or not (roots.APP_ROOT / "main.py").is_file() or not (roots.APP_ROOT / "static").is_dir():
         raise PathRootsError("PATH_PORTABLE_APP_LAYOUT_INVALID", "APP_ROOT")
+
+
+def validate_portable_path_roots(roots: PathRoots) -> None:
+    """Validate portable root relationships without requiring shipped payload files.
+
+    Directory preparation is intentionally allowed before an APP_ROOT payload is
+    populated, while runtime resolution still calls ``validate_portable_release_layout``.
+    Both paths require a trusted, factory-derived ``PathRoots`` capability.
+    """
+    if roots.profile != PORTABLE_RELEASE_PROFILE:
+        raise PathRootsError("PATH_PORTABLE_PROFILE_INVALID")
+    validate_common_path_roots(roots)
+
+
+def validate_path_roots_for_use(roots: PathRoots) -> None:
+    """Gate process installation and every mutable-directory capability."""
+    if roots._derivation_token is not _DERIVATION_TOKEN:
+        raise PathRootsError("PATH_ROOTS_UNTRUSTED")
+    if roots.profile == DEVELOPMENT_PROFILE:
+        validate_development_path_roots(roots)
+    elif roots.profile == PORTABLE_RELEASE_PROFILE:
+        validate_portable_path_roots(roots)
+    else:
+        raise PathRootsError("PATH_ROOTS_SCHEMA_INVALID")
+
+
+def resolve_database_path(roots: PathRoots, configured: str | Path | None) -> Path:
+    """Resolve DB_PATH without allowing portable roots to escape DATA_ROOT."""
+    validate_path_roots_for_use(roots)
+    if configured is None:
+        return roots.DATA_ROOT / "enterprise.db"
+    raw = os.fspath(configured)
+    if not raw:
+        raise PathRootsError("DB_PATH_EMPTY", "DATA_ROOT")
+    _reject_windows_special(raw, "DATA_ROOT")
+    candidate = Path(raw)
+    if not candidate.is_absolute():
+        candidate = roots.DATA_ROOT / candidate
+    candidate = _normalise(candidate, "DATA_ROOT")
+    if _key(candidate) == _key(roots.DATA_ROOT) or candidate.name in {"", "."}:
+        raise PathRootsError("DB_PATH_DIRECTORY_INVALID", "DATA_ROOT")
+    if roots.profile == PORTABLE_RELEASE_PROFILE and not _inside(candidate, roots.DATA_ROOT):
+        raise PathRootsError("DB_PATH_OUTSIDE_DATA_ROOT", "DATA_ROOT")
+    try:
+        _assert_no_reparse(candidate.parent, "DATA_ROOT")
+    except PathRootsError:
+        raise
+    return candidate
 
 
 def _create_and_check(paths: Iterable[tuple[Path, str]]) -> None:
@@ -286,20 +362,24 @@ def _create_and_check(paths: Iterable[tuple[Path, str]]) -> None:
 
 
 def prepare_application_directories(roots: PathRoots) -> None:
+    validate_path_roots_for_use(roots)
     _create_and_check(((roots.DATA_ROOT / name, "DATA_ROOT") for name in ("conversations", "canvases", "workflows", "trash")))
     _create_and_check(((roots.UPLOAD_ROOT / name, "UPLOAD_ROOT") for name in ("assets/input", "assets/output", "assets/library", "assets/uploads", "output")))
     _create_and_check(((roots.CACHE_ROOT / "media_previews", "CACHE_ROOT"), (roots.LOG_ROOT / "application", "LOG_ROOT"), (roots.TEMP_ROOT / "application", "TEMP_ROOT")))
 
 
 def prepare_runtime_directories(roots: PathRoots) -> None:
+    validate_path_roots_for_use(roots)
     _create_and_check(((roots.RUNTIME_ROOT / "control", "RUNTIME_ROOT"), (roots.LOG_ROOT / "runtime", "LOG_ROOT"), (roots.LOG_ROOT / "health", "LOG_ROOT"), (roots.LOG_ROOT / "crash", "LOG_ROOT")))
 
 
 def prepare_ops_directories(roots: PathRoots) -> None:
+    validate_path_roots_for_use(roots)
     _create_and_check(((roots.BACKUP_ROOT, "BACKUP_ROOT"), (roots.STAGING_ROOT / "reports", "STAGING_ROOT"), (roots.STAGING_ROOT / "workspace", "STAGING_ROOT"), (roots.LOG_ROOT / "ops", "LOG_ROOT")))
 
 
 def prepare_install_state_directories(roots: PathRoots) -> None:
+    validate_path_roots_for_use(roots)
     _create_and_check(((roots.CONFIG_ROOT, "CONFIG_ROOT"), (roots.STATE_ROOT, "STATE_ROOT")))
 
 
@@ -309,6 +389,7 @@ _install_lock = threading.Lock()
 
 def install_path_roots_for_process(roots: PathRoots) -> PathRoots:
     global _installed_roots
+    validate_path_roots_for_use(roots)
     with _install_lock:
         if _installed_roots is None:
             _installed_roots = roots

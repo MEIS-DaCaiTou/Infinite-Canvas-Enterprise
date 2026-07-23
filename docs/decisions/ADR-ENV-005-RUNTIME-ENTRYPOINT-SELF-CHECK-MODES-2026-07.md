@@ -52,3 +52,7 @@
 ENV-1B1B 当前 Draft PR 只实现 PathRoots 与 current-release pointer 的纯状态/路径原语。它不会从
 pointer 启动服务、选择 `PYTHON_RUNTIME`、回退 PATH Python 或改变 supervisor entrypoint。上述
 绑定、自检与 fail-closed launcher 行为仍完整属于 ENV-1B1C，当前未开始。
+
+在 C1 correction pass 中，development CLI 保持 supervisor 日志回落既有外部 `RUNTIME_ROOT`，不将其
+迁回 `APP_ROOT/logs/runtime`；仅隔离 portable fixture 可显式注入 `LOG_ROOT/runtime`。这不是正式
+portable 入口协议，也不改变本 ADR 对 ENV-1B1C 的边界。

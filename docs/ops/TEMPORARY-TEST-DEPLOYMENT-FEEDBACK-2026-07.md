@@ -2,7 +2,7 @@
 
 - 状态：反馈记录；不是生产操作记录
 - 关联：仓库外 temporary test business deployment 包的项目负责人本地测试
-- 生产影响：`production touched=false`
+- `production_device_touched_by_project_owner=true`（项目负责人确认的既有事实）；`production_device_touched_by_codex=false`；`production_modified_by_this_PR=false`
 
 ## 已记录反馈
 

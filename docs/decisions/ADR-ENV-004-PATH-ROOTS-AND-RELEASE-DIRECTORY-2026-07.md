@@ -69,8 +69,13 @@ Junction 或快捷目录可以作为便利入口，但不是权威状态；junct
 ## ENV-1B1B Draft 实施事实
 
 当前 Draft PR 提供 `PathRoots` 十四根模型、development/portable-release 显式 profile、两阶段
-portable 推导、containment/同卷/Windows 特殊路径/reparse 检查，以及按 application、runtime、
-OPS、install-state 分开的 directory prepare capability。它也提供 `STATE_ROOT/current-release.json`
-的严格 reader/writer/resolver（schema、固定字段、canonical JSON、residual `.new` 拒绝、fsync +
-`os.replace`）。这些实现不等于 activation、不选择解释器、不接线 launcher，且 legacy update、
-restart、bytecode 和其它 deferred 写入仍阻止完整只读 APP_ROOT。
+portable 推导、组件语义 containment/同卷/Windows 特殊路径/reparse 检查，以及按 application、runtime、
+OPS、install-state 分开的 directory prepare capability。C1 规定只有 factory-derived 且按 profile
+验证的 roots 才能 install 或触发 prepare；手工构造或 `dataclasses.replace` 派生的 roots 不具备写入
+capability。portable `DB_PATH`
+默认位于 `DATA_ROOT/enterprise.db`，相对值也以 `DATA_ROOT` 解析，绝对值必须 containment 通过。
+它也提供 `STATE_ROOT/current-release.json` 的严格 reader/writer/resolver（schema、固定字段、canonical
+JSON、residual `.new` 拒绝、替换前 identity 复核、仅清理本次排他创建且 identity 仍匹配的 temp、
+fsync + `os.replace`）。这些实现不等于
+activation、不选择解释器、不接线 launcher，且 legacy update、restart、bytecode 和其它 deferred 写入
+仍阻止完整只读 APP_ROOT。

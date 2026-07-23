@@ -1,6 +1,6 @@
 # Infinite Canvas Enterprise 当前项目状态
 
-更新时间：2026-07-20
+更新时间：2026-07-22
 
 ## 1. 当前主线与运行事实
 
@@ -10,8 +10,9 @@
 - ENV-1B0 / DOC-2 / DOC-2A：PR #80 已合并，merge commit `be5573ae416b4ce81f8cc26ae282868a7efa7672`；完成架构决策冻结、Greenfield 路线和文档事实同步。
 - ENV-1B1A：PR #81 已合并，merge commit `a53885b026a6c2440acb0fbde72d6571ff6f7723`；APP_ROOT 写入审计、CSS 传递依赖哈希、统一 HTML build ID、确定性 static staging builder、`main.py` 最小不可变 Release 补丁和 Git tracked fingerprint/Wxx 漂移门禁已进入 `main`。
 - ENV-1B2P：PR #82 已合并，merge commit `240f6a2b93268a415cddc3c9af9951f334c8e4e1`；只读核验仓库外既有 Runtime 证据，真实结果仍为 core `true`、dependency `false`、archive `false`、`production_approved=false`，不代表正式 Runtime 获批。
-- ENV-1B1B：当前 Draft PR 实施集中 PathRoots、严格 `current-release.json` 原语及核心路径迁移；不实施 Release activation、正式入口/解释器绑定或完整 APP_ROOT 只读。
-- ADR-OPS-007：项目负责人已接受 Greenfield 全新生产路线；旧生产迁移计划取消，本次文档决策 `production touched=false`。
+- ENV-1B1B：PR #83 当前 Draft correction pass；PathRoots / `current-release.json` 的 initial implementation 已存在，但 `ENV_1B1B_completion_classification=partial`、`ENV_1B1B_acceptance_passed=false`，不实施 Release activation、正式入口/解释器绑定或完整 APP_ROOT 只读。
+- ADR-OPS-007：项目负责人已接受 Greenfield 全新生产路线；旧生产迁移计划取消。
+- `production_device_touched_by_project_owner=true`（项目负责人确认的既有事实）；`production_device_touched_by_codex=false`；`production_modified_by_this_PR=false`。
 - OPS-3A：PR #77 已合并，merge commit `1430e2d7389c66d82d8f93d3c306451a22a51d3c`。
 - STAB-1 / OPS-L1：PR #78 已合并，merge commit `a00a2fd2807b41a9fee3c267ee1116986b52fd7e`。
 - Runtime service-host 启动修复：PR #79 已合并，merge commit `396cccc68d63bd16393a2cb72d24e4a48fcf47cb`。
@@ -139,22 +140,22 @@ ARCH-2A、SEC-1A、SEC-1B1、SEC-1F0、SEC-1C0 和 SEC-1B2 仓库实现已完成
 1. ENV-1B0：决策和文档收口；已由 PR #80 完成并合并。
 2. ENV-1B1A：已由 PR #81 完成并合并；builder 尚未接入完整 Release / Manifest / activation，完整 APP_ROOT 仍不可视为只读。
 3. ENV-1B2P：已由 PR #82 合并；core `true`，dependency / archive `false`，`production_approved=false`。
-4. ENV-1B1B：当前 Draft PR 实施路径根、版本目录与 `current-release.json` 原语；不实施 activation。
+4. ENV-1B1B：PR #83 当前 Draft correction pass；仅报告 Codex 本地测试，`github_ci_verified=false`，等待重新审查，不实施 activation。
 5. ENV-1B1C、完整 ENV-1B2、Manifest v2 和 ENV-1B3：按路线完成 Release-bound 入口、可重复 Runtime、自检和干净 Windows 验证；均未开始。
-5. 形成不可变 Windows Release Candidate；Release Candidate 不等于 Production Baseline。
-6. DATA-1：建立新生产所需 schema version、migration history、兼容分类和数据完整性基础，不迁移旧生产数据。
-7. 独立设计、实现并验证尚不存在的 Fresh Install Bootstrap。
-8. 在干净 Windows 环境完成全新安装与初始化验收。
-9. 收口 P0 安全、ARCH-3、PERF-1 / OBS-1、浏览器回归和真实 Provider 验收。
-10. 使用全新基线数据完成正式 backup 和 restore rehearsal。
-11. 完成 OPS-3B 仓库实现；OPS-3B 不用于旧生产，当前尚未开始。
-12. 在干净 Windows 环境使用 Fresh Install Bootstrap 建立的全新隔离数据，完成 apply / switch / health / rollback / restore 演练；这是开发或隔离验证，不是生产执行。
-13. 由项目负责人确认已经具备经过验证的持续升级和失败恢复能力，并明确批准 Production Baseline。
-14. 在生产设备使用全新数据库、账号、配置和凭据进行 Greenfield 部署；新生产尚未部署。
-15. 后续正式 Release 才进入新生产版本迭代；OPS-3B 的首次真实生产执行只能发生在 Greenfield 新生产部署以后，并由项目负责人在生产设备本地执行。
-16. 完成新生产业务验收后，再由项目负责人单独决定旧生产停止、归档或删除。
-17. OPS-3C / Update Center 可在 Production Baseline 后独立实施，不是首次生产部署前置条件。
-18. Linux 单服务器后置；PostgreSQL、对象存储、queue、Redis 和多实例按真实需求引入。
+6. 形成不可变 Windows Release Candidate；Release Candidate 不等于 Production Baseline。
+7. DATA-1：建立新生产所需 schema version、migration history、兼容分类和数据完整性基础，不迁移旧生产数据。
+8. 独立设计、实现并验证尚不存在的 Fresh Install Bootstrap。
+9. 在干净 Windows 环境完成全新安装与初始化验收。
+10. 收口 P0 安全、ARCH-3、PERF-1 / OBS-1、浏览器回归和真实 Provider 验收。
+11. 使用全新基线数据完成正式 backup 和 restore rehearsal。
+12. 完成 OPS-3B 仓库实现；OPS-3B 不用于旧生产，当前尚未开始。
+13. 在干净 Windows 环境使用 Fresh Install Bootstrap 建立的全新隔离数据，完成 apply / switch / health / rollback / restore 演练；这是开发或隔离验证，不是生产执行。
+14. 由项目负责人确认已经具备经过验证的持续升级和失败恢复能力，并明确批准 Production Baseline。
+15. 在生产设备使用全新数据库、账号、配置和凭据进行 Greenfield 部署；新生产尚未部署。
+16. 后续正式 Release 才进入新生产版本迭代；OPS-3B 的首次真实生产执行只能发生在 Greenfield 新生产部署以后，并由项目负责人在生产设备本地执行。
+17. 完成新生产业务验收后，再由项目负责人单独决定旧生产停止、归档或删除。
+18. OPS-3C / Update Center 可在 Production Baseline 后独立实施，不是首次生产部署前置条件。
+19. Linux 单服务器后置；PostgreSQL、对象存储、queue、Redis 和多实例按真实需求引入。
 
 3G-8 浏览器级自动化回归、3G-6 外部 provider 成功链路补验和长期协作 ACL 仍保留，但不得挤占 P0 安全与数据一致性优先级。
 

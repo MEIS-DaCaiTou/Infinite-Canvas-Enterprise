@@ -15,9 +15,12 @@ from enterprise.paths import (
     PathRootsError,
     PortableRootInputs,
     _assert_no_reparse,
+    _normalise,
     derive_portable_path_roots,
     derive_portable_root_layout,
+    validate_path_roots_for_use,
     validate_portable_release_layout,
+    validate_release_component,
 )
 
 
@@ -26,10 +29,11 @@ MAX_BYTES = 16 * 1024
 FILENAME = "current-release.json"
 TEMP_FILENAME = "current-release.json.new"
 _FIELDS = frozenset({"schema_version", "release_id", "app_root_relative", "manifest_sha256", "activated_at", "previous_release_id"})
-_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _SHA_RE = re.compile(r"^[0-9a-f]{64}$")
-_DEVICE_RE = re.compile(r"^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$", re.I)
 _writer_lock = threading.Lock()
+# ENV-1B1B deliberately supplies only an in-process writer serialization.
+# Cross-process activation locking belongs to a later activation protocol.
+CROSS_PROCESS_LOCK = False
 
 
 class CurrentReleaseError(RuntimeError):
@@ -65,12 +69,11 @@ def _pairs_no_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 
 
 def _validate_release_id(value: object) -> str:
-    if not isinstance(value, str) or not _ID_RE.fullmatch(value) or value.endswith((".", " ")) or ".." in value:
-        raise CurrentReleaseError("CURRENT_RELEASE_ID_INVALID")
-    stem = value.split(".", 1)[0]
-    if _DEVICE_RE.fullmatch(stem):
-        raise CurrentReleaseError("CURRENT_RELEASE_ID_DEVICE")
-    return value
+    try:
+        return validate_release_component(value)
+    except PathRootsError as exc:
+        code = "CURRENT_RELEASE_ID_DEVICE" if exc.code == "RELEASE_COMPONENT_DEVICE" else "CURRENT_RELEASE_ID_INVALID"
+        raise CurrentReleaseError(code) from exc
 
 
 def _validate_payload(payload: object, *, expected_manifest_sha256: str | None = None) -> CurrentRelease:
@@ -118,8 +121,28 @@ def canonical_json(release: CurrentRelease) -> bytes:
     return (json.dumps(release.as_dict(), ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
 
 
+def _file_identity(stat_result: os.stat_result) -> tuple[int, int]:
+    """Return stable file identity fields, never content/time-derived ownership."""
+    return stat_result.st_dev, stat_result.st_ino
+
+
+def _owned_temp_still_present(path: Path, identity: tuple[int, int] | None) -> bool:
+    if identity is None:
+        return False
+    try:
+        return _file_identity(os.stat(path, follow_symlinks=False)) == identity
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return False
+
+
 def read_current_release_from_state_root(state_root: Path, *, expected_manifest_sha256: str | None = None) -> CurrentRelease:
     """Read the v1 pointer from a pre-release-owned state root."""
+    try:
+        state_root = _normalise(state_root, "STATE_ROOT")
+    except PathRootsError as exc:
+        raise CurrentReleaseError(exc.code) from exc
     path = state_root / FILENAME
     try:
         _assert_no_reparse(state_root, "STATE_ROOT")
@@ -148,6 +171,10 @@ def read_current_release_from_state_root(state_root: Path, *, expected_manifest_
 
 
 def read_current_release(roots: PathRoots, *, expected_manifest_sha256: str | None = None) -> CurrentRelease:
+    try:
+        validate_path_roots_for_use(roots)
+    except PathRootsError as exc:
+        raise CurrentReleaseError(exc.code) from exc
     return read_current_release_from_state_root(roots.STATE_ROOT, expected_manifest_sha256=expected_manifest_sha256)
 
 
@@ -191,12 +218,18 @@ def resolve_current_app_root(roots: PathRoots, *, expected_manifest_sha256: str 
 
 
 def atomic_write_current_release(roots: PathRoots, release: CurrentRelease, *, expected_manifest_sha256: str | None = None) -> None:
+    try:
+        validate_path_roots_for_use(roots)
+    except PathRootsError as exc:
+        raise CurrentReleaseError(exc.code) from exc
     checked = validate_current_release(release, expected_manifest_sha256=expected_manifest_sha256)
     target, temporary = roots.STATE_ROOT / FILENAME, roots.STATE_ROOT / TEMP_FILENAME
     encoded = canonical_json(checked)
     if len(encoded) > MAX_BYTES:
         raise CurrentReleaseError("CURRENT_RELEASE_SIZE_INVALID")
     with _writer_lock:
+        created_by_this_invocation = False
+        created_temp_identity: tuple[int, int] | None = None
         try:
             _assert_no_reparse(roots.STATE_ROOT, "STATE_ROOT")
             if not roots.STATE_ROOT.is_dir():
@@ -204,10 +237,14 @@ def atomic_write_current_release(roots: PathRoots, release: CurrentRelease, *, e
             if temporary.exists():
                 raise CurrentReleaseError("CURRENT_RELEASE_TEMP_EXISTS")
             with temporary.open("xb") as handle:
+                created_by_this_invocation = True
+                created_temp_identity = _file_identity(os.fstat(handle.fileno()))
                 handle.write(encoded)
                 handle.flush()
                 os.fsync(handle.fileno())
             _assert_no_reparse(temporary, "STATE_ROOT")
+            if not _owned_temp_still_present(temporary, created_temp_identity):
+                raise CurrentReleaseError("CURRENT_RELEASE_TEMP_OWNERSHIP_LOST")
             os.replace(temporary, target)
         except CurrentReleaseError:
             raise
@@ -218,10 +255,12 @@ def atomic_write_current_release(roots: PathRoots, release: CurrentRelease, *, e
         except OSError as exc:
             raise CurrentReleaseError("CURRENT_RELEASE_WRITE_FAILED") from exc
         finally:
-            # Only remove a temporary document this invocation created.  A
-            # pre-existing residual was rejected before opening it.
+            # Cleanup needs both this invocation's exclusive-create record and
+            # the original file identity.  Never infer ownership from bytes,
+            # size, mtime, or merely a pathname that another process may have
+            # replaced after our create.
             try:
-                if temporary.exists() and temporary.stat().st_size == len(encoded):
+                if created_by_this_invocation and _owned_temp_still_present(temporary, created_temp_identity):
                     temporary.unlink()
             except OSError:
                 pass

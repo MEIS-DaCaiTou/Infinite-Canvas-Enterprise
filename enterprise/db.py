@@ -13,6 +13,7 @@ import json
 from typing import Optional
 
 from enterprise.config import DB_PATH, ADMIN_USERNAME, ADMIN_PASSWORD, PATH_ROOTS, ROOT_DIR
+from enterprise.paths import resolve_database_path
 from enterprise.migrations.sec_1b1_role_auth import (
     ROLE_AUTH_READY,
     SCHEMA_LEGACY,
@@ -86,8 +87,9 @@ class SecureUserGovernanceRequiredError(RuntimeError):
 
 
 def get_db() -> sqlite3.Connection:
-    os.makedirs(os.path.dirname(os.path.abspath(DB_PATH)), exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    database_path = resolve_database_path(PATH_ROOTS, DB_PATH)
+    os.makedirs(database_path.parent, exist_ok=True)
+    conn = sqlite3.connect(database_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     return conn

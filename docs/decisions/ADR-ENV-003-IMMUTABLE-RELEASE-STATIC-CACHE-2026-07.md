@@ -48,7 +48,7 @@ ENV-1B1A 合并实现对第 3 项采用以下确定性细化：独立 CSS 的 `u
 - Git 工作区不因启动而产生静态变化。
 - ENV-1B1A 不修改正式 Python 运行时。
 
-已合并的 ENV-1B1A 只关闭 static 构建期转换和源码树不变门禁，并形成 Git tracked 写入 site fingerprint 到 W01-W40 的审计清单和漂移门禁。该静态分析不能证明绝对不存在未知写入。导入/启动/健康/重启/停止的 APP_ROOT 全树不变和真实只读生命周期仍被数据、配置、上传、startup migration、legacy update、bytecode 等写入阻塞，不得因 static 子门禁通过而宣称本 ADR 已完整实施。ENV-1B2P 的 Runtime 文件证据验证也不替代这些 APP_ROOT 生命周期门禁。
+已合并的 ENV-1B1A 只关闭 static 构建期转换和源码树不变门禁，并形成 Git tracked 写入 site fingerprint 到 W01-W41 的审计清单和漂移门禁。C1 将 `current-release` persistent-state primitive 独立为 W41，W24 仍只表示 legacy self-restart 生命周期。该静态分析不能证明绝对不存在未知写入。导入/启动/健康/重启/停止的 APP_ROOT 全树不变和真实只读生命周期仍被数据、配置、上传、startup migration、legacy update、bytecode 等写入阻塞，不得因 static 子门禁通过而宣称本 ADR 已完整实施。ENV-1B2P 的 Runtime 文件证据验证也不替代这些 APP_ROOT 生命周期门禁。
 
 ## 后果
 

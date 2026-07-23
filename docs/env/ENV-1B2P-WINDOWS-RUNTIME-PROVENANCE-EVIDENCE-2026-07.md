@@ -6,7 +6,7 @@
 - 固定上游：`hero8152/Infinite-Canvas@f1dd6834a72f3e7ff8340be05a84347d931e9cb9`，`VERSION=2026.07.6`
 - 决策依据：[ADR-ENV-002](../decisions/ADR-ENV-002-WINDOWS-PYTHON-RUNTIME-PROVENANCE-2026-07.md)
 - 机器摘要：[ENV-1B2P-RUNTIME-PROVENANCE-SUMMARY.json](./evidence/ENV-1B2P-RUNTIME-PROVENANCE-SUMMARY.json)
-- 生产影响：`production touched=false`、`production_approved=false`
+- `production_device_touched_by_project_owner=true`（项目负责人确认的既有事实）；`production_device_touched_by_codex=false`；`production_modified_by_this_PR=false`；`production_approved=false`
 
 ## 1. 结论
 

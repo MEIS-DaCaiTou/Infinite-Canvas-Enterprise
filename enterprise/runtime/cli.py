@@ -51,7 +51,9 @@ def _config(args: argparse.Namespace, *, mode: str) -> SupervisorConfig:
     return SupervisorConfig(
         app_root=app_root,
         runtime_root=runtime_root,
-        log_root=(PATH_ROOTS.LOG_ROOT / "runtime") if PATH_ROOTS is not None else None,
+        # Do not regress development logs into APP_ROOT.  Portable injection
+        # is explicit in a future B1C entrypoint, not inferred by this CLI.
+        log_root=None,
         mode=mode,
         upstream_port=upstream_port,
         gateway_port=gateway_port,
