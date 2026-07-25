@@ -65,21 +65,40 @@ fixture suite：`53 passed`。B1 加 static/audit regression：`83 passed, 2 war
 均 exit `0`。所有命令设置 `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1` 与 `PYTHONDONTWRITEBYTECODE=1`，不监听
 B1 端口、不访问网络。
 
-全量 `enterprise/tests` 在当前可用的 embedded development interpreter 下结果为 `305 passed, 3 skipped,
-4 failed, 8 warnings`。四项失败均为该 interpreter 的 `._pth` 忽略子进程 `PYTHONPATH`：两项 B1B
-subprocess integration 无法从 cwd import `enterprise`，supervisor 的两项则无法加载其 `sitecustomize`
-probe 并在 lifecycle start 阶段失败。B1 纯模块不修改这些旧 lifecycle 或 test harness，未为改变该
-环境限制安装/升级依赖或 Runtime。真实 bundled Python fixture 测试为 `false`；本机结果不是 GitHub CI。
+全量 `enterprise/tests` 不通过，且其退出码为 `1`。为避免把嵌入式解释器现象误写成“与本分支无关”，
+使用同一个现有 embedded development interpreter（CPython 3.12.10 / pytest 8.4.2）、相同的
+`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1` / `PYTHONDONTWRITEBYTECODE=1`、相同的 repository-root 和
+已跟踪 test-only `python-multipart` wheel 注入方式，分别运行了 `origin/main` 与 PR Head 的完整
+`enterprise/tests`。没有安装、下载或修改 Python Runtime。
+
+| comparison target | result | failed nodeids | exit |
+| --- | --- | --- | --- |
+| `origin/main@4d9cc4e` | `252 passed, 3 skipped, 4 failed, 8 warnings` | 下列四项 | `1` |
+| PR Head `35b4ab3` | `305 passed, 3 skipped, 4 failed, 9 warnings` | 与 base 相同的四项 | `1` |
+
+四个共同失败节点及脱敏错误摘要为：
+
+- `test_env_1b1b_app_path_integration.py::test_portable_roots_are_installed_before_main_import_and_keep_app_root_clean`：子进程无法 import `enterprise`；
+- `test_env_1b1b_workflow_overlay.py::test_workflow_overlay_copies_before_config_and_never_deletes_shipped_source`：子进程无法 import `enterprise`；
+- `test_stab_1_supervisor_logging.py::test_static_runtime_boundary`：`sitecustomize` logging-origin probe 未被加载；
+- `test_stab_1_supervisor_logging.py::test_real_cli_lifecycle_and_acknowledgements`：isolated CLI lifecycle phase worker 在 `start` 阶段失败。
+
+`branch_regression_delta=0`：PR failure-node set 减去 `origin/main` failure-node set 为空；相对 base
+增加的 53 个 B1 pure-contract fixture tests 没有引入失败。该对照支持“本分支没有新增该四个失败节点”，
+但不等于全量测试通过；`full_suite_passed=false`，独立验收仍未闭合。失败行为与该解释器的 `._pth`
+不接受子进程 `PYTHONPATH` 的已观察限制相符，但本报告不把该环境解释提升为正式 bundled Runtime 验证。
+真实 bundled Python fixture 测试为 `false`；本机结果不是 GitHub CI。
 
 ## M. Git / PR
 
-Commit：`65b298891dca6556c8b147fb8a39974fde7c3e47`
-(`feat(env): add runtime contract foundations`)；普通 push 已完成。Draft PR：
+已有实现 commits：`65b298891dca6556c8b147fb8a39974fde7c3e47`
+(`feat(env): add runtime contract foundations`) 与 `35b4ab36758047f469ec48928c55a86933cb2d81`
+(`docs(env): record ENV-1B1C B1 evidence`)。本报告的 evidence-correction commit 会在本节更新后
+单独记录；PR body 必须链接到该最终 PR Head 的固定 GitHub blob URL。Draft PR：
 `https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/84`；Base 为
-`4d9cc4ef3d6a0f6ed956c2dda6303e9cc3b99b89`，该首个 commit 的 Head 为
-`65b298891dca6556c8b147fb8a39974fde7c3e47`。创建时 PR 为 `OPEN`、`Draft=true`、
-`merged=false`、`mergeable=MERGEABLE`，28 files、`+2027/-84`，GitHub checks 尚为空，
-`github_ci_verified=false`。禁止文件分支 diff exit code 均为 0；收尾 docs commit 后工作树应为 clean。
+`4d9cc4ef3d6a0f6ed956c2dda6303e9cc3b99b89`。PR 保持 `OPEN`、`Draft=true`、
+`merged=false`、`mergeable=MERGEABLE`；`github_ci_verified=false`。禁止文件分支 diff exit code
+均为 `0`；本次 evidence-only correction 后工作树应为 clean。
 
 ## N. 边界确认
 
