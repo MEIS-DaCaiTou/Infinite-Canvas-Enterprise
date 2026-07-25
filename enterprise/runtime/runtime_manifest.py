@@ -8,14 +8,18 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
-import stat
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 from .error_contract import RuntimeContractError
+from enterprise.path_safety import (
+    PathSafetyError,
+    assert_no_reparse_ancestors as _assert_no_reparse_ancestors,
+    assert_path_within_root,
+    has_reparse_point as _has_reparse_point,
+)
 
 
 RUNTIME_MANIFEST_SCHEMA = "enterprise-windows-runtime-manifest-v1"
@@ -30,6 +34,8 @@ STARTUP_CORE_FILES = ("python.exe", "pythonw.exe", "python310.dll", "python310.z
 APPROVED_PORTABLE_ARCHITECTURES = frozenset({"x64"})
 KNOWN_ARCHITECTURES = frozenset({"x64", "arm64"})
 _SHA_RE = re.compile(r"^[0-9a-f]{64}$")
+_PYTHON_310_VERSION_RE = re.compile(r"^3\.10\.(?:0|[1-9][0-9]{0,2})$")
+_CANDIDATE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _WINDOWS_DEVICE_RE = re.compile(r"^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$", re.I)
 
 
@@ -87,19 +93,16 @@ def _pairs_no_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 
 def has_reparse_point(path: Path) -> bool:
     try:
-        info = os.lstat(path)
-    except OSError:
-        return False
-    attrs = getattr(info, "st_file_attributes", 0)
-    return stat.S_ISLNK(info.st_mode) or bool(attrs & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400))
+        return _has_reparse_point(Path(path))
+    except PathSafetyError as exc:
+        raise RuntimeContractError("RUNTIME_MANIFEST_REPARSE_FORBIDDEN", details={"label": Path(path).name}) from exc
 
 
 def assert_no_reparse_ancestors(path: Path, *, code: str = "RUNTIME_MANIFEST_REPARSE_FORBIDDEN") -> None:
-    current = Path(path.anchor)
-    for part in path.parts[1:]:
-        current = current / part
-        if current.exists() and has_reparse_point(current):
-            raise RuntimeContractError(code, details={"label": current.name})
+    try:
+        _assert_no_reparse_ancestors(Path(path))
+    except PathSafetyError as exc:
+        raise RuntimeContractError(code, details={"label": Path(path).name}) from exc
 
 
 def sha256_file(path: Path, *, max_bytes: int = SINGLE_FILE_HASH_MAX_BYTES) -> tuple[str, int]:
@@ -200,12 +203,14 @@ def parse_runtime_manifest_startup_view(manifest_path: Path, python_runtime_root
     version = payload.get("python_version")
     if not isinstance(implementation, str) or implementation.lower() != "cpython":
         raise RuntimeContractError("PYTHON_IDENTITY_IMPLEMENTATION_INVALID")
-    if not isinstance(version, str) or not version.startswith("3.10."):
+    if not isinstance(version, str) or _PYTHON_310_VERSION_RE.fullmatch(version) is None:
         raise RuntimeContractError("PYTHON_IDENTITY_VERSION_INVALID")
     records: dict[str, dict[str, Any]] = {}
     core_items = payload.get("core_files")
     if type(core_items) is not list:
         raise RuntimeContractError("RUNTIME_MANIFEST_CORE_MISSING")
+    if len(core_items) > STARTUP_CORE_FILE_COUNT_HARD_MAX:
+        raise RuntimeContractError("RUNTIME_MANIFEST_CORE_LIMIT_EXCEEDED")
     for item in core_items:
         if type(item) is not dict:
             raise RuntimeContractError("RUNTIME_MANIFEST_CORE_MISSING")
@@ -229,8 +234,8 @@ def parse_runtime_manifest_startup_view(manifest_path: Path, python_runtime_root
             raise RuntimeContractError("RUNTIME_MANIFEST_CORE_SIZE_MISMATCH", details={"label": relative})
         actual_path = runtime_root / Path(relative)
         try:
-            actual_path.resolve().relative_to(runtime_root.resolve())
-        except (OSError, ValueError) as exc:
+            actual_path = assert_path_within_root(actual_path, runtime_root)
+        except PathSafetyError as exc:
             raise RuntimeContractError("RUNTIME_MANIFEST_PATH_INVALID", details={"label": relative}) from exc
         if not actual_path.is_file():
             raise RuntimeContractError("RUNTIME_MANIFEST_CORE_MISSING", details={"label": relative})
@@ -251,8 +256,8 @@ def parse_runtime_manifest_startup_view(manifest_path: Path, python_runtime_root
         digest.update(bytes.fromhex(actual_sha))
     source = payload.get("source") if type(payload.get("source")) is dict else {}
     candidate_id = payload.get("candidate_id")
-    if candidate_id is not None and (not isinstance(candidate_id, str) or len(candidate_id) > 128):
-        candidate_id = None
+    if candidate_id is not None and (not isinstance(candidate_id, str) or _CANDIDATE_ID_RE.fullmatch(candidate_id) is None):
+        raise RuntimeContractError("RUNTIME_MANIFEST_METADATA_INVALID")
     view = RuntimeManifestStartupView(
         schema_version=STARTUP_VIEW_SCHEMA,
         manifest_sha256=manifest_sha256,

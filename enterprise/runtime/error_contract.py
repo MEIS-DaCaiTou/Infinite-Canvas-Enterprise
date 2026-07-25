@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any, Mapping
 
 
@@ -18,6 +19,7 @@ PORTABLE_EXIT_OK = 0
 PORTABLE_EXIT_BLOCKED = 2
 _CODE_RE = re.compile(r"^[A-Z0-9_]{3,64}$")
 _SAFE_DETAIL_KEY_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+_CORRELATION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
 @dataclass(frozen=True)
@@ -32,6 +34,7 @@ class ErrorDefinition:
 
 
 _DEFINITIONS: tuple[ErrorDefinition, ...] = (
+    ErrorDefinition("ERROR_CONTRACT_INVALID", "error_contract", "runtime error payload is invalid"),
     ErrorDefinition("RUNTIME_MODE_REQUIRED", "mode", "runtime mode is required"),
     ErrorDefinition("RUNTIME_MODE_INVALID", "mode", "runtime mode is invalid"),
     ErrorDefinition("RUNTIME_MODE_NOT_IMPLEMENTED", "mode", "runtime mode is not implemented"),
@@ -44,6 +47,8 @@ _DEFINITIONS: tuple[ErrorDefinition, ...] = (
     ErrorDefinition("RUNTIME_MANIFEST_DUPLICATE_KEY", "runtime_manifest", "runtime manifest contains a duplicate key"),
     ErrorDefinition("RUNTIME_MANIFEST_SCHEMA_INVALID", "runtime_manifest", "runtime manifest schema is invalid"),
     ErrorDefinition("RUNTIME_MANIFEST_CORE_MISSING", "runtime_manifest", "runtime manifest is missing a startup core file"),
+    ErrorDefinition("RUNTIME_MANIFEST_CORE_LIMIT_EXCEEDED", "runtime_manifest", "runtime manifest startup core file limit exceeded"),
+    ErrorDefinition("RUNTIME_MANIFEST_METADATA_INVALID", "runtime_manifest", "runtime manifest optional metadata is invalid"),
     ErrorDefinition("RUNTIME_MANIFEST_CORE_HASH_MISMATCH", "runtime_manifest", "startup core file hash does not match"),
     ErrorDefinition("RUNTIME_MANIFEST_CORE_SIZE_MISMATCH", "runtime_manifest", "startup core file size does not match"),
     ErrorDefinition("RUNTIME_MANIFEST_PATH_INVALID", "runtime_manifest", "runtime manifest path is invalid"),
@@ -56,6 +61,8 @@ _DEFINITIONS: tuple[ErrorDefinition, ...] = (
     ErrorDefinition("PYTHON_IDENTITY_EXECUTABLE_MISSING", "python_identity", "Python executable is missing"),
     ErrorDefinition("PYTHON_IDENTITY_EXECUTABLE_INVALID", "python_identity", "Python executable is invalid"),
     ErrorDefinition("PYTHON_IDENTITY_EXECUTABLE_MISMATCH", "python_identity", "Python executable identity mismatch"),
+    ErrorDefinition("PYTHON_IDENTITY_PREFIX_MISMATCH", "python_identity", "Python runtime prefix identity mismatch"),
+    ErrorDefinition("PYTHON_IDENTITY_CACHE_TAG_INVALID", "python_identity", "Python cache tag is invalid"),
     ErrorDefinition("PYTHON_IDENTITY_REPARSE_FORBIDDEN", "python_identity", "Python executable uses a reparse point"),
     ErrorDefinition("PYTHON_IDENTITY_HASH_LIMIT_EXCEEDED", "python_identity", "Python executable hash limit exceeded"),
     ErrorDefinition("PYTHON_IDENTITY_IMPLEMENTATION_INVALID", "python_identity", "Python implementation is invalid"),
@@ -116,17 +123,17 @@ def _validate_detail_value(value: Any) -> Any:
         return value
     if isinstance(value, str):
         if len(value) > 160 or "\n" in value or "\r" in value:
-            raise RuntimeContractError("LAUNCH_CONTEXT_INVALID")
+            raise RuntimeContractError("ERROR_CONTRACT_INVALID")
         # Public details carry labels and basenames only; obvious host paths are
         # rejected at construction time to keep the final JSON redacted.
         if ":\\" in value or ":/" in value or value.startswith(("\\\\", "//")):
-            raise RuntimeContractError("LAUNCH_CONTEXT_INVALID")
+            raise RuntimeContractError("ERROR_CONTRACT_INVALID")
         return value
     if isinstance(value, (tuple, list)):
         if len(value) > 16:
-            raise RuntimeContractError("LAUNCH_CONTEXT_INVALID")
-        return [_validate_detail_value(item) for item in value]
-    raise RuntimeContractError("LAUNCH_CONTEXT_INVALID")
+            raise RuntimeContractError("ERROR_CONTRACT_INVALID")
+        return tuple(_validate_detail_value(item) for item in value)
+    raise RuntimeContractError("ERROR_CONTRACT_INVALID")
 
 
 def _sanitize_details(details: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -135,12 +142,22 @@ def _sanitize_details(details: Mapping[str, Any] | None) -> dict[str, Any]:
     sanitized: dict[str, Any] = {}
     for key, value in details.items():
         if not isinstance(key, str) or not _SAFE_DETAIL_KEY_RE.fullmatch(key):
-            raise RuntimeContractError("LAUNCH_CONTEXT_INVALID")
+            raise RuntimeContractError("ERROR_CONTRACT_INVALID")
         sanitized[key] = _validate_detail_value(value)
     encoded = json.dumps(sanitized, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     if len(encoded) > 2048:
-        raise RuntimeContractError("LAUNCH_CONTEXT_INVALID")
-    return sanitized
+        raise RuntimeContractError("ERROR_CONTRACT_INVALID")
+    return MappingProxyType(sanitized)
+
+
+def _public_detail_value(value: Any) -> Any:
+    if isinstance(value, tuple):
+        return [_public_detail_value(item) for item in value]
+    return value
+
+
+def _public_details(details: Mapping[str, Any]) -> dict[str, Any]:
+    return {key: _public_detail_value(value) for key, value in details.items()}
 
 
 @dataclass(frozen=True)
@@ -152,7 +169,7 @@ class ErrorPayload:
     exit_code: int
     pointer_or_context_may_have_changed: bool
     reread_state_required: bool
-    details: dict[str, Any] = field(default_factory=dict)
+    details: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
     correlation_id: str | None = None
     schema_version: str = ERROR_SCHEMA_VERSION
     status: str = "blocked"
@@ -161,7 +178,7 @@ class ErrorPayload:
         return {
             "code": self.code,
             "correlation_id": self.correlation_id,
-            "details": self.details,
+            "details": _public_details(self.details),
             "exit_code": self.exit_code,
             "layer": self.layer,
             "message": self.message,
@@ -184,7 +201,7 @@ def error_payload(
 ) -> ErrorPayload:
     if not isinstance(code, str) or not _CODE_RE.fullmatch(code) or code not in ERROR_REGISTRY:
         raise ValueError(f"unknown ENV-1B1C error code: {code!r}")
-    if correlation_id is not None and (not isinstance(correlation_id, str) or len(correlation_id) > 64):
+    if correlation_id is not None and (not isinstance(correlation_id, str) or not _CORRELATION_ID_RE.fullmatch(correlation_id)):
         raise ValueError("correlation_id is invalid")
     definition = ERROR_REGISTRY[code]
     if definition.exit_code not in {PORTABLE_EXIT_OK, PORTABLE_EXIT_BLOCKED}:

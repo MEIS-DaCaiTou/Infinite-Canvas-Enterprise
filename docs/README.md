@@ -21,6 +21,7 @@
 | ENV-1B1B 路径根与版本指针 | [ENV-1B1B PathRoots 与 Current Release 实施记录](./env/ENV-1B1B-PATH-ROOTS-AND-CURRENT-RELEASE-IMPLEMENTATION-2026-07.md) | 已合并：核心路径迁移和严格 pointer 原语，不等于 activation 或完整只读 APP_ROOT |
 | ENV-1B1C Runtime 入口与自检 | [ENV-1B1C Runtime 入口与自检实施记录](./env/ENV-1B1C-RUNTIME-ENTRYPOINT-SELF-CHECK-IMPLEMENTATION-2026-07.md) | 当前 Draft PR：B1 纯契约、安全原语和测试基础，不接入正式生命周期 |
 | ENV-1B1C-B1 实施报告 | [ENV-1B1C-B1 实施报告](./env/evidence/ENV-1B1C-B1-IMPLEMENTATION-REPORT.md) | Draft PR 内完整 Codex 回报、测试和边界证据 |
+| ENV-1B1C-B1 R3 补正报告 | [ENV-1B1C-B1-R3 补正报告](./env/evidence/ENV-1B1C-B1-R3-CORRECTION-REPORT.md) | 独立复核九项纯契约 blocker 的修正、回归与边界证据 |
 | 临时测试部署反馈 | [临时测试部署反馈](./ops/TEMPORARY-TEST-DEPLOYMENT-FEEDBACK-2026-07.md) | 仅记录不含敏感信息的兼容性反馈；不是生产操作 |
 | 代码和数据边界 | [../CODE_BOUNDARIES.md](../CODE_BOUNDARIES.md) | 上游覆盖区和禁止提交范围 |
 | 上游同步 | [upstream/SYNC_POLICY.md](./upstream/SYNC_POLICY.md) | 固定 commit、差异和回归 |

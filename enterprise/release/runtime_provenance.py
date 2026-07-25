@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Mapping, Sequence
 
+from enterprise.path_safety import PathSafetyError, has_reparse_point as _shared_has_reparse_point
+
 
 SCHEMA_VERSION = "env-1b2p-runtime-provenance-report-v2"
 VERIFIER_VERSION = "env-1b2p-runtime-provenance-verifier-v3"
@@ -135,18 +137,18 @@ def _sha256_bytes(content: bytes) -> str:
 
 def _has_reparse_point(path: Path) -> bool:
     try:
-        metadata = path.lstat()
-    except OSError as exc:
+        return _shared_has_reparse_point(path)
+    except PathSafetyError as exc:
         raise ProvenanceVerificationError("path-inspection-failed", path.name) from exc
-    attributes = getattr(metadata, "st_file_attributes", 0)
-    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
-    return path.is_symlink() or bool(attributes & reparse_flag)
 
 
 def _reject_reparse_ancestors(path: Path) -> None:
-    current = path.absolute()
-    for candidate in (current, *current.parents):
-        if candidate.exists() and _has_reparse_point(candidate):
+    absolute = path.absolute()
+    parts = absolute.parts
+    current = Path(parts[0])
+    for part in parts[1:]:
+        current = current / part
+        if _has_reparse_point(current):
             raise ProvenanceVerificationError("input-reparse-point", path.name)
 
 

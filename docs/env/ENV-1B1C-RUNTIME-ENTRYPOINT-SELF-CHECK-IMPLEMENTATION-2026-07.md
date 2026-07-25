@@ -42,9 +42,10 @@ Release 的 formal command 均拒绝。
 ## Audit
 
 `launch_context.publish_launch_context` 映射到 W26（runtime control / diagnostic state）；新的
-`writable_probe.probe_writable_root` 映射到 W42（runtime writable-root probe primitive）。当前
-Draft scan 为 `scanned=90`、`excluded=239`、`detected=299`、`mapped=299`、parse failures / uncovered /
-stale 均为 `0`，site manifest digest 为
+`writable_probe.probe_writable_root` 映射到 W42（runtime writable-root probe primitive）。R3 将 reparse
+inspection 收口为共享 fail-closed path safety 原语，并对 context replace 保留“需要 B2 external exclusive
+runtime lock、不能单独宣称 CAS”的边界。R3 staged Draft scan 为 `scanned=91`、`excluded=249`、
+`detected=299`、`mapped=299`、parse failures / uncovered / stale 均为 `0`，site manifest digest 为
 `464b2eef086b6fea37daf810d3b9f0551de652763f23028df799f8affb81e1ab`。
 
 ## 未实施边界

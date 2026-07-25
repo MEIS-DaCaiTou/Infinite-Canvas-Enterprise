@@ -11,9 +11,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from enterprise.path_safety import PathSafetyError, assert_no_reparse_ancestors
+
 from .error_contract import RuntimeContractError, canonical_json
 from .preflight import StartupPreflightResult
-from .runtime_manifest import assert_no_reparse_ancestors
 
 
 LAUNCH_CONTEXT_SCHEMA_VERSION = "env-1b1c-runtime-launch-context-v1"
@@ -41,6 +42,43 @@ _FIELDS = frozenset({
 })
 _SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 _INSTANCE_RE = re.compile(r"^[0-9a-f]{16,64}$")
+_RELEASE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_PYTHON_VERSION_RE = re.compile(r"^3\.10\.(?:0|[1-9][0-9]{0,2})$")
+
+
+def _path_safety(path: Path, *, allow_missing: bool = False) -> None:
+    try:
+        assert_no_reparse_ancestors(path, allow_missing=allow_missing)
+    except PathSafetyError as exc:
+        raise RuntimeContractError("LAUNCH_CONTEXT_INVALID") from exc
+
+
+def _validate_context_values(context: "RuntimeLaunchContext") -> None:
+    if context.schema_version != LAUNCH_CONTEXT_SCHEMA_VERSION:
+        raise RuntimeContractError("LAUNCH_CONTEXT_SCHEMA_INVALID")
+    if context.mode != "portable-release":
+        raise RuntimeContractError("LAUNCH_CONTEXT_INVALID")
+    if not _INSTANCE_RE.fullmatch(context.instance_id):
+        raise RuntimeContractError("LAUNCH_CONTEXT_INVALID")
+    if not _RELEASE_ID_RE.fullmatch(context.release_id):
+        raise RuntimeContractError("LAUNCH_CONTEXT_INVALID")
+    if context.app_root_relative != f"releases/{context.release_id}":
+        raise RuntimeContractError("LAUNCH_CONTEXT_INVALID")
+    if context.python_implementation != "CPython" or not _PYTHON_VERSION_RE.fullmatch(context.python_version):
+        raise RuntimeContractError("LAUNCH_CONTEXT_INVALID")
+    if context.python_abi != "cp310" or context.architecture != "x64":
+        raise RuntimeContractError("LAUNCH_CONTEXT_INVALID")
+    if context.bytecode_policy != "disabled-no-user-site":
+        raise RuntimeContractError("LAUNCH_CONTEXT_INVALID")
+    for value in (
+        context.path_roots_identity,
+        context.current_release_sha256,
+        context.runtime_manifest_sha256,
+        context.python_executable_sha256,
+        context.startup_preflight_sha256,
+    ):
+        if not isinstance(value, str) or not _SHA_RE.fullmatch(value):
+            raise RuntimeContractError("LAUNCH_CONTEXT_INVALID")
 
 
 @dataclass(frozen=True)
@@ -60,6 +98,9 @@ class RuntimeLaunchContext:
     bytecode_policy: str
     startup_preflight_sha256: str
     schema_version: str = LAUNCH_CONTEXT_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        _validate_context_values(self)
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -130,19 +171,6 @@ def _pairs_no_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 def _validate_payload(payload: object) -> RuntimeLaunchContext:
     if type(payload) is not dict or set(payload) != _FIELDS:
         raise RuntimeContractError("LAUNCH_CONTEXT_INVALID")
-    if payload.get("schema_version") != LAUNCH_CONTEXT_SCHEMA_VERSION:
-        raise RuntimeContractError("LAUNCH_CONTEXT_SCHEMA_INVALID")
-    for key in (
-        "path_roots_identity",
-        "current_release_sha256",
-        "runtime_manifest_sha256",
-        "python_executable_sha256",
-        "startup_preflight_sha256",
-    ):
-        if not isinstance(payload.get(key), str) or not _SHA_RE.fullmatch(payload[key]):
-            raise RuntimeContractError("LAUNCH_CONTEXT_INVALID")
-    if not isinstance(payload.get("instance_id"), str) or not _INSTANCE_RE.fullmatch(payload["instance_id"]):
-        raise RuntimeContractError("LAUNCH_CONTEXT_INVALID")
     context = RuntimeLaunchContext(**payload)
     if context.canonical_json() != canonical_json(payload):
         raise RuntimeContractError("LAUNCH_CONTEXT_INVALID")
@@ -150,7 +178,7 @@ def _validate_payload(payload: object) -> RuntimeLaunchContext:
 
 
 def read_launch_context(path: Path) -> RuntimeLaunchContext:
-    assert_no_reparse_ancestors(path, code="LAUNCH_CONTEXT_INVALID")
+    _path_safety(Path(path))
     try:
         raw = Path(path).read_bytes()
     except OSError as exc:
@@ -167,7 +195,10 @@ def read_launch_context(path: Path) -> RuntimeLaunchContext:
         raise
     except (json.JSONDecodeError, TypeError) as exc:
         raise RuntimeContractError("LAUNCH_CONTEXT_JSON_INVALID") from exc
-    return _validate_payload(payload)
+    context = _validate_payload(payload)
+    if raw != context.canonical_json():
+        raise RuntimeContractError("LAUNCH_CONTEXT_INVALID")
+    return context
 
 
 def _file_identity(path: Path) -> tuple[int, int]:
@@ -194,7 +225,7 @@ def _directory_sync_is_unsupported(exc: OSError, *, stage: str) -> bool:
 
 def sync_context_directory(root: Path) -> str:
     try:
-        assert_no_reparse_ancestors(root, code="LAUNCH_CONTEXT_DIRECTORY_SYNC_FAILED")
+        _path_safety(root)
         fd = os.open(root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
     except OSError as exc:
         if _directory_sync_is_unsupported(exc, stage="open"):
@@ -215,6 +246,22 @@ def sync_context_directory(root: Path) -> str:
     return DIRECTORY_SYNC_VERIFIED
 
 
+def _verify_target_state(target: Path, expected_existing_identity: str | None) -> None:
+    """Check target immediately before publication.
+
+    This is deliberately a second verification, not an atomic CAS claim.  An
+    external exclusive runtime lock remains mandatory for lifecycle wiring in
+    B2; an outside actor can still race the operating-system replacement.
+    """
+    if target.exists():
+        if expected_existing_identity is None:
+            raise RuntimeContractError("LAUNCH_CONTEXT_EXISTING_FORBIDDEN")
+        if read_launch_context(target).identity != expected_existing_identity:
+            raise RuntimeContractError("LAUNCH_CONTEXT_EXISTING_MISMATCH")
+    elif expected_existing_identity is not None:
+        raise RuntimeContractError("LAUNCH_CONTEXT_EXISTING_FORBIDDEN")
+
+
 def publish_launch_context(
     target: Path,
     context: RuntimeLaunchContext,
@@ -224,14 +271,10 @@ def publish_launch_context(
     target = Path(target)
     if target.name != LAUNCH_CONTEXT_FILENAME:
         raise RuntimeContractError("LAUNCH_CONTEXT_INVALID")
-    if target.exists():
-        if expected_existing_identity is None:
-            raise RuntimeContractError("LAUNCH_CONTEXT_EXISTING_REQUIRED")
-        existing = read_launch_context(target)
-        if existing.identity != expected_existing_identity:
-            raise RuntimeContractError("LAUNCH_CONTEXT_EXISTING_MISMATCH")
-    elif expected_existing_identity is not None:
-        raise RuntimeContractError("LAUNCH_CONTEXT_EXISTING_FORBIDDEN")
+    if target.exists() and expected_existing_identity is None:
+        raise RuntimeContractError("LAUNCH_CONTEXT_EXISTING_REQUIRED")
+    _verify_target_state(target, expected_existing_identity)
+    _validate_context_values(context)
     encoded = context.canonical_json()
     if len(encoded) > LAUNCH_CONTEXT_MAX_BYTES:
         raise RuntimeContractError("LAUNCH_CONTEXT_SIZE_INVALID")
@@ -239,7 +282,7 @@ def publish_launch_context(
     created = False
     identity: tuple[int, int] | None = None
     try:
-        assert_no_reparse_ancestors(target.parent, code="LAUNCH_CONTEXT_INVALID")
+        _path_safety(target.parent)
         if temporary.exists():
             raise RuntimeContractError("LAUNCH_CONTEXT_TEMP_EXISTS")
         with temporary.open("xb") as handle:
@@ -250,6 +293,7 @@ def publish_launch_context(
             os.fsync(handle.fileno())
         if not _owned_file(temporary, identity):
             raise RuntimeContractError("LAUNCH_CONTEXT_TEMP_OWNERSHIP_LOST")
+        _verify_target_state(target, expected_existing_identity)
         os.replace(temporary, target)
         sync_status = sync_context_directory(target.parent)
         return LaunchContextPublishResult(context.identity, True, sync_status)

@@ -61,4 +61,19 @@ def test_unknown_error_code_is_rejected() -> None:
 
 def test_error_details_reject_host_paths() -> None:
     with pytest.raises(RuntimeContractError):
-        error_payload("RUNTIME_MODE_INVALID", details={"label": r"C:\Users\secret"})
+        error_payload("RUNTIME_MODE_INVALID", details={"label": "C:" + "\\redacted"})
+
+
+def test_r3_error_payload_details_are_immutable_and_not_leaked() -> None:
+    payload = error_payload("RUNTIME_MODE_INVALID", details={"labels": ["DATA_ROOT"]})
+    with pytest.raises((AttributeError, TypeError)):
+        payload.details["labels"] = "changed"  # type: ignore[index]
+    public = payload.as_public_dict()
+    public["details"]["labels"].append("LOG_ROOT")
+    assert json.loads(payload.canonical_json())["details"] == {"labels": ["DATA_ROOT"]}
+
+
+@pytest.mark.parametrize("correlation_id", ["bad\nvalue", r"C:\secret", "x" * 65])
+def test_r3_error_payload_rejects_unsafe_correlation_id(correlation_id: str) -> None:
+    with pytest.raises(ValueError):
+        error_payload("RUNTIME_MODE_INVALID", correlation_id=correlation_id)

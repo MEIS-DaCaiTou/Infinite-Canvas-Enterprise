@@ -3,18 +3,28 @@
 from __future__ import annotations
 
 import os
+import re
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from enterprise.path_safety import PathSafetyError, assert_no_reparse_ancestors, has_reparse_point
+
 from .error_contract import RuntimeContractError
-from .runtime_manifest import assert_no_reparse_ancestors, has_reparse_point
 
 
 PROBE_SCHEMA_VERSION = "env-1b1c-writable-probe-v1"
 WRITABLE_PROBE_LABELS = frozenset({"DATA_ROOT", "LOG_ROOT", "RUNTIME_ROOT", "CACHE_ROOT", "TEMP_ROOT"})
 PROBE_PREFIX = ".ice-probe-"
+_SUFFIX_RE = re.compile(r"^[a-z0-9]{8,64}$")
+
+
+def _path_safety(path: Path, *, allow_missing: bool = False) -> None:
+    try:
+        assert_no_reparse_ancestors(path, allow_missing=allow_missing)
+    except PathSafetyError as exc:
+        raise RuntimeContractError("WRITABLE_PROBE_REPARSE_FORBIDDEN") from exc
 
 
 @dataclass(frozen=True)
@@ -56,22 +66,36 @@ def probe_writable_root(
     if root_label not in WRITABLE_PROBE_LABELS:
         raise RuntimeContractError("WRITABLE_PROBE_LABEL_INVALID")
     root = Path(root)
-    assert_no_reparse_ancestors(root, code="WRITABLE_PROBE_REPARSE_FORBIDDEN")
     if root_label == "APP_ROOT":
         raise RuntimeContractError("WRITABLE_PROBE_LABEL_INVALID")
+    try:
+        if not root.is_dir():
+            raise RuntimeContractError("WRITABLE_PROBE_CREATE_FAILED", details={"label": root_label})
+    except OSError as exc:
+        raise RuntimeContractError("WRITABLE_PROBE_CREATE_FAILED", details={"label": root_label}) from exc
+    _path_safety(root)
     suffix = name_factory() if name_factory is not None else uuid.uuid4().hex
-    if not isinstance(suffix, str) or not suffix or any(ch in suffix for ch in "\\/:"):
+    if not isinstance(suffix, str) or not _SUFFIX_RE.fullmatch(suffix):
         raise RuntimeContractError("WRITABLE_PROBE_LABEL_INVALID")
     path = root / f"{PROBE_PREFIX}{root_label.lower()}-{suffix}.tmp"
     created = False
     file_identity: tuple[int, int] | None = None
     cleanup_failed = False
     try:
-        assert_no_reparse_ancestors(path.parent, code="WRITABLE_PROBE_REPARSE_FORBIDDEN")
-        with path.open("xb") as handle:
+        _path_safety(path.parent)
+        try:
+            handle = path.open("xb")
+        except FileExistsError as exc:
+            raise RuntimeContractError("WRITABLE_PROBE_EXISTS", details={"label": root_label}) from exc
+        except OSError as exc:
+            raise RuntimeContractError("WRITABLE_PROBE_CREATE_FAILED", details={"label": root_label}) from exc
+        with handle:
             created = True
-            file_identity = _identity(path)
-            handle.write(b"probe\n")
+            try:
+                file_identity = _identity(path)
+                handle.write(b"probe\n")
+            except OSError as exc:
+                raise RuntimeContractError("WRITABLE_PROBE_WRITE_FAILED", details={"label": root_label}) from exc
             try:
                 handle.flush()
             except OSError as exc:
@@ -80,7 +104,12 @@ def probe_writable_root(
                 os.fsync(handle.fileno())
             except OSError as exc:
                 raise RuntimeContractError("WRITABLE_PROBE_FSYNC_FAILED", details={"label": root_label}) from exc
-        if has_reparse_point(path) or not _owned(path, file_identity):
+        try:
+            reparse = has_reparse_point(path)
+            owned = _owned(path, file_identity)
+        except PathSafetyError as exc:
+            raise RuntimeContractError("WRITABLE_PROBE_REPARSE_FORBIDDEN", details={"label": root_label}) from exc
+        if reparse or not owned:
             raise RuntimeContractError("WRITABLE_PROBE_OWNERSHIP_LOST", details={"label": root_label})
         try:
             path.unlink()
@@ -88,8 +117,6 @@ def probe_writable_root(
             cleanup_failed = True
             raise RuntimeContractError("WRITABLE_PROBE_CLEANUP_FAILED", details={"label": root_label}) from exc
         return WritableProbeResult(root_label, created=True, cleaned_up=True)
-    except FileExistsError as exc:
-        raise RuntimeContractError("WRITABLE_PROBE_EXISTS", details={"label": root_label}) from exc
     finally:
         if created and _owned(path, file_identity):
             try:

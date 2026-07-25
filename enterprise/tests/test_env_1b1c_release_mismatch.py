@@ -74,6 +74,37 @@ def test_restart_mismatch_is_blocked_and_invalid_ownership_blocks_stop() -> None
     assert stop.status_code == "STOP_OWNERSHIP_UNAVAILABLE"
 
 
+def test_r3_same_release_running_instance_still_requires_valid_stop_ownership() -> None:
+    decision = decide_release_mismatch(
+        launcher_release_id="new",
+        current_release_id="new",
+        running_release_id="new",
+        owned_instance_valid=False,
+        command="stop",
+    )
+    assert decision.allowed is False
+    assert decision.exit_code == 2
+    assert decision.launcher_release_mismatch is False
+    assert decision.running_release_mismatch is False
+    assert decision.running_instance_present is True
+    assert decision.ownership_valid is False
+    assert decision.status_code == "STOP_OWNERSHIP_UNAVAILABLE"
+
+
+def test_r3_mismatch_properties_distinguish_launcher_and_running_instance() -> None:
+    decision = decide_release_mismatch(
+        launcher_release_id="old",
+        current_release_id="new",
+        running_release_id="old",
+        owned_instance_valid=True,
+        command="status",
+    )
+    assert decision.launcher_release_mismatch is True
+    assert decision.running_release_mismatch is True
+    assert decision.running_instance_present is True
+    assert decision.ownership_valid is True
+
+
 def test_invalid_release_mismatch_command_fails() -> None:
     with pytest.raises(RuntimeContractError) as exc:
         decide_release_mismatch(

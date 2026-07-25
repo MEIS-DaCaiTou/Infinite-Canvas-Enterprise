@@ -11,6 +11,7 @@ import pytest
 from enterprise.runtime.error_contract import RuntimeContractError
 from enterprise.runtime.runtime_manifest import (
     STARTUP_CORE_FILES,
+    assert_no_reparse_ancestors,
     parse_runtime_manifest_startup_view,
     validate_manifest_relative_path,
 )
@@ -102,3 +103,34 @@ def test_duplicate_manifest_key_fails_closed(tmp_path: Path) -> None:
     with pytest.raises(RuntimeContractError) as exc:
         parse_runtime_manifest_startup_view(manifest, runtime)
     assert exc.value.code == "RUNTIME_MANIFEST_DUPLICATE_KEY"
+
+
+def test_r3_reparse_inspection_error_fails_closed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import enterprise.path_safety as path_safety
+
+    def denied(_path: object) -> object:
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(path_safety.os, "lstat", denied)
+    with pytest.raises(RuntimeContractError) as exc:
+        assert_no_reparse_ancestors(tmp_path / "runtime")
+    assert exc.value.code == "RUNTIME_MANIFEST_REPARSE_FORBIDDEN"
+
+
+def test_r3_hard_core_record_limit_is_enforced(tmp_path: Path) -> None:
+    runtime, manifest = _runtime_fixture(tmp_path)
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    for index in range(4):
+        payload["core_files"].append({"filename": f"extra-{index}.dll", "sha256": "0" * 64, "size_bytes": 0})
+    manifest.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+    with pytest.raises(RuntimeContractError) as exc:
+        parse_runtime_manifest_startup_view(manifest, runtime)
+    assert exc.value.code == "RUNTIME_MANIFEST_CORE_LIMIT_EXCEEDED"
+
+
+@pytest.mark.parametrize("candidate_id", ["", "contains space", "../escape", "x" * 129])
+def test_r3_invalid_optional_candidate_id_fails_closed(tmp_path: Path, candidate_id: str) -> None:
+    runtime, manifest = _runtime_fixture(tmp_path, candidate_id=candidate_id)
+    with pytest.raises(RuntimeContractError) as exc:
+        parse_runtime_manifest_startup_view(manifest, runtime)
+    assert exc.value.code == "RUNTIME_MANIFEST_METADATA_INVALID"

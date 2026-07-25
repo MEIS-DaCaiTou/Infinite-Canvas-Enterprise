@@ -52,9 +52,38 @@ call site。
 ## K. Audit
 
 W26 包含 `launch_context.publish_launch_context` 的 runtime control / diagnostic state primitive；
-W42 是 `writable_probe.probe_writable_root`。Audit：`scanned=90`、`excluded=239`、`detected=299`、
+W42 是 `writable_probe.probe_writable_root`。R3 staged audit：`scanned=91`、`excluded=249`、`detected=299`、
 `mapped=299`、`parse_failures=0`、`uncovered=0`、`stale=0`。Digest：
 `464b2eef086b6fea37daf810d3b9f0551de652763f23028df799f8affb81e1ab`。
+
+## K.1 R3 independent-review correction
+
+R3 closes the nine B1 pure-contract blockers without adding a lifecycle caller.
+Launch-context construction/read/publish now share a strict portable validator and canonical raw-byte gate; publish
+rechecks target identity immediately before replacement but explicitly does **not** claim standalone compare-and-swap.
+The future B2 caller still requires an external exclusive runtime lock and must account for residual TOCTOU.
+
+`enterprise.path_safety` is the one fail-closed lexical reparse/containment implementation reused by manifest,
+Python identity, launch context, writable probe and ENV-1B2P provenance.  Typed preflight cross-binds a manifest view,
+Python identity and ordered successful probes.  Error details are immutable, Python prefixes bind to the expected
+Runtime root without publishing paths, any live stop requires ownership, and manifest metadata / hard limits fail
+closed.  R3 adds 19 named regression functions (46 collected parameterized cases).  The dedicated correction evidence
+is [ENV-1B1C-B1-R3-CORRECTION-REPORT.md](ENV-1B1C-B1-R3-CORRECTION-REPORT.md).
+
+```text
+B1_BLOCKER_01_closed=true
+B1_BLOCKER_02_closed=true
+B1_BLOCKER_03_closed=true
+B1_BLOCKER_04_closed=true
+B1_BLOCKER_05_closed=true
+B1_BLOCKER_06_closed=true
+B1_BLOCKER_07_closed=true
+B1_BLOCKER_08_closed=true
+B1_BLOCKER_09_closed=true
+external_exclusive_runtime_lock_required=true
+standalone_atomic_compare_and_swap_claim=false
+residual_TOCTOU_acknowledged=true
+```
 
 ## L. 测试
 
@@ -83,8 +112,10 @@ B1 端口、不访问网络。
 - `test_stab_1_supervisor_logging.py::test_static_runtime_boundary`：`sitecustomize` logging-origin probe 未被加载；
 - `test_stab_1_supervisor_logging.py::test_real_cli_lifecycle_and_acknowledgements`：isolated CLI lifecycle phase worker 在 `start` 阶段失败。
 
-`branch_regression_delta=0`：PR failure-node set 减去 `origin/main` failure-node set 为空；相对 base
-增加的 53 个 B1 pure-contract fixture tests 没有引入失败。该对照支持“本分支没有新增该四个失败节点”，
+R3 在同一解释器和相同环境变量下重新完成了有效 Base/Head 对照：Base 为 `252 passed, 3 skipped,
+4 failed, 8 warnings`，R3 Head 为 `351 passed, 3 skipped, 4 failed, 9 warnings`；有效 Base 使用 detached
+Git worktree，避免 `git archive` 缺少 `.git` 造成 audit/upstream-sync 伪失败。`branch_regression_delta=0`：
+PR failure-node set 减去 `origin/main` failure-node set 为空。该对照支持“本分支没有新增该四个失败节点”，
 但不等于全量测试通过；`full_suite_passed=false`，独立验收仍未闭合。失败行为与该解释器的 `._pth`
 不接受子进程 `PYTHONPATH` 的已观察限制相符，但本报告不把该环境解释提升为正式 bundled Runtime 验证。
 真实 bundled Python fixture 测试为 `false`；本机结果不是 GitHub CI。

@@ -10,25 +10,33 @@ import pytest
 from enterprise.runtime.error_contract import RuntimeContractError
 from enterprise.runtime.launch_context import (
     LAUNCH_CONTEXT_FILENAME,
+    RuntimeLaunchContext,
     build_launch_context,
     publish_launch_context,
     read_launch_context,
 )
-from enterprise.runtime.preflight import build_startup_preflight_result
+from enterprise.runtime.preflight import StartupPreflightResult
 
 
 SHA = "a" * 64
 
 
 def _context(instance_id: str = "1" * 32):
-    preflight = build_startup_preflight_result(
-        mode_value="portable-release",
+    preflight = StartupPreflightResult(
+        result="pass",
+        mode="portable-release",
         release_id="release-A",
+        app_root_relative="releases/release-A",
         path_roots_identity=SHA,
         current_release_sha256="b" * 64,
         runtime_manifest_sha256="c" * 64,
         python_executable_sha256="d" * 64,
+        python_implementation="CPython",
         python_version="3.10.11",
+        python_abi="cp310",
+        architecture="x64",
+        bytecode_policy="disabled-no-user-site",
+        writable_roots_verified=("DATA_ROOT", "LOG_ROOT", "RUNTIME_ROOT", "CACHE_ROOT", "TEMP_ROOT"),
     )
     return build_launch_context(preflight, instance_id=instance_id)
 
@@ -96,3 +104,74 @@ def test_launch_context_write_failure_cleans_owned_temp(tmp_path: Path, monkeypa
         publish_launch_context(target, _context(), expected_existing_identity=None)
     assert exc.value.code == "LAUNCH_CONTEXT_WRITE_FAILED"
     assert not (tmp_path / "launch-context.json.new").exists()
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("mode", "development"),
+        ("release_id", "../evil"),
+        ("app_root_relative", "C:/absolute"),
+        ("python_implementation", "PyPy"),
+        ("python_version", "garbage"),
+        ("python_abi", "cp999"),
+        ("architecture", "arm64"),
+        ("bytecode_policy", "enabled"),
+    ],
+)
+def test_r3_launch_context_reader_rejects_each_invalid_contract_field(
+    tmp_path: Path, field: str, value: str
+) -> None:
+    target = tmp_path / LAUNCH_CONTEXT_FILENAME
+    payload = _context().as_dict()
+    payload[field] = value
+    target.write_bytes(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8") + b"\n"
+    )
+    with pytest.raises(RuntimeContractError) as exc:
+        read_launch_context(target)
+    assert exc.value.code == "LAUNCH_CONTEXT_INVALID"
+
+
+def test_r3_launch_context_direct_construction_and_publish_revalidate_contract(tmp_path: Path) -> None:
+    payload = _context().as_dict()
+    payload["mode"] = "development"
+    with pytest.raises(RuntimeContractError) as exc:
+        RuntimeLaunchContext(**payload)  # type: ignore[arg-type]
+    assert exc.value.code == "LAUNCH_CONTEXT_INVALID"
+
+
+@pytest.mark.parametrize(
+    "raw_suffix",
+    [b"", b"\n\n", b" ", b"\n "],
+)
+def test_r3_launch_context_reader_requires_exact_canonical_bytes(tmp_path: Path, raw_suffix: bytes) -> None:
+    target = tmp_path / LAUNCH_CONTEXT_FILENAME
+    raw = _context().canonical_json()
+    target.write_bytes(raw[:-1] + raw_suffix)
+    with pytest.raises(RuntimeContractError) as exc:
+        read_launch_context(target)
+    assert exc.value.code == "LAUNCH_CONTEXT_INVALID"
+
+
+def test_r3_publish_does_not_overwrite_foreign_target_created_before_replace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import enterprise.runtime.launch_context as subject
+
+    target = tmp_path / LAUNCH_CONTEXT_FILENAME
+    original_verify = subject._verify_target_state
+    calls = 0
+
+    def foreign_appears(destination: Path, expected: str | None) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            destination.write_bytes(_context("f" * 32).canonical_json())
+        original_verify(destination, expected)
+
+    monkeypatch.setattr(subject, "_verify_target_state", foreign_appears)
+    with pytest.raises(RuntimeContractError) as exc:
+        publish_launch_context(target, _context(), expected_existing_identity=None)
+    assert exc.value.code == "LAUNCH_CONTEXT_EXISTING_FORBIDDEN"
+    assert read_launch_context(target).instance_id == "f" * 32
