@@ -10,9 +10,12 @@ import pytest
 
 from enterprise.runtime.error_contract import RuntimeContractError
 from enterprise.runtime.runtime_manifest import (
+    RuntimeManifestStartupView,
     STARTUP_CORE_FILES,
+    StartupCoreFile,
     assert_no_reparse_ancestors,
     parse_runtime_manifest_startup_view,
+    sha256_file,
     validate_manifest_relative_path,
 )
 
@@ -145,3 +148,58 @@ def test_r4_source_metadata_is_strict_when_present(tmp_path: Path, source: objec
     with pytest.raises(RuntimeContractError) as exc:
         parse_runtime_manifest_startup_view(manifest, runtime)
     assert exc.value.code == "RUNTIME_MANIFEST_METADATA_INVALID"
+
+
+def _typed_view(records: tuple[StartupCoreFile, ...]) -> RuntimeManifestStartupView:
+    digest = hashlib.sha256()
+    for record in records:
+        encoded = record.relative_path.encode("utf-8")
+        digest.update(len(encoded).to_bytes(8, "big"))
+        digest.update(encoded)
+        digest.update(record.size_bytes.to_bytes(8, "big"))
+        digest.update(bytes.fromhex(record.sha256))
+    return RuntimeManifestStartupView(
+        schema_version="env-1b1c-runtime-manifest-startup-view-v1", manifest_sha256="a" * 64,
+        python_version="3.10.11", python_implementation="CPython", python_abi="cp310",
+        architecture="x64", architecture_supported=True, startup_core_files=records,
+        startup_core_digest=digest.hexdigest(), candidate_id=None, manifest_self_declared_enterprise_commit=None,
+    )
+
+
+@pytest.mark.parametrize("size", [64 * 1024 * 1024 + 1, 70 * 1024 * 1024])
+def test_r5_typed_manifest_reapplies_single_file_hash_limit(size: int) -> None:
+    records = tuple(StartupCoreFile(name, "e" * 64, size if name == "python.exe" else 1) for name in STARTUP_CORE_FILES)
+    with pytest.raises(RuntimeContractError) as exc:
+        _typed_view(records).validated()
+    assert exc.value.code == "RUNTIME_MANIFEST_HASH_LIMIT_EXCEEDED"
+
+
+def test_r5_typed_manifest_reapplies_total_hash_limit() -> None:
+    records = tuple(StartupCoreFile(name, "e" * 64, 30 * 1024 * 1024) for name in STARTUP_CORE_FILES)
+    with pytest.raises(RuntimeContractError) as exc:
+        _typed_view(records).validated()
+    assert exc.value.code == "RUNTIME_MANIFEST_HASH_LIMIT_EXCEEDED"
+
+
+@pytest.mark.parametrize("stage", ["open", "read", "close"])
+def test_r5_core_hash_os_errors_are_mapped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str) -> None:
+    target = tmp_path / "python.exe"
+    target.write_bytes(b"core")
+    if stage == "open":
+        monkeypatch.setattr(Path, "open", lambda *_a, **_k: (_ for _ in ()).throw(PermissionError("host detail")))
+    elif stage == "read":
+        class BrokenRead:
+            def __enter__(self): return self
+            def __exit__(self, *_a): return None
+            def read(self, _n): raise PermissionError("host detail")
+        monkeypatch.setattr(Path, "open", lambda *_a, **_k: BrokenRead())
+    else:
+        original = Path.open
+        class BrokenClose:
+            def __enter__(self): self.handle = original(target, "rb"); return self.handle
+            def __exit__(self, *_a): self.handle.close(); raise PermissionError("host detail")
+        monkeypatch.setattr(Path, "open", lambda *_a, **_k: BrokenClose())
+    with pytest.raises(RuntimeContractError) as exc:
+        sha256_file(target)
+    assert exc.value.code == "RUNTIME_MANIFEST_CORE_READ_FAILED"
+    assert "host detail" not in exc.value.payload.canonical_json().decode("utf-8")

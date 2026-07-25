@@ -174,3 +174,26 @@ temporary_test_environment_accessed_by_codex=false
 Ready=false
 merged=false
 ```
+
+## R5 trust-chain correction
+
+R5 keeps this PR in Draft and closes the third-review B1 primitive findings:
+manifest-to-executable hash binding, typed manifest byte limits, shared
+Windows-safe release components, descriptor-first probe identity and nonce
+cleanup, stable hash-read errors, symbolic public error details, explicit
+portable identity roots with SOABI validation, and shared strict 3.10 version
+validation. `decide_release_mismatch()` is release-gate-only and must not be
+treated as final process, HTTP, context, or readiness health. See
+[the R5 correction report](ENV-1B1C-B1-R5-CORRECTION-REPORT.md).
+
+```text
+ENV_1B1C_B1_R5_completed_in_Draft_PR=true
+ENV_1B1C_B2_started=false
+STOPPED_AFTER_B1_R5_AWAITING_INDEPENDENT_REVIEW=true
+```
+
+R5 reran the same full-suite comparison with the existing embedded development
+interpreter: Base was `252 passed, 3 skipped, 4 failed, 8 warnings`; R5 Head
+was `433 passed, 3 skipped, 4 failed, 9 warnings`. The same four failure
+nodeids remained, so `branch_regression_delta=0`; this is not a full-suite
+pass and is not GitHub CI evidence.

@@ -55,6 +55,7 @@ _DEFINITIONS: tuple[ErrorDefinition, ...] = (
     ErrorDefinition("RUNTIME_MANIFEST_PATH_DUPLICATE", "runtime_manifest", "runtime manifest path is duplicated"),
     ErrorDefinition("RUNTIME_MANIFEST_REPARSE_FORBIDDEN", "runtime_manifest", "runtime manifest input uses a reparse point"),
     ErrorDefinition("RUNTIME_MANIFEST_HASH_LIMIT_EXCEEDED", "runtime_manifest", "runtime manifest hash limit exceeded"),
+    ErrorDefinition("RUNTIME_MANIFEST_CORE_READ_FAILED", "runtime_manifest", "runtime manifest core file could not be read"),
     ErrorDefinition("RUNTIME_MANIFEST_ABI_INVALID", "runtime_manifest", "runtime manifest ABI is invalid"),
     ErrorDefinition("RUNTIME_MANIFEST_ARCHITECTURE_INVALID", "runtime_manifest", "runtime manifest architecture is invalid"),
     ErrorDefinition("PORTABLE_ARCHITECTURE_UNSUPPORTED", "runtime_manifest", "portable architecture is not supported"),
@@ -65,12 +66,14 @@ _DEFINITIONS: tuple[ErrorDefinition, ...] = (
     ErrorDefinition("PYTHON_IDENTITY_CACHE_TAG_INVALID", "python_identity", "Python cache tag is invalid"),
     ErrorDefinition("PYTHON_IDENTITY_REPARSE_FORBIDDEN", "python_identity", "Python executable uses a reparse point"),
     ErrorDefinition("PYTHON_IDENTITY_HASH_LIMIT_EXCEEDED", "python_identity", "Python executable hash limit exceeded"),
+    ErrorDefinition("PYTHON_IDENTITY_EXECUTABLE_READ_FAILED", "python_identity", "Python executable could not be read"),
     ErrorDefinition("PYTHON_IDENTITY_IMPLEMENTATION_INVALID", "python_identity", "Python implementation is invalid"),
     ErrorDefinition("PYTHON_IDENTITY_VERSION_INVALID", "python_identity", "Python version is invalid"),
     ErrorDefinition("PYTHON_IDENTITY_ABI_INVALID", "python_identity", "Python ABI is invalid"),
     ErrorDefinition("PYTHON_IDENTITY_ARCHITECTURE_INVALID", "python_identity", "Python architecture is invalid"),
     ErrorDefinition("PYTHON_IDENTITY_BYTECODE_POLICY_INVALID", "python_identity", "Python bytecode policy is invalid"),
     ErrorDefinition("STARTUP_PREFLIGHT_INVALID", "preflight", "startup preflight result is invalid"),
+    ErrorDefinition("STARTUP_PREFLIGHT_PYTHON_MANIFEST_MISMATCH", "preflight", "Python executable does not match runtime manifest"),
     ErrorDefinition("LAUNCH_CONTEXT_INVALID", "launch_context", "launch context is invalid"),
     ErrorDefinition("LAUNCH_CONTEXT_SIZE_INVALID", "launch_context", "launch context size is invalid"),
     ErrorDefinition("LAUNCH_CONTEXT_UTF8_INVALID", "launch_context", "launch context is not valid UTF-8"),
@@ -89,6 +92,7 @@ _DEFINITIONS: tuple[ErrorDefinition, ...] = (
     ErrorDefinition("WRITABLE_PROBE_CREATE_FAILED", "writable_probe", "writable probe could not be created"),
     ErrorDefinition("WRITABLE_PROBE_EXISTS", "writable_probe", "writable probe file already exists"),
     ErrorDefinition("WRITABLE_PROBE_WRITE_FAILED", "writable_probe", "writable probe write failed"),
+    ErrorDefinition("WRITABLE_PROBE_IDENTITY_FAILED", "writable_probe", "writable probe identity could not be verified"),
     ErrorDefinition("WRITABLE_PROBE_FSYNC_FAILED", "writable_probe", "writable probe fsync failed"),
     ErrorDefinition("WRITABLE_PROBE_REPARSE_FORBIDDEN", "writable_probe", "writable probe path uses a reparse point"),
     ErrorDefinition("WRITABLE_PROBE_OWNERSHIP_LOST", "writable_probe", "writable probe ownership was lost"),
@@ -123,11 +127,10 @@ def _validate_detail_value(value: Any) -> Any:
     if value is None or type(value) in {bool, int}:
         return value
     if isinstance(value, str):
-        if len(value) > 160 or "\n" in value or "\r" in value:
-            raise RuntimeContractError("ERROR_CONTRACT_INVALID")
-        # Public details carry labels and basenames only; obvious host paths are
-        # rejected at construction time to keep the final JSON redacted.
-        if ":\\" in value or ":/" in value or value.startswith(("\\\\", "//")):
+        # Details are public labels/basenames, not free-form diagnostic text.
+        # A single bounded symbolic grammar prevents POSIX, Windows, relative,
+        # UNC, device, and control-character path disclosure.
+        if not re.fullmatch(r"[A-Za-z0-9._-]{1,160}", value) or value in {".", ".."} or ".." in value.split("."):
             raise RuntimeContractError("ERROR_CONTRACT_INVALID")
         return value
     if isinstance(value, (tuple, list)):

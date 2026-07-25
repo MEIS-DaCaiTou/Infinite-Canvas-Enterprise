@@ -153,3 +153,12 @@ def test_r3_writable_probe_suffix_is_strictly_bounded(tmp_path: Path, suffix: st
     with pytest.raises(RuntimeContractError) as exc:
         probe_writable_root(tmp_path, "DATA_ROOT", name_factory=lambda: suffix)
     assert exc.value.code == "WRITABLE_PROBE_LABEL_INVALID"
+
+
+def test_r5_identity_acquisition_failure_cleans_own_probe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import enterprise.runtime.writable_probe as subject
+    monkeypatch.setattr(subject, "_descriptor_identity", lambda _fd: (_ for _ in ()).throw(OSError("host detail")))
+    with pytest.raises(RuntimeContractError) as exc:
+        probe_writable_root(tmp_path, "DATA_ROOT", name_factory=lambda: VALID_SUFFIX)
+    assert exc.value.code == "WRITABLE_PROBE_IDENTITY_FAILED"
+    assert list(tmp_path.iterdir()) == []

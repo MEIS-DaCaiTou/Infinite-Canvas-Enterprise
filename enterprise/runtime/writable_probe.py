@@ -54,6 +54,11 @@ def _identity(path: Path) -> tuple[int, int]:
     return info.st_dev, info.st_ino
 
 
+def _descriptor_identity(fd: int) -> tuple[int, int]:
+    info = os.fstat(fd)
+    return info.st_dev, info.st_ino
+
+
 def _owned(path: Path, identity: tuple[int, int] | None, token: bytes) -> bool:
     if identity is None:
         return False
@@ -74,6 +79,27 @@ def _owned(path: Path, identity: tuple[int, int] | None, token: bytes) -> bool:
         finally:
             os.close(fd)
         return b"".join(chunks) == token
+    except (OSError, PathSafetyError):
+        return False
+
+
+def _token_only_owned(path: Path, token: bytes) -> bool:
+    """Conservative recovery after descriptor identity acquisition failed."""
+
+    if not token:
+        return False
+    try:
+        if has_reparse_point(path):
+            return False
+        info = os.lstat(path)
+        if not stat.S_ISREG(info.st_mode):
+            return False
+        fd = os.open(path, os.O_RDONLY)
+        try:
+            content = b"".join(iter(lambda: os.read(fd, 4096), b""))
+        finally:
+            os.close(fd)
+        return content == token
     except (OSError, PathSafetyError):
         return False
 
@@ -115,18 +141,30 @@ def probe_writable_root(
         with handle:
             created = True
             try:
-                file_identity = _identity(path)
                 written = handle.write(token)
                 if written != len(token):
                     expected_content = token[: max(0, int(written))]
                     raise OSError("short probe write")
                 expected_content = token
             except OSError as exc:
+                # A failed write can leave an empty or partial file.  Obtain
+                # identity from the still-open exclusive-create descriptor so
+                # final cleanup can remove only this invocation's pathname.
+                try:
+                    file_identity = _descriptor_identity(handle.fileno())
+                except OSError as identity_exc:
+                    raise RuntimeContractError("WRITABLE_PROBE_IDENTITY_FAILED", details={"label": root_label}) from identity_exc
                 raise RuntimeContractError("WRITABLE_PROBE_WRITE_FAILED", details={"label": root_label}) from exc
             try:
                 handle.flush()
             except OSError as exc:
                 raise RuntimeContractError("WRITABLE_PROBE_WRITE_FAILED", details={"label": root_label}) from exc
+            try:
+                # The first identity comes from the exclusive-create handle,
+                # not a later pathname stat that can race replacement.
+                file_identity = _descriptor_identity(handle.fileno())
+            except OSError as exc:
+                raise RuntimeContractError("WRITABLE_PROBE_IDENTITY_FAILED", details={"label": root_label}) from exc
             try:
                 os.fsync(handle.fileno())
             except OSError as exc:
@@ -145,7 +183,14 @@ def probe_writable_root(
             raise RuntimeContractError("WRITABLE_PROBE_CLEANUP_FAILED", details={"label": root_label}) from exc
         return WritableProbeResult(root_label, created=True, cleaned_up=True)
     finally:
-        if created and _owned(path, file_identity, expected_content):
+        owned_for_cleanup = _owned(path, file_identity, expected_content)
+        if created and file_identity is None:
+            # Descriptor identity was unavailable. The unique per-call token
+            # still distinguishes our fully written file from a replacement;
+            # if that proof fails, retain the pathname rather than deleting a
+            # possible foreign file.
+            owned_for_cleanup = _token_only_owned(path, expected_content)
+        if created and owned_for_cleanup:
             try:
                 path.unlink()
             except FileNotFoundError:

@@ -14,6 +14,7 @@ from .runtime_manifest import (
     APPROVED_PORTABLE_ARCHITECTURES,
     SINGLE_FILE_HASH_MAX_BYTES,
     abi_from_cache_tag,
+    is_strict_cpython_310_version,
     normalize_architecture,
 )
 from enterprise.path_safety import (
@@ -25,7 +26,6 @@ from enterprise.path_safety import (
 
 
 PYTHON_IDENTITY_SCHEMA = "env-1b1c-python-identity-v1"
-_PYTHON_310_VERSION_RE = re.compile(r"^3\.10\.(?:0|[1-9][0-9]{0,2})$")
 _SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -49,7 +49,7 @@ class PythonIdentity:
         if (
             self.schema_version != PYTHON_IDENTITY_SCHEMA
             or self.implementation != "CPython"
-            or _PYTHON_310_VERSION_RE.fullmatch(self.version) is None
+            or not is_strict_cpython_310_version(self.version)
             or self.abi != "cp310"
             or self.architecture not in {"x64", "arm64"}
             or self.architecture_supported != (self.architecture in APPROVED_PORTABLE_ARCHITECTURES)
@@ -83,12 +83,17 @@ class PythonIdentity:
 def _hash_file(path: Path) -> str:
     digest = hashlib.sha256()
     size = 0
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            size += len(chunk)
-            if size > SINGLE_FILE_HASH_MAX_BYTES:
-                raise RuntimeContractError("PYTHON_IDENTITY_HASH_LIMIT_EXCEEDED", details={"label": path.name})
-            digest.update(chunk)
+    try:
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                size += len(chunk)
+                if size > SINGLE_FILE_HASH_MAX_BYTES:
+                    raise RuntimeContractError("PYTHON_IDENTITY_HASH_LIMIT_EXCEEDED", details={"label": path.name})
+                digest.update(chunk)
+    except RuntimeContractError:
+        raise
+    except OSError as exc:
+        raise RuntimeContractError("PYTHON_IDENTITY_EXECUTABLE_READ_FAILED", details={"label": path.name}) from exc
     return digest.hexdigest()
 
 
@@ -120,6 +125,20 @@ def _same_path(first: Path, second: Path) -> bool:
     )
 
 
+def _validate_soabi(value: object, *, abi: str, architecture: str) -> None:
+    """Validate an optional SOABI against the frozen Windows CPython 3.10 ABI."""
+
+    if value is None:
+        return
+    if not isinstance(value, str):
+        raise RuntimeContractError("PYTHON_IDENTITY_ABI_INVALID")
+    normalized = value.strip().lower().replace("_", "-")
+    if abi != "cp310" or architecture != "x64" or normalized not in {
+        "cp310-win-amd64", "cpython-310-win-amd64",
+    }:
+        raise RuntimeContractError("PYTHON_IDENTITY_ABI_INVALID")
+
+
 def build_python_identity(
     executable: Path,
     probe: dict[str, Any],
@@ -127,6 +146,8 @@ def build_python_identity(
     expected_executable: Path | None = None,
     expected_runtime_root: Path | None = None,
 ) -> PythonIdentity:
+    if expected_executable is None or expected_runtime_root is None:
+        raise RuntimeContractError("PYTHON_IDENTITY_EXECUTABLE_MISMATCH")
     executable = Path(executable)
     try:
         assert_no_reparse_ancestors(executable)
@@ -140,13 +161,12 @@ def build_python_identity(
         raise RuntimeContractError("PYTHON_IDENTITY_EXECUTABLE_MISSING", details={"label": executable.name})
     if executable.name.lower() != "python.exe":
         raise RuntimeContractError("PYTHON_IDENTITY_EXECUTABLE_INVALID", details={"label": executable.name})
-    if expected_executable is not None:
-        try:
-            if not _same_path(executable, Path(expected_executable)):
-                raise RuntimeContractError("PYTHON_IDENTITY_EXECUTABLE_MISMATCH", details={"label": executable.name})
-        except OSError as exc:
-            raise RuntimeContractError("PYTHON_IDENTITY_EXECUTABLE_MISMATCH", details={"label": executable.name}) from exc
-    runtime_root = Path(expected_runtime_root) if expected_runtime_root is not None else (Path(expected_executable).parent if expected_executable is not None else executable.parent)
+    try:
+        if not _same_path(executable, Path(expected_executable)):
+            raise RuntimeContractError("PYTHON_IDENTITY_EXECUTABLE_MISMATCH", details={"label": executable.name})
+    except OSError as exc:
+        raise RuntimeContractError("PYTHON_IDENTITY_EXECUTABLE_MISMATCH", details={"label": executable.name}) from exc
+    runtime_root = Path(expected_runtime_root)
     try:
         assert_no_reparse_ancestors(runtime_root)
         if not runtime_root.is_dir() or has_reparse_point(runtime_root):
@@ -171,7 +191,7 @@ def build_python_identity(
     if implementation != "cpython":
         raise RuntimeContractError("PYTHON_IDENTITY_IMPLEMENTATION_INVALID")
     version = probe.get("version")
-    if not isinstance(version, str) or _PYTHON_310_VERSION_RE.fullmatch(version) is None:
+    if not is_strict_cpython_310_version(version):
         raise RuntimeContractError("PYTHON_IDENTITY_VERSION_INVALID")
     try:
         abi = abi_from_cache_tag(probe.get("cache_tag"))
@@ -186,6 +206,7 @@ def build_python_identity(
         raise RuntimeContractError("PYTHON_IDENTITY_ARCHITECTURE_INVALID")
     if abi != "cp310":
         raise RuntimeContractError("PYTHON_IDENTITY_ABI_INVALID")
+    _validate_soabi(probe.get("soabi"), abi=abi, architecture=architecture)
     if architecture not in APPROVED_PORTABLE_ARCHITECTURES:
         # Parsed but not approved for current formal Windows portable target.
         architecture_supported = False

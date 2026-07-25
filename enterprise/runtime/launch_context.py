@@ -13,9 +13,11 @@ from pathlib import Path
 from typing import Any, Literal
 
 from enterprise.path_safety import PathSafetyError, assert_no_reparse_ancestors, has_reparse_point
+from enterprise.paths import PathRootsError, validate_release_component
 
 from .error_contract import RuntimeContractError, canonical_json
 from .preflight import StartupPreflightResult
+from .runtime_manifest import is_strict_cpython_310_version
 
 
 LAUNCH_CONTEXT_SCHEMA_VERSION = "env-1b1c-runtime-launch-context-v1"
@@ -43,8 +45,6 @@ _FIELDS = frozenset({
 })
 _SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 _INSTANCE_RE = re.compile(r"^[0-9a-f]{16,64}$")
-_RELEASE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
-_PYTHON_VERSION_RE = re.compile(r"^3\.10\.(?:0|[1-9][0-9]{0,2})$")
 
 
 def _path_safety(path: Path, *, allow_missing: bool = False) -> None:
@@ -61,11 +61,13 @@ def _validate_context_values(context: "RuntimeLaunchContext") -> None:
         raise RuntimeContractError("LAUNCH_CONTEXT_INVALID")
     if not _INSTANCE_RE.fullmatch(context.instance_id):
         raise RuntimeContractError("LAUNCH_CONTEXT_INVALID")
-    if not _RELEASE_ID_RE.fullmatch(context.release_id):
+    try:
+        validate_release_component(context.release_id)
+    except PathRootsError as exc:
         raise RuntimeContractError("LAUNCH_CONTEXT_INVALID")
     if context.app_root_relative != f"releases/{context.release_id}":
         raise RuntimeContractError("LAUNCH_CONTEXT_INVALID")
-    if context.python_implementation != "CPython" or not _PYTHON_VERSION_RE.fullmatch(context.python_version):
+    if context.python_implementation != "CPython" or not is_strict_cpython_310_version(context.python_version):
         raise RuntimeContractError("LAUNCH_CONTEXT_INVALID")
     if context.python_abi != "cp310" or context.architecture != "x64":
         raise RuntimeContractError("LAUNCH_CONTEXT_INVALID")

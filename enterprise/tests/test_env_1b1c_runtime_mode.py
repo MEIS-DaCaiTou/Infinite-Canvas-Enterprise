@@ -77,3 +77,14 @@ def test_r3_error_payload_details_are_immutable_and_not_leaked() -> None:
 def test_r3_error_payload_rejects_unsafe_correlation_id(correlation_id: str) -> None:
     with pytest.raises(ValueError):
         error_payload("RUNTIME_MODE_INVALID", correlation_id=correlation_id)
+
+
+@pytest.mark.parametrize("value", ["/home/alice/token", r"\Users\alice\secret", "../secret", "a/b", r"a\b"])
+def test_r5_error_details_reject_pathlike_values_recursively(value: str) -> None:
+    with pytest.raises(RuntimeContractError):
+        error_payload("RUNTIME_MODE_INVALID", details={"label": ("APP_ROOT", [value])})
+
+
+@pytest.mark.parametrize("value", ["APP_ROOT", "python.exe", "runtime_manifest"])
+def test_r5_error_details_allow_symbolic_labels(value: str) -> None:
+    assert error_payload("RUNTIME_MODE_INVALID", details={"label": value}).as_public_dict()["details"] == {"label": value}

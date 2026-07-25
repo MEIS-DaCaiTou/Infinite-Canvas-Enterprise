@@ -9,14 +9,13 @@ from dataclasses import dataclass
 from .error_contract import PORTABLE_EXIT_BLOCKED, PORTABLE_EXIT_OK, RuntimeContractError, canonical_json
 from .mode import PORTABLE_RELEASE, RuntimeMode
 from .python_identity import PythonIdentity
-from .runtime_manifest import RuntimeManifestStartupView
+from .runtime_manifest import RuntimeManifestStartupView, is_strict_cpython_310_version
 from .writable_probe import WRITABLE_PROBE_LABELS, WritableProbeResult
+from enterprise.paths import PathRootsError, validate_release_component
 
 
 PREFLIGHT_SCHEMA_VERSION = "env-1b1c-startup-preflight-v1"
 _SHA_RE = re.compile(r"^[0-9a-f]{64}$")
-_RELEASE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
-_VERSION_RE = re.compile(r"^3\.10\.[0-9]{1,5}$")
 _WRITABLE_ROOT_ORDER = ("DATA_ROOT", "LOG_ROOT", "RUNTIME_ROOT", "CACHE_ROOT", "TEMP_ROOT")
 
 
@@ -48,7 +47,9 @@ class StartupPreflightResult:
     def __post_init__(self) -> None:
         if self.result != "pass" or self.mode != PORTABLE_RELEASE:
             raise RuntimeContractError("STARTUP_PREFLIGHT_INVALID")
-        if not _RELEASE_RE.fullmatch(self.release_id):
+        try:
+            validate_release_component(self.release_id)
+        except PathRootsError as exc:
             raise RuntimeContractError("STARTUP_PREFLIGHT_INVALID")
         if self.app_root_relative != f"releases/{self.release_id}":
             raise RuntimeContractError("STARTUP_PREFLIGHT_INVALID")
@@ -61,7 +62,7 @@ class StartupPreflightResult:
             _require_sha(value)
         if (
             self.python_implementation != "CPython"
-            or not _VERSION_RE.fullmatch(self.python_version)
+            or not is_strict_cpython_310_version(self.python_version)
             or self.python_abi != "cp310"
             or self.architecture != "x64"
         ):
@@ -154,8 +155,11 @@ def build_startup_preflight_result(
         or runtime_manifest.architecture != python_identity.architecture
     ):
         raise RuntimeContractError("STARTUP_PREFLIGHT_INVALID")
-    if not _VERSION_RE.fullmatch(runtime_manifest.python_version):
+    if not is_strict_cpython_310_version(runtime_manifest.python_version):
         raise RuntimeContractError("STARTUP_PREFLIGHT_INVALID")
+    python_record = next((item for item in runtime_manifest.startup_core_files if item.relative_path == "python.exe"), None)
+    if python_record is None or python_record.sha256 != python_identity.executable_sha256:
+        raise RuntimeContractError("STARTUP_PREFLIGHT_PYTHON_MANIFEST_MISMATCH")
     if runtime_manifest.architecture != "x64" or not runtime_manifest.architecture_supported or not python_identity.architecture_supported:
         raise RuntimeContractError("PORTABLE_ARCHITECTURE_UNSUPPORTED")
     if python_identity.pointer_bits != 64 or not python_identity.dont_write_bytecode or not python_identity.no_user_site:
@@ -191,6 +195,7 @@ class ReleaseMismatchDecision:
     ownership_valid: bool
     ownership_untrusted: bool
     status_code: str
+    decision_scope: str = "release_gate_only"
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -202,6 +207,7 @@ class ReleaseMismatchDecision:
             "ownership_valid": self.ownership_valid,
             "ownership_untrusted": self.ownership_untrusted,
             "status_code": self.status_code,
+            "decision_scope": self.decision_scope,
         }
 
 
@@ -213,6 +219,11 @@ def decide_release_mismatch(
     owned_instance_valid: bool,
     command: str,
 ) -> ReleaseMismatchDecision:
+    """Apply only the release/ownership gate, never final process or HTTP health.
+
+    ``allowed`` means this narrow release gate has not blocked the command. B2
+    must still validate process ownership, launch context, and readiness.
+    """
     if command not in {"start", "stop", "restart", "status", "health"}:
         raise RuntimeContractError("RELEASE_MISMATCH_COMMAND_INVALID")
     launcher_mismatch = launcher_release_id != current_release_id

@@ -233,3 +233,13 @@ def test_r4_broken_symlink_is_lexically_present_and_preserved(tmp_path: Path, na
     with pytest.raises(RuntimeContractError):
         publish_launch_context(target, _context(), expected_existing_identity=None)
     assert link.is_symlink()
+
+
+@pytest.mark.parametrize("release_id", ["CON", "NUL", "COM1", "LPT9.txt", "release.", "release ", ".", "..", "a/b", "a\\b", "a:b"])
+def test_r5_launch_context_reuses_windows_safe_release_component(tmp_path: Path, release_id: str) -> None:
+    payload = _context().as_dict()
+    payload["release_id"] = release_id
+    payload["app_root_relative"] = f"releases/{release_id}"
+    with pytest.raises(RuntimeContractError) as exc:
+        RuntimeLaunchContext(**payload)  # type: ignore[arg-type]
+    assert exc.value.code == "LAUNCH_CONTEXT_INVALID"

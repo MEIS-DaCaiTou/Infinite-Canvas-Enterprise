@@ -46,6 +46,36 @@ class StartupCoreFile:
     size_bytes: int
 
 
+def is_strict_cpython_310_version(value: object) -> bool:
+    """Return whether ``value`` is the frozen B1 CPython 3.10 version form."""
+
+    return isinstance(value, str) and _PYTHON_310_VERSION_RE.fullmatch(value) is not None
+
+
+def validate_startup_core_records(records: tuple[StartupCoreFile, ...]) -> tuple[StartupCoreFile, ...]:
+    """Apply the startup-view count, ordering, and byte limits in one place."""
+
+    if not isinstance(records, tuple) or len(records) != STARTUP_CORE_FILE_COUNT:
+        raise RuntimeContractError("STARTUP_PREFLIGHT_INVALID")
+    total_size = 0
+    for expected_name, record in zip(STARTUP_CORE_FILES, records):
+        if (
+            not isinstance(record, StartupCoreFile)
+            or record.relative_path != expected_name
+            or not isinstance(record.sha256, str)
+            or _SHA_RE.fullmatch(record.sha256) is None
+            or type(record.size_bytes) is not int
+            or record.size_bytes < 0
+        ):
+            raise RuntimeContractError("STARTUP_PREFLIGHT_INVALID")
+        if record.size_bytes > SINGLE_FILE_HASH_MAX_BYTES:
+            raise RuntimeContractError("RUNTIME_MANIFEST_HASH_LIMIT_EXCEEDED", details={"label": record.relative_path})
+        total_size += record.size_bytes
+        if total_size > TOTAL_STARTUP_HASH_MAX_BYTES:
+            raise RuntimeContractError("RUNTIME_MANIFEST_HASH_LIMIT_EXCEEDED", details={"label": record.relative_path})
+    return records
+
+
 @dataclass(frozen=True)
 class RuntimeManifestStartupView:
     schema_version: str
@@ -69,7 +99,7 @@ class RuntimeManifestStartupView:
             or not isinstance(self.manifest_sha256, str)
             or _SHA_RE.fullmatch(self.manifest_sha256) is None
             or self.python_implementation != "CPython"
-            or _PYTHON_310_VERSION_RE.fullmatch(self.python_version) is None
+            or not is_strict_cpython_310_version(self.python_version)
             or self.python_abi != "cp310"
             or self.architecture not in KNOWN_ARCHITECTURES
             or self.architecture_supported != (self.architecture in APPROVED_PORTABLE_ARCHITECTURES)
@@ -77,29 +107,17 @@ class RuntimeManifestStartupView:
             or self.runtime_provenance_promoted is not False
             or self.Manifest_v2_implemented is not False
             or not isinstance(self.startup_core_files, tuple)
-            or len(self.startup_core_files) != STARTUP_CORE_FILE_COUNT
         ):
             raise RuntimeContractError("STARTUP_PREFLIGHT_INVALID")
-        names: list[str] = []
+        records = validate_startup_core_records(self.startup_core_files)
         digest = hashlib.sha256()
-        for record in self.startup_core_files:
-            if not isinstance(record, StartupCoreFile):
-                raise RuntimeContractError("STARTUP_PREFLIGHT_INVALID")
-            if (
-                record.relative_path not in STARTUP_CORE_FILES
-                or not isinstance(record.sha256, str)
-                or _SHA_RE.fullmatch(record.sha256) is None
-                or type(record.size_bytes) is not int
-                or record.size_bytes < 0
-            ):
-                raise RuntimeContractError("STARTUP_PREFLIGHT_INVALID")
-            names.append(record.relative_path)
+        for record in records:
             encoded = record.relative_path.encode("utf-8")
             digest.update(len(encoded).to_bytes(8, "big"))
             digest.update(encoded)
             digest.update(record.size_bytes.to_bytes(8, "big"))
             digest.update(bytes.fromhex(record.sha256))
-        if tuple(names) != STARTUP_CORE_FILES or self.startup_core_digest != digest.hexdigest():
+        if self.startup_core_digest != digest.hexdigest():
             raise RuntimeContractError("STARTUP_PREFLIGHT_INVALID")
         if self.candidate_id is not None and (not isinstance(self.candidate_id, str) or _CANDIDATE_ID_RE.fullmatch(self.candidate_id) is None):
             raise RuntimeContractError("STARTUP_PREFLIGHT_INVALID")
@@ -158,12 +176,17 @@ def sha256_file(path: Path, *, max_bytes: int = SINGLE_FILE_HASH_MAX_BYTES) -> t
         raise RuntimeContractError("RUNTIME_MANIFEST_REPARSE_FORBIDDEN", details={"label": path.name})
     digest = hashlib.sha256()
     size = 0
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            size += len(chunk)
-            if size > max_bytes:
-                raise RuntimeContractError("RUNTIME_MANIFEST_HASH_LIMIT_EXCEEDED", details={"label": path.name})
-            digest.update(chunk)
+    try:
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                size += len(chunk)
+                if size > max_bytes:
+                    raise RuntimeContractError("RUNTIME_MANIFEST_HASH_LIMIT_EXCEEDED", details={"label": path.name})
+                digest.update(chunk)
+    except RuntimeContractError:
+        raise
+    except OSError as exc:
+        raise RuntimeContractError("RUNTIME_MANIFEST_CORE_READ_FAILED", details={"label": path.name}) from exc
     return digest.hexdigest(), size
 
 
@@ -250,7 +273,7 @@ def parse_runtime_manifest_startup_view(manifest_path: Path, python_runtime_root
     version = payload.get("python_version")
     if not isinstance(implementation, str) or implementation.lower() != "cpython":
         raise RuntimeContractError("PYTHON_IDENTITY_IMPLEMENTATION_INVALID")
-    if not isinstance(version, str) or _PYTHON_310_VERSION_RE.fullmatch(version) is None:
+    if not is_strict_cpython_310_version(version):
         raise RuntimeContractError("PYTHON_IDENTITY_VERSION_INVALID")
     records: dict[str, dict[str, Any]] = {}
     core_items = payload.get("core_files")
@@ -301,6 +324,7 @@ def parse_runtime_manifest_startup_view(manifest_path: Path, python_runtime_root
         digest.update(encoded)
         digest.update(actual_size.to_bytes(8, "big"))
         digest.update(bytes.fromhex(actual_sha))
+    validate_startup_core_records(tuple(startup_records))
     if "source" not in payload:
         source: dict[str, Any] = {}
     elif type(payload["source"]) is dict:

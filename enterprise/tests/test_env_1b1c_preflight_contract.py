@@ -9,7 +9,7 @@ import pytest
 
 from enterprise.runtime.error_contract import RuntimeContractError
 from enterprise.runtime.mode import parse_runtime_mode
-from enterprise.runtime.preflight import build_startup_preflight_result
+from enterprise.runtime.preflight import StartupPreflightResult, build_startup_preflight_result, decide_release_mismatch
 from enterprise.runtime.python_identity import PythonIdentity
 from enterprise.runtime.runtime_manifest import STARTUP_CORE_FILES, RuntimeManifestStartupView, StartupCoreFile
 from enterprise.runtime.writable_probe import WritableProbeResult
@@ -53,7 +53,7 @@ def _identity(**overrides: object) -> PythonIdentity:
         "architecture_supported": True,
         "pointer_bits": 64,
         "executable_basename": "python.exe",
-        "executable_sha256": "d" * 64,
+        "executable_sha256": "e" * 64,
         "prefix_identity": "f" * 64,
         "base_prefix_identity": "f" * 64,
         "dont_write_bytecode": True,
@@ -146,4 +146,42 @@ def test_r4_preflight_rejects_error_codes_as_warnings(warning: str) -> None:
 def test_r4_preflight_rejects_forged_typed_models(override: dict[str, object]) -> None:
     with pytest.raises(RuntimeContractError) as exc:
         _build(**override)
+    assert exc.value.code == "STARTUP_PREFLIGHT_INVALID"
+
+
+def test_r5_preflight_binds_python_executable_to_manifest_record() -> None:
+    with pytest.raises(RuntimeContractError) as exc:
+        _build(python_identity=_identity(executable_sha256="d" * 64))
+    assert exc.value.code == "STARTUP_PREFLIGHT_PYTHON_MANIFEST_MISMATCH"
+    assert _build().result == "pass"
+
+
+@pytest.mark.parametrize("patch", ["00001", "01", "1000"])
+def test_r5_preflight_rejects_noncanonical_python_patch_version(patch: str) -> None:
+    with pytest.raises(RuntimeContractError) as exc:
+        StartupPreflightResult(
+            result="pass", mode="portable-release", release_id="release-A",
+            app_root_relative="releases/release-A", path_roots_identity=SHA,
+            current_release_sha256="b" * 64, runtime_manifest_sha256="c" * 64,
+            python_executable_sha256="d" * 64, python_implementation="CPython",
+            python_version=f"3.10.{patch}", python_abi="cp310", architecture="x64",
+            bytecode_policy="disabled-no-user-site",
+            writable_roots_verified=("DATA_ROOT", "LOG_ROOT", "RUNTIME_ROOT", "CACHE_ROOT", "TEMP_ROOT"),
+        )
+    assert exc.value.code == "STARTUP_PREFLIGHT_INVALID"
+
+
+def test_r5_release_gate_is_not_final_health_readiness() -> None:
+    decision = decide_release_mismatch(
+        launcher_release_id="release-A", current_release_id="release-A",
+        running_release_id=None, owned_instance_valid=False, command="health",
+    )
+    assert decision.allowed is True and decision.status_code == "RELEASE_MATCH"
+    assert decision.decision_scope == "release_gate_only"
+
+
+@pytest.mark.parametrize("release_id", ["CON", "NUL", "COM1", "LPT9.txt", "release.", "release ", ".", "..", "a/b", "a\\b", "a:b"])
+def test_r5_preflight_reuses_windows_safe_release_component(release_id: str) -> None:
+    with pytest.raises(RuntimeContractError) as exc:
+        _build(release_id=release_id)
     assert exc.value.code == "STARTUP_PREFLIGHT_INVALID"
