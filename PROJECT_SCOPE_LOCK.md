@@ -1,6 +1,6 @@
 # Infinite Canvas Enterprise · 项目定位与后续开发范围锁定
 
-> **当前维护说明（2026-07-22）：** 本文保留 3G / U-2 阶段范围历史。当前实施事实以 [`docs/CURRENT_PROJECT_STATUS.md`](docs/CURRENT_PROJECT_STATUS.md) 为准，执行顺序以 [`docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md`](docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md) 为准，架构决策以 [`docs/README.md`](docs/README.md) 的 ADR 索引为准。ENV-1B0、ENV-1B1A、ENV-1B2P 已分别由 PR #80、#81、#82 合并；ENV-1B1B 当前只在 Draft PR 分支实施。ENV-1B1C、完整 ENV-1B2、Fresh Install Bootstrap 和 OPS-3B 均未开始。
+> **当前维护说明（2026-07-23）：** 本文保留 3G / U-2 阶段范围历史。当前实施事实以 [`docs/CURRENT_PROJECT_STATUS.md`](docs/CURRENT_PROJECT_STATUS.md) 为准，执行顺序以 [`docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md`](docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md) 为准，架构决策以 [`docs/README.md`](docs/README.md) 的 ADR 索引为准。ENV-1B0、ENV-1B1A、ENV-1B2P、ENV-1B1B 已分别由 PR #80、#81、#82、#83 合并；当前 ENV-1B1C-B1 只在 Draft PR 分支实施纯契约和安全原语。完整 ENV-1B1C、完整 ENV-1B2、Fresh Install Bootstrap 和 OPS-3B 均未完成。
 
 更新时间：2026-07-17
 适用对象：ChatGPT 主对话、Codex、后续 Agent、人工审核者。
@@ -25,7 +25,8 @@
 9. 旧生产停止、归档或删除只能在新生产验收后由项目负责人另行明确授权；本文不授权任何生产操作。
 10. 任何改变“旧生产非迁移”决策的任务都必须重新获得项目负责人批准，并以新的正式决策记录，不得由普通 PR 或 Agent 自行扩大范围。
 11. Runtime 来源证据必须分别记录 core、dependency 和 archive 结论；任一层通过不得自动提升其它层，也不得由 Agent 将 evidence verification 写成 `production_approved=true`。ENV-1B2P 已合并但其 dependency/archive 仍为 false；正式批准仍依赖 ENV-1B1B、ENV-1B1C、完整 ENV-1B2、Manifest v2、ENV-1B3 和 Release Candidate 门禁。
-12. ENV-1B1B 只允许集中 PathRoots、严格 current-release pointer 和明确路径迁移；不得借此实施 activation、当前 Release 切换、PATH Python fallback、Manifest v2、Fresh Install Bootstrap 或 OPS-3B。
+12. ENV-1B1B 已合并，范围仅为集中 PathRoots、严格 current-release pointer 和明确路径迁移；不得把它描述为 activation、当前 Release 切换、PATH Python fail-closed、Manifest v2、Fresh Install Bootstrap 或 OPS-3B。
+13. ENV-1B1C-B1 只允许 Runtime mode、Runtime Manifest startup view、Python identity、preflight、launch context 和 writable probe 的纯契约/安全原语与隔离测试；不得在 B1 中接入 controller、host、child、Batch、launcher、`main.py`、Manifest v2 或 activation。
 
 ---
 

@@ -3,7 +3,7 @@
 - 状态：Accepted
 - 决策日期：2026-07-16
 - 事实基线：`main@396cccc68d63bd16393a2cb72d24e4a48fcf47cb`
-- 实施状态：已决策，ENV-1B1C 尚未开始
+- 实施状态：已决策；ENV-1B1C-A 架构门禁已完成，ENV-1B1C-B1 当前 Draft PR 仅提供纯契约、安全原语和隔离测试，尚未接入正式生命周期。
 
 ## 运行模式
 
@@ -49,10 +49,28 @@
 
 ## 与 ENV-1B1B 的接口边界
 
-ENV-1B1B 当前 Draft PR 只实现 PathRoots 与 current-release pointer 的纯状态/路径原语。它不会从
+ENV-1B1B 已由 PR #83 合并，只实现 PathRoots 与 current-release pointer 的纯状态/路径原语。它不会从
 pointer 启动服务、选择 `PYTHON_RUNTIME`、回退 PATH Python 或改变 supervisor entrypoint。上述
-绑定、自检与 fail-closed launcher 行为仍完整属于 ENV-1B1C，当前未开始。
+绑定、自检与 fail-closed launcher 行为仍完整属于 ENV-1B1C，尚未接入运行时入口。
 
 在 C1 correction pass 中，development CLI 保持 supervisor 日志回落既有外部 `RUNTIME_ROOT`，不将其
 迁回 `APP_ROOT/logs/runtime`；仅隔离 portable fixture 可显式注入 `LOG_ROOT/runtime`。这不是正式
 portable 入口协议，也不改变本 ADR 对 ENV-1B1C 的边界。
+
+## ENV-1B1C-B1 实施边界
+
+当前 Draft PR 只冻结并测试后续入口所需的纯模型：显式 `development`、`portable-release` 和
+`server` mode（`server` fail closed）；固定五个 startup core files：`python.exe`、`pythonw.exe`、
+`python310.dll`、`python310.zip`、`python310._pth`；`candidate_id` 为可选 metadata；当前 portable
+Windows target 仅批准 x64，ARM64 可解析但不获批准。Python identity 仅来自显式 probe，禁止 PATH
+fallback、`pythonw.exe`、错误 ABI 或不满足 bytecode policy 的 identity。
+
+未来启动顺序固定为：preflight pass → 在内存生成 `instance_id` → 用该 identity reserve lock →
+构造并发布 launch context → 启动 host / child。B1 的 launch context 仅为 `RUNTIME_ROOT` 下的原子
+发布原语；successful stop 后可保留为受限诊断，不能单独证明运行中 ownership。writable-root probe
+只允许 DATA / LOG / RUNTIME / CACHE / TEMP roots，明确拒绝 APP_ROOT。
+
+B1 不创建 `launcher.py`、不修改 Batch / PowerShell、也不接入 controller、host、child、supervisor、
+`main.py` 或 gateway。未来正式 Batch 必须调用固定脚本 `enterprise/runtime/launcher.py`，不得将
+`python -m enterprise.runtime.launcher` 作为唯一 bootstrap；operator 也不得覆盖 install root、
+LOCALAPPDATA、Python、Runtime Manifest 或 launch context 等信任输入。
