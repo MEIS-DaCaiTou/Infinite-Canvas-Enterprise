@@ -58,7 +58,9 @@ W42 是 `writable_probe.probe_writable_root`。Audit：`scanned=90`、`excluded=
 
 ## L. 测试
 
-隔离 B1 fixture suite：`53 passed`。B1 加 static/audit regression：`83 passed, 2 warnings`。ENV-1B2P：
+默认 `python` 入口是 WindowsApps stub，未提供可用 pytest；因此使用现有 embedded development runner
+执行隔离测试，并显式注入仓库根与已跟踪的测试-only `python-multipart` wheel（没有安装）。隔离 B1
+fixture suite：`53 passed`。B1 加 static/audit regression：`83 passed, 2 warnings`。ENV-1B2P：
 `70 passed`；ENV-1B1B PathRoots：`55 passed, 3 skipped`；current-release：`52 passed`；OPS direct scripts
 均 exit `0`。所有命令设置 `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1` 与 `PYTHONDONTWRITEBYTECODE=1`，不监听
 B1 端口、不访问网络。
@@ -71,7 +73,13 @@ probe 并在 lifecycle start 阶段失败。B1 纯模块不修改这些旧 lifec
 
 ## M. Git / PR
 
-本报告将在本次 Draft PR 建立后补充 commit、PR URL、Base/Head、checks 与最终工作树状态。
+Commit：`65b298891dca6556c8b147fb8a39974fde7c3e47`
+(`feat(env): add runtime contract foundations`)；普通 push 已完成。Draft PR：
+`https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/84`；Base 为
+`4d9cc4ef3d6a0f6ed956c2dda6303e9cc3b99b89`，该首个 commit 的 Head 为
+`65b298891dca6556c8b147fb8a39974fde7c3e47`。创建时 PR 为 `OPEN`、`Draft=true`、
+`merged=false`、`mergeable=MERGEABLE`，28 files、`+2027/-84`，GitHub checks 尚为空，
+`github_ci_verified=false`。禁止文件分支 diff exit code 均为 0；收尾 docs commit 后工作树应为 clean。
 
 ## N. 边界确认
 
