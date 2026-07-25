@@ -14,7 +14,8 @@ host、child、supervisor、`main` 或 gateway，且测试只使用临时 fixtur
 `portable-release` 禁止系统 Python 与 PATH fallback；`server` 返回稳定的
 `RUNTIME_MODE_NOT_IMPLEMENTED`。Runtime Manifest startup view 固定只验证五个文件：
 `python.exe`、`pythonw.exe`、`python310.dll`、`python310.zip`、`python310._pth`。
-`candidate_id_required=false`；ARM64 可被解析但当前 portable Windows target 仅批准 x64。
+`candidate_id_required=false`；ARM64 可被解析但当前 portable Windows target 仅批准 x64。R4 要求
+source metadata 存在时为严格对象，`enterprise_commit` 存在时为精确 40 位小写十六进制。
 
 Python identity 只接收显式 probe，输出只含 basename、摘要和脱敏 prefix identity。preflight
 是不可变、canonical 的纯结果，不会创建 `instance_id`、reserve lock、写 context 或启动进程。
@@ -22,7 +23,8 @@ launch context 使用固定 `.new` 文件、exclusive create、file identity、a
 sync 分类；只有调用方提供的已通过 preflight 与显式 `instance_id` 才能构造它。successful stop
 后 context 可保留为受限诊断，但它本身不证明实例仍在运行。
 
-writable probe 仅可对 DATA / LOG / RUNTIME / CACHE / TEMP roots 写入短时 `probe\n` marker，
+writable probe 仅可对 DATA / LOG / RUNTIME / CACHE / TEMP roots 写入短时、每次调用唯一的
+`ice-probe-v1:<nonce>\n` marker，
 拒绝 APP_ROOT，并以 file identity 避免删除 foreign replacement。该设计提供 pre-use / post-create
 检查，不声称消除全部 Windows TOCTOU。
 

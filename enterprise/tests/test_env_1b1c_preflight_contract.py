@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 
 import pytest
@@ -10,7 +11,7 @@ from enterprise.runtime.error_contract import RuntimeContractError
 from enterprise.runtime.mode import parse_runtime_mode
 from enterprise.runtime.preflight import build_startup_preflight_result
 from enterprise.runtime.python_identity import PythonIdentity
-from enterprise.runtime.runtime_manifest import RuntimeManifestStartupView
+from enterprise.runtime.runtime_manifest import STARTUP_CORE_FILES, RuntimeManifestStartupView, StartupCoreFile
 from enterprise.runtime.writable_probe import WritableProbeResult
 
 
@@ -18,6 +19,14 @@ SHA = "a" * 64
 
 
 def _manifest(**overrides: object) -> RuntimeManifestStartupView:
+    records = tuple(StartupCoreFile(name, "e" * 64, 1) for name in STARTUP_CORE_FILES)
+    digest = hashlib.sha256()
+    for record in records:
+        encoded = record.relative_path.encode("utf-8")
+        digest.update(len(encoded).to_bytes(8, "big"))
+        digest.update(encoded)
+        digest.update(record.size_bytes.to_bytes(8, "big"))
+        digest.update(bytes.fromhex(record.sha256))
     values: dict[str, object] = {
         "schema_version": "env-1b1c-runtime-manifest-startup-view-v1",
         "manifest_sha256": "c" * 64,
@@ -26,8 +35,8 @@ def _manifest(**overrides: object) -> RuntimeManifestStartupView:
         "python_abi": "cp310",
         "architecture": "x64",
         "architecture_supported": True,
-        "startup_core_files": (),
-        "startup_core_digest": "e" * 64,
+        "startup_core_files": records,
+        "startup_core_digest": digest.hexdigest(),
         "candidate_id": None,
         "manifest_self_declared_enterprise_commit": None,
     }
@@ -115,4 +124,26 @@ def test_r3_preflight_cross_binds_verified_inputs(override: dict[str, object], c
 def test_r3_preflight_rejects_legacy_raw_string_arguments() -> None:
     with pytest.raises(RuntimeContractError) as exc:
         _build(mode="portable-release")
+    assert exc.value.code == "STARTUP_PREFLIGHT_INVALID"
+
+
+@pytest.mark.parametrize("warning", ["RUNTIME_MODE_INVALID", "PYTHON_IDENTITY_EXECUTABLE_MISSING"])
+def test_r4_preflight_rejects_error_codes_as_warnings(warning: str) -> None:
+    with pytest.raises(RuntimeContractError) as exc:
+        _build(warnings=(warning,))
+    assert exc.value.code == "STARTUP_PREFLIGHT_INVALID"
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"mode": __import__("enterprise.runtime.mode", fromlist=["RuntimeMode"]).RuntimeMode("portable-release", True, False, True, False)},
+        {"runtime_manifest": _manifest(schema_version="wrong")},
+        {"python_identity": _identity(schema_version="wrong")},
+        {"writable_probe_results": tuple(WritableProbeResult(label, True, True, schema_version="wrong") for label in ("DATA_ROOT", "LOG_ROOT", "RUNTIME_ROOT", "CACHE_ROOT", "TEMP_ROOT"))},
+    ],
+)
+def test_r4_preflight_rejects_forged_typed_models(override: dict[str, object]) -> None:
+    with pytest.raises(RuntimeContractError) as exc:
+        _build(**override)
     assert exc.value.code == "STARTUP_PREFLIGHT_INVALID"

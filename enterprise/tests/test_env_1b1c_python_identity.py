@@ -110,3 +110,19 @@ def test_r3_prefix_escape_from_expected_runtime_is_rejected(tmp_path: Path) -> N
     with pytest.raises(RuntimeContractError) as exc:
         build_python_identity(exe, _probe(exe, prefix=str(tmp_path), base_prefix=str(tmp_path)), expected_runtime_root=runtime)
     assert exc.value.code == "PYTHON_IDENTITY_PREFIX_MISMATCH"
+
+
+@pytest.mark.parametrize("kind", ["subdir", "file"])
+def test_r4_prefix_and_base_prefix_must_equal_runtime_root(tmp_path: Path, kind: str) -> None:
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    exe = runtime / "python.exe"
+    exe.write_bytes(b"fake")
+    candidate = runtime / kind
+    if kind == "subdir":
+        candidate.mkdir()
+    else:
+        candidate.write_bytes(b"not a directory")
+    with pytest.raises(RuntimeContractError) as exc:
+        build_python_identity(exe, _probe(exe, prefix=str(candidate), base_prefix=str(candidate)), expected_runtime_root=runtime)
+    assert exc.value.code == "PYTHON_IDENTITY_PREFIX_MISMATCH"

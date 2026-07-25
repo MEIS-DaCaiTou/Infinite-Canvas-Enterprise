@@ -7,11 +7,12 @@ import hashlib
 import json
 import os
 import re
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from enterprise.path_safety import PathSafetyError, assert_no_reparse_ancestors
+from enterprise.path_safety import PathSafetyError, assert_no_reparse_ancestors, has_reparse_point
 
 from .error_contract import RuntimeContractError, canonical_json
 from .preflight import StartupPreflightResult
@@ -202,16 +203,32 @@ def read_launch_context(path: Path) -> RuntimeLaunchContext:
 
 
 def _file_identity(path: Path) -> tuple[int, int]:
-    stat_result = os.stat(path, follow_symlinks=False)
+    stat_result = os.lstat(path)
     return stat_result.st_dev, stat_result.st_ino
 
 
-def _owned_file(path: Path, identity: tuple[int, int] | None) -> bool:
+def _lexical_exists(path: Path) -> bool:
+    try:
+        os.lstat(path)
+        return True
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        raise RuntimeContractError("LAUNCH_CONTEXT_INVALID") from exc
+
+
+def _owned_file(path: Path, identity: tuple[int, int] | None, expected: bytes) -> bool:
     if identity is None:
         return False
     try:
-        return _file_identity(path) == identity
-    except OSError:
+        metadata = os.lstat(path)
+        if not stat.S_ISREG(metadata.st_mode) or _file_identity(path) != identity:
+            return False
+        if has_reparse_point(path):
+            return False
+        actual = path.read_bytes()
+        return len(actual) == len(expected) and actual == expected
+    except (OSError, PathSafetyError):
         return False
 
 
@@ -253,7 +270,7 @@ def _verify_target_state(target: Path, expected_existing_identity: str | None) -
     external exclusive runtime lock remains mandatory for lifecycle wiring in
     B2; an outside actor can still race the operating-system replacement.
     """
-    if target.exists():
+    if _lexical_exists(target):
         if expected_existing_identity is None:
             raise RuntimeContractError("LAUNCH_CONTEXT_EXISTING_FORBIDDEN")
         if read_launch_context(target).identity != expected_existing_identity:
@@ -271,7 +288,7 @@ def publish_launch_context(
     target = Path(target)
     if target.name != LAUNCH_CONTEXT_FILENAME:
         raise RuntimeContractError("LAUNCH_CONTEXT_INVALID")
-    if target.exists() and expected_existing_identity is None:
+    if _lexical_exists(target) and expected_existing_identity is None:
         raise RuntimeContractError("LAUNCH_CONTEXT_EXISTING_REQUIRED")
     _verify_target_state(target, expected_existing_identity)
     _validate_context_values(context)
@@ -283,7 +300,7 @@ def publish_launch_context(
     identity: tuple[int, int] | None = None
     try:
         _path_safety(target.parent)
-        if temporary.exists():
+        if _lexical_exists(temporary):
             raise RuntimeContractError("LAUNCH_CONTEXT_TEMP_EXISTS")
         with temporary.open("xb") as handle:
             created = True
@@ -291,9 +308,11 @@ def publish_launch_context(
             handle.write(encoded)
             handle.flush()
             os.fsync(handle.fileno())
-        if not _owned_file(temporary, identity):
+        if not _owned_file(temporary, identity, encoded):
             raise RuntimeContractError("LAUNCH_CONTEXT_TEMP_OWNERSHIP_LOST")
         _verify_target_state(target, expected_existing_identity)
+        if not _owned_file(temporary, identity, encoded):
+            raise RuntimeContractError("LAUNCH_CONTEXT_TEMP_OWNERSHIP_LOST")
         os.replace(temporary, target)
         sync_status = sync_context_directory(target.parent)
         return LaunchContextPublishResult(context.identity, True, sync_status)
@@ -305,7 +324,7 @@ def publish_launch_context(
         raise RuntimeContractError("LAUNCH_CONTEXT_WRITE_FAILED") from exc
     finally:
         try:
-            if created and _owned_file(temporary, identity):
+            if created and _owned_file(temporary, identity, encoded):
                 temporary.unlink()
         except OSError:
             pass

@@ -85,6 +85,28 @@ standalone_atomic_compare_and_swap_claim=false
 residual_TOCTOU_acknowledged=true
 ```
 
+## K.2 R4 second-independent-review correction
+
+R3's nine closure values above are historical Codex self-assessments; the
+second independent review did not accept them as an approval. R4 corrects the
+remaining pure-contract weaknesses without B2 integration: context temp
+ownership now binds canonical bytes in addition to a file identity; writable
+probes bind a one-call nonce token; broken symlinks are lexical existing
+entries; Python prefix/base-prefix bind exactly to the Runtime root; manifest
+source metadata is strict; preflight validates typed input invariants and
+freezes warnings to `()`; and any unowned live instance is diagnostic-only for
+status and blocked for every state-changing or health command. The dedicated
+evidence is [ENV-1B1C-B1-R4-CORRECTION-REPORT.md](ENV-1B1C-B1-R4-CORRECTION-REPORT.md).
+
+```text
+ENV_1B1C_B1_R3_independent_review_passed=false
+ENV_1B1C_B1_R4_required=true
+ENV_1B1C_B2_started=false
+external_exclusive_runtime_lock_required=true
+standalone_atomic_compare_and_swap_claim=false
+residual_TOCTOU_acknowledged=true
+```
+
 ## L. 测试
 
 默认 `python` 入口是 WindowsApps stub，未提供可用 pytest；因此使用现有 embedded development runner

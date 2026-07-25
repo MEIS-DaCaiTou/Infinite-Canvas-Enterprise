@@ -49,6 +49,13 @@ def assert_no_reparse_ancestors(path: Path, *, allow_missing: bool = False) -> N
     if not parts:
         raise PathSafetyError("path-inspection-failed")
     current = Path(parts[0])
+    try:
+        if has_reparse_point(current):
+            raise PathSafetyError("path-reparse-forbidden")
+    except PathSafetyError as exc:
+        if allow_missing and exc.code == "path-missing":
+            return
+        raise
     for part in parts[1:]:
         current = current / part
         try:

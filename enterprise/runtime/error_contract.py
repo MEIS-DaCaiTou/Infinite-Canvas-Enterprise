@@ -98,6 +98,7 @@ _DEFINITIONS: tuple[ErrorDefinition, ...] = (
     ErrorDefinition("RUNTIME_RELEASE_MISMATCH_RUNNING", "release_mismatch", "another owned release is running"),
     ErrorDefinition("RESTART_RELEASE_MISMATCH_BLOCKED", "release_mismatch", "restart is blocked by release mismatch"),
     ErrorDefinition("STOP_OWNERSHIP_UNAVAILABLE", "release_mismatch", "stop ownership is unavailable"),
+    ErrorDefinition("RUNTIME_OWNERSHIP_UNTRUSTED", "release_mismatch", "running instance ownership is untrusted"),
     ErrorDefinition("READINESS_RELEASE_MISMATCH", "readiness", "running release does not match current release"),
 )
 

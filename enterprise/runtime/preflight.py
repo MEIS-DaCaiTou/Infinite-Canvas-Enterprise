@@ -6,7 +6,7 @@ import hashlib
 import re
 from dataclasses import dataclass
 
-from .error_contract import ERROR_REGISTRY, PORTABLE_EXIT_BLOCKED, PORTABLE_EXIT_OK, RuntimeContractError, canonical_json
+from .error_contract import PORTABLE_EXIT_BLOCKED, PORTABLE_EXIT_OK, RuntimeContractError, canonical_json
 from .mode import PORTABLE_RELEASE, RuntimeMode
 from .python_identity import PythonIdentity
 from .runtime_manifest import RuntimeManifestStartupView
@@ -72,9 +72,8 @@ class StartupPreflightResult:
             raise RuntimeContractError("STARTUP_PREFLIGHT_INVALID")
         if not isinstance(self.warnings, tuple) or len(set(self.warnings)) != len(self.warnings):
             raise RuntimeContractError("STARTUP_PREFLIGHT_INVALID")
-        for warning in self.warnings:
-            if not isinstance(warning, str) or warning not in ERROR_REGISTRY:
-                raise RuntimeContractError("STARTUP_PREFLIGHT_INVALID")
+        if self.warnings:
+            raise RuntimeContractError("STARTUP_PREFLIGHT_INVALID")
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -122,9 +121,17 @@ def build_startup_preflight_result(
     results so the canonical preflight identity binds the same artefacts.
     """
 
-    if not isinstance(mode, RuntimeMode) or mode.mode != PORTABLE_RELEASE:
+    if not isinstance(mode, RuntimeMode):
         raise RuntimeContractError("STARTUP_PREFLIGHT_INVALID")
     if not isinstance(runtime_manifest, RuntimeManifestStartupView) or not isinstance(python_identity, PythonIdentity):
+        raise RuntimeContractError("STARTUP_PREFLIGHT_INVALID")
+    try:
+        mode.validated()
+        runtime_manifest.validated()
+        python_identity.validated()
+    except RuntimeContractError as exc:
+        raise RuntimeContractError("STARTUP_PREFLIGHT_INVALID") from exc
+    if mode.mode != PORTABLE_RELEASE:
         raise RuntimeContractError("STARTUP_PREFLIGHT_INVALID")
     if not isinstance(writable_probe_results, tuple) or len(writable_probe_results) != len(_WRITABLE_ROOT_ORDER):
         raise RuntimeContractError("STARTUP_PREFLIGHT_INVALID")
@@ -134,8 +141,11 @@ def build_startup_preflight_result(
         raise RuntimeContractError("STARTUP_PREFLIGHT_INVALID")
     if set(item.root_label for item in writable_probe_results) != WRITABLE_PROBE_LABELS:
         raise RuntimeContractError("STARTUP_PREFLIGHT_INVALID")
-    if any(not item.created or not item.cleaned_up for item in writable_probe_results):
-        raise RuntimeContractError("STARTUP_PREFLIGHT_INVALID")
+    try:
+        for item in writable_probe_results:
+            item.validated()
+    except RuntimeContractError as exc:
+        raise RuntimeContractError("STARTUP_PREFLIGHT_INVALID") from exc
     if (
         runtime_manifest.python_implementation != "CPython"
         or python_identity.implementation != "CPython"
@@ -150,9 +160,7 @@ def build_startup_preflight_result(
         raise RuntimeContractError("PORTABLE_ARCHITECTURE_UNSUPPORTED")
     if python_identity.pointer_bits != 64 or not python_identity.dont_write_bytecode or not python_identity.no_user_site:
         raise RuntimeContractError("STARTUP_PREFLIGHT_INVALID")
-    if not isinstance(warnings, tuple) or len(set(warnings)) != len(warnings):
-        raise RuntimeContractError("STARTUP_PREFLIGHT_INVALID")
-    if any(not isinstance(warning, str) or warning not in ERROR_REGISTRY for warning in warnings):
+    if warnings != ():
         raise RuntimeContractError("STARTUP_PREFLIGHT_INVALID")
     return StartupPreflightResult(
         result="pass",
@@ -181,6 +189,7 @@ class ReleaseMismatchDecision:
     running_release_mismatch: bool
     running_instance_present: bool
     ownership_valid: bool
+    ownership_untrusted: bool
     status_code: str
 
     def as_dict(self) -> dict[str, object]:
@@ -191,6 +200,7 @@ class ReleaseMismatchDecision:
             "running_release_mismatch": self.running_release_mismatch,
             "running_instance_present": self.running_instance_present,
             "ownership_valid": self.ownership_valid,
+            "ownership_untrusted": self.ownership_untrusted,
             "status_code": self.status_code,
         }
 
@@ -209,22 +219,28 @@ def decide_release_mismatch(
     running_present = running_release_id is not None
     mismatch = running_present and running_release_id != current_release_id
     if launcher_mismatch:
-        return ReleaseMismatchDecision(False, PORTABLE_EXIT_BLOCKED, True, mismatch, running_present, owned_instance_valid, "PORTABLE_RELEASE_NOT_CURRENT")
+        return ReleaseMismatchDecision(False, PORTABLE_EXIT_BLOCKED, True, mismatch, running_present, owned_instance_valid, running_present and not owned_instance_valid, "PORTABLE_RELEASE_NOT_CURRENT")
+    if running_present and not owned_instance_valid:
+        if command == "status":
+            return ReleaseMismatchDecision(True, PORTABLE_EXIT_OK, False, mismatch, True, False, True, "RUNTIME_OWNERSHIP_UNTRUSTED")
+        if command == "stop":
+            return ReleaseMismatchDecision(False, PORTABLE_EXIT_BLOCKED, False, mismatch, True, False, True, "STOP_OWNERSHIP_UNAVAILABLE")
+        return ReleaseMismatchDecision(False, PORTABLE_EXIT_BLOCKED, False, mismatch, True, False, True, "RUNTIME_OWNERSHIP_UNTRUSTED")
     # Stopping any live instance is an ownership-sensitive operation, even if
     # it belongs to the same release.  A same-release identity is not proof of
     # ownership and must not authorize a stop.
     if command == "stop" and running_present and not owned_instance_valid:
-        return ReleaseMismatchDecision(False, PORTABLE_EXIT_BLOCKED, False, mismatch, True, False, "STOP_OWNERSHIP_UNAVAILABLE")
+        return ReleaseMismatchDecision(False, PORTABLE_EXIT_BLOCKED, False, mismatch, True, False, True, "STOP_OWNERSHIP_UNAVAILABLE")
     if not mismatch:
-        return ReleaseMismatchDecision(True, PORTABLE_EXIT_OK, False, False, running_present, owned_instance_valid, "RELEASE_MATCH")
+        return ReleaseMismatchDecision(True, PORTABLE_EXIT_OK, False, False, running_present, owned_instance_valid, False, "RELEASE_MATCH")
     if command == "stop":
         if owned_instance_valid:
-            return ReleaseMismatchDecision(True, PORTABLE_EXIT_OK, False, True, True, True, "STOP_OWNED_MISMATCH_ALLOWED")
-        return ReleaseMismatchDecision(False, PORTABLE_EXIT_BLOCKED, False, True, True, False, "STOP_OWNERSHIP_UNAVAILABLE")
+            return ReleaseMismatchDecision(True, PORTABLE_EXIT_OK, False, True, True, True, False, "STOP_OWNED_MISMATCH_ALLOWED")
+        return ReleaseMismatchDecision(False, PORTABLE_EXIT_BLOCKED, False, True, True, False, True, "STOP_OWNERSHIP_UNAVAILABLE")
     if command == "status":
-        return ReleaseMismatchDecision(True, PORTABLE_EXIT_OK, False, True, True, owned_instance_valid, "READINESS_RELEASE_MISMATCH")
+        return ReleaseMismatchDecision(True, PORTABLE_EXIT_OK, False, True, True, owned_instance_valid, False, "READINESS_RELEASE_MISMATCH")
     if command == "health":
-        return ReleaseMismatchDecision(False, PORTABLE_EXIT_BLOCKED, False, True, True, owned_instance_valid, "READINESS_RELEASE_MISMATCH")
+        return ReleaseMismatchDecision(False, PORTABLE_EXIT_BLOCKED, False, True, True, owned_instance_valid, False, "READINESS_RELEASE_MISMATCH")
     if command == "restart":
-        return ReleaseMismatchDecision(False, PORTABLE_EXIT_BLOCKED, False, True, True, owned_instance_valid, "RESTART_RELEASE_MISMATCH_BLOCKED")
-    return ReleaseMismatchDecision(False, PORTABLE_EXIT_BLOCKED, False, True, True, owned_instance_valid, "RUNTIME_RELEASE_MISMATCH_RUNNING")
+        return ReleaseMismatchDecision(False, PORTABLE_EXIT_BLOCKED, False, True, True, owned_instance_valid, False, "RESTART_RELEASE_MISMATCH_BLOCKED")
+    return ReleaseMismatchDecision(False, PORTABLE_EXIT_BLOCKED, False, True, True, owned_instance_valid, False, "RUNTIME_RELEASE_MISMATCH_RUNNING")

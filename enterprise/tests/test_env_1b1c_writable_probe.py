@@ -46,6 +46,13 @@ def test_writable_probe_success_creates_and_removes_only_own_file(tmp_path: Path
     assert list(tmp_path.iterdir()) == []
 
 
+def test_r4_writable_probe_default_name_is_random_and_cleanup_safe(tmp_path: Path) -> None:
+    result = probe_writable_root(tmp_path, "TEMP_ROOT")
+    assert result.created is True
+    assert result.cleaned_up is True
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_writable_probe_existing_name_fails_without_overwrite(tmp_path: Path) -> None:
     existing = tmp_path / f".ice-probe-data_root-{VALID_SUFFIX}.tmp"
     existing.write_text("foreign", encoding="utf-8")
@@ -68,6 +75,26 @@ def test_writable_probe_does_not_delete_foreign_replacement(tmp_path: Path, monk
         probe_writable_root(tmp_path, "LOG_ROOT", name_factory=lambda: VALID_SUFFIX)
     assert exc.value.code == "WRITABLE_PROBE_OWNERSHIP_LOST"
     assert target.read_text(encoding="utf-8") == "foreign replacement"
+
+
+def test_r4_writable_probe_rejects_identity_reused_foreign_replacement(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A reusable file id is not ownership: the nonce bytes are also bound."""
+    import enterprise.runtime.writable_probe as subject
+
+    target = tmp_path / f".ice-probe-log_root-{VALID_SUFFIX}.tmp"
+    original_identity = subject._identity
+
+    def replace_after_create(path: Path) -> bool:
+        target.unlink()
+        target.write_bytes(b"ice-probe-v1:foreign-token\\n")
+        return False
+
+    monkeypatch.setattr(subject, "has_reparse_point", replace_after_create)
+    monkeypatch.setattr(subject, "_identity", lambda path: (1, 1))
+    with pytest.raises(RuntimeContractError) as exc:
+        probe_writable_root(tmp_path, "LOG_ROOT", name_factory=lambda: VALID_SUFFIX)
+    assert exc.value.code == "WRITABLE_PROBE_OWNERSHIP_LOST"
+    assert target.read_bytes() == b"ice-probe-v1:foreign-token\\n"
 
 
 def test_writable_probe_fsync_failure_cleans_own_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

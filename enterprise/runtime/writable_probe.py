@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import os
 import re
-import uuid
+import secrets
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -34,6 +35,11 @@ class WritableProbeResult:
     cleaned_up: bool
     schema_version: str = PROBE_SCHEMA_VERSION
 
+    def validated(self) -> "WritableProbeResult":
+        if self.schema_version != PROBE_SCHEMA_VERSION or self.root_label not in WRITABLE_PROBE_LABELS or self.created is not True or self.cleaned_up is not True:
+            raise RuntimeContractError("STARTUP_PREFLIGHT_INVALID")
+        return self
+
     def as_public_dict(self) -> dict[str, object]:
         return {
             "cleaned_up": self.cleaned_up,
@@ -48,12 +54,27 @@ def _identity(path: Path) -> tuple[int, int]:
     return info.st_dev, info.st_ino
 
 
-def _owned(path: Path, identity: tuple[int, int] | None) -> bool:
+def _owned(path: Path, identity: tuple[int, int] | None, token: bytes) -> bool:
     if identity is None:
         return False
     try:
-        return _identity(path) == identity
-    except OSError:
+        if _identity(path) != identity or has_reparse_point(path):
+            return False
+        info = os.lstat(path)
+        if not os.path.isfile(path) or not stat.S_ISREG(info.st_mode):
+            return False
+        fd = os.open(path, os.O_RDONLY)
+        try:
+            chunks: list[bytes] = []
+            while True:
+                chunk = os.read(fd, 4096)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+        finally:
+            os.close(fd)
+        return b"".join(chunks) == token
+    except (OSError, PathSafetyError):
         return False
 
 
@@ -74,12 +95,14 @@ def probe_writable_root(
     except OSError as exc:
         raise RuntimeContractError("WRITABLE_PROBE_CREATE_FAILED", details={"label": root_label}) from exc
     _path_safety(root)
-    suffix = name_factory() if name_factory is not None else uuid.uuid4().hex
+    suffix = name_factory() if name_factory is not None else secrets.token_hex(16)
     if not isinstance(suffix, str) or not _SUFFIX_RE.fullmatch(suffix):
         raise RuntimeContractError("WRITABLE_PROBE_LABEL_INVALID")
     path = root / f"{PROBE_PREFIX}{root_label.lower()}-{suffix}.tmp"
     created = False
     file_identity: tuple[int, int] | None = None
+    token = b"ice-probe-v1:" + secrets.token_hex(16).encode("ascii") + b"\n"
+    expected_content = b""
     cleanup_failed = False
     try:
         _path_safety(path.parent)
@@ -93,7 +116,11 @@ def probe_writable_root(
             created = True
             try:
                 file_identity = _identity(path)
-                handle.write(b"probe\n")
+                written = handle.write(token)
+                if written != len(token):
+                    expected_content = token[: max(0, int(written))]
+                    raise OSError("short probe write")
+                expected_content = token
             except OSError as exc:
                 raise RuntimeContractError("WRITABLE_PROBE_WRITE_FAILED", details={"label": root_label}) from exc
             try:
@@ -106,7 +133,7 @@ def probe_writable_root(
                 raise RuntimeContractError("WRITABLE_PROBE_FSYNC_FAILED", details={"label": root_label}) from exc
         try:
             reparse = has_reparse_point(path)
-            owned = _owned(path, file_identity)
+            owned = _owned(path, file_identity, expected_content)
         except PathSafetyError as exc:
             raise RuntimeContractError("WRITABLE_PROBE_REPARSE_FORBIDDEN", details={"label": root_label}) from exc
         if reparse or not owned:
@@ -118,7 +145,7 @@ def probe_writable_root(
             raise RuntimeContractError("WRITABLE_PROBE_CLEANUP_FAILED", details={"label": root_label}) from exc
         return WritableProbeResult(root_label, created=True, cleaned_up=True)
     finally:
-        if created and _owned(path, file_identity):
+        if created and _owned(path, file_identity, expected_content):
             try:
                 path.unlink()
             except FileNotFoundError:

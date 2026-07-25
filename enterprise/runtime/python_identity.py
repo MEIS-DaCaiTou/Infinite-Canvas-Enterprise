@@ -26,6 +26,7 @@ from enterprise.path_safety import (
 
 PYTHON_IDENTITY_SCHEMA = "env-1b1c-python-identity-v1"
 _PYTHON_310_VERSION_RE = re.compile(r"^3\.10\.(?:0|[1-9][0-9]{0,2})$")
+_SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,23 @@ class PythonIdentity:
     dont_write_bytecode: bool
     no_user_site: bool
     schema_version: str = PYTHON_IDENTITY_SCHEMA
+
+    def validated(self) -> "PythonIdentity":
+        if (
+            self.schema_version != PYTHON_IDENTITY_SCHEMA
+            or self.implementation != "CPython"
+            or _PYTHON_310_VERSION_RE.fullmatch(self.version) is None
+            or self.abi != "cp310"
+            or self.architecture not in {"x64", "arm64"}
+            or self.architecture_supported != (self.architecture in APPROVED_PORTABLE_ARCHITECTURES)
+            or self.pointer_bits != 64
+            or self.executable_basename.lower() != "python.exe"
+            or any(not isinstance(value, str) or _SHA_RE.fullmatch(value) is None for value in (self.executable_sha256, self.prefix_identity, self.base_prefix_identity))
+            or self.dont_write_bytecode is not True
+            or self.no_user_site is not True
+        ):
+            raise RuntimeContractError("STARTUP_PREFLIGHT_INVALID")
+        return self
 
     def public_snapshot(self) -> dict[str, object]:
         return {
@@ -96,6 +114,12 @@ def _assert_identity_path_safe(path: Path, *, runtime_root: Path) -> Path:
         raise RuntimeContractError("PYTHON_IDENTITY_PREFIX_MISMATCH", details={"label": path.name}) from exc
 
 
+def _same_path(first: Path, second: Path) -> bool:
+    return os.path.normcase(os.path.normpath(os.path.abspath(os.fspath(first)))) == os.path.normcase(
+        os.path.normpath(os.path.abspath(os.fspath(second)))
+    )
+
+
 def build_python_identity(
     executable: Path,
     probe: dict[str, Any],
@@ -118,21 +142,31 @@ def build_python_identity(
         raise RuntimeContractError("PYTHON_IDENTITY_EXECUTABLE_INVALID", details={"label": executable.name})
     if expected_executable is not None:
         try:
-            if os.path.normcase(os.path.abspath(os.fspath(executable))) != os.path.normcase(os.path.abspath(os.fspath(expected_executable))):
+            if not _same_path(executable, Path(expected_executable)):
                 raise RuntimeContractError("PYTHON_IDENTITY_EXECUTABLE_MISMATCH", details={"label": executable.name})
         except OSError as exc:
             raise RuntimeContractError("PYTHON_IDENTITY_EXECUTABLE_MISMATCH", details={"label": executable.name}) from exc
     runtime_root = Path(expected_runtime_root) if expected_runtime_root is not None else (Path(expected_executable).parent if expected_executable is not None else executable.parent)
     try:
         assert_no_reparse_ancestors(runtime_root)
+        if not runtime_root.is_dir() or has_reparse_point(runtime_root):
+            raise PathSafetyError("path-reparse-forbidden")
         executable = assert_path_within_root(executable, runtime_root)
+        expected_fixed_executable = runtime_root / "python.exe"
+        if not _same_path(executable, expected_fixed_executable):
+            raise PathSafetyError("path-outside-root")
     except PathSafetyError as exc:
         raise RuntimeContractError("PYTHON_IDENTITY_EXECUTABLE_MISMATCH", details={"label": executable.name}) from exc
     probed_executable = _probe_path(probe, "executable")
-    if os.path.normcase(os.path.abspath(os.fspath(probed_executable))) != os.path.normcase(os.path.abspath(os.fspath(executable))):
+    if not _same_path(probed_executable, executable):
         raise RuntimeContractError("PYTHON_IDENTITY_EXECUTABLE_MISMATCH", details={"label": executable.name})
     prefix = _assert_identity_path_safe(_probe_path(probe, "prefix"), runtime_root=runtime_root)
     base_prefix = _assert_identity_path_safe(_probe_path(probe, "base_prefix"), runtime_root=runtime_root)
+    try:
+        if not _same_path(prefix, runtime_root) or not _same_path(base_prefix, runtime_root) or not prefix.is_dir() or not base_prefix.is_dir():
+            raise RuntimeContractError("PYTHON_IDENTITY_PREFIX_MISMATCH", details={"label": "runtime_root"})
+    except OSError as exc:
+        raise RuntimeContractError("PYTHON_IDENTITY_PREFIX_MISMATCH", details={"label": "runtime_root"}) from exc
     implementation = str(probe.get("implementation", "")).lower()
     if implementation != "cpython":
         raise RuntimeContractError("PYTHON_IDENTITY_IMPLEMENTATION_INVALID")
@@ -143,7 +177,10 @@ def build_python_identity(
         abi = abi_from_cache_tag(probe.get("cache_tag"))
     except RuntimeContractError as exc:
         raise RuntimeContractError("PYTHON_IDENTITY_ABI_INVALID") from exc
-    architecture = normalize_architecture(probe.get("machine", probe.get("architecture")))
+    try:
+        architecture = normalize_architecture(probe.get("machine", probe.get("architecture")))
+    except RuntimeContractError as exc:
+        raise RuntimeContractError("PYTHON_IDENTITY_ARCHITECTURE_INVALID") from exc
     pointer_bits = probe.get("pointer_bits")
     if pointer_bits != 64:
         raise RuntimeContractError("PYTHON_IDENTITY_ARCHITECTURE_INVALID")

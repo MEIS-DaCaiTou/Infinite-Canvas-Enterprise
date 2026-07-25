@@ -18,7 +18,11 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Mapping, Sequence
 
-from enterprise.path_safety import PathSafetyError, has_reparse_point as _shared_has_reparse_point
+from enterprise.path_safety import (
+    PathSafetyError,
+    assert_no_reparse_ancestors as _shared_assert_no_reparse_ancestors,
+    has_reparse_point as _shared_has_reparse_point,
+)
 
 
 SCHEMA_VERSION = "env-1b2p-runtime-provenance-report-v2"
@@ -143,13 +147,15 @@ def _has_reparse_point(path: Path) -> bool:
 
 
 def _reject_reparse_ancestors(path: Path) -> None:
-    absolute = path.absolute()
-    parts = absolute.parts
-    current = Path(parts[0])
-    for part in parts[1:]:
-        current = current / part
-        if _has_reparse_point(current):
+    try:
+        # Keep this narrow leaf hook for the existing verifier fault-injection
+        # seam; ancestor traversal itself is owned by the shared helper.
+        if _has_reparse_point(Path(path).absolute()):
             raise ProvenanceVerificationError("input-reparse-point", path.name)
+        _shared_assert_no_reparse_ancestors(path)
+    except PathSafetyError as exc:
+        code = "input-reparse-point" if exc.code == "path-reparse-forbidden" else "path-inspection-failed"
+        raise ProvenanceVerificationError(code, path.name) from exc
 
 
 def _input_file(path: Path | str, artifact_type: str) -> Path:

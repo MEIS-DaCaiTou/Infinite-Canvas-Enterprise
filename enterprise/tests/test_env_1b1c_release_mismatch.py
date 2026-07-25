@@ -91,6 +91,16 @@ def test_r3_same_release_running_instance_still_requires_valid_stop_ownership() 
     assert decision.status_code == "STOP_OWNERSHIP_UNAVAILABLE"
 
 
+@pytest.mark.parametrize(("command", "allowed", "exit_code"), [("start", False, 2), ("restart", False, 2), ("health", False, 2), ("stop", False, 2), ("status", True, 0)])
+def test_r4_unowned_live_same_release_is_only_status_diagnostic(command: str, allowed: bool, exit_code: int) -> None:
+    decision = decide_release_mismatch(
+        launcher_release_id="new", current_release_id="new", running_release_id="new", owned_instance_valid=False, command=command
+    )
+    assert decision.allowed is allowed
+    assert decision.exit_code == exit_code
+    assert decision.ownership_untrusted is True
+
+
 def test_r3_mismatch_properties_distinguish_launcher_and_running_instance() -> None:
     decision = decide_release_mismatch(
         launcher_release_id="old",

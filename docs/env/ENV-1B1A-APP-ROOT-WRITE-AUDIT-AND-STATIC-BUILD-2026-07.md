@@ -73,7 +73,7 @@
 | W39 | Python import machinery | `__pycache__` / `.pyc`；默认可在 APP_ROOT | import / child | bytecode cache；否；否 | Python interpreter | `CACHE_ROOT` | 已识别；ENV-1B1C/B2 | 正式入口尚未禁止 APP_ROOT bytecode；生命周期门禁待做 |
 | W40 | `enterprise/release/static_build.py`、`enterprise/release/runtime_provenance.py` | 调用者显式全新 output + report；否（正式要求） | release-build / evidence verification | staging static、确定性构建报告与脱敏 provenance 报告；否；否 | 显式 build / verifier CLI | `STAGING_ROOT` | static 边界已关闭；provenance report 已识别，正式根仍待 ENV-1B1B | source/evidence 只读、原子 report、失败清理、确定性测试 |
 | W41 | `enterprise/release/current_release.py:atomic_write_current_release` | `STATE_ROOT/current-release.json`；否 | test / validation state primitive | strict current-release pointer；是；否 | 当前仅测试/验证调用 | `STATE_ROOT` | C1/C2 已实现状态原语；没有 activation call site | fixed `.new` exclusive create、owned-temp cleanup、atomic replace、replace 后目录同步尝试测试 |
-| W42 | `enterprise/runtime/writable_probe.py:probe_writable_root` | DATA / LOG / RUNTIME / CACHE / TEMP roots 内的短时 probe；否 | future portable preflight | 固定 `probe\n` marker；否；否 | B1 纯 preflight 原语，尚无入口 caller | 目标可变根 | Draft primitive；不探测 APP_ROOT，不接入 controller | exclusive create、fsync、identity cleanup、foreign replacement 与 reparse fail-closed tests |
+| W42 | `enterprise/runtime/writable_probe.py:probe_writable_root` | DATA / LOG / RUNTIME / CACHE / TEMP roots 内的短时 probe；否 | future portable preflight | 单次随机 nonce 的 `ice-probe-v1:<nonce>` marker；否；否 | B1 纯 preflight 原语，尚无入口 caller | 目标可变根 | Draft primitive；不探测 APP_ROOT，不接入 controller | exclusive create、fsync、identity + exact-token cleanup、mocked reused-ID foreign replacement 与 reparse fail-closed tests |
 
 ### 3.1 要求覆盖但当前无仓库写入器的项目
 

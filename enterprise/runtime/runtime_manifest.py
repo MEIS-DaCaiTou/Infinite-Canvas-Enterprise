@@ -63,6 +63,53 @@ class RuntimeManifestStartupView:
     runtime_provenance_promoted: bool = False
     Manifest_v2_implemented: bool = False
 
+    def validated(self) -> "RuntimeManifestStartupView":
+        if (
+            self.schema_version != STARTUP_VIEW_SCHEMA
+            or not isinstance(self.manifest_sha256, str)
+            or _SHA_RE.fullmatch(self.manifest_sha256) is None
+            or self.python_implementation != "CPython"
+            or _PYTHON_310_VERSION_RE.fullmatch(self.python_version) is None
+            or self.python_abi != "cp310"
+            or self.architecture not in KNOWN_ARCHITECTURES
+            or self.architecture_supported != (self.architecture in APPROVED_PORTABLE_ARCHITECTURES)
+            or self.runtime_manifest_v1_self_consistency_checked is not True
+            or self.runtime_provenance_promoted is not False
+            or self.Manifest_v2_implemented is not False
+            or not isinstance(self.startup_core_files, tuple)
+            or len(self.startup_core_files) != STARTUP_CORE_FILE_COUNT
+        ):
+            raise RuntimeContractError("STARTUP_PREFLIGHT_INVALID")
+        names: list[str] = []
+        digest = hashlib.sha256()
+        for record in self.startup_core_files:
+            if not isinstance(record, StartupCoreFile):
+                raise RuntimeContractError("STARTUP_PREFLIGHT_INVALID")
+            if (
+                record.relative_path not in STARTUP_CORE_FILES
+                or not isinstance(record.sha256, str)
+                or _SHA_RE.fullmatch(record.sha256) is None
+                or type(record.size_bytes) is not int
+                or record.size_bytes < 0
+            ):
+                raise RuntimeContractError("STARTUP_PREFLIGHT_INVALID")
+            names.append(record.relative_path)
+            encoded = record.relative_path.encode("utf-8")
+            digest.update(len(encoded).to_bytes(8, "big"))
+            digest.update(encoded)
+            digest.update(record.size_bytes.to_bytes(8, "big"))
+            digest.update(bytes.fromhex(record.sha256))
+        if tuple(names) != STARTUP_CORE_FILES or self.startup_core_digest != digest.hexdigest():
+            raise RuntimeContractError("STARTUP_PREFLIGHT_INVALID")
+        if self.candidate_id is not None and (not isinstance(self.candidate_id, str) or _CANDIDATE_ID_RE.fullmatch(self.candidate_id) is None):
+            raise RuntimeContractError("STARTUP_PREFLIGHT_INVALID")
+        if self.manifest_self_declared_enterprise_commit is not None and (
+            not isinstance(self.manifest_self_declared_enterprise_commit, str)
+            or re.fullmatch(r"[0-9a-f]{40}", self.manifest_self_declared_enterprise_commit) is None
+        ):
+            raise RuntimeContractError("STARTUP_PREFLIGHT_INVALID")
+        return self
+
     def as_dict(self) -> dict[str, object]:
         return {
             "Manifest_v2_implemented": self.Manifest_v2_implemented,
@@ -254,7 +301,18 @@ def parse_runtime_manifest_startup_view(manifest_path: Path, python_runtime_root
         digest.update(encoded)
         digest.update(actual_size.to_bytes(8, "big"))
         digest.update(bytes.fromhex(actual_sha))
-    source = payload.get("source") if type(payload.get("source")) is dict else {}
+    if "source" not in payload:
+        source: dict[str, Any] = {}
+    elif type(payload["source"]) is dict:
+        source_value = payload["source"]
+        source = source_value
+    else:
+        raise RuntimeContractError("RUNTIME_MANIFEST_METADATA_INVALID")
+    enterprise_commit = source.get("enterprise_commit")
+    if enterprise_commit is not None and (
+        not isinstance(enterprise_commit, str) or re.fullmatch(r"[0-9a-f]{40}", enterprise_commit) is None
+    ):
+        raise RuntimeContractError("RUNTIME_MANIFEST_METADATA_INVALID")
     candidate_id = payload.get("candidate_id")
     if candidate_id is not None and (not isinstance(candidate_id, str) or _CANDIDATE_ID_RE.fullmatch(candidate_id) is None):
         raise RuntimeContractError("RUNTIME_MANIFEST_METADATA_INVALID")
@@ -269,7 +327,7 @@ def parse_runtime_manifest_startup_view(manifest_path: Path, python_runtime_root
         startup_core_files=tuple(startup_records),
         startup_core_digest=digest.hexdigest(),
         candidate_id=candidate_id,
-        manifest_self_declared_enterprise_commit=source.get("enterprise_commit") if isinstance(source.get("enterprise_commit"), str) else None,
+        manifest_self_declared_enterprise_commit=enterprise_commit,
     )
     if not architecture_supported:
         # The parsed model is valid, but the current formal Windows portable

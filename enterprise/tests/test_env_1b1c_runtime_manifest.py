@@ -134,3 +134,14 @@ def test_r3_invalid_optional_candidate_id_fails_closed(tmp_path: Path, candidate
     with pytest.raises(RuntimeContractError) as exc:
         parse_runtime_manifest_startup_view(manifest, runtime)
     assert exc.value.code == "RUNTIME_MANIFEST_METADATA_INVALID"
+
+
+@pytest.mark.parametrize("source", [None, "bad", {"enterprise_commit": 1}, {"enterprise_commit": "a" * 39}, {"enterprise_commit": "a" * 39 + "\\n"}, {"enterprise_commit": "C:/escape"}])
+def test_r4_source_metadata_is_strict_when_present(tmp_path: Path, source: object) -> None:
+    runtime, manifest = _runtime_fixture(tmp_path)
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    payload["source"] = source
+    manifest.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+    with pytest.raises(RuntimeContractError) as exc:
+        parse_runtime_manifest_startup_view(manifest, runtime)
+    assert exc.value.code == "RUNTIME_MANIFEST_METADATA_INVALID"

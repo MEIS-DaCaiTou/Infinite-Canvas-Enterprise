@@ -22,6 +22,20 @@ class RuntimeMode:
     development_only: bool
     schema_version: str = MODE_SCHEMA_VERSION
 
+    def validated(self) -> "RuntimeMode":
+        expected = {
+            DEVELOPMENT: (True, True, False, True),
+            PORTABLE_RELEASE: (False, False, True, False),
+        }.get(self.mode)
+        if (
+            self.schema_version != MODE_SCHEMA_VERSION
+            or expected is None
+            or (self.allow_system_python, self.allows_path_fallback, self.release_validation_eligible, self.development_only)
+            != expected
+        ):
+            raise RuntimeContractError("STARTUP_PREFLIGHT_INVALID")
+        return self
+
     def as_dict(self) -> dict[str, object]:
         return {
             "allow_system_python": self.allow_system_python,

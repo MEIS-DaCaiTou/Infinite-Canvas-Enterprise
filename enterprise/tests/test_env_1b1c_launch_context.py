@@ -175,3 +175,61 @@ def test_r3_publish_does_not_overwrite_foreign_target_created_before_replace(
         publish_launch_context(target, _context(), expected_existing_identity=None)
     assert exc.value.code == "LAUNCH_CONTEXT_EXISTING_FORBIDDEN"
     assert read_launch_context(target).instance_id == "f" * 32
+
+
+def test_r4_temp_identity_reuse_does_not_publish_foreign_bytes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import enterprise.runtime.launch_context as subject
+
+    target = tmp_path / LAUNCH_CONTEXT_FILENAME
+    temporary = tmp_path / "launch-context.json.new"
+    original_verify = subject._verify_target_state
+    calls = 0
+
+    def replace_temp_after_target_verify(destination: Path, expected: str | None) -> None:
+        nonlocal calls
+        calls += 1
+        original_verify(destination, expected)
+        if calls == 2:
+            temporary.unlink()
+            temporary.write_bytes(b"foreign")
+
+    monkeypatch.setattr(subject, "_verify_target_state", replace_temp_after_target_verify)
+    monkeypatch.setattr(subject, "_file_identity", lambda path: (7, 7))
+    with pytest.raises(RuntimeContractError) as exc:
+        publish_launch_context(target, _context(), expected_existing_identity=None)
+    assert exc.value.code == "LAUNCH_CONTEXT_TEMP_OWNERSHIP_LOST"
+    assert temporary.read_bytes() == b"foreign"
+    assert not target.exists()
+
+
+@pytest.mark.parametrize("name", [LAUNCH_CONTEXT_FILENAME, "launch-context.json.new"])
+def test_r4_broken_symlink_is_lexically_present_and_preserved(tmp_path: Path, name: str) -> None:
+    target = tmp_path / LAUNCH_CONTEXT_FILENAME
+    link = tmp_path / name
+    try:
+        link.symlink_to(tmp_path / "missing")
+    except OSError:
+        # Keep the policy covered when this Windows fixture cannot create a
+        # real symlink: lstat success is lexical existence even when normal
+        # path resolution would fail for a broken link.
+        import enterprise.runtime.launch_context as subject
+
+        original_lstat = subject.os.lstat
+
+        def synthetic_lstat(path: object):
+            if Path(path) == link:
+                return original_lstat(tmp_path)
+            return original_lstat(path)
+
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(subject.os, "lstat", synthetic_lstat)
+        try:
+            with pytest.raises(RuntimeContractError):
+                publish_launch_context(target, _context(), expected_existing_identity=None)
+        finally:
+            monkeypatch.undo()
+        assert not link.exists()
+        return
+    with pytest.raises(RuntimeContractError):
+        publish_launch_context(target, _context(), expected_existing_identity=None)
+    assert link.is_symlink()
