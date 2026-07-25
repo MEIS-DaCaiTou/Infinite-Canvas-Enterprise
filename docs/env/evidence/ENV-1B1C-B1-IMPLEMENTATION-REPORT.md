@@ -93,8 +93,9 @@ B1 端口、不访问网络。
 
 已有实现 commits：`65b298891dca6556c8b147fb8a39974fde7c3e47`
 (`feat(env): add runtime contract foundations`) 与 `35b4ab36758047f469ec48928c55a86933cb2d81`
-(`docs(env): record ENV-1B1C B1 evidence`)。本报告的 evidence-correction commit 会在本节更新后
-单独记录；PR body 必须链接到该最终 PR Head 的固定 GitHub blob URL。Draft PR：
+(`docs(env): record ENV-1B1C B1 evidence`) 与 `5c735fb0815c091154c7ad8bd8e59b8b5eeba2e0`
+(`docs(env): compare B1 full-suite baseline`)。PR body 链接到当前 PR Head 的固定 GitHub blob URL。
+Draft PR：
 `https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/84`；Base 为
 `4d9cc4ef3d6a0f6ed956c2dda6303e9cc3b99b89`。PR 保持 `OPEN`、`Draft=true`、
 `merged=false`、`mergeable=MERGEABLE`；`github_ci_verified=false`。禁止文件分支 diff exit code
