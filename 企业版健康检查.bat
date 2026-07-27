@@ -10,5 +10,5 @@ set "PYTHONHOME="
 set "PYTHONPATH="
 set "PYTHONDONTWRITEBYTECODE=1"
 set "PYTHONNOUSERSITE=1"
-"%PYEXE%" -I -B "%~dp0enterprise\runtime\launcher.py" portable start
+"%PYEXE%" -I -B "%~dp0enterprise\runtime\launcher.py" portable health
 exit /b %errorlevel%

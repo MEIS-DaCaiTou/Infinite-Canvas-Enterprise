@@ -2,7 +2,7 @@
 
 本文档描述当前仓库已实现的 Infinite Canvas 企业多用户运行架构和主要模块职责；它不证明相同仓库基线已经部署到生产。
 
-> 最后一次代码事实核对基线：`main@d3885a92968e68f35500318977341c94612ab2a2`。PR #80、#81、#82、#83、#84 已合并；ENV-1B1C-B1 的 Runtime 纯契约和安全原语已进入 `main` 并通过独立验收。正式决策和实际文件链接见 [ADR 索引](docs/README.md)。当前仓库定位是“企业安全增强型单机模块化单体”；B1 不实施 launcher、controller/host/child 接线、activation 或正式入口；完整 APP_ROOT 只读、ENV-1 正式运行时、Manifest v2、Fresh Install Bootstrap、OPS-3B、formal Release、Production Baseline、Docker、PostgreSQL、Redis、对象存储、restore 和 rollback 尚未实现。
+> 最后一次代码事实核对基线：`main@6610218aecc0b864df5f075cb6824e041daedfd7`。PR #80 至 #84 已合并；ENV-1B1C-B1 已进入 `main` 并通过独立验收。B2 repository implementation 在既有 STAB-1 生命周期上接入 fixed launcher、Release identity、preflight、launch context 和 readiness，不创建第二套 controller/supervisor/state/lock；独立验收与真实 bundled Runtime 验证尚未完成。完整 APP_ROOT 只读、Manifest v2、Fresh Install Bootstrap、OPS-3B、formal Release、Production Baseline、restore 和 rollback尚未完成。
 
 ---
 

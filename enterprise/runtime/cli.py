@@ -48,17 +48,43 @@ def _config(args: argparse.Namespace, *, mode: str) -> SupervisorConfig:
         GATEWAY_PORT, UPSTREAM_PORT, PATH_ROOTS = 8000, 3001, None
     upstream_port = args.upstream_port if args.upstream_port is not None else UPSTREAM_PORT
     gateway_port = args.gateway_port if args.gateway_port is not None else GATEWAY_PORT
+    runtime_mode = getattr(args, "runtime_mode", "development")
+    portable: dict[str, str | None] = {
+        "release_id": None,
+        "runtime_manifest_sha256": None,
+        "startup_preflight_sha256": None,
+        "launch_context_identity": None,
+        "python_executable": None,
+    }
+    log_root = None
+    if runtime_mode == "portable-release":
+        from .launch_context import LAUNCH_CONTEXT_FILENAME, read_launch_context
+
+        context = read_launch_context(runtime_root / LAUNCH_CONTEXT_FILENAME)
+        expected_identity = getattr(args, "launch_context_identity", None)
+        if context.identity != expected_identity or context.instance_id != getattr(args, "instance_id", None):
+            raise RuntimeControlError("portable launch context is untrusted")
+        portable = {
+            "release_id": context.release_id,
+            "runtime_manifest_sha256": context.runtime_manifest_sha256,
+            "startup_preflight_sha256": context.startup_preflight_sha256,
+            "launch_context_identity": context.identity,
+            "python_executable": str(PATH_ROOTS.PYTHON_RUNTIME / "python.exe"),
+        }
+        log_root = PATH_ROOTS.LOG_ROOT / "runtime"
     return SupervisorConfig(
         app_root=app_root,
         runtime_root=runtime_root,
         # Do not regress development logs into APP_ROOT.  Portable injection
         # is explicit in a future B1C entrypoint, not inferred by this CLI.
-        log_root=None,
+        log_root=log_root,
         mode=mode,
+        runtime_mode=runtime_mode,
         upstream_port=upstream_port,
         gateway_port=gateway_port,
         secret_values=_configured_secret_values(),
         fixture_child_wrapper=bool(args.fixture_child_wrapper),
+        **portable,
     )
 
 
@@ -74,6 +100,8 @@ def build_parser() -> argparse.ArgumentParser:
         item.add_argument("--fixture-child-wrapper", action="store_true", help=argparse.SUPPRESS)
         if name == "service-host":
             item.add_argument("--instance-id", required=True)
+            item.add_argument("--runtime-mode", choices=("development", "portable-release"), default="development")
+            item.add_argument("--launch-context-identity")
     return parser
 
 

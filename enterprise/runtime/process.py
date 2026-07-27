@@ -71,15 +71,33 @@ def default_commands(
     upstream_port: int,
     gateway_port: int,
     python_executable: str | None = None,
+    runtime_mode: str = "development",
+    runtime_root: Path | None = None,
+    instance_id: str | None = None,
+    launch_context_identity: str | None = None,
     fixture_child_wrapper: bool = False,
 ) -> dict[str, CommandSpec]:
-    executable = python_executable or bundled_python(app_root)
+    if runtime_mode == "portable-release":
+        if not all((python_executable, runtime_root, instance_id, launch_context_identity)):
+            raise ProcessControlError("portable child identity is incomplete")
+        executable = str(python_executable)
+        python_prefix = (executable, "-I", "-B")
+        portable_arguments = (
+            "--runtime-mode", "portable-release",
+            "--runtime-root", str(runtime_root),
+            "--instance-id", str(instance_id),
+            "--launch-context-identity", str(launch_context_identity),
+        )
+    else:
+        executable = python_executable or bundled_python(app_root)
+        python_prefix = (executable,)
+        portable_arguments = ()
     if fixture_child_wrapper:
         fixture = app_root / "enterprise" / "tests" / "runtime_fixture_service.py"
         return {
             role: CommandSpec(
                 role=role,
-                arguments=(executable, str(fixture), "--role", role, "--port", str(port)),
+                arguments=(*python_prefix, str(fixture), "--role", role, "--port", str(port)),
                 host="127.0.0.1",
                 port=port,
             )
@@ -90,7 +108,7 @@ def default_commands(
         "upstream": CommandSpec(
             role="upstream",
             arguments=(
-                executable,
+                *python_prefix,
                 str(child_wrapper),
                 "--role",
                 "upstream",
@@ -100,6 +118,7 @@ def default_commands(
                 "127.0.0.1",
                 "--port",
                 str(upstream_port),
+                *portable_arguments,
             ),
             host="127.0.0.1",
             port=upstream_port,
@@ -107,7 +126,7 @@ def default_commands(
         "gateway": CommandSpec(
             role="gateway",
             arguments=(
-                executable,
+                *python_prefix,
                 str(child_wrapper),
                 "--role",
                 "gateway",
@@ -117,6 +136,7 @@ def default_commands(
                 "0.0.0.0",
                 "--port",
                 str(gateway_port),
+                *portable_arguments,
             ),
             host="127.0.0.1",
             port=gateway_port,

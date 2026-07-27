@@ -82,6 +82,26 @@ def _write_bootstrap_failure(path: Path | None, category: str) -> None:
 
 def _main(arguments: list[str]) -> int:
     marker = _bootstrap_failure_path(arguments)
+    runtime_mode = _option_value(arguments, "--runtime-mode") or "development"
+    if runtime_mode == "portable-release":
+        try:
+            from enterprise.runtime.portable import validate_portable_process_binding
+
+            app_root = _option_value(arguments, "--app-root")
+            runtime_root = _option_value(arguments, "--runtime-root")
+            instance_id = _option_value(arguments, "--instance-id")
+            context_identity = _option_value(arguments, "--launch-context-identity")
+            if not all((app_root, runtime_root, instance_id, context_identity)):
+                raise RuntimeError("portable host identity is incomplete")
+            validate_portable_process_binding(
+                app_root=Path(str(app_root)),
+                runtime_root=Path(str(runtime_root)),
+                instance_id=str(instance_id),
+                expected_context_identity=str(context_identity),
+            )
+        except Exception:
+            _write_bootstrap_failure(marker, "portable_host_identity_failed")
+            return 2
     try:
         from enterprise.runtime.cli import main
     except Exception:

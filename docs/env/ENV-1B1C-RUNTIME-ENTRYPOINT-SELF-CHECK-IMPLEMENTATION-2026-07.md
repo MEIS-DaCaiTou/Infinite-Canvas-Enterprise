@@ -78,3 +78,14 @@ Launch Context 在 `os.replace()` 已成功但目录同步失败时，返回
 `RUNTIME_MANIFEST_PATH_DUPLICATE` 和符号 detail，不回显外部路径。
 
 这些仍是 B1 的纯契约补正，不构成 portable lifecycle、formal Batch、Release activation 或生产批准。
+
+## B2 repository implementation
+
+B2 read-only architecture gate 已通过，repository implementation 使用固定
+`enterprise/runtime/launcher.py`、Release 内 `python.exe -I -B`、B1 preflight/context 和既有 STAB-1
+lock/state/supervisor/instance identity 接线 controller、host、child、readiness 与 Windows wrappers；未建立
+第二套 lifecycle。详细能力与限制见
+[ENV-1B1C-B2 Portable Runtime Lifecycle 实施记录](./ENV-1B1C-B2-PORTABLE-RUNTIME-LIFECYCLE-IMPLEMENTATION-2026-07.md)。
+
+独立验收和真实 bundled Python lifecycle 尚未完成；Manifest v2、activation、formal Release、
+Production Baseline 和 production approval 仍未实现。
