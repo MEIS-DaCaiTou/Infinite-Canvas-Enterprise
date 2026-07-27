@@ -276,3 +276,76 @@ def test_r6_launch_context_ownership_read_is_bounded_and_preserves_large_foreign
     assert exc.value.code == "LAUNCH_CONTEXT_TEMP_OWNERSHIP_LOST"
     assert read_sizes and max(read_sizes) <= len(context.canonical_json()) + 1
     assert temporary.read_bytes().startswith(b"foreign")
+
+
+class _VirtualContextHandle:
+    def __init__(self, total_bytes: int, *, read_failure: bool = False, close_failure: bool = False) -> None:
+        self.total_bytes = total_bytes; self.position = 0; self.requests: list[int] = []
+        self.read_failure = read_failure; self.close_failure = close_failure
+
+    def __enter__(self): return self
+    def __exit__(self, *_args: object) -> None:
+        if self.close_failure: raise OSError("host-close-detail")
+    def read(self, size: int) -> bytes:
+        self.requests.append(size)
+        if self.read_failure: raise OSError("host-read-detail")
+        count = min(size, self.total_bytes - self.position); self.position += count
+        return b"x" * count
+
+
+@pytest.mark.parametrize("total_bytes", [16 * 1024, 16 * 1024 + 1, 1024 * 1024])
+def test_r7_launch_context_reader_uses_bounded_read_requests(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, total_bytes: int
+) -> None:
+    target = tmp_path / LAUNCH_CONTEXT_FILENAME; target.write_bytes(b"{}")
+    handle = _VirtualContextHandle(total_bytes)
+    monkeypatch.setattr(Path, "open", lambda *_args, **_kwargs: handle)
+    with pytest.raises(RuntimeContractError) as exc:
+        read_launch_context(target)
+    expected = "LAUNCH_CONTEXT_SIZE_INVALID" if total_bytes > 16 * 1024 else "LAUNCH_CONTEXT_JSON_INVALID"
+    assert exc.value.code == expected
+    assert handle.requests and max(handle.requests) <= 16 * 1024 + 1
+    assert sum(handle.requests) <= 16 * 1024 + 1
+
+
+@pytest.mark.parametrize("kind", ["open", "read", "close"])
+def test_r7_launch_context_reader_maps_open_read_and_close_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    target = tmp_path / LAUNCH_CONTEXT_FILENAME; target.write_bytes(b"{}")
+    if kind == "open":
+        monkeypatch.setattr(Path, "open", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("host-open-detail")))
+    else:
+        monkeypatch.setattr(Path, "open", lambda *_args, **_kwargs: _VirtualContextHandle(2, read_failure=kind == "read", close_failure=kind == "close"))
+    with pytest.raises(RuntimeContractError) as exc:
+        read_launch_context(target)
+    assert exc.value.code == "LAUNCH_CONTEXT_INVALID"
+    assert "host-" not in exc.value.payload.canonical_json().decode("utf-8")
+
+
+@pytest.mark.parametrize("sync_failure", ["path_safety", "open", "fsync"])
+def test_r7_post_replace_sync_failures_are_uncertain_and_keep_new_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sync_failure: str
+) -> None:
+    import enterprise.runtime.launch_context as subject
+    target = tmp_path / LAUNCH_CONTEXT_FILENAME; context = _context()
+    code = "LAUNCH_CONTEXT_INVALID" if sync_failure == "path_safety" else "LAUNCH_CONTEXT_DIRECTORY_SYNC_FAILED"
+    monkeypatch.setattr(subject, "sync_context_directory", lambda _root: (_ for _ in ()).throw(RuntimeContractError(code)))
+    with pytest.raises(RuntimeContractError) as exc:
+        publish_launch_context(target, context, expected_existing_identity=None)
+    assert exc.value.code == "LAUNCH_CONTEXT_DIRECTORY_SYNC_FAILED"
+    assert exc.value.payload.pointer_or_context_may_have_changed is True
+    assert exc.value.payload.reread_state_required is True
+    assert read_launch_context(target).identity == context.identity
+
+
+def test_r7_replace_failure_is_not_marked_as_uncertain(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import enterprise.runtime.launch_context as subject
+    target = tmp_path / LAUNCH_CONTEXT_FILENAME
+    monkeypatch.setattr(subject.os, "replace", lambda *_args: (_ for _ in ()).throw(OSError("replace-detail")))
+    with pytest.raises(RuntimeContractError) as exc:
+        publish_launch_context(target, _context(), expected_existing_identity=None)
+    assert exc.value.code == "LAUNCH_CONTEXT_WRITE_FAILED"
+    assert exc.value.payload.pointer_or_context_may_have_changed is False
+    assert exc.value.payload.reread_state_required is False
+    assert not target.exists()

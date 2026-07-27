@@ -252,3 +252,73 @@ def test_r6_manifest_lstat_inspection_failure_is_not_missing(tmp_path: Path, mon
     with pytest.raises(RuntimeContractError) as exc:
         parse_runtime_manifest_startup_view(manifest, runtime)
     assert exc.value.code == "RUNTIME_MANIFEST_REPARSE_FORBIDDEN"
+
+
+class _VirtualReadHandle:
+    def __init__(self, total_bytes: int, *, read_failure: bool = False, close_failure: bool = False) -> None:
+        self.total_bytes = total_bytes
+        self.position = 0
+        self.requests: list[int] = []
+        self.read_failure = read_failure
+        self.close_failure = close_failure
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        if self.close_failure:
+            raise OSError("host-close-detail")
+
+    def read(self, size: int) -> bytes:
+        self.requests.append(size)
+        if self.read_failure:
+            raise OSError("host-read-detail")
+        count = min(size, self.total_bytes - self.position)
+        self.position += count
+        return b"x" * count
+
+
+@pytest.mark.parametrize("total_bytes", [1024 * 1024, 1024 * 1024 + 1, 16 * 1024 * 1024])
+def test_r7_manifest_reader_uses_bounded_read_requests(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, total_bytes: int
+) -> None:
+    import enterprise.runtime.runtime_manifest as subject
+    runtime = tmp_path / "runtime"; runtime.mkdir()
+    manifest = tmp_path / "runtime-manifest.json"; manifest.write_bytes(b"{}")
+    handle = _VirtualReadHandle(total_bytes)
+    monkeypatch.setattr(Path, "open", lambda *_args, **_kwargs: handle)
+    with pytest.raises(RuntimeContractError) as exc:
+        parse_runtime_manifest_startup_view(manifest, runtime)
+    expected = "RUNTIME_MANIFEST_SIZE_INVALID" if total_bytes > 1024 * 1024 else "RUNTIME_MANIFEST_JSON_INVALID"
+    assert exc.value.code == expected
+    assert handle.requests and max(handle.requests) <= 1024 * 1024 + 1
+    assert sum(handle.requests) <= 1024 * 1024 + 1
+
+
+@pytest.mark.parametrize("kind", ["open", "read", "close"])
+def test_r7_manifest_reader_maps_open_read_and_close_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    runtime = tmp_path / "runtime"; runtime.mkdir()
+    manifest = tmp_path / "runtime-manifest.json"; manifest.write_bytes(b"{}")
+    if kind == "open":
+        monkeypatch.setattr(Path, "open", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("host-open-detail")))
+    else:
+        monkeypatch.setattr(Path, "open", lambda *_args, **_kwargs: _VirtualReadHandle(2, read_failure=kind == "read", close_failure=kind == "close"))
+    with pytest.raises(RuntimeContractError) as exc:
+        parse_runtime_manifest_startup_view(manifest, runtime)
+    assert exc.value.code == "RUNTIME_MANIFEST_READ_FAILED"
+    assert "host-" not in exc.value.payload.canonical_json().decode("utf-8")
+
+
+@pytest.mark.parametrize("path", ["python/extra.dll", "folder/file.bin", "name with space.bin"])
+def test_r7_duplicate_manifest_paths_use_a_static_public_label(tmp_path: Path, path: str) -> None:
+    runtime, manifest = _runtime_fixture(tmp_path)
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    item = {"filename": path, "sha256": "0" * 64, "size_bytes": 0}
+    payload["core_files"].extend([item, dict(item)])
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(RuntimeContractError) as exc:
+        parse_runtime_manifest_startup_view(manifest, runtime)
+    assert exc.value.code == "RUNTIME_MANIFEST_PATH_DUPLICATE"
+    assert exc.value.payload.as_public_dict()["details"] == {"label": "manifest_path"}

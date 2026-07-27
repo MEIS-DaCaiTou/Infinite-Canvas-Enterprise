@@ -59,3 +59,14 @@ runtime lock、不能单独宣称 CAS”的边界。R3 staged Draft scan 为 `sc
 
 `real_bundled_python_fixture_available=false`、`real_bundled_python_lifecycle_verified=false`；B1
 不重建 Runtime、不实现 Manifest v2、Release activation、OPS-3B 或 formal Release，也不批准生产。
+
+## R7 B1 纯原语收口
+
+R7 将 Runtime Manifest 和 Launch Context 的读取限制为各自的最大字节数加一个 overflow
+byte，避免外部文件造成无界读取；所有 open/read/close 失败仍映射为各模块既有的稳定错误。
+Launch Context 在 `os.replace()` 已成功但目录同步失败时，返回
+`LAUNCH_CONTEXT_DIRECTORY_SYNC_FAILED` 并要求调用方重新读取状态，而不删除新的 target 或
+虚假回滚。重复 manifest path 使用稳定的
+`RUNTIME_MANIFEST_PATH_DUPLICATE` 和符号 detail，不回显外部路径。
+
+这些仍是 B1 的纯契约补正，不构成 portable lifecycle、formal Batch、Release activation 或生产批准。

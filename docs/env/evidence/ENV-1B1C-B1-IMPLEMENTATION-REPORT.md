@@ -214,3 +214,32 @@ ENV_1B1C_B1_R6_completed_in_Draft_PR=true
 ENV_1B1C_B2_started=false
 STOPPED_AFTER_B1_R6_AWAITING_INDEPENDENT_REVIEW=true
 ```
+
+## R7 bounded-reader and post-replace correction
+
+R7 is the final scoped B1 convergence pass. It adds true bounded readers for
+the Runtime Manifest (1 MiB) and Launch Context (16 KiB), including a single
+overflow byte only; it preserves a stable uncertain-state contract after an
+already-successful context replacement when directory durability cannot be
+verified; and it makes duplicate manifest paths retain
+`RUNTIME_MANIFEST_PATH_DUPLICATE` with only the symbolic `manifest_path`
+detail. It does not add lifecycle wiring. The detailed evidence is
+[ENV-1B1C-B1-R7-CORRECTION-REPORT.md](ENV-1B1C-B1-R7-CORRECTION-REPORT.md).
+
+```text
+ENV_1B1C_B1_R7_completed=true
+ENV_1B1C_B2_started=false
+STOPPED_AFTER_B1_R7_AWAITING_FINAL_INDEPENDENT_ACCEPTANCE=true
+```
+
+## R7 recovery evidence (current local run)
+
+R7 continuation preserved the interrupted worktree externally and verified its
+eight allowed files against the preservation bundle before making no rewrite of
+the already-passing primitive implementation. `fetch --no-write-fetch-head`
+and `ls-remote` confirmed the intended base and pre-correction branch head.
+The current CPython 3.11.9 same-interpreter comparison reported base `256
+passed, 3 skipped, 0 failed` and head `479 passed, 5 skipped, 0 failed`;
+`branch_regression_delta=0`. This supersedes the historical R3/R5 local
+comparison only for this recovery environment; it remains local evidence,
+`github_ci_verified=false`, and `real_bundled_python_fixture_tests=false`.

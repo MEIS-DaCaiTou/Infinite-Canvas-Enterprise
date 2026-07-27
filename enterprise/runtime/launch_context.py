@@ -183,7 +183,7 @@ def _validate_payload(payload: object) -> RuntimeLaunchContext:
 def read_launch_context(path: Path) -> RuntimeLaunchContext:
     _path_safety(Path(path))
     try:
-        raw = Path(path).read_bytes()
+        raw = _read_context_bounded(Path(path))
     except OSError as exc:
         raise RuntimeContractError("LAUNCH_CONTEXT_INVALID") from exc
     if not raw or len(raw) > LAUNCH_CONTEXT_MAX_BYTES:
@@ -202,6 +202,27 @@ def read_launch_context(path: Path) -> RuntimeLaunchContext:
     if raw != context.canonical_json():
         raise RuntimeContractError("LAUNCH_CONTEXT_INVALID")
     return context
+
+
+def _read_context_bounded(path: Path) -> bytes:
+    """Read at most the context limit plus a single overflow byte."""
+
+    content = bytearray()
+    try:
+        with Path(path).open("rb") as handle:
+            while len(content) < LAUNCH_CONTEXT_MAX_BYTES + 1:
+                remaining = LAUNCH_CONTEXT_MAX_BYTES + 1 - len(content)
+                # Do not issue an unbounded read or request beyond the single
+                # overflow byte used to distinguish exact-limit input.
+                chunk = handle.read(min(4 * 1024, remaining))
+                if not chunk:
+                    break
+                content.extend(chunk)
+    except OSError as exc:
+        raise RuntimeContractError("LAUNCH_CONTEXT_INVALID") from exc
+    if not content or len(content) > LAUNCH_CONTEXT_MAX_BYTES:
+        raise RuntimeContractError("LAUNCH_CONTEXT_SIZE_INVALID")
+    return bytes(content)
 
 
 def _file_identity(path: Path) -> tuple[int, int]:
@@ -323,6 +344,7 @@ def publish_launch_context(
         raise RuntimeContractError("LAUNCH_CONTEXT_SIZE_INVALID")
     temporary = target.with_name(LAUNCH_CONTEXT_TEMP_FILENAME)
     created = False
+    target_replaced = False
     identity: tuple[int, int] | None = None
     try:
         _path_safety(target.parent)
@@ -340,9 +362,22 @@ def publish_launch_context(
         if not _owned_file(temporary, identity, encoded):
             raise RuntimeContractError("LAUNCH_CONTEXT_TEMP_OWNERSHIP_LOST")
         os.replace(temporary, target)
-        sync_status = sync_context_directory(target.parent)
+        target_replaced = True
+        try:
+            sync_status = sync_context_directory(target.parent)
+        except RuntimeContractError as exc:
+            if exc.code == "LAUNCH_CONTEXT_DIRECTORY_SYNC_FAILED":
+                raise
+            raise RuntimeContractError("LAUNCH_CONTEXT_DIRECTORY_SYNC_FAILED") from exc
+        except OSError as exc:
+            raise RuntimeContractError("LAUNCH_CONTEXT_DIRECTORY_SYNC_FAILED") from exc
         return LaunchContextPublishResult(context.identity, True, sync_status)
-    except RuntimeContractError:
+    except RuntimeContractError as exc:
+        # Once replacement succeeded the target already represents the new
+        # authoritative context.  Any later unexpected failure is an
+        # uncertain durability outcome and callers must reread it.
+        if target_replaced and exc.code != "LAUNCH_CONTEXT_DIRECTORY_SYNC_FAILED":
+            raise RuntimeContractError("LAUNCH_CONTEXT_DIRECTORY_SYNC_FAILED") from exc
         raise
     except FileExistsError as exc:
         raise RuntimeContractError("LAUNCH_CONTEXT_TEMP_EXISTS") from exc

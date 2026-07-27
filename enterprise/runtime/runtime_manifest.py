@@ -243,7 +243,7 @@ def _load_manifest(path: Path) -> tuple[dict[str, Any], str]:
         raise RuntimeContractError("RUNTIME_MANIFEST_REPARSE_FORBIDDEN", details={"label": "manifest_path"})
     assert_no_reparse_ancestors(path)
     try:
-        raw = path.read_bytes()
+        raw = _read_manifest_bounded(path)
     except FileNotFoundError as exc:
         raise RuntimeContractError("RUNTIME_MANIFEST_MISSING") from exc
     except OSError as exc:
@@ -263,6 +263,30 @@ def _load_manifest(path: Path) -> tuple[dict[str, Any], str]:
     if type(payload) is not dict:
         raise RuntimeContractError("RUNTIME_MANIFEST_JSON_INVALID")
     return payload, hashlib.sha256(raw).hexdigest()
+
+
+def _read_manifest_bounded(path: Path) -> bytes:
+    """Read a manifest without consuming more than one overflow byte."""
+
+    content = bytearray()
+    try:
+        with Path(path).open("rb") as handle:
+            while len(content) < MANIFEST_MAX_BYTES + 1:
+                remaining = MANIFEST_MAX_BYTES + 1 - len(content)
+                # A bounded chunk keeps the aggregate requested read size at
+                # most ``limit + 1`` even when an exact-limit file requires
+                # one final EOF probe.
+                chunk = handle.read(min(64 * 1024, remaining))
+                if not chunk:
+                    break
+                content.extend(chunk)
+    except FileNotFoundError as exc:
+        raise RuntimeContractError("RUNTIME_MANIFEST_MISSING") from exc
+    except OSError as exc:
+        raise RuntimeContractError("RUNTIME_MANIFEST_READ_FAILED") from exc
+    if not content or len(content) > MANIFEST_MAX_BYTES:
+        raise RuntimeContractError("RUNTIME_MANIFEST_SIZE_INVALID")
+    return bytes(content)
 
 
 def parse_runtime_manifest_startup_view(manifest_path: Path, python_runtime_root: Path) -> RuntimeManifestStartupView:
@@ -293,7 +317,7 @@ def parse_runtime_manifest_startup_view(manifest_path: Path, python_runtime_root
         relative = validate_manifest_relative_path(item.get("filename", item.get("path")))
         normalized = relative.casefold()
         if normalized in records:
-            raise RuntimeContractError("RUNTIME_MANIFEST_PATH_DUPLICATE", details={"label": relative})
+            raise RuntimeContractError("RUNTIME_MANIFEST_PATH_DUPLICATE", details={"label": "manifest_path"})
         records[normalized] = item
     startup_records: list[StartupCoreFile] = []
     total_size = 0
