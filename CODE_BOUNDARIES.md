@@ -2,7 +2,7 @@
 
 本文档定义本仓库的修改边界。Codex 和开发者每次任务开始前都必须阅读，并据此判断哪些文件可以修改。
 
-当前 Release / 路径边界由 [ADR-ENV-003](docs/decisions/ADR-ENV-003-IMMUTABLE-RELEASE-STATIC-CACHE-2026-07.md)、[ADR-ENV-004](docs/decisions/ADR-ENV-004-PATH-ROOTS-AND-RELEASE-DIRECTORY-2026-07.md) 和 [ADR-ENV-005](docs/decisions/ADR-ENV-005-RUNTIME-ENTRYPOINT-SELF-CHECK-MODES-2026-07.md) 决定：正式 `APP_ROOT` 必须最终只读，运行数据、日志、runtime state、缓存、临时文件和更新证据不得继续默认写入版本目录。ENV-1B1A 已合并并关闭 static 自修改；ENV-1B1B 已合并并提供 PathRoots/current-release scoped contract；当前 ENV-1B1C-B1 只允许新增 Runtime 纯契约、安全原语和隔离测试，不得接入 lifecycle、Batch、launcher 或 `main.py`。完整只读 `APP_ROOT` 仍未实现。
+当前 Release / 路径边界由 [ADR-ENV-003](docs/decisions/ADR-ENV-003-IMMUTABLE-RELEASE-STATIC-CACHE-2026-07.md)、[ADR-ENV-004](docs/decisions/ADR-ENV-004-PATH-ROOTS-AND-RELEASE-DIRECTORY-2026-07.md) 和 [ADR-ENV-005](docs/decisions/ADR-ENV-005-RUNTIME-ENTRYPOINT-SELF-CHECK-MODES-2026-07.md) 决定：正式 `APP_ROOT` 必须最终只读，运行数据、日志、runtime state、缓存、临时文件和更新证据不得继续默认写入版本目录。ENV-1B1A 已合并并关闭 static 自修改；ENV-1B1B 已合并并提供 PathRoots/current-release scoped contract；ENV-1B1C-B1 已由 PR #84 合并并独立验收，但只建立 Runtime 纯契约、安全原语和隔离测试，不授权 lifecycle、Batch、launcher 或 `main.py` 接线。B2 必须由后续独立任务和 Draft PR 承载；完整只读 `APP_ROOT` 仍未实现。
 
 ---
 

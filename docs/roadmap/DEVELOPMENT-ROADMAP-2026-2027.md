@@ -1,9 +1,9 @@
 # Infinite-Canvas-Enterprise 开发路线图（2026-2027）
 
-更新时间：2026-07-23
-最后一次代码事实核对基线：`main@4d9cc4ef3d6a0f6ed956c2dda6303e9cc3b99b89`
+更新时间：2026-07-27
+最后一次代码事实核对基线：`main@d3885a92968e68f35500318977341c94612ab2a2`
 
-当前 repository HEAD 以 GitHub `main` 为准；PR #80、PR #81、PR #82 和 PR #83 已合并。ENV-1B1C-B1 当前只在 Draft PR 分支提供纯契约、安全原语和隔离测试基础，尚未进入 `main`。
+当前 repository HEAD 以 GitHub `main` 为准；PR #80、PR #81、PR #82、PR #83 和 PR #84 已合并。ENV-1B1C-B1 纯契约、安全原语和隔离测试基础已进入 `main` 并通过独立验收；完整 lifecycle 尚未接线。
 
 当前实施事实以 [CURRENT_PROJECT_STATUS](../CURRENT_PROJECT_STATUS.md) 为准；架构决策以 [ADR 索引](../README.md) 为准。本文负责阶段顺序，不重复定义实现状态。
 
@@ -43,13 +43,13 @@
 | ENV-1B1A | 已合并，PR #81 | APP_ROOT 写入审计、static 构建期哈希和漂移门禁；merge commit `a53885b`，不等于完整 APP_ROOT 只读。 |
 | ENV-1B2P | 已合并，PR #82 | Runtime 分层来源证据验证；core true、dependency/archive false，production approval 固定 false。 |
 | ENV-1B1B | 已合并，PR #83 | PathRoots、严格 pointer 和核心路径迁移；不实施 activation、B1C 或完整 immutable release。 |
-| ENV-1B1C-B1 | 当前 Draft PR | Runtime mode、manifest startup view、Python identity、preflight、launch context、writable probe 的纯契约与测试基础；不接入正式 lifecycle。 |
+| ENV-1B1C-B1 | 已合并并独立验收，PR #84 | Runtime mode、manifest startup view、Python identity、preflight、launch context、writable probe、release/ownership gate 和 path safety 的纯契约与测试基础；不接入正式 lifecycle。 |
 
 OPS-2A / OPS-2B 已进入 main，项目负责人曾在旧生产侧人工完成 dry-run 和一次单独确认的正式备份。这些是历史运维事实，不代表 restore、upgrade、apply-upgrade 或 rollback 已实现，也不再作为旧到新迁移输入。旧生产 `check-data` warning 和其中的 unowned、orphan map、missing file 不再阻塞新生产基线；旧数据仍未被自动修复或删除。
 
 ## 3. 当前阶段
 
-当前阶段为 **ENV-1B1C-B1：Runtime 纯契约、安全原语与测试基础**。ENV-1B0、ENV-1B1A、ENV-1B2P 和 ENV-1B1B 已分别由 PR #80、PR #81、PR #82、PR #83 合并；ENV-1B1C-B1 实现仅存在于当前 Draft PR 分支，且不接入 controller、host、child、Batch、launcher 或 `main.py`。正常上游功能同步在 ENV-1 期间冻结；紧急安全漏洞修复可以单独评估并受控引入。
+当前已确认状态为 **ENV-1B1C-B1 已合并、独立验收并完成 docs closeout evidence 持久化；下一门禁为 B2 read-only architecture gate**。ENV-1B0、ENV-1B1A、ENV-1B2P、ENV-1B1B 和 ENV-1B1C-B1 已分别由 PR #80、PR #81、PR #82、PR #83、PR #84 合并；B1 docs closeout 不接入 controller、host、child、Batch、launcher、`main.py` 或其它 Runtime lifecycle。`ENV_1B1C_B2_started=false`；B2 implementation 尚未开始，仍需项目负责人单独批准。正常上游功能同步在 ENV-1 期间冻结；紧急安全漏洞修复可以单独评估并受控引入。
 
 Greenfield Production Baseline 路线按以下顺序执行，后项不能绕过前项门禁：
 
@@ -57,28 +57,29 @@ Greenfield Production Baseline 路线按以下顺序执行，后项不能绕过�
 1. ENV-1B1A：完整 APP_ROOT 写入审计与 static 构建期哈希；已由 PR #81 合并完成，但不等于完整 APP_ROOT 只读。
 2. ENV-1B2P：Python 核心、依赖层、archive provenance 分层证据；已合并，core `true`、dependency `false`、archive `false`、`production_approved=false`。
 3. ENV-1B1B：路径根、版本目录和 `current-release.json`；已合并，不含 activation。
-4. ENV-1B1C-B1：Runtime mode、manifest startup view、Python identity、preflight、launch context 和 writable probe 的纯契约/安全原语；当前 Draft PR，不接入 lifecycle。
-5. ENV-1B1C 后续：所有正式入口和内部进程 fail closed。
-6. ENV-1B2：可重复 Runtime、依赖锁、`pip check`、SBOM、自检，并验证受支持的新 Python 版本。
-7. OPS Release Manifest v2。
-8. ENV-1B3：干净 Windows VM、无系统 Python、非管理员、中文/空格/长路径、低磁盘、重启、损坏 DLL/manifest、杀毒软件和 APP_ROOT 只读验证。
-9. 形成首个不可变 Windows Release Candidate；Release Candidate 不等于 Production Baseline。
-10. DATA-1：Repository、schema version、migration history、新版本 migration compatibility、数据完整性和数据库回滚基础；不迁移或修复旧生产数据。
-11. Fresh Install Bootstrap：面向空环境建立目标 Schema、mandatory audit、首个 `super_admin` 和不可变 lifecycle marker。
-12. 在干净 Windows 环境完成全新安装与初始化验收。
-13. 收口 ARCH-3、P0 安全、PERF-1 / OBS-1、浏览器回归和真实 Provider 成功链路。
-14. 使用全新基线数据完成正式 backup 和 restore rehearsal。
-15. OPS-3B repository implementation：实现计划驱动的 apply / switch / health / rollback / restore；不用于旧生产。
-16. 在干净 Windows 环境使用 Fresh Install Bootstrap 建立的全新隔离数据，完成 Release Candidate 之间的升级、rollback / restore 演练；这是开发或隔离验证，不是生产执行。
-17. 由项目负责人确认已经具备经过验证的持续升级和失败恢复能力，并批准 Production Baseline。
-18. 在生产设备使用全新数据库、账号、配置和凭据执行 Greenfield 部署，并完成新生产业务验收。
-19. 后续正式 Release 进入新生产版本迭代；OPS-3B 的首次真实生产执行只能发生在 Greenfield 新生产部署以后，并由项目负责人在生产设备本地执行。
-20. 新生产验收通过后，由项目负责人另行决定旧生产停止、归档或删除。
-21. OPS-3C / Update Center 可在 Production Baseline 后单独实施，不是首次生产部署前置条件。
-22. Linux 单服务器适配。
-23. PostgreSQL、对象存储、queue、Redis 和多实例按真实需求引入。
+4. ENV-1B1C-B1：Runtime mode、manifest startup view、Python identity、preflight、launch context 和 writable probe 的纯契约/安全原语；已由 PR #84 合并并独立验收，不接入 lifecycle。
+5. ENV-1B1C-B1 docs closeout：由独立 docs-only closeout commit 持久化 Final Acceptance evidence；不接入 Runtime lifecycle。
+6. ENV-1B1C-B2 read-only architecture gate：必须由项目负责人单独批准；B2 implementation 再由独立 branch/worktree/Draft PR 承载。
+7. ENV-1B2：可重复 Runtime、依赖锁、`pip check`、SBOM、自检，并验证受支持的新 Python 版本。
+8. OPS Release Manifest v2。
+9. ENV-1B3：干净 Windows VM、无系统 Python、非管理员、中文/空格/长路径、低磁盘、重启、损坏 DLL/manifest、杀毒软件和 APP_ROOT 只读验证。
+10. 形成首个不可变 Windows Release Candidate；Release Candidate 不等于 Production Baseline。
+11. DATA-1：Repository、schema version、migration history、新版本 migration compatibility、数据完整性和数据库回滚基础；不迁移或修复旧生产数据。
+12. Fresh Install Bootstrap：面向空环境建立目标 Schema、mandatory audit、首个 `super_admin` 和不可变 lifecycle marker。
+13. 在干净 Windows 环境完成全新安装与初始化验收。
+14. 收口 ARCH-3、P0 安全、PERF-1 / OBS-1、浏览器回归和真实 Provider 成功链路。
+15. 使用全新基线数据完成正式 backup 和 restore rehearsal。
+16. OPS-3B repository implementation：实现计划驱动的 apply / switch / health / rollback / restore；不用于旧生产。
+17. 在干净 Windows 环境使用 Fresh Install Bootstrap 建立的全新隔离数据，完成 Release Candidate 之间的升级、rollback / restore 演练；这是开发或隔离验证，不是生产执行。
+18. 由项目负责人确认已经具备经过验证的持续升级和失败恢复能力，并批准 Production Baseline。
+19. 在生产设备使用全新数据库、账号、配置和凭据执行 Greenfield 部署，并完成新生产业务验收。
+20. 后续正式 Release 进入新生产版本迭代；OPS-3B 的首次真实生产执行只能发生在 Greenfield 新生产部署以后，并由项目负责人在生产设备本地执行。
+21. 新生产验收通过后，由项目负责人另行决定旧生产停止、归档或删除。
+22. OPS-3C / Update Center 可在 Production Baseline 后单独实施，不是首次生产部署前置条件。
+23. Linux 单服务器适配。
+24. PostgreSQL、对象存储、queue、Redis 和多实例按真实需求引入。
 
-以上第 0、1、2、3 项已进入 `main`，第 4 项只在当前 Draft PR 分支实现，第 5 项及以后均为未完成工作。ENV-1B1A 只关闭 static 自修改并形成写入审计；ENV-1B2P 只分类既有证据；ENV-1B1B 不接线正式入口或 activation；ENV-1B1C-B1 不创建 launcher 或生命周期接线。Fresh Install Bootstrap、新生产部署、OPS-3B、Linux、PostgreSQL、Redis、durable queue、多实例、Windows Service、正式 Windows Runtime Release 和 Production Baseline 当前都不是已实现能力。
+以上第 0、1、2、3、4 项已进入 `main`；第 5 项只持久化 B1 Final Acceptance evidence，不接入 Runtime lifecycle；第 6 项 B2 read-only architecture gate 尚未开始，其后均为未完成工作。顺序固定为：B1 docs closeout → B2 read-only architecture gate → 项目负责人批准 B2 implementation → 独立 B2 branch/worktree/Draft PR。ENV-1B1A 只关闭 static 自修改并形成写入审计；ENV-1B2P 只分类既有证据；ENV-1B1B 不接线正式入口或 activation；ENV-1B1C-B1 不创建 launcher 或生命周期接线。Fresh Install Bootstrap、新生产部署、OPS-3B、Linux、PostgreSQL、Redis、durable queue、多实例、Windows Service、正式 Windows Runtime Release 和 Production Baseline 当前都不是已实现能力。
 
 ## 4. 历史拆解参考
 
@@ -194,7 +195,7 @@ DATA-1 服务于全新数据库和未来新版本 migration，不导入旧生产
 
 建议顺序：
 
-1. release builder 与 release validator 增强；ENV-1B1A 已提供确定性 static staging builder，ENV-1B2P 已提供分层 Runtime 证据验证，当前 ENV-1B1B Draft 提供路径根/pointer 原语；完整 Release builder / validator 仍属后续。
+1. release builder 与 release validator 增强；ENV-1B1A 已提供确定性 static staging builder，ENV-1B2P 已提供分层 Runtime 证据验证，ENV-1B1B 已提供路径根/pointer 原语，ENV-1B1C-B1 已提供 Runtime 纯契约；完整 Release builder / validator 仍属后续。
 2. Fresh Install Bootstrap 和干净环境安装验收。
 3. 使用新基线数据完成 backup / restore rehearsal。
 4. 完成 OPS-3B 仓库实现。

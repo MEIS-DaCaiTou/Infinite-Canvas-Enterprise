@@ -1,17 +1,20 @@
 # Infinite Canvas Enterprise 当前项目状态
 
-更新时间：2026-07-23
+更新时间：2026-07-27
 
 ## 1. 当前主线与运行事实
 
 - 企业版仓库：`MEIS-DaCaiTou/Infinite-Canvas-Enterprise`
 - `current_main`：以仓库 GitHub `main` HEAD 为准。
-- `last_verified_code_baseline`：`4d9cc4ef3d6a0f6ed956c2dda6303e9cc3b99b89`。
+- `last_verified_code_baseline`：`d3885a92968e68f35500318977341c94612ab2a2`。
 - ENV-1B0 / DOC-2 / DOC-2A：PR #80 已合并，merge commit `be5573ae416b4ce81f8cc26ae282868a7efa7672`；完成架构决策冻结、Greenfield 路线和文档事实同步。
 - ENV-1B1A：PR #81 已合并，merge commit `a53885b026a6c2440acb0fbde72d6571ff6f7723`；APP_ROOT 写入审计、CSS 传递依赖哈希、统一 HTML build ID、确定性 static staging builder、`main.py` 最小不可变 Release 补丁和 Git tracked fingerprint/Wxx 漂移门禁已进入 `main`。
 - ENV-1B2P：PR #82 已合并，merge commit `240f6a2b93268a415cddc3c9af9951f334c8e4e1`；只读核验仓库外既有 Runtime 证据，真实结果仍为 core `true`、dependency `false`、archive `false`、`production_approved=false`，不代表正式 Runtime 获批。
 - ENV-1B1B：PR #83 已合并，merge commit `4d9cc4ef3d6a0f6ed956c2dda6303e9cc3b99b89`；PathRoots / `current-release.json` / workflow overlay scoped contract 已进入 `main`。`ENV_1B1B_in_main=true`、`ENV_1B1B_scoped_contract_acceptance_passed=true`、`ENV_1B1B_completion_classification=partial`、`ENV_1B1B_full_release_acceptance_passed=false`；完整只读 APP_ROOT、Release activation 和 formal Release 仍未形成。
-- ENV-1B1C：已完成阶段 A 只读架构门禁；当前 Draft PR 仅实施 B1 纯契约、安全原语和隔离测试基础。R7 已在同一 Draft PR 收口 bounded reader、context post-replace uncertain-state 和 duplicate manifest path 的三项纯原语缺口，等待最终独立验收；`ENV_1B1C_B1_R7_completed=true`、`ENV_1B1C_B2_started=false`。`ENV_1B1C_started=true`、`ENV_1B1C_B1_in_draft_pr=true`、`ENV_1B1C_lifecycle_integrated=false`、`portable_launcher_implemented=false`、`controller_host_child_integrated=false`、`main_py_changed_by_B1=false`、`formal_release_created=false`、`Release_activation_implemented=false`、`Manifest_v2_implemented=false`、`Production_Baseline_approved=false`、`production_approved=false`。
+- ENV-1B1C：阶段 A 只读架构门禁已完成；B1 纯契约、安全原语和隔离测试基础已由 PR #84 合并，source Head `afa03af45da938549a1e62e36df8de11d7c82867`，squash merge commit `d3885a92968e68f35500318977341c94612ab2a2`。独立验收已接受 B1 contract foundations，Final Acceptance evidence 已由独立 docs-only closeout commit 持久化；B1 docs closeout 不接入 Runtime lifecycle。`ENV_1B1C_B1_code_merged=true`、`ENV_1B1C_B1_independently_accepted=true`、`ENV_1B1C_B1_contract_foundations_accepted=true`、`ENV_1B1C_B1_final_acceptance_record_committed=true`、`ENV_1B1C_B2_started=false`。
+- B1 最终验收事实、审查包摘要和测试矩阵见 [ENV-1B1C-B1 Final Acceptance / Closeout](./env/evidence/ENV-1B1C-B1-FINAL-ACCEPTANCE-CLOSEOUT-2026-07-27.md)；`github_ci_verified=false`、`real_bundled_python_fixture_tests=false`、`production_validation=false`。
+- ENV-1B1C 未实施边界保持：`portable_runtime_lifecycle_integrated=false`、`portable_launcher_implemented=false`、`formal_portable_batch_created=false`、`controller_host_child_integrated=false`、`fixed_release_python_real_start_chain=false`、`final_health_readiness_integrated=false`、`real_bundled_python_fixture_tests=false`、`Runtime_rebuilt=false`、`Manifest_v2_implemented=false`、`Release_activation_implemented=false`、`OPS_3B_implemented=false`、`formal_Release_created=false`、`formal_release_deployed=false`、`Production_Baseline_approved=false`、`production_approved=false`、`production_validation=false`。
+- 临时业务测试部署仍为 `Infinite-Canvas-Enterprise-TEST-240f6a2-win-x64.zip`（SHA-256 `7111243ec661d5f1caf90a207161ff1e57d0b46737d5abccdb81b001ffadc3c9`）：Gateway `8000`、upstream `3001` loopback，`LAN_UI_verified=true`。`temporary_test_business_deployment_active=true`、`temporary_test_business_deployment_updated_by_PR84=false`、`controlled_LAN_or_VPN_only=true`、`public_exposure=false`、`copy_to_more_devices=false`、`migration_guarantee=false`；它不是 formal Release 或 Production Baseline。
 - ADR-OPS-007：项目负责人已接受 Greenfield 全新生产路线；旧生产迁移计划取消。
 - `production_device_touched_by_project_owner=true`（项目负责人确认的既有事实）；`production_device_touched_by_codex=false`；`production_modified_by_this_PR=false`。
 - OPS-3A：PR #77 已合并，merge commit `1430e2d7389c66d82d8f93d3c306451a22a51d3c`。
@@ -90,7 +93,7 @@ SEC-1B2 已完成仓库实现和临时数据库验证，由 PR #75 承载。该�
 | ENV-1B1A | 已完成并合并，PR #81，merge `a53885b` | 移除 static 运行时自修改，新增 CSS 传递哈希、HTML build ID、显式 staging builder 和 APP_ROOT 写入审计漂移门禁；不等于完整 APP_ROOT 只读。 |
 | ENV-1B2P | 已完成并合并，PR #82，merge `240f6a2` | 只读验证既有仓库外证据；core 已验证，dependency/archive 仍为 false；固定 `production_approved=false`。 |
 | ENV-1B1B | 已完成并合并，PR #83，merge `4d9cc4e` | PathRoots、严格 current-release pointer、核心数据/配置/upload/ops 路径边界和 workflow overlay scoped contract 已进入 main。完整 Release acceptance 仍未通过，不等于完整只读 APP_ROOT 或 Release activation。 |
-| ENV-1B1C-B1 | 当前 Draft PR | 仅新增 Runtime mode、manifest startup view、Python identity、preflight、launch context 和 writable probe 的纯契约/安全原语与隔离测试；不接入 controller、host、child、Batch、launcher 或 `main.py`。 |
+| ENV-1B1C-B1 | 已合并并独立验收，PR #84，merge `d3885a9` | Runtime mode、manifest startup view、Python identity、preflight、launch context、writable-root probe、release/ownership gate 和共享 path-safety 的纯契约/安全原语已进入 main；不接入 controller、host、child、Batch、launcher 或 `main.py`。 |
 
 ## 4. 当前能力矩阵摘要
 
@@ -110,7 +113,7 @@ SEC-1B2 已完成仓库实现和临时数据库验证，由 PR #75 承载。该�
 | OPS / Runtime | OPS-2A / OPS-2B / OPS-3A、STAB-1 / OPS-L1 和 PR #79 hotfix 已进入 main。已有 `start/stop/restart/status/health`、独立角色恢复、持久日志、runtime state、完整 identity、ACK 和 Job Object。上述能力不代表生产已升级或切换，也不代表 apply-upgrade / restore / rollback、Windows Service、Docker / 1Panel 或 PostgreSQL 已实现。 |
 | 超级管理员 / Capability | SEC-1B1 只建立固定 role 基础，不创建 super_admin，也不实现 Capability；旧生产仍使用历史 `is_admin` 数据。面向新生产空环境的 Fresh Install Bootstrap 尚未实现。 |
 | 强制安全审计 | SEC-1F0 已提供仓库底层和临时数据库证明；旧生产未建表且不再计划 activation，现有在线管理操作仍使用原 `usage_logs`；新生产必须从 Fresh Install Bootstrap 建立 mandatory audit，完整查询 / 导出 / 保留 / 归档仍未实现。 |
-| ENV / 不可变 Release | ENV-1B0、ENV-1B1A、ENV-1B2P 和 ENV-1B1B 已合并。当前 ENV-1B1C-B1 Draft 只提供正式入口后续接线所需的纯契约和安全原语；legacy update、restart、bytecode、正式入口、controller/host/child 统一身份和完整 runtime 自检仍未迁移/接线；完整只读 APP_ROOT、正式不可变 Release、Production Baseline 和 production approval 均未形成。 |
+| ENV / 不可变 Release | ENV-1B0、ENV-1B1A、ENV-1B2P、ENV-1B1B 和 ENV-1B1C-B1 已合并；B1 只提供正式入口后续接线所需的纯契约和安全原语。legacy update、restart、bytecode、正式入口、controller/host/child 统一身份和完整 runtime 自检仍未迁移/接线；完整只读 APP_ROOT、正式不可变 Release、Production Baseline 和 production approval 均未形成。 |
 
 ## 5. 当前人工确认
 
@@ -143,8 +146,8 @@ ARCH-2A、SEC-1A、SEC-1B1、SEC-1F0、SEC-1C0 和 SEC-1B2 仓库实现已完成
 2. ENV-1B1A：已由 PR #81 完成并合并；builder 尚未接入完整 Release / Manifest / activation，完整 APP_ROOT 仍不可视为只读。
 3. ENV-1B2P：已由 PR #82 合并；core `true`，dependency / archive `false`，`production_approved=false`。
 4. ENV-1B1B：已由 PR #83 合并；`ENV_1B1B_scoped_contract_acceptance_passed=true`，但 `ENV_1B1B_full_release_acceptance_passed=false`。
-5. ENV-1B1C：阶段 A 只读架构门禁已通过；当前 B1 Draft 只建立 Runtime mode、manifest startup view、Python identity、preflight、launch context 和 writable probe 的纯契约/安全原语与测试基础，不接入生命周期。
-6. ENV-1B1C 后续、完整 ENV-1B2、Manifest v2 和 ENV-1B3：按路线完成 Release-bound 入口、可重复 Runtime、自检和干净 Windows 验证；均未完成。
+5. ENV-1B1C-B1：已由 PR #84 合并并通过独立 contract-foundation 验收；Final Acceptance evidence 已由独立 docs-only closeout commit 持久化，且该文档收口不接入 Runtime lifecycle。
+6. 下一阶段是 ENV-1B1C-B2 只读架构门禁；B2 implementation 需要项目负责人单独批准，当前尚未开始。完整 ENV-1B2、Manifest v2 和 ENV-1B3 仍按路线完成 Release-bound 入口、可重复 Runtime、自检和干净 Windows 验证。
 7. 形成不可变 Windows Release Candidate；Release Candidate 不等于 Production Baseline。
 8. DATA-1：建立新生产所需 schema version、migration history、兼容分类和数据完整性基础，不迁移旧生产数据。
 9. 独立设计、实现并验证尚不存在的 Fresh Install Bootstrap。
@@ -201,7 +204,7 @@ git rev-parse HEAD
 git status --short --untracked-files=all
 ```
 
-从 GitHub 最新 `main` 开始新任务；`4d9cc4ef3d6a0f6ed956c2dda6303e9cc3b99b89` 是 PR #83 合并后的 ENV-1B1C 起始基线，`240f6a2`、`a53885b`、`be5573a`、`396cccc` 和 `a095ce2e` 只作为历史核对基线。main 前进后先读取 `docs/README.md`、本文件、当前 ADR 和最近 PR。
+从 GitHub 最新 `main` 开始新任务；`d3885a92968e68f35500318977341c94612ab2a2` 是 PR #84 的 squash merge commit 和本次最后验证基线，`4d9cc4e`、`240f6a2`、`a53885b`、`be5573a`、`396cccc` 和 `a095ce2e` 只作为历史核对基线。main 前进后先读取 `docs/README.md`、本文件、当前 ADR 和最近 PR。
 
 每个新任务必须：
 
