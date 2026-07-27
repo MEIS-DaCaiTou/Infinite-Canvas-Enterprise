@@ -22,6 +22,7 @@ from enterprise.path_safety import (
     assert_no_reparse_ancestors,
     assert_path_within_root,
     has_reparse_point,
+    lexical_path_state,
 )
 
 
@@ -88,12 +89,12 @@ def _hash_file(path: Path) -> str:
             for chunk in iter(lambda: handle.read(1024 * 1024), b""):
                 size += len(chunk)
                 if size > SINGLE_FILE_HASH_MAX_BYTES:
-                    raise RuntimeContractError("PYTHON_IDENTITY_HASH_LIMIT_EXCEEDED", details={"label": path.name})
+                    raise RuntimeContractError("PYTHON_IDENTITY_HASH_LIMIT_EXCEEDED", details={"label": "executable"})
                 digest.update(chunk)
     except RuntimeContractError:
         raise
     except OSError as exc:
-        raise RuntimeContractError("PYTHON_IDENTITY_EXECUTABLE_READ_FAILED", details={"label": path.name}) from exc
+        raise RuntimeContractError("PYTHON_IDENTITY_EXECUTABLE_READ_FAILED", details={"label": "executable"}) from exc
     return digest.hexdigest()
 
 
@@ -116,7 +117,7 @@ def _assert_identity_path_safe(path: Path, *, runtime_root: Path) -> Path:
         assert_no_reparse_ancestors(path)
         return assert_path_within_root(path, runtime_root)
     except PathSafetyError as exc:
-        raise RuntimeContractError("PYTHON_IDENTITY_PREFIX_MISMATCH", details={"label": path.name}) from exc
+        raise RuntimeContractError("PYTHON_IDENTITY_PREFIX_MISMATCH", details={"label": "runtime_root"}) from exc
 
 
 def _same_path(first: Path, second: Path) -> bool:
@@ -149,23 +150,28 @@ def build_python_identity(
     if expected_executable is None or expected_runtime_root is None:
         raise RuntimeContractError("PYTHON_IDENTITY_EXECUTABLE_MISMATCH")
     executable = Path(executable)
+    leaf_state = lexical_path_state(executable)
+    if leaf_state == "missing":
+        raise RuntimeContractError("PYTHON_IDENTITY_EXECUTABLE_MISSING", details={"label": "executable"})
+    if leaf_state != "regular":
+        raise RuntimeContractError("PYTHON_IDENTITY_REPARSE_FORBIDDEN", details={"label": "executable"})
     try:
         assert_no_reparse_ancestors(executable)
     except PathSafetyError as exc:
-        raise RuntimeContractError("PYTHON_IDENTITY_REPARSE_FORBIDDEN", details={"label": executable.name}) from exc
+        raise RuntimeContractError("PYTHON_IDENTITY_REPARSE_FORBIDDEN", details={"label": "executable"}) from exc
     try:
         is_reparse = has_reparse_point(executable)
     except PathSafetyError as exc:
-        raise RuntimeContractError("PYTHON_IDENTITY_REPARSE_FORBIDDEN", details={"label": executable.name}) from exc
+        raise RuntimeContractError("PYTHON_IDENTITY_REPARSE_FORBIDDEN", details={"label": "executable"}) from exc
     if not executable.is_file() or is_reparse:
-        raise RuntimeContractError("PYTHON_IDENTITY_EXECUTABLE_MISSING", details={"label": executable.name})
+        raise RuntimeContractError("PYTHON_IDENTITY_EXECUTABLE_MISSING", details={"label": "executable"})
     if executable.name.lower() != "python.exe":
-        raise RuntimeContractError("PYTHON_IDENTITY_EXECUTABLE_INVALID", details={"label": executable.name})
+        raise RuntimeContractError("PYTHON_IDENTITY_EXECUTABLE_INVALID", details={"label": "executable"})
     try:
         if not _same_path(executable, Path(expected_executable)):
-            raise RuntimeContractError("PYTHON_IDENTITY_EXECUTABLE_MISMATCH", details={"label": executable.name})
+            raise RuntimeContractError("PYTHON_IDENTITY_EXECUTABLE_MISMATCH", details={"label": "executable"})
     except OSError as exc:
-        raise RuntimeContractError("PYTHON_IDENTITY_EXECUTABLE_MISMATCH", details={"label": executable.name}) from exc
+        raise RuntimeContractError("PYTHON_IDENTITY_EXECUTABLE_MISMATCH", details={"label": "executable"}) from exc
     runtime_root = Path(expected_runtime_root)
     try:
         assert_no_reparse_ancestors(runtime_root)
@@ -176,10 +182,10 @@ def build_python_identity(
         if not _same_path(executable, expected_fixed_executable):
             raise PathSafetyError("path-outside-root")
     except PathSafetyError as exc:
-        raise RuntimeContractError("PYTHON_IDENTITY_EXECUTABLE_MISMATCH", details={"label": executable.name}) from exc
+        raise RuntimeContractError("PYTHON_IDENTITY_EXECUTABLE_MISMATCH", details={"label": "executable"}) from exc
     probed_executable = _probe_path(probe, "executable")
     if not _same_path(probed_executable, executable):
-        raise RuntimeContractError("PYTHON_IDENTITY_EXECUTABLE_MISMATCH", details={"label": executable.name})
+        raise RuntimeContractError("PYTHON_IDENTITY_EXECUTABLE_MISMATCH", details={"label": "executable"})
     prefix = _assert_identity_path_safe(_probe_path(probe, "prefix"), runtime_root=runtime_root)
     base_prefix = _assert_identity_path_safe(_probe_path(probe, "base_prefix"), runtime_root=runtime_root)
     try:

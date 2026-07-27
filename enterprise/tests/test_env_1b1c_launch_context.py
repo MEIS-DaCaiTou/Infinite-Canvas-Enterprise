@@ -243,3 +243,36 @@ def test_r5_launch_context_reuses_windows_safe_release_component(tmp_path: Path,
     with pytest.raises(RuntimeContractError) as exc:
         RuntimeLaunchContext(**payload)  # type: ignore[arg-type]
     assert exc.value.code == "LAUNCH_CONTEXT_INVALID"
+
+
+def test_r6_launch_context_ownership_read_is_bounded_and_preserves_large_foreign_temp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import enterprise.runtime.launch_context as subject
+    target = tmp_path / LAUNCH_CONTEXT_FILENAME
+    temporary = tmp_path / "launch-context.json.new"
+    original_verify = subject._verify_target_state
+    original_read = subject.os.read
+    calls = 0
+    read_sizes: list[int] = []
+
+    def replace_temp_after_target_verify(destination: Path, expected: str | None) -> None:
+        nonlocal calls
+        calls += 1
+        original_verify(destination, expected)
+        if calls == 2:
+            temporary.unlink(); temporary.write_bytes(b"foreign" * 4096)
+
+    def bounded_read(fd: int, size: int) -> bytes:
+        read_sizes.append(size)
+        return original_read(fd, size)
+
+    monkeypatch.setattr(subject, "_verify_target_state", replace_temp_after_target_verify)
+    monkeypatch.setattr(subject, "_file_identity", lambda _path: (7, 7))
+    monkeypatch.setattr(subject.os, "read", bounded_read)
+    context = _context()
+    with pytest.raises(RuntimeContractError) as exc:
+        publish_launch_context(target, context, expected_existing_identity=None)
+    assert exc.value.code == "LAUNCH_CONTEXT_TEMP_OWNERSHIP_LOST"
+    assert read_sizes and max(read_sizes) <= len(context.canonical_json()) + 1
+    assert temporary.read_bytes().startswith(b"foreign")

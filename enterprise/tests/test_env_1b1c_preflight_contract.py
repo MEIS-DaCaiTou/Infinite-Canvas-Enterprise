@@ -180,6 +180,21 @@ def test_r5_release_gate_is_not_final_health_readiness() -> None:
     assert decision.decision_scope == "release_gate_only"
 
 
+def test_r6_preflight_schema_is_an_invariant() -> None:
+    with pytest.raises(RuntimeContractError) as exc:
+        StartupPreflightResult(
+            result="pass", mode="portable-release", release_id="release-A",
+            app_root_relative="releases/release-A", path_roots_identity=SHA,
+            current_release_sha256="b" * 64, runtime_manifest_sha256="c" * 64,
+            python_executable_sha256="d" * 64, python_implementation="CPython",
+            python_version="3.10.11", python_abi="cp310", architecture="x64",
+            bytecode_policy="disabled-no-user-site",
+            writable_roots_verified=("DATA_ROOT", "LOG_ROOT", "RUNTIME_ROOT", "CACHE_ROOT", "TEMP_ROOT"),
+            schema_version="WRONG",
+        )
+    assert exc.value.code == "STARTUP_PREFLIGHT_INVALID"
+
+
 @pytest.mark.parametrize("release_id", ["CON", "NUL", "COM1", "LPT9.txt", "release.", "release ", ".", "..", "a/b", "a\\b", "a:b"])
 def test_r5_preflight_reuses_windows_safe_release_component(release_id: str) -> None:
     with pytest.raises(RuntimeContractError) as exc:

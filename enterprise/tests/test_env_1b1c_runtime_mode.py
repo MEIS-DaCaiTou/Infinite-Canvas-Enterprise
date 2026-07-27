@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from enterprise.runtime.error_contract import ERROR_REGISTRY, RuntimeContractError, error_payload
+from enterprise.runtime.error_contract import ERROR_REGISTRY, ErrorPayload, RuntimeContractError, error_payload
 from enterprise.runtime.mode import DEVELOPMENT, PORTABLE_RELEASE, parse_runtime_mode
 
 
@@ -88,3 +88,27 @@ def test_r5_error_details_reject_pathlike_values_recursively(value: str) -> None
 @pytest.mark.parametrize("value", ["APP_ROOT", "python.exe", "runtime_manifest"])
 def test_r5_error_details_allow_symbolic_labels(value: str) -> None:
     assert error_payload("RUNTIME_MODE_INVALID", details={"label": value}).as_public_dict()["details"] == {"label": value}
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"code": "NOT_REGISTERED"}, {"layer": "wrong"}, {"message": "wrong"},
+        {"exit_code": 0}, {"schema_version": "wrong"}, {"status": "ok"},
+        {"correlation_id": "C:\\secret"}, {"details": {"path": "/home/alice/secret"}},
+    ],
+)
+def test_r6_direct_error_payload_cannot_bypass_contract(overrides: dict[str, object]) -> None:
+    base = error_payload("RUNTIME_MODE_INVALID")
+    values = dict(base.__dict__)
+    values.update(overrides)
+    with pytest.raises((ValueError, RuntimeContractError)):
+        ErrorPayload(**values)  # type: ignore[arg-type]
+
+
+def test_r6_direct_error_payload_defensively_copies_details() -> None:
+    source = {"label": "APP_ROOT"}
+    base = error_payload("RUNTIME_MODE_INVALID")
+    payload = ErrorPayload(**{**base.__dict__, "details": source})
+    source["label"] = "MUTATED"
+    assert payload.as_public_dict()["details"] == {"label": "APP_ROOT"}

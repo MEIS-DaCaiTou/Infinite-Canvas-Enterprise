@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 import stat
 from pathlib import Path
+from typing import Literal
 
 
 class PathSafetyError(RuntimeError):
@@ -22,18 +23,39 @@ class PathSafetyError(RuntimeError):
         super().__init__(code)
 
 
-def has_reparse_point(path: Path) -> bool:
-    """Return whether *path* is a symlink/reparse point, or fail closed."""
+LexicalPathState = Literal["missing", "regular", "reparse", "inspection_failed"]
+
+
+def lexical_path_state(path: Path) -> LexicalPathState:
+    """Classify a leaf without following it.
+
+    This intentionally distinguishes a normal absent leaf from a dangling
+    symlink/reparse point.  Callers still inspect existing ancestors before
+    trusting a regular leaf.
+    """
 
     try:
         metadata = os.lstat(path)
-    except FileNotFoundError as exc:
-        raise PathSafetyError("path-missing") from exc
-    except OSError as exc:
-        raise PathSafetyError("path-inspection-failed") from exc
+    except FileNotFoundError:
+        return "missing"
+    except OSError:
+        return "inspection_failed"
     attributes = getattr(metadata, "st_file_attributes", 0)
     reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
-    return stat.S_ISLNK(metadata.st_mode) or bool(attributes & reparse_flag)
+    if stat.S_ISLNK(metadata.st_mode) or bool(attributes & reparse_flag):
+        return "reparse"
+    return "regular"
+
+
+def has_reparse_point(path: Path) -> bool:
+    """Return whether *path* is a symlink/reparse point, or fail closed."""
+
+    state = lexical_path_state(path)
+    if state == "missing":
+        raise PathSafetyError("path-missing")
+    if state == "inspection_failed":
+        raise PathSafetyError("path-inspection-failed")
+    return state == "reparse"
 
 
 def assert_no_reparse_ancestors(path: Path, *, allow_missing: bool = False) -> None:

@@ -39,6 +39,12 @@ class _HandleProxy:
         return self._handle.fileno()
 
 
+class _CloseFailHandle(_HandleProxy):
+    def __exit__(self, *args: object) -> None:
+        self._handle.close()
+        raise OSError("host-close-detail")
+
+
 def test_writable_probe_success_creates_and_removes_only_own_file(tmp_path: Path) -> None:
     result = probe_writable_root(tmp_path, "DATA_ROOT", name_factory=lambda: VALID_SUFFIX)
     assert result.created is True
@@ -162,3 +168,38 @@ def test_r5_identity_acquisition_failure_cleans_own_probe(tmp_path: Path, monkey
         probe_writable_root(tmp_path, "DATA_ROOT", name_factory=lambda: VALID_SUFFIX)
     assert exc.value.code == "WRITABLE_PROBE_IDENTITY_FAILED"
     assert list(tmp_path.iterdir()) == []
+
+
+def test_r6_close_failure_is_stable_and_cleans_owned_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    original_open = Path.open
+    monkeypatch.setattr(Path, "open", lambda path, *args, **kwargs: _CloseFailHandle(original_open(path, *args, **kwargs)))
+    with pytest.raises(RuntimeContractError) as exc:
+        probe_writable_root(tmp_path, "DATA_ROOT", name_factory=lambda: VALID_SUFFIX)
+    assert exc.value.code == "WRITABLE_PROBE_CLOSE_FAILED"
+    assert "host-close-detail" not in exc.value.payload.canonical_json().decode("utf-8")
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_r6_probe_ownership_read_is_bounded_and_preserves_foreign_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import enterprise.runtime.writable_probe as subject
+    target = tmp_path / f".ice-probe-log_root-{VALID_SUFFIX}.tmp"
+    original_read = subject.os.read
+    read_sizes: list[int] = []
+
+    def replace_after_create(_path: Path) -> bool:
+        target.unlink(); target.write_bytes(b"foreign" * 200)
+        return False
+
+    def bounded_read(fd: int, size: int) -> bytes:
+        read_sizes.append(size)
+        return original_read(fd, size)
+
+    monkeypatch.setattr(subject, "has_reparse_point", replace_after_create)
+    monkeypatch.setattr(subject, "_identity", lambda _path: (1, 1))
+    monkeypatch.setattr(subject, "_descriptor_identity", lambda _fd: (1, 1))
+    monkeypatch.setattr(subject.os, "read", bounded_read)
+    with pytest.raises(RuntimeContractError) as exc:
+        probe_writable_root(tmp_path, "LOG_ROOT", name_factory=lambda: VALID_SUFFIX)
+    assert exc.value.code == "WRITABLE_PROBE_OWNERSHIP_LOST"
+    assert read_sizes and max(read_sizes) <= len(b"ice-probe-v1:" + b"x" * 32 + b"\n") + 1
+    assert target.read_bytes().startswith(b"foreign")

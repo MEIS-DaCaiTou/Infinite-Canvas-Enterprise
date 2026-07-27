@@ -19,6 +19,7 @@ from enterprise.path_safety import (
     assert_no_reparse_ancestors as _assert_no_reparse_ancestors,
     assert_path_within_root,
     has_reparse_point as _has_reparse_point,
+    lexical_path_state,
 )
 
 
@@ -160,20 +161,20 @@ def has_reparse_point(path: Path) -> bool:
     try:
         return _has_reparse_point(Path(path))
     except PathSafetyError as exc:
-        raise RuntimeContractError("RUNTIME_MANIFEST_REPARSE_FORBIDDEN", details={"label": Path(path).name}) from exc
+        raise RuntimeContractError("RUNTIME_MANIFEST_REPARSE_FORBIDDEN", details={"label": "manifest_path"}) from exc
 
 
 def assert_no_reparse_ancestors(path: Path, *, code: str = "RUNTIME_MANIFEST_REPARSE_FORBIDDEN") -> None:
     try:
         _assert_no_reparse_ancestors(Path(path))
     except PathSafetyError as exc:
-        raise RuntimeContractError(code, details={"label": Path(path).name}) from exc
+        raise RuntimeContractError(code, details={"label": "manifest_path"}) from exc
 
 
 def sha256_file(path: Path, *, max_bytes: int = SINGLE_FILE_HASH_MAX_BYTES) -> tuple[str, int]:
     assert_no_reparse_ancestors(path)
     if not path.is_file() or has_reparse_point(path):
-        raise RuntimeContractError("RUNTIME_MANIFEST_REPARSE_FORBIDDEN", details={"label": path.name})
+        raise RuntimeContractError("RUNTIME_MANIFEST_REPARSE_FORBIDDEN", details={"label": "manifest_path"})
     digest = hashlib.sha256()
     size = 0
     try:
@@ -181,12 +182,12 @@ def sha256_file(path: Path, *, max_bytes: int = SINGLE_FILE_HASH_MAX_BYTES) -> t
             for chunk in iter(lambda: handle.read(1024 * 1024), b""):
                 size += len(chunk)
                 if size > max_bytes:
-                    raise RuntimeContractError("RUNTIME_MANIFEST_HASH_LIMIT_EXCEEDED", details={"label": path.name})
+                    raise RuntimeContractError("RUNTIME_MANIFEST_HASH_LIMIT_EXCEEDED", details={"label": "manifest_path"})
                 digest.update(chunk)
     except RuntimeContractError:
         raise
     except OSError as exc:
-        raise RuntimeContractError("RUNTIME_MANIFEST_CORE_READ_FAILED", details={"label": path.name}) from exc
+        raise RuntimeContractError("RUNTIME_MANIFEST_CORE_READ_FAILED", details={"label": "manifest_path"}) from exc
     return digest.hexdigest(), size
 
 
@@ -198,7 +199,7 @@ def normalize_abi(value: object) -> str:
         return "cp310"
     if normalized == "cpython-310":
         return "cp310"
-    raise RuntimeContractError("RUNTIME_MANIFEST_ABI_INVALID", details={"label": value[:32]})
+    raise RuntimeContractError("RUNTIME_MANIFEST_ABI_INVALID", details={"label": "python_abi"})
 
 
 def abi_from_cache_tag(cache_tag: object) -> str:
@@ -213,14 +214,14 @@ def normalize_architecture(value: object) -> str:
         return "x64"
     if normalized in {"arm64", "aarch64"}:
         return "arm64"
-    raise RuntimeContractError("RUNTIME_MANIFEST_ARCHITECTURE_INVALID", details={"label": value[:32]})
+    raise RuntimeContractError("RUNTIME_MANIFEST_ARCHITECTURE_INVALID", details={"label": "architecture"})
 
 
 def validate_manifest_relative_path(value: object) -> str:
     if not isinstance(value, str) or not value or len(value) > RELATIVE_PATH_MAX_CHARS:
         raise RuntimeContractError("RUNTIME_MANIFEST_PATH_INVALID")
     if "\\" in value or "*" in value or "?" in value or value.startswith(("/", "//", "\\\\")):
-        raise RuntimeContractError("RUNTIME_MANIFEST_PATH_INVALID", details={"label": PurePosixPath(value).name[:80]})
+        raise RuntimeContractError("RUNTIME_MANIFEST_PATH_INVALID", details={"label": "manifest_path"})
     if value.startswith("\\\\?\\") or value.startswith("\\\\.\\"):
         raise RuntimeContractError("RUNTIME_MANIFEST_PATH_INVALID")
     if len(value) >= 2 and value[1] == ":":
@@ -230,11 +231,16 @@ def validate_manifest_relative_path(value: object) -> str:
         raise RuntimeContractError("RUNTIME_MANIFEST_PATH_INVALID")
     for part in path.parts:
         if ":" in part or _WINDOWS_DEVICE_RE.fullmatch(part):
-            raise RuntimeContractError("RUNTIME_MANIFEST_PATH_INVALID", details={"label": part[:80]})
+            raise RuntimeContractError("RUNTIME_MANIFEST_PATH_INVALID", details={"label": "manifest_path"})
     return path.as_posix()
 
 
 def _load_manifest(path: Path) -> tuple[dict[str, Any], str]:
+    state = lexical_path_state(path)
+    if state == "missing":
+        raise RuntimeContractError("RUNTIME_MANIFEST_MISSING")
+    if state != "regular":
+        raise RuntimeContractError("RUNTIME_MANIFEST_REPARSE_FORBIDDEN", details={"label": "manifest_path"})
     assert_no_reparse_ancestors(path)
     try:
         raw = path.read_bytes()

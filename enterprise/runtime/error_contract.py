@@ -94,6 +94,7 @@ _DEFINITIONS: tuple[ErrorDefinition, ...] = (
     ErrorDefinition("WRITABLE_PROBE_WRITE_FAILED", "writable_probe", "writable probe write failed"),
     ErrorDefinition("WRITABLE_PROBE_IDENTITY_FAILED", "writable_probe", "writable probe identity could not be verified"),
     ErrorDefinition("WRITABLE_PROBE_FSYNC_FAILED", "writable_probe", "writable probe fsync failed"),
+    ErrorDefinition("WRITABLE_PROBE_CLOSE_FAILED", "writable_probe", "writable probe close failed"),
     ErrorDefinition("WRITABLE_PROBE_REPARSE_FORBIDDEN", "writable_probe", "writable probe path uses a reparse point"),
     ErrorDefinition("WRITABLE_PROBE_OWNERSHIP_LOST", "writable_probe", "writable probe ownership was lost"),
     ErrorDefinition("WRITABLE_PROBE_CLEANUP_FAILED", "writable_probe", "writable probe cleanup failed"),
@@ -177,6 +178,40 @@ class ErrorPayload:
     correlation_id: str | None = None
     schema_version: str = ERROR_SCHEMA_VERSION
     status: str = "blocked"
+
+    def __post_init__(self) -> None:
+        """Make direct construction as strict as the public factory.
+
+        Do not raise ``RuntimeContractError`` here: constructing that error
+        itself constructs an ``ErrorPayload`` and would recurse on malformed
+        direct input.
+        """
+
+        definition = ERROR_REGISTRY.get(self.code) if isinstance(self.code, str) else None
+        if definition is None:
+            raise ValueError("error code is invalid")
+        if self.schema_version != ERROR_SCHEMA_VERSION or self.status != "blocked":
+            raise ValueError("error payload schema or status is invalid")
+        if (
+            self.layer != definition.layer
+            or self.message != definition.message
+            or self.retryable is not definition.retryable
+            or self.exit_code != definition.exit_code
+            or self.pointer_or_context_may_have_changed is not definition.pointer_or_context_may_have_changed
+            or self.reread_state_required is not definition.reread_state_required
+        ):
+            raise ValueError("error payload definition does not match registry")
+        if self.correlation_id is not None and (
+            not isinstance(self.correlation_id, str) or _CORRELATION_ID_RE.fullmatch(self.correlation_id) is None
+        ):
+            raise ValueError("correlation_id is invalid")
+        if not isinstance(self.details, Mapping):
+            raise ValueError("error payload details are invalid")
+        try:
+            sanitized = _sanitize_details(dict(self.details))
+        except RuntimeContractError as exc:
+            raise ValueError("error payload details are invalid") from exc
+        object.__setattr__(self, "details", sanitized)
 
     def as_public_dict(self) -> dict[str, Any]:
         return {

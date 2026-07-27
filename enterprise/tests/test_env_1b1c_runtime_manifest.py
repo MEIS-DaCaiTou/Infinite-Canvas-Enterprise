@@ -17,6 +17,8 @@ from enterprise.runtime.runtime_manifest import (
     parse_runtime_manifest_startup_view,
     sha256_file,
     validate_manifest_relative_path,
+    normalize_abi,
+    normalize_architecture,
 )
 
 
@@ -203,3 +205,50 @@ def test_r5_core_hash_os_errors_are_mapped(tmp_path: Path, monkeypatch: pytest.M
         sha256_file(target)
     assert exc.value.code == "RUNTIME_MANIFEST_CORE_READ_FAILED"
     assert "host detail" not in exc.value.payload.canonical_json().decode("utf-8")
+
+
+@pytest.mark.parametrize(
+    ("call", "expected"),
+    [
+        (lambda: normalize_abi("bad/abi"), "RUNTIME_MANIFEST_ABI_INVALID"),
+        (lambda: normalize_architecture("bad arch"), "RUNTIME_MANIFEST_ARCHITECTURE_INVALID"),
+        (lambda: validate_manifest_relative_path(r"folder\python.exe"), "RUNTIME_MANIFEST_PATH_INVALID"),
+        (lambda: validate_manifest_relative_path("file:name"), "RUNTIME_MANIFEST_PATH_INVALID"),
+        (lambda: normalize_abi("x" * 200 + "\n"), "RUNTIME_MANIFEST_ABI_INVALID"),
+        (lambda: normalize_architecture("bad\u2028arch"), "RUNTIME_MANIFEST_ARCHITECTURE_INVALID"),
+    ],
+)
+def test_r6_invalid_external_values_keep_their_stable_code(call: object, expected: str) -> None:
+    with pytest.raises(RuntimeContractError) as exc:
+        call()  # type: ignore[operator]
+    assert exc.value.code == expected
+    assert "bad" not in exc.value.payload.canonical_json().decode("utf-8")
+
+
+def test_r6_missing_manifest_is_not_misclassified_as_reparse(tmp_path: Path) -> None:
+    runtime = tmp_path / "runtime"; runtime.mkdir()
+    with pytest.raises(RuntimeContractError) as exc:
+        parse_runtime_manifest_startup_view(tmp_path / "runtime-manifest.json", runtime)
+    assert exc.value.code == "RUNTIME_MANIFEST_MISSING"
+
+
+def test_r6_broken_manifest_symlink_remains_reparse(tmp_path: Path) -> None:
+    runtime = tmp_path / "runtime"; runtime.mkdir()
+    manifest = tmp_path / "runtime-manifest.json"
+    try:
+        manifest.symlink_to(tmp_path / "missing")
+    except OSError:
+        pytest.skip("symlink creation unavailable")
+    with pytest.raises(RuntimeContractError) as exc:
+        parse_runtime_manifest_startup_view(manifest, runtime)
+    assert exc.value.code == "RUNTIME_MANIFEST_REPARSE_FORBIDDEN"
+
+
+def test_r6_manifest_lstat_inspection_failure_is_not_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import enterprise.path_safety as path_safety
+    runtime = tmp_path / "runtime"; runtime.mkdir()
+    manifest = tmp_path / "runtime-manifest.json"; manifest.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(path_safety.os, "lstat", lambda _path: (_ for _ in ()).throw(PermissionError("host detail")))
+    with pytest.raises(RuntimeContractError) as exc:
+        parse_runtime_manifest_startup_view(manifest, runtime)
+    assert exc.value.code == "RUNTIME_MANIFEST_REPARSE_FORBIDDEN"

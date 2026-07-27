@@ -173,3 +173,30 @@ def test_r5_executable_hash_os_errors_are_mapped(tmp_path: Path, monkeypatch: py
         _hash_file(target)
     assert exc.value.code == "PYTHON_IDENTITY_EXECUTABLE_READ_FAILED"
     assert "host detail" not in exc.value.payload.canonical_json().decode("utf-8")
+
+
+def test_r6_missing_executable_is_not_misclassified_as_reparse(tmp_path: Path) -> None:
+    executable = tmp_path / "python.exe"
+    with pytest.raises(RuntimeContractError) as exc:
+        build_python_identity(executable, _probe(executable), expected_executable=executable, expected_runtime_root=tmp_path)
+    assert exc.value.code == "PYTHON_IDENTITY_EXECUTABLE_MISSING"
+
+
+def test_r6_broken_executable_symlink_remains_reparse(tmp_path: Path) -> None:
+    executable = tmp_path / "python.exe"
+    try:
+        executable.symlink_to(tmp_path / "missing")
+    except OSError:
+        pytest.skip("symlink creation unavailable")
+    with pytest.raises(RuntimeContractError) as exc:
+        build_python_identity(executable, _probe(executable), expected_executable=executable, expected_runtime_root=tmp_path)
+    assert exc.value.code == "PYTHON_IDENTITY_REPARSE_FORBIDDEN"
+
+
+def test_r6_executable_lstat_inspection_failure_is_not_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import enterprise.path_safety as path_safety
+    executable = tmp_path / "python.exe"; executable.write_bytes(b"fake")
+    monkeypatch.setattr(path_safety.os, "lstat", lambda _path: (_ for _ in ()).throw(PermissionError("host detail")))
+    with pytest.raises(RuntimeContractError) as exc:
+        build_python_identity(executable, _probe(executable), expected_executable=executable, expected_runtime_root=tmp_path)
+    assert exc.value.code == "PYTHON_IDENTITY_REPARSE_FORBIDDEN"

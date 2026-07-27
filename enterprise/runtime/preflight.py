@@ -45,7 +45,7 @@ class StartupPreflightResult:
     schema_version: str = PREFLIGHT_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
-        if self.result != "pass" or self.mode != PORTABLE_RELEASE:
+        if self.schema_version != PREFLIGHT_SCHEMA_VERSION or self.result != "pass" or self.mode != PORTABLE_RELEASE:
             raise RuntimeContractError("STARTUP_PREFLIGHT_INVALID")
         try:
             validate_release_component(self.release_id)
@@ -237,11 +237,6 @@ def decide_release_mismatch(
         if command == "stop":
             return ReleaseMismatchDecision(False, PORTABLE_EXIT_BLOCKED, False, mismatch, True, False, True, "STOP_OWNERSHIP_UNAVAILABLE")
         return ReleaseMismatchDecision(False, PORTABLE_EXIT_BLOCKED, False, mismatch, True, False, True, "RUNTIME_OWNERSHIP_UNTRUSTED")
-    # Stopping any live instance is an ownership-sensitive operation, even if
-    # it belongs to the same release.  A same-release identity is not proof of
-    # ownership and must not authorize a stop.
-    if command == "stop" and running_present and not owned_instance_valid:
-        return ReleaseMismatchDecision(False, PORTABLE_EXIT_BLOCKED, False, mismatch, True, False, True, "STOP_OWNERSHIP_UNAVAILABLE")
     if not mismatch:
         return ReleaseMismatchDecision(True, PORTABLE_EXIT_OK, False, False, running_present, owned_instance_valid, False, "RELEASE_MATCH")
     if command == "stop":

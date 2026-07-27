@@ -228,10 +228,34 @@ def _owned_file(path: Path, identity: tuple[int, int] | None, expected: bytes) -
             return False
         if has_reparse_point(path):
             return False
-        actual = path.read_bytes()
-        return len(actual) == len(expected) and actual == expected
+        actual = _read_exact_bounded(path, len(expected))
+        return actual == expected
     except (OSError, PathSafetyError):
         return False
+
+
+def _read_exact_bounded(path: Path, expected_length: int) -> bytes | None:
+    """Read at most one byte beyond the expected ownership payload.
+
+    Ownership checks are deliberately not general file readers: a foreign
+    replacement larger than the expected payload is immediately unowned.
+    """
+
+    if expected_length < 0:
+        return None
+    fd: int | None = None
+    try:
+        fd = os.open(path, os.O_RDONLY)
+        data = os.read(fd, expected_length + 1)
+        return None if len(data) > expected_length else data
+    except OSError:
+        return None
+    finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                return None
 
 
 def _directory_sync_is_unsupported(exc: OSError, *, stage: str) -> bool:

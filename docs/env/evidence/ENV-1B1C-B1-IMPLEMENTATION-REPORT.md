@@ -197,3 +197,20 @@ interpreter: Base was `252 passed, 3 skipped, 4 failed, 8 warnings`; R5 Head
 was `433 passed, 3 skipped, 4 failed, 9 warnings`. The same four failure
 nodeids remained, so `branch_regression_delta=0`; this is not a full-suite
 pass and is not GitHub CI evidence.
+
+## R6 stable-error and type-encapsulation correction
+
+R6 is limited to the six fourth-review primitive findings. It preserves the B1
+no-lifecycle boundary while making malformed external input retain its original
+stable code, requiring the preflight schema invariant, and making direct
+`ErrorPayload` construction registry-bound and immutably sanitized. It adds
+close-error classification for writable probes, lexical missing/reparse state
+classification, and bounded ownership reads. The dedicated details and current
+test evidence are in
+[ENV-1B1C-B1-R6-CORRECTION-REPORT.md](ENV-1B1C-B1-R6-CORRECTION-REPORT.md).
+
+```text
+ENV_1B1C_B1_R6_completed_in_Draft_PR=true
+ENV_1B1C_B2_started=false
+STOPPED_AFTER_B1_R6_AWAITING_INDEPENDENT_REVIEW=true
+```

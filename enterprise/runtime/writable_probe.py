@@ -68,17 +68,7 @@ def _owned(path: Path, identity: tuple[int, int] | None, token: bytes) -> bool:
         info = os.lstat(path)
         if not os.path.isfile(path) or not stat.S_ISREG(info.st_mode):
             return False
-        fd = os.open(path, os.O_RDONLY)
-        try:
-            chunks: list[bytes] = []
-            while True:
-                chunk = os.read(fd, 4096)
-                if not chunk:
-                    break
-                chunks.append(chunk)
-        finally:
-            os.close(fd)
-        return b"".join(chunks) == token
+        return _read_exact_bounded(path, len(token)) == token
     except (OSError, PathSafetyError):
         return False
 
@@ -94,14 +84,27 @@ def _token_only_owned(path: Path, token: bytes) -> bool:
         info = os.lstat(path)
         if not stat.S_ISREG(info.st_mode):
             return False
-        fd = os.open(path, os.O_RDONLY)
-        try:
-            content = b"".join(iter(lambda: os.read(fd, 4096), b""))
-        finally:
-            os.close(fd)
-        return content == token
+        return _read_exact_bounded(path, len(token)) == token
     except (OSError, PathSafetyError):
         return False
+
+
+def _read_exact_bounded(path: Path, expected_length: int) -> bytes | None:
+    """Read no more than the token length plus a mismatch byte."""
+
+    fd: int | None = None
+    try:
+        fd = os.open(path, os.O_RDONLY)
+        data = os.read(fd, expected_length + 1)
+        return None if len(data) > expected_length else data
+    except OSError:
+        return None
+    finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                return None
 
 
 def probe_writable_root(
@@ -182,6 +185,13 @@ def probe_writable_root(
             cleanup_failed = True
             raise RuntimeContractError("WRITABLE_PROBE_CLEANUP_FAILED", details={"label": root_label}) from exc
         return WritableProbeResult(root_label, created=True, cleaned_up=True)
+    except RuntimeContractError:
+        raise
+    except OSError as exc:
+        # All other write-stage operations are individually mapped above.  An
+        # OSError escaping the context manager here is its close/__exit__
+        # failure; preserve no host diagnostic in the public contract.
+        raise RuntimeContractError("WRITABLE_PROBE_CLOSE_FAILED", details={"label": root_label}) from exc
     finally:
         owned_for_cleanup = _owned(path, file_identity, expected_content)
         if created and file_identity is None:
