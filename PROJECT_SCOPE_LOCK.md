@@ -1,6 +1,6 @@
 # Infinite Canvas Enterprise · 项目定位与后续开发范围锁定
 
-> **当前维护说明（2026-07-23）：** 本文保留 3G / U-2 阶段范围历史。当前实施事实以 [`docs/CURRENT_PROJECT_STATUS.md`](docs/CURRENT_PROJECT_STATUS.md) 为准，执行顺序以 [`docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md`](docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md) 为准，架构决策以 [`docs/README.md`](docs/README.md) 的 ADR 索引为准。ENV-1B0、ENV-1B1A、ENV-1B2P、ENV-1B1B 已分别由 PR #80、#81、#82、#83 合并；当前 ENV-1B1C-B1 只在 Draft PR 分支实施纯契约和安全原语。完整 ENV-1B1C、完整 ENV-1B2、Fresh Install Bootstrap 和 OPS-3B 均未完成。
+> **当前维护说明（2026-07-27）：** 本文保留 3G / U-2 阶段范围历史。当前实施事实以 [`docs/CURRENT_PROJECT_STATUS.md`](docs/CURRENT_PROJECT_STATUS.md) 为准，执行顺序以 [`docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md`](docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md) 为准，架构决策以 [`docs/README.md`](docs/README.md) 的 ADR 索引为准。ENV-1B0、ENV-1B1A、ENV-1B2P、ENV-1B1B、ENV-1B1C-B1 已分别由 PR #80、#81、#82、#83、#84 合并；B1 已独立验收但只包含纯契约和安全原语，不授权 lifecycle、Batch、launcher 或 `main.py` 接线。B2 必须由后续独立任务承载；完整 ENV-1B1C、完整 ENV-1B2、Fresh Install Bootstrap 和 OPS-3B 均未完成。
 
 更新时间：2026-07-17
 适用对象：ChatGPT 主对话、Codex、后续 Agent、人工审核者。

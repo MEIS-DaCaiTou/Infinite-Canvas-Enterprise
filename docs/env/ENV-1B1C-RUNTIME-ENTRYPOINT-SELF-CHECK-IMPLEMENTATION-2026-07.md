@@ -1,8 +1,16 @@
 # ENV-1B1C：Runtime 入口与自检实施记录
 
-- 状态：ENV-1B1C-B1 当前 Draft PR；仅为纯契约、安全原语和隔离测试基础。
-- 基线：`main@4d9cc4ef3d6a0f6ed956c2dda6303e9cc3b99b89`（PR #83 merge commit）。
+- 状态：ENV-1B1C-B1 已由 PR #84 合并进入 `main` 并通过独立 contract-foundation 验收；完整 ENV-1B1C 尚未完成。
+- 基线：起始 base `4d9cc4ef3d6a0f6ed956c2dda6303e9cc3b99b89`；B1 source Head `afa03af45da938549a1e62e36df8de11d7c82867`；main squash merge commit `d3885a92968e68f35500318977341c94612ab2a2`。
 - 非生产事实：`production_device_touched_by_codex=false`；`temporary_test_environment_accessed_by_codex=false`。
+- 最终验收记录：[ENV-1B1C-B1 Final Acceptance / Closeout](./evidence/ENV-1B1C-B1-FINAL-ACCEPTANCE-CLOSEOUT-2026-07-27.md)。
+
+## B1 合并与验收状态
+
+`ENV_1B1C_B1_code_merged=true`、`ENV_1B1C_B1_independently_accepted=true`、
+`ENV_1B1C_B1_contract_foundations_accepted=true`、
+`ENV_1B1C_B1_final_acceptance_record_committed=true`。验收对象仅为下述 B1 纯契约和安全原语；
+Implementation Report 与 R3–R7 Correction Reports 保留其各自实施时点的 Draft/复核措辞，不回写为当前状态。
 
 ## 已实现的 B1 基础
 

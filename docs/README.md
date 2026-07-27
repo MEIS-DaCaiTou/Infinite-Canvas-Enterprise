@@ -1,9 +1,9 @@
 # Infinite Canvas Enterprise 文档索引与事实源
 
-更新时间：2026-07-23
-最后一次代码事实核对基线：`main@4d9cc4ef3d6a0f6ed956c2dda6303e9cc3b99b89`
+更新时间：2026-07-27
+最后一次代码事实核对基线：`main@d3885a92968e68f35500318977341c94612ab2a2`
 
-当前 repository HEAD：以 GitHub `main` 分支为准；PR #80 已完成 ENV-1B0 / DOC-2 / DOC-2A，PR #81 已合并并完成 ENV-1B1A，PR #82 已合并并完成 ENV-1B2P（core `true`、dependency/archive `false`、`production_approved=false`），PR #83 已合并并完成 ENV-1B1B scoped contract。当前 ENV-1B1C-B1 Draft 仅实现 Runtime 纯契约、安全原语和隔离测试基础；不接入 controller、host、child、Batch、launcher 或 `main.py`。
+当前 repository HEAD：以 GitHub `main` 分支为准；PR #80 已完成 ENV-1B0 / DOC-2 / DOC-2A，PR #81 已合并并完成 ENV-1B1A，PR #82 已合并并完成 ENV-1B2P（core `true`、dependency/archive `false`、`production_approved=false`），PR #83 已合并并完成 ENV-1B1B scoped contract，PR #84 已合并且 ENV-1B1C-B1 contract foundations 已独立验收。B1 不接入 controller、host、child、Batch、launcher 或 `main.py`，完整 ENV-1B1C 仍未完成。
 
 本索引用于避免当前事实、目标架构、历史实施记录和未来规划相互覆盖。新任务应先读取当前事实源，再按任务域读取 ADR 和专项文档。
 
@@ -19,10 +19,14 @@
 | ENV-1B1A 实施与写入审计 | [ENV-1B1A APP_ROOT 写入审计与 Static 构建](./env/ENV-1B1A-APP-ROOT-WRITE-AUDIT-AND-STATIC-BUILD-2026-07.md) | 区分 PR #81 已关闭的 static blocker 与后续未迁移写入 |
 | ENV-1B2P Runtime 来源证据 | [ENV-1B2P Windows Runtime 分层来源证据](./env/ENV-1B2P-WINDOWS-RUNTIME-PROVENANCE-EVIDENCE-2026-07.md) | 独立记录 core / dependency / archive 结论并固定 production approval 为 false |
 | ENV-1B1B 路径根与版本指针 | [ENV-1B1B PathRoots 与 Current Release 实施记录](./env/ENV-1B1B-PATH-ROOTS-AND-CURRENT-RELEASE-IMPLEMENTATION-2026-07.md) | 已合并：核心路径迁移和严格 pointer 原语，不等于 activation 或完整只读 APP_ROOT |
-| ENV-1B1C Runtime 入口与自检 | [ENV-1B1C Runtime 入口与自检实施记录](./env/ENV-1B1C-RUNTIME-ENTRYPOINT-SELF-CHECK-IMPLEMENTATION-2026-07.md) | 当前 Draft PR：B1 纯契约、安全原语和测试基础，不接入正式生命周期 |
-| ENV-1B1C-B1 实施报告 | [ENV-1B1C-B1 实施报告](./env/evidence/ENV-1B1C-B1-IMPLEMENTATION-REPORT.md) | Draft PR 内完整 Codex 回报、测试和边界证据 |
+| ENV-1B1C Runtime 入口与自检 | [ENV-1B1C Runtime 入口与自检实施记录](./env/ENV-1B1C-RUNTIME-ENTRYPOINT-SELF-CHECK-IMPLEMENTATION-2026-07.md) | B1 已合并并独立验收；完整正式生命周期尚未接线 |
+| ENV-1B1C-B1 最终验收与收口 | [ENV-1B1C-B1 Final Acceptance / Closeout](./env/evidence/ENV-1B1C-B1-FINAL-ACCEPTANCE-CLOSEOUT-2026-07-27.md) | PR #84 合并后的独立验收决定、审查包摘要、测试矩阵和未实现边界 |
+| ENV-1B1C-B1 实施报告 | [ENV-1B1C-B1 实施报告](./env/evidence/ENV-1B1C-B1-IMPLEMENTATION-REPORT.md) | B1 Draft 实施时点的完整 Codex 回报、测试和边界证据；历史措辞不表示当前状态 |
 | ENV-1B1C-B1 R3 补正报告 | [ENV-1B1C-B1-R3 补正报告](./env/evidence/ENV-1B1C-B1-R3-CORRECTION-REPORT.md) | 独立复核九项纯契约 blocker 的修正、回归与边界证据 |
-| ENV-1B1C-B1 R4 补正报告 | [ENV-1B1C-B1-R4 补正报告](./env/evidence/ENV-1B1C-B1-R4-CORRECTION-REPORT.md) | R3 第二轮独立复核后的纯契约修正；仍等待新的独立复核，不进入 B2 |
+| ENV-1B1C-B1 R4 补正报告 | [ENV-1B1C-B1-R4 补正报告](./env/evidence/ENV-1B1C-B1-R4-CORRECTION-REPORT.md) | R3 第二轮独立复核后的纯契约修正；该历史时点仍等待新的独立复核，不进入 B2 |
+| ENV-1B1C-B1 R5 补正报告 | [ENV-1B1C-B1-R5 补正报告](./env/evidence/ENV-1B1C-B1-R5-CORRECTION-REPORT.md) | R4 后纯契约信任链修正的历史时点证据 |
+| ENV-1B1C-B1 R6 补正报告 | [ENV-1B1C-B1-R6 补正报告](./env/evidence/ENV-1B1C-B1-R6-CORRECTION-REPORT.md) | stable error、bounded ownership read 等修正的历史时点证据 |
+| ENV-1B1C-B1 R7 补正报告 | [ENV-1B1C-B1-R7 补正报告](./env/evidence/ENV-1B1C-B1-R7-CORRECTION-REPORT.md) | bounded reader、post-replace uncertain-state 和 duplicate path 收口的历史时点证据 |
 | 临时测试部署反馈 | [临时测试部署反馈](./ops/TEMPORARY-TEST-DEPLOYMENT-FEEDBACK-2026-07.md) | 仅记录不含敏感信息的兼容性反馈；不是生产操作 |
 | 代码和数据边界 | [../CODE_BOUNDARIES.md](../CODE_BOUNDARIES.md) | 上游覆盖区和禁止提交范围 |
 | 上游同步 | [upstream/SYNC_POLICY.md](./upstream/SYNC_POLICY.md) | 固定 commit、差异和回归 |
@@ -45,7 +49,7 @@ ADR 的 `Accepted` 只表示决策冻结，不表示对应能力已经实现或�
 ## 专项参考
 
 - Architecture：[architecture/](./architecture/)
-- ENV：ADR-ENV-001 至 ADR-ENV-005 已由 PR #80 冻结；ENV-1B1A 已由 PR #81 合并，ENV-1B2P 已由 PR #82 合并，ENV-1B1B scoped contract 已由 PR #83 合并；ENV-1B1C-B1 是当前 Draft PR 实施阶段，完整 ENV-1B1C / ENV-1B2 均未完成。
+- ENV：ADR-ENV-001 至 ADR-ENV-005 已由 PR #80 冻结；ENV-1B1A 已由 PR #81 合并，ENV-1B2P 已由 PR #82 合并，ENV-1B1B scoped contract 已由 PR #83 合并，ENV-1B1C-B1 contract foundations 已由 PR #84 合并并独立验收；完整 ENV-1B1C / ENV-1B2 均未完成。
 - OPS：[ops/](./ops/)
 - Security：[security/](./security/)、[runbooks/](./runbooks/)
 - Upstream：[upstream/](./upstream/)
@@ -65,7 +69,7 @@ ADR 的 `Accepted` 只表示决策冻结，不表示对应能力已经实现或�
 - `docs/ops/*-TASK-2026-07.md`
 - 生产盘点、上游同步、缺陷调查和测试日志等带日期的实施记录
 
-历史文档中的 SHA、PR 状态和当时的未实现边界只描述其记录时点。当前状态始终以 `docs/CURRENT_PROJECT_STATUS.md` 为准。
+历史文档（包括 B1 Implementation Report 与 R3–R7 Correction Reports）中的 SHA、Draft/等待验收措辞和当时的未实现边界只描述其记录时点。当前状态始终以 `docs/CURRENT_PROJECT_STATUS.md` 和 B1 Final Acceptance / Closeout evidence 为准。
 
 ## 维护规则
 
