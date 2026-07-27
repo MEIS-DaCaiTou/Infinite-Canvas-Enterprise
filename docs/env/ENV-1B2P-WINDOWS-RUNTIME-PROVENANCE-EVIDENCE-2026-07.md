@@ -1,6 +1,6 @@
 # ENV-1B2P：Windows Python Runtime 分层来源证据
 
-- 状态：当前 Draft PR 实施；尚未进入 `main`
+- 状态：已由 PR #82 合并进入 `main`；本文件记录当时的外部只读证据结论，不是正式 Runtime approval。
 - 验证日期：2026-07-20
 - 当前代码基线：`main@a53885b026a6c2440acb0fbde72d6571ff6f7723`
 - 固定上游：`hero8152/Infinite-Canvas@f1dd6834a72f3e7ff8340be05a84347d931e9cb9`，`VERSION=2026.07.6`
@@ -10,7 +10,7 @@
 
 ## 1. 结论
 
-ENV-1B2P 是对开发设备仓库外既有证据的只读核验，不是 Runtime 重建、安装、下载或正式入口接线。当前 Draft PR 的真实验证结果为：
+ENV-1B2P 是对开发设备仓库外既有证据的只读核验，不是 Runtime 重建、安装、下载或正式入口接线。已合并 PR #82 的真实验证结果为：
 
 ```text
 core_runtime_provenance_verified=true
@@ -107,8 +107,8 @@ overall_classification=partially_verified
 
 ## 7. 后续边界
 
-- ENV-1B1B：路径根、版本目录和 `current-release.json` 尚未开始。
-- ENV-1B1C：正式入口、内部进程和 Release-bound Python fail closed 尚未开始。
+- ENV-1B1B：已由 PR #83 合并；PathRoots、版本目录和 `current-release.json` 仍不构成 activation。
+- ENV-1B1C：B1 当前 Draft 仅提供纯入口契约与安全原语；正式入口、内部进程和 Release-bound Python fail closed 尚未接线。
 - 完整 ENV-1B2：可重复依赖重建、hash lock、`pip check`、SBOM、许可证、assembled archive 和新 Python 版本兼容仍待独立实施。
 - Manifest v2、ENV-1B3、正式 Release Candidate、Fresh Install Bootstrap、OPS-3B 和 Production Baseline 均未形成。
 - 本任务未访问生产设备、生产数据或网络，未安装 Python，未修改 `python/` 或 `requirements.txt`。

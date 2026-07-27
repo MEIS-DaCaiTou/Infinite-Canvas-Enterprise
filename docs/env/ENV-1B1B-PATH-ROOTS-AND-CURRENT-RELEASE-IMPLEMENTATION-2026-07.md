@@ -1,7 +1,7 @@
 # ENV-1B1B：PathRoots 与 Current Release 实施记录
 
-- 状态：当前 Draft PR closeout；C3 已由独立远程代码复核确认关闭最终代码缺口，尚未进入 `main`
-- 基线：`main@240f6a2b93268a415cddc3c9af9951f334c8e4e1`
+- 状态：已合并，PR #83 merge commit `4d9cc4ef3d6a0f6ed956c2dda6303e9cc3b99b89`；ENV-1B1C-B1 当前仅在 Draft PR 提供后续纯运行时原语
+- 基线：`main@4d9cc4ef3d6a0f6ed956c2dda6303e9cc3b99b89`
 - `production_device_touched_by_project_owner=true`（项目负责人确认的既有事实）
 - `production_device_touched_by_codex=false`
 - `production_modified_by_this_PR=false`
@@ -109,10 +109,12 @@ writer 只使用进程内锁（`cross_process_lock=false`），不声称提供�
 
 `enterprise.release.app_root_audit` 只扫描 Git tracked 的生产候选文件；AST、受控脚本扫描、
 site fingerprint、操作数、W01–W41 映射和每个 flow anchor 共同构成漂移门禁。当前本 PR
-代码版本的结果是：scanned `83`、excluded `239`、detected/mapped `293`、parse failures
+PR #83 合并时的代码版本结果是：scanned `83`、excluded `239`、detected/mapped `293`、parse failures
 `0`、uncovered `0`、stale mappings `0`，site manifest SHA-256 为
-`2220ebccfea0194d1bfe4c5720f6da134e30babc6a42d86259c0e665e888f0d0`。C2 和 C3 重新运行
-APP_ROOT audit 后统计和 digest 均未变化；workflow 上传写入仍归入既有 W12，不新增 W42。
+`2220ebccfea0194d1bfe4c5720f6da134e30babc6a42d86259c0e665e888f0d0`。当前 ENV-1B1C-B1 Draft
+新增 launch-context 原子状态原语（W26）和 writable-root probe（W42）后，Draft audit 结果为
+scanned `90`、excluded `239`、detected/mapped `299`、parse failures/uncovered/stale `0`，digest 为
+`464b2eef086b6fea37daf810d3b9f0551de652763f23028df799f8affb81e1ab`。这不追溯改变 PR #83 的已合并事实。
 
 这是“已知静态 site 发生漂移时提醒维护者更新审计”的证据，不证明运行时或动态路径绝对
 不存在未知写入。
@@ -152,7 +154,7 @@ APP_ROOT audit 后统计和 digest 均未变化；workflow 上传写入仍归入
 | --- | --- |
 | 普通 deferred | W17、W35–W38 共 5 项，均有明确后续归属且未以范围扩张处理。 |
 | formal Release blocker | W22–W25、W39 共 5 项；此外正式 runtime entrypoint/self-check 与可信 Python 尚未接线。完整 APP_ROOT read-only 因此未成立。 |
-| ENV-1B1C | 未开始：只负责正式入口、解释器绑定和 fail-closed 自检，不应在本 PR 偷渡实现。 |
+| ENV-1B1C | B1 当前 Draft：仅纯 mode / manifest / identity / preflight / launch-context / writable-probe 原语与测试；正式入口、解释器绑定和 fail-closed lifecycle 仍未接线。 |
 | ENV-1B2 / Manifest v2 | 未开始；不重建 Runtime、不生成 lock/wheelhouse、不建立 Release manifest。 |
 | 其它 | Fresh Install Bootstrap、DATA-1、OPS-3B/3C、Release activation、生产部署均未实现。 |
 

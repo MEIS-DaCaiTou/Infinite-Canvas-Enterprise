@@ -2,7 +2,7 @@
 
 本文档定义本仓库的修改边界。Codex 和开发者每次任务开始前都必须阅读，并据此判断哪些文件可以修改。
 
-当前 Release / 路径边界由 [ADR-ENV-003](docs/decisions/ADR-ENV-003-IMMUTABLE-RELEASE-STATIC-CACHE-2026-07.md) 和 [ADR-ENV-004](docs/decisions/ADR-ENV-004-PATH-ROOTS-AND-RELEASE-DIRECTORY-2026-07.md) 决定：正式 `APP_ROOT` 必须最终只读，运行数据、日志、runtime state、缓存、临时文件和更新证据不得继续默认写入版本目录。ENV-1B1A 已合并并关闭 static 自修改；ENV-1B1B 当前 Draft PR 可修改 `enterprise/paths.py`、`enterprise/release/current_release.py` 和必要核心调用点以迁移路径，但不得实施 activation 或正式入口。完整只读 `APP_ROOT` 仍未实现。
+当前 Release / 路径边界由 [ADR-ENV-003](docs/decisions/ADR-ENV-003-IMMUTABLE-RELEASE-STATIC-CACHE-2026-07.md)、[ADR-ENV-004](docs/decisions/ADR-ENV-004-PATH-ROOTS-AND-RELEASE-DIRECTORY-2026-07.md) 和 [ADR-ENV-005](docs/decisions/ADR-ENV-005-RUNTIME-ENTRYPOINT-SELF-CHECK-MODES-2026-07.md) 决定：正式 `APP_ROOT` 必须最终只读，运行数据、日志、runtime state、缓存、临时文件和更新证据不得继续默认写入版本目录。ENV-1B1A 已合并并关闭 static 自修改；ENV-1B1B 已合并并提供 PathRoots/current-release scoped contract；当前 ENV-1B1C-B1 只允许新增 Runtime 纯契约、安全原语和隔离测试，不得接入 lifecycle、Batch、launcher 或 `main.py`。完整只读 `APP_ROOT` 仍未实现。
 
 ---
 
@@ -96,6 +96,8 @@ U-2 已完成到上游 `2026.07.6` 的受控同步，U-2-F2 已完成文生图 /
 ENV-1B1A 对 `main.py` 的例外只用于满足 ADR-ENV-003：删除 startup 和 HTML response 阶段的 static cache 参数生成，使缓存哈希只能由显式 Release staging builder 产生。上游同步必须保留这一最小补丁并复跑 ENV-1B1A startup/static 源树不变测试；回滚会恢复已确认的 static/APP_ROOT blocker。建议向上游反馈 build-time content hash 与 runtime source immutability，但本仓库不以外部 issue/PR 作为当前实现前提。
 
 ENV-1B1B 对 `main.py` 的例外仅用于 ADR-ENV-004 明确要求的最小路径常量、import 写入移除和 shipped/user workflow overlay 兼容补丁。必须保留上游 workflow 模板的只读位置、用户数据的外部根和现有业务 API；PR 必须提供 overlay、copy-on-edit、shipped-only delete 拒绝及 APP_ROOT 不再 import 写入的测试。回滚该补丁会恢复已审计的 APP_ROOT 写入 blocker。
+
+ENV-1B1C-B1 不授权修改 `main.py`、Batch/PowerShell launcher 或既有 runtime lifecycle 文件。它只建立后续正式入口会调用的纯契约和安全原语：mode parsing、Runtime Manifest startup view、Python identity snapshot、preflight result、launch context 和 writable probe。后续 B/C 阶段如需接线正式入口，必须由新的明确任务和 Draft PR 承载。
 
 ---
 

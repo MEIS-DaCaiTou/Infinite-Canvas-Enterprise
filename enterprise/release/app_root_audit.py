@@ -3,7 +3,7 @@
 The scanner is deliberately a conservative maintenance control, not a proof
 that static analysis can discover every possible write. It combines Python AST
 inspection, focused script inspection, stable call fingerprints, frozen
-operation counts, and W01-W41 flow anchors.
+operation counts, and W01-W42 flow anchors.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Iterable, Sequence
 
 
-_FLOW_IDS = frozenset(f"W{number:02d}" for number in range(1, 42))
+_FLOW_IDS = frozenset(f"W{number:02d}" for number in range(1, 43))
 _SCANNED_SUFFIXES = frozenset({".bat", ".cmd", ".js", ".ps1", ".py"})
 _EXCLUDED_PREFIXES = ("enterprise/tests/", "enterprise-static/", "static/")
 _PATH_METHODS = frozenset(
@@ -519,6 +519,7 @@ _OTHER_FLOW_BY_SYMBOL: dict[tuple[str, str], str] = {
     ("enterprise/release/static_build.py", "_atomic_write_report"): "W40",
     ("enterprise/release/static_build.py", "_copy_tree"): "W40",
     ("enterprise/release/static_build.py", "build_static_tree"): "W40",
+    ("enterprise/runtime/launch_context.py", "publish_launch_context"): "W26",
     ("enterprise/runtime/child.py", "_serve"): "W28",
     ("enterprise/runtime/control.py", "_discard_bootstrap_failure"): "W28",
     ("enterprise/runtime/control.py", "_prepare_bootstrap_failure_path"): "W28",
@@ -538,6 +539,7 @@ _OTHER_FLOW_BY_SYMBOL: dict[tuple[str, str], str] = {
     ("enterprise/runtime/state.py", "RuntimeStateStore.remove_ack"): "W26",
     ("enterprise/runtime/state.py", "RuntimeStateStore.reserve_lock"): "W26",
     ("enterprise/runtime/state.py", "_atomic_json_replace"): "W26",
+    ("enterprise/runtime/writable_probe.py", "probe_writable_root"): "W42",
     ("get-pip.py", "main"): "W35",
     ("get-pip.py", "monkeypatch_for_cert"): "W35",
     ("tools/sec_1b2_local_runner.py", "_write_final_json"): "W19",
@@ -570,7 +572,7 @@ def _flow_for_operation(file: str, symbol: str) -> str:
 # every mapped site as (file, symbol, operation, normalized-call fingerprint,
 # Wxx flow). Line numbers are deliberately excluded, while duplicate identical
 # calls remain duplicate records. Any added/removed/changed call drifts it.
-EXPECTED_SITE_MANIFEST_DIGEST = "2220ebccfea0194d1bfe4c5720f6da134e30babc6a42d86259c0e665e888f0d0"
+EXPECTED_SITE_MANIFEST_DIGEST = "464b2eef086b6fea37daf810d3b9f0551de652763f23028df799f8affb81e1ab"
 
 FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W01", "main.py", "startup_event"),
@@ -614,6 +616,7 @@ FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W39", "enterprise/runtime/child.py", "_serve"),
     FlowAnchor("W40", "enterprise/release/static_build.py", "build_static_tree"),
     FlowAnchor("W41", "enterprise/release/current_release.py", "atomic_write_current_release"),
+    FlowAnchor("W42", "enterprise/runtime/writable_probe.py", "probe_writable_root"),
 )
 
 

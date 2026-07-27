@@ -77,7 +77,7 @@ def test_two_stage_portable_resolution_reads_only_state_before_deriving_app_root
     assert resolved.PYTHON_RUNTIME == value.APP_ROOT / "python"
 
 
-@pytest.mark.parametrize("release_id", ["CON", "CON.txt", "COM1.json", "bad/name", "bad\\name", "bad..name", "trail.", " trail"])
+@pytest.mark.parametrize("release_id", ["CON", "CON.txt", "COM1.json", "NUL", "LPT9.txt", "release.", "release ", ".", "..", "a/b", "a\\b", "a:b", "bad/name", "bad\\name", "bad..name", "trail.", " trail"])
 def test_release_id_fails_closed(tmp_path: Path, release_id: str):
     value = roots(tmp_path)
     bad = CurrentRelease(release().schema_version, release_id, f"releases/{release_id}", "a" * 64, release().activated_at, None)

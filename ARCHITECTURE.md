@@ -2,7 +2,7 @@
 
 本文档描述当前仓库已实现的 Infinite Canvas 企业多用户运行架构和主要模块职责；它不证明相同仓库基线已经部署到生产。
 
-> 最后一次代码事实核对基线：`main@240f6a2b93268a415cddc3c9af9951f334c8e4e1`。PR #80、#81、#82 已合并；当前 ENV-1B1B PathRoots/current-release 代码只在 Draft PR 分支，尚未进入 `main`。正式决策和实际文件链接见 [ADR 索引](docs/README.md)。当前仓库定位是“企业安全增强型单机模块化单体”；ENV-1B1B 不实施 activation 或正式入口，完整 APP_ROOT 只读、ENV-1 正式运行时、Manifest v2、Fresh Install Bootstrap、OPS-3B、Docker、PostgreSQL、Redis、对象存储、restore 和 rollback 尚未实现。
+> 最后一次代码事实核对基线：`main@4d9cc4ef3d6a0f6ed956c2dda6303e9cc3b99b89`。PR #80、#81、#82、#83 已合并；当前 ENV-1B1C-B1 代码只在 Draft PR 分支，尚未进入 `main`。正式决策和实际文件链接见 [ADR 索引](docs/README.md)。当前仓库定位是“企业安全增强型单机模块化单体”；ENV-1B1C-B1 只提供 Runtime 纯契约和安全原语，不实施 launcher、controller/host/child 接线、activation 或正式入口；完整 APP_ROOT 只读、ENV-1 正式运行时、Manifest v2、Fresh Install Bootstrap、OPS-3B、Docker、PostgreSQL、Redis、对象存储、restore 和 rollback 尚未实现。
 
 ---
 

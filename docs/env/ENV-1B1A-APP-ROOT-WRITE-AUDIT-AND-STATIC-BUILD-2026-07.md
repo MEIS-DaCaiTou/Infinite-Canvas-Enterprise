@@ -12,7 +12,7 @@
 
 本任务关闭一个明确 blocker：`main.py` 不再在 import、FastAPI startup 或 HTML 响应阶段按版本和 mtime 改写 `static/*.html`。静态缓存参数改由显式 Release staging builder 生成：本地叶子资源使用实际文件字节的完整小写 SHA-256，CSS 使用传递依赖处理后的 output SHA-256，HTML 引用 HTML 使用统一确定性 build ID；builder 只接受显式 source、全新 output 和 report 路径。
 
-这不等于 APP_ROOT 已只读。审计识别出 40 个功能写入流；只有 static 自修改和新 builder 边界在 ENV-1B1A 内关闭，其余数据、配置、上传、生成结果、启动 migration、legacy update、重启脚本、OPS 默认路径、bytecode 等仍是 ENV-1B1B / ENV-1B1C 或后续阶段 blocker。正式不可变 Release、Release-bound Python 和 Production Baseline 均未形成。
+这不等于 APP_ROOT 已只读。历史审计识别出 40 个功能写入流；后续 C1 新增 W41，ENV-1B1C-B1 Draft 新增 W42。只有 static 自修改和新 builder 边界在 ENV-1B1A 内关闭，其余数据、配置、上传、生成结果、启动 migration、legacy update、重启脚本、OPS 默认路径、bytecode 等仍是 ENV-1B1B / ENV-1B1C 或后续阶段 blocker。正式不可变 Release、Release-bound Python 和 Production Baseline 均未形成。
 
 ## 2. 审计方法和可重复证据
 
@@ -21,10 +21,10 @@
 1. Python AST 检查 write-mode `open` / `Path.open`、`write_text`、`write_bytes`、目录和删除/移动 API、`json.dump`、SQLite、临时文件、图片保存、解压、下载和日志构造。
 2. PowerShell / Batch / JavaScript 受控文本检查 `Out-File`、content cmdlet、文件操作、transcript、下载目标、重定向和浏览器 local storage。
 3. 从入口、caller、路径常量和触发条件追到实际目标；区分磁盘写入、内存序列化、浏览器客户端缓存和只读打开。
-4. `enterprise.release.app_root_audit` 只接收 Git tracked 文件集，排除 test fixture 和浏览器静态页面后，对每个生产写入 site 记录相对文件、qualified symbol、operation 和规范化调用 SHA-256 fingerprint，再映射到 W01-W41。
+4. `enterprise.release.app_root_audit` 只接收 Git tracked 文件集，排除 test fixture 和浏览器静态页面后，对每个生产写入 site 记录相对文件、qualified symbol、operation 和规范化调用 SHA-256 fingerprint，再映射到 W01-W42。
 5. 冻结 manifest digest 覆盖所有 site fingerprint 和 Wxx；在既有 symbol 或脚本中新增、删除或改变写入也会漂移。每个 Wxx 另有必须存在的文件/符号锚点；读取失败、Unicode decode error 和 Python `SyntaxError` 均 fail closed。
 
-原始 ENV-1B1A 扫描的 40 个功能流是历史基线。当前 ENV-1B1B C1/C2/C3 重新扫描 Git tracked 输入后，83 个生产候选文件进入扫描、239 个文件被分类排除，检测到并映射 293 个 write site，parse failure、uncovered site 和 stale mapping 均为 0；冻结 site manifest SHA-256 为 `2220ebccfea0194d1bfe4c5720f6da134e30babc6a42d86259c0e665e888f0d0`。C1 新增 W41，将 current-release persistent-state primitive 从 W24 分离；C2 和 C3 重新运行 audit 后统计和 digest 未变化。C3 的 workflow 同名上传修复仍归入既有 W12，不新增 W42。ENV-1B2P 的 `runtime_provenance._atomic_write_report` 仍归入 W40，不表示 APP_ROOT 路径已迁移。该静态分析是可重复漂移门禁，不能证明绝对不存在动态或未知写入。
+原始 ENV-1B1A 扫描的 40 个功能流是历史基线。当前 ENV-1B1C-B1 R3 staged Git tracked 输入为 `scanned=91`、`excluded=249`、`detected=299`、`mapped=299`，parse failure、uncovered site 和 stale mapping 均为 0；冻结 site manifest SHA-256 为 `464b2eef086b6fea37daf810d3b9f0551de652763f23028df799f8affb81e1ab`。R3 未把新原语伪装为“无写入”。C1 新增 W41，将 current-release persistent-state primitive 从 W24 分离；C3 的 workflow 同名上传修复仍归入既有 W12。B1 的 launch-context publish 保持 W26 runtime-control-state 语义，writable-root probe 是独立 W42；二者均尚未接入 controller 或正式入口。R3 的共享 path-safety module 没有新增生产 write site，并由 manifest、identity、context、probe 和 provenance 复用以防 reparse 检查漂移。ENV-1B2P 的 `runtime_provenance._atomic_write_report` 仍归入 W40，不表示 APP_ROOT 路径已迁移。该静态分析是可重复漂移门禁，不能证明绝对不存在动态或未知写入。
 
 ## 3. 写入流清单
 
@@ -57,7 +57,7 @@
 | W23 | `update_from_github`、`rollback_update` | 覆盖/删除 `main.py`、`static/` 等；是 | update | Release 文件；是；否 | legacy update endpoint | `APP_ROOT` | 已识别；OPS-3B 后续 | 原地更新违反不可变 Release；本任务不实现或调用 |
 | W24 | `schedule_self_restart` | `_self_restart.bat` / `.sh`；是 | restart | 一次性控制脚本；否；可能含路径/PID | legacy update restart | `STATE_ROOT` | 已识别；ENV-1B1B/B1C | 生成脚本位于 APP_ROOT；脚本和 caller 核对 |
 | W25 | `schedule_self_restart`、`_self_restart.bat` | `_self_restart.log`；是 | restart / crash handling | launcher 日志；否；可能 | legacy restart script | `LOG_ROOT` | 已识别；ENV-1B1B/B1C | APP_ROOT 日志且脚本含强制 taskkill；文本扫描 |
-| W26 | `enterprise/runtime/state.py`、control/process/child | PID、lock、state、command、ACK、shutdown marker；默认否 | service-host / foreground / child / stop | runtime 控制状态；否；可能 | runtime CLI/controller/supervisor | `RUNTIME_ROOT` | 已在现有 runtime root；ENV-1B1C 接线仍待做 | 默认 `%LOCALAPPDATA%` 且拒绝 APP_ROOT；runtime 测试 |
+| W26 | `enterprise/runtime/state.py`、control/process/child、`enterprise/runtime/launch_context.py:publish_launch_context` | PID、lock、state、command、ACK、shutdown marker、launch context；默认否 | service-host / foreground / child / stop / future start | runtime 控制状态与受限诊断；否；可能 | runtime CLI/controller/supervisor；B1 仅原语 | `RUNTIME_ROOT` | launch-context 原子状态原语在 Draft；正式 ENV-1B1C 接线仍待做 | 默认 `%LOCALAPPDATA%` 且拒绝 APP_ROOT；B1 ownership/atomic tests |
 | W27 | `enterprise/runtime/logging.py`、supervisor streams | launcher/upstream/gateway/health/crash logs；默认否 | service-host / child / crash handling | 脱敏日志；部分保留；可能 | supervisor/runtime host | `LOG_ROOT` | 当前实际位于 runtime root；ENV-1B1B | 正式 LOG_ROOT 尚未接线；runtime 测试 |
 | W28 | host bootstrap failure、graceful request/marker | runtime control 目录；默认否 | crash handling / stop / child | 失败与关闭证据；否；可能 | host/process/child | `RUNTIME_ROOT` | 已识别；ENV-1B1C | 入口统一和 Release identity 尚未完成；AST inventory |
 | W29 | `enterprise/ops/runner.py:write_json` | portable operation target 相对 report 锚定 `STAGING_ROOT/reports`，development compatibility 仍保留；可为是 | admin | inventory/check/plan report；否；可能 | OPS CLI | `STAGING_ROOT` | partially_migrated；ENV-1B1B | C2 增加 APP_ROOT / RELEASE_ROOT / reparse / overlap fail-closed 测试；development 兼容路径仍非 portable 证据 |
@@ -73,6 +73,7 @@
 | W39 | Python import machinery | `__pycache__` / `.pyc`；默认可在 APP_ROOT | import / child | bytecode cache；否；否 | Python interpreter | `CACHE_ROOT` | 已识别；ENV-1B1C/B2 | 正式入口尚未禁止 APP_ROOT bytecode；生命周期门禁待做 |
 | W40 | `enterprise/release/static_build.py`、`enterprise/release/runtime_provenance.py` | 调用者显式全新 output + report；否（正式要求） | release-build / evidence verification | staging static、确定性构建报告与脱敏 provenance 报告；否；否 | 显式 build / verifier CLI | `STAGING_ROOT` | static 边界已关闭；provenance report 已识别，正式根仍待 ENV-1B1B | source/evidence 只读、原子 report、失败清理、确定性测试 |
 | W41 | `enterprise/release/current_release.py:atomic_write_current_release` | `STATE_ROOT/current-release.json`；否 | test / validation state primitive | strict current-release pointer；是；否 | 当前仅测试/验证调用 | `STATE_ROOT` | C1/C2 已实现状态原语；没有 activation call site | fixed `.new` exclusive create、owned-temp cleanup、atomic replace、replace 后目录同步尝试测试 |
+| W42 | `enterprise/runtime/writable_probe.py:probe_writable_root` | DATA / LOG / RUNTIME / CACHE / TEMP roots 内的短时 probe；否 | future portable preflight | 单次随机 nonce 的 `ice-probe-v1:<nonce>` marker；否；否 | B1 纯 preflight 原语，尚无入口 caller | 目标可变根 | Draft primitive；不探测 APP_ROOT，不接入 controller | exclusive create、fsync、identity + exact-token cleanup、mocked reused-ID foreign replacement 与 reparse fail-closed tests |
 
 ### 3.1 要求覆盖但当前无仓库写入器的项目
 
@@ -160,17 +161,17 @@
 
 - 启动和 HTML response 不再生成 static `v` 参数。
 - static build 在显式 staging 中完成，source 不变且输出/报告确定。
-- 写入 inventory、Git tracked fingerprint manifest、W01-W41 锚点和 fail-closed 漂移测试形成；这仍不是对未知写入绝对不存在的证明。
+- 写入 inventory、Git tracked fingerprint manifest、W01-W42 锚点和 fail-closed 漂移测试形成；这仍不是对未知写入绝对不存在的证明。
 
-### ENV-1B1B 当前 Draft PR
+### ENV-1B1B 已合并，ENV-1B1C-B1 当前 Draft PR
 
-- 集中 PathRoots、current-release pointer 和 W02–W16、W18、W20–W21、W27、W29–W31 的核心路径边界正在当前 Draft PR 实施；C2 已补齐 DB file-level reparse、portable OPS operation-target fail-closed 和 current-release directory sync 证据，但 W29–W31 因 development compatibility 仍保留而继续标记为 partially_migrated。详见 [ENV-1B1B 实施记录](./ENV-1B1B-PATH-ROOTS-AND-CURRENT-RELEASE-IMPLEMENTATION-2026-07.md)。
+- 集中 PathRoots、current-release pointer 和 W02–W16、W18、W20–W21、W27、W29–W31 的核心路径边界已由 PR #83 合并；W29–W31 因 development compatibility 仍保留而继续标记为 partially_migrated。详见 [ENV-1B1B 实施记录](./ENV-1B1B-PATH-ROOTS-AND-CURRENT-RELEASE-IMPLEMENTATION-2026-07.md)。
 - legacy update W22/W23、self-restart W24/W25、第三方/installer/辅助脚本 W17/W35–W37 和 bytecode W39 仍未关闭；不能因此宣称完整 APP_ROOT 只读。
 - startup asset/upload migration 调用保留，但目标由 PathRoots 指向外部 UPLOAD_ROOT；此语义只在当前 Draft PR 中待审查。
 
-### ENV-1B1C 尚未开始
+### ENV-1B1C-B1 当前 Draft PR
 
-- 正式入口、supervisor/host/child/process 尚未绑定集中路径根和显式模式。
+- B1 仅建立 runtime mode、bounded manifest startup view、Python identity、preflight、launch context 和 W42 writable probe 的纯契约及隔离测试；正式入口、supervisor/host/child/process 尚未绑定集中路径根和显式模式。
 - `__pycache__` / bytecode 尚未在 portable-release 中 fail closed 或迁到 `CACHE_ROOT`。
 - `_self_restart.*` legacy 路径和正式入口替代尚未处理。
 
@@ -183,6 +184,6 @@
 ### 其它后续
 
 - legacy 原地 update/apply/rollback 与不可变 Release 冲突，需在 OPS-3B 的全新 Release 切换协议中处理；OPS-3B 当前未实现。
-- Manifest v2、Release 激活、Fresh Install Bootstrap、DATA-1、正式 backup/restore rehearsal 均未实施；`current-release.json` 原语只在 ENV-1B1B Draft PR 中，尚未进入 main 或接线 activation。
+- Manifest v2、Release 激活、Fresh Install Bootstrap、DATA-1、正式 backup/restore rehearsal 均未实施；`current-release.json` 原语已随 PR #83 进入 main，仍未接线 activation。
 
 因此当前 `full APP_ROOT immutable=false`、`formal Release created=false`、`Production Baseline=false`。
