@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import json
+import os
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 from enterprise.runtime import launcher
+from enterprise.runtime.portable import windows_local_app_data_known_folder
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -49,3 +55,80 @@ def test_launcher_source_imports_enterprise_only_after_bootstrap_identity() -> N
     assert bootstrap_call < enterprise_import
     assert "subprocess" not in source
     assert "shell=True" not in source
+
+
+@pytest.mark.skipif(os.name != "nt", reason="cmd.exe contract is Windows-only")
+@pytest.mark.parametrize("name", tuple(WRAPPERS))
+def test_cmd_wrapper_from_unicode_space_path_has_exact_missing_python_result(
+    tmp_path: Path,
+    name: str,
+) -> None:
+    package = tmp_path / "中文 空格 package"
+    package.mkdir()
+    wrapper = package / name
+    shutil.copyfile(ROOT / name, wrapper)
+    other_cwd = tmp_path / "different cwd"
+    other_cwd.mkdir()
+    environment = dict(os.environ)
+    environment.update(
+        {
+            "PYTHONHOME": str(tmp_path / "forged home"),
+            "PYTHONPATH": str(tmp_path / "forged path"),
+            "LOCALAPPDATA": str(tmp_path / "forged local app data"),
+        }
+    )
+    completed = subprocess.run(
+        [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/c", "call", str(wrapper)],
+        cwd=other_cwd,
+        env=environment,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="strict",
+        timeout=15,
+        shell=False,
+        check=False,
+    )
+    assert completed.returncode == 2
+    assert completed.stderr == ""
+    assert completed.stdout.splitlines() == ['{"code":"PORTABLE_PYTHON_MISSING","status":"blocked"}']
+
+
+def test_direct_launcher_isolation_is_independent_of_cwd_and_python_environment(tmp_path: Path) -> None:
+    different_cwd = tmp_path / "污染 cwd"
+    different_cwd.mkdir()
+    environment = dict(os.environ)
+    environment.update(
+        {
+            "PYTHONHOME": str(tmp_path / "forged home"),
+            "PYTHONPATH": str(tmp_path / "forged path"),
+        }
+    )
+    completed = subprocess.run(
+        [sys.executable, "-I", "-B", str(ROOT / "enterprise" / "runtime" / "launcher.py"), "portable", "status"],
+        cwd=different_cwd,
+        env=environment,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="strict",
+        timeout=15,
+        shell=False,
+        check=False,
+    )
+    assert completed.returncode == 2
+    assert completed.stderr == ""
+    payload = json.loads(completed.stdout)
+    assert payload == {"code": "PORTABLE_RELEASE_LAYOUT_INVALID", "status": "blocked"}
+    assert "forged" not in completed.stdout
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Known Folder API is Windows-only")
+def test_windows_known_folder_resolver_ignores_forged_localappdata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    forged = tmp_path / "forged-localappdata"
+    monkeypatch.setenv("LOCALAPPDATA", str(forged))
+    resolved = windows_local_app_data_known_folder()
+    assert resolved.is_absolute()
+    assert os.path.normcase(os.path.abspath(resolved)) != os.path.normcase(os.path.abspath(forged))

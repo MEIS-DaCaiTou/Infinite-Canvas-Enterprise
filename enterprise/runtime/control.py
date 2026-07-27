@@ -266,10 +266,20 @@ def _portable_identity_snapshot(
     )
     running_release = context.release_id if context is not None and instance_present else None
     instance_id = context.instance_id if context is not None else None
+    state_supervisor = _supervisor_identity_from_state(state)
+    lock_supervisor = _supervisor_identity_from_state(lock)
+    supervisor_lock_binding = bool(
+        state_supervisor is not None
+        and lock_supervisor is not None
+        and same_process(state_supervisor, lock_supervisor)
+        and same_process(state_supervisor, process_identity(state_supervisor.pid))
+        and snapshot.get("supervisor_identity_current") is True
+    )
     identity_fields_match = bool(
         context is not None
         and type(state) is dict
         and type(lock) is dict
+        and supervisor_lock_binding
         and state.get("runtime_mode") == "portable-release"
         and lock.get("runtime_mode") == "portable-release"
         and state.get("supervisor_instance_id") == instance_id
@@ -282,7 +292,7 @@ def _portable_identity_snapshot(
     )
     role_ownership = bool(
         type(state) is dict
-        and snapshot.get("supervisor_identity_current") is True
+        and supervisor_lock_binding
         and snapshot.get("owned_child_current") is True
         and _role_owned_by_state(state, "upstream", upstream_listener.resolved_identities)
         and _role_owned_by_state(state, "gateway", gateway_listener.resolved_identities)
@@ -378,6 +388,13 @@ class RuntimeController:
         snapshot = inspect_runtime(self.config)
         disposition = snapshot["start_disposition"]
         if disposition == "complete_healthy_instance":
+            if self.config.runtime_mode == "portable-release" and not (
+                snapshot.get("portable_ownership_valid") is True
+                and snapshot.get("running_release_mismatch") is False
+                and type(snapshot.get("readiness")) is dict
+                and snapshot["readiness"].get("ready") is True
+            ):
+                raise RuntimeStartBlocked("portable runtime ownership or readiness is untrusted")
             return {"result": "already_running", "status": snapshot}
         if disposition in {"stale_runtime_state", "startup_in_progress"}:
             if not self._clear_stale_if_safe(snapshot):
@@ -424,7 +441,16 @@ class RuntimeController:
                     context,
                     expected_existing_identity=expected_existing_context,
                 )
-            except Exception:
+            except Exception as exc:
+                if getattr(exc, "code", None) == "LAUNCH_CONTEXT_DIRECTORY_SYNC_FAILED":
+                    # replace() has already made the target authoritative.  The
+                    # B1 contract requires a reread, but never rollback/delete;
+                    # retain the original stable uncertain-state error either
+                    # way so the public caller knows another read is required.
+                    try:
+                        read_launch_context(self.config.runtime_root / LAUNCH_CONTEXT_FILENAME)
+                    except Exception:
+                        pass
                 self.store.release_lock(instance_id)
                 raise
         host: subprocess.Popen[bytes] | None = None
@@ -618,6 +644,27 @@ class RuntimeController:
         elif not state or snapshot["state"] == "stopped":
             return {"result": "not_running", "status": snapshot}
 
+        if self.config.runtime_mode == "portable-release":
+            # Re-inspect immediately before publishing a command.  A valid
+            # first snapshot cannot authorize a command after context/lock/
+            # process ownership changes underneath the caller.
+            verified = inspect_runtime(self.config)
+            verified_state = verified.get("runtime_state")
+            if verified.get("portable_ownership_valid") is not True:
+                return {"result": "ownership_unavailable", "status": verified}
+            if command == "restart" and verified.get("running_release_mismatch") is True:
+                return {"result": "release_mismatch", "status": verified}
+            if (
+                type(state) is not dict
+                or type(verified_state) is not dict
+                or state.get("supervisor_instance_id") != verified_state.get("supervisor_instance_id")
+                or state.get("state_generation") != verified_state.get("state_generation")
+                or snapshot.get("launch_context_identity") != verified.get("launch_context_identity")
+            ):
+                return {"result": "ownership_unavailable", "status": verified}
+            snapshot = verified
+            state = verified_state
+
         instance_id = state.get("supervisor_instance_id") if type(state) is dict else None
         generation = state.get("state_generation") if type(state) is dict else None
         if (
@@ -649,9 +696,21 @@ class RuntimeController:
                 result = ack.get("result")
                 if command == "restart" and result == "restarted":
                     current = inspect_runtime(self.config)
-                    if current["state"] == "healthy" and current.get("supervisor_identity_current"):
+                    portable_ready = self.config.runtime_mode != "portable-release" or (
+                        current.get("portable_ownership_valid") is True
+                        and current.get("running_release_mismatch") is False
+                        and type(current.get("readiness")) is dict
+                        and current["readiness"].get("ready") is True
+                    )
+                    if (
+                        current["state"] == "healthy"
+                        and current.get("supervisor_identity_current")
+                        and portable_ready
+                    ):
                         self.store.remove_ack(request_id, instance_id=instance_id)
                         return {"result": "restarted", "ack": ack, "status": current}
+                    if self.config.runtime_mode == "portable-release":
+                        return {"result": "ownership_unavailable", "ack": ack, "status": current}
                 if command == "stop" and result in {"stopped", "foreign_port_occupant", "unresolved_port_occupant", "stop_incomplete"}:
                     current = inspect_runtime(self.config)
                     if not current.get("supervisor_identity_current"):

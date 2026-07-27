@@ -73,3 +73,26 @@ supervisor,process,host,child,cli,error_contract}.py`，五个正式 wrappers，
 
 skips 为既有平台条件场景；宿主 pytest 插件在原始 STAB-1 collection 中仍有既知兼容冲突，隔离插件后
 STAB-1 全部通过。`github_ci_verified=false`，测试均为开发设备临时 fixture 证据。
+
+## PR #86 集中 correction
+
+独立初审接受 D1–D10 总体设计与分支范围，并在初始 B2 Head
+`ff8b187fbdfb8668c839605b94a229ba1cdc335b` 上确认三项实现 Blocker。本次 correction 不重新设计 B2，
+只收紧以下既有边界：
+
+- portable ownership 同时绑定 adopted lock、runtime state 和 live supervisor 的 PID、creation time 与
+  executable；任一缺失或不一致均 fail closed；
+- `RuntimeController` 的 healthy start 快路径、command submit 前和 restart ACK 后均重新检查 ownership、
+  readiness 与 Release mismatch；保留 old owned Release stop，阻止 old Release restart；
+- launch context 在 `os.replace()` 后目录同步失败时按 B1 uncertain-state 契约重新读取 target，不启动 host、
+  不删除或回滚 target，只释放匹配的 reservation 并返回原稳定错误。
+
+补强证据包括真实 `cmd.exe` 执行五个 wrapper：Unicode/空格临时路径、不同 cwd、污染的 Python 环境变量、
+缺失 bundled Python 的精确单行 JSON 与 exit `2`；同时直接验证 launcher isolation flags，以及 Windows
+Known Folder resolver 不采用伪造 `LOCALAPPDATA`。这些仍是开发设备临时 fixture，不启动真实 Runtime，
+也不访问生产或临时业务测试设备。
+
+correction 候选的聚焦证据：B2 三文件 `39 passed`；B1 launch-context/release-mismatch 回归
+`57 passed`；STAB-1 lifecycle `19 passed`。初始 Head 的 `498 passed, 5 skipped, 8 warnings` 仍只属于
+初始实现证据；新 correction 候选的 final enterprise suite 仅运行一次，结果为
+`518 passed, 5 skipped, 8 warnings`，exit `0`，耗时 `249.21s`。`github_ci_verified=false`。
