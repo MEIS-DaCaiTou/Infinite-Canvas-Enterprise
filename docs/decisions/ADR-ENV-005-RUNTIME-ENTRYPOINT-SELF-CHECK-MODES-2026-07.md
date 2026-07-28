@@ -3,7 +3,7 @@
 - 状态：Accepted
 - 决策日期：2026-07-16
 - 事实基线：`main@396cccc68d63bd16393a2cb72d24e4a48fcf47cb`
-- 实施状态：已决策；B1 已由 PR #84 合并并独立验收；B2 架构门禁已通过并形成 portable lifecycle repository implementation，独立验收尚未完成。
+- 实施状态：已决策；B1 已由 PR #84 合并并独立验收；B2 架构门禁已通过，portable lifecycle repository implementation 与 D1–D10 实现已通过独立代码审查。
 
 ## 运行模式
 
@@ -92,6 +92,10 @@ B2 repository implementation 采用固定 direct-script launcher 和当前 Relea
 复用唯一 STAB-1 controller、lock、state、supervisor 与 instance identity 发布 launch context，并向 host、
 supervisor 和 child 传播相同 Release identity。`runtime_mode` 与 `host_style` 分离，status/health 使用六项
 readiness evidence，跨 Release stop/status/health/restart 服从本 ADR 的 ownership 表。
+
+`ENV_1B1C_B2_repository_implementation_independently_accepted=true`、
+`D1-D10_repository_implementation_accepted=true`。该结论只接受仓库实现，不提升真实 Runtime、Release 或
+生产验证状态。
 
 真实 bundled Python 生命周期尚未验证；Manifest v2、activation、formal Release、Production Baseline 和
 production validation 仍未实现。

@@ -2,7 +2,7 @@
 
 本文档描述当前仓库已实现的 Infinite Canvas 企业多用户运行架构和主要模块职责；它不证明相同仓库基线已经部署到生产。
 
-> 最后一次代码事实核对基线：`main@6610218aecc0b864df5f075cb6824e041daedfd7`。PR #80 至 #84 已合并；ENV-1B1C-B1 已进入 `main` 并通过独立验收。B2 repository implementation 在既有 STAB-1 生命周期上接入 fixed launcher、Release identity、preflight、launch context 和 readiness，不创建第二套 controller/supervisor/state/lock；独立验收与真实 bundled Runtime 验证尚未完成。完整 APP_ROOT 只读、Manifest v2、Fresh Install Bootstrap、OPS-3B、formal Release、Production Baseline、restore 和 rollback尚未完成。
+> 最后一次代码事实核对基线：`main@6610218aecc0b864df5f075cb6824e041daedfd7`。PR #80 至 #84 已合并；ENV-1B1C-B1 已进入 `main` 并通过独立验收。B2 repository implementation 在既有 STAB-1 生命周期上接入 fixed launcher、Release identity、preflight、launch context 和 readiness，不创建第二套 controller/supervisor/state/lock；该 repository implementation 与 D1–D10 实现已通过独立代码审查。真实 bundled Runtime 验证、完整 APP_ROOT 只读、Manifest v2、Fresh Install Bootstrap、OPS-3B、formal Release、Production Baseline、restore 和 rollback 尚未完成。
 
 ---
 

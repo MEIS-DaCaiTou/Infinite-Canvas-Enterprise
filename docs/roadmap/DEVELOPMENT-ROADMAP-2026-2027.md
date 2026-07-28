@@ -1,9 +1,9 @@
 # Infinite-Canvas-Enterprise 开发路线图（2026-2027）
 
-更新时间：2026-07-27
+更新时间：2026-07-28
 最后一次代码事实核对基线：`main@6610218aecc0b864df5f075cb6824e041daedfd7`
 
-当前 repository HEAD 以 GitHub `main` 为准；PR #80、PR #81、PR #82、PR #83 和 PR #84 已合并。ENV-1B1C-B1 纯契约、安全原语和隔离测试基础已进入 `main` 并通过独立验收；完整 lifecycle 尚未接线。
+当前 repository HEAD 以 GitHub `main` 为准；PR #80、PR #81、PR #82、PR #83 和 PR #84 已合并。ENV-1B1C-B1 纯契约、安全原语和隔离测试基础已进入 `main` 并通过独立验收；B2 portable lifecycle repository implementation 与 D1–D10 实现已通过独立代码审查。
 
 当前实施事实以 [CURRENT_PROJECT_STATUS](../CURRENT_PROJECT_STATUS.md) 为准；架构决策以 [ADR 索引](../README.md) 为准。本文负责阶段顺序，不重复定义实现状态。
 
@@ -49,7 +49,7 @@ OPS-2A / OPS-2B 已进入 main，项目负责人曾在旧生产侧人工完成 d
 
 ## 3. 当前阶段
 
-当前已确认状态为 **ENV-1B1C-B1 已合并并独立验收；B2 read-only architecture gate 已通过且 repository implementation 已形成**。B2 接入固定 launcher、Release identity、现有 STAB-1 lifecycle 和 readiness；独立验收、真实 bundled Runtime 验证、formal Release 与生产批准仍未完成。正常上游功能同步在 ENV-1 期间冻结；紧急安全漏洞修复可以单独评估并受控引入。
+当前已确认状态为 **ENV-1B1C-B1 已合并并独立验收；B2 read-only architecture gate 已通过，repository implementation 与 D1–D10 实现已通过独立代码审查**。B2 接入固定 launcher、Release identity、现有 STAB-1 lifecycle 和 readiness；真实 bundled Runtime 验证、formal Release 与生产批准仍未完成。正常上游功能同步在 ENV-1 期间冻结；紧急安全漏洞修复可以单独评估并受控引入。
 
 Greenfield Production Baseline 路线按以下顺序执行，后项不能绕过前项门禁：
 
@@ -59,7 +59,7 @@ Greenfield Production Baseline 路线按以下顺序执行，后项不能绕过�
 3. ENV-1B1B：路径根、版本目录和 `current-release.json`；已合并，不含 activation。
 4. ENV-1B1C-B1：Runtime mode、manifest startup view、Python identity、preflight、launch context 和 writable probe 的纯契约/安全原语；已由 PR #84 合并并独立验收，不接入 lifecycle。
 5. ENV-1B1C-B1 docs closeout：由独立 docs-only closeout commit 持久化 Final Acceptance evidence；不接入 Runtime lifecycle。
-6. ENV-1B1C-B2：read-only architecture gate 已通过并形成 repository implementation；独立验收仍待后续决定。
+6. ENV-1B1C-B2：read-only architecture gate 已通过；repository implementation 与 D1–D10 实现已通过独立代码审查。
 7. ENV-1B2：可重复 Runtime、依赖锁、`pip check`、SBOM、自检，并验证受支持的新 Python 版本。
 8. OPS Release Manifest v2。
 9. ENV-1B3：干净 Windows VM、无系统 Python、非管理员、中文/空格/长路径、低磁盘、重启、损坏 DLL/manifest、杀毒软件和 APP_ROOT 只读验证。
@@ -79,7 +79,7 @@ Greenfield Production Baseline 路线按以下顺序执行，后项不能绕过�
 23. Linux 单服务器适配。
 24. PostgreSQL、对象存储、queue、Redis 和多实例按真实需求引入。
 
-第 0 至 5 项已完成既定范围；第 6 项已完成架构门禁并形成 repository implementation，但尚未独立验收。后续仍须先完成 B2 独立审查，再进入可重复 Runtime、Manifest v2 与干净 Windows 验证。Fresh Install Bootstrap、新生产部署、OPS-3B、Linux、PostgreSQL、Redis、durable queue、多实例、Windows Service、正式 Windows Runtime Release 和 Production Baseline 当前都不是已完成能力。
+第 0 至 6 项已完成各自的 repository 范围，B2 repository implementation 与 D1–D10 实现已通过独立代码审查。后续仍须依次完成可重复 Runtime、Manifest v2 与干净 Windows 验证。Fresh Install Bootstrap、新生产部署、OPS-3B、Linux、PostgreSQL、Redis、durable queue、多实例、Windows Service、正式 Windows Runtime Release 和 Production Baseline 当前都不是已完成能力。
 
 ## 4. 历史拆解参考
 

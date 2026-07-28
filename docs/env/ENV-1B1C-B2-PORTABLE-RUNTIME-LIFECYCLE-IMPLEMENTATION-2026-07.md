@@ -1,7 +1,8 @@
 # ENV-1B1C-B2：Portable Runtime Lifecycle 实施记录
 
 - 基线：`main@6610218aecc0b864df5f075cb6824e041daedfd7`。
-- 状态：B2 repository implementation 已形成；独立验收和真实 bundled Runtime lifecycle 验证尚未完成。
+- 状态：B2 repository implementation 与 D1–D10 实现已通过独立代码审查；真实 bundled Runtime lifecycle 验证尚未完成。
+- 验收字段：`ENV_1B1C_B2_repository_implementation_independently_accepted=true`；`D1-D10_repository_implementation_accepted=true`。
 - 边界：不修改 `main.py` / gateway，不实现 Runtime 重建、Manifest v2、Release activation、OPS-3B、formal Release 或生产操作。
 
 ## 固定入口与信任链

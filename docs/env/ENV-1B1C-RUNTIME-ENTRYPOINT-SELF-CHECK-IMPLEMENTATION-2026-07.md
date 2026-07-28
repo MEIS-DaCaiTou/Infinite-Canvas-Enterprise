@@ -1,6 +1,6 @@
 # ENV-1B1C：Runtime 入口与自检实施记录
 
-- 状态：ENV-1B1C-B1 已由 PR #84 合并进入 `main` 并通过独立 contract-foundation 验收；完整 ENV-1B1C 尚未完成。
+- 状态：ENV-1B1C-B1 已由 PR #84 合并进入 `main` 并通过独立 contract-foundation 验收；B2 repository implementation 与 D1–D10 实现已通过独立代码审查；完整 ENV-1B1C 尚未完成。
 - 基线：起始 base `4d9cc4ef3d6a0f6ed956c2dda6303e9cc3b99b89`；B1 source Head `afa03af45da938549a1e62e36df8de11d7c82867`；main squash merge commit `d3885a92968e68f35500318977341c94612ab2a2`。
 - 非生产事实：`production_device_touched_by_codex=false`；`temporary_test_environment_accessed_by_codex=false`。
 - 最终验收记录：[ENV-1B1C-B1 Final Acceptance / Closeout](./evidence/ENV-1B1C-B1-FINAL-ACCEPTANCE-CLOSEOUT-2026-07-27.md)。
@@ -87,5 +87,6 @@ lock/state/supervisor/instance identity 接线 controller、host、child、readi
 第二套 lifecycle。详细能力与限制见
 [ENV-1B1C-B2 Portable Runtime Lifecycle 实施记录](./ENV-1B1C-B2-PORTABLE-RUNTIME-LIFECYCLE-IMPLEMENTATION-2026-07.md)。
 
-独立验收和真实 bundled Python lifecycle 尚未完成；Manifest v2、activation、formal Release、
-Production Baseline 和 production approval 仍未实现。
+`ENV_1B1C_B2_repository_implementation_independently_accepted=true`、
+`D1-D10_repository_implementation_accepted=true`。真实 bundled Python lifecycle 与干净 Windows 验证尚未完成；
+Manifest v2、activation、formal Release、Production Baseline 和 production approval 仍未实现。
