@@ -282,9 +282,14 @@ def _portable_identity_snapshot(
         and supervisor_lock_binding
         and state.get("runtime_mode") == "portable-release"
         and lock.get("runtime_mode") == "portable-release"
+        and state.get("portable_identity_schema") == "env-1b1c-portable-runtime-identity-v2" == lock.get("portable_identity_schema")
         and state.get("supervisor_instance_id") == instance_id
         and lock.get("supervisor_instance_id") == instance_id
         and state.get("release_id") == context.release_id == lock.get("release_id")
+        and state.get("release_manifest_sha256") == context.release_manifest_sha256 == lock.get("release_manifest_sha256")
+        and state.get("release_payload_tree_sha256") == context.release_payload_tree_sha256 == lock.get("release_payload_tree_sha256")
+        and state.get("enterprise_commit") == context.enterprise_commit == lock.get("enterprise_commit")
+        and state.get("enterprise_tree") == context.enterprise_tree == lock.get("enterprise_tree")
         and state.get("runtime_manifest_sha256") == context.runtime_manifest_sha256 == lock.get("runtime_manifest_sha256")
         and state.get("startup_preflight_sha256") == context.startup_preflight_sha256 == lock.get("startup_preflight_sha256")
         and state.get("launch_context_identity") == context.identity == lock.get("launch_context_identity")
@@ -313,6 +318,10 @@ def _portable_identity_snapshot(
         ownership_valid
         and context is not None
         and context.runtime_manifest_sha256 == config.runtime_manifest_sha256
+        and context.release_manifest_sha256 == config.release_manifest_sha256
+        and context.release_payload_tree_sha256 == config.release_payload_tree_sha256
+        and context.enterprise_commit == config.enterprise_commit
+        and context.enterprise_tree == config.enterprise_tree
         and context.startup_preflight_sha256 == config.startup_preflight_sha256
     )
     readiness = classify_portable_readiness(
@@ -411,6 +420,10 @@ class RuntimeController:
                 raise RuntimeControlError("portable startup preflight is required")
             if (
                 preflight.release_id != self.config.release_id
+                or preflight.release_manifest_sha256 != self.config.release_manifest_sha256
+                or preflight.release_payload_tree_sha256 != self.config.release_payload_tree_sha256
+                or preflight.enterprise_commit != self.config.enterprise_commit
+                or preflight.enterprise_tree != self.config.enterprise_tree
                 or preflight.runtime_manifest_sha256 != self.config.runtime_manifest_sha256
                 or preflight.identity != self.config.startup_preflight_sha256
             ):

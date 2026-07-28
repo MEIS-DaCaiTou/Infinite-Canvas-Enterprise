@@ -31,6 +31,12 @@ from enterprise.release.current_release import (
     CurrentReleaseReadResult,
     read_current_release_result_from_state_root,
 )
+from enterprise.release.release_manifest_v2 import (
+    ReleaseManifestV2,
+    ReleaseManifestV2Error,
+    read_release_manifest_v2,
+    verify_materialized_release,
+)
 
 from .error_contract import RuntimeContractError, error_payload
 from .launch_context import LAUNCH_CONTEXT_FILENAME, RuntimeLaunchContext, read_launch_context
@@ -131,6 +137,7 @@ def in_process_python_probe() -> dict[str, object]:
 class PortablePreflight:
     roots: PathRoots
     current_release: CurrentReleaseReadResult
+    release_manifest: ReleaseManifestV2
     runtime_manifest: RuntimeManifestStartupView
     python_identity: PythonIdentity
     writable_probes: tuple[WritableProbeResult, ...]
@@ -144,6 +151,7 @@ def build_portable_preflight(
     executable: Path | None = None,
     python_probe: dict[str, object] | None = None,
     probe: Callable[[Path, str], WritableProbeResult] = probe_writable_root,
+    verify_full_payload: bool = True,
 ) -> PortablePreflight:
     """Run the full read-only trust chain plus self-cleaning writable probes."""
 
@@ -160,7 +168,19 @@ def build_portable_preflight(
         validate_portable_release_layout(roots)
     except PathRootsError as exc:
         raise RuntimeContractError("PORTABLE_RELEASE_LAYOUT_INVALID") from exc
-    manifest = parse_runtime_manifest_startup_view(app_root / "runtime-manifest.json", roots.PYTHON_RUNTIME)
+    try:
+        release_manifest = read_release_manifest_v2(app_root / "release-manifest.json")
+        if release_manifest.raw_sha256 != pointer.release.manifest_sha256 or release_manifest.release_id != pointer.release.release_id:
+            raise ReleaseManifestV2Error("RELEASE_POINTER_MANIFEST_MISMATCH")
+        inventory_path = app_root / str(release_manifest.section("release_payload")["inventory_path"])
+        if verify_full_payload:
+            verify_materialized_release(app_root, inventory_path=inventory_path)
+    except ReleaseManifestV2Error as exc:
+        raise RuntimeContractError("PORTABLE_RELEASE_MANIFEST_INVALID") from exc
+    runtime_manifest_relative = str(release_manifest.section("runtime")["runtime_manifest_path"])
+    manifest = parse_runtime_manifest_startup_view(app_root / runtime_manifest_relative, roots.PYTHON_RUNTIME)
+    if manifest.manifest_sha256 != release_manifest.section("runtime")["runtime_manifest_sha256"]:
+        raise RuntimeContractError("PORTABLE_RELEASE_MANIFEST_INVALID")
     fixed_executable = roots.PYTHON_RUNTIME / "python.exe"
     actual_executable = Path(sys.executable if executable is None else executable)
     identity = build_python_identity(
@@ -175,11 +195,12 @@ def build_portable_preflight(
         release_id=pointer.release.release_id,
         path_roots_identity=roots.root_identity,
         current_release_sha256=pointer.raw_sha256,
+        release_manifest=release_manifest,
         runtime_manifest=manifest,
         python_identity=identity,
         writable_probe_results=probes,
     )
-    return PortablePreflight(roots, pointer, manifest, identity, probes, result)
+    return PortablePreflight(roots, pointer, release_manifest, manifest, identity, probes, result)
 
 
 @dataclass(frozen=True)
@@ -218,7 +239,22 @@ def validate_portable_process_binding(
         validate_portable_release_layout(roots)
     except PathRootsError as exc:
         raise RuntimeContractError("PORTABLE_CONTEXT_UNTRUSTED") from exc
-    manifest = parse_runtime_manifest_startup_view(app_root / "runtime-manifest.json", roots.PYTHON_RUNTIME)
+    try:
+        release_manifest = read_release_manifest_v2(app_root / "release-manifest.json")
+    except ReleaseManifestV2Error as exc:
+        raise RuntimeContractError("PORTABLE_CONTEXT_UNTRUSTED") from exc
+    if (
+        release_manifest.raw_sha256 != context.release_manifest_sha256
+        or release_manifest.release_id != context.release_id
+        or release_manifest.section("release_payload")["tree_sha256"] != context.release_payload_tree_sha256
+        or release_manifest.section("enterprise_source")["commit"] != context.enterprise_commit
+        or release_manifest.section("enterprise_source")["tree"] != context.enterprise_tree
+    ):
+        raise RuntimeContractError("PORTABLE_CONTEXT_UNTRUSTED")
+    manifest = parse_runtime_manifest_startup_view(
+        app_root / str(release_manifest.section("runtime")["runtime_manifest_path"]),
+        roots.PYTHON_RUNTIME,
+    )
     identity = build_python_identity(
         Path(sys.executable if executable is None else executable),
         in_process_python_probe() if python_probe is None else python_probe,
@@ -227,6 +263,7 @@ def validate_portable_process_binding(
     )
     if (
         manifest.manifest_sha256 != context.runtime_manifest_sha256
+        or manifest.manifest_sha256 != release_manifest.section("runtime")["runtime_manifest_sha256"]
         or identity.executable_sha256 != context.python_executable_sha256
         or identity.version != context.python_version
         or identity.abi != context.python_abi
@@ -280,8 +317,37 @@ def execute_portable_command(*, app_root: Path, command: str) -> tuple[dict[str,
 
     if command not in PORTABLE_COMMANDS:
         raise RuntimeContractError("RELEASE_MISMATCH_COMMAND_INVALID")
-    preflight = build_portable_preflight(app_root)
-    roots = install_path_roots_for_process(preflight.roots)
+    preflight: PortablePreflight | None = None
+    manifest_error: RuntimeContractError | None = None
+    try:
+        preflight = build_portable_preflight(app_root, verify_full_payload=command in {"start", "restart"})
+        roots = install_path_roots_for_process(preflight.roots)
+        portable_identity: StartupPreflightResult | RuntimeLaunchContext = preflight.result
+    except RuntimeContractError as exc:
+        if command not in {"status", "stop"}:
+            raise
+        manifest_error = exc
+        # Safe-stop/status recovery is authorized only by the retained context
+        # plus the existing adopted lock/state/process identity. It never turns
+        # damaged current Release files back into start/restart/health trust.
+        install_root = _derive_install_root(Path(app_root).absolute())
+        inputs = PortableRootInputs(install_root, windows_local_app_data_known_folder())
+        provisional = derive_portable_path_roots(inputs, Path(app_root).name)
+        try:
+            context = read_launch_context(provisional.RUNTIME_ROOT / LAUNCH_CONTEXT_FILENAME)
+        except RuntimeContractError:
+            if command == "status":
+                return {
+                    "release_manifest_error_code": manifest_error.code,
+                    "release_manifest_v2_valid": False,
+                    "status": "invalid",
+                }, 0
+            raise
+        roots = derive_portable_path_roots(inputs, context.release_id)
+        if not _same_path(roots.APP_ROOT, Path(app_root).absolute()) or roots.root_identity != context.path_roots_identity:
+            raise RuntimeContractError("PORTABLE_CONTEXT_UNTRUSTED")
+        roots = install_path_roots_for_process(roots)
+        portable_identity = context
 
     # Imports below this point are intentionally after portable root install.
     from enterprise import config as enterprise_config
@@ -306,15 +372,30 @@ def execute_portable_command(*, app_root: Path, command: str) -> tuple[dict[str,
         log_root=roots.LOG_ROOT / "runtime",
         mode="service-host",
         runtime_mode="portable-release",
-        release_id=preflight.result.release_id,
-        runtime_manifest_sha256=preflight.result.runtime_manifest_sha256,
-        startup_preflight_sha256=preflight.result.identity,
+        release_id=portable_identity.release_id,
+        runtime_manifest_sha256=portable_identity.runtime_manifest_sha256,
+        release_manifest_sha256=portable_identity.release_manifest_sha256,
+        release_payload_tree_sha256=portable_identity.release_payload_tree_sha256,
+        enterprise_commit=portable_identity.enterprise_commit,
+        enterprise_tree=portable_identity.enterprise_tree,
+        startup_preflight_sha256=(portable_identity.identity if isinstance(portable_identity, StartupPreflightResult) else portable_identity.startup_preflight_sha256),
         python_executable=str(roots.PYTHON_RUNTIME / "python.exe"),
         upstream_port=int(getattr(enterprise_config, "UPSTREAM_PORT", 3001)),
         gateway_port=int(getattr(enterprise_config, "GATEWAY_PORT", 8000)),
         secret_values=secrets_to_redact,
     )
     snapshot = inspect_runtime(config)
+    if manifest_error is not None:
+        snapshot["release_manifest_v2_valid"] = False
+        snapshot["release_manifest_error_code"] = manifest_error.code
+        public = _public_runtime_snapshot(snapshot)
+        if command == "status":
+            return public, 0
+        if snapshot.get("portable_ownership_valid") is not True:
+            return {"code": "PORTABLE_RUNTIME_OWNERSHIP_UNTRUSTED", "status": "blocked"}, 2
+        payload = RuntimeController(config).send_command("stop")
+        result = str(payload.get("result"))
+        return _public_runtime_snapshot(payload), 0 if result in {"stopped", "already_stopped"} else 2
     decision = decide_release_mismatch(
         launcher_release_id=preflight.result.release_id,
         current_release_id=preflight.result.release_id,
@@ -349,6 +430,7 @@ def execute_portable_command(*, app_root: Path, command: str) -> tuple[dict[str,
         }, 2
     controller = RuntimeController(config)
     if command == "start":
+        assert preflight is not None
         payload = controller.start(preflight=preflight.result)
         result = str(payload.get("result"))
         return _public_runtime_snapshot(payload), 0 if result in {"started", "already_running"} else 2

@@ -21,8 +21,13 @@ VALID_COMMANDS = frozenset({"stop", "restart"})
 STARTUP_LOCK_GRACE_SECONDS = 75
 CONTROL_TTL_SECONDS = 15 * 60
 PORTABLE_IDENTITY_FIELDS = (
+    "portable_identity_schema",
     "runtime_mode",
     "release_id",
+    "release_manifest_sha256",
+    "release_payload_tree_sha256",
+    "enterprise_commit",
+    "enterprise_tree",
     "runtime_manifest_sha256",
     "startup_preflight_sha256",
     "launch_context_identity",

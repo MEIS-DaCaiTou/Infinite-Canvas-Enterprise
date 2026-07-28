@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -12,8 +13,10 @@ from enterprise.release.current_release import (
     read_current_release_result_from_state_root,
 )
 from enterprise.runtime.error_contract import RuntimeContractError
-from enterprise.runtime.portable import build_portable_preflight, validate_portable_process_binding
+from enterprise.runtime.portable import build_portable_preflight, execute_portable_command, validate_portable_process_binding
 from enterprise.runtime.runtime_manifest import STARTUP_CORE_FILES
+from enterprise.release.release_manifest_v2 import build_inventory, canonical_json as release_canonical_json, sha256_bytes
+from enterprise.tests.release_manifest_v2_fixture import release_manifest
 
 
 def _sha(value: bytes) -> str:
@@ -22,7 +25,8 @@ def _sha(value: bytes) -> str:
 
 def _fixture(tmp_path: Path) -> tuple[Path, Path, dict[str, object]]:
     install = tmp_path / "install"
-    app = install / "releases" / "release-A"
+    release_id = "ice-2026.07.6-bbbbbbbbbbbb"
+    app = install / "releases" / release_id
     runtime = app / "python"
     runtime.mkdir(parents=True)
     (app / "main.py").write_text("# fixture\n", encoding="utf-8")
@@ -45,6 +49,14 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, dict[str, object]]:
         "source": {"enterprise_commit": "a" * 40},
     }
     (app / "runtime-manifest.json").write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
+    runtime_manifest_sha = _sha((app / "runtime-manifest.json").read_bytes())
+    inventory = build_inventory(app)
+    (app / "release-payload-inventory.json").write_bytes(inventory.canonical_bytes)
+    release_payload = release_manifest(release_id=release_id, runtime_manifest_sha256=runtime_manifest_sha).data
+    release_payload["release_payload"].update({"inventory_sha256": inventory.sha256, "tree_sha256": inventory.tree_sha256, "file_count": len(inventory.entries), "total_size_bytes": inventory.total_size_bytes})
+    release_payload["archive"].update({"inventory_sha256": inventory.sha256, "payload_tree_sha256": inventory.tree_sha256, "file_count": len(inventory.entries) + 1, "total_uncompressed_bytes": inventory.total_size_bytes + len(inventory.canonical_bytes)})
+    release_bytes = release_canonical_json(release_payload)
+    (app / "release-manifest.json").write_bytes(release_bytes)
     for directory in (
         install / "data",
         install / "logs",
@@ -56,9 +68,9 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, dict[str, object]]:
         directory.mkdir(parents=True, exist_ok=True)
     pointer = CurrentRelease(
         "env-1b1b-current-release-v1",
-        "release-A",
-        "releases/release-A",
-        "b" * 64,
+        release_id,
+        f"releases/{release_id}",
+        sha256_bytes(release_bytes),
         "2026-07-27T00:00:00Z",
         None,
     )
@@ -84,7 +96,7 @@ def test_pointer_read_result_binds_exact_accepted_bytes(tmp_path: Path) -> None:
     app, _local, _probe = _fixture(tmp_path)
     raw = (app.parents[1] / "state" / "current-release.json").read_bytes()
     result = read_current_release_result_from_state_root(app.parents[1] / "state")
-    assert result.release.release_id == "release-A"
+    assert result.release.release_id == "ice-2026.07.6-bbbbbbbbbbbb"
     assert result.raw_sha256 == _sha(raw)
 
 
@@ -97,7 +109,7 @@ def test_portable_preflight_cross_binds_pointer_manifest_python_and_roots(tmp_pa
         python_probe=probe,
     )
     assert evidence.result.result == "pass"
-    assert evidence.result.release_id == "release-A"
+    assert evidence.result.release_id == "ice-2026.07.6-bbbbbbbbbbbb"
     assert evidence.result.path_roots_identity == evidence.roots.root_identity
     assert evidence.result.runtime_manifest_sha256 == evidence.runtime_manifest.manifest_sha256
     assert evidence.result.python_executable_sha256 == evidence.python_identity.executable_sha256
@@ -120,6 +132,22 @@ def test_pointer_must_identify_launcher_release(tmp_path: Path) -> None:
             python_probe=probe,
         )
     assert exc.value.code == "PORTABLE_RELEASE_POINTER_MISMATCH"
+
+
+def test_pointer_must_bind_exact_release_manifest_bytes(tmp_path: Path) -> None:
+    app, local, probe = _fixture(tmp_path)
+    pointer_path = app.parents[1] / "state" / "current-release.json"
+    payload = json.loads(pointer_path.read_text(encoding="utf-8"))
+    payload["manifest_sha256"] = "f" * 64
+    pointer_path.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
+    with pytest.raises(RuntimeContractError) as exc:
+        build_portable_preflight(
+            app,
+            local_app_data_resolver=lambda: local,
+            executable=app / "python" / "python.exe",
+            python_probe=probe,
+        )
+    assert exc.value.code == "PORTABLE_RELEASE_MANIFEST_INVALID"
 
 
 def test_process_binding_uses_retained_context_not_current_pointer(tmp_path: Path) -> None:
@@ -153,3 +181,51 @@ def test_process_binding_uses_retained_context_not_current_pointer(tmp_path: Pat
     )
     assert binding.context.identity == context.identity
     assert binding.roots.root_identity == evidence.roots.root_identity
+
+
+def test_process_binding_rejects_launch_context_manifest_mismatch(tmp_path: Path) -> None:
+    from enterprise.runtime.launch_context import build_launch_context, publish_launch_context
+
+    app, local, probe = _fixture(tmp_path)
+    evidence = build_portable_preflight(
+        app,
+        local_app_data_resolver=lambda: local,
+        executable=app / "python" / "python.exe",
+        python_probe=probe,
+    )
+    context = replace(build_launch_context(evidence.result, instance_id="a" * 32), release_manifest_sha256="f" * 64)
+    publish_launch_context(evidence.roots.RUNTIME_ROOT / "launch-context.json", context, expected_existing_identity=None)
+    with pytest.raises(RuntimeContractError) as exc:
+        validate_portable_process_binding(
+            app_root=app,
+            runtime_root=evidence.roots.RUNTIME_ROOT,
+            instance_id=context.instance_id,
+            expected_context_identity=context.identity,
+            local_app_data_resolver=lambda: local,
+            executable=app / "python" / "python.exe",
+            python_probe=probe,
+            install_roots=False,
+        )
+    assert exc.value.code == "PORTABLE_CONTEXT_UNTRUSTED"
+
+
+def test_status_reports_damaged_manifest_without_context_as_read_only_invalid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "enterprise.runtime.portable.build_portable_preflight",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeContractError("PORTABLE_RELEASE_MANIFEST_INVALID")),
+    )
+    monkeypatch.setattr("enterprise.runtime.portable._derive_install_root", lambda _app: tmp_path / "install")
+    monkeypatch.setattr("enterprise.runtime.portable.windows_local_app_data_known_folder", lambda: tmp_path / "local")
+    monkeypatch.setattr(
+        "enterprise.runtime.portable.read_launch_context",
+        lambda _path: (_ for _ in ()).throw(RuntimeContractError("LAUNCH_CONTEXT_INVALID")),
+    )
+    payload, exit_code = execute_portable_command(app_root=tmp_path / "install/releases/release-A", command="status")
+    assert exit_code == 0
+    assert payload == {
+        "release_manifest_error_code": "PORTABLE_RELEASE_MANIFEST_INVALID",
+        "release_manifest_v2_valid": False,
+        "status": "invalid",
+    }

@@ -12,6 +12,7 @@ from enterprise.runtime.process import default_commands
 from enterprise.runtime.readiness import classify_portable_readiness
 from enterprise.runtime.state import RuntimeStateStore, initial_state
 from enterprise.runtime.supervisor import RuntimeStartBlocked, SupervisorConfig
+from enterprise.tests.release_manifest_v2_fixture import preflight_v2_fields, portable_config_v2_fields, runtime_identity_v2_fields
 
 
 def _preflight() -> StartupPreflightResult:
@@ -22,6 +23,7 @@ def _preflight() -> StartupPreflightResult:
         app_root_relative="releases/release-A",
         path_roots_identity="a" * 64,
         current_release_sha256="b" * 64,
+        **preflight_v2_fields(),
         runtime_manifest_sha256="c" * 64,
         python_executable_sha256="d" * 64,
         python_implementation="CPython",
@@ -35,6 +37,7 @@ def _preflight() -> StartupPreflightResult:
 
 def _identity(context_identity: str) -> dict[str, str]:
     return {
+        **runtime_identity_v2_fields(),
         "runtime_mode": "portable-release",
         "release_id": "release-A",
         "runtime_manifest_sha256": "c" * 64,
@@ -52,6 +55,7 @@ def _portable_config(tmp_path: Path) -> SupervisorConfig:
         mode="service-host",
         runtime_mode="portable-release",
         release_id="release-A",
+        **portable_config_v2_fields(),
         runtime_manifest_sha256=preflight.runtime_manifest_sha256,
         startup_preflight_sha256=preflight.identity,
         python_executable=str(tmp_path / "install" / "releases" / "release-A" / "python" / "python.exe"),
@@ -173,6 +177,7 @@ def test_portable_start_reserves_then_publishes_context_then_starts_existing_hos
         mode="service-host",
         runtime_mode="portable-release",
         release_id="release-A",
+        **portable_config_v2_fields(),
         runtime_manifest_sha256=preflight.runtime_manifest_sha256,
         startup_preflight_sha256=preflight.identity,
         python_executable=str(python),
@@ -406,6 +411,7 @@ def _portable_ownership_case(tmp_path: Path):
     upstream = ProcessIdentity(11, 101, str(python))
     gateway = ProcessIdentity(12, 102, str(python))
     identity = {
+        **runtime_identity_v2_fields(),
         "runtime_mode": "portable-release",
         "release_id": "release-A",
         "runtime_manifest_sha256": preflight.runtime_manifest_sha256,
@@ -444,6 +450,7 @@ def _portable_ownership_case(tmp_path: Path):
         mode="service-host",
         runtime_mode="portable-release",
         release_id="release-A",
+        **portable_config_v2_fields(),
         runtime_manifest_sha256=preflight.runtime_manifest_sha256,
         startup_preflight_sha256=preflight.identity,
         python_executable=str(python),

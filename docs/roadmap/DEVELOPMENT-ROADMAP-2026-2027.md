@@ -1,7 +1,7 @@
 # Infinite-Canvas-Enterprise 开发路线图（2026-2027）
 
 更新时间：2026-07-28
-最后一次代码事实核对基线：`main@c5d0a62822bb8b55b25215aa74a9f02653e03fc9`
+最后一次代码事实核对基线：`main@ea71a9a73c80244f679487c35a960ceea7732876`
 
 当前 repository HEAD 以 GitHub `main` 为准；PR #80、PR #81、PR #82、PR #83、PR #84、PR #86 和 PR #87 已合并。ENV-1B2A 的 Python 3.10 可复现 Runtime 已进入 `main` 并保留为 rollback baseline；ENV-1B2B 已将唯一 active Runtime 迁移到 CPython 3.14.6 / cp314，其 repository implementation 已通过独立代码与证据审查。
 
@@ -65,7 +65,7 @@ Greenfield Production Baseline 路线按以下顺序执行，后项不能绕过�
 6. ENV-1B1C-B2：已由 PR #86 合并；固定 portable launcher、Release Python 信任链、现有 STAB-1 lifecycle 与 readiness 已进入 `main`。
 7. ENV-1B2A：固定 Python 3.10 layout 的官方来源、依赖锁、离线双重建、`pip check`、SBOM、deterministic archive 和 B2 fixed-Python fixture；已由 PR #87 合并并保留为 rollback baseline。
 8. ENV-1B2B：资格门禁选择 CPython 3.14.6；cp314 active policy、离线双构建、三层 provenance 与真实 formal-entry fixture 已完成并通过 repository implementation 独立验收，`ENV_1B2_completed=true`。
-9. OPS Release Manifest v2。
+9. OPS Release Manifest v2：repository implementation 位于单一 Draft PR，独立验收 pending；不含 activation 或 OPS-3B。
 10. ENV-1B3：干净 Windows VM、无系统 Python、非管理员、中文/空格/长路径、低磁盘、重启、损坏 DLL/manifest、杀毒软件和 APP_ROOT 只读验证。
 11. 形成首个不可变 Windows Release Candidate；Release Candidate 不等于 Production Baseline。
 12. DATA-1：Repository、schema version、migration history、新版本 migration compatibility、数据完整性和数据库回滚基础；不迁移或修复旧生产数据。

@@ -13,6 +13,7 @@ from enterprise.runtime.preflight import StartupPreflightResult, build_startup_p
 from enterprise.runtime.python_identity import PythonIdentity
 from enterprise.runtime.runtime_manifest import STARTUP_CORE_FILES, RuntimeManifestStartupView, StartupCoreFile
 from enterprise.runtime.writable_probe import WritableProbeResult
+from enterprise.tests.release_manifest_v2_fixture import preflight_v2_fields, release_manifest
 
 
 SHA = "a" * 64
@@ -73,6 +74,7 @@ def _build(**overrides: object):
         "release_id": "release-A",
         "path_roots_identity": SHA,
         "current_release_sha256": "b" * 64,
+        "release_manifest": release_manifest(runtime_manifest_sha256="c" * 64),
         "runtime_manifest": _manifest(),
         "python_identity": _identity(),
         "writable_probe_results": _probes(),
@@ -86,7 +88,7 @@ def test_startup_preflight_result_is_immutable_and_canonical() -> None:
     result = _build()
     assert result.identity == result.identity
     decoded = json.loads(result.canonical_json().decode("utf-8"))
-    assert decoded["schema_version"] == "env-1b1c-startup-preflight-v1"
+    assert decoded["schema_version"] == "env-1b1c-startup-preflight-v2"
     assert decoded["app_root_relative"] == "releases/release-A"
     assert set(decoded["writable_roots_verified"]) == {"DATA_ROOT", "LOG_ROOT", "RUNTIME_ROOT", "CACHE_ROOT", "TEMP_ROOT"}
 
@@ -163,6 +165,7 @@ def test_r5_preflight_rejects_noncanonical_python_patch_version(patch: str) -> N
             result="pass", mode="portable-release", release_id="release-A",
             app_root_relative="releases/release-A", path_roots_identity=SHA,
             current_release_sha256="b" * 64, runtime_manifest_sha256="c" * 64,
+            **preflight_v2_fields(),
             python_executable_sha256="d" * 64, python_implementation="CPython",
             python_version=f"3.14.{patch}", python_abi="cp314", architecture="x64",
             bytecode_policy="disabled-no-user-site",
@@ -186,6 +189,7 @@ def test_r6_preflight_schema_is_an_invariant() -> None:
             result="pass", mode="portable-release", release_id="release-A",
             app_root_relative="releases/release-A", path_roots_identity=SHA,
             current_release_sha256="b" * 64, runtime_manifest_sha256="c" * 64,
+            **preflight_v2_fields(),
             python_executable_sha256="d" * 64, python_implementation="CPython",
             python_version="3.14.6", python_abi="cp314", architecture="x64",
             bytecode_policy="disabled-no-user-site",

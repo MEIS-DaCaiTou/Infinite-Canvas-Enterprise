@@ -12,7 +12,7 @@
 
 本任务关闭一个明确 blocker：`main.py` 不再在 import、FastAPI startup 或 HTML 响应阶段按版本和 mtime 改写 `static/*.html`。静态缓存参数改由显式 Release staging builder 生成：本地叶子资源使用实际文件字节的完整小写 SHA-256，CSS 使用传递依赖处理后的 output SHA-256，HTML 引用 HTML 使用统一确定性 build ID；builder 只接受显式 source、全新 output 和 report 路径。
 
-这不等于 APP_ROOT 已只读。历史审计识别出 40 个功能写入流；后续 C1 新增 W41，ENV-1B1C-B1 Draft 新增 W42，ENV-1B2A 新增 W43。只有 static 自修改和新 builder 边界在 ENV-1B1A 内关闭，其余数据、配置、上传、生成结果、启动 migration、legacy update、重启脚本、OPS 默认路径、bytecode 等仍是 ENV-1B1B / ENV-1B1C 或后续阶段 blocker。正式不可变 Release、Release-bound Python 和 Production Baseline 均未形成。
+这不等于 APP_ROOT 已只读。历史审计识别出 40 个功能写入流；后续 C1 新增 W41，ENV-1B1C-B1 Draft 新增 W42，ENV-1B2A 新增 W43，OPS Release Manifest v2 新增 W44。只有 static 自修改和新 builder 边界在 ENV-1B1A 内关闭，其余数据、配置、上传、生成结果、启动 migration、legacy update、重启脚本、OPS 默认路径、bytecode 等仍是 ENV-1B1B / ENV-1B1C 或后续阶段 blocker。正式不可变 Release、Release-bound Python 和 Production Baseline 均未形成。
 
 ## 2. 审计方法和可重复证据
 
@@ -21,10 +21,10 @@
 1. Python AST 检查 write-mode `open` / `Path.open`、`write_text`、`write_bytes`、目录和删除/移动 API、`json.dump`、SQLite、临时文件、图片保存、解压、下载和日志构造。
 2. PowerShell / Batch / JavaScript 受控文本检查 `Out-File`、content cmdlet、文件操作、transcript、下载目标、重定向和浏览器 local storage。
 3. 从入口、caller、路径常量和触发条件追到实际目标；区分磁盘写入、内存序列化、浏览器客户端缓存和只读打开。
-4. `enterprise.release.app_root_audit` 只接收 Git tracked 文件集，排除 test fixture 和浏览器静态页面后，对每个生产写入 site 记录相对文件、qualified symbol、operation 和规范化调用 SHA-256 fingerprint，再映射到 W01-W43。
+4. `enterprise.release.app_root_audit` 只接收 Git tracked 文件集，排除 test fixture 和浏览器静态页面后，对每个生产写入 site 记录相对文件、qualified symbol、operation 和规范化调用 SHA-256 fingerprint，再映射到 W01-W44。
 5. 冻结 manifest digest 覆盖所有 site fingerprint 和 Wxx；在既有 symbol 或脚本中新增、删除或改变写入也会漂移。每个 Wxx 另有必须存在的文件/符号锚点；读取失败、Unicode decode error 和 Python `SyntaxError` 均 fail closed。
 
-原始 ENV-1B1A 扫描的 40 个功能流是历史基线。ENV-1B1C-B1 R3 staged Git tracked 输入为 `scanned=91`、`excluded=249`、`detected=299`、`mapped=299`，历史冻结 digest 为 `464b2eef086b6fea37daf810d3b9f0551de652763f23028df799f8affb81e1ab`。当前 ENV-1B2A correction tracked 输入为 `scanned=97`、`excluded=266`、`detected=322`、`mapped=322`，parse failure、uncovered site、stale mapping、missing anchor 和 invalid flow 均为 0；冻结 site manifest SHA-256 为 `b69cfffca2f40a4f6b39af5b92673efbfede91d8ac3740017fc28914a9c69c71`。C1 新增 W41，将 current-release persistent-state primitive 从 W24 分离；C3 的 workflow 同名上传修复仍归入既有 W12。B1 的 launch-context publish 保持 W26 runtime-control-state 语义，writable-root probe 是独立 W42。ENV-1B2A 的构建器只接受显式 caller-owned 外部 artifact root，其写入统一归入 W43，不是 APP_ROOT 正式运行写入。ENV-1B2P 的 `runtime_provenance._atomic_write_report` 仍归入 W40，不表示 APP_ROOT 路径已迁移。该静态分析是可重复漂移门禁，不能证明绝对不存在动态或未知写入。
+原始 ENV-1B1A 扫描的 40 个功能流是历史基线。ENV-1B1C-B1 R3 staged Git tracked 输入为 `scanned=91`、`excluded=249`、`detected=299`、`mapped=299`，历史冻结 digest 为 `464b2eef086b6fea37daf810d3b9f0551de652763f23028df799f8affb81e1ab`。ENV-1B2A correction tracked 输入为 `scanned=97`、`excluded=266`、`detected=322`、`mapped=322`，冻结 digest 为 `b69cfffca2f40a4f6b39af5b92673efbfede91d8ac3740017fc28914a9c69c71`。当前 OPS Release Manifest v2 候选 tracked 输入为 `scanned=100`、`excluded=267`、`detected=363`、`mapped=363`，parse failure、uncovered site、stale mapping、missing anchor 和 invalid flow 均为 0；冻结 site manifest SHA-256 为 `99a961cc1b3914d67294b23190b281a520381e072b30813e7c5f25ef82e81df4`。C1 新增 W41，将 current-release persistent-state primitive 从 W24 分离；C3 的 workflow 同名上传修复仍归入既有 W12。B1 的 launch-context publish 保持 W26 runtime-control-state 语义，writable-root probe 是独立 W42。ENV-1B2A 的构建器只接受显式 caller-owned 外部 artifact root，其写入统一归入 W43。OPS Release Manifest v2 的 build/materialization 写入统一归入 W44；两者都不是 APP_ROOT 正式运行写入。ENV-1B2P 的 `runtime_provenance._atomic_write_report` 仍归入 W40，不表示 APP_ROOT 路径已迁移。该静态分析是可重复漂移门禁，不能证明绝对不存在动态或未知写入。
 
 ## 3. 写入流清单
 
@@ -75,6 +75,7 @@
 | W41 | `enterprise/release/current_release.py:atomic_write_current_release` | `STATE_ROOT/current-release.json`；否 | test / validation state primitive | strict current-release pointer；是；否 | 当前仅测试/验证调用 | `STATE_ROOT` | C1/C2 已实现状态原语；没有 activation call site | fixed `.new` exclusive create、owned-temp cleanup、atomic replace、replace 后目录同步尝试测试 |
 | W42 | `enterprise/runtime/writable_probe.py:probe_writable_root` | DATA / LOG / RUNTIME / CACHE / TEMP roots 内的短时 probe；否 | future portable preflight | 单次随机 nonce 的 `ice-probe-v1:<nonce>` marker；否；否 | B1 纯 preflight 原语，尚无入口 caller | 目标可变根 | Draft primitive；不探测 APP_ROOT，不接入 controller | exclusive create、fsync、identity + exact-token cleanup、mocked reused-ID foreign replacement 与 reparse fail-closed tests |
 | W43 | `enterprise/release/windows_runtime_build.py:build_runtime` | caller-owned 仓库外 artifact root；否 | ENV-1B2A build CLI | Runtime、wheelhouse、SBOM、attestation、archive 与报告；否；否 | 显式 source/lock/wheelhouse/policy 与输出根 | 仓库外构建根 | build-only；不接入应用启动，不允许 APP_ROOT/证据源重叠 | owned-new-root、reparse/overlap 拒绝、deterministic A/B 与 audit drift gate |
+| W44 | `enterprise/release/release_builder_v2.py:build_release_v2`、`release_manifest_v2.py:materialize_release_fixture` | caller-owned 仓库外全新 build / fixture root；否 | OPS Release Manifest v2 build / fixture materialization | Release payload、detached manifest、inventory、archive 与 fixture；否；否 | 显式 policy、accepted Runtime evidence 与输出根 | 仓库外构建或测试 staging 根 | build/test-only；不接入 activation，不允许 APP_ROOT 原地覆盖 | owned-new-root、闭合 inventory、deterministic A/B、materialized reverify 与 audit drift gate |
 
 ### 3.1 要求覆盖但当前无仓库写入器的项目
 
@@ -162,7 +163,7 @@
 
 - 启动和 HTML response 不再生成 static `v` 参数。
 - static build 在显式 staging 中完成，source 不变且输出/报告确定。
-- 写入 inventory、Git tracked fingerprint manifest、W01-W43 锚点和 fail-closed 漂移测试形成；这仍不是对未知写入绝对不存在的证明。
+- 写入 inventory、Git tracked fingerprint manifest、W01-W44 锚点和 fail-closed 漂移测试形成；这仍不是对未知写入绝对不存在的证明。
 
 ### ENV-1B1B 已合并，ENV-1B1C-B1 当前 Draft PR
 

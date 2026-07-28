@@ -3,7 +3,7 @@
 - 状态：Accepted
 - 决策日期：2026-07-16
 - 事实基线：`main@396cccc68d63bd16393a2cb72d24e4a48fcf47cb`
-- 实施状态：仅决策；Manifest v2、OPS-3B、restore 和 rollback 尚未实现
+- 实施状态：Manifest v2 repository implementation 位于 Draft PR、独立验收 pending；OPS-3B、restore、rollback 和 activation 尚未实现
 
 ## 背景
 

@@ -80,6 +80,10 @@ class SupervisorConfig:
     fixture_child_wrapper: bool = False
     runtime_mode: str = "development"
     release_id: str | None = None
+    release_manifest_sha256: str | None = None
+    release_payload_tree_sha256: str | None = None
+    enterprise_commit: str | None = None
+    enterprise_tree: str | None = None
     runtime_manifest_sha256: str | None = None
     startup_preflight_sha256: str | None = None
     launch_context_identity: str | None = None
@@ -92,6 +96,10 @@ class SupervisorConfig:
             raise ValueError("runtime mode is invalid")
         portable_values = (
             self.release_id,
+            self.release_manifest_sha256,
+            self.release_payload_tree_sha256,
+            self.enterprise_commit,
+            self.enterprise_tree,
             self.runtime_manifest_sha256,
             self.startup_preflight_sha256,
             self.python_executable,
@@ -131,8 +139,13 @@ class SupervisorConfig:
         if not self.launch_context_identity:
             return None
         return {
+            "portable_identity_schema": "env-1b1c-portable-runtime-identity-v2",
             "runtime_mode": self.runtime_mode,
             "release_id": str(self.release_id),
+            "release_manifest_sha256": str(self.release_manifest_sha256),
+            "release_payload_tree_sha256": str(self.release_payload_tree_sha256),
+            "enterprise_commit": str(self.enterprise_commit),
+            "enterprise_tree": str(self.enterprise_tree),
             "runtime_manifest_sha256": str(self.runtime_manifest_sha256),
             "startup_preflight_sha256": str(self.startup_preflight_sha256),
             "launch_context_identity": str(self.launch_context_identity),
