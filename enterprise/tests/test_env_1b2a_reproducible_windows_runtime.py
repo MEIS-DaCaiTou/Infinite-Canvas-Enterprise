@@ -258,6 +258,16 @@ def test_real_bundled_python_fixture_is_explicit_and_external_only() -> None:
     assert "import main" not in harness and "from main" not in harness
 
 
+def test_clean_environment_preserves_windows_architecture_but_not_python_overrides(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("PROCESSOR_ARCHITECTURE", "AMD64")
+    monkeypatch.setenv("PYTHONHOME", "untrusted-home")
+    monkeypatch.setenv("PYTHONPATH", "untrusted-path")
+    environment = build._clean_environment(tmp_path)
+    assert environment["PROCESSOR_ARCHITECTURE"] == "AMD64"
+    assert "PYTHONHOME" not in environment
+    assert "PYTHONPATH" not in environment
+
+
 def test_existing_verifier_accepts_official_root_core_inventory(tmp_path: Path) -> None:
     archive = tmp_path / "official.zip"
     with zipfile.ZipFile(archive, "w") as handle:

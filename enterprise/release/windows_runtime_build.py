@@ -608,7 +608,16 @@ def _clean_environment(runtime: Path) -> dict[str, str]:
         "PIP_DISABLE_PIP_VERSION_CHECK": "1",
         "PIP_NO_CACHE_DIR": "1",
     }
-    for name in ("SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "TEMP", "TMP"):
+    for name in (
+        "SYSTEMROOT",
+        "WINDIR",
+        "COMSPEC",
+        "PATHEXT",
+        "TEMP",
+        "TMP",
+        "PROCESSOR_ARCHITECTURE",
+        "PROCESSOR_ARCHITEW6432",
+    ):
         value = os.environ.get(name)
         if value:
             result[name] = value
