@@ -5,8 +5,9 @@
 ## 状态
 
 - 基线：`main@c5d0a62822bb8b55b25215aa74a9f02653e03fc9`（PR #87 merge）。
-- 当前阶段：`Python_3_14_candidate_implemented_in_PR=true`、`ENV_1B2B_independent_acceptance_pending=true`。
-- 未完成：`ENV_1B2_completed=false`、`clean_Windows_validation=false`、`formal_Release_created=false`、`production_approved=false`。
+- 当前阶段：`ENV_1B2B_repository_implementation_independently_accepted=true`、`Python_3_14_Runtime_candidate_independently_accepted=true`、`new_Python_version_repository_implemented=true`、`ENV_1B2_completed=true`。
+- 测试分类：`full_repository_regression_passed=true`、`full_repository_regression_interpreter=CPython 3.11.9`、`target_CP314_formal_entry_fixture_verified=true`、`target_CP314_full_enterprise_suite_run=false`、`github_ci_verified=false`。
+- 未完成：`ENV_1B3_started=false`、`clean_Windows_validation=false`、`Manifest_v2_implemented=false`、`Release_activation_implemented=false`、`OPS_3B_implemented=false`、`formal_Release_created=false`、`Production_Baseline_approved=false`、`production_approved=false`、`production_validation=false`。
 
 ## Active Runtime 契约
 
@@ -18,7 +19,7 @@
 
 `enterprise/release/windows_runtime_build.py` 继续作为唯一可复现 builder，`enterprise/release/runtime_provenance.py` 继续作为唯一三层 provenance verifier。两者必须交叉验证 active policy、clean Git HEAD/tree、source archive、requirements lock、wheelhouse、Runtime tree、dependency graph、SBOM、attestation 和 archive build record。验证阶段离线执行，不读取系统 site-packages，不修改仓库 `python/`。
 
-最终动态证据保存在仓库外 `review-artifacts/ENV-1B2B`，包括 Build A/B、三层 provenance、真实 formal Windows Batch chain、测试日志和小型 review bundle。该仓库文档不嵌入大型 Runtime、wheel 或 archive，也不把尚待独立审查的动态结果写成合并事实。
+最终动态证据保存在仓库外 `review-artifacts/ENV-1B2B`，包括 Build A/B、三层 provenance、真实 formal Windows Batch chain、测试日志和小型 review bundle。独立审查已确认 repository implementation 与候选 Runtime 证据，没有把 PR 合并、clean Windows、formal Release 或 production validation 写成已完成事实。该仓库文档不嵌入大型 Runtime、wheel 或 archive。
 
 ## 历史与边界
 

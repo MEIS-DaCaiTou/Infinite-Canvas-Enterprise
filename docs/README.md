@@ -3,7 +3,7 @@
 更新时间：2026-07-28
 最后一次代码事实核对基线：`main@c5d0a62822bb8b55b25215aa74a9f02653e03fc9`
 
-当前 repository HEAD：以 GitHub `main` 分支为准；PR #80 至 #84 已分别合并 ENV-1B0、ENV-1B1A、ENV-1B2P、ENV-1B1B 和 ENV-1B1C-B1，PR #86 已合并 ENV-1B1C-B2，PR #87 已合并 ENV-1B2A。ENV-1B2B 当前 Draft 将唯一 active Runtime 迁移到 ordinary-GIL CPython 3.14.6 / cp314；独立验收、完整 ENV-1B2、formal Release 与 production approval 仍未完成。
+当前 repository HEAD：以 GitHub `main` 分支为准；PR #80 至 #84 已分别合并 ENV-1B0、ENV-1B1A、ENV-1B2P、ENV-1B1B 和 ENV-1B1C-B1，PR #86 已合并 ENV-1B1C-B2，PR #87 已合并 ENV-1B2A。ENV-1B2B 的唯一 active Runtime 已迁移到 ordinary-GIL CPython 3.14.6 / cp314，repository implementation 已通过独立代码与证据审查，`ENV_1B2_completed=true`；ENV-1B3、clean Windows、formal Release 与 production approval 仍未完成。
 
 本索引用于避免当前事实、目标架构、历史实施记录和未来规划相互覆盖。新任务应先读取当前事实源，再按任务域读取 ADR 和专项文档。
 
@@ -19,7 +19,7 @@
 | ENV-1B1A 实施与写入审计 | [ENV-1B1A APP_ROOT 写入审计与 Static 构建](./env/ENV-1B1A-APP-ROOT-WRITE-AUDIT-AND-STATIC-BUILD-2026-07.md) | 区分 PR #81 已关闭的 static blocker 与后续未迁移写入 |
 | ENV-1B2P Runtime 来源证据 | [ENV-1B2P Windows Runtime 分层来源证据](./env/ENV-1B2P-WINDOWS-RUNTIME-PROVENANCE-EVIDENCE-2026-07.md) | 独立记录 core / dependency / archive 结论并固定 production approval 为 false |
 | ENV-1B2A 可复现 Runtime | [ENV-1B2A 可复现 Windows Runtime 实施记录](./env/ENV-1B2A-REPRODUCIBLE-WINDOWS-RUNTIME-IMPLEMENTATION-2026-07.md) | 官方 source、哈希锁、闭合 wheelhouse、双 clean build、SBOM、archive 与真实 B2 fixture；仍固定 production approval 为 false |
-| ENV-1B2B Python 3.14 Runtime | [ENV-1B2B Python 3.14 Runtime 实施记录](./env/ENV-1B2B-PYTHON-314-RUNTIME-IMPLEMENTATION-2026-07.md) | 唯一 active policy 迁移到 CPython 3.14.6 / cp314；当前为 Draft implementation，等待独立验收 |
+| ENV-1B2B Python 3.14 Runtime | [ENV-1B2B Python 3.14 Runtime 实施记录](./env/ENV-1B2B-PYTHON-314-RUNTIME-IMPLEMENTATION-2026-07.md) | 唯一 active policy 迁移到 CPython 3.14.6 / cp314；repository implementation 与 Runtime candidate 已独立验收 |
 | ENV-1B1B 路径根与版本指针 | [ENV-1B1B PathRoots 与 Current Release 实施记录](./env/ENV-1B1B-PATH-ROOTS-AND-CURRENT-RELEASE-IMPLEMENTATION-2026-07.md) | 已合并：核心路径迁移和严格 pointer 原语，不等于 activation 或完整只读 APP_ROOT |
 | ENV-1B1C Runtime 入口与自检 | [ENV-1B1C Runtime 入口与自检实施记录](./env/ENV-1B1C-RUNTIME-ENTRYPOINT-SELF-CHECK-IMPLEMENTATION-2026-07.md) | B1 已独立验收；B2 repository implementation 与 D1–D10 实现已通过独立代码审查 |
 | ENV-1B1C-B2 portable lifecycle | [ENV-1B1C-B2 Portable Runtime Lifecycle 实施记录](./env/ENV-1B1C-B2-PORTABLE-RUNTIME-LIFECYCLE-IMPLEMENTATION-2026-07.md) | 固定 launcher、Release identity、STAB-1 integration 与 readiness 的实现和验证边界 |
@@ -52,7 +52,7 @@ ADR 的 `Accepted` 只表示决策冻结，不表示对应能力已经实现或�
 ## 专项参考
 
 - Architecture：[architecture/](./architecture/)
-- ENV：ADR-ENV-001 至 ADR-ENV-005 已由 PR #80 冻结；ENV-1B1A、ENV-1B2P、ENV-1B1B、ENV-1B1C-B1/B2 和 ENV-1B2A 已分别合并。ENV-1B2B 当前 Draft 实施 CPython 3.14.6 / cp314 active Runtime，仍等待独立验收；完整 ENV-1B1C / ENV-1B2 均未完成。
+- ENV：ADR-ENV-001 至 ADR-ENV-005 已由 PR #80 冻结；ENV-1B1A、ENV-1B2P、ENV-1B1B、ENV-1B1C-B1/B2 和 ENV-1B2A 已分别合并。ENV-1B2B 的 CPython 3.14.6 / cp314 repository implementation 已独立验收，`ENV_1B2_completed=true`；ENV-1B3、Manifest v2、activation、formal Release 和 production approval 均未完成。
 - OPS：[ops/](./ops/)
 - Security：[security/](./security/)、[runbooks/](./runbooks/)
 - Upstream：[upstream/](./upstream/)
