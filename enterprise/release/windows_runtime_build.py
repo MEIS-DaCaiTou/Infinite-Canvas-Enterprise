@@ -675,6 +675,7 @@ def _copy_tree_exact(source: Path, target: Path) -> tuple[int, int, str]:
 
 def _fixture_sitecustomize() -> bytes:
     return (
+        "import json\n"
         "import os\n"
         "from pathlib import Path\n"
         "from enterprise.runtime import portable as _portable\n"
@@ -684,6 +685,16 @@ def _fixture_sitecustomize() -> bytes:
         "    base = Path(os.environ['ICE_B2_FIXTURE_LOCAL_BASE'])\n"
         "    return _original_validate(local_app_data_resolver=lambda: base, **kwargs)\n"
         "_portable.validate_portable_process_binding = _fixture_validate\n"
+        "from enterprise.runtime import cli as _runtime_cli\n"
+        "_original_cli_main = _runtime_cli.main\n"
+        "def _fixture_cli_main(argv=None):\n"
+        "    try:\n"
+        "        return _original_cli_main(argv)\n"
+        "    except BaseException as exc:\n"
+        "        diagnostic = Path(os.environ['ICE_B2_FIXTURE_DIAGNOSTIC'])\n"
+        "        diagnostic.write_text(json.dumps({'code':str(getattr(exc,'code',type(exc).__name__))[:64]},sort_keys=True),encoding='utf-8')\n"
+        "        raise\n"
+        "_runtime_cli.main = _fixture_cli_main\n"
     ).encode("utf-8")
 
 
@@ -783,6 +794,7 @@ def verify_b2_fixture(
     )
     _write_new(install_root / "state" / "current-release.json", canonical_current_release_json(current_release))
     sitecustomize = app_root / "sitecustomize.py"
+    host_diagnostic = root / "host-diagnostic.json"
     _write_new(sitecustomize, _fixture_sitecustomize())
     completed: subprocess.CompletedProcess[str] | None = None
     try:
@@ -799,7 +811,10 @@ def verify_b2_fixture(
             ],
             timeout=150,
             cwd=different_cwd,
-            extra_environment={"ICE_B2_FIXTURE_LOCAL_BASE": str(local_base)},
+            extra_environment={
+                "ICE_B2_FIXTURE_DIAGNOSTIC": str(host_diagnostic),
+                "ICE_B2_FIXTURE_LOCAL_BASE": str(local_base),
+            },
         )
     finally:
         try:
@@ -821,6 +836,13 @@ def verify_b2_fixture(
         or lifecycle.get("schema_version") != B2_FIXTURE_REPORT_SCHEMA
     ):
         label = lifecycle.get("error_code", "fixture_failed") if type(lifecycle) is dict else "fixture_failed"
+        if host_diagnostic.is_file() and host_diagnostic.stat().st_size <= 1024:
+            try:
+                diagnostic = json.loads(host_diagnostic.read_text(encoding="utf-8", errors="strict"))
+                if type(diagnostic) is dict and isinstance(diagnostic.get("code"), str):
+                    label = diagnostic["code"]
+            except (OSError, UnicodeError, json.JSONDecodeError):
+                pass
         raise WindowsRuntimeBuildError("B2_FIXTURE_LIFECYCLE_FAILED", str(label)[:64])
     after_records, after_digest, after_size = provenance._tree_inventory(app_root / "python")
     if len(after_records) != runtime_count or after_size != runtime_size or after_digest != runtime_digest:
