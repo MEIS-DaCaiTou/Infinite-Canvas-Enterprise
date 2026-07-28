@@ -103,4 +103,20 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except SystemExit:
+        raise
+    except BaseException as exc:
+        print(
+            json.dumps(
+                {
+                    "error_code": str(getattr(exc, "code", type(exc).__name__))[:64],
+                    "result": "fail",
+                    "schema_version": "env-1b2a-real-bundled-python-lifecycle-v1",
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+        raise SystemExit(2)

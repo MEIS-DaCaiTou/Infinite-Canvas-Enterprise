@@ -799,14 +799,20 @@ def verify_b2_fixture(
             pass
         except OSError as exc:
             raise WindowsRuntimeBuildError("FIXTURE_HOOK_CLEANUP_FAILED") from exc
-    if completed is None or completed.returncode != 0 or len(completed.stdout.encode("utf-8")) > 64 * 1024:
+    if completed is None or len(completed.stdout.encode("utf-8")) > 64 * 1024:
         raise WindowsRuntimeBuildError("B2_FIXTURE_LIFECYCLE_FAILED")
     try:
         lifecycle = json.loads(completed.stdout)
     except json.JSONDecodeError as exc:
         raise WindowsRuntimeBuildError("B2_FIXTURE_REPORT_INVALID") from exc
-    if type(lifecycle) is not dict or lifecycle.get("result") != "pass" or lifecycle.get("schema_version") != B2_FIXTURE_REPORT_SCHEMA:
-        raise WindowsRuntimeBuildError("B2_FIXTURE_LIFECYCLE_FAILED")
+    if (
+        completed.returncode != 0
+        or type(lifecycle) is not dict
+        or lifecycle.get("result") != "pass"
+        or lifecycle.get("schema_version") != B2_FIXTURE_REPORT_SCHEMA
+    ):
+        label = lifecycle.get("error_code", "fixture_failed") if type(lifecycle) is dict else "fixture_failed"
+        raise WindowsRuntimeBuildError("B2_FIXTURE_LIFECYCLE_FAILED", str(label)[:64])
     after_records, after_digest, after_size = provenance._tree_inventory(app_root / "python")
     if len(after_records) != runtime_count or after_size != runtime_size or after_digest != runtime_digest:
         raise WindowsRuntimeBuildError("B2_FIXTURE_RUNTIME_CHANGED")
