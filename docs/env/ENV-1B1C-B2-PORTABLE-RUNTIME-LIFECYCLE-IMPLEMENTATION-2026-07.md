@@ -96,3 +96,21 @@ correction 候选的聚焦证据：B2 三文件 `39 passed`；B1 launch-context/
 `57 passed`；STAB-1 lifecycle `19 passed`。初始 Head 的 `498 passed, 5 skipped, 8 warnings` 仍只属于
 初始实现证据；新 correction 候选的 final enterprise suite 仅运行一次，结果为
 `518 passed, 5 skipped, 8 warnings`，exit `0`，耗时 `249.21s`。`github_ci_verified=false`。
+
+## PR #86 最终 Python isolation correction
+
+parent Head `3d6b257b0c4d333175af034942c04d7631834fe8` 的集中修正已关闭前三项 Blocker，其 final
+enterprise suite 证据为 `518 passed, 5 skipped, 8 warnings`。最后一项 launcher 自身门禁在任何环境清理、
+Release layout / current-release 读取和 enterprise import 前，要求以下五项同时成立：
+
+- `sys.flags.isolated == 1`；
+- `sys.flags.ignore_environment == 1`；
+- `sys.flags.no_user_site == 1`；
+- `sys.flags.dont_write_bytecode == 1`；
+- `sys.dont_write_bytecode is True`。
+
+缺少 `-I` 或 `-B` 时只输出稳定单行 `PORTABLE_PYTHON_ISOLATION_REQUIRED` JSON 并以 `2` 退出。
+`python -I -B` 通过 isolation gate 后才到达既有 Release layout 分类。最终 launcher/wrapper、B2 portable
+与 error-contract focused 组合为 `52 passed`，exit `0`；`compileall`、diff check 和安全扫描另行执行。
+本 correction 未重复 enterprise full suite；PR 历史 full-suite 总运行次数保持 `2`。未启动真实 Runtime，
+未访问生产或临时业务测试设备，`github_ci_verified=false`。

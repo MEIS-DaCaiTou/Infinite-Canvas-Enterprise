@@ -55,6 +55,7 @@ def test_error_payload_is_canonical_and_redacted() -> None:
 
 def test_unknown_error_code_is_rejected() -> None:
     assert "RUNTIME_MODE_REQUIRED" in ERROR_REGISTRY
+    assert "PORTABLE_PYTHON_ISOLATION_REQUIRED" in ERROR_REGISTRY
     with pytest.raises(ValueError):
         error_payload("NOT_A_REAL_CODE")
 

@@ -50,9 +50,12 @@ def test_formal_launcher_grammar_has_no_operator_trust_overrides(capsys: pytest.
 
 def test_launcher_source_imports_enterprise_only_after_bootstrap_identity() -> None:
     source = (ROOT / "enterprise" / "runtime" / "launcher.py").read_text(encoding="utf-8")
-    bootstrap_call = source.index("app_root = _bootstrap_identity")
-    enterprise_import = source.index("from enterprise.runtime.portable import")
-    assert bootstrap_call < enterprise_import
+    main_body = source[source.index("def main("):]
+    isolation_gate = main_body.index("if not _python_isolation_ready():")
+    environment_sanitization = main_body.index("_sanitize_python_environment()")
+    bootstrap_call = main_body.index("app_root = _bootstrap_identity")
+    enterprise_import = main_body.index("from enterprise.runtime.portable import")
+    assert isolation_gate < environment_sanitization < bootstrap_call < enterprise_import
     assert "subprocess" not in source
     assert "shell=True" not in source
 
@@ -94,18 +97,24 @@ def test_cmd_wrapper_from_unicode_space_path_has_exact_missing_python_result(
     assert completed.stdout.splitlines() == ['{"code":"PORTABLE_PYTHON_MISSING","status":"blocked"}']
 
 
-def test_direct_launcher_isolation_is_independent_of_cwd_and_python_environment(tmp_path: Path) -> None:
+def _run_direct_launcher(
+    tmp_path: Path,
+    flags: tuple[str, ...],
+    *,
+    polluted_environment: bool = False,
+) -> subprocess.CompletedProcess[str]:
     different_cwd = tmp_path / "污染 cwd"
-    different_cwd.mkdir()
+    different_cwd.mkdir(exist_ok=True)
     environment = dict(os.environ)
-    environment.update(
-        {
-            "PYTHONHOME": str(tmp_path / "forged home"),
-            "PYTHONPATH": str(tmp_path / "forged path"),
-        }
-    )
-    completed = subprocess.run(
-        [sys.executable, "-I", "-B", str(ROOT / "enterprise" / "runtime" / "launcher.py"), "portable", "status"],
+    if polluted_environment:
+        environment.update(
+            {
+                "PYTHONHOME": str(tmp_path / "forged home"),
+                "PYTHONPATH": str(tmp_path / "forged path"),
+            }
+        )
+    return subprocess.run(
+        [sys.executable, *flags, str(ROOT / "enterprise" / "runtime" / "launcher.py"), "portable", "status"],
         cwd=different_cwd,
         env=environment,
         capture_output=True,
@@ -116,6 +125,25 @@ def test_direct_launcher_isolation_is_independent_of_cwd_and_python_environment(
         shell=False,
         check=False,
     )
+
+
+@pytest.mark.parametrize("flags", [("-s", "-B"), ("-I",)])
+def test_direct_launcher_requires_complete_python_isolation_flags(
+    tmp_path: Path,
+    flags: tuple[str, ...],
+) -> None:
+    completed = _run_direct_launcher(tmp_path, flags)
+    assert completed.returncode == 2
+    assert completed.stderr == ""
+    assert completed.stdout.splitlines() == [
+        '{"code":"PORTABLE_PYTHON_ISOLATION_REQUIRED","status":"blocked"}'
+    ]
+
+
+def test_direct_launcher_complete_isolation_precedes_release_layout(
+    tmp_path: Path,
+) -> None:
+    completed = _run_direct_launcher(tmp_path, ("-I", "-B"), polluted_environment=True)
     assert completed.returncode == 2
     assert completed.stderr == ""
     payload = json.loads(completed.stdout)

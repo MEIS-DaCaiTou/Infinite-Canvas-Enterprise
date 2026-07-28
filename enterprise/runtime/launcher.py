@@ -44,6 +44,16 @@ def _same_path(left: Path, right: Path) -> bool:
     )
 
 
+def _python_isolation_ready() -> bool:
+    return (
+        sys.flags.isolated == 1
+        and sys.flags.ignore_environment == 1
+        and sys.flags.no_user_site == 1
+        and sys.flags.dont_write_bytecode == 1
+        and sys.dont_write_bytecode is True
+    )
+
+
 def _sanitize_python_environment() -> None:
     os.environ.pop("PYTHONHOME", None)
     os.environ.pop("PYTHONPATH", None)
@@ -86,6 +96,8 @@ def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
     if len(arguments) != 2 or arguments[0] != "portable" or arguments[1] not in _COMMANDS:
         return _blocked("RUNTIME_MODE_INVALID")
+    if not _python_isolation_ready():
+        return _blocked("PORTABLE_PYTHON_ISOLATION_REQUIRED")
     _sanitize_python_environment()
     try:
         app_root = _bootstrap_identity(Path(__file__))

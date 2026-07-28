@@ -106,6 +106,7 @@ _DEFINITIONS: tuple[ErrorDefinition, ...] = (
     ErrorDefinition("RUNTIME_OWNERSHIP_UNTRUSTED", "release_mismatch", "running instance ownership is untrusted"),
     ErrorDefinition("READINESS_RELEASE_MISMATCH", "readiness", "running release does not match current release"),
     ErrorDefinition("PORTABLE_BOOTSTRAP_INVALID", "portable", "portable bootstrap identity is invalid"),
+    ErrorDefinition("PORTABLE_PYTHON_ISOLATION_REQUIRED", "portable", "portable Python isolation flags are required"),
     ErrorDefinition("PORTABLE_PLATFORM_UNSUPPORTED", "portable", "portable platform is not supported"),
     ErrorDefinition("PORTABLE_PYTHON_MISSING", "portable", "portable Release Python is missing"),
     ErrorDefinition("PORTABLE_LOCALAPPDATA_UNAVAILABLE", "portable", "portable local application data root is unavailable"),
