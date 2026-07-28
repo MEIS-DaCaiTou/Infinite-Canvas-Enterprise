@@ -3,7 +3,7 @@
 The scanner is deliberately a conservative maintenance control, not a proof
 that static analysis can discover every possible write. It combines Python AST
 inspection, focused script inspection, stable call fingerprints, frozen
-operation counts, and W01-W42 flow anchors.
+operation counts, and W01-W43 flow anchors.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Iterable, Sequence
 
 
-_FLOW_IDS = frozenset(f"W{number:02d}" for number in range(1, 43))
+_FLOW_IDS = frozenset(f"W{number:02d}" for number in range(1, 44))
 _SCANNED_SUFFIXES = frozenset({".bat", ".cmd", ".js", ".ps1", ".py"})
 _EXCLUDED_PREFIXES = ("enterprise/tests/", "enterprise-static/", "static/")
 _PATH_METHODS = frozenset(
@@ -563,6 +563,11 @@ _SCRIPT_FLOW_BY_FILE = {
 def _flow_for_operation(file: str, symbol: str) -> str:
     if file == "main.py":
         return _MAIN_FLOW_BY_SYMBOL[symbol]
+    if file == "enterprise/release/windows_runtime_build.py":
+        # ENV-1B2A writes exclusively beneath caller-owned external artifact
+        # roots; keep the build pipeline distinct from APP_ROOT release-state
+        # and static-staging primitives.
+        return "W43"
     if symbol == "<script>":
         return _SCRIPT_FLOW_BY_FILE[file]
     return _OTHER_FLOW_BY_SYMBOL[(file, symbol)]
@@ -572,7 +577,7 @@ def _flow_for_operation(file: str, symbol: str) -> str:
 # every mapped site as (file, symbol, operation, normalized-call fingerprint,
 # Wxx flow). Line numbers are deliberately excluded, while duplicate identical
 # calls remain duplicate records. Any added/removed/changed call drifts it.
-EXPECTED_SITE_MANIFEST_DIGEST = "464b2eef086b6fea37daf810d3b9f0551de652763f23028df799f8affb81e1ab"
+EXPECTED_SITE_MANIFEST_DIGEST = "e81201364d49abeb3b2b40bb92c839dc33dc37ad502bca9be3887a45b4c548d6"
 
 FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W01", "main.py", "startup_event"),
@@ -617,6 +622,7 @@ FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W40", "enterprise/release/static_build.py", "build_static_tree"),
     FlowAnchor("W41", "enterprise/release/current_release.py", "atomic_write_current_release"),
     FlowAnchor("W42", "enterprise/runtime/writable_probe.py", "probe_writable_root"),
+    FlowAnchor("W43", "enterprise/release/windows_runtime_build.py", "build_runtime"),
 )
 
 
