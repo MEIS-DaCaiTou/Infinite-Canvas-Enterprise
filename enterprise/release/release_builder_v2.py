@@ -253,8 +253,9 @@ def _config_contract() -> bytes:
 
 
 def _database_snapshot(repo: Path, destination: Path) -> bytes:
-    script = r'''import json, os, sqlite3
+    script = r'''import json, os, sqlite3, sys
 from pathlib import Path
+sys.path.insert(0, os.environ["ICE_REPO_ROOT"])
 from enterprise.paths import derive_development_path_roots, resolve_database_path
 import enterprise.config as config
 import enterprise.db as db
@@ -306,6 +307,7 @@ def build_release_v2(*, repo: Path, output_root: Path, runtime_root: Path, runti
     if policy.get("schema_version") != POLICY_SCHEMA: raise ReleaseManifestV2Error("RELEASE_PAYLOAD_POLICY_INVALID")
     runtime_values, runtime_summary = _runtime_values(repo, runtime_root, runtime_evidence_root)
     output_root.mkdir(parents=True, exist_ok=False)
+    completed = False
     source_export = output_root / ".source-export"; payload = output_root / ".payload"; source_export.mkdir(); payload.mkdir()
     try:
         _extract_git_tree(repo, commit, source_export)
@@ -360,6 +362,9 @@ def build_release_v2(*, repo: Path, output_root: Path, runtime_root: Path, runti
         verification = verify_release_manifest_v2(manifest_path, archive_path, inventory_path, expected_enterprise_commit=commit, expected_enterprise_tree=tree)
         report = {"archive": archive_path.name, "builder_version": BUILDER_VERSION, "enterprise_commit": commit, "enterprise_tree": tree, "manifest": manifest_path.name, "payload_policy_sha256": sha256_bytes(policy_bytes), "release_id": release_id, "result": "pass", "runtime_rebuilt": False, "runtime_summary": runtime_summary, "verification": verification.as_dict()}
         (output_root / "build-report.json").write_bytes(canonical_json(report))
+        completed = True
         return report
     finally:
         shutil.rmtree(source_export, ignore_errors=True); shutil.rmtree(payload, ignore_errors=True)
+        if not completed:
+            shutil.rmtree(output_root, ignore_errors=True)
