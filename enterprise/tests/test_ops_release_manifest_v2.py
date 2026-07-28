@@ -395,6 +395,18 @@ def test_materialize_refuses_existing_destination(tmp_path: Path) -> None:
         materialize_release_fixture(manifest, archive, inventory, destination)
 
 
+def test_release_payload_policy_includes_every_formal_wrapper() -> None:
+    root = Path(__file__).parents[2]
+    payload = json.loads((root / "release" / "windows" / "release-payload-policy.json").read_text(encoding="utf-8"))
+    assert {
+        "启动企业版.bat",
+        "停止企业版.bat",
+        "重启企业版.bat",
+        "查看企业版状态.bat",
+        "企业版健康检查.bat",
+    }.issubset(payload["included_root_files"])
+
+
 def test_release_id_is_fixed_by_version_and_commit() -> None:
     assert derive_release_id("2026.07.6", SHA1) == "ice-2026.07.6-aaaaaaaaaaaa"
     with pytest.raises(ReleaseManifestV2Error):
