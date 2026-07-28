@@ -42,6 +42,7 @@ def _add_inputs(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--wheelhouse", required=True, type=_path)
     parser.add_argument("--bootstrap-wheelhouse", required=True, type=_path)
     parser.add_argument("--enterprise-commit", required=True)
+    parser.add_argument("--enterprise-worktree", required=True, type=_path)
 
 
 def _inputs(args: argparse.Namespace) -> BuildInputs:
@@ -54,6 +55,7 @@ def _inputs(args: argparse.Namespace) -> BuildInputs:
         wheelhouse=args.wheelhouse,
         bootstrap_wheelhouse=args.bootstrap_wheelhouse,
         enterprise_commit=args.enterprise_commit,
+        enterprise_worktree=args.enterprise_worktree,
     )
 
 
@@ -87,12 +89,15 @@ def _parser() -> argparse.ArgumentParser:
     all_command.add_argument("--seed-wheelhouse", required=True, type=_path)
     all_command.add_argument("--seed-bootstrap-wheelhouse", required=True, type=_path)
     all_command.add_argument("--enterprise-commit", required=True)
+    all_command.add_argument("--enterprise-worktree", required=True, type=_path)
     all_command.add_argument("--output", required=True, type=_path)
 
     fixture = commands.add_parser("verify-b2-fixture")
     fixture.add_argument("--runtime", required=True, type=_path)
     fixture.add_argument("--runtime-manifest", required=True, type=_path)
     fixture.add_argument("--app-source-archive", required=True, type=_path)
+    fixture.add_argument("--enterprise-commit", required=True)
+    fixture.add_argument("--enterprise-worktree", required=True, type=_path)
     fixture.add_argument("--output", required=True, type=_path)
     return parser
 
@@ -164,6 +169,7 @@ def main(argv: list[str] | None = None) -> int:
                 wheelhouse=wheelhouse,
                 bootstrap_wheelhouse=bootstrap,
                 enterprise_commit=args.enterprise_commit,
+                enterprise_worktree=args.enterprise_worktree,
             )
             first = build_runtime(inputs, root / "build-A")
             build_archive(inputs, first)
@@ -182,6 +188,8 @@ def main(argv: list[str] | None = None) -> int:
                 runtime=args.runtime,
                 runtime_manifest=args.runtime_manifest,
                 app_source_archive=args.app_source_archive,
+                enterprise_commit=args.enterprise_commit,
+                enterprise_worktree=args.enterprise_worktree,
                 output=args.output,
             )
             _result(

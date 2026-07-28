@@ -33,6 +33,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--archive", type=Path)
     parser.add_argument("--archive-build-record", type=Path)
     parser.add_argument("--source-runtime-archive", type=Path)
+    parser.add_argument("--python-source-policy", type=Path)
+    parser.add_argument("--enterprise-worktree", type=Path)
     parser.add_argument("--external-validation-report", type=Path)
     parser.add_argument("--upstream-core-archive", type=Path)
     parser.add_argument("--enterprise-commit", required=True)
@@ -62,10 +64,11 @@ def main(argv: list[str] | None = None) -> int:
                 args.archive,
                 args.archive_build_record,
                 args.source_runtime_archive,
+                args.python_source_policy,
                 args.external_validation_report,
                 args.upstream_core_archive,
             ),
-            input_directories=(args.core_runtime_root, args.wheelhouse),
+            input_directories=(args.core_runtime_root, args.wheelhouse, args.enterprise_worktree),
         )
     except ProvenanceVerificationError as exc:
         print(f"runtime provenance verification failed [{exc.code}]", file=sys.stderr)
@@ -82,6 +85,8 @@ def main(argv: list[str] | None = None) -> int:
             archive=args.archive,
             archive_build_record=args.archive_build_record,
             source_runtime_archive=args.source_runtime_archive,
+            python_source_policy=args.python_source_policy,
+            enterprise_worktree=args.enterprise_worktree,
             external_validation_report=args.external_validation_report,
             upstream_core_archive=args.upstream_core_archive,
             enterprise_commit=args.enterprise_commit,

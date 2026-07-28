@@ -15,8 +15,10 @@ import json
 import os
 import re
 import shutil
+import socket
 import stat
 import subprocess
+import time
 import zipfile
 from dataclasses import dataclass
 from email.parser import BytesParser
@@ -33,7 +35,7 @@ from enterprise.release.current_release import (
 )
 
 
-BUILD_TOOL_VERSION = "env-1b2a-windows-runtime-builder-v1"
+BUILD_TOOL_VERSION = "env-1b2a-windows-runtime-builder-v2"
 PYTHON_SOURCE_SCHEMA = "env-1b2a-python-source-v1"
 WHEELHOUSE_LOCK_SCHEMA = provenance.WHEELHOUSE_MANIFEST_SCHEMA
 BUILD_POLICY_SCHEMA = "env-1b2a-runtime-build-policy-v1"
@@ -91,6 +93,7 @@ class BuildInputs:
     wheelhouse: Path
     bootstrap_wheelhouse: Path
     enterprise_commit: str
+    enterprise_worktree: Path
 
 
 @dataclass(frozen=True)
@@ -407,7 +410,9 @@ def load_build_policy(path: Path | str) -> dict[str, Any]:
     return payload
 
 
-def validate_inputs(inputs: BuildInputs) -> tuple[dict[str, Any], dict[str, Any], dict[str, LockedWheel], dict[str, Any]]:
+def validate_inputs(
+    inputs: BuildInputs,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, LockedWheel], dict[str, Any], dict[str, str]]:
     source = load_source_policy(inputs.source_policy)
     wheel_payload, wheels = load_wheelhouse_lock(inputs.wheelhouse_lock)
     lock = parse_requirements_lock(inputs.requirements_lock)
@@ -421,11 +426,20 @@ def validate_inputs(inputs: BuildInputs) -> tuple[dict[str, Any], dict[str, Any]
         raise WindowsRuntimeBuildError("LOCK_WHEELHOUSE_CLOSURE_INVALID")
     if not re.fullmatch(r"[0-9a-f]{40}", inputs.enterprise_commit):
         raise WindowsRuntimeBuildError("ENTERPRISE_COMMIT_INVALID")
+    try:
+        enterprise_identity = provenance._git_worktree_identity(
+            Path(inputs.enterprise_worktree), inputs.enterprise_commit
+        )
+        provenance._git_tracked_file_sha256(
+            Path(inputs.enterprise_worktree), Path(inputs.source_policy), inputs.enterprise_commit
+        )
+    except provenance.ProvenanceVerificationError as exc:
+        raise WindowsRuntimeBuildError("ENTERPRISE_WORKTREE_IDENTITY_INVALID", exc.code) from exc
     _input_directory(inputs.wheelhouse, "wheelhouse")
     _input_directory(inputs.bootstrap_wheelhouse, "bootstrap_wheelhouse")
     _verify_wheel_files(inputs.wheelhouse, wheels)
     _verify_bootstrap_files(inputs.bootstrap_wheelhouse, policy)
-    return source, wheel_payload, wheels, policy
+    return source, wheel_payload, wheels, policy, enterprise_identity
 
 
 def _verify_source_inventory(path: Path, policy: Mapping[str, Any]) -> None:
@@ -678,31 +692,63 @@ def _copy_tree_exact(source: Path, target: Path) -> tuple[int, int, str]:
 
 def _fixture_sitecustomize() -> bytes:
     return (
+        "import builtins\n"
+        "import dataclasses\n"
         "import json\n"
         "import os\n"
         "import re\n"
+        "import sys\n"
         "import traceback\n"
         "from pathlib import Path\n"
-        "from enterprise.runtime import portable as _portable\n"
-        "_original_validate = _portable.validate_portable_process_binding\n"
-        "def _fixture_validate(**kwargs):\n"
-        "    kwargs.pop('local_app_data_resolver', None)\n"
-        "    base = Path(os.environ['ICE_B2_FIXTURE_LOCAL_BASE'])\n"
-        "    return _original_validate(local_app_data_resolver=lambda: base, **kwargs)\n"
-        "_portable.validate_portable_process_binding = _fixture_validate\n"
-        "from enterprise.runtime import cli as _runtime_cli\n"
-        "_original_cli_main = _runtime_cli.main\n"
-        "def _fixture_cli_main(argv=None):\n"
-        "    try:\n"
-        "        return _original_cli_main(argv)\n"
-        "    except BaseException as exc:\n"
-        "        diagnostic = Path(os.environ['ICE_B2_FIXTURE_DIAGNOSTIC'])\n"
-        "        message = str(exc)\n"
-        "        safe_message = message[:96] if re.fullmatch(r'[A-Za-z0-9 _.-]{1,96}', message) else 'redacted'\n"
-        "        frames = [{'function':item.name,'line':item.lineno} for item in traceback.extract_tb(exc.__traceback__)[-4:]]\n"
-        "        diagnostic.write_text(json.dumps({'code':str(getattr(exc,'code',type(exc).__name__))[:64],'message':safe_message,'frames':frames},sort_keys=True),encoding='utf-8')\n"
-        "        raise\n"
-        "_runtime_cli.main = _fixture_cli_main\n"
+        "_original_import = builtins.__import__\n"
+        "_patched = set()\n"
+        "def _patch_loaded_modules():\n"
+        "    portable = sys.modules.get('enterprise.runtime.portable')\n"
+        "    if portable is not None and hasattr(portable, 'build_portable_preflight') and 'portable' not in _patched:\n"
+        "        original_preflight = portable.build_portable_preflight\n"
+        "        original_validate = portable.validate_portable_process_binding\n"
+        "        def fixture_preflight(app_root, **kwargs):\n"
+        "            kwargs['local_app_data_resolver'] = lambda: Path(os.environ['ICE_B2_FIXTURE_LOCAL_BASE'])\n"
+        "            return original_preflight(app_root, **kwargs)\n"
+        "        def fixture_validate(**kwargs):\n"
+        "            kwargs['local_app_data_resolver'] = lambda: Path(os.environ['ICE_B2_FIXTURE_LOCAL_BASE'])\n"
+        "            return original_validate(**kwargs)\n"
+        "        portable.build_portable_preflight = fixture_preflight\n"
+        "        portable.validate_portable_process_binding = fixture_validate\n"
+        "        _patched.add('portable')\n"
+        "    config = sys.modules.get('enterprise.config')\n"
+        "    if config is not None and hasattr(config, 'GATEWAY_PORT') and hasattr(config, 'UPSTREAM_PORT') and 'config' not in _patched:\n"
+        "        config.UPSTREAM_PORT = int(os.environ['ICE_B2_FIXTURE_UPSTREAM_PORT'])\n"
+        "        config.GATEWAY_PORT = int(os.environ['ICE_B2_FIXTURE_GATEWAY_PORT'])\n"
+        "        _patched.add('config')\n"
+        "    control = sys.modules.get('enterprise.runtime.control')\n"
+        "    if control is not None and hasattr(control, 'RuntimeController') and 'control' not in _patched:\n"
+        "        original_controller = control.RuntimeController\n"
+        "        class FixtureController(original_controller):\n"
+        "            def __init__(self, config):\n"
+        "                super().__init__(dataclasses.replace(config, fixture_child_wrapper=True))\n"
+        "        control.RuntimeController = FixtureController\n"
+        "        _patched.add('control')\n"
+        "    runtime_cli = sys.modules.get('enterprise.runtime.cli')\n"
+        "    if runtime_cli is not None and hasattr(runtime_cli, 'main') and 'cli' not in _patched:\n"
+        "        original_cli_main = runtime_cli.main\n"
+        "        def fixture_cli_main(argv=None):\n"
+        "            try:\n"
+        "                return original_cli_main(argv)\n"
+        "            except BaseException as exc:\n"
+        "                diagnostic = Path(os.environ['ICE_B2_FIXTURE_DIAGNOSTIC'])\n"
+        "                message = str(exc)\n"
+        "                safe_message = message[:96] if re.fullmatch(r'[A-Za-z0-9 _.-]{1,96}', message) else 'redacted'\n"
+        "                frames = [{'function':item.name,'line':item.lineno} for item in traceback.extract_tb(exc.__traceback__)[-4:]]\n"
+        "                diagnostic.write_text(json.dumps({'code':str(getattr(exc,'code',type(exc).__name__))[:64],'message':safe_message,'frames':frames},sort_keys=True),encoding='utf-8')\n"
+        "                raise\n"
+        "        runtime_cli.main = fixture_cli_main\n"
+        "        _patched.add('cli')\n"
+        "def _fixture_import(name, globals=None, locals=None, fromlist=(), level=0):\n"
+        "    module = _original_import(name, globals, locals, fromlist, level)\n"
+        "    _patch_loaded_modules()\n"
+        "    return module\n"
+        "builtins.__import__ = _fixture_import\n"
     ).encode("utf-8")
 
 
@@ -748,11 +794,104 @@ def _run_wrapper_bootstrap_fixture(app_root: Path, different_cwd: Path) -> dict[
     }
 
 
+def _fixture_free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as handle:
+        handle.bind(("127.0.0.1", 0))
+        return int(handle.getsockname()[1])
+
+
+def _port_is_listening(port: int) -> bool:
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.25):
+            return True
+    except OSError:
+        return False
+
+
+def _run_formal_wrapper(
+    app_root: Path,
+    different_cwd: Path,
+    wrapper_name: str,
+    environment: Mapping[str, str],
+) -> tuple[int, dict[str, object]]:
+    wrapper = app_root / wrapper_name
+    comspec = os.environ.get("COMSPEC")
+    if os.name != "nt" or not comspec or not wrapper.is_file():
+        raise WindowsRuntimeBuildError("FIXTURE_WRAPPER_MISSING", wrapper_name)
+    try:
+        completed = subprocess.run(
+            [comspec, "/d", "/s", "/c", str(wrapper)],
+            cwd=str(different_cwd),
+            env=dict(environment),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="strict",
+            timeout=120,
+            check=False,
+            shell=False,
+        )
+    except (OSError, UnicodeError, subprocess.TimeoutExpired) as exc:
+        raise WindowsRuntimeBuildError("FIXTURE_WRAPPER_EXECUTION_FAILED", wrapper_name) from exc
+    if len(completed.stdout.encode("utf-8")) > 1024 * 1024:
+        raise WindowsRuntimeBuildError("FIXTURE_WRAPPER_OUTPUT_INVALID", wrapper_name)
+    lines = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
+    try:
+        payload = json.loads(lines[-1]) if lines else None
+    except json.JSONDecodeError as exc:
+        raise WindowsRuntimeBuildError("FIXTURE_WRAPPER_OUTPUT_INVALID", wrapper_name) from exc
+    if type(payload) is not dict:
+        raise WindowsRuntimeBuildError("FIXTURE_WRAPPER_OUTPUT_INVALID", wrapper_name)
+    return completed.returncode, payload
+
+
+def _verify_app_source_archive(
+    *, enterprise_worktree: Path, enterprise_commit: str, source_archive: Path, scratch_root: Path
+) -> dict[str, str]:
+    try:
+        identity = provenance._git_worktree_identity(enterprise_worktree, enterprise_commit)
+    except provenance.ProvenanceVerificationError as exc:
+        raise WindowsRuntimeBuildError("FIXTURE_ENTERPRISE_IDENTITY_INVALID", exc.code) from exc
+    expected = scratch_root / "expected-app-source.zip"
+    try:
+        completed = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(enterprise_worktree),
+                "archive",
+                "--format=zip",
+                "--output",
+                str(expected),
+                enterprise_commit,
+            ],
+            capture_output=True,
+            timeout=60,
+            check=False,
+            shell=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise WindowsRuntimeBuildError("FIXTURE_APP_SOURCE_BINDING_FAILED") from exc
+    if completed.returncode != 0 or not expected.is_file():
+        raise WindowsRuntimeBuildError("FIXTURE_APP_SOURCE_BINDING_FAILED")
+    try:
+        if sha256_file(expected) != sha256_file(source_archive) or expected.stat().st_size != source_archive.stat().st_size:
+            raise WindowsRuntimeBuildError("FIXTURE_APP_SOURCE_COMMIT_MISMATCH")
+    finally:
+        try:
+            expected.unlink()
+        except FileNotFoundError:
+            pass
+    return identity
+
+
 def verify_b2_fixture(
     *,
     runtime: Path,
     runtime_manifest: Path,
     app_source_archive: Path,
+    enterprise_commit: str,
+    enterprise_worktree: Path,
     output: Path,
 ) -> dict[str, object]:
     """Exercise the B2 lifecycle with the real built Runtime and fixture children.
@@ -774,6 +913,12 @@ def verify_b2_fixture(
     app_root.mkdir(parents=True)
     local_base.mkdir()
     different_cwd.mkdir()
+    enterprise_identity = _verify_app_source_archive(
+        enterprise_worktree=_input_directory(enterprise_worktree, "enterprise_worktree"),
+        enterprise_commit=enterprise_commit,
+        source_archive=source_archive,
+        scratch_root=root,
+    )
     _extract_zip(source_archive, app_root)
     runtime_count, runtime_size, runtime_digest = _copy_tree_exact(runtime, app_root / "python")
     _copy_new(manifest, app_root / "runtime-manifest.json")
@@ -804,59 +949,98 @@ def verify_b2_fixture(
     sitecustomize = app_root / "sitecustomize.py"
     host_diagnostic = root / "host-diagnostic.json"
     _write_new(sitecustomize, _fixture_sitecustomize())
-    completed: subprocess.CompletedProcess[str] | None = None
+    upstream_port = _fixture_free_port()
+    gateway_port = _fixture_free_port()
+    while gateway_port == upstream_port:
+        gateway_port = _fixture_free_port()
+    environment = _clean_environment(app_root / "python")
+    environment.update(
+        {
+            "ICE_B2_FIXTURE_DIAGNOSTIC": str(host_diagnostic),
+            "ICE_B2_FIXTURE_GATEWAY_PORT": str(gateway_port),
+            "ICE_B2_FIXTURE_LOCAL_BASE": str(local_base),
+            "ICE_B2_FIXTURE_UPSTREAM_PORT": str(upstream_port),
+            "PYTHONHOME": str(different_cwd / "polluted-home"),
+            "PYTHONPATH": str(different_cwd / "polluted-path"),
+        }
+    )
+    command_results: dict[str, dict[str, object]] = {}
+    stop_completed = False
     try:
-        completed = _run_fixed_python(
-            app_root / "python",
-            [
-                "-I",
-                "-B",
-                str(app_root / "enterprise" / "tests" / "runtime_fixture_portable_harness.py"),
-                "--app-root",
-                str(app_root),
-                "--local-base",
-                str(local_base),
-            ],
-            timeout=150,
-            cwd=different_cwd,
-            extra_environment={
-                "ICE_B2_FIXTURE_DIAGNOSTIC": str(host_diagnostic),
-                "ICE_B2_FIXTURE_LOCAL_BASE": str(local_base),
-            },
-        )
+        for command, wrapper_name in (
+            ("start", "启动企业版.bat"),
+            ("status", "查看企业版状态.bat"),
+            ("health", "企业版健康检查.bat"),
+            ("stop", "停止企业版.bat"),
+        ):
+            exit_code, payload = _run_formal_wrapper(app_root, different_cwd, wrapper_name, environment)
+            command_results[command] = {"exit_code": exit_code, "payload": payload}
+            if exit_code != 0:
+                raise WindowsRuntimeBuildError("B2_FIXTURE_FORMAL_COMMAND_FAILED", command)
+            if command == "stop":
+                stop_completed = True
     finally:
+        if "start" in command_results and not stop_completed:
+            try:
+                _run_formal_wrapper(app_root, different_cwd, "停止企业版.bat", environment)
+            except WindowsRuntimeBuildError:
+                pass
         try:
             sitecustomize.unlink()
         except FileNotFoundError:
             pass
         except OSError as exc:
             raise WindowsRuntimeBuildError("FIXTURE_HOOK_CLEANUP_FAILED") from exc
-    if completed is None or len(completed.stdout.encode("utf-8")) > 64 * 1024:
-        raise WindowsRuntimeBuildError("B2_FIXTURE_LIFECYCLE_FAILED")
-    try:
-        lifecycle = json.loads(completed.stdout)
-    except json.JSONDecodeError as exc:
-        raise WindowsRuntimeBuildError("B2_FIXTURE_REPORT_INVALID") from exc
-    if (
-        completed.returncode != 0
-        or type(lifecycle) is not dict
-        or lifecycle.get("result") != "pass"
-        or lifecycle.get("schema_version") != B2_FIXTURE_REPORT_SCHEMA
+    status = command_results["status"]["payload"]
+    health = command_results["health"]["payload"]
+    start = command_results["start"]["payload"]
+    stop = command_results["stop"]["payload"]
+    runtime_state = status.get("runtime_state") if type(status) is dict else None
+    process_identities = {
+        "supervisor": Path(str(runtime_state.get("supervisor_executable", ""))).name
+        if type(runtime_state) is dict
+        else "",
+        **{
+            role: Path(str(runtime_state.get(role, {}).get("executable", ""))).name
+            if type(runtime_state) is dict and type(runtime_state.get(role)) is dict
+            else ""
+            for role in ("upstream", "gateway")
+        },
+    }
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline and (_port_is_listening(upstream_port) or _port_is_listening(gateway_port)):
+        time.sleep(0.1)
+    lifecycle = {
+        "commands": {name: {"exit_code": value["exit_code"]} for name, value in command_results.items()},
+        "fixed_python_basename": "python.exe",
+        "health_ready": type(health.get("readiness")) is dict and health["readiness"].get("ready") is True,
+        "launch_context_identity_present": isinstance(status.get("launch_context_identity"), str),
+        "portable_ownership_valid": status.get("portable_ownership_valid") is True,
+        "ports_released": not _port_is_listening(upstream_port) and not _port_is_listening(gateway_port),
+        "process_python_basenames": process_identities,
+        "result": "pass",
+        "schema_version": B2_FIXTURE_REPORT_SCHEMA,
+        "start_result": start.get("result"),
+        "stop_result": stop.get("result"),
+    }
+    if not all(
+        (
+            lifecycle["start_result"] in {"started", "already_running"},
+            lifecycle["stop_result"] in {"stopped", "already_stopped"},
+            lifecycle["portable_ownership_valid"] is True,
+            lifecycle["health_ready"] is True,
+            lifecycle["ports_released"] is True,
+            all(value.casefold() == "python.exe" for value in process_identities.values()),
+        )
     ):
-        label = lifecycle.get("error_code", "fixture_failed") if type(lifecycle) is dict else "fixture_failed"
-        if host_diagnostic.is_file() and host_diagnostic.stat().st_size <= 1024:
-            try:
-                diagnostic = json.loads(host_diagnostic.read_text(encoding="utf-8", errors="strict"))
-                if type(diagnostic) is dict and isinstance(diagnostic.get("code"), str):
-                    label = diagnostic["code"]
-            except (OSError, UnicodeError, json.JSONDecodeError):
-                pass
-        raise WindowsRuntimeBuildError("B2_FIXTURE_LIFECYCLE_FAILED", str(label)[:64])
+        raise WindowsRuntimeBuildError("B2_FIXTURE_LIFECYCLE_FAILED")
     after_records, after_digest, after_size = provenance._tree_inventory(app_root / "python")
     if len(after_records) != runtime_count or after_size != runtime_size or after_digest != runtime_digest:
         raise WindowsRuntimeBuildError("B2_FIXTURE_RUNTIME_CHANGED")
     report = {
         "app_source_archive_sha256": sha256_file(source_archive),
+        "enterprise_commit": enterprise_identity["enterprise_commit"],
+        "enterprise_tree_id": enterprise_identity["enterprise_tree_id"],
         "fixed_release_python_real_start_chain_verified": True,
         "fixture_child_wrapper": True,
         "fixture_only_local_root_injection": True,
@@ -874,6 +1058,7 @@ def verify_b2_fixture(
         "schema_version": B2_FIXTURE_REPORT_SCHEMA,
         "temporary_business_test_environment_accessed": False,
         "wrapper_bootstrap": wrapper_result,
+        "formal_wrapper_success_chain_verified": True,
     }
     _write_json(root / "b2-real-bundled-python-fixture-report.json", report)
     return report
@@ -902,6 +1087,59 @@ def _probe_installed(runtime: Path) -> tuple[dict[str, object], list[dict[str, s
     return payload, distributions
 
 
+def _probe_dependency_graph(runtime: Path, installed: Mapping[str, str]) -> dict[str, tuple[str, ...]]:
+    script = """
+import importlib.metadata
+import json
+import re
+from pip._vendor.packaging.markers import default_environment
+from pip._vendor.packaging.requirements import Requirement
+
+def normalized(value):
+    return re.sub(r"[-_.]+", "-", value).casefold()
+
+environment = default_environment()
+environment.update({
+    "implementation_name": "cpython",
+    "platform_machine": "AMD64",
+    "python_version": "3.10",
+    "python_full_version": "3.10.11",
+    "sys_platform": "win32",
+})
+graph = {}
+for distribution in importlib.metadata.distributions():
+    name = normalized(distribution.metadata.get("Name") or "")
+    if not name or name in graph:
+        raise RuntimeError("distribution metadata is not unique")
+    dependencies = set()
+    for raw in distribution.metadata.get_all("Requires-Dist") or []:
+        requirement = Requirement(raw)
+        if requirement.marker is None or requirement.marker.evaluate(environment={**environment, "extra": ""}):
+            dependencies.add(normalized(requirement.name))
+    graph[name] = sorted(dependencies)
+print(json.dumps(graph, sort_keys=True, separators=(",", ":")))
+"""
+    completed = _run_fixed_python(runtime, ["-I", "-B", "-c", script], timeout=60)
+    if completed.returncode != 0 or len(completed.stdout.encode("utf-8")) > 1024 * 1024:
+        raise WindowsRuntimeBuildError("DEPENDENCY_GRAPH_PROBE_FAILED")
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise WindowsRuntimeBuildError("DEPENDENCY_GRAPH_PROBE_INVALID") from exc
+    if type(payload) is not dict or set(payload) != set(installed):
+        raise WindowsRuntimeBuildError("DEPENDENCY_GRAPH_CLOSURE_INVALID")
+    graph: dict[str, tuple[str, ...]] = {}
+    for name in sorted(payload):
+        values = payload[name]
+        if type(values) is not list or any(not isinstance(value, str) or not value for value in values):
+            raise WindowsRuntimeBuildError("DEPENDENCY_GRAPH_PROBE_INVALID")
+        normalized_values = tuple(sorted(set(values)))
+        if any(value not in installed for value in normalized_values):
+            raise WindowsRuntimeBuildError("DEPENDENCY_GRAPH_CLOSURE_INVALID", name)
+        graph[name] = normalized_values
+    return graph
+
+
 def _wheel_metadata(path: Path) -> tuple[str | None, list[str]]:
     try:
         with zipfile.ZipFile(path, "r") as archive:
@@ -924,6 +1162,7 @@ def _build_sbom(
     runtime_digest: str,
     input_hashes: Mapping[str, str],
     bootstrap_policy: Mapping[str, Any],
+    dependency_graph: Mapping[str, Sequence[str]],
 ) -> dict[str, object]:
     components: list[dict[str, object]] = [
         {
@@ -963,17 +1202,27 @@ def _build_sbom(
                 {"name": "source_requirement_relation", "value": "bootstrap-fixed-allowlist"}
             ]
         components.append(component)
-    dependencies = [{"ref": "runtime", "dependsOn": [component["bom-ref"] for component in components]}] + [
-        {"ref": component["bom-ref"], "dependsOn": []}
-        for component in components
+    refs = {name: f"pkg:pypi/{name}@{installed[name]}" for name in installed}
+    dependencies = [
+        {"ref": "runtime", "dependsOn": [component["bom-ref"] for component in components]},
+        {"ref": "pkg:generic/cpython@3.10.11?arch=x64", "dependsOn": []},
+    ] + [
+        {"ref": refs[name], "dependsOn": [refs[value] for value in dependency_graph[name]]}
+        for name in sorted(installed)
     ]
+    graph_sha256 = sha256_bytes(
+        _canonical_json({name: list(dependency_graph[name]) for name in sorted(dependency_graph)})
+    )
     return {
         "bomFormat": "CycloneDX",
         "components": components,
         "dependencies": dependencies,
         "metadata": {
             "component": {"bom-ref": "runtime", "name": "Infinite Canvas Enterprise bundled Python", "type": "application"},
-            "properties": [{"name": name, "value": value} for name, value in sorted(input_hashes.items())],
+            "properties": [
+                {"name": name, "value": value}
+                for name, value in sorted({**input_hashes, "dependency_graph_sha256": graph_sha256}.items())
+            ],
         },
         "serialNumber": "urn:uuid:00000000-0000-0000-0000-000000000000",
         "specVersion": "1.6",
@@ -1012,7 +1261,7 @@ def _output_layout(root: Path) -> BuildOutput:
 
 
 def build_runtime(inputs: BuildInputs, output_root: Path | str) -> BuildOutput:
-    source, wheel_payload, wheels, policy = validate_inputs(inputs)
+    source, wheel_payload, wheels, policy, enterprise_identity = validate_inputs(inputs)
     root = _new_output_root(output_root)
     output = _output_layout(root)
     _extract_zip(inputs.source_archive, output.runtime, expected_names=set(provenance.UPSTREAM_CORE_FILES))
@@ -1057,6 +1306,7 @@ def build_runtime(inputs: BuildInputs, output_root: Path | str) -> BuildOutput:
     pip_check = _run_fixed_python(output.runtime, ["-I", "-B", "-m", "pip", "check"], timeout=120)
     if pip_check.returncode != 0:
         raise WindowsRuntimeBuildError("PIP_CHECK_FAILED")
+    dependency_graph = _probe_dependency_graph(output.runtime, installed)
     runtime_records, runtime_digest, runtime_size = provenance._tree_inventory(output.runtime)
     wheel_records, wheel_digest, wheel_size = provenance._tree_inventory(inputs.wheelhouse)
     wheel_inventory = dict(wheel_payload)
@@ -1067,11 +1317,27 @@ def build_runtime(inputs: BuildInputs, output_root: Path | str) -> BuildOutput:
     wheel_inventory_sha = sha256_file(output.wheelhouse_inventory)
     input_hashes = {
         "build_policy_sha256": sha256_file(inputs.build_policy),
+        "python_source_policy_sha256": sha256_file(inputs.source_policy),
         "python_source_sha256": sha256_file(inputs.source_archive),
         "requirements_lock_sha256": lock_sha,
         "wheelhouse_inventory_sha256": wheel_inventory_sha,
     }
     installed_digest = provenance._installed_closure_digest(installed)
+    source_records = {
+        str(item["path"]): provenance.FileRecord(
+            str(item["path"]), str(item["sha256"]), int(item["size_bytes"])
+        )
+        for item in source["expected_core_inventory"]
+    }
+    source_inventory_digest = provenance._records_digest(source_records)
+    source_binding = {
+        "enterprise_tree_id": enterprise_identity["enterprise_tree_id"],
+        "python_source_archive_filename": source["archive_filename"],
+        "python_source_inventory_sha256": source_inventory_digest,
+        "python_source_policy_sha256": sha256_file(inputs.source_policy),
+        "python_source_sha256": source["sha256"],
+        "python_source_size_bytes": source["size_bytes"],
+    }
     common = {
         "dependency_lock_sha256": lock_sha,
         "enterprise_commit": inputs.enterprise_commit,
@@ -1082,6 +1348,7 @@ def build_runtime(inputs: BuildInputs, output_root: Path | str) -> BuildOutput:
         "upstream_commit": provenance.FIXED_UPSTREAM_COMMIT,
         "wheelhouse_manifest_sha256": wheel_inventory_sha,
         "wheelhouse_tree_sha256": wheel_digest,
+        **source_binding,
     }
     rebuild = {
         **common,
@@ -1108,6 +1375,10 @@ def build_runtime(inputs: BuildInputs, output_root: Path | str) -> BuildOutput:
     _write_json(output.rebuild_attestation, rebuild)
     _write_json(output.pip_check_report, pip_report)
     _write_json(output.installed_distributions, {
+        "dependency_graph": {name: list(dependency_graph[name]) for name in sorted(dependency_graph)},
+        "dependency_graph_sha256": sha256_bytes(
+            _canonical_json({name: list(dependency_graph[name]) for name in sorted(dependency_graph)})
+        ),
         "distributions": [{"name": name, "version": installed[name]} for name in sorted(installed)],
         "installed_closure_sha256": installed_digest,
         "python_executable_sha256": sha256_file(output.runtime / "python.exe"),
@@ -1121,6 +1392,7 @@ def build_runtime(inputs: BuildInputs, output_root: Path | str) -> BuildOutput:
         runtime_digest=runtime_digest,
         input_hashes=input_hashes,
         bootstrap_policy=policy,
+        dependency_graph=dependency_graph,
     )
     _write_json(output.sbom, sbom)
     core_files = [
@@ -1160,12 +1432,17 @@ def build_runtime(inputs: BuildInputs, output_root: Path | str) -> BuildOutput:
         "schema_version": provenance.RUNTIME_MANIFEST_SCHEMA,
         "source": {
             "enterprise_commit": inputs.enterprise_commit,
+            "enterprise_tree_id": enterprise_identity["enterprise_tree_id"],
             "upstream_commit": provenance.FIXED_UPSTREAM_COMMIT,
             "upstream_repository": provenance.FIXED_UPSTREAM_REPOSITORY,
             "upstream_version": provenance.FIXED_UPSTREAM_VERSION,
         },
         "source_python_zip": {
+            "archive_filename": source["archive_filename"],
+            "core_inventory_sha256": source_inventory_digest,
             "official_source_url": source["official_source_url"],
+            "policy_filename": inputs.source_policy.name,
+            "policy_sha256": sha256_file(inputs.source_policy),
             "provenance_verified": True,
             "sha256": source["sha256"],
             "size_bytes": source["size_bytes"],
@@ -1196,7 +1473,7 @@ def _deterministic_archive(runtime: Path, target: Path) -> tuple[dict[str, prove
 
 
 def build_archive(inputs: BuildInputs, output: BuildOutput) -> None:
-    validate_inputs(inputs)
+    source, _wheel_payload, _wheels, _policy, enterprise_identity = validate_inputs(inputs)
     if output.archive.exists() or output.archive_build_record.exists() or output.archive_inventory.exists():
         raise WindowsRuntimeBuildError("ARCHIVE_OUTPUT_ALREADY_EXISTS")
     runtime_records, runtime_digest, _runtime_size = provenance._tree_inventory(output.runtime)
@@ -1213,6 +1490,12 @@ def build_archive(inputs: BuildInputs, output: BuildOutput) -> None:
     manifest = _load_json(output.runtime_manifest, provenance.RUNTIME_MANIFEST_SCHEMA)
     dependency = manifest["dependency_lock"]
     wheel_inventory = _load_json(output.wheelhouse_inventory, WHEELHOUSE_LOCK_SCHEMA)
+    source_records = {
+        str(item["path"]): provenance.FileRecord(
+            str(item["path"]), str(item["sha256"]), int(item["size_bytes"])
+        )
+        for item in source["expected_core_inventory"]
+    }
     build_record = {
         "archive_inventory_sha256": sha256_file(output.archive_inventory),
         "build_policy_sha256": sha256_file(inputs.build_policy),
@@ -1221,13 +1504,18 @@ def build_archive(inputs: BuildInputs, output: BuildOutput) -> None:
         "builder_version": BUILD_TOOL_VERSION,
         "dependency_lock_sha256": dependency["sha256"],
         "enterprise_commit": inputs.enterprise_commit,
+        "enterprise_tree_id": enterprise_identity["enterprise_tree_id"],
         "exit_code": 0,
         "full_file_inventory_sha256": provenance._records_digest(runtime_records),
         "output_archive_entry_count": len(archive_records),
         "output_archive_sha256": archive_sha,
         "post_build_changes_detected": False,
         "python_abi": "cp310",
+        "python_source_archive_filename": source["archive_filename"],
+        "python_source_inventory_sha256": provenance._records_digest(source_records),
+        "python_source_policy_sha256": sha256_file(inputs.source_policy),
         "python_source_sha256": sha256_file(inputs.source_archive),
+        "python_source_size_bytes": inputs.source_archive.stat().st_size,
         "python_version": "3.10.11",
         "runtime_tree_sha256": runtime_digest,
         "schema_version": provenance.ARCHIVE_BUILD_RECORD_SCHEMA,
@@ -1265,7 +1553,8 @@ def verify_output(inputs: BuildInputs, output: BuildOutput, *, include_archive: 
         archive=output.archive if include_archive else None,
         archive_build_record=output.archive_build_record if include_archive else None,
         source_runtime_archive=inputs.source_archive,
-        upstream_core_archive=inputs.source_archive,
+        python_source_policy=inputs.source_policy,
+        enterprise_worktree=inputs.enterprise_worktree,
         enterprise_commit=inputs.enterprise_commit,
         upstream_commit=provenance.FIXED_UPSTREAM_COMMIT,
     )
@@ -1302,10 +1591,14 @@ def existing_output(root: Path | str) -> BuildOutput:
 def compare_builds(first: BuildOutput, second: BuildOutput) -> dict[str, object]:
     first_records, first_digest, _ = provenance._tree_inventory(first.runtime)
     second_records, second_digest, _ = provenance._tree_inventory(second.runtime)
+    first_installed = _load_json(first.installed_distributions, INSTALLED_DISTRIBUTIONS_SCHEMA)
+    second_installed = _load_json(second.installed_distributions, INSTALLED_DISTRIBUTIONS_SCHEMA)
     comparisons = {
         "archive_sha256_equal": sha256_file(first.archive) == sha256_file(second.archive),
         "archive_inventory_equal": sha256_file(first.archive_inventory) == sha256_file(second.archive_inventory),
         "installed_distributions_equal": sha256_file(first.installed_distributions) == sha256_file(second.installed_distributions),
+        "dependency_graph_sha256_equal": first_installed.get("dependency_graph_sha256")
+        == second_installed.get("dependency_graph_sha256"),
         "runtime_file_inventory_equal": first_records == second_records,
         "runtime_tree_sha256_equal": first_digest == second_digest,
         "sbom_sha256_equal": sha256_file(first.sbom) == sha256_file(second.sbom),
@@ -1315,6 +1608,7 @@ def compare_builds(first: BuildOutput, second: BuildOutput) -> dict[str, object]
         "build_a_runtime_tree_sha256": first_digest,
         "build_b_archive_sha256": sha256_file(second.archive),
         "build_b_runtime_tree_sha256": second_digest,
+        "dependency_graph_sha256": first_installed.get("dependency_graph_sha256"),
         "comparisons": comparisons,
         "result": "pass" if all(comparisons.values()) else "fail",
         "schema_version": BUILD_SUMMARY_SCHEMA,

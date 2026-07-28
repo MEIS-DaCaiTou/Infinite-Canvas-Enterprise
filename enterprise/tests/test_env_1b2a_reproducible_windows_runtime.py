@@ -229,11 +229,39 @@ def test_sbom_is_canonical_and_deterministic(tmp_path: Path) -> None:
         "runtime_digest": "a" * 64,
         "input_hashes": {"python_source_sha256": "b" * 64},
         "bootstrap_policy": json.loads((WINDOWS_INPUTS / "build-policy.json").read_text(encoding="utf-8")),
+        "dependency_graph": {"demo": ()},
     }
     assert build._canonical_json(build._build_sbom(**arguments)) == build._canonical_json(build._build_sbom(**arguments))
     assert b"CycloneDX" in build._canonical_json(build._build_sbom(**arguments))
     payload = build._build_sbom(**arguments)
     assert payload["dependencies"][0]["ref"] == "runtime"
+
+
+def test_sbom_contains_closed_requires_dist_edges(tmp_path: Path) -> None:
+    wheelhouse = tmp_path / "wheelhouse"
+    wheelhouse.mkdir()
+    first_path = wheelhouse / "first-1.0-py3-none-any.whl"
+    second_path = wheelhouse / "second-2.0-py3-none-any.whl"
+    _wheel(first_path, "first", "1.0")
+    _wheel(second_path, "second", "2.0")
+    wheels = {
+        name: build.LockedWheel(
+            name, version, path.name, build.sha256_file(path), path.stat().st_size,
+            ("py3",), ("none",), ("any",), "direct:test",
+        )
+        for name, version, path in (("first", "1.0", first_path), ("second", "2.0", second_path))
+    }
+    payload = build._build_sbom(
+        wheels=wheels,
+        wheelhouse=wheelhouse,
+        installed={"first": "1.0", "second": "2.0"},
+        runtime_digest="a" * 64,
+        input_hashes={},
+        bootstrap_policy=json.loads((WINDOWS_INPUTS / "build-policy.json").read_text(encoding="utf-8")),
+        dependency_graph={"first": ("second",), "second": ()},
+    )
+    dependency = next(item for item in payload["dependencies"] if item["ref"] == "pkg:pypi/first@1.0")
+    assert dependency["dependsOn"] == ["pkg:pypi/second@2.0"]
 
 
 def test_builder_source_has_offline_install_and_no_shell_or_network_client() -> None:
@@ -247,15 +275,15 @@ def test_builder_source_has_offline_install_and_no_shell_or_network_client() -> 
 
 def test_real_bundled_python_fixture_is_explicit_and_external_only() -> None:
     source = (ROOT / "enterprise" / "release" / "windows_runtime_build.py").read_text(encoding="utf-8")
-    harness = (ROOT / "enterprise" / "tests" / "runtime_fixture_portable_harness.py").read_text(encoding="utf-8")
     assert "ICE_B2_FIXTURE_LOCAL_BASE" in source
     assert "fixture_only_local_root_injection" in source
     assert "temporary_business_test_environment_accessed" in source
-    assert "RuntimeController" in harness
-    assert "fixture_child_wrapper=True" in harness
-    assert "3001" not in harness and "8000" not in harness
-    assert "import requests" not in harness
-    assert "import main" not in harness and "from main" not in harness
+    assert '"启动企业版.bat"' in source
+    assert '"查看企业版状态.bat"' in source
+    assert '"企业版健康检查.bat"' in source
+    assert '"停止企业版.bat"' in source
+    assert "dataclasses.replace(config, fixture_child_wrapper=True)" in source
+    assert "formal_wrapper_success_chain_verified" in source
 
 
 def test_clean_environment_preserves_windows_architecture_but_not_python_overrides(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

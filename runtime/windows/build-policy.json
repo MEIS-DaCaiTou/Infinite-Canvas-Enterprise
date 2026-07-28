@@ -7,7 +7,7 @@
     {"filename": "setuptools-82.0.1-py3-none-any.whl", "package": "setuptools", "sha256": "a59e362652f08dcd477c78bb6e7bd9d80a7995bc73ce773050228a348ce2e5bb", "size_bytes": 1006223, "version": "82.0.1"},
     {"filename": "wheel-0.47.0-py3-none-any.whl", "package": "wheel", "sha256": "212281cab4dff978f6cedd499cd893e1f620791ca6ff7107cf270781e587eced", "size_bytes": 32218, "version": "0.47.0"}
   ],
-  "build_tool_version": "env-1b2a-windows-runtime-builder-v1",
+  "build_tool_version": "env-1b2a-windows-runtime-builder-v2",
   "console_scripts_policy": "omit-and-normalize-wheel-records",
   "ignored_nondeterministic_fields": [],
   "offline_install_arguments": ["--isolated", "--no-index", "--find-links", "--require-hashes", "--only-binary=:all:", "--no-compile"],
