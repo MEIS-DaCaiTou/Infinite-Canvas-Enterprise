@@ -76,7 +76,10 @@ UPSTREAM_CORE_FILES = (
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
-_LOCK_LINE_RE = re.compile(r"^(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)==(?P<version>[^\s;]+)$")
+_LOCK_LINE_RE = re.compile(
+    r"^(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)==(?P<version>[^\s;]+)"
+    r"(?:\s+--hash=sha256:[0-9a-f]{64})?$"
+)
 _WINDOWS_DEVICE_NAMES = frozenset(
     {"con", "prn", "aux", "nul"}
     | {f"com{index}" for index in range(1, 10)}
@@ -419,6 +422,22 @@ def _zip_subtree(records: Mapping[str, FileRecord], prefix: str) -> dict[str, Fi
     }
 
 
+def _upstream_core_inventory(records: Mapping[str, FileRecord]) -> dict[str, FileRecord]:
+    """Accept the historical ``python/`` evidence shape or the official ZIP root.
+
+    CPython's official Windows embeddable archive contains exactly the fixed
+    34-file core inventory at its root.  Earlier ENV-1B2P evidence wrapped the
+    same inventory in a ``python/`` prefix.  Supporting both shapes keeps the
+    established verifier as the single authority without repacking the
+    official source archive or weakening the exact inventory requirement.
+    """
+
+    root_names = set(records)
+    if root_names == set(UPSTREAM_CORE_FILES):
+        return dict(sorted(records.items()))
+    return _zip_subtree(records, "python")
+
+
 def _atomic_write_report(path: Path, payload: Mapping[str, object]) -> None:
     if path.exists():
         raise ProvenanceVerificationError("output-report-already-exists", path.name)
@@ -602,7 +621,7 @@ def _verify_core_layer(
         state.gaps.add("fixed-upstream-core-archive-missing")
         valid = False
     else:
-        upstream_core = _zip_subtree(upstream_records, "python")
+        upstream_core = _upstream_core_inventory(upstream_records)
         inventory_ok = set(upstream_core) == set(UPSTREAM_CORE_FILES)
         state.check("fixed-upstream-core-inventory", "pass" if inventory_ok else "fail", count=len(upstream_core))
         valid &= inventory_ok
@@ -612,7 +631,7 @@ def _verify_core_layer(
             state.gaps.add("source-runtime-archive-missing")
             valid = False
         else:
-            source_core = _zip_subtree(source_archive_records, "python")
+            source_core = _upstream_core_inventory(source_archive_records)
             source_match = set(source_core) >= set(UPSTREAM_CORE_FILES) and all(
                 _records_equal(source_core.get(relative), upstream_core.get(relative)) for relative in UPSTREAM_CORE_FILES
             )
