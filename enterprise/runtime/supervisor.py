@@ -78,10 +78,30 @@ class SupervisorConfig:
     command_specs: dict[str, CommandSpec] | None = None
     secret_values: tuple[str, ...] = field(default=(), repr=False, compare=False)
     fixture_child_wrapper: bool = False
+    runtime_mode: str = "development"
+    release_id: str | None = None
+    runtime_manifest_sha256: str | None = None
+    startup_preflight_sha256: str | None = None
+    launch_context_identity: str | None = None
+    python_executable: str | None = None
 
     def __post_init__(self) -> None:
         if self.mode not in {"foreground", "service-host"}:
             raise ValueError("runtime mode is invalid")
+        if self.runtime_mode not in {"development", "portable-release", "server"}:
+            raise ValueError("runtime mode is invalid")
+        portable_values = (
+            self.release_id,
+            self.runtime_manifest_sha256,
+            self.startup_preflight_sha256,
+            self.python_executable,
+        )
+        if self.runtime_mode == "portable-release" and any(not isinstance(value, str) or not value for value in portable_values):
+            raise ValueError("portable runtime identity is incomplete")
+        if self.runtime_mode != "portable-release" and any(
+            value is not None for value in (*portable_values, self.launch_context_identity)
+        ):
+            raise ValueError("development runtime cannot carry portable identity")
         for name, value, minimum, maximum in (
             ("startup timeout", self.startup_timeout_seconds, 5, 300),
             ("health interval", self.health_interval_seconds, 1, 60),
@@ -99,6 +119,24 @@ class SupervisorConfig:
             raise ValueError("runtime command roles are invalid")
         if any(not isinstance(value, str) or not value for value in self.secret_values):
             raise ValueError("runtime secret values are invalid")
+
+    @property
+    def host_style(self) -> str:
+        return self.mode
+
+    @property
+    def runtime_identity(self) -> dict[str, str] | None:
+        if self.runtime_mode != "portable-release":
+            return None
+        if not self.launch_context_identity:
+            return None
+        return {
+            "runtime_mode": self.runtime_mode,
+            "release_id": str(self.release_id),
+            "runtime_manifest_sha256": str(self.runtime_manifest_sha256),
+            "startup_preflight_sha256": str(self.startup_preflight_sha256),
+            "launch_context_identity": str(self.launch_context_identity),
+        }
 
 
 @dataclass
@@ -123,6 +161,15 @@ class RuntimeSupervisor:
         self.config = config
         self.instance_id = instance_id or uuid.uuid4().hex
         self.store = RuntimeStateStore(config.runtime_root)
+        if config.runtime_mode == "portable-release":
+            from .portable import validate_portable_process_binding
+
+            validate_portable_process_binding(
+                app_root=config.app_root,
+                runtime_root=config.runtime_root,
+                instance_id=self.instance_id,
+                expected_context_identity=str(config.launch_context_identity),
+            )
         self.logs = RuntimeLogs(
             config.log_root or config.runtime_root,
             max_bytes=config.log_max_bytes,
@@ -134,14 +181,29 @@ class RuntimeSupervisor:
             config.app_root,
             upstream_port=config.upstream_port,
             gateway_port=config.gateway_port,
+            python_executable=config.python_executable,
+            runtime_mode=config.runtime_mode,
+            runtime_root=config.runtime_root,
+            instance_id=self.instance_id,
+            launch_context_identity=config.launch_context_identity,
             fixture_child_wrapper=config.fixture_child_wrapper,
         )
         identity = process_identity(os.getpid())
         if identity is None:
             raise RuntimeSupervisorError("supervisor identity is unavailable")
+        if config.runtime_mode == "portable-release" and os.path.normcase(os.path.abspath(identity.executable)) != os.path.normcase(
+            os.path.abspath(str(config.python_executable))
+        ):
+            raise RuntimeSupervisorError("portable supervisor executable identity mismatch")
         self.supervisor_identity = identity
         self.roles = {role: RoleRuntime(role=role) for role in ROLES}
-        self.state = initial_state(instance_id=self.instance_id, supervisor=identity, mode=config.mode)
+        self.state = initial_state(
+            instance_id=self.instance_id,
+            supervisor=identity,
+            mode=config.mode,
+            runtime_mode=config.runtime_mode,
+            runtime_identity=config.runtime_identity,
+        )
         self._job: ProcessJob | None = None
         self._acquired = False
         self._stopping = False
@@ -292,6 +354,7 @@ class RuntimeSupervisor:
                 instance_id=self.instance_id,
                 owner=owner,
                 supervisor=self.supervisor_identity,
+                expected_runtime_identity=self.config.runtime_identity,
                 grace_seconds=STARTUP_LOCK_GRACE_SECONDS,
             ):
                 raise RuntimeStartBlocked("runtime startup reservation could not be adopted")
@@ -320,6 +383,12 @@ class RuntimeSupervisor:
                 shutdown_file=self._control_path("child-stop", role, "request"),
                 shutdown_marker=self._control_path("child-stop", role, "complete"),
             )
+            if self.config.runtime_mode == "portable-release":
+                expected = os.path.normcase(os.path.abspath(str(self.config.python_executable)))
+                actual = os.path.normcase(os.path.abspath(process.identity.executable))
+                if actual != expected:
+                    force_stop(process)
+                    raise ProcessControlError("portable child executable identity mismatch")
             if self._job is not None:
                 self._job.add(process.process)
         except (ProcessControlError, JobObjectError):
@@ -533,6 +602,11 @@ class RuntimeSupervisor:
                 "upstream_after_process_created_at": after["upstream_process_created_at"],
                 "gateway_before_process_created_at": before["gateway_process_created_at"],
                 "gateway_after_process_created_at": after["gateway_process_created_at"],
+                **(
+                    {"launch_context_identity": self.config.launch_context_identity}
+                    if self.config.runtime_mode == "portable-release"
+                    else {}
+                ),
                 **after.get("stop_report", {}),
             }
         )
@@ -552,7 +626,12 @@ class RuntimeSupervisor:
 
     def _handle_commands(self) -> None:
         current_generation = self.state.get("state_generation", 0)
-        for command in self.store.consume_commands(self.instance_id):
+        for command in self.store.consume_commands(
+            self.instance_id,
+            expected_launch_context_identity=self.config.launch_context_identity
+            if self.config.runtime_mode == "portable-release"
+            else None,
+        ):
             command["accepted_at"] = utc_now()
             expected = command.get("expected_state_generation")
             if type(expected) is not int or expected != current_generation:

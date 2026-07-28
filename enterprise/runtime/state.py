@@ -20,6 +20,13 @@ STATE_FILENAME = "runtime-state.json"
 VALID_COMMANDS = frozenset({"stop", "restart"})
 STARTUP_LOCK_GRACE_SECONDS = 75
 CONTROL_TTL_SECONDS = 15 * 60
+PORTABLE_IDENTITY_FIELDS = (
+    "runtime_mode",
+    "release_id",
+    "runtime_manifest_sha256",
+    "startup_preflight_sha256",
+    "launch_context_identity",
+)
 
 
 class RuntimeStateError(RuntimeError):
@@ -136,7 +143,13 @@ class RuntimeStateStore:
         current = now or datetime.now(timezone.utc)
         return max(0.0, (current - created).total_seconds())
 
-    def reserve_lock(self, *, instance_id: str, owner: ProcessIdentity) -> bool:
+    def reserve_lock(
+        self,
+        *,
+        instance_id: str,
+        owner: ProcessIdentity,
+        runtime_identity: dict[str, str] | None = None,
+    ) -> bool:
         """Only the short-lived launcher may create a ``reserved`` lock."""
         self.initialize()
         now = utc_now()
@@ -153,6 +166,13 @@ class RuntimeStateStore:
             "created_at": now,
             "updated_at": now,
         }
+        if runtime_identity is not None:
+            if set(runtime_identity) != set(PORTABLE_IDENTITY_FIELDS) or any(
+                not isinstance(runtime_identity[name], str) or not runtime_identity[name]
+                for name in PORTABLE_IDENTITY_FIELDS
+            ):
+                raise RuntimeStateError("runtime identity is invalid")
+            payload.update(runtime_identity)
         try:
             with self.lock_path.open("x", encoding="utf-8", newline="") as handle:
                 handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
@@ -168,11 +188,16 @@ class RuntimeStateStore:
         instance_id: str,
         owner: ProcessIdentity,
         supervisor: ProcessIdentity,
+        expected_runtime_identity: dict[str, str] | None = None,
         grace_seconds: int = STARTUP_LOCK_GRACE_SECONDS,
     ) -> bool:
         """Adopt a fresh reservation only after validating the launcher's identity."""
         lock = self.read_lock()
         age = self.lock_age_seconds(lock)
+        identity_matches = expected_runtime_identity is None or (
+            set(expected_runtime_identity) == set(PORTABLE_IDENTITY_FIELDS)
+            and all(lock and lock.get(name) == expected_runtime_identity[name] for name in PORTABLE_IDENTITY_FIELDS)
+        )
         if (
             not lock
             or lock.get("supervisor_instance_id") != instance_id
@@ -181,6 +206,7 @@ class RuntimeStateStore:
             or age > grace_seconds
             or not same_process(owner, self.lock_owner_identity(lock))
             or not same_process(owner, process_identity(owner.pid))
+            or not identity_matches
         ):
             return False
         payload = dict(lock)
@@ -248,6 +274,7 @@ class RuntimeStateStore:
         command: str,
         supervisor_instance_id: str,
         expected_state_generation: int,
+        launch_context_identity: str | None = None,
     ) -> str:
         if (
             command not in VALID_COMMANDS
@@ -268,11 +295,20 @@ class RuntimeStateStore:
             "issued_at": utc_now(),
             "expected_state_generation": expected_state_generation,
         }
+        if launch_context_identity is not None:
+            if not isinstance(launch_context_identity, str) or not launch_context_identity:
+                raise RuntimeStateError("runtime command is invalid")
+            payload["launch_context_identity"] = launch_context_identity
         path = self.control_root / f"cmd-{request_id[:16]}.json"
         _atomic_json_replace(path, payload)
         return request_id
 
-    def consume_commands(self, instance_id: str) -> list[dict[str, Any]]:
+    def consume_commands(
+        self,
+        instance_id: str,
+        *,
+        expected_launch_context_identity: str | None = None,
+    ) -> list[dict[str, Any]]:
         self.initialize()
         self.purge_control()
         commands: list[dict[str, Any]] = []
@@ -296,6 +332,10 @@ class RuntimeStateStore:
                 and payload.get("command") in VALID_COMMANDS
                 and isinstance(payload.get("request_id"), str)
                 and type(payload.get("expected_state_generation")) is int
+                and (
+                    expected_launch_context_identity is None
+                    or payload.get("launch_context_identity") == expected_launch_context_identity
+                )
             ):
                 commands.append(payload)
         return commands
@@ -378,7 +418,14 @@ class RuntimeStateStore:
         return False
 
 
-def initial_state(*, instance_id: str, supervisor: ProcessIdentity, mode: str) -> dict[str, Any]:
+def initial_state(
+    *,
+    instance_id: str,
+    supervisor: ProcessIdentity,
+    mode: str,
+    runtime_mode: str = "development",
+    runtime_identity: dict[str, str] | None = None,
+) -> dict[str, Any]:
     if mode not in {"foreground", "service-host"}:
         raise RuntimeStateError("runtime mode is invalid")
     now = utc_now()
@@ -394,13 +441,22 @@ def initial_state(*, instance_id: str, supervisor: ProcessIdentity, mode: str) -
         "last_exit_code_hex": None,
         "last_exit_at": None,
     }
-    return {
+    if runtime_mode not in {"development", "portable-release", "server"}:
+        raise RuntimeStateError("runtime mode is invalid")
+    if runtime_mode == "portable-release" and (
+        runtime_identity is None or set(runtime_identity) != set(PORTABLE_IDENTITY_FIELDS)
+    ):
+        raise RuntimeStateError("runtime identity is invalid")
+    state = {
         "schema_version": STATE_SCHEMA,
         "supervisor_instance_id": instance_id,
         "supervisor_pid": supervisor.pid,
         "supervisor_process_created_at": supervisor.created_at,
         "supervisor_executable": supervisor.executable,
+        # ``mode`` remains a compatibility alias for the STAB-1 host style.
         "mode": mode,
+        "host_style": mode,
+        "runtime_mode": runtime_mode,
         "state": "starting",
         "state_generation": 0,
         "active_control_request": None,
@@ -412,3 +468,6 @@ def initial_state(*, instance_id: str, supervisor: ProcessIdentity, mode: str) -
         "upstream": dict(role),
         "gateway": dict(role),
     }
+    if runtime_identity is not None:
+        state.update(runtime_identity)
+    return state

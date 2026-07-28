@@ -43,6 +43,24 @@ def _load_application(role: str, app_root: Path):
 
 
 async def _serve(args: argparse.Namespace) -> int:
+    if args.runtime_mode == "portable-release":
+        app_root = Path(args.app_root).absolute()
+        expected_entry = app_root / "enterprise" / "runtime" / "child.py"
+        try:
+            if expected_entry.resolve() != Path(__file__).resolve():
+                return 2
+        except OSError:
+            return 2
+        if str(app_root) not in sys.path:
+            sys.path.insert(0, str(app_root))
+        from enterprise.runtime.portable import validate_portable_process_binding
+
+        validate_portable_process_binding(
+            app_root=app_root,
+            runtime_root=Path(args.runtime_root),
+            instance_id=args.instance_id,
+            expected_context_identity=args.launch_context_identity,
+        )
     import uvicorn
 
     application = _load_application(args.role, Path(args.app_root))
@@ -81,7 +99,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--port", required=True, type=int)
     parser.add_argument("--runtime-stop-file", required=True)
     parser.add_argument("--shutdown-marker", required=True)
+    parser.add_argument("--runtime-mode", choices=("development", "portable-release"), default="development")
+    parser.add_argument("--runtime-root")
+    parser.add_argument("--instance-id")
+    parser.add_argument("--launch-context-identity")
     args = parser.parse_args(argv)
+    if args.runtime_mode == "portable-release" and not all(
+        (args.runtime_root, args.instance_id, args.launch_context_identity)
+    ):
+        return 2
     return asyncio.run(_serve(args))
 
 

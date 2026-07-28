@@ -473,15 +473,17 @@ def test_static_runtime_boundary() -> None:
     start_script = (ROOT / "启动企业版.bat").read_text(encoding="utf-8")
     restart_script = (ROOT / "重启企业版.bat").read_text(encoding="utf-8")
     status_script = (ROOT / "查看企业版状态.bat").read_text(encoding="utf-8")
+    health_script = (ROOT / "企业版健康检查.bat").read_text(encoding="utf-8")
     foreground_script = (ROOT / "启动企业版前台.bat").read_text(encoding="utf-8")
-    for script in (stop_script, start_script, restart_script, status_script, foreground_script):
-        assert "enterprise.runtime.cli" in script
+    for script in (stop_script, start_script, restart_script, status_script, health_script):
+        assert "enterprise\\runtime\\launcher.py" in script
+        assert " -I -B " in script
+        assert " -m " not in script
+        assert 'set "PYEXE=python"' not in script
         assert "exit /b %errorlevel%" in script.lower()
-        # ``%~dp0`` carries a trailing backslash.  Passing it directly inside
-        # a quoted Windows argument escapes the final quote for Python's argv
-        # parser, so the launcher must use the same-directory ``.`` form.
-        assert 'set "APP_ROOT=%~dp0."' in script
-        assert '--app-root "%APP_ROOT%"' in script
+    # Foreground remains an explicitly development-only diagnostic entry.
+    assert "enterprise.runtime.cli" in foreground_script
+    assert '--app-root "%APP_ROOT%"' in foreground_script
     assert "taskkill" not in stop_script.lower()
     commands = default_commands(ROOT, upstream_port=13001, gateway_port=18000)
     for command in commands.values():

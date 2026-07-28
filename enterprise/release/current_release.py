@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import threading
@@ -66,6 +67,14 @@ class CurrentRelease:
 class CurrentReleaseWriteResult:
     pointer_replaced: bool
     directory_sync_status: Literal["synced", "unsupported"]
+
+
+@dataclass(frozen=True)
+class CurrentReleaseReadResult:
+    """One authoritative pointer read plus the identity of its accepted bytes."""
+
+    release: CurrentRelease
+    raw_sha256: str
 
 
 def _pairs_no_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -195,8 +204,31 @@ def sync_state_root_directory(state_root: Path) -> str:
     return DIRECTORY_SYNC_VERIFIED
 
 
-def read_current_release_from_state_root(state_root: Path, *, expected_manifest_sha256: str | None = None) -> CurrentRelease:
-    """Read the v1 pointer from a pre-release-owned state root."""
+def _read_bounded(path: Path) -> bytes:
+    content = bytearray()
+    try:
+        with path.open("rb") as handle:
+            while len(content) < MAX_BYTES + 1:
+                remaining = MAX_BYTES + 1 - len(content)
+                chunk = handle.read(min(4096, remaining))
+                if not chunk:
+                    break
+                content.extend(chunk)
+    except FileNotFoundError as exc:
+        raise CurrentReleaseError("CURRENT_RELEASE_MISSING") from exc
+    except OSError as exc:
+        raise CurrentReleaseError("CURRENT_RELEASE_READ_FAILED") from exc
+    if not content or len(content) > MAX_BYTES:
+        raise CurrentReleaseError("CURRENT_RELEASE_SIZE_INVALID")
+    return bytes(content)
+
+
+def read_current_release_result_from_state_root(
+    state_root: Path,
+    *,
+    expected_manifest_sha256: str | None = None,
+) -> CurrentReleaseReadResult:
+    """Read and validate the v1 pointer exactly once, retaining raw-byte identity."""
     try:
         state_root = _normalise(state_root, "STATE_ROOT")
     except PathRootsError as exc:
@@ -207,14 +239,7 @@ def read_current_release_from_state_root(state_root: Path, *, expected_manifest_
         _assert_no_reparse(path, "STATE_ROOT")
     except PathRootsError as exc:
         raise CurrentReleaseError(exc.code) from exc
-    try:
-        raw = path.read_bytes()
-    except FileNotFoundError as exc:
-        raise CurrentReleaseError("CURRENT_RELEASE_MISSING") from exc
-    except OSError as exc:
-        raise CurrentReleaseError("CURRENT_RELEASE_READ_FAILED") from exc
-    if not raw or len(raw) > MAX_BYTES:
-        raise CurrentReleaseError("CURRENT_RELEASE_SIZE_INVALID")
+    raw = _read_bounded(path)
     if raw.startswith(b"\xef\xbb\xbf"):
         raise CurrentReleaseError("CURRENT_RELEASE_BOM_FORBIDDEN")
     try:
@@ -225,7 +250,16 @@ def read_current_release_from_state_root(state_root: Path, *, expected_manifest_
         raise
     except (json.JSONDecodeError, TypeError) as exc:
         raise CurrentReleaseError("CURRENT_RELEASE_JSON_INVALID") from exc
-    return _validate_payload(payload, expected_manifest_sha256=expected_manifest_sha256)
+    release = _validate_payload(payload, expected_manifest_sha256=expected_manifest_sha256)
+    return CurrentReleaseReadResult(release=release, raw_sha256=hashlib.sha256(raw).hexdigest())
+
+
+def read_current_release_from_state_root(state_root: Path, *, expected_manifest_sha256: str | None = None) -> CurrentRelease:
+    """Compatibility view for callers that do not need raw pointer identity."""
+    return read_current_release_result_from_state_root(
+        state_root,
+        expected_manifest_sha256=expected_manifest_sha256,
+    ).release
 
 
 def read_current_release(roots: PathRoots, *, expected_manifest_sha256: str | None = None) -> CurrentRelease:

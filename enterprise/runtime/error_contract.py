@@ -105,6 +105,16 @@ _DEFINITIONS: tuple[ErrorDefinition, ...] = (
     ErrorDefinition("STOP_OWNERSHIP_UNAVAILABLE", "release_mismatch", "stop ownership is unavailable"),
     ErrorDefinition("RUNTIME_OWNERSHIP_UNTRUSTED", "release_mismatch", "running instance ownership is untrusted"),
     ErrorDefinition("READINESS_RELEASE_MISMATCH", "readiness", "running release does not match current release"),
+    ErrorDefinition("PORTABLE_BOOTSTRAP_INVALID", "portable", "portable bootstrap identity is invalid"),
+    ErrorDefinition("PORTABLE_PYTHON_ISOLATION_REQUIRED", "portable", "portable Python isolation flags are required"),
+    ErrorDefinition("PORTABLE_PLATFORM_UNSUPPORTED", "portable", "portable platform is not supported"),
+    ErrorDefinition("PORTABLE_PYTHON_MISSING", "portable", "portable Release Python is missing"),
+    ErrorDefinition("PORTABLE_LOCALAPPDATA_UNAVAILABLE", "portable", "portable local application data root is unavailable"),
+    ErrorDefinition("PORTABLE_RELEASE_LAYOUT_INVALID", "portable", "portable Release layout is invalid"),
+    ErrorDefinition("PORTABLE_RELEASE_POINTER_MISMATCH", "portable", "portable Release pointer does not identify this Release"),
+    ErrorDefinition("PORTABLE_CONTEXT_UNTRUSTED", "portable", "portable launch context identity is untrusted"),
+    ErrorDefinition("PORTABLE_RUNTIME_OWNERSHIP_UNTRUSTED", "portable", "portable runtime ownership identity is untrusted"),
+    ErrorDefinition("PORTABLE_STARTUP_NOT_READY", "readiness", "portable runtime startup is not ready"),
 )
 
 ERROR_REGISTRY: dict[str, ErrorDefinition] = {definition.code: definition for definition in _DEFINITIONS}

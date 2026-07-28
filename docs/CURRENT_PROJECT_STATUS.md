@@ -1,19 +1,19 @@
 # Infinite Canvas Enterprise 当前项目状态
 
-更新时间：2026-07-27
+更新时间：2026-07-28
 
 ## 1. 当前主线与运行事实
 
 - 企业版仓库：`MEIS-DaCaiTou/Infinite-Canvas-Enterprise`
 - `current_main`：以仓库 GitHub `main` HEAD 为准。
-- `last_verified_code_baseline`：`d3885a92968e68f35500318977341c94612ab2a2`。
+- `last_verified_code_baseline`：`6610218aecc0b864df5f075cb6824e041daedfd7`。
 - ENV-1B0 / DOC-2 / DOC-2A：PR #80 已合并，merge commit `be5573ae416b4ce81f8cc26ae282868a7efa7672`；完成架构决策冻结、Greenfield 路线和文档事实同步。
 - ENV-1B1A：PR #81 已合并，merge commit `a53885b026a6c2440acb0fbde72d6571ff6f7723`；APP_ROOT 写入审计、CSS 传递依赖哈希、统一 HTML build ID、确定性 static staging builder、`main.py` 最小不可变 Release 补丁和 Git tracked fingerprint/Wxx 漂移门禁已进入 `main`。
 - ENV-1B2P：PR #82 已合并，merge commit `240f6a2b93268a415cddc3c9af9951f334c8e4e1`；只读核验仓库外既有 Runtime 证据，真实结果仍为 core `true`、dependency `false`、archive `false`、`production_approved=false`，不代表正式 Runtime 获批。
 - ENV-1B1B：PR #83 已合并，merge commit `4d9cc4ef3d6a0f6ed956c2dda6303e9cc3b99b89`；PathRoots / `current-release.json` / workflow overlay scoped contract 已进入 `main`。`ENV_1B1B_in_main=true`、`ENV_1B1B_scoped_contract_acceptance_passed=true`、`ENV_1B1B_completion_classification=partial`、`ENV_1B1B_full_release_acceptance_passed=false`；完整只读 APP_ROOT、Release activation 和 formal Release 仍未形成。
-- ENV-1B1C：阶段 A 只读架构门禁已完成；B1 纯契约、安全原语和隔离测试基础已由 PR #84 合并，source Head `afa03af45da938549a1e62e36df8de11d7c82867`，squash merge commit `d3885a92968e68f35500318977341c94612ab2a2`。独立验收已接受 B1 contract foundations，Final Acceptance evidence 已由独立 docs-only closeout commit 持久化；B1 docs closeout 不接入 Runtime lifecycle。`ENV_1B1C_B1_code_merged=true`、`ENV_1B1C_B1_independently_accepted=true`、`ENV_1B1C_B1_contract_foundations_accepted=true`、`ENV_1B1C_B1_final_acceptance_record_committed=true`、`ENV_1B1C_B2_started=false`。
+- ENV-1B1C：阶段 A 与 B2 read-only architecture gate 已完成；B1 已由 PR #84 合并并独立验收。B2 已形成固定 direct-script launcher、Release Python/manifest/preflight 信任链、复用 STAB-1 lock/state/supervisor 的 context/identity 传播、跨 Release ownership、readiness/health 与正式 Windows wrappers 的仓库实现，并已通过独立代码审查。`ENV_1B1C_B2_started=true`、`ENV_1B1C_B2_repository_implementation_present=true`、`ENV_1B1C_B2_repository_implementation_independently_accepted=true`、`D1-D10_repository_implementation_accepted=true`。
 - B1 最终验收事实、审查包摘要和测试矩阵见 [ENV-1B1C-B1 Final Acceptance / Closeout](./env/evidence/ENV-1B1C-B1-FINAL-ACCEPTANCE-CLOSEOUT-2026-07-27.md)；`github_ci_verified=false`、`real_bundled_python_fixture_tests=false`、`production_validation=false`。
-- ENV-1B1C 未实施边界保持：`portable_runtime_lifecycle_integrated=false`、`portable_launcher_implemented=false`、`formal_portable_batch_created=false`、`controller_host_child_integrated=false`、`fixed_release_python_real_start_chain=false`、`final_health_readiness_integrated=false`、`real_bundled_python_fixture_tests=false`、`Runtime_rebuilt=false`、`Manifest_v2_implemented=false`、`Release_activation_implemented=false`、`OPS_3B_implemented=false`、`formal_Release_created=false`、`formal_release_deployed=false`、`Production_Baseline_approved=false`、`production_approved=false`、`production_validation=false`。
+- ENV-1B1C B2 仓库能力：`portable_runtime_lifecycle_integrated=true`、`portable_launcher_implemented=true`、`formal_portable_batch_created=true`、`controller_host_child_integrated=true`、`final_health_readiness_integrated=true`。限制保持：`real_bundled_python_fixture_tests=false`、`fixed_release_python_real_start_chain_verified=false`、`clean_Windows_validation=false`、`ENV_1B1C_completed=false`、`Runtime_rebuilt=false`、`Manifest_v2_implemented=false`、`Release_activation_implemented=false`、`OPS_3B_implemented=false`、`formal_Release_created=false`、`formal_release_deployed=false`、`Production_Baseline_approved=false`、`production_approved=false`、`production_validation=false`。
 - 临时业务测试部署仍为 `Infinite-Canvas-Enterprise-TEST-240f6a2-win-x64.zip`（SHA-256 `7111243ec661d5f1caf90a207161ff1e57d0b46737d5abccdb81b001ffadc3c9`）：Gateway `8000`、upstream `3001` loopback，`LAN_UI_verified=true`。`temporary_test_business_deployment_active=true`、`temporary_test_business_deployment_updated_by_PR84=false`、`controlled_LAN_or_VPN_only=true`、`public_exposure=false`、`copy_to_more_devices=false`、`migration_guarantee=false`；它不是 formal Release 或 Production Baseline。
 - ADR-OPS-007：项目负责人已接受 Greenfield 全新生产路线；旧生产迁移计划取消。
 - `production_device_touched_by_project_owner=true`（项目负责人确认的既有事实）；`production_device_touched_by_codex=false`；`production_modified_by_this_PR=false`。
@@ -113,7 +113,7 @@ SEC-1B2 已完成仓库实现和临时数据库验证，由 PR #75 承载。该�
 | OPS / Runtime | OPS-2A / OPS-2B / OPS-3A、STAB-1 / OPS-L1 和 PR #79 hotfix 已进入 main。已有 `start/stop/restart/status/health`、独立角色恢复、持久日志、runtime state、完整 identity、ACK 和 Job Object。上述能力不代表生产已升级或切换，也不代表 apply-upgrade / restore / rollback、Windows Service、Docker / 1Panel 或 PostgreSQL 已实现。 |
 | 超级管理员 / Capability | SEC-1B1 只建立固定 role 基础，不创建 super_admin，也不实现 Capability；旧生产仍使用历史 `is_admin` 数据。面向新生产空环境的 Fresh Install Bootstrap 尚未实现。 |
 | 强制安全审计 | SEC-1F0 已提供仓库底层和临时数据库证明；旧生产未建表且不再计划 activation，现有在线管理操作仍使用原 `usage_logs`；新生产必须从 Fresh Install Bootstrap 建立 mandatory audit，完整查询 / 导出 / 保留 / 归档仍未实现。 |
-| ENV / 不可变 Release | ENV-1B0、ENV-1B1A、ENV-1B2P、ENV-1B1B 和 ENV-1B1C-B1 已合并；B1 只提供正式入口后续接线所需的纯契约和安全原语。legacy update、restart、bytecode、正式入口、controller/host/child 统一身份和完整 runtime 自检仍未迁移/接线；完整只读 APP_ROOT、正式不可变 Release、Production Baseline 和 production approval 均未形成。 |
+| ENV / 不可变 Release | ENV-1B0、ENV-1B1A、ENV-1B2P、ENV-1B1B 和 ENV-1B1C-B1 已合并；B2 portable lifecycle repository implementation 与 D1–D10 实现已通过独立代码审查。真实 bundled Python 成功链、干净 Windows 验证、完整只读 APP_ROOT、正式不可变 Release、Production Baseline 和 production approval 均未形成。 |
 
 ## 5. 当前人工确认
 
@@ -147,7 +147,7 @@ ARCH-2A、SEC-1A、SEC-1B1、SEC-1F0、SEC-1C0 和 SEC-1B2 仓库实现已完成
 3. ENV-1B2P：已由 PR #82 合并；core `true`，dependency / archive `false`，`production_approved=false`。
 4. ENV-1B1B：已由 PR #83 合并；`ENV_1B1B_scoped_contract_acceptance_passed=true`，但 `ENV_1B1B_full_release_acceptance_passed=false`。
 5. ENV-1B1C-B1：已由 PR #84 合并并通过独立 contract-foundation 验收；Final Acceptance evidence 已由独立 docs-only closeout commit 持久化，且该文档收口不接入 Runtime lifecycle。
-6. 下一阶段是 ENV-1B1C-B2 只读架构门禁；B2 implementation 需要项目负责人单独批准，当前尚未开始。完整 ENV-1B2、Manifest v2 和 ENV-1B3 仍按路线完成 Release-bound 入口、可重复 Runtime、自检和干净 Windows 验证。
+6. ENV-1B1C-B2 只读架构门禁已通过，repository implementation 与 D1–D10 实现已通过独立代码审查。完整 ENV-1B2、Manifest v2 和 ENV-1B3 仍按路线完成可重复 Runtime、正式 manifest 和干净 Windows 验证。
 7. 形成不可变 Windows Release Candidate；Release Candidate 不等于 Production Baseline。
 8. DATA-1：建立新生产所需 schema version、migration history、兼容分类和数据完整性基础，不迁移旧生产数据。
 9. 独立设计、实现并验证尚不存在的 Fresh Install Bootstrap。
