@@ -14,7 +14,7 @@ def _probe(executable: Path, **overrides: object) -> dict[str, object]:
     data: dict[str, object] = {
         "architecture": "64bit",
         "base_prefix": str(executable.parent),
-        "cache_tag": "cpython-310",
+        "cache_tag": "cpython-314",
         "dont_write_bytecode": True,
         "implementation": "cpython",
         "machine": "AMD64",
@@ -22,7 +22,7 @@ def _probe(executable: Path, **overrides: object) -> dict[str, object]:
         "pointer_bits": 64,
         "executable": str(executable),
         "prefix": str(executable.parent),
-        "version": "3.10.11",
+        "version": "3.14.6",
     }
     data.update(overrides)
     return data
@@ -34,7 +34,7 @@ def test_python_identity_is_redacted_and_bound_to_python_exe(tmp_path: Path) -> 
     identity = build_python_identity(exe, _probe(exe), expected_executable=exe, expected_runtime_root=exe.parent)
     snapshot = identity.public_snapshot()
     assert snapshot["implementation"] == "CPython"
-    assert snapshot["abi"] == "cp310"
+    assert snapshot["abi"] == "cp314"
     assert snapshot["architecture"] == "x64"
     assert snapshot["executable_basename"] == "python.exe"
     assert str(tmp_path) not in str(snapshot)
@@ -64,7 +64,8 @@ def test_executable_mismatch_fails_closed(tmp_path: Path) -> None:
     [
         ({"implementation": "pypy"}, "PYTHON_IDENTITY_IMPLEMENTATION_INVALID"),
         ({"version": "3.11.0"}, "PYTHON_IDENTITY_VERSION_INVALID"),
-        ({"version": "3.10.not-a-patch"}, "PYTHON_IDENTITY_VERSION_INVALID"),
+        ({"version": "3.14.5"}, "PYTHON_IDENTITY_VERSION_INVALID"),
+        ({"version": "3.14.not-a-patch"}, "PYTHON_IDENTITY_VERSION_INVALID"),
         ({"cache_tag": "cpython-311"}, "PYTHON_IDENTITY_ABI_INVALID"),
         ({"pointer_bits": 32}, "PYTHON_IDENTITY_ARCHITECTURE_INVALID"),
         ({"dont_write_bytecode": False}, "PYTHON_IDENTITY_BYTECODE_POLICY_INVALID"),
@@ -136,12 +137,12 @@ def test_r5_portable_identity_requires_explicit_expected_roots(tmp_path: Path) -
     assert exc.value.code == "PYTHON_IDENTITY_EXECUTABLE_MISMATCH"
 
 
-@pytest.mark.parametrize("soabi", [None, "cpython-310-win_amd64"])
+@pytest.mark.parametrize("soabi", [None, "cpython-314-win_amd64"])
 def test_r5_portable_identity_allows_absent_or_exact_soabi(tmp_path: Path, soabi: str | None) -> None:
     runtime = tmp_path / "runtime"; runtime.mkdir()
     exe = runtime / "python.exe"; exe.write_bytes(b"fake")
     identity = build_python_identity(exe, _probe(exe, soabi=soabi), expected_executable=exe, expected_runtime_root=runtime)
-    assert identity.abi == "cp310"
+    assert identity.abi == "cp314"
 
 
 def test_r5_portable_identity_rejects_incompatible_soabi(tmp_path: Path) -> None:

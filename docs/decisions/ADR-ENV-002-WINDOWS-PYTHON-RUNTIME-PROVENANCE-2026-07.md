@@ -3,8 +3,8 @@
 - 状态：Accepted
 - 决策日期：2026-07-16
 - 决策事实基线：`main@396cccc68d63bd16393a2cb72d24e4a48fcf47cb`
-- 当前实施核对基线：`main@d86d58871c5d08601bb384c783033fa05687b9ed`
-- 实施状态：ENV-1B2P 已合并；ENV-1B2A 当前分支形成 Python 3.10.11 可复现 Runtime 与三层 true-path 证据，正式 Release 运行时仍未批准
+- 当前实施核对基线：`main@c5d0a62822bb8b55b25215aa74a9f02653e03fc9`
+- 实施状态：ENV-1B2P、ENV-1B2A 已合并；ENV-1B2B 当前 Draft 实施 CPython 3.14.6 / cp314 active Runtime，正式 Release 运行时仍未批准
 
 ## 背景
 
@@ -84,6 +84,12 @@ production_approved=false
 ```
 
 真实 Build A 还通过 B2 fixed launcher/host/supervisor/fixture-child 启停验证，Runtime tree 前后不变。详情见 [ENV-1B2A 实施记录](../env/ENV-1B2A-REPRODUCIBLE-WINDOWS-RUNTIME-IMPLEMENTATION-2026-07.md)。该证据不完成 ENV-1B2B 新 Python qualification、clean-Windows validation、Manifest v2、activation、formal Release 或 production approval。
+
+## ENV-1B2B implementation-status addendum（2026-07-28）
+
+Python 版本资格门禁已选择仍受支持、提供 Windows x64 embeddable package 的 ordinary-GIL CPython 3.14.6。ENV-1B2B 当前 Draft 将 Git-tracked 唯一 active source policy、完整官方 36-file inventory、30 项应用依赖 lock、3 项 bootstrap wheel、builder/verifier 和 startup identity/preflight 契约迁移到 `cp314`；CPython 3.10.11 的 ENV-1B2A 证据继续作为历史证据与 rollback baseline 保留，不建立双 active profile 或 operator version selector。
+
+本阶段要求仓库外两次独立 clean build、33 项精确 installed closure、真实 `pip check`、Requires-Dist graph、CycloneDX 1.6 SBOM、deterministic archive、三层 provenance 和真实 fixed-Python formal-entry fixture 全部绑定同一 clean Git HEAD/tree。当前记录只说明 implementation candidate 存在于 Draft PR；独立验收、clean Windows、Manifest v2、activation、formal Release、Production Baseline 和 production approval 均未完成。
 
 ## 后果
 

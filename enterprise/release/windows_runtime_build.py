@@ -1,4 +1,4 @@
-"""Reproducible, offline Windows bundled Runtime build primitives for ENV-1B2A.
+"""Reproducible, offline Windows bundled Runtime build primitives for ENV-1B2A/B.
 
 The module is intentionally release tooling.  It never discovers inputs from
 the current working directory, never falls back to PATH Python, and never
@@ -35,7 +35,7 @@ from enterprise.release.current_release import (
 )
 
 
-BUILD_TOOL_VERSION = "env-1b2a-windows-runtime-builder-v2"
+BUILD_TOOL_VERSION = "env-1b2b-windows-runtime-builder-v3"
 PYTHON_SOURCE_SCHEMA = "env-1b2a-python-source-v1"
 WHEELHOUSE_LOCK_SCHEMA = provenance.WHEELHOUSE_MANIFEST_SCHEMA
 BUILD_POLICY_SCHEMA = "env-1b2a-runtime-build-policy-v1"
@@ -58,7 +58,7 @@ _WINDOWS_DEVICES = frozenset(
 _JSON_LIMIT = 16 * 1024 * 1024
 _CHUNK = 1024 * 1024
 _ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
-_PTH_BYTES = b"python310.zip\r\n.\r\n..\r\nimport site\r\n"
+_PTH_BYTES = b"python314.zip\r\n.\r\n..\r\nimport site\r\n"
 
 
 class WindowsRuntimeBuildError(RuntimeError):
@@ -279,12 +279,14 @@ def load_source_policy(path: Path | str) -> dict[str, Any]:
     payload = _load_json(Path(path).absolute(), PYTHON_SOURCE_SCHEMA)
     if (
         payload.get("implementation") != "CPython"
-        or payload.get("version") != "3.10.11"
+        or payload.get("version") != "3.14.6"
         or payload.get("architecture") != "x64"
-        or payload.get("python_abi") != "cp310"
-        or payload.get("archive_filename") != "python-3.10.11-embed-amd64.zip"
-        or not isinstance(payload.get("official_source_url"), str)
-        or not str(payload["official_source_url"]).startswith("https://www.python.org/")
+        or payload.get("python_abi") != "cp314"
+        or payload.get("archive_filename") != "python-3.14.6-embed-amd64.zip"
+        or payload.get("official_source_url")
+        != "https://www.python.org/ftp/python/3.14.6/python-3.14.6-embed-amd64.zip"
+        or payload.get("ordinary_gil_build") is not True
+        or payload.get("free_threaded") is not False
         or _SHA256_RE.fullmatch(str(payload.get("sha256", ""))) is None
     ):
         raise WindowsRuntimeBuildError("PYTHON_SOURCE_POLICY_INVALID")
@@ -303,8 +305,17 @@ def load_source_policy(path: Path | str) -> dict[str, Any]:
         names.add(_safe_relative(item.get("path"), label="source_core"))
     if names != set(provenance.UPSTREAM_CORE_FILES):
         raise WindowsRuntimeBuildError("PYTHON_SOURCE_INVENTORY_INVALID")
-    pth = payload.get("python310_pth_policy")
-    if type(pth) is not dict or pth.get("candidate_sha256") != sha256_bytes(_PTH_BYTES):
+    pth = payload.get("python_pth_policy")
+    if (
+        type(pth) is not dict
+        or pth.get("candidate_lines") != ["python314.zip", ".", "..", "import site"]
+        or pth.get("candidate_sha256") != sha256_bytes(_PTH_BYTES)
+        or pth.get("canonical_bytes_sha256") != sha256_bytes(_PTH_BYTES)
+        or pth.get("relative_app_root_entry") != ".."
+        or pth.get("import_site_enabled") is not True
+        or pth.get("line_ending") != "CRLF"
+        or _SHA256_RE.fullmatch(str(pth.get("original_sha256", ""))) is None
+    ):
         raise WindowsRuntimeBuildError("PYTHON_PTH_POLICY_INVALID")
     return payload
 
@@ -334,7 +345,7 @@ def parse_requirements_lock(path: Path | str) -> dict[str, tuple[str, str]]:
 
 def load_wheelhouse_lock(path: Path | str) -> tuple[dict[str, Any], dict[str, LockedWheel]]:
     payload = _load_json(Path(path).absolute(), WHEELHOUSE_LOCK_SCHEMA)
-    if payload.get("target_python_abi") != "cp310" or payload.get("target_platform") != "win_amd64":
+    if payload.get("target_python_abi") != "cp314" or payload.get("target_platform") != "win_amd64":
         raise WindowsRuntimeBuildError("WHEELHOUSE_TARGET_INVALID")
     values = payload.get("wheels")
     if type(values) is not list or payload.get("wheel_count") != len(values) or payload.get("invalid_wheel_count") != 0:
@@ -366,8 +377,8 @@ def load_wheelhouse_lock(path: Path | str) -> tuple[dict[str, Any], dict[str, Lo
             or not isinstance(relation, str)
             or not relation
             or not all(type(tags) is list and tags and all(isinstance(tag, str) and tag for tag in tags) for tags in (python_tags, abi_tags, platform_tags))
-            or item.get("compatible_with_cpython_310_win_amd64") is not True
-            or not provenance._wheel_is_cp310_win_amd64(filename)
+            or item.get("compatible_with_cpython_314_win_amd64") is not True
+            or not provenance._wheel_is_cp314_win_amd64(filename)
         ):
             raise WindowsRuntimeBuildError("WHEELHOUSE_RECORD_INVALID")
         result[name] = LockedWheel(
@@ -389,6 +400,10 @@ def load_build_policy(path: Path | str) -> dict[str, Any]:
     payload = _load_json(Path(path).absolute(), BUILD_POLICY_SCHEMA)
     if (
         payload.get("build_tool_version") != BUILD_TOOL_VERSION
+        or payload.get("active_python_version") != "3.14.6"
+        or payload.get("active_python_abi") != "cp314"
+        or payload.get("ordinary_gil_build") is not True
+        or payload.get("free_threaded") is not False
         or payload.get("bootstrap_distribution_allowlist") != sorted(provenance.BOOTSTRAP_DISTRIBUTION_ALLOWLIST)
         or payload.get("archive_root_prefix") != "runtime"
         or payload.get("zip_timestamp") != list(_ZIP_TIMESTAMP)
@@ -492,7 +507,7 @@ def prepare_sources(*, source_archive: Path, source_policy: Path, output: Path) 
         "schema_version": "env-1b2a-source-verification-v1",
         "sha256": sha256_file(target),
         "size_bytes": target.stat().st_size,
-        "version": "3.10.11",
+        "version": "3.14.6",
     })
     return target
 
@@ -907,7 +922,7 @@ def verify_b2_fixture(
     source_archive = _input_file(app_source_archive, "app_source_archive")
     root = _new_output_root(output)
     install_root = root / "fixture-install"
-    app_root = install_root / "releases" / "env-1b2a-fixture"
+    app_root = install_root / "releases" / "env-1b2b-fixture"
     local_base = root / "fixture-local-app-data"
     different_cwd = root / "Unicode 路径 with spaces"
     app_root.mkdir(parents=True)
@@ -939,8 +954,8 @@ def verify_b2_fixture(
         directory.mkdir(parents=True, exist_ok=True)
     current_release = CurrentRelease(
         schema_version=CURRENT_RELEASE_SCHEMA,
-        release_id="env-1b2a-fixture",
-        app_root_relative="releases/env-1b2a-fixture",
+        release_id="env-1b2b-fixture",
+        app_root_relative="releases/env-1b2b-fixture",
         manifest_sha256=sha256_file(manifest),
         activated_at="2026-07-28T00:00:00Z",
         previous_release_id=None,
@@ -1102,8 +1117,8 @@ environment = default_environment()
 environment.update({
     "implementation_name": "cpython",
     "platform_machine": "AMD64",
-    "python_version": "3.10",
-    "python_full_version": "3.10.11",
+    "python_version": "3.14",
+    "python_full_version": "3.14.6",
     "sys_platform": "win32",
 })
 graph = {}
@@ -1166,11 +1181,11 @@ def _build_sbom(
 ) -> dict[str, object]:
     components: list[dict[str, object]] = [
         {
-            "bom-ref": "pkg:generic/cpython@3.10.11?arch=x64",
+            "bom-ref": "pkg:generic/cpython@3.14.6?arch=x64",
             "name": "CPython",
             "properties": [{"name": "runtime_tree_sha256", "value": runtime_digest}],
             "type": "framework",
-            "version": "3.10.11",
+            "version": "3.14.6",
         }
     ]
     bootstrap = {
@@ -1205,7 +1220,7 @@ def _build_sbom(
     refs = {name: f"pkg:pypi/{name}@{installed[name]}" for name in installed}
     dependencies = [
         {"ref": "runtime", "dependsOn": [component["bom-ref"] for component in components]},
-        {"ref": "pkg:generic/cpython@3.10.11?arch=x64", "dependsOn": []},
+        {"ref": "pkg:generic/cpython@3.14.6?arch=x64", "dependsOn": []},
     ] + [
         {"ref": refs[name], "dependsOn": [refs[value] for value in dependency_graph[name]]}
         for name in sorted(installed)
@@ -1265,8 +1280,8 @@ def build_runtime(inputs: BuildInputs, output_root: Path | str) -> BuildOutput:
     root = _new_output_root(output_root)
     output = _output_layout(root)
     _extract_zip(inputs.source_archive, output.runtime, expected_names=set(provenance.UPSTREAM_CORE_FILES))
-    original_pth = output.runtime / "python310._pth"
-    if sha256_file(original_pth) != source["python310_pth_policy"]["original_sha256"]:
+    original_pth = output.runtime / "python314._pth"
+    if sha256_file(original_pth) != source["python_pth_policy"]["original_sha256"]:
         raise WindowsRuntimeBuildError("PYTHON_PTH_SOURCE_MISMATCH")
     try:
         original_pth.write_bytes(_PTH_BYTES)
@@ -1342,8 +1357,8 @@ def build_runtime(inputs: BuildInputs, output_root: Path | str) -> BuildOutput:
         "dependency_lock_sha256": lock_sha,
         "enterprise_commit": inputs.enterprise_commit,
         "installed_closure_sha256": installed_digest,
-        "python_abi": "cp310",
-        "python_version": "3.10.11",
+        "python_abi": "cp314",
+        "python_version": "3.14.6",
         "runtime_tree_sha256": runtime_digest,
         "upstream_commit": provenance.FIXED_UPSTREAM_COMMIT,
         "wheelhouse_manifest_sha256": wheel_inventory_sha,
@@ -1401,7 +1416,7 @@ def build_runtime(inputs: BuildInputs, output_root: Path | str) -> BuildOutput:
             "sha256": runtime_records[name].sha256,
             "size_bytes": runtime_records[name].size_bytes,
         }
-        for name in ("python.exe", "pythonw.exe", "python310.dll", "python310.zip", "python310._pth")
+        for name in ("python.exe", "pythonw.exe", "python314.dll", "python314.zip", "python314._pth")
     ]
     manifest = {
         "architecture": "x64",
@@ -1421,14 +1436,14 @@ def build_runtime(inputs: BuildInputs, output_root: Path | str) -> BuildOutput:
         "embedded_pth": {
             "candidate_sha256": sha256_bytes(_PTH_BYTES),
             "import_site_enabled": True,
-            "original_sha256": source["python310_pth_policy"]["original_sha256"],
+            "original_sha256": source["python_pth_policy"]["original_sha256"],
             "relative_app_root_entry": "..",
         },
         "files": _records_payload(runtime_records),
         "files_summary": {"runtime_file_count": len(runtime_records), "runtime_size_bytes": runtime_size},
-        "python_abi": "cp310",
+        "python_abi": "cp314",
         "python_implementation": "CPython",
-        "python_version": "3.10.11",
+        "python_version": "3.14.6",
         "schema_version": provenance.RUNTIME_MANIFEST_SCHEMA,
         "source": {
             "enterprise_commit": inputs.enterprise_commit,
@@ -1510,13 +1525,13 @@ def build_archive(inputs: BuildInputs, output: BuildOutput) -> None:
         "output_archive_entry_count": len(archive_records),
         "output_archive_sha256": archive_sha,
         "post_build_changes_detected": False,
-        "python_abi": "cp310",
+        "python_abi": "cp314",
         "python_source_archive_filename": source["archive_filename"],
         "python_source_inventory_sha256": provenance._records_digest(source_records),
         "python_source_policy_sha256": sha256_file(inputs.source_policy),
         "python_source_sha256": sha256_file(inputs.source_archive),
         "python_source_size_bytes": inputs.source_archive.stat().st_size,
-        "python_version": "3.10.11",
+        "python_version": "3.14.6",
         "runtime_tree_sha256": runtime_digest,
         "schema_version": provenance.ARCHIVE_BUILD_RECORD_SCHEMA,
         "upstream_commit": provenance.FIXED_UPSTREAM_COMMIT,
@@ -1532,8 +1547,8 @@ def build_archive(inputs: BuildInputs, output: BuildOutput) -> None:
         "dependency_lock_sha256": dependency["sha256"],
         "enterprise_commit": inputs.enterprise_commit,
         "post_build_changes_detected": False,
-        "python_abi": "cp310",
-        "python_version": "3.10.11",
+        "python_abi": "cp314",
+        "python_version": "3.14.6",
         "root_prefix": "runtime",
         "upstream_commit": provenance.FIXED_UPSTREAM_COMMIT,
         "wheelhouse_manifest_sha256": sha256_file(output.wheelhouse_inventory),

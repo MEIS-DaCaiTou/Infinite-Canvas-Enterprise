@@ -17,7 +17,7 @@ from enterprise.paths import PathRootsError, validate_release_component
 
 from .error_contract import RuntimeContractError, canonical_json
 from .preflight import StartupPreflightResult
-from .runtime_manifest import is_strict_cpython_310_version
+from .runtime_manifest import is_strict_cpython_314_version
 
 
 LAUNCH_CONTEXT_SCHEMA_VERSION = "env-1b1c-runtime-launch-context-v1"
@@ -67,9 +67,9 @@ def _validate_context_values(context: "RuntimeLaunchContext") -> None:
         raise RuntimeContractError("LAUNCH_CONTEXT_INVALID")
     if context.app_root_relative != f"releases/{context.release_id}":
         raise RuntimeContractError("LAUNCH_CONTEXT_INVALID")
-    if context.python_implementation != "CPython" or not is_strict_cpython_310_version(context.python_version):
+    if context.python_implementation != "CPython" or not is_strict_cpython_314_version(context.python_version):
         raise RuntimeContractError("LAUNCH_CONTEXT_INVALID")
-    if context.python_abi != "cp310" or context.architecture != "x64":
+    if context.python_abi != "cp314" or context.architecture != "x64":
         raise RuntimeContractError("LAUNCH_CONTEXT_INVALID")
     if context.bytecode_policy != "disabled-no-user-site":
         raise RuntimeContractError("LAUNCH_CONTEXT_INVALID")

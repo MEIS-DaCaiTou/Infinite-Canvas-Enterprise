@@ -23,8 +23,8 @@ from enterprise.release import runtime_provenance as provenance
 
 
 ENTERPRISE_COMMIT = "a" * 40
-ORIGINAL_PTH = b"python310.zip\r\n.\r\n\r\n# Uncomment to run site.main() automatically\r\nimport site\r\n"
-CANDIDATE_PTH = b"python310.zip\r\n.\r\n..\r\nimport site\r\n"
+ORIGINAL_PTH = b"python314.zip\r\n.\r\n\r\n# Uncomment to run site.main() automatically\r\nimport site\r\n"
+CANDIDATE_PTH = b"python314.zip\r\n.\r\n..\r\nimport site\r\n"
 
 
 def _sha(content: bytes) -> str:
@@ -72,8 +72,8 @@ def _build_fixture(
     upstream_content: dict[str, bytes] = {}
     candidate_content: dict[str, bytes] = {}
     for relative in provenance.UPSTREAM_CORE_FILES:
-        upstream = ORIGINAL_PTH if relative == "python310._pth" else f"upstream:{relative}".encode("utf-8")
-        candidate = CANDIDATE_PTH if relative == "python310._pth" else upstream
+        upstream = ORIGINAL_PTH if relative == "python314._pth" else f"upstream:{relative}".encode("utf-8")
+        candidate = CANDIDATE_PTH if relative == "python314._pth" else upstream
         upstream_content[relative] = upstream
         candidate_content[relative] = candidate
         path = runtime / Path(relative)
@@ -89,14 +89,14 @@ def _build_fixture(
     wheelhouse.mkdir()
     wheel_data = {
         "alpha-1.0-py3-none-any.whl": b"alpha-wheel",
-        "native-2.0-cp310-cp310-win_amd64.whl": b"native-wheel",
+        "native-2.0-cp314-cp314-win_amd64.whl": b"native-wheel",
     }
     for name, content in wheel_data.items():
         (wheelhouse / name).write_bytes(content)
-    lock = tmp_path / "requirements-windows-cp310.lock"
+    lock = tmp_path / "requirements-windows-cp314.lock"
     lock.write_text(
         "alpha==1.0 --hash=sha256:" + _sha(wheel_data["alpha-1.0-py3-none-any.whl"]) + "\n"
-        "native==2.0 --hash=sha256:" + _sha(wheel_data["native-2.0-cp310-cp310-win_amd64.whl"]) + "\n",
+        "native==2.0 --hash=sha256:" + _sha(wheel_data["native-2.0-cp314-cp314-win_amd64.whl"]) + "\n",
         encoding="utf-8",
     )
     wheel_manifest = tmp_path / "wheelhouse-sha256.json"
@@ -104,16 +104,16 @@ def _build_fixture(
         "invalid_wheel_count": 0,
         "schema_version": provenance.WHEELHOUSE_MANIFEST_SCHEMA,
         "target_platform": "win_amd64",
-        "target_python_abi": "cp310",
+        "target_python_abi": "cp314",
         "wheel_count": 2,
         "wheels": [
             {
-                "abi_tags": ["none" if "none-any" in name else "cp310"],
-                "compatible_with_cpython_310_win_amd64": True,
+                "abi_tags": ["none" if "none-any" in name else "cp314"],
+                "compatible_with_cpython_314_win_amd64": True,
                 "filename": name,
                 "package": "alpha" if name.startswith("alpha-") else "native",
                 "platform_tags": ["any" if name.endswith("none-any.whl") else "win_amd64"],
-                "python_tags": ["py3" if "-py3-" in name else "cp310"],
+                "python_tags": ["py3" if "-py3-" in name else "cp314"],
                 "sha256": _sha(content),
                 "size_bytes": len(content),
                 "version": "1.0" if name.startswith("alpha-") else "2.0",
@@ -125,7 +125,7 @@ def _build_fixture(
     external_report = tmp_path / "external-validation.md"
     external_report.write_text("Historical validation attachment only.\n", encoding="utf-8")
 
-    core_names = ("python.exe", "pythonw.exe", "python310.dll", "python310.zip", "python310._pth")
+    core_names = ("python.exe", "pythonw.exe", "python314.dll", "python314.zip", "python314._pth")
     core_files = []
     for name in core_names:
         content = (runtime / name).read_bytes()
@@ -150,9 +150,9 @@ def _build_fixture(
             "relative_app_root_entry": "..",
         },
         "files_summary": {"runtime_file_count": len(files), "runtime_size_bytes": runtime_size},
-        "python_abi": "cp310",
+        "python_abi": "cp314",
         "python_implementation": "CPython",
-        "python_version": "3.10.11",
+        "python_version": "3.14.6",
         "schema_version": provenance.RUNTIME_MANIFEST_SCHEMA,
         "source": {
             "enterprise_commit": ENTERPRISE_COMMIT,
@@ -175,8 +175,8 @@ def _build_fixture(
         "dependency_lock_sha256": provenance._sha256_file(lock),
         "enterprise_commit": ENTERPRISE_COMMIT,
         "installed_closure_sha256": installed_closure_digest,
-        "python_abi": "cp310",
-        "python_version": "3.10.11",
+        "python_abi": "cp314",
+        "python_version": "3.14.6",
         "runtime_tree_sha256": runtime_tree_digest,
         "upstream_commit": provenance.FIXED_UPSTREAM_COMMIT,
         "wheelhouse_manifest_sha256": provenance._sha256_file(wheel_manifest),
@@ -226,8 +226,8 @@ def _build_fixture(
             "dependency_lock_sha256": provenance._sha256_file(lock),
             "enterprise_commit": ENTERPRISE_COMMIT,
             "post_build_changes_detected": False,
-            "python_abi": "cp310",
-            "python_version": "3.10.11",
+            "python_abi": "cp314",
+            "python_version": "3.14.6",
             "root_prefix": "runtime",
             "upstream_commit": provenance.FIXED_UPSTREAM_COMMIT,
             "wheelhouse_manifest_sha256": provenance._sha256_file(wheel_manifest),
@@ -251,8 +251,8 @@ def _build_fixture(
                 "output_archive_entry_count": len(archive_records),
                 "output_archive_sha256": provenance._sha256_file(target_archive),
                 "post_build_changes_detected": False,
-                "python_abi": "cp310",
-                "python_version": "3.10.11",
+                "python_abi": "cp314",
+                "python_version": "3.14.6",
                 "runtime_tree_sha256": runtime_tree_digest,
                 "schema_version": provenance.ARCHIVE_BUILD_RECORD_SCHEMA,
                 "upstream_commit": provenance.FIXED_UPSTREAM_COMMIT,
@@ -285,9 +285,9 @@ def _build_fixture(
         "machine": "AMD64",
         "pointer_bits": 64,
         "prefix_basename": runtime.name,
-        "soabi": "cp310",
-        "version": "fixture CPython 3.10.11",
-        "version_info": [3, 10, 11],
+        "soabi": "cp314",
+        "version": "fixture CPython 3.14.6",
+        "version_info": [3, 14, 6],
     }
     return Fixture(
         tmp_path,
@@ -371,12 +371,12 @@ def test_complete_core_runtime_matches_fixed_upstream(tmp_path: Path) -> None:
     report = _verify(_build_fixture(tmp_path))
     assert report["core_runtime_provenance_verified"] is True
     assert report["overall_classification"] == "partially_verified"
-    assert _check(report, "fixed-upstream-core-inventory")["count"] == 34
+    assert _check(report, "fixed-upstream-core-inventory")["count"] == 36
 
 
 def test_core_file_missing_fails_integrity(tmp_path: Path) -> None:
     fixture = _build_fixture(tmp_path)
-    (fixture.runtime / "python310.dll").unlink()
+    (fixture.runtime / "python314.dll").unlink()
     report = _verify(fixture)
     assert report["result"] == "fail"
     assert report["core_runtime_provenance_verified"] is False
@@ -581,7 +581,7 @@ def test_pip_check_broken_requirements_fail_integrity(tmp_path: Path) -> None:
 
 def test_nested_platform_wheelhouse_is_closed_by_basename(tmp_path: Path) -> None:
     fixture = _build_fixture(tmp_path, independent_dependency=True)
-    leaf = fixture.wheelhouse / "windows-x64" / "cp310"
+    leaf = fixture.wheelhouse / "windows-x64" / "cp314"
     leaf.mkdir(parents=True)
     for wheel in list(fixture.wheelhouse.glob("*.whl")):
         wheel.replace(leaf / wheel.name)
@@ -627,15 +627,15 @@ def test_wheel_hash_mismatch_fails_integrity(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "filename,expected",
     [
-        ("native-2.0-cp310-cp310-win_amd64.whl", True),
+        ("native-2.0-cp314-cp314-win_amd64.whl", True),
         ("portable-2.0-py3-none-any.whl", True),
         ("legacy-2.0-py2-none-any.whl", False),
         ("native-2.0-cp311-cp311-win_amd64.whl", False),
-        ("native-2.0-cp310-cp310-manylinux_x86_64.whl", False),
+        ("native-2.0-cp314-cp314-manylinux_x86_64.whl", False),
     ],
 )
 def test_wheel_tag_compatibility(filename: str, expected: bool) -> None:
-    assert provenance._wheel_is_cp310_win_amd64(filename) is expected
+    assert provenance._wheel_is_cp314_win_amd64(filename) is expected
 
 
 def test_formal_candidate_archive_can_be_verified(tmp_path: Path) -> None:
@@ -935,14 +935,25 @@ def test_committed_python_source_policy_independently_anchors_official_zip(tmp_p
             for name, record in sorted(source_records.items())
         ],
         "implementation": "CPython",
-        "official_source_url": "https://www.python.org/ftp/python/3.10.11/python-3.10.11-embed-amd64.zip",
-        "python_abi": "cp310",
+        "ordinary_gil_build": True,
+        "free_threaded": False,
+        "official_source_url": "https://www.python.org/ftp/python/3.14.6/python-3.14.6-embed-amd64.zip",
+        "python_pth_policy": {
+            "candidate_lines": ["python314.zip", ".", "..", "import site"],
+            "candidate_sha256": _sha(CANDIDATE_PTH),
+            "canonical_bytes_sha256": _sha(CANDIDATE_PTH),
+            "import_site_enabled": True,
+            "line_ending": "CRLF",
+            "original_sha256": _sha(ORIGINAL_PTH),
+            "relative_app_root_entry": "..",
+        },
+        "python_abi": "cp314",
         "schema_version": provenance.PYTHON_SOURCE_POLICY_SCHEMA,
         "sha256": provenance._sha256_file(fixture.source_archive),
         "size_bytes": fixture.source_archive.stat().st_size,
-        "version": "3.10.11",
+        "version": "3.14.6",
     }
-    policy_payload["archive_filename"] = "python-3.10.11-embed-amd64.zip"
+    policy_payload["archive_filename"] = "python-3.14.6-embed-amd64.zip"
     official_archive = tmp_path / str(policy_payload["archive_filename"])
     fixture.source_archive.replace(official_archive)
     fixture.source_archive = official_archive

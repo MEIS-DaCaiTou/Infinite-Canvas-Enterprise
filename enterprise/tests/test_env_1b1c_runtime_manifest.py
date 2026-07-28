@@ -40,9 +40,9 @@ def _runtime_fixture(tmp_path: Path, *, architecture: str = "x64", candidate_id:
             {"filename": name, "sha256": _sha(content), "size_bytes": len(content)}
             for name, content in core.items()
         ],
-        "python_abi": "cp310",
+        "python_abi": "cp314",
         "python_implementation": "CPython",
-        "python_version": "3.10.11",
+        "python_version": "3.14.6",
         "schema_version": "enterprise-windows-runtime-manifest-v1",
         "source": {"enterprise_commit": "a" * 40},
     }
@@ -69,6 +69,16 @@ def test_runtime_manifest_startup_view_uses_fixed_five_files(tmp_path: Path) -> 
 def test_candidate_id_is_optional_metadata(tmp_path: Path) -> None:
     runtime, manifest = _runtime_fixture(tmp_path, candidate_id="candidate-1")
     assert parse_runtime_manifest_startup_view(manifest, runtime).candidate_id == "candidate-1"
+
+
+def test_active_runtime_manifest_rejects_other_python_314_patch(tmp_path: Path) -> None:
+    runtime, manifest = _runtime_fixture(tmp_path)
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    payload["python_version"] = "3.14.5"
+    manifest.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+    with pytest.raises(RuntimeContractError) as exc:
+        parse_runtime_manifest_startup_view(manifest, runtime)
+    assert exc.value.code == "PYTHON_IDENTITY_VERSION_INVALID"
 
 
 def test_arm64_parses_but_is_not_approved_for_current_portable_target(tmp_path: Path) -> None:
@@ -162,7 +172,7 @@ def _typed_view(records: tuple[StartupCoreFile, ...]) -> RuntimeManifestStartupV
         digest.update(bytes.fromhex(record.sha256))
     return RuntimeManifestStartupView(
         schema_version="env-1b1c-runtime-manifest-startup-view-v1", manifest_sha256="a" * 64,
-        python_version="3.10.11", python_implementation="CPython", python_abi="cp310",
+        python_version="3.14.6", python_implementation="CPython", python_abi="cp314",
         architecture="x64", architecture_supported=True, startup_core_files=records,
         startup_core_digest=digest.hexdigest(), candidate_id=None, manifest_self_declared_enterprise_commit=None,
     )

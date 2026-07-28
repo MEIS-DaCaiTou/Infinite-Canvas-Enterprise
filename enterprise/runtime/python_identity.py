@@ -14,7 +14,7 @@ from .runtime_manifest import (
     APPROVED_PORTABLE_ARCHITECTURES,
     SINGLE_FILE_HASH_MAX_BYTES,
     abi_from_cache_tag,
-    is_strict_cpython_310_version,
+    is_strict_cpython_314_version,
     normalize_architecture,
 )
 from enterprise.path_safety import (
@@ -50,8 +50,8 @@ class PythonIdentity:
         if (
             self.schema_version != PYTHON_IDENTITY_SCHEMA
             or self.implementation != "CPython"
-            or not is_strict_cpython_310_version(self.version)
-            or self.abi != "cp310"
+            or not is_strict_cpython_314_version(self.version)
+            or self.abi != "cp314"
             or self.architecture not in {"x64", "arm64"}
             or self.architecture_supported != (self.architecture in APPROVED_PORTABLE_ARCHITECTURES)
             or self.pointer_bits != 64
@@ -127,15 +127,15 @@ def _same_path(first: Path, second: Path) -> bool:
 
 
 def _validate_soabi(value: object, *, abi: str, architecture: str) -> None:
-    """Validate an optional SOABI against the frozen Windows CPython 3.10 ABI."""
+    """Validate an optional SOABI against the active Windows CPython 3.14 ABI."""
 
     if value is None:
         return
     if not isinstance(value, str):
         raise RuntimeContractError("PYTHON_IDENTITY_ABI_INVALID")
     normalized = value.strip().lower().replace("_", "-")
-    if abi != "cp310" or architecture != "x64" or normalized not in {
-        "cp310-win-amd64", "cpython-310-win-amd64",
+    if abi != "cp314" or architecture != "x64" or normalized not in {
+        "cp314-win-amd64", "cpython-314-win-amd64",
     }:
         raise RuntimeContractError("PYTHON_IDENTITY_ABI_INVALID")
 
@@ -197,7 +197,7 @@ def build_python_identity(
     if implementation != "cpython":
         raise RuntimeContractError("PYTHON_IDENTITY_IMPLEMENTATION_INVALID")
     version = probe.get("version")
-    if not is_strict_cpython_310_version(version):
+    if not is_strict_cpython_314_version(version):
         raise RuntimeContractError("PYTHON_IDENTITY_VERSION_INVALID")
     try:
         abi = abi_from_cache_tag(probe.get("cache_tag"))
@@ -210,7 +210,7 @@ def build_python_identity(
     pointer_bits = probe.get("pointer_bits")
     if pointer_bits != 64:
         raise RuntimeContractError("PYTHON_IDENTITY_ARCHITECTURE_INVALID")
-    if abi != "cp310":
+    if abi != "cp314":
         raise RuntimeContractError("PYTHON_IDENTITY_ABI_INVALID")
     _validate_soabi(probe.get("soabi"), abi=abi, architecture=architecture)
     if architecture not in APPROVED_PORTABLE_ARCHITECTURES:
