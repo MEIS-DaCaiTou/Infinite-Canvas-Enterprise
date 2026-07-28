@@ -260,10 +260,14 @@ def test_real_bundled_python_fixture_is_explicit_and_external_only() -> None:
 
 def test_clean_environment_preserves_windows_architecture_but_not_python_overrides(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("PROCESSOR_ARCHITECTURE", "AMD64")
+    monkeypatch.setenv("USERPROFILE", r"C:\Users\fixture")
+    monkeypatch.setenv("LOCALAPPDATA", r"C:\untrusted-local-app-data")
     monkeypatch.setenv("PYTHONHOME", "untrusted-home")
     monkeypatch.setenv("PYTHONPATH", "untrusted-path")
     environment = build._clean_environment(tmp_path)
     assert environment["PROCESSOR_ARCHITECTURE"] == "AMD64"
+    assert environment["USERPROFILE"] == r"C:\Users\fixture"
+    assert "LOCALAPPDATA" not in environment
     assert "PYTHONHOME" not in environment
     assert "PYTHONPATH" not in environment
 

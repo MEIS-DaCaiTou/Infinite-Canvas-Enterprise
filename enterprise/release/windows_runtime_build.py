@@ -617,6 +617,9 @@ def _clean_environment(runtime: Path) -> dict[str, str]:
         "TMP",
         "PROCESSOR_ARCHITECTURE",
         "PROCESSOR_ARCHITEW6432",
+        "USERPROFILE",
+        "HOMEDRIVE",
+        "HOMEPATH",
     ):
         value = os.environ.get(name)
         if value:
@@ -677,6 +680,8 @@ def _fixture_sitecustomize() -> bytes:
     return (
         "import json\n"
         "import os\n"
+        "import re\n"
+        "import traceback\n"
         "from pathlib import Path\n"
         "from enterprise.runtime import portable as _portable\n"
         "_original_validate = _portable.validate_portable_process_binding\n"
@@ -692,7 +697,10 @@ def _fixture_sitecustomize() -> bytes:
         "        return _original_cli_main(argv)\n"
         "    except BaseException as exc:\n"
         "        diagnostic = Path(os.environ['ICE_B2_FIXTURE_DIAGNOSTIC'])\n"
-        "        diagnostic.write_text(json.dumps({'code':str(getattr(exc,'code',type(exc).__name__))[:64]},sort_keys=True),encoding='utf-8')\n"
+        "        message = str(exc)\n"
+        "        safe_message = message[:96] if re.fullmatch(r'[A-Za-z0-9 _.-]{1,96}', message) else 'redacted'\n"
+        "        frames = [{'function':item.name,'line':item.lineno} for item in traceback.extract_tb(exc.__traceback__)[-4:]]\n"
+        "        diagnostic.write_text(json.dumps({'code':str(getattr(exc,'code',type(exc).__name__))[:64],'message':safe_message,'frames':frames},sort_keys=True),encoding='utf-8')\n"
         "        raise\n"
         "_runtime_cli.main = _fixture_cli_main\n"
     ).encode("utf-8")
