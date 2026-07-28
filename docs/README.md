@@ -1,9 +1,9 @@
 # Infinite Canvas Enterprise 文档索引与事实源
 
 更新时间：2026-07-28
-最后一次代码事实核对基线：`main@d3885a92968e68f35500318977341c94612ab2a2`
+最后一次代码事实核对基线：`main@d86d58871c5d08601bb384c783033fa05687b9ed`
 
-当前 repository HEAD：以 GitHub `main` 分支为准；PR #80 至 #84 已分别合并 ENV-1B0、ENV-1B1A、ENV-1B2P、ENV-1B1B 和 ENV-1B1C-B1。B1 contract foundations 已独立验收；B2 read-only architecture gate 已通过，portable lifecycle repository implementation 与 D1–D10 实现已通过独立代码审查。完整 ENV-1B1C、formal Release 与 production approval 仍未完成。
+当前 repository HEAD：以 GitHub `main` 分支为准；PR #80 至 #84 已分别合并 ENV-1B0、ENV-1B1A、ENV-1B2P、ENV-1B1B 和 ENV-1B1C-B1，PR #86 已合并 ENV-1B1C-B2。B1 contract foundations 已独立验收；B2 portable lifecycle 与 D1–D10 repository implementation 已进入 `main` 并通过独立代码审查。ENV-1B2A 当前分支已形成可复现 Python 3.10 Runtime 与三层 provenance 证据；完整 ENV-1B2、formal Release 与 production approval 仍未完成。
 
 本索引用于避免当前事实、目标架构、历史实施记录和未来规划相互覆盖。新任务应先读取当前事实源，再按任务域读取 ADR 和专项文档。
 
@@ -18,6 +18,7 @@
 | 生产部署路线 | [ADR-OPS-007](./decisions/ADR-OPS-007-GREENFIELD-PRODUCTION-BASELINE-AND-LEGACY-NON-MIGRATION-2026-07.md) | Greenfield 新生产与旧生产非迁移的权威决策 |
 | ENV-1B1A 实施与写入审计 | [ENV-1B1A APP_ROOT 写入审计与 Static 构建](./env/ENV-1B1A-APP-ROOT-WRITE-AUDIT-AND-STATIC-BUILD-2026-07.md) | 区分 PR #81 已关闭的 static blocker 与后续未迁移写入 |
 | ENV-1B2P Runtime 来源证据 | [ENV-1B2P Windows Runtime 分层来源证据](./env/ENV-1B2P-WINDOWS-RUNTIME-PROVENANCE-EVIDENCE-2026-07.md) | 独立记录 core / dependency / archive 结论并固定 production approval 为 false |
+| ENV-1B2A 可复现 Runtime | [ENV-1B2A 可复现 Windows Runtime 实施记录](./env/ENV-1B2A-REPRODUCIBLE-WINDOWS-RUNTIME-IMPLEMENTATION-2026-07.md) | 官方 source、哈希锁、闭合 wheelhouse、双 clean build、SBOM、archive 与真实 B2 fixture；仍固定 production approval 为 false |
 | ENV-1B1B 路径根与版本指针 | [ENV-1B1B PathRoots 与 Current Release 实施记录](./env/ENV-1B1B-PATH-ROOTS-AND-CURRENT-RELEASE-IMPLEMENTATION-2026-07.md) | 已合并：核心路径迁移和严格 pointer 原语，不等于 activation 或完整只读 APP_ROOT |
 | ENV-1B1C Runtime 入口与自检 | [ENV-1B1C Runtime 入口与自检实施记录](./env/ENV-1B1C-RUNTIME-ENTRYPOINT-SELF-CHECK-IMPLEMENTATION-2026-07.md) | B1 已独立验收；B2 repository implementation 与 D1–D10 实现已通过独立代码审查 |
 | ENV-1B1C-B2 portable lifecycle | [ENV-1B1C-B2 Portable Runtime Lifecycle 实施记录](./env/ENV-1B1C-B2-PORTABLE-RUNTIME-LIFECYCLE-IMPLEMENTATION-2026-07.md) | 固定 launcher、Release identity、STAB-1 integration 与 readiness 的实现和验证边界 |
@@ -50,7 +51,7 @@ ADR 的 `Accepted` 只表示决策冻结，不表示对应能力已经实现或�
 ## 专项参考
 
 - Architecture：[architecture/](./architecture/)
-- ENV：ADR-ENV-001 至 ADR-ENV-005 已由 PR #80 冻结；ENV-1B1A 已由 PR #81 合并，ENV-1B2P 已由 PR #82 合并，ENV-1B1B scoped contract 已由 PR #83 合并，ENV-1B1C-B1 contract foundations 已由 PR #84 合并并独立验收；ENV-1B1C-B2 repository implementation 与 D1–D10 实现已通过独立代码审查；完整 ENV-1B1C / ENV-1B2 均未完成。
+- ENV：ADR-ENV-001 至 ADR-ENV-005 已由 PR #80 冻结；ENV-1B1A 已由 PR #81 合并，ENV-1B2P 已由 PR #82 合并，ENV-1B1B scoped contract 已由 PR #83 合并，ENV-1B1C-B1 contract foundations 已由 PR #84 合并并独立验收，ENV-1B1C-B2 已由 PR #86 合并；ENV-1B2A 当前分支完成 Python 3.10 可复现 Runtime 证据，不包含 ENV-1B2B 新 Python qualification；完整 ENV-1B1C / ENV-1B2 均未完成。
 - OPS：[ops/](./ops/)
 - Security：[security/](./security/)、[runbooks/](./runbooks/)
 - Upstream：[upstream/](./upstream/)

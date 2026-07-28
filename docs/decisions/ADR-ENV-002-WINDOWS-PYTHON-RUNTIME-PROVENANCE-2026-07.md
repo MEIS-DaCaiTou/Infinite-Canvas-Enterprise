@@ -3,8 +3,8 @@
 - 状态：Accepted
 - 决策日期：2026-07-16
 - 决策事实基线：`main@396cccc68d63bd16393a2cb72d24e4a48fcf47cb`
-- 当前实施核对基线：`main@a53885b026a6c2440acb0fbde72d6571ff6f7723`
-- 实施状态：历史候选验证已完成；ENV-1B2P 当前在 Draft PR 中形成分层复核，正式 Release 运行时尚未批准
+- 当前实施核对基线：`main@d86d58871c5d08601bb384c783033fa05687b9ed`
+- 实施状态：ENV-1B2P 已合并；ENV-1B2A 当前分支形成 Python 3.10.11 可复现 Runtime 与三层 true-path 证据，正式 Release 运行时仍未批准
 
 ## 背景
 
@@ -69,6 +69,21 @@ ENV-1B2P 的 future true-path 必须将 rebuild attestation、pip-check report �
 - 构建工具版本、构建时间、上游和企业 commit。
 - runtime manifest、SBOM、第三方许可证清单和完整归档哈希。
 - 清空 `PYTHONPATH`、无系统 Python 条件下的导入与生命周期验证。
+
+## ENV-1B2A implementation-status addendum（2026-07-28）
+
+ENV-1B2A 不改写上述历史候选事实，而是使用官方 CPython 3.10.11 Windows x64 embeddable ZIP（SHA-256 `608619f8619075629c9c69f361352a0da6ed7e62f83a0e19c63e0ea32eb7629d`）、30 项精确哈希 dependency lock、闭合 wheelhouse 和固定 3 项 bootstrap allowlist 从全新目录执行两次离线构建。两次 Runtime tree SHA-256 均为 `6dbeb669533b082a0fe5ca01239692288388df3d27ba4338f6bfe8f5aa6b9887`，两次 assembled archive SHA-256 均为 `f57d50c4184f4fe6d07dc86423b4d266455f976d2011894838aa3526ca6c09c0`。
+
+独立 rebuild attestation、真实 `pip check`、installed closure、CycloneDX 1.6 SBOM、full inventory 和 archive build record 均以实际 SHA-256 相互绑定。现有 verifier 的本次仓库外结果为：
+
+```text
+core_runtime_provenance_verified=true
+dependency_layer_rebuilt_and_verified=true
+archive_provenance_verified=true
+production_approved=false
+```
+
+真实 Build A 还通过 B2 fixed launcher/host/supervisor/fixture-child 启停验证，Runtime tree 前后不变。详情见 [ENV-1B2A 实施记录](../env/ENV-1B2A-REPRODUCIBLE-WINDOWS-RUNTIME-IMPLEMENTATION-2026-07.md)。该证据不完成 ENV-1B2B 新 Python qualification、clean-Windows validation、Manifest v2、activation、formal Release 或 production approval。
 
 ## 后果
 

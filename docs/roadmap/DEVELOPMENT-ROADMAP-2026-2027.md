@@ -1,9 +1,9 @@
 # Infinite-Canvas-Enterprise 开发路线图（2026-2027）
 
 更新时间：2026-07-28
-最后一次代码事实核对基线：`main@6610218aecc0b864df5f075cb6824e041daedfd7`
+最后一次代码事实核对基线：`main@d86d58871c5d08601bb384c783033fa05687b9ed`
 
-当前 repository HEAD 以 GitHub `main` 为准；PR #80、PR #81、PR #82、PR #83 和 PR #84 已合并。ENV-1B1C-B1 纯契约、安全原语和隔离测试基础已进入 `main` 并通过独立验收；B2 portable lifecycle repository implementation 与 D1–D10 实现已通过独立代码审查。
+当前 repository HEAD 以 GitHub `main` 为准；PR #80、PR #81、PR #82、PR #83、PR #84 和 PR #86 已合并。ENV-1B1C-B1 纯契约已独立验收，B2 portable lifecycle 与 D1–D10 repository implementation 已进入 `main` 并通过独立代码审查。ENV-1B2A 当前分支实施 Python 3.10 可复现 Runtime，ENV-1B2B 新 Python qualification 尚未开始。
 
 当前实施事实以 [CURRENT_PROJECT_STATUS](../CURRENT_PROJECT_STATUS.md) 为准；架构决策以 [ADR 索引](../README.md) 为准。本文负责阶段顺序，不重复定义实现状态。
 
@@ -44,12 +44,14 @@
 | ENV-1B2P | 已合并，PR #82 | Runtime 分层来源证据验证；core true、dependency/archive false，production approval 固定 false。 |
 | ENV-1B1B | 已合并，PR #83 | PathRoots、严格 pointer 和核心路径迁移；不实施 activation、B1C 或完整 immutable release。 |
 | ENV-1B1C-B1 | 已合并并独立验收，PR #84 | Runtime mode、manifest startup view、Python identity、preflight、launch context、writable probe、release/ownership gate 和 path safety 的纯契约与测试基础；不接入正式 lifecycle。 |
+| ENV-1B1C-B2 | 已合并，PR #86 | 固定 direct-script launcher、Release Python/preflight/launch-context 信任链、复用 STAB-1 lifecycle 的 host/supervisor/child identity、ownership、readiness 和 Windows wrappers。 |
+| ENV-1B2A | 当前 Draft 实施阶段 | 固定 CPython 3.10.11 x64，完成官方 source、hash lock、闭合 wheelhouse、双 clean build、pip check、SBOM、deterministic archive 和真实 B2 fixture；不包含新 Python qualification。 |
 
 OPS-2A / OPS-2B 已进入 main，项目负责人曾在旧生产侧人工完成 dry-run 和一次单独确认的正式备份。这些是历史运维事实，不代表 restore、upgrade、apply-upgrade 或 rollback 已实现，也不再作为旧到新迁移输入。旧生产 `check-data` warning 和其中的 unowned、orphan map、missing file 不再阻塞新生产基线；旧数据仍未被自动修复或删除。
 
 ## 3. 当前阶段
 
-当前已确认状态为 **ENV-1B1C-B1 已合并并独立验收；B2 read-only architecture gate 已通过，repository implementation 与 D1–D10 实现已通过独立代码审查**。B2 接入固定 launcher、Release identity、现有 STAB-1 lifecycle 和 readiness；真实 bundled Runtime 验证、formal Release 与生产批准仍未完成。正常上游功能同步在 ENV-1 期间冻结；紧急安全漏洞修复可以单独评估并受控引入。
+当前已确认状态为 **ENV-1B1C-B1 已合并并独立验收，ENV-1B1C-B2 已由 PR #86 合并；ENV-1B2A 当前分支已完成 Python 3.10 可复现 Runtime 与仓库外真实 fixed-Python fixture**。ENV-1B2B 新 Python qualification、clean Windows、formal Release 与生产批准仍未完成。正常上游功能同步在 ENV-1 期间冻结；紧急安全漏洞修复可以单独评估并受控引入。
 
 Greenfield Production Baseline 路线按以下顺序执行，后项不能绕过前项门禁：
 
@@ -59,27 +61,28 @@ Greenfield Production Baseline 路线按以下顺序执行，后项不能绕过�
 3. ENV-1B1B：路径根、版本目录和 `current-release.json`；已合并，不含 activation。
 4. ENV-1B1C-B1：Runtime mode、manifest startup view、Python identity、preflight、launch context 和 writable probe 的纯契约/安全原语；已由 PR #84 合并并独立验收，不接入 lifecycle。
 5. ENV-1B1C-B1 docs closeout：由独立 docs-only closeout commit 持久化 Final Acceptance evidence；不接入 Runtime lifecycle。
-6. ENV-1B1C-B2：read-only architecture gate 已通过；repository implementation 与 D1–D10 实现已通过独立代码审查。
-7. ENV-1B2：可重复 Runtime、依赖锁、`pip check`、SBOM、自检，并验证受支持的新 Python 版本。
-8. OPS Release Manifest v2。
-9. ENV-1B3：干净 Windows VM、无系统 Python、非管理员、中文/空格/长路径、低磁盘、重启、损坏 DLL/manifest、杀毒软件和 APP_ROOT 只读验证。
-10. 形成首个不可变 Windows Release Candidate；Release Candidate 不等于 Production Baseline。
-11. DATA-1：Repository、schema version、migration history、新版本 migration compatibility、数据完整性和数据库回滚基础；不迁移或修复旧生产数据。
-12. Fresh Install Bootstrap：面向空环境建立目标 Schema、mandatory audit、首个 `super_admin` 和不可变 lifecycle marker。
-13. 在干净 Windows 环境完成全新安装与初始化验收。
-14. 收口 ARCH-3、P0 安全、PERF-1 / OBS-1、浏览器回归和真实 Provider 成功链路。
-15. 使用全新基线数据完成正式 backup 和 restore rehearsal。
-16. OPS-3B repository implementation：实现计划驱动的 apply / switch / health / rollback / restore；不用于旧生产。
-17. 在干净 Windows 环境使用 Fresh Install Bootstrap 建立的全新隔离数据，完成 Release Candidate 之间的升级、rollback / restore 演练；这是开发或隔离验证，不是生产执行。
-18. 由项目负责人确认已经具备经过验证的持续升级和失败恢复能力，并批准 Production Baseline。
-19. 在生产设备使用全新数据库、账号、配置和凭据执行 Greenfield 部署，并完成新生产业务验收。
-20. 后续正式 Release 进入新生产版本迭代；OPS-3B 的首次真实生产执行只能发生在 Greenfield 新生产部署以后，并由项目负责人在生产设备本地执行。
-21. 新生产验收通过后，由项目负责人另行决定旧生产停止、归档或删除。
-22. OPS-3C / Update Center 可在 Production Baseline 后单独实施，不是首次生产部署前置条件。
-23. Linux 单服务器适配。
-24. PostgreSQL、对象存储、queue、Redis 和多实例按真实需求引入。
+6. ENV-1B1C-B2：已由 PR #86 合并；固定 portable launcher、Release Python 信任链、现有 STAB-1 lifecycle 与 readiness 已进入 `main`。
+7. ENV-1B2A：固定 Python 3.10 layout 的官方来源、依赖锁、离线双重建、`pip check`、SBOM、deterministic archive 和 B2 fixed-Python fixture；当前 Draft 实施阶段。
+8. ENV-1B2B：受支持的新 Python 版本候选、ABI/wheel 覆盖和应用兼容 qualification；尚未开始。
+9. OPS Release Manifest v2。
+10. ENV-1B3：干净 Windows VM、无系统 Python、非管理员、中文/空格/长路径、低磁盘、重启、损坏 DLL/manifest、杀毒软件和 APP_ROOT 只读验证。
+11. 形成首个不可变 Windows Release Candidate；Release Candidate 不等于 Production Baseline。
+12. DATA-1：Repository、schema version、migration history、新版本 migration compatibility、数据完整性和数据库回滚基础；不迁移或修复旧生产数据。
+13. Fresh Install Bootstrap：面向空环境建立目标 Schema、mandatory audit、首个 `super_admin` 和不可变 lifecycle marker。
+14. 在干净 Windows 环境完成全新安装与初始化验收。
+15. 收口 ARCH-3、P0 安全、PERF-1 / OBS-1、浏览器回归和真实 Provider 成功链路。
+16. 使用全新基线数据完成正式 backup 和 restore rehearsal。
+17. OPS-3B repository implementation：实现计划驱动的 apply / switch / health / rollback / restore；不用于旧生产。
+18. 在干净 Windows 环境使用 Fresh Install Bootstrap 建立的全新隔离数据，完成 Release Candidate 之间的升级、rollback / restore 演练；这是开发或隔离验证，不是生产执行。
+19. 由项目负责人确认已经具备经过验证的持续升级和失败恢复能力，并批准 Production Baseline。
+20. 在生产设备使用全新数据库、账号、配置和凭据执行 Greenfield 部署，并完成新生产业务验收。
+21. 后续正式 Release 进入新生产版本迭代；OPS-3B 的首次真实生产执行只能发生在 Greenfield 新生产部署以后，并由项目负责人在生产设备本地执行。
+22. 新生产验收通过后，由项目负责人另行决定旧生产停止、归档或删除。
+23. OPS-3C / Update Center 可在 Production Baseline 后单独实施，不是首次生产部署前置条件。
+24. Linux 单服务器适配。
+25. PostgreSQL、对象存储、queue、Redis 和多实例按真实需求引入。
 
-第 0 至 6 项已完成各自的 repository 范围，B2 repository implementation 与 D1–D10 实现已通过独立代码审查。后续仍须依次完成可重复 Runtime、Manifest v2 与干净 Windows 验证。Fresh Install Bootstrap、新生产部署、OPS-3B、Linux、PostgreSQL、Redis、durable queue、多实例、Windows Service、正式 Windows Runtime Release 和 Production Baseline 当前都不是已完成能力。
+第 0 至 6 项已完成各自的 repository 范围，B2 repository implementation 与 D1–D10 实现已通过独立代码审查；第 7 项 ENV-1B2A 当前分支已形成可复现 Python 3.10 Runtime 证据。后续仍须依次完成 ENV-1B2B 新 Python qualification、Manifest v2 与干净 Windows 验证。Fresh Install Bootstrap、新生产部署、OPS-3B、Linux、PostgreSQL、Redis、durable queue、多实例、Windows Service、正式 Windows Runtime Release 和 Production Baseline 当前都不是已完成能力。
 
 ## 4. 历史拆解参考
 

@@ -83,7 +83,7 @@ def _build_fixture(
     upstream_archive = tmp_path / "fixed-upstream-core.zip"
     source_archive = tmp_path / "source-python.zip"
     _write_zip(upstream_archive, {f"python/{name}": content for name, content in upstream_content.items()})
-    _write_zip(source_archive, {f"python/{name}": content for name, content in upstream_content.items()})
+    _write_zip(source_archive, dict(upstream_content))
 
     wheelhouse = tmp_path / "wheelhouse"
     wheelhouse.mkdir()
@@ -94,7 +94,11 @@ def _build_fixture(
     for name, content in wheel_data.items():
         (wheelhouse / name).write_bytes(content)
     lock = tmp_path / "requirements-windows-cp310.lock"
-    lock.write_text("alpha==1.0\nnative==2.0\n", encoding="utf-8")
+    lock.write_text(
+        "alpha==1.0 --hash=sha256:" + _sha(wheel_data["alpha-1.0-py3-none-any.whl"]) + "\n"
+        "native==2.0 --hash=sha256:" + _sha(wheel_data["native-2.0-cp310-cp310-win_amd64.whl"]) + "\n",
+        encoding="utf-8",
+    )
     wheel_manifest = tmp_path / "wheelhouse-sha256.json"
     wheel_payload = {
         "invalid_wheel_count": 0,
@@ -429,6 +433,29 @@ def test_lock_and_wheelhouse_bidirectional_closure(tmp_path: Path) -> None:
     assert _check(report, "wheelhouse-bidirectional-closure")["status"] == "pass"
     assert _check(report, "candidate-installed-exact-closure")["status"] == "pass"
     assert report["dependency_layer_rebuilt_and_verified"] is True
+
+
+def test_legacy_unhashed_lock_parses_but_cannot_promote_dependency(tmp_path: Path) -> None:
+    fixture = _build_fixture(tmp_path, independent_dependency=True)
+    fixture.lock.write_text("alpha==1.0\nnative==2.0\n", encoding="utf-8")
+    lock_sha256 = provenance._sha256_file(fixture.lock)
+    manifest = json.loads(fixture.manifest.read_text(encoding="utf-8"))
+    manifest["dependency_lock"]["sha256"] = lock_sha256
+    for artifact, filename_key, sha_key in (
+        (fixture.rebuild_attestation, "rebuild_attestation_filename", "rebuild_attestation_sha256"),
+        (fixture.pip_check_report, "pip_check_report_filename", "pip_check_report_sha256"),
+    ):
+        assert artifact is not None
+        payload = json.loads(artifact.read_text(encoding="utf-8"))
+        payload["dependency_lock_sha256"] = lock_sha256
+        artifact.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+        manifest["dependency_lock"][filename_key] = artifact.name
+        manifest["dependency_lock"][sha_key] = provenance._sha256_file(artifact)
+    fixture.manifest.write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
+    report = _verify(fixture)
+    assert _check(report, "dependency-lock-sha256-complete")["status"] == "insufficient"
+    assert report["dependency_layer_rebuilt_and_verified"] is False
+    assert report["overall_classification"] == "partially_verified"
 
 
 def test_unlocked_distribution_fails_exact_installed_closure(tmp_path: Path) -> None:
@@ -887,6 +914,67 @@ def test_missing_upstream_core_evidence_keeps_core_false(tmp_path: Path) -> None
     report = _verify(_build_fixture(tmp_path), upstream_core_archive=None)
     assert report["core_runtime_provenance_verified"] is False
     assert _check(report, "fixed-upstream-core-inventory")["status"] == "insufficient"
+
+
+def test_same_source_zip_cannot_self_authorize_without_committed_policy(tmp_path: Path) -> None:
+    fixture = _build_fixture(tmp_path)
+    report = _verify(fixture, upstream_core_archive=fixture.source_archive)
+    assert report["core_runtime_provenance_verified"] is False
+    assert _check(report, "python-source-independent-authority")["status"] == "insufficient"
+
+
+def test_committed_python_source_policy_independently_anchors_official_zip(tmp_path: Path) -> None:
+    fixture = _build_fixture(tmp_path)
+    source_records = provenance._zip_inventory(fixture.source_archive)[0]
+    policy = tmp_path / "python-source.json"
+    policy_payload = {
+        "architecture": "x64",
+        "archive_filename": fixture.source_archive.name,
+        "expected_core_inventory": [
+            {"path": name, "sha256": record.sha256, "size_bytes": record.size_bytes}
+            for name, record in sorted(source_records.items())
+        ],
+        "implementation": "CPython",
+        "official_source_url": "https://www.python.org/ftp/python/3.10.11/python-3.10.11-embed-amd64.zip",
+        "python_abi": "cp310",
+        "schema_version": provenance.PYTHON_SOURCE_POLICY_SCHEMA,
+        "sha256": provenance._sha256_file(fixture.source_archive),
+        "size_bytes": fixture.source_archive.stat().st_size,
+        "version": "3.10.11",
+    }
+    policy_payload["archive_filename"] = "python-3.10.11-embed-amd64.zip"
+    official_archive = tmp_path / str(policy_payload["archive_filename"])
+    fixture.source_archive.replace(official_archive)
+    fixture.source_archive = official_archive
+    policy.write_text(json.dumps(policy_payload, sort_keys=True), encoding="utf-8")
+    manifest = json.loads(fixture.manifest.read_text(encoding="utf-8"))
+    manifest["source"]["enterprise_tree_id"] = "b" * 40
+    manifest["source_python_zip"].update(
+        {
+            "archive_filename": official_archive.name,
+            "core_inventory_sha256": provenance._records_digest(source_records),
+            "policy_filename": policy.name,
+            "policy_sha256": provenance._sha256_file(policy),
+        }
+    )
+    fixture.manifest.write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
+    with (
+        patch.object(
+            provenance,
+            "_git_worktree_identity",
+            return_value={"enterprise_commit": ENTERPRISE_COMMIT, "enterprise_tree_id": "b" * 40},
+        ),
+        patch.object(provenance, "_git_tracked_file_sha256", return_value=provenance._sha256_file(policy)),
+    ):
+        report = _verify(
+            fixture,
+            python_source_policy=policy,
+            enterprise_worktree=tmp_path,
+            upstream_core_archive=None,
+        )
+    assert _check(report, "python-source-policy-archive-binding")["status"] == "pass"
+    assert _check(report, "enterprise-clean-worktree-binding")["status"] == "pass"
+    assert report["core_runtime_provenance_verified"] is True
 
 
 def test_output_report_cannot_be_inside_runtime(tmp_path: Path) -> None:

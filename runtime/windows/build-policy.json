@@ -1,0 +1,17 @@
+{
+  "archive_compression": "deflate-9",
+  "archive_root_prefix": "runtime",
+  "bootstrap_distribution_allowlist": ["pip", "setuptools", "wheel"],
+  "bootstrap_wheels": [
+    {"filename": "pip-26.1.1-py3-none-any.whl", "package": "pip", "sha256": "99cb1c2899893b075ff56e4ed0af55669a955b49ad7fb8d8603ecdaf4ed653fb", "size_bytes": 1812777, "version": "26.1.1"},
+    {"filename": "setuptools-82.0.1-py3-none-any.whl", "package": "setuptools", "sha256": "a59e362652f08dcd477c78bb6e7bd9d80a7995bc73ce773050228a348ce2e5bb", "size_bytes": 1006223, "version": "82.0.1"},
+    {"filename": "wheel-0.47.0-py3-none-any.whl", "package": "wheel", "sha256": "212281cab4dff978f6cedd499cd893e1f620791ca6ff7107cf270781e587eced", "size_bytes": 32218, "version": "0.47.0"}
+  ],
+  "build_tool_version": "env-1b2a-windows-runtime-builder-v2",
+  "console_scripts_policy": "omit-and-normalize-wheel-records",
+  "ignored_nondeterministic_fields": [],
+  "offline_install_arguments": ["--isolated", "--no-index", "--find-links", "--require-hashes", "--only-binary=:all:", "--no-compile"],
+  "python_bytecode_policy": "disabled",
+  "schema_version": "env-1b2a-runtime-build-policy-v1",
+  "zip_timestamp": [1980, 1, 1, 0, 0, 0]
+}

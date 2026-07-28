@@ -26,12 +26,13 @@ from enterprise.path_safety import (
 
 
 SCHEMA_VERSION = "env-1b2p-runtime-provenance-report-v2"
-VERIFIER_VERSION = "env-1b2p-runtime-provenance-verifier-v3"
+VERIFIER_VERSION = "env-1b2a-runtime-provenance-verifier-v4"
 RUNTIME_MANIFEST_SCHEMA = "enterprise-windows-runtime-manifest-v1"
 WHEELHOUSE_MANIFEST_SCHEMA = "env-1b2a-wheelhouse-sha256-v1"
 DEPENDENCY_REBUILD_ATTESTATION_SCHEMA = "env-1b2p-dependency-rebuild-attestation-v1"
 PIP_CHECK_REPORT_SCHEMA = "env-1b2p-pip-check-report-v1"
 ARCHIVE_BUILD_RECORD_SCHEMA = "env-1b2p-archive-build-record-v1"
+PYTHON_SOURCE_POLICY_SCHEMA = "env-1b2a-python-source-v1"
 BOOTSTRAP_DISTRIBUTION_ALLOWLIST = frozenset({"pip", "setuptools", "wheel"})
 FIXED_UPSTREAM_REPOSITORY = "hero8152/Infinite-Canvas"
 FIXED_UPSTREAM_COMMIT = "f1dd6834a72f3e7ff8340be05a84347d931e9cb9"
@@ -76,7 +77,10 @@ UPSTREAM_CORE_FILES = (
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
-_LOCK_LINE_RE = re.compile(r"^(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)==(?P<version>[^\s;]+)$")
+_LOCK_LINE_RE = re.compile(
+    r"^(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)==(?P<version>[^\s;]+)"
+    r"(?:\s+--hash=sha256:(?P<sha256>[0-9a-f]{64}))?$"
+)
 _WINDOWS_DEVICE_NAMES = frozenset(
     {"con", "prn", "aux", "nul"}
     | {f"com{index}" for index in range(1, 10)}
@@ -324,7 +328,7 @@ def _normalized_name(value: str) -> str:
     return re.sub(r"[-_.]+", "-", value).casefold()
 
 
-def _parse_lock(path: Path) -> dict[str, str]:
+def _parse_lock(path: Path) -> tuple[dict[str, str], dict[str, str | None]]:
     try:
         text = path.read_text(encoding="utf-8", errors="strict")
     except UnicodeError as exc:
@@ -332,6 +336,7 @@ def _parse_lock(path: Path) -> dict[str, str]:
     except OSError as exc:
         raise ProvenanceVerificationError("artifact-read-failed", path.name) from exc
     packages: dict[str, str] = {}
+    hashes: dict[str, str | None] = {}
     for raw_line in text.splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#"):
@@ -343,9 +348,107 @@ def _parse_lock(path: Path) -> dict[str, str]:
         if name in packages:
             raise ProvenanceVerificationError("dependency-lock-duplicate", name)
         packages[name] = match.group("version")
+        hashes[name] = match.group("sha256")
     if not packages:
         raise ProvenanceVerificationError("dependency-lock-empty")
-    return dict(sorted(packages.items()))
+    return dict(sorted(packages.items())), dict(sorted(hashes.items()))
+
+
+def _load_python_source_policy(path: Path) -> tuple[dict[str, object], dict[str, FileRecord]]:
+    payload = _load_json(path, PYTHON_SOURCE_POLICY_SCHEMA)
+    if (
+        payload.get("implementation") != "CPython"
+        or payload.get("version") != "3.10.11"
+        or payload.get("architecture") != "x64"
+        or payload.get("python_abi") != "cp310"
+        or payload.get("archive_filename") != "python-3.10.11-embed-amd64.zip"
+        or payload.get("official_source_url")
+        != "https://www.python.org/ftp/python/3.10.11/python-3.10.11-embed-amd64.zip"
+        or _SHA256_RE.fullmatch(str(payload.get("sha256", ""))) is None
+        or type(payload.get("size_bytes")) is not int
+        or int(payload["size_bytes"]) < 1
+    ):
+        raise ProvenanceVerificationError("python-source-policy-invalid")
+    values = payload.get("expected_core_inventory")
+    if type(values) is not list or len(values) != len(UPSTREAM_CORE_FILES):
+        raise ProvenanceVerificationError("python-source-policy-inventory-invalid")
+    records: dict[str, FileRecord] = {}
+    for item in values:
+        if type(item) is not dict:
+            raise ProvenanceVerificationError("python-source-policy-inventory-invalid")
+        relative = _safe_relative_path(item.get("path"), code="python-source-policy-path-invalid")
+        digest = item.get("sha256")
+        size = item.get("size_bytes")
+        if (
+            relative in records
+            or not isinstance(digest, str)
+            or _SHA256_RE.fullmatch(digest) is None
+            or type(size) is not int
+            or size < 0
+        ):
+            raise ProvenanceVerificationError("python-source-policy-inventory-invalid")
+        records[relative] = FileRecord(relative, digest, size)
+    if set(records) != set(UPSTREAM_CORE_FILES):
+        raise ProvenanceVerificationError("python-source-policy-inventory-invalid")
+    return payload, dict(sorted(records.items()))
+
+
+def _git_worktree_identity(path: Path, enterprise_commit: str) -> dict[str, str]:
+    root = _input_directory(path, "enterprise_worktree")
+
+    def invoke(*arguments: str) -> str:
+        try:
+            completed = subprocess.run(
+                ["git", "-C", str(root), *arguments],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="strict",
+                timeout=30,
+                check=False,
+                shell=False,
+            )
+        except (OSError, UnicodeError, subprocess.TimeoutExpired) as exc:
+            raise ProvenanceVerificationError("enterprise-worktree-git-failed") from exc
+        if completed.returncode != 0 or len(completed.stdout.encode("utf-8")) > 1024 * 1024:
+            raise ProvenanceVerificationError("enterprise-worktree-git-failed")
+        return completed.stdout.strip()
+
+    head = invoke("rev-parse", "HEAD")
+    tree = invoke("rev-parse", "HEAD^{tree}")
+    status = invoke("status", "--porcelain=v1", "--untracked-files=all")
+    if head != enterprise_commit:
+        raise ProvenanceVerificationError("enterprise-worktree-head-mismatch")
+    if _COMMIT_RE.fullmatch(tree) is None:
+        raise ProvenanceVerificationError("enterprise-worktree-tree-invalid")
+    if status:
+        raise ProvenanceVerificationError("enterprise-worktree-dirty")
+    return {"enterprise_commit": head, "enterprise_tree_id": tree}
+
+
+def _git_tracked_file_sha256(worktree: Path, path: Path, enterprise_commit: str) -> str:
+    root = _input_directory(worktree, "enterprise_worktree")
+    candidate = _input_file(path, "git_tracked_evidence")
+    try:
+        relative = candidate.relative_to(root).as_posix()
+    except ValueError as exc:
+        raise ProvenanceVerificationError("git-tracked-evidence-outside-worktree") from exc
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(root), "show", f"{enterprise_commit}:{relative}"],
+            capture_output=True,
+            timeout=30,
+            check=False,
+            shell=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ProvenanceVerificationError("git-tracked-evidence-read-failed") from exc
+    if completed.returncode != 0 or len(completed.stdout) > _MAX_JSON_BYTES:
+        raise ProvenanceVerificationError("git-tracked-evidence-read-failed")
+    digest = _sha256_bytes(completed.stdout)
+    if digest != _sha256_file(candidate):
+        raise ProvenanceVerificationError("git-tracked-evidence-content-mismatch")
+    return digest
 
 
 def _wheel_filename_tags(filename: str) -> tuple[set[str], set[str], set[str]]:
@@ -417,6 +520,22 @@ def _zip_subtree(records: Mapping[str, FileRecord], prefix: str) -> dict[str, Fi
         for relative, record in records.items()
         if relative.startswith(marker)
     }
+
+
+def _upstream_core_inventory(records: Mapping[str, FileRecord]) -> dict[str, FileRecord]:
+    """Accept the historical ``python/`` evidence shape or the official ZIP root.
+
+    CPython's official Windows embeddable archive contains exactly the fixed
+    34-file core inventory at its root.  Earlier ENV-1B2P evidence wrapped the
+    same inventory in a ``python/`` prefix.  Supporting both shapes keeps the
+    established verifier as the single authority without repacking the
+    official source archive or weakening the exact inventory requirement.
+    """
+
+    root_names = set(records)
+    if root_names == set(UPSTREAM_CORE_FILES):
+        return dict(sorted(records.items()))
+    return _zip_subtree(records, "python")
 
 
 def _atomic_write_report(path: Path, payload: Mapping[str, object]) -> None:
@@ -602,7 +721,7 @@ def _verify_core_layer(
         state.gaps.add("fixed-upstream-core-archive-missing")
         valid = False
     else:
-        upstream_core = _zip_subtree(upstream_records, "python")
+        upstream_core = _upstream_core_inventory(upstream_records)
         inventory_ok = set(upstream_core) == set(UPSTREAM_CORE_FILES)
         state.check("fixed-upstream-core-inventory", "pass" if inventory_ok else "fail", count=len(upstream_core))
         valid &= inventory_ok
@@ -612,7 +731,7 @@ def _verify_core_layer(
             state.gaps.add("source-runtime-archive-missing")
             valid = False
         else:
-            source_core = _zip_subtree(source_archive_records, "python")
+            source_core = _upstream_core_inventory(source_archive_records)
             source_match = set(source_core) >= set(UPSTREAM_CORE_FILES) and all(
                 _records_equal(source_core.get(relative), upstream_core.get(relative)) for relative in UPSTREAM_CORE_FILES
             )
@@ -704,6 +823,7 @@ def _verify_dependency_layer(
     runtime_tree_digest: str,
     enterprise_commit: str,
     upstream_commit: str,
+    source_context: Mapping[str, object],
     probe: Mapping[str, object],
     state: _EvidenceState,
     artifacts: list[dict[str, object]],
@@ -751,7 +871,7 @@ def _verify_dependency_layer(
         return False, counts, context
 
     assert dependency_lock is not None and wheelhouse_manifest_path is not None and wheelhouse_root is not None
-    lock_packages = _parse_lock(dependency_lock)
+    lock_packages, lock_hashes = _parse_lock(dependency_lock)
     wheel_manifest = _load_json(wheelhouse_manifest_path, WHEELHOUSE_MANIFEST_SCHEMA)
     artifacts.append(_artifact(dependency_lock, "dependency_lock"))
     artifacts.append(_artifact(wheelhouse_manifest_path, "wheelhouse_manifest", schema_version=WHEELHOUSE_MANIFEST_SCHEMA))
@@ -761,6 +881,7 @@ def _verify_dependency_layer(
         raise ProvenanceVerificationError("wheelhouse-manifest-wheels-invalid")
     declared: dict[str, dict[str, object]] = {}
     declared_packages: dict[str, str] = {}
+    declared_by_package: dict[str, dict[str, object]] = {}
     for item in wheel_items:
         if type(item) is not dict:
             raise ProvenanceVerificationError("wheelhouse-record-invalid")
@@ -786,6 +907,7 @@ def _verify_dependency_layer(
             raise ProvenanceVerificationError("wheelhouse-package-duplicate", normalized)
         declared[filename] = item
         declared_packages[normalized] = version
+        declared_by_package[normalized] = item
 
     actual_files = _iter_tree(wheelhouse_root)
     actual_by_basename: dict[str, tuple[str, Path]] = {}
@@ -818,6 +940,10 @@ def _verify_dependency_layer(
         hash_ok &= actual_hash == record.get("sha256") and actual_size == record.get("size_bytes")
         tags_ok &= _wheel_is_cp310_win_amd64(basename)
     lock_closure_ok = lock_packages == dict(sorted(declared_packages.items()))
+    fully_hashed = all(lock_hashes.get(name) is not None for name in lock_packages)
+    lock_hash_binding_ok = fully_hashed and set(lock_packages) == set(declared_by_package) and all(
+        lock_hashes.get(name) == declared_by_package[name].get("sha256") for name in lock_packages
+    )
     declared_summary_ok = (
         wheel_manifest.get("target_python_abi") == "cp310"
         and wheel_manifest.get("target_platform") == "win_amd64"
@@ -852,6 +978,12 @@ def _verify_dependency_layer(
     wheelhouse_tree_digest = wheel_digest.hexdigest()
 
     state.check("dependency-lock-wheel-manifest-closure", "pass" if lock_closure_ok else "fail", count=len(lock_packages))
+    if not fully_hashed:
+        state.check("dependency-lock-sha256-complete", "insufficient", count=len(lock_packages))
+        state.gaps.add("dependency-lock-not-fully-hash-pinned")
+    else:
+        state.check("dependency-lock-sha256-complete", "pass")
+        state.check("dependency-lock-wheel-sha256-binding", "pass" if lock_hash_binding_ok else "fail")
     state.check("wheelhouse-bidirectional-closure", "pass" if closure_ok else "fail", count=len(actual_files))
     state.check("wheelhouse-sha256", "pass" if hash_ok else "fail", count=len(actual_files))
     state.check("wheel-tags-cp310-win-amd64", "pass" if tags_ok and declared_summary_ok else "fail", count=len(actual_files))
@@ -887,6 +1019,7 @@ def _verify_dependency_layer(
         "enterprise_commit": enterprise_commit,
         "upstream_commit": upstream_commit,
         "installed_closure_sha256": installed_closure_digest,
+        **source_context,
     }
     rebuild_ok = False
     if rebuild_attestation is not None:
@@ -920,10 +1053,12 @@ def _verify_dependency_layer(
             "runtime_tree_sha256": runtime_tree_digest,
             "wheelhouse_manifest_sha256": wheel_manifest_sha256,
             "wheelhouse_tree_sha256": wheelhouse_tree_digest,
+            **source_context,
         }
     )
     return bool(
         lock_closure_ok
+        and lock_hash_binding_ok
         and closure_ok
         and hash_ok
         and tags_ok
@@ -972,6 +1107,7 @@ def _verify_archive_layer(
     dependency_context: Mapping[str, object],
     enterprise_commit: str,
     upstream_commit: str,
+    source_context: Mapping[str, object],
     state: _EvidenceState,
     artifacts: list[dict[str, object]],
 ) -> bool:
@@ -1056,6 +1192,7 @@ def _verify_archive_layer(
             "full_file_inventory_sha256": full_inventory_digest,
             "output_archive_sha256": archive_sha256,
             "output_archive_entry_count": len(expected_archive_paths),
+            **source_context,
         }
         build_record_ok = all(build_record.get(key) == value for key, value in expected_build_binding.items())
         build_record_ok = bool(
@@ -1143,6 +1280,8 @@ def verify_runtime_provenance(
     archive: Path | str | None = None,
     archive_build_record: Path | str | None = None,
     source_runtime_archive: Path | str | None = None,
+    python_source_policy: Path | str | None = None,
+    enterprise_worktree: Path | str | None = None,
     external_validation_report: Path | str | None = None,
     upstream_core_archive: Path | str | None = None,
 ) -> dict[str, object]:
@@ -1165,6 +1304,8 @@ def verify_runtime_provenance(
     archive_path = _resolve_optional_file(archive, "archive")
     archive_build_record_path = _resolve_optional_file(archive_build_record, "archive_build_record")
     source_archive_path = _resolve_optional_file(source_runtime_archive, "source_runtime_archive")
+    source_policy_path = _resolve_optional_file(python_source_policy, "python_source_policy")
+    enterprise_worktree_path = _resolve_optional_directory(enterprise_worktree, "enterprise_worktree")
     external_report_path = _resolve_optional_file(external_validation_report, "external_validation_report")
     upstream_archive_path = _resolve_optional_file(upstream_core_archive, "upstream_core_archive")
 
@@ -1184,6 +1325,7 @@ def verify_runtime_provenance(
             archive_path,
             archive_build_record_path,
             source_archive_path,
+            source_policy_path,
             external_report_path,
             upstream_archive_path,
         )
@@ -1199,6 +1341,37 @@ def verify_runtime_provenance(
         state.check("enterprise-baseline-binding", "insufficient")
         state.gaps.add("evidence-built-against-earlier-enterprise-commit")
         state.warnings.add("historical-evidence-enterprise-commit-differs-from-current-base")
+
+    source_policy_payload: dict[str, object] | None = None
+    source_policy_records: dict[str, FileRecord] | None = None
+    source_context: dict[str, object] = {}
+    enterprise_identity_ok = True
+    if source_policy_path is not None:
+        source_policy_payload, source_policy_records = _load_python_source_policy(source_policy_path)
+        policy_artifact = _artifact(
+            source_policy_path,
+            "python_source_policy",
+            schema_version=PYTHON_SOURCE_POLICY_SCHEMA,
+        )
+        artifacts.append(policy_artifact)
+        if enterprise_worktree_path is None:
+            enterprise_identity_ok = False
+            state.check("enterprise-clean-worktree-binding", "insufficient")
+            state.gaps.add("enterprise-clean-worktree-evidence-missing")
+        else:
+            identity = _git_worktree_identity(enterprise_worktree_path, enterprise_commit)
+            committed_policy_sha256 = _git_tracked_file_sha256(
+                enterprise_worktree_path, source_policy_path, enterprise_commit
+            )
+            enterprise_identity_ok = bool(
+                type(source) is dict
+                and source.get("enterprise_commit") == identity["enterprise_commit"]
+                and source.get("enterprise_tree_id") == identity["enterprise_tree_id"]
+                and committed_policy_sha256 == policy_artifact["sha256"]
+            )
+            state.check("enterprise-clean-worktree-binding", "pass" if enterprise_identity_ok else "fail")
+            state.check("python-source-policy-git-binding", "pass" if enterprise_identity_ok else "fail")
+            source_context.update(identity)
 
     runtime_records_before, runtime_digest_before, runtime_size_before = _tree_inventory(runtime_root)
     artifacts.append(
@@ -1226,6 +1399,7 @@ def verify_runtime_provenance(
         source_archive = manifest.get("source_python_zip")
         source_identity_ok = (
             type(source_archive) is dict
+            and source_archive.get("archive_filename", source_archive_path.name) == source_archive_path.name
             and source_archive.get("sha256") == _sha256_file(source_archive_path)
             and source_archive.get("size_bytes") == source_archive_path.stat().st_size
         )
@@ -1234,6 +1408,54 @@ def verify_runtime_provenance(
         source_identity_ok = False
         state.check("source-archive-declared-hash", "insufficient")
         state.gaps.add("source-runtime-archive-missing")
+
+    source_authority_ok = upstream_records is not None
+    if source_policy_path is not None and source_policy_payload is not None and source_policy_records is not None:
+        source_archive_binding = manifest.get("source_python_zip")
+        policy_sha256 = _sha256_file(source_policy_path)
+        inventory_sha256 = _records_digest(source_policy_records)
+        policy_manifest_ok = bool(
+            type(source_archive_binding) is dict
+            and source_archive_binding.get("policy_filename") == source_policy_path.name
+            and source_archive_binding.get("policy_sha256") == policy_sha256
+            and source_archive_binding.get("archive_filename") == source_policy_payload.get("archive_filename")
+            and source_archive_binding.get("sha256") == source_policy_payload.get("sha256")
+            and source_archive_binding.get("size_bytes") == source_policy_payload.get("size_bytes")
+            and source_archive_binding.get("core_inventory_sha256") == inventory_sha256
+        )
+        policy_archive_ok = bool(
+            source_archive_path is not None
+            and source_archive_path.name == source_policy_payload.get("archive_filename")
+            and _sha256_file(source_archive_path) == source_policy_payload.get("sha256")
+            and source_archive_path.stat().st_size == source_policy_payload.get("size_bytes")
+            and source_archive_records == source_policy_records
+        )
+        state.check("python-source-policy-manifest-binding", "pass" if policy_manifest_ok else "fail")
+        state.check("python-source-policy-archive-binding", "pass" if policy_archive_ok else "fail")
+        state.check("python-source-policy-core-inventory", "pass" if policy_archive_ok else "fail")
+        source_authority_ok = policy_manifest_ok and policy_archive_ok
+        state.check("python-source-independent-authority", "pass" if source_authority_ok else "fail")
+        if source_authority_ok:
+            upstream_records = source_policy_records
+        source_context.update(
+            {
+                "python_source_policy_sha256": policy_sha256,
+                "python_source_archive_filename": source_policy_payload["archive_filename"],
+                "python_source_sha256": source_policy_payload["sha256"],
+                "python_source_size_bytes": source_policy_payload["size_bytes"],
+                "python_source_inventory_sha256": inventory_sha256,
+            }
+        )
+    elif (
+        source_archive_path is not None
+        and upstream_archive_path is not None
+        and source_archive_path == upstream_archive_path
+    ):
+        source_authority_ok = False
+        state.check("python-source-independent-authority", "insufficient")
+        state.gaps.add("python-source-policy-anchor-missing")
+    else:
+        state.check("python-source-independent-authority", "pass" if source_authority_ok else "insufficient")
 
     archive_records: dict[str, FileRecord] | None = None
     archive_uncompressed_bytes = 0
@@ -1260,7 +1482,7 @@ def verify_runtime_provenance(
         source_archive_records=source_archive_records,
         state=state,
     )
-    core_verified = bool(core_verified and source_identity_ok)
+    core_verified = bool(core_verified and source_identity_ok and source_authority_ok and enterprise_identity_ok)
     dependency_verified, dependency_counts, dependency_context = _verify_dependency_layer(
         manifest=manifest,
         dependency_lock=dependency_lock_path,
@@ -1271,6 +1493,7 @@ def verify_runtime_provenance(
         runtime_tree_digest=runtime_digest_before,
         enterprise_commit=enterprise_commit,
         upstream_commit=upstream_commit,
+        source_context=source_context,
         probe=probe,
         state=state,
         artifacts=artifacts,
@@ -1286,6 +1509,7 @@ def verify_runtime_provenance(
         dependency_context=dependency_context,
         enterprise_commit=enterprise_commit,
         upstream_commit=upstream_commit,
+        source_context=source_context,
         state=state,
         artifacts=artifacts,
     )
