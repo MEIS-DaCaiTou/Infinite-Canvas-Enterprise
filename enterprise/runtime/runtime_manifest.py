@@ -25,17 +25,18 @@ from enterprise.path_safety import (
 
 RUNTIME_MANIFEST_SCHEMA = "enterprise-windows-runtime-manifest-v1"
 STARTUP_VIEW_SCHEMA = "env-1b1c-runtime-manifest-startup-view-v1"
+ACTIVE_PYTHON_VERSION = "3.14.6"
 MANIFEST_MAX_BYTES = 1024 * 1024
 STARTUP_CORE_FILE_COUNT = 5
 STARTUP_CORE_FILE_COUNT_HARD_MAX = 8
 RELATIVE_PATH_MAX_CHARS = 160
 SINGLE_FILE_HASH_MAX_BYTES = 64 * 1024 * 1024
 TOTAL_STARTUP_HASH_MAX_BYTES = 128 * 1024 * 1024
-STARTUP_CORE_FILES = ("python.exe", "pythonw.exe", "python310.dll", "python310.zip", "python310._pth")
+STARTUP_CORE_FILES = ("python.exe", "pythonw.exe", "python314.dll", "python314.zip", "python314._pth")
 APPROVED_PORTABLE_ARCHITECTURES = frozenset({"x64"})
 KNOWN_ARCHITECTURES = frozenset({"x64", "arm64"})
 _SHA_RE = re.compile(r"^[0-9a-f]{64}$")
-_PYTHON_310_VERSION_RE = re.compile(r"^3\.10\.(?:0|[1-9][0-9]{0,2})$")
+_PYTHON_314_VERSION_RE = re.compile(r"^3\.14\.(?:0|[1-9][0-9]{0,2})$")
 _CANDIDATE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _WINDOWS_DEVICE_RE = re.compile(r"^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$", re.I)
 
@@ -47,10 +48,14 @@ class StartupCoreFile:
     size_bytes: int
 
 
-def is_strict_cpython_310_version(value: object) -> bool:
-    """Return whether ``value`` is the frozen B1 CPython 3.10 version form."""
+def is_strict_cpython_314_version(value: object) -> bool:
+    """Return whether ``value`` is the exact active CPython patch."""
 
-    return isinstance(value, str) and _PYTHON_310_VERSION_RE.fullmatch(value) is not None
+    return (
+        isinstance(value, str)
+        and _PYTHON_314_VERSION_RE.fullmatch(value) is not None
+        and value == ACTIVE_PYTHON_VERSION
+    )
 
 
 def validate_startup_core_records(records: tuple[StartupCoreFile, ...]) -> tuple[StartupCoreFile, ...]:
@@ -100,8 +105,8 @@ class RuntimeManifestStartupView:
             or not isinstance(self.manifest_sha256, str)
             or _SHA_RE.fullmatch(self.manifest_sha256) is None
             or self.python_implementation != "CPython"
-            or not is_strict_cpython_310_version(self.python_version)
-            or self.python_abi != "cp310"
+            or not is_strict_cpython_314_version(self.python_version)
+            or self.python_abi != "cp314"
             or self.architecture not in KNOWN_ARCHITECTURES
             or self.architecture_supported != (self.architecture in APPROVED_PORTABLE_ARCHITECTURES)
             or self.runtime_manifest_v1_self_consistency_checked is not True
@@ -195,10 +200,10 @@ def normalize_abi(value: object) -> str:
     if not isinstance(value, str):
         raise RuntimeContractError("RUNTIME_MANIFEST_ABI_INVALID")
     normalized = value.strip().lower().replace("_", "-")
-    if normalized == "cp310":
-        return "cp310"
-    if normalized == "cpython-310":
-        return "cp310"
+    if normalized == "cp314":
+        return "cp314"
+    if normalized == "cpython-314":
+        return "cp314"
     raise RuntimeContractError("RUNTIME_MANIFEST_ABI_INVALID", details={"label": "python_abi"})
 
 
@@ -303,7 +308,7 @@ def parse_runtime_manifest_startup_view(manifest_path: Path, python_runtime_root
     version = payload.get("python_version")
     if not isinstance(implementation, str) or implementation.lower() != "cpython":
         raise RuntimeContractError("PYTHON_IDENTITY_IMPLEMENTATION_INVALID")
-    if not is_strict_cpython_310_version(version):
+    if not is_strict_cpython_314_version(version):
         raise RuntimeContractError("PYTHON_IDENTITY_VERSION_INVALID")
     records: dict[str, dict[str, Any]] = {}
     core_items = payload.get("core_files")

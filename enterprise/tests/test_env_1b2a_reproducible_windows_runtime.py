@@ -29,7 +29,7 @@ def _wheel(path: Path, name: str = "demo", version: str = "1.0") -> None:
 def _wheel_record(path: Path, *, package: str = "demo", version: str = "1.0") -> dict[str, object]:
     return {
         "abi_tags": ["none"],
-        "compatible_with_cpython_310_win_amd64": True,
+        "compatible_with_cpython_314_win_amd64": True,
         "filename": path.name,
         "package": package,
         "platform_tags": ["any"],
@@ -48,7 +48,7 @@ def _wheel_lock(path: Path, record: dict[str, object]) -> None:
             "invalid_wheel_count": 0,
             "schema_version": build.WHEELHOUSE_LOCK_SCHEMA,
             "target_platform": "win_amd64",
-            "target_python_abi": "cp310",
+            "target_python_abi": "cp314",
             "wheel_count": 1,
             "wheels": [record],
         },
@@ -60,12 +60,56 @@ def test_committed_source_lock_and_build_policy_are_exact() -> None:
     wheel_payload, wheels = build.load_wheelhouse_lock(WINDOWS_INPUTS / "wheelhouse.lock.json")
     lock = build.parse_requirements_lock(WINDOWS_INPUTS / "requirements.lock")
     policy = build.load_build_policy(WINDOWS_INPUTS / "build-policy.json")
-    assert source["version"] == "3.10.11"
-    assert source["sha256"] == "608619f8619075629c9c69f361352a0da6ed7e62f83a0e19c63e0ea32eb7629d"
-    assert len(source["expected_core_inventory"]) == 34
+    assert source["version"] == "3.14.6"
+    assert source["sha256"] == "df901e84a896ff1ee720ad03377e0c8d8c2244fda79808aeeaff6316df1cb75c"
+    assert len(source["expected_core_inventory"]) == 36
+    assert source["ordinary_gil_build"] is True
+    assert source["free_threaded"] is False
+    assert source["python_pth_policy"]["relative_app_root_entry"] == ".."
+    assert source["python_pth_policy"]["import_site_enabled"] is True
     assert wheel_payload["wheel_count"] == len(wheels) == len(lock) == 30
     assert lock == {name: (wheel.version, wheel.sha256) for name, wheel in wheels.items()}
     assert {item["package"] for item in policy["bootstrap_wheels"]} == {"pip", "setuptools", "wheel"}
+
+
+@pytest.mark.parametrize(
+    ("updates", "expected_code"),
+    (
+        ({"version": "3.10.11", "python_abi": "cp310"}, "PYTHON_SOURCE_POLICY_INVALID"),
+        ({"ordinary_gil_build": False}, "PYTHON_SOURCE_POLICY_INVALID"),
+        ({"free_threaded": True}, "PYTHON_SOURCE_POLICY_INVALID"),
+    ),
+)
+def test_active_source_policy_rejects_legacy_or_nonstandard_runtime(
+    tmp_path: Path, updates: dict[str, object], expected_code: str
+) -> None:
+    payload = json.loads((WINDOWS_INPUTS / "python-source.json").read_text(encoding="utf-8"))
+    payload.update(updates)
+    policy = tmp_path / "python-source.json"
+    _json(policy, payload)
+    with pytest.raises(build.WindowsRuntimeBuildError) as exc:
+        build.load_source_policy(policy)
+    assert exc.value.code == expected_code
+
+
+@pytest.mark.parametrize(
+    "updates",
+    (
+        {"active_python_version": "3.10.11", "active_python_abi": "cp310"},
+        {"ordinary_gil_build": False},
+        {"free_threaded": True},
+    ),
+)
+def test_active_build_policy_rejects_legacy_or_nonstandard_runtime(
+    tmp_path: Path, updates: dict[str, object]
+) -> None:
+    payload = json.loads((WINDOWS_INPUTS / "build-policy.json").read_text(encoding="utf-8"))
+    payload.update(updates)
+    policy = tmp_path / "build-policy.json"
+    _json(policy, payload)
+    with pytest.raises(build.WindowsRuntimeBuildError) as exc:
+        build.load_build_policy(policy)
+    assert exc.value.code == "BUILD_POLICY_INVALID"
 
 
 @pytest.mark.parametrize(
@@ -99,13 +143,13 @@ def test_dependency_lock_rejects_duplicate_normalized_name(tmp_path: Path) -> No
 
 @pytest.mark.parametrize(
     "filename",
-    ("demo-1.0.tar.gz", "demo-1.0-cp311-cp311-win_amd64.whl", "demo-1.0-cp310-cp310-win32.whl"),
+    ("demo-1.0.tar.gz", "demo-1.0-cp311-cp311-win_amd64.whl", "demo-1.0-cp314-cp314-win32.whl"),
 )
 def test_wheelhouse_lock_rejects_sdist_and_unsupported_tags(tmp_path: Path, filename: str) -> None:
     wheel = tmp_path / filename
     wheel.write_bytes(b"fixture")
     record = _wheel_record(wheel)
-    record.update({"python_tags": ["cp310"], "abi_tags": ["cp310"], "platform_tags": ["win_amd64"]})
+    record.update({"python_tags": ["cp314"], "abi_tags": ["cp314"], "platform_tags": ["win_amd64"]})
     path = tmp_path / "wheelhouse.lock.json"
     _wheel_lock(path, record)
     with pytest.raises(build.WindowsRuntimeBuildError) as exc:

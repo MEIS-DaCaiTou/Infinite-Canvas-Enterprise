@@ -26,7 +26,7 @@ from enterprise.path_safety import (
 
 
 SCHEMA_VERSION = "env-1b2p-runtime-provenance-report-v2"
-VERIFIER_VERSION = "env-1b2a-runtime-provenance-verifier-v4"
+VERIFIER_VERSION = "env-1b2b-runtime-provenance-verifier-v5"
 RUNTIME_MANIFEST_SCHEMA = "enterprise-windows-runtime-manifest-v1"
 WHEELHOUSE_MANIFEST_SCHEMA = "env-1b2a-wheelhouse-sha256-v1"
 DEPENDENCY_REBUILD_ATTESTATION_SCHEMA = "env-1b2p-dependency-rebuild-attestation-v1"
@@ -47,25 +47,27 @@ UPSTREAM_CORE_FILES = (
     "_elementtree.pyd",
     "_hashlib.pyd",
     "_lzma.pyd",
-    "_msi.pyd",
     "_multiprocessing.pyd",
     "_overlapped.pyd",
     "_queue.pyd",
+    "_remote_debugging.pyd",
     "_socket.pyd",
     "_sqlite3.pyd",
     "_ssl.pyd",
     "_uuid.pyd",
+    "_wmi.pyd",
     "_zoneinfo.pyd",
-    "libcrypto-1_1.dll",
-    "libffi-7.dll",
-    "libssl-1_1.dll",
+    "_zstd.pyd",
+    "libcrypto-3.dll",
+    "libffi-8.dll",
+    "libssl-3.dll",
     "pyexpat.pyd",
     "python.cat",
     "python.exe",
     "python3.dll",
-    "python310._pth",
-    "python310.dll",
-    "python310.zip",
+    "python314._pth",
+    "python314.dll",
+    "python314.zip",
     "pythonw.exe",
     "select.pyd",
     "sqlite3.dll",
@@ -358,12 +360,14 @@ def _load_python_source_policy(path: Path) -> tuple[dict[str, object], dict[str,
     payload = _load_json(path, PYTHON_SOURCE_POLICY_SCHEMA)
     if (
         payload.get("implementation") != "CPython"
-        or payload.get("version") != "3.10.11"
+        or payload.get("version") != "3.14.6"
         or payload.get("architecture") != "x64"
-        or payload.get("python_abi") != "cp310"
-        or payload.get("archive_filename") != "python-3.10.11-embed-amd64.zip"
+        or payload.get("python_abi") != "cp314"
+        or payload.get("archive_filename") != "python-3.14.6-embed-amd64.zip"
         or payload.get("official_source_url")
-        != "https://www.python.org/ftp/python/3.10.11/python-3.10.11-embed-amd64.zip"
+        != "https://www.python.org/ftp/python/3.14.6/python-3.14.6-embed-amd64.zip"
+        or payload.get("ordinary_gil_build") is not True
+        or payload.get("free_threaded") is not False
         or _SHA256_RE.fullmatch(str(payload.get("sha256", ""))) is None
         or type(payload.get("size_bytes")) is not int
         or int(payload["size_bytes"]) < 1
@@ -390,6 +394,19 @@ def _load_python_source_policy(path: Path) -> tuple[dict[str, object], dict[str,
         records[relative] = FileRecord(relative, digest, size)
     if set(records) != set(UPSTREAM_CORE_FILES):
         raise ProvenanceVerificationError("python-source-policy-inventory-invalid")
+    pth = payload.get("python_pth_policy")
+    expected_pth = b"python314.zip\r\n.\r\n..\r\nimport site\r\n"
+    if (
+        type(pth) is not dict
+        or pth.get("candidate_lines") != ["python314.zip", ".", "..", "import site"]
+        or pth.get("candidate_sha256") != _sha256_bytes(expected_pth)
+        or pth.get("canonical_bytes_sha256") != _sha256_bytes(expected_pth)
+        or pth.get("relative_app_root_entry") != ".."
+        or pth.get("import_site_enabled") is not True
+        or pth.get("line_ending") != "CRLF"
+        or _SHA256_RE.fullmatch(str(pth.get("original_sha256", ""))) is None
+    ):
+        raise ProvenanceVerificationError("python-source-policy-pth-invalid")
     return payload, dict(sorted(records.items()))
 
 
@@ -460,10 +477,10 @@ def _wheel_filename_tags(filename: str) -> tuple[set[str], set[str], set[str]]:
     return set(components[1].split(".")), set(components[2].split(".")), set(components[3].split("."))
 
 
-def _wheel_is_cp310_win_amd64(filename: str) -> bool:
+def _wheel_is_cp314_win_amd64(filename: str) -> bool:
     python_tags, abi_tags, platform_tags = _wheel_filename_tags(filename)
-    python_ok = bool(python_tags & {"cp310", "py3"})
-    abi_ok = bool(abi_tags & {"cp310", "abi3", "none"})
+    python_ok = bool(python_tags & {"cp314", "py3"})
+    abi_ok = bool(abi_tags & {"cp314", "abi3", "none"})
     platform_ok = bool(platform_tags & {"win_amd64", "any"})
     return python_ok and abi_ok and platform_ok
 
@@ -526,7 +543,7 @@ def _upstream_core_inventory(records: Mapping[str, FileRecord]) -> dict[str, Fil
     """Accept the historical ``python/`` evidence shape or the official ZIP root.
 
     CPython's official Windows embeddable archive contains exactly the fixed
-    34-file core inventory at its root.  Earlier ENV-1B2P evidence wrapped the
+    complete active core inventory at its root. Earlier ENV-1B2P evidence wrapped the
     same inventory in a ``python/`` prefix.  Supporting both shapes keeps the
     established verifier as the single authority without repacking the
     official source archive or weakening the exact inventory requirement.
@@ -702,7 +719,7 @@ def _verify_core_layer(
     state.check("core-manifest-files-match-runtime", "pass" if manifest_ok else "fail", count=len(manifest_records))
     valid &= manifest_ok
 
-    required_manifest_names = {"python.exe", "pythonw.exe", "python310.dll", "python310.zip", "python310._pth"}
+    required_manifest_names = {"python.exe", "pythonw.exe", "python314.dll", "python314.zip", "python314._pth"}
     required_manifest_ok = required_manifest_names.issubset(manifest_records)
     state.check("core-manifest-required-files", "pass" if required_manifest_ok else "fail", count=len(required_manifest_names))
     valid &= required_manifest_ok
@@ -743,7 +760,7 @@ def _verify_core_layer(
         for relative in UPSTREAM_CORE_FILES:
             upstream_record = upstream_core.get(relative)
             candidate_record = runtime_records_before.get(relative)
-            if relative != "python310._pth":
+            if relative != "python314._pth":
                 candidate_matches &= _records_equal(upstream_record, candidate_record)
                 continue
             if _records_equal(upstream_record, candidate_record):
@@ -758,7 +775,7 @@ def _verify_core_layer(
                 and embedded.get("relative_app_root_entry") == ".."
                 and embedded.get("import_site_enabled") is True
             )
-            expected_pth = b"python310.zip\r\n.\r\n..\r\nimport site\r\n"
+            expected_pth = b"python314.zip\r\n.\r\n..\r\nimport site\r\n"
             declared = declared and candidate_record.sha256 == _sha256_bytes(expected_pth)
             transformed_pth = bool(declared)
             candidate_matches &= declared
@@ -768,20 +785,20 @@ def _verify_core_layer(
             count=len(UPSTREAM_CORE_FILES),
         )
         if transformed_pth:
-            state.warnings.add("python310-pth-is-declared-relative-app-root-transform")
+            state.warnings.add("python314-pth-is-declared-relative-app-root-transform")
         valid &= candidate_matches
 
     identity_ok = (
-        probe.get("version_info") == [3, 10, 11]
+        probe.get("version_info") == [3, 14, 6]
         and probe.get("implementation") == "CPython"
         and probe.get("implementation_name") == "cpython"
         and probe.get("pointer_bits") == 64
         and str(probe.get("machine", "")).casefold() in {"amd64", "x86_64"}
         and str(probe.get("executable_basename", "")).casefold() == "python.exe"
-        and manifest.get("python_version") == "3.10.11"
+        and manifest.get("python_version") == "3.14.6"
         and str(manifest.get("python_implementation", "")).casefold() == "cpython"
         and manifest.get("architecture") == "x64"
-        and manifest.get("python_abi") == "cp310"
+        and manifest.get("python_abi") == "cp314"
     )
     state.check("candidate-interpreter-identity", "pass" if identity_ok else "fail")
     valid &= identity_ok
@@ -938,18 +955,18 @@ def _verify_dependency_layer(
             hash_ok = False
             continue
         hash_ok &= actual_hash == record.get("sha256") and actual_size == record.get("size_bytes")
-        tags_ok &= _wheel_is_cp310_win_amd64(basename)
+        tags_ok &= _wheel_is_cp314_win_amd64(basename)
     lock_closure_ok = lock_packages == dict(sorted(declared_packages.items()))
     fully_hashed = all(lock_hashes.get(name) is not None for name in lock_packages)
     lock_hash_binding_ok = fully_hashed and set(lock_packages) == set(declared_by_package) and all(
         lock_hashes.get(name) == declared_by_package[name].get("sha256") for name in lock_packages
     )
     declared_summary_ok = (
-        wheel_manifest.get("target_python_abi") == "cp310"
+        wheel_manifest.get("target_python_abi") == "cp314"
         and wheel_manifest.get("target_platform") == "win_amd64"
         and wheel_manifest.get("wheel_count") == len(declared)
         and wheel_manifest.get("invalid_wheel_count") == 0
-        and all(item.get("compatible_with_cpython_310_win_amd64") is True for item in declared.values())
+        and all(item.get("compatible_with_cpython_314_win_amd64") is True for item in declared.values())
     )
     binding_ok = (
         manifest_dependency is not None
@@ -986,7 +1003,7 @@ def _verify_dependency_layer(
         state.check("dependency-lock-wheel-sha256-binding", "pass" if lock_hash_binding_ok else "fail")
     state.check("wheelhouse-bidirectional-closure", "pass" if closure_ok else "fail", count=len(actual_files))
     state.check("wheelhouse-sha256", "pass" if hash_ok else "fail", count=len(actual_files))
-    state.check("wheel-tags-cp310-win-amd64", "pass" if tags_ok and declared_summary_ok else "fail", count=len(actual_files))
+    state.check("wheel-tags-cp314-win-amd64", "pass" if tags_ok and declared_summary_ok else "fail", count=len(actual_files))
     state.check("runtime-manifest-dependency-binding", "pass" if binding_ok else "fail")
     state.check("candidate-installed-exact-closure", "pass" if installed_ok else "fail", count=len(installed))
 

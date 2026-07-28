@@ -30,9 +30,9 @@ def _manifest(**overrides: object) -> RuntimeManifestStartupView:
     values: dict[str, object] = {
         "schema_version": "env-1b1c-runtime-manifest-startup-view-v1",
         "manifest_sha256": "c" * 64,
-        "python_version": "3.10.11",
+        "python_version": "3.14.6",
         "python_implementation": "CPython",
-        "python_abi": "cp310",
+        "python_abi": "cp314",
         "architecture": "x64",
         "architecture_supported": True,
         "startup_core_files": records,
@@ -47,8 +47,8 @@ def _manifest(**overrides: object) -> RuntimeManifestStartupView:
 def _identity(**overrides: object) -> PythonIdentity:
     values: dict[str, object] = {
         "implementation": "CPython",
-        "version": "3.10.11",
-        "abi": "cp310",
+        "version": "3.14.6",
+        "abi": "cp314",
         "architecture": "x64",
         "architecture_supported": True,
         "pointer_bits": 64,
@@ -105,7 +105,7 @@ def test_preflight_rejects_bad_hash() -> None:
 @pytest.mark.parametrize(
     ("override", "code"),
     [
-        ({"runtime_manifest": _manifest(python_version="3.10.12")}, "STARTUP_PREFLIGHT_INVALID"),
+        ({"runtime_manifest": _manifest(python_version="3.13.12")}, "STARTUP_PREFLIGHT_INVALID"),
         ({"runtime_manifest": _manifest(python_abi="cp311")}, "STARTUP_PREFLIGHT_INVALID"),
         ({"runtime_manifest": _manifest(architecture="arm64", architecture_supported=False), "python_identity": _identity(architecture="arm64", architecture_supported=False)}, "PORTABLE_ARCHITECTURE_UNSUPPORTED"),
         ({"python_identity": _identity(version="arbitrary")}, "STARTUP_PREFLIGHT_INVALID"),
@@ -164,7 +164,7 @@ def test_r5_preflight_rejects_noncanonical_python_patch_version(patch: str) -> N
             app_root_relative="releases/release-A", path_roots_identity=SHA,
             current_release_sha256="b" * 64, runtime_manifest_sha256="c" * 64,
             python_executable_sha256="d" * 64, python_implementation="CPython",
-            python_version=f"3.10.{patch}", python_abi="cp310", architecture="x64",
+            python_version=f"3.14.{patch}", python_abi="cp314", architecture="x64",
             bytecode_policy="disabled-no-user-site",
             writable_roots_verified=("DATA_ROOT", "LOG_ROOT", "RUNTIME_ROOT", "CACHE_ROOT", "TEMP_ROOT"),
         )
@@ -187,7 +187,7 @@ def test_r6_preflight_schema_is_an_invariant() -> None:
             app_root_relative="releases/release-A", path_roots_identity=SHA,
             current_release_sha256="b" * 64, runtime_manifest_sha256="c" * 64,
             python_executable_sha256="d" * 64, python_implementation="CPython",
-            python_version="3.10.11", python_abi="cp310", architecture="x64",
+            python_version="3.14.6", python_abi="cp314", architecture="x64",
             bytecode_policy="disabled-no-user-site",
             writable_roots_verified=("DATA_ROOT", "LOG_ROOT", "RUNTIME_ROOT", "CACHE_ROOT", "TEMP_ROOT"),
             schema_version="WRONG",

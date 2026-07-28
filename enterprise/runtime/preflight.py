@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from .error_contract import PORTABLE_EXIT_BLOCKED, PORTABLE_EXIT_OK, RuntimeContractError, canonical_json
 from .mode import PORTABLE_RELEASE, RuntimeMode
 from .python_identity import PythonIdentity
-from .runtime_manifest import RuntimeManifestStartupView, is_strict_cpython_310_version
+from .runtime_manifest import RuntimeManifestStartupView, is_strict_cpython_314_version
 from .writable_probe import WRITABLE_PROBE_LABELS, WritableProbeResult
 from enterprise.paths import PathRootsError, validate_release_component
 
@@ -62,8 +62,8 @@ class StartupPreflightResult:
             _require_sha(value)
         if (
             self.python_implementation != "CPython"
-            or not is_strict_cpython_310_version(self.python_version)
-            or self.python_abi != "cp310"
+            or not is_strict_cpython_314_version(self.python_version)
+            or self.python_abi != "cp314"
             or self.architecture != "x64"
         ):
             raise RuntimeContractError("STARTUP_PREFLIGHT_INVALID")
@@ -155,7 +155,7 @@ def build_startup_preflight_result(
         or runtime_manifest.architecture != python_identity.architecture
     ):
         raise RuntimeContractError("STARTUP_PREFLIGHT_INVALID")
-    if not is_strict_cpython_310_version(runtime_manifest.python_version):
+    if not is_strict_cpython_314_version(runtime_manifest.python_version):
         raise RuntimeContractError("STARTUP_PREFLIGHT_INVALID")
     python_record = next((item for item in runtime_manifest.startup_core_files if item.relative_path == "python.exe"), None)
     if python_record is None or python_record.sha256 != python_identity.executable_sha256:

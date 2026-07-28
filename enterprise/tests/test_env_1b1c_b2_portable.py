@@ -38,9 +38,9 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, dict[str, object]]:
             {"filename": name, "sha256": _sha(content), "size_bytes": len(content)}
             for name, content in core.items()
         ],
-        "python_abi": "cp310",
+        "python_abi": "cp314",
         "python_implementation": "CPython",
-        "python_version": "3.10.11",
+        "python_version": "3.14.6",
         "schema_version": "enterprise-windows-runtime-manifest-v1",
         "source": {"enterprise_commit": "a" * 40},
     }
@@ -66,8 +66,8 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, dict[str, object]]:
     (install / "state" / "current-release.json").write_bytes(raw)
     probe = {
         "implementation": "cpython",
-        "version": "3.10.11",
-        "cache_tag": "cpython-310",
+        "version": "3.14.6",
+        "cache_tag": "cpython-314",
         "machine": "AMD64",
         "pointer_bits": 64,
         "executable": str(runtime / "python.exe"),
