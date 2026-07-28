@@ -327,8 +327,15 @@ def build_release_v2(*, repo: Path, output_root: Path, runtime_root: Path, runti
             ("wheelhouse-inventory.json", "wheelhouse-inventory.json"),
         ):
             shutil.copyfile(runtime_evidence_root / source_name, evidence / target_name)
-        shutil.copyfile(source_export / "runtime/windows/python-source.json", evidence / "runtime-source-policy.json")
-        shutil.copyfile(source_export / "runtime/windows/requirements.lock", evidence / "requirements.lock")
+        # Evidence hashes are defined over exact Git blob bytes.  Do not use
+        # git-archive checkout bytes here because path attributes may perform
+        # line-ending conversion (notably for requirements.lock on Windows).
+        (evidence / "runtime-source-policy.json").write_bytes(
+            _git_bytes(repo, f"{commit}:runtime/windows/python-source.json")
+        )
+        (evidence / "requirements.lock").write_bytes(
+            _git_bytes(repo, f"{commit}:runtime/windows/requirements.lock")
+        )
         sbom_bytes, component_count, edge_count = _release_sbom(runtime_evidence_root / "runtime-sbom.cdx.json", version, commit)
         (evidence / "release-sbom.cdx.json").write_bytes(sbom_bytes)
         machine, notice, license_count = _license_documents(sbom_bytes, payload, runtime_root, version, commit)
