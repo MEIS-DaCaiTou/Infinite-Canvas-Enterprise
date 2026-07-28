@@ -11,6 +11,8 @@ import pytest
 
 from enterprise.release.release_manifest_v2 import (
     ReleaseManifestV2Error,
+    UPSTREAM_COMMIT,
+    UPSTREAM_VERSION_FILE_SHA256,
     build_inventory,
     canonical_json,
     derive_release_id,
@@ -103,7 +105,7 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, Path, dict[str, object]]:
     wheelhouse_tree = "5" * 64
     wheelhouse_inventory = canonical_json({"schema_version": "env-1b2a-wheelhouse-sha256-v1", "target_python_abi": "cp314", "target_platform": "win_amd64", "invalid_wheel_count": 0, "tree_sha256": wheelhouse_tree, "files": []})
     app_source_root = tmp_path / "app-source"
-    _write(app_source_root / "VERSION", b"2026.07.6\n")
+    _write(app_source_root / "VERSION", b"2026.07.6")
     app_source_inventory = build_inventory(app_source_root)
     hashes = {
         "runtime-manifest.json": _write(payload / "runtime-manifest.json", runtime_manifest),
@@ -121,7 +123,7 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, Path, dict[str, object]]:
         "release-evidence/database-schema.json": _write(payload / "release-evidence/database-schema.json", database_contract),
         "python/python.exe": _write(payload / "python/python.exe", b"python\n"),
         "static/index.html": _write(payload / "static/index.html", static_content),
-        "VERSION": _write(payload / "VERSION", b"2026.07.6\n"),
+        "VERSION": _write(payload / "VERSION", b"2026.07.6"),
     }
     runtime_tree_digest = hashlib.sha256()
     for entry in build_inventory(payload / "python").entries:
@@ -336,6 +338,13 @@ def test_version_and_expected_git_identity_mismatch_fail_closed(tmp_path: Path) 
         verify_release_manifest_v2(manifest_path, archive, inventory_path, expected_enterprise_commit="f" * 40)
     with pytest.raises(ReleaseManifestV2Error, match="RELEASE_ENTERPRISE_TREE_MISMATCH"):
         verify_release_manifest_v2(manifest_path, archive, inventory_path, expected_enterprise_tree="f" * 40)
+
+
+def test_fixed_upstream_version_hash_uses_exact_git_blob_bytes() -> None:
+    root = Path(__file__).resolve().parents[2]
+    version = subprocess.check_output(["git", "-C", str(root), "show", f"{UPSTREAM_COMMIT}:VERSION"])
+    assert version == b"2026.07.6"
+    assert sha256_bytes(version) == UPSTREAM_VERSION_FILE_SHA256
 
 
 def test_requirement_without_hash_cannot_be_promoted_by_rebinding(tmp_path: Path) -> None:
