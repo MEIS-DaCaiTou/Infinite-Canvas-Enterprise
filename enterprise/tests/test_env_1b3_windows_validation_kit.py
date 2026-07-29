@@ -32,7 +32,12 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _write_fixture(root: Path) -> tuple[Path, Path, Path]:
+def _write_fixture(
+    root: Path,
+    *,
+    enterprise_commit: str = "a" * 40,
+    enterprise_tree: str = "b" * 40,
+) -> tuple[Path, Path, Path]:
     root.mkdir()
     payloads = {"empty.txt": b"", "payload.txt": b"candidate\n"}
     entries = [
@@ -63,6 +68,7 @@ def _write_fixture(root: Path) -> tuple[Path, Path, Path]:
     inventory_hash = _sha256(inventory_bytes)
     manifest = {
         "schema_version": "ops-release-manifest-v2",
+        "enterprise_source": {"commit": enterprise_commit, "tree": enterprise_tree},
         "identity": {"release_id": "fixture-release"},
         "archive": {
             "filename": archive_path.name,
@@ -79,6 +85,7 @@ def _write_fixture(root: Path) -> tuple[Path, Path, Path]:
             "total_size_bytes": inventory["total_size_bytes"],
             "tree_sha256": inventory["tree_sha256"],
         },
+        "runtime": {"runtime_tree_sha256": "1" * 64},
     }
     manifest_path = root / "ops-release-manifest-v2.json"
     manifest_path.write_text(
@@ -193,3 +200,75 @@ def test_offline_release_artifact_verification_and_tamper(tmp_path: Path) -> Non
         stream.write(b"tamper")
     failed = _run_powershell(command)
     assert failed.returncode != 0
+
+
+@pytest.mark.skipif(POWERSHELL is None, reason="Windows PowerShell is required")
+def test_candidate_handoff_readme_is_safe_and_bound(tmp_path: Path) -> None:
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    subprocess.run(["git", "init", "-q", repository], check=True)
+    subprocess.run(["git", "-C", repository, "config", "user.name", "ENV-1B3 fixture"], check=True)
+    subprocess.run(["git", "-C", repository, "config", "user.email", "fixture@example.invalid"], check=True)
+    (repository / "tracked.txt").write_text("fixture\n", encoding="utf-8")
+    subprocess.run(["git", "-C", repository, "add", "tracked.txt"], check=True)
+    subprocess.run(["git", "-C", repository, "commit", "-q", "-m", "fixture"], check=True)
+    commit = subprocess.check_output(["git", "-C", repository, "rev-parse", "HEAD"], text=True).strip()
+    tree = subprocess.check_output(["git", "-C", repository, "rev-parse", "HEAD^{tree}"], text=True).strip()
+
+    candidate = tmp_path / "candidate-03"
+    candidate.mkdir()
+    build = candidate / "release-build"
+    _write_fixture(build, enterprise_commit=commit, enterprise_tree=tree)
+    taskbook = tmp_path / "taskbook.md"
+    taskbook.write_text("# Independent test-host taskbook\n", encoding="utf-8", newline="\n")
+    script = KIT / "New-CandidateHandoff.ps1"
+    completed = subprocess.run(
+        [
+            POWERSHELL,
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(script),
+            "-Repository",
+            str(repository),
+            "-BuildRoot",
+            str(build),
+            "-CandidateRoot",
+            str(candidate),
+            "-CandidateSequence",
+            "03",
+            "-TestHostTaskbook",
+            str(taskbook),
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        timeout=120,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+    handoff = candidate / "handoff"
+    readme_bytes = (handoff / "README-FIRST.md").read_bytes()
+    assert not readme_bytes.startswith(b"\xef\xbb\xbf")
+    assert all(value >= 0x20 or value in (0x09, 0x0A, 0x0D) for value in readme_bytes)
+    readme = readme_bytes.decode("utf-8")
+    assert "fixture-release-candidate-03" in readme
+    assert "$candidateId" not in readme
+    assert ".\\validation-kit\\Invoke-ENV1B3Validation.ps1" in readme
+    assert "ENV-1B3-INDEPENDENT-WINDOWS-TEST-HOST-CODEX-TASK.md" in readme
+    assert "validation-kit/README.md" in readme
+    for parameter in ("-HandoffRoot", "-TestRoot", "-EvidenceRoot", "-CleanHostClassification"):
+        assert parameter in readme
+
+    sums = {}
+    for line in (handoff / "SHA256SUMS").read_text(encoding="utf-8").splitlines():
+        digest, relative = line.split("  ", 1)
+        sums[relative] = digest
+    assert sums["README-FIRST.md"] == _sha256(readme_bytes)
+    handoff_json = json.loads((handoff / "CANDIDATE-HANDOFF.json").read_text(encoding="utf-8"))
+    copied_taskbook = handoff / "ENV-1B3-INDEPENDENT-WINDOWS-TEST-HOST-CODEX-TASK.md"
+    assert handoff_json["expected_test_host_taskbook_sha256"] == _sha256(copied_taskbook.read_bytes())

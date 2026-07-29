@@ -40,18 +40,22 @@ try {
         validation_matrix_version='env-1b3-windows-validation-matrix-v1';expected_test_host_taskbook_sha256=$taskbookHash;production_approved=$false
     }
     [IO.File]::WriteAllText((Join-Path $handoffRoot 'CANDIDATE-HANDOFF.json'),($document|ConvertTo-Json -Depth 8 -Compress)+"`n",[Text.UTF8Encoding]::new($false))
-    $readme=@"
-# Read first
-
-This immutable handoff is for candidate `$candidateId` under `ENV-1B3-CLEAN-WINDOWS-VALIDATION-AND-RELEASE-CANDIDATE`.
-
-1. Record the outer ZIP SHA-256 before extraction.
-2. Read `CANDIDATE-HANDOFF.json` and the included independent test-host taskbook.
-3. Keep this input copy read-only; use new test roots for materialization and tamper cases.
-4. Start with `validation-kit\Invoke-ENV1B3Validation.ps1 -Mode Baseline`.
-
-This is a Release Candidate, not a formal Release or production-approved payload.
-"@
+    $readmeLines=@(
+        '# Read first',
+        '',
+        ('This immutable handoff is for candidate {0} under ENV-1B3-CLEAN-WINDOWS-VALIDATION-AND-RELEASE-CANDIDATE.' -f $candidateId),
+        '',
+        '1. Record the outer ZIP SHA-256 before extraction.',
+        '2. Read ENV-1B3-INDEPENDENT-WINDOWS-TEST-HOST-CODEX-TASK.md and validation-kit/README.md before executing any validation case.',
+        '3. Read CANDIDATE-HANDOFF.json and verify all included SHA256SUMS records.',
+        '4. Keep this input copy read-only; use new test roots for materialization and tamper cases.',
+        '5. Run the complete validation entrypoint with explicit roots and host classification:',
+        '',
+        'powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\validation-kit\Invoke-ENV1B3Validation.ps1 -Mode Full -HandoffRoot <HANDOFF_ROOT> -TestRoot <TEST_ROOT> -EvidenceRoot <EVIDENCE_ROOT> -CleanHostClassification <classification>',
+        '',
+        'This is a Release Candidate, not a formal Release or production-approved payload.'
+    )
+    $readme=($readmeLines -join "`n")+"`n"
     [IO.File]::WriteAllText((Join-Path $handoffRoot 'README-FIRST.md'),$readme,[Text.UTF8Encoding]::new($false))
     $sumLines=@();foreach($file in @(Get-ChildItem -LiteralPath $handoffRoot -File -Recurse|Sort-Object FullName)){$relative=$file.FullName.Substring($handoffRoot.Length).TrimStart('\').Replace('\','/');$sumLines+=(Get-ENV1B3Sha256 $file.FullName)+'  '+$relative}
     [IO.File]::WriteAllText((Join-Path $handoffRoot 'SHA256SUMS'),($sumLines -join "`n")+"`n",[Text.UTF8Encoding]::new($false))
