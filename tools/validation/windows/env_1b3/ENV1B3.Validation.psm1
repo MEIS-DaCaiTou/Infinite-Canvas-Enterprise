@@ -118,7 +118,10 @@ function Get-ENV1B3InventoryTree {
     param([Parameter(Mandatory)]$Entries)
     $sha = [Security.Cryptography.SHA256]::Create()
     try {
-        foreach ($entry in @($Entries | Sort-Object path)) {
+        # The strict inventory validator already requires ordinal path order.
+        # Re-sorting with PowerShell's culture-sensitive comparer would change
+        # the canonical byte stream for some real Unicode/case combinations.
+        foreach ($entry in @($Entries)) {
             $line = "{0}`0{1}`0{2}`n" -f [string]$entry.path, [int64]$entry.size_bytes, [string]$entry.sha256
             $bytes = [Text.Encoding]::UTF8.GetBytes($line)
             [void]$sha.TransformBlock($bytes, 0, $bytes.Length, $bytes, 0)
@@ -154,7 +157,7 @@ function Assert-ENV1B3Inventory {
         $key = $path.ToLowerInvariant()
         if ($seen.ContainsKey($key)) { Throw-ENV1B3Error 'ENV1B3_INVENTORY_INVALID' 'duplicate' }
         if ($null -ne $previous -and [string]::CompareOrdinal($previous, $path) -ge 0) { Throw-ENV1B3Error 'ENV1B3_INVENTORY_INVALID' 'order' }
-        if ([string]$entry.sha256 -notmatch '^[0-9a-f]{64}$' -or [int64]$entry.size_bytes -lt 1) { Throw-ENV1B3Error 'ENV1B3_INVENTORY_INVALID' 'record' }
+        if ([string]$entry.sha256 -notmatch '^[0-9a-f]{64}$' -or [int64]$entry.size_bytes -lt 0) { Throw-ENV1B3Error 'ENV1B3_INVENTORY_INVALID' 'record' }
         $seen[$key] = $entry
         $total += [int64]$entry.size_bytes
         $previous = $path

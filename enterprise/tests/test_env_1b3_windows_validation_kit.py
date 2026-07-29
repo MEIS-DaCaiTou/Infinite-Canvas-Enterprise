@@ -34,16 +34,21 @@ def _sha256(data: bytes) -> str:
 
 def _write_fixture(root: Path) -> tuple[Path, Path, Path]:
     root.mkdir()
-    payload = b"candidate\n"
-    relative = "payload.txt"
-    entry = {"path": relative, "sha256": _sha256(payload), "size_bytes": len(payload)}
-    tree_line = f"{relative}\0{len(payload)}\0{entry['sha256']}\n".encode()
+    payloads = {"empty.txt": b"", "payload.txt": b"candidate\n"}
+    entries = [
+        {"path": relative, "sha256": _sha256(payload), "size_bytes": len(payload)}
+        for relative, payload in payloads.items()
+    ]
+    tree_lines = b"".join(
+        f"{entry['path']}\0{entry['size_bytes']}\0{entry['sha256']}\n".encode()
+        for entry in entries
+    )
     inventory = {
         "schema_version": "ops-release-payload-inventory-v1",
-        "entries": [entry],
-        "file_count": 1,
-        "total_size_bytes": len(payload),
-        "tree_sha256": _sha256(tree_line),
+        "entries": entries,
+        "file_count": len(entries),
+        "total_size_bytes": sum(len(payload) for payload in payloads.values()),
+        "tree_sha256": _sha256(tree_lines),
     }
     inventory_path = root / "release-payload-inventory.json"
     inventory_bytes = (json.dumps(inventory, sort_keys=True, separators=(",", ":")) + "\n").encode()
@@ -51,7 +56,8 @@ def _write_fixture(root: Path) -> tuple[Path, Path, Path]:
 
     archive_path = root / "fixture.zip"
     with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_STORED) as archive:
-        archive.writestr("fixture/payload.txt", payload)
+        for relative, payload in payloads.items():
+            archive.writestr(f"fixture/{relative}", payload)
         archive.writestr("fixture/release-payload-inventory.json", inventory_bytes)
     archive_bytes = archive_path.read_bytes()
     inventory_hash = _sha256(inventory_bytes)
@@ -66,11 +72,11 @@ def _write_fixture(root: Path) -> tuple[Path, Path, Path]:
             "size_bytes": len(archive_bytes),
         },
         "release_payload": {
-            "file_count": 1,
+            "file_count": len(entries),
             "inventory_path": inventory_path.name,
             "inventory_sha256": inventory_hash,
             "static_tree_sha256": "0" * 64,
-            "total_size_bytes": len(payload),
+            "total_size_bytes": inventory["total_size_bytes"],
             "tree_sha256": inventory["tree_sha256"],
         },
     }

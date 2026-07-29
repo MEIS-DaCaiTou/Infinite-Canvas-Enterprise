@@ -2,6 +2,8 @@
 
 This kit is the single test-host interface for `ENV-1B3-CLEAN-WINDOWS-VALIDATION-AND-RELEASE-CANDIDATE`. It uses Windows PowerShell and the candidate's own `APP_ROOT\python\python.exe`; it never falls back to PATH Python and does not require GitHub credentials or repository write access.
 
+The artifact verifier preserves the Manifest v2 inventory's required ordinal path order when deriving its canonical tree identity and accepts legitimate zero-length files while continuing to reject negative sizes, duplicate paths and any archive/inventory mismatch.
+
 ## Safety boundary
 
 - Work only under explicit absolute `HandoffRoot`, `TestRoot`, and `EvidenceRoot` paths.
