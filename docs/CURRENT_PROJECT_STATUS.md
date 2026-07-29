@@ -6,7 +6,7 @@
 
 - 企业版仓库：`MEIS-DaCaiTou/Infinite-Canvas-Enterprise`
 - `current_main`：以仓库 GitHub `main` HEAD 为准。
-- `last_verified_code_baseline`：`ea71a9a73c80244f679487c35a960ceea7732876`（PR #88 merge commit）。
+- `last_verified_code_baseline`：`b444197a6eab7697748ab1fa2aa1287cbc39efd2`（PR #89 merge commit）。
 - ENV-1B0 / DOC-2 / DOC-2A：PR #80 已合并，merge commit `be5573ae416b4ce81f8cc26ae282868a7efa7672`；完成架构决策冻结、Greenfield 路线和文档事实同步。
 - ENV-1B1A：PR #81 已合并，merge commit `a53885b026a6c2440acb0fbde72d6571ff6f7723`；APP_ROOT 写入审计、CSS 传递依赖哈希、统一 HTML build ID、确定性 static staging builder、`main.py` 最小不可变 Release 补丁和 Git tracked fingerprint/Wxx 漂移门禁已进入 `main`。
 - ENV-1B2P：PR #82 已合并，merge commit `240f6a2b93268a415cddc3c9af9951f334c8e4e1`；只读核验仓库外既有 Runtime 证据，真实结果仍为 core `true`、dependency `false`、archive `false`、`production_approved=false`，不代表正式 Runtime 获批。
@@ -17,6 +17,7 @@
 - ENV-1B2A：PR #87 已合并，merge commit `c5d0a62822bb8b55b25215aa74a9f02653e03fc9`。该阶段固定官方 CPython `3.10.11` Windows x64 embeddable ZIP、逐项 SHA-256 lock、闭合 wheelhouse和固定 build policy，并形成双 clean build、三层 provenance、SBOM 与真实 fixed-Python fixture 证据；它保留为 CP310 rollback baseline，不是当前长期 Runtime 目标，且 `production_approved=false`。实现边界见 [ENV-1B2A 实施记录](./env/ENV-1B2A-REPRODUCIBLE-WINDOWS-RUNTIME-IMPLEMENTATION-2026-07.md)。
 - ENV-1B2B：资格门禁选择的 ordinary-GIL CPython `3.14.6` Windows x64 / ABI `cp314` 已成为唯一 active Runtime repository policy；30 项应用依赖锁、3 项 bootstrap wheel、builder/verifier、Runtime identity/preflight、仓库外 Build A/B、三层 provenance 和真实 formal-entry fixture 已通过独立代码与证据审查。`ENV_1B2B_repository_implementation_independently_accepted=true`、`Python_3_14_Runtime_candidate_independently_accepted=true`、`new_Python_version_repository_implemented=true`、`ENV_1B2_completed=true`。测试边界为 `full_repository_regression_passed=true`、`full_repository_regression_interpreter=CPython 3.11.9`、`target_CP314_formal_entry_fixture_verified=true`、`target_CP314_full_enterprise_suite_run=false`、`github_ci_verified=false`；`clean_Windows_validation=false`、`production_validation=false`、`production_approved=false`。实现边界见 [ENV-1B2B 实施记录](./env/ENV-1B2B-PYTHON-314-RUNTIME-IMPLEMENTATION-2026-07.md)。
 - OPS Release Manifest v2：detached manifest、Git-tree payload、闭合 inventory、deterministic archive、Runtime/static/SBOM/licenses/config/database 绑定、offline verifier/materializer 与 portable v2 identity 的 repository implementation 已通过独立审查。`OPS_RELEASE_MANIFEST_V2_repository_implementation_independently_accepted=true`、`Manifest_v2_repository_implementation=true`、`Release_candidate_payload_buildable=true`、`Release_candidate_payload_offline_verifiable=true`、`portable_startup_bound_to_Manifest_v2=true`；`original_independent_review_blockers_closed=5`、`remaining_code_blockers=0`、`remaining_evidence_blockers=0`、`remaining_test_blockers=0`。这仍不是 activation、OPS-3B、formal Release、clean Windows 验证或 production approval。实现边界见 [OPS Release Manifest v2 实施记录](./ops/OPS-RELEASE-MANIFEST-V2-IMPLEMENTATION-2026-07.md)。
+- ENV-1B3：已在单一 Draft PR 启动 Windows 原生 W01-W14 验证工具和不可变候选交接协议，开发设备只负责 Git、候选构建与证据复核，完整矩阵必须由另一台独立 Windows 测试主机执行。`ENV_1B3_started=true`、`ENV_1B3_completed=false`、`clean_Windows_validation=false`；candidate sequence 与 artifact identity 只记录在不可变仓库外交接和 Draft PR 中，当前不代表 formal Release、activation、OPS-3B 或 production validation。实现边界见 [ENV-1B3 实施记录](./env/ENV-1B3-CLEAN-WINDOWS-VALIDATION-AND-RELEASE-CANDIDATE-2026-07.md)。
 - 最终仓库回归证据：`full_repository_regression_passed=true`、`full_repository_regression_interpreter=CPython 3.11.9 x64`、`collected=624`、`executed=624`、`passed=615`、`skipped=9`、`failed=0`、`omitted=0`、`extra=0`、`duplicate=0`、`aggregate_exit=0`、`interpreter_switching=false`、`github_ci_verified=false`。环境事实：`dedicated_dev_test_environment_established=true`、`legacy_upstream_python_restored=true`、`legacy_upstream_python_identity=CPython 3.10.11 x64`、`accepted_CP314_Runtime_unchanged=true`、`python_deletion_actor=not_proven`、`host_python_maintenance_side_effect_recorded=true`。此 host Python maintenance 是开发机环境事件，不是仓库、Runtime 或 PR 代码失败。
 - 临时业务测试部署仍为 `Infinite-Canvas-Enterprise-TEST-240f6a2-win-x64.zip`（SHA-256 `7111243ec661d5f1caf90a207161ff1e57d0b46737d5abccdb81b001ffadc3c9`）：Gateway `8000`、upstream `3001` loopback，`LAN_UI_verified=true`。`temporary_test_business_deployment_active=true`、`temporary_test_business_deployment_updated_by_PR84=false`、`controlled_LAN_or_VPN_only=true`、`public_exposure=false`、`copy_to_more_devices=false`、`migration_guarantee=false`；它不是 formal Release 或 Production Baseline。
 - ADR-OPS-007：项目负责人已接受 Greenfield 全新生产路线；旧生产迁移计划取消。
@@ -121,7 +122,7 @@ SEC-1B2 已完成仓库实现和临时数据库验证，由 PR #75 承载。该�
 | OPS / Runtime | OPS-2A / OPS-2B / OPS-3A、STAB-1 / OPS-L1 和 PR #79 hotfix 已进入 main。已有 `start/stop/restart/status/health`、独立角色恢复、持久日志、runtime state、完整 identity、ACK 和 Job Object。上述能力不代表生产已升级或切换，也不代表 apply-upgrade / restore / rollback、Windows Service、Docker / 1Panel 或 PostgreSQL 已实现。 |
 | 超级管理员 / Capability | SEC-1B1 只建立固定 role 基础，不创建 super_admin，也不实现 Capability；旧生产仍使用历史 `is_admin` 数据。面向新生产空环境的 Fresh Install Bootstrap 尚未实现。 |
 | 强制安全审计 | SEC-1F0 已提供仓库底层和临时数据库证明；旧生产未建表且不再计划 activation，现有在线管理操作仍使用原 `usage_logs`；新生产必须从 Fresh Install Bootstrap 建立 mandatory audit，完整查询 / 导出 / 保留 / 归档仍未实现。 |
-| ENV / 不可变 Release | ENV-1B0、ENV-1B1A、ENV-1B2P、ENV-1B1B、ENV-1B1C-B1/B2 和 ENV-1B2A 已合并。ENV-1B2B 的 CPython 3.14.6 / cp314 repository implementation 与 OPS Release Manifest v2 repository implementation 已独立验收，`ENV_1B2_completed=true`；`ENV_1B3_started=false`，干净 Windows 验证、正式不可变 Release、Production Baseline 和 production approval 均未形成。 |
+| ENV / 不可变 Release | ENV-1B0、ENV-1B1A、ENV-1B2P、ENV-1B1B、ENV-1B1C-B1/B2 和 ENV-1B2A 已合并。ENV-1B2B 的 CPython 3.14.6 / cp314 repository implementation 与 OPS Release Manifest v2 repository implementation 已独立验收，`ENV_1B2_completed=true`；`ENV_1B3_started=true`，W01-W14 repository validation kit 已进入 Draft，独立 Windows 矩阵、不可变候选验收、Production Baseline 和 production approval 尚未形成。 |
 
 ## 5. 当前人工确认
 
@@ -155,7 +156,7 @@ ARCH-2A、SEC-1A、SEC-1B1、SEC-1F0、SEC-1C0 和 SEC-1B2 仓库实现已完成
 3. ENV-1B2P：已由 PR #82 合并；core `true`，dependency / archive `false`，`production_approved=false`。
 4. ENV-1B1B：已由 PR #83 合并；`ENV_1B1B_scoped_contract_acceptance_passed=true`，但 `ENV_1B1B_full_release_acceptance_passed=false`。
 5. ENV-1B1C-B1：已由 PR #84 合并并通过独立 contract-foundation 验收；Final Acceptance evidence 已由独立 docs-only closeout commit 持久化，且该文档收口不接入 Runtime lifecycle。
-6. ENV-1B1C-B2 已合并，repository implementation 与 D1–D10 实现已通过独立代码审查；ENV-1B2B 可重复 Runtime 与 OPS Release Manifest v2 repository implementation 也已通过独立验收。下一门禁是 ENV-1B3 干净 Windows 验证，`ENV_1B3_started=false`。
+6. ENV-1B1C-B2 已合并，repository implementation 与 D1–D10 实现已通过独立代码审查；ENV-1B2B 可重复 Runtime 与 OPS Release Manifest v2 repository implementation 也已通过独立验收。ENV-1B3 干净 Windows 验证已在单一 Draft PR 启动，`ENV_1B3_started=true`，但独立测试主机矩阵尚未通过。
 7. 形成不可变 Windows Release Candidate；Release Candidate 不等于 Production Baseline。
 8. DATA-1：建立新生产所需 schema version、migration history、兼容分类和数据完整性基础，不迁移旧生产数据。
 9. 独立设计、实现并验证尚不存在的 Fresh Install Bootstrap。
