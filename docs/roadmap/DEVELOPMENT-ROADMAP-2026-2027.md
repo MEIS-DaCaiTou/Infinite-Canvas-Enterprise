@@ -1,9 +1,9 @@
 # Infinite-Canvas-Enterprise 开发路线图（2026-2027）
 
-更新时间：2026-07-28
+更新时间：2026-07-29
 最后一次代码事实核对基线：`main@ea71a9a73c80244f679487c35a960ceea7732876`
 
-当前 repository HEAD 以 GitHub `main` 为准；PR #80、PR #81、PR #82、PR #83、PR #84、PR #86 和 PR #87 已合并。ENV-1B2A 的 Python 3.10 可复现 Runtime 已进入 `main` 并保留为 rollback baseline；ENV-1B2B 已将唯一 active Runtime 迁移到 CPython 3.14.6 / cp314，其 repository implementation 已通过独立代码与证据审查。
+当前 repository HEAD 以 GitHub `main` 为准；PR #80、PR #81、PR #82、PR #83、PR #84、PR #86 和 PR #87 已合并。ENV-1B2A 的 Python 3.10 可复现 Runtime 已进入 `main` 并保留为 rollback baseline；ENV-1B2B 已将唯一 active Runtime 迁移到 CPython 3.14.6 / cp314，其 repository implementation 与 OPS Release Manifest v2 repository implementation 已通过独立代码与证据审查。
 
 当前实施事实以 [CURRENT_PROJECT_STATUS](../CURRENT_PROJECT_STATUS.md) 为准；架构决策以 [ADR 索引](../README.md) 为准。本文负责阶段顺序，不重复定义实现状态。
 
@@ -47,12 +47,13 @@
 | ENV-1B1C-B2 | 已合并，PR #86 | 固定 direct-script launcher、Release Python/preflight/launch-context 信任链、复用 STAB-1 lifecycle 的 host/supervisor/child identity、ownership、readiness 和 Windows wrappers。 |
 | ENV-1B2A | 已合并，PR #87 | 固定 CPython 3.10.11 x64，完成官方 source、hash lock、闭合 wheelhouse、双 clean build、pip check、SBOM、deterministic archive 和真实 B2 fixture；作为历史证据和 rollback baseline 保留。 |
 | ENV-1B2B | Repository implementation 已独立验收 | 唯一 active Runtime 迁移到 ordinary-GIL CPython 3.14.6 / cp314，`ENV_1B2_completed=true`；clean Windows、formal Release 和 production approval 尚未完成。 |
+| OPS Release Manifest v2 | Repository implementation 已独立验收 | Release candidate payload 可构建、离线验证，portable startup 已绑定 Manifest v2；activation、OPS-3B 与 formal Release 尚未完成。 |
 
 OPS-2A / OPS-2B 已进入 main，项目负责人曾在旧生产侧人工完成 dry-run 和一次单独确认的正式备份。这些是历史运维事实，不代表 restore、upgrade、apply-upgrade 或 rollback 已实现，也不再作为旧到新迁移输入。旧生产 `check-data` warning 和其中的 unowned、orphan map、missing file 不再阻塞新生产基线；旧数据仍未被自动修复或删除。
 
 ## 3. 当前阶段
 
-当前已确认状态为 **ENV-1B1C-B1/B2 已合并，ENV-1B2A 已由 PR #87 合并；ENV-1B2B 的 Python 3.14.6 / cp314 active Runtime repository implementation 已独立验收**。`ENV_1B2_completed=true`；ENV-1B3、clean Windows、formal Release 与生产批准仍未完成。正常上游功能同步在 ENV-1 期间冻结；紧急安全漏洞修复可以单独评估并受控引入。
+当前已确认状态为 **ENV-1B1C-B1/B2 已合并，ENV-1B2A 已由 PR #87 合并；ENV-1B2B 的 Python 3.14.6 / cp314 active Runtime 与 OPS Release Manifest v2 repository implementation 已独立验收**。`ENV_1B2_completed=true`、`ENV_1B3_started=false`；clean Windows、activation、formal Release 与生产批准仍未完成。正常上游功能同步在 ENV-1 期间冻结；紧急安全漏洞修复可以单独评估并受控引入。
 
 Greenfield Production Baseline 路线按以下顺序执行，后项不能绕过前项门禁：
 
@@ -65,7 +66,7 @@ Greenfield Production Baseline 路线按以下顺序执行，后项不能绕过�
 6. ENV-1B1C-B2：已由 PR #86 合并；固定 portable launcher、Release Python 信任链、现有 STAB-1 lifecycle 与 readiness 已进入 `main`。
 7. ENV-1B2A：固定 Python 3.10 layout 的官方来源、依赖锁、离线双重建、`pip check`、SBOM、deterministic archive 和 B2 fixed-Python fixture；已由 PR #87 合并并保留为 rollback baseline。
 8. ENV-1B2B：资格门禁选择 CPython 3.14.6；cp314 active policy、离线双构建、三层 provenance 与真实 formal-entry fixture 已完成并通过 repository implementation 独立验收，`ENV_1B2_completed=true`。
-9. OPS Release Manifest v2：repository implementation 位于单一 Draft PR，独立验收 pending；不含 activation 或 OPS-3B。
+9. OPS Release Manifest v2：repository implementation 已独立验收，Release candidate payload 可构建并离线验证，portable startup 已绑定 v2；不含 activation 或 OPS-3B。
 10. ENV-1B3：干净 Windows VM、无系统 Python、非管理员、中文/空格/长路径、低磁盘、重启、损坏 DLL/manifest、杀毒软件和 APP_ROOT 只读验证。
 11. 形成首个不可变 Windows Release Candidate；Release Candidate 不等于 Production Baseline。
 12. DATA-1：Repository、schema version、migration history、新版本 migration compatibility、数据完整性和数据库回滚基础；不迁移或修复旧生产数据。
@@ -83,7 +84,7 @@ Greenfield Production Baseline 路线按以下顺序执行，后项不能绕过�
 24. Linux 单服务器适配。
 25. PostgreSQL、对象存储、queue、Redis 和多实例按真实需求引入。
 
-第 0 至 8 项已完成各自的 repository 范围；第 8 项 ENV-1B2B 的 CPython 3.14.6 active Runtime 已通过独立代码与证据审查。后续仍须依次完成 Manifest v2 与干净 Windows 验证。Fresh Install Bootstrap、新生产部署、OPS-3B、Linux、PostgreSQL、Redis、durable queue、多实例、Windows Service、正式 Windows Runtime Release 和 Production Baseline 当前都不是已完成能力。
+第 0 至 9 项已完成各自的 repository 范围；第 8 项 ENV-1B2B 的 CPython 3.14.6 active Runtime 和第 9 项 OPS Release Manifest v2 repository implementation 已通过独立代码与证据审查。后续仍须依次完成 ENV-1B3 干净 Windows 验证与后续门禁。Fresh Install Bootstrap、新生产部署、OPS-3B、Linux、PostgreSQL、Redis、durable queue、多实例、Windows Service、正式 Windows Runtime Release 和 Production Baseline 当前都不是已完成能力。
 
 ## 4. 历史拆解参考
 

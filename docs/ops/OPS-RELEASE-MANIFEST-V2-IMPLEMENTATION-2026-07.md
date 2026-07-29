@@ -1,15 +1,24 @@
 # OPS Release Manifest v2 repository implementation
 
-Date: 2026-07-28
+Date: 2026-07-29
 Baseline: `main@ea71a9a73c80244f679487c35a960ceea7732876`
 
 ## Status
 
-- `Manifest_v2_repository_implementation_present=true`
-- `Manifest_v2_independent_acceptance_pending=true`
+- `OPS_RELEASE_MANIFEST_V2_repository_implementation_independently_accepted=true`
+- `Manifest_v2_repository_implementation=true`
+- `Release_candidate_payload_buildable=true`
+- `Release_candidate_payload_offline_verifiable=true`
+- `portable_startup_bound_to_Manifest_v2=true`
+- `original_independent_review_blockers_closed=5`
+- `remaining_code_blockers=0`
+- `remaining_evidence_blockers=0`
+- `remaining_test_blockers=0`
 - `ops_release_manifest_v1_unchanged=true`
 - `runtime_manifest_v1_preserved=true`
-- `Manifest_v2_implemented=true` means repository implementation in this Draft PR; it does not mean activation or production approval.
+- `Manifest_v2_implemented=true` means the independently accepted repository implementation; it does not mean activation or production approval.
+- `ENV_1B3_started=false`
+- `clean_Windows_validation=false`
 - `Release_activation_implemented=false`
 - `OPS_3B_implemented=false`
 - `formal_Release_created=false`
@@ -62,6 +71,35 @@ Both minimum compatibility fields are strict positive integers and are enforced 
 
 Detached manifest, inventory and archive inputs, materialized APP_ROOT, and builder/materializer roots use the shared path-safety primitives for regular-file, no-reparse-ancestor, containment and root-overlap checks. Git symlink modes, archive symlink/reparse entries, duplicate/case-fold collisions and traversal paths fail closed. Host and child retained-context validation reaches the same path-safe Manifest reader.
 
-The concentrated correction candidate reproduced the five independent-review blockers before implementation. Current focused evidence is `104 passed, 4 platform skips` for Release v2/portable/lifecycle/wrapper tests and `30 passed, 2 warnings` for static/audit. The audit candidate is `scanned=100`, `detected=mapped=368`, with parse/uncovered/stale/missing/invalid all zero and digest `b237e92a27ff6da88f70a6e542743ef0a6a6228fff7d5f9a9e47430cdd78299b`. Final clean-Head Build A/B, formal-entry and single enterprise-suite evidence is generated after the correction commit and recorded in the external review bundle and Draft PR body; this source document does not self-assert dynamic hashes that depend on its own commit.
+The concentrated correction reproduced and closed all five independent-review blockers. Focused evidence is `104 passed, 4 platform skips` for Release v2/portable/lifecycle/wrapper tests and `30 passed, 2 warnings` for static/audit. The audit result is `scanned=100`, `detected=mapped=368`, with parse/uncovered/stale/missing/invalid all zero and digest `b237e92a27ff6da88f70a6e542743ef0a6a6228fff7d5f9a9e47430cdd78299b`.
+
+## Independent acceptance and final regression baseline
+
+- `full_repository_regression_passed=true`
+- `full_repository_regression_interpreter=CPython 3.11.9 x64`
+- `collected=624`
+- `executed=624`
+- `passed=615`
+- `skipped=9`
+- `failed=0`
+- `omitted=0`
+- `extra=0`
+- `duplicate=0`
+- `aggregate_exit=0`
+- `interpreter_switching=false`
+- `github_ci_verified=false`
+
+The earlier three failing nodes were reproduced as effects of a non-canonical host test environment. They passed with the complete 624/624 aggregate in the dedicated development test environment; this classification is an environment finding, not a repository, Runtime, or PR code failure.
+
+Environment facts:
+
+- `dedicated_dev_test_environment_established=true`
+- `legacy_upstream_python_restored=true`
+- `legacy_upstream_python_identity=CPython 3.10.11 x64`
+- `accepted_CP314_Runtime_unchanged=true`
+- `python_deletion_actor=not_proven`
+- `host_python_maintenance_side_effect_recorded=true`
+
+The host Python maintenance side effect was recorded without modifying this PR, contaminating the dedicated development virtual environment, or changing the accepted CP314 Runtime.
 
 External Build A/B, real CP314 formal-entry fixture, final test aggregates and hashes are review evidence under the repository-external task artifact root and are not committed here.
