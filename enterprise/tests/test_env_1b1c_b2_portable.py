@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from enterprise.path_safety import PathSafetyError
+from enterprise.release import release_manifest_v2
 from enterprise.release.current_release import (
     CurrentRelease,
     canonical_json,
@@ -150,6 +152,28 @@ def test_pointer_must_bind_exact_release_manifest_bytes(tmp_path: Path) -> None:
     assert exc.value.code == "PORTABLE_RELEASE_MANIFEST_INVALID"
 
 
+@pytest.mark.parametrize("field", ["minimum_launcher_contract", "minimum_runtime_contract"])
+def test_portable_preflight_rejects_future_release_contract(tmp_path: Path, field: str) -> None:
+    app, local, probe = _fixture(tmp_path)
+    manifest_path = app / "release-manifest.json"
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    payload["compatibility"][field] = 999
+    raw = release_canonical_json(payload)
+    manifest_path.write_bytes(raw)
+    pointer_path = app.parents[1] / "state" / "current-release.json"
+    pointer = json.loads(pointer_path.read_text(encoding="utf-8"))
+    pointer["manifest_sha256"] = _sha(raw)
+    pointer_path.write_bytes(canonical_json(CurrentRelease(**pointer)))
+    with pytest.raises(RuntimeContractError) as exc:
+        build_portable_preflight(
+            app,
+            local_app_data_resolver=lambda: local,
+            executable=app / "python" / "python.exe",
+            python_probe=probe,
+        )
+    assert exc.value.code == "PORTABLE_RELEASE_CONTRACT_UNSUPPORTED"
+
+
 def test_process_binding_uses_retained_context_not_current_pointer(tmp_path: Path) -> None:
     from enterprise.runtime.launch_context import build_launch_context, publish_launch_context
 
@@ -209,12 +233,50 @@ def test_process_binding_rejects_launch_context_manifest_mismatch(tmp_path: Path
     assert exc.value.code == "PORTABLE_CONTEXT_UNTRUSTED"
 
 
-def test_status_reports_damaged_manifest_without_context_as_read_only_invalid(
+def test_process_binding_rechecks_manifest_path_safety_from_retained_context(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from enterprise.runtime.launch_context import build_launch_context, publish_launch_context
+
+    app, local, probe = _fixture(tmp_path)
+    evidence = build_portable_preflight(
+        app,
+        local_app_data_resolver=lambda: local,
+        executable=app / "python" / "python.exe",
+        python_probe=probe,
+    )
+    context = build_launch_context(evidence.result, instance_id="a" * 32)
+    publish_launch_context(
+        evidence.roots.RUNTIME_ROOT / "launch-context.json",
+        context,
+        expected_existing_identity=None,
+    )
+
+    def reject(_path: Path, *, allow_missing: bool = False) -> None:
+        raise PathSafetyError("fixture-reparse")
+
+    monkeypatch.setattr(release_manifest_v2, "assert_no_reparse_ancestors", reject)
+    with pytest.raises(RuntimeContractError) as exc:
+        validate_portable_process_binding(
+            app_root=app,
+            runtime_root=evidence.roots.RUNTIME_ROOT,
+            instance_id=context.instance_id,
+            expected_context_identity=context.identity,
+            local_app_data_resolver=lambda: local,
+            executable=app / "python" / "python.exe",
+            python_probe=probe,
+            install_roots=False,
+        )
+    assert exc.value.code == "PORTABLE_CONTEXT_UNTRUSTED"
+
+
+@pytest.mark.parametrize("error_code", ["PORTABLE_RELEASE_MANIFEST_INVALID", "PORTABLE_RELEASE_CONTRACT_UNSUPPORTED"])
+def test_status_reports_damaged_manifest_without_context_as_read_only_invalid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error_code: str
 ) -> None:
     monkeypatch.setattr(
         "enterprise.runtime.portable.build_portable_preflight",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeContractError("PORTABLE_RELEASE_MANIFEST_INVALID")),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeContractError(error_code)),
     )
     monkeypatch.setattr("enterprise.runtime.portable._derive_install_root", lambda _app: tmp_path / "install")
     monkeypatch.setattr("enterprise.runtime.portable.windows_local_app_data_known_folder", lambda: tmp_path / "local")
@@ -225,7 +287,7 @@ def test_status_reports_damaged_manifest_without_context_as_read_only_invalid(
     payload, exit_code = execute_portable_command(app_root=tmp_path / "install/releases/release-A", command="status")
     assert exit_code == 0
     assert payload == {
-        "release_manifest_error_code": "PORTABLE_RELEASE_MANIFEST_INVALID",
+        "release_manifest_error_code": error_code,
         "release_manifest_v2_valid": False,
         "status": "invalid",
     }

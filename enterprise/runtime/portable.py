@@ -34,6 +34,7 @@ from enterprise.release.current_release import (
 from enterprise.release.release_manifest_v2 import (
     ReleaseManifestV2,
     ReleaseManifestV2Error,
+    enforce_portable_contract_compatibility,
     read_release_manifest_v2,
     verify_materialized_release,
 )
@@ -172,10 +173,13 @@ def build_portable_preflight(
         release_manifest = read_release_manifest_v2(app_root / "release-manifest.json")
         if release_manifest.raw_sha256 != pointer.release.manifest_sha256 or release_manifest.release_id != pointer.release.release_id:
             raise ReleaseManifestV2Error("RELEASE_POINTER_MANIFEST_MISMATCH")
+        enforce_portable_contract_compatibility(release_manifest)
         inventory_path = app_root / str(release_manifest.section("release_payload")["inventory_path"])
         if verify_full_payload:
             verify_materialized_release(app_root, inventory_path=inventory_path)
     except ReleaseManifestV2Error as exc:
+        if exc.code == "RELEASE_COMPATIBILITY_UNSUPPORTED":
+            raise RuntimeContractError("PORTABLE_RELEASE_CONTRACT_UNSUPPORTED") from exc
         raise RuntimeContractError("PORTABLE_RELEASE_MANIFEST_INVALID") from exc
     runtime_manifest_relative = str(release_manifest.section("runtime")["runtime_manifest_path"])
     manifest = parse_runtime_manifest_startup_view(app_root / runtime_manifest_relative, roots.PYTHON_RUNTIME)

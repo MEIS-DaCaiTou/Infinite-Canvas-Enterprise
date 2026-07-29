@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import ast
 import json
 import subprocess
 import sys
@@ -9,13 +10,17 @@ from pathlib import Path
 
 import pytest
 
+from enterprise.path_safety import PathSafetyError
+from enterprise.release import release_manifest_v2
 from enterprise.release.release_manifest_v2 import (
     ReleaseManifestV2Error,
     UPSTREAM_COMMIT,
     UPSTREAM_VERSION_FILE_SHA256,
     build_inventory,
+    assert_non_overlapping_roots,
     canonical_json,
     derive_release_id,
+    git_blob_sha1,
     materialize_release_fixture,
     parse_release_manifest_v2_bytes,
     parse_inventory_bytes,
@@ -24,6 +29,14 @@ from enterprise.release.release_manifest_v2 import (
     verify_materialized_release,
     verify_release_manifest_v2,
 )
+from enterprise.release.release_builder_v2 import (
+    _config_contract,
+    _copy_git_payload,
+    _license_documents,
+    _release_sbom,
+    _third_party_policy,
+)
+from enterprise.release.static_build import build_static_tree
 
 
 SHA1 = "a" * 40
@@ -80,8 +93,18 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, Path, dict[str, object]]:
         "inventory_complete": True,
         "unresolved_count": 0,
         "legal_review_complete": False,
-        "components": [{"component": "fixture", "version": "1", "source": "fixture", "license_expression": "LicenseRef-Fixture", "license_text_sha256": "4" * 64, "evidence_type": "fixture", "payload_paths": ["VERSION"]}],
+        "components": [{"bom_ref": "fixture", "component": "fixture", "version": "1", "source": "fixture", "license_expression": "LicenseRef-Fixture", "license_text_sha256": sha256_bytes(b"fixture license\n"), "license_evidence_path": "LICENSE", "evidence_type": "fixture", "payload_paths": ["VERSION"]}],
     })
+    payload_policy = canonical_json({
+        "schema_version": "ops-release-payload-policy-v1",
+        "included_roots": ["static"],
+        "included_root_files": ["VERSION"],
+        "excluded_globs": [],
+        "runtime_destination": "python",
+        "static_destination": "static",
+        "source_static_root": "static",
+    })
+    component_policy = canonical_json({"schema_version": "ops-third-party-component-policy-v1", "components": [], "project_owned_payload_files": {}})
     static_report = canonical_json({
         "schema_version": "env-1b1a-static-build-report-v2",
         "result": "pass",
@@ -93,7 +116,10 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, Path, dict[str, object]]:
     config_contract = canonical_json({
         "schema_id": "enterprise-config-contract-v1",
         "secret_values_embedded": False,
-        "keys": [{"key": "GATEWAY_PORT", "type": "integer", "required": True, "default_classification": "non-secret-default", "secret": False, "scope": "runtime", "validation": "1..65535"}],
+        "keys": [
+            {"key": key, "type": "string", "required": True, "default_classification": "fixture", "secret": key in {"JWT_SECRET", "ADMIN_PASSWORD"}, "scope": "runtime", "validation": "fixture"}
+            for key in sorted({"GATEWAY_PORT", "UPSTREAM_PORT", "JWT_SECRET", "JWT_EXPIRE_HOURS", "ADMIN_USERNAME", "ADMIN_PASSWORD", "DB_PATH", "ENTERPRISE_REPO_URL", "ENTERPRISE_UPDATE_ENABLED", "ENTERPRISE_HIDE_UPSTREAM_AUTHOR", "ENTERPRISE_ENV", "ENTERPRISE_STRICT_SECURITY"})
+        ],
     })
     database_contract = canonical_json({
         "schema_id": "enterprise-database-contract-v1",
@@ -115,6 +141,8 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, Path, dict[str, object]]:
         "release-evidence/requirements.lock": _write(payload / "release-evidence/requirements.lock", requirements_lock),
         "release-evidence/wheelhouse-inventory.json": _write(payload / "release-evidence/wheelhouse-inventory.json", wheelhouse_inventory),
         "release-evidence/app-source-inventory.json": _write(payload / "release-evidence/app-source-inventory.json", app_source_inventory.canonical_bytes),
+        "release-evidence/release-payload-policy.json": _write(payload / "release-evidence/release-payload-policy.json", payload_policy),
+        "release-evidence/third-party-component-policy.json": _write(payload / "release-evidence/third-party-component-policy.json", component_policy),
         "release-evidence/release-sbom.cdx.json": _write(payload / "release-evidence/release-sbom.cdx.json", sbom),
         "release-evidence/third-party-licenses.json": _write(payload / "release-evidence/third-party-licenses.json", licenses),
         "THIRD-PARTY-LICENSES.txt": _write(payload / "THIRD-PARTY-LICENSES.txt", b"notice\n"),
@@ -124,6 +152,7 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, Path, dict[str, object]]:
         "python/python.exe": _write(payload / "python/python.exe", b"python\n"),
         "static/index.html": _write(payload / "static/index.html", static_content),
         "VERSION": _write(payload / "VERSION", b"2026.07.6"),
+        "LICENSE": _write(payload / "LICENSE", b"fixture license\n"),
     }
     runtime_tree_digest = hashlib.sha256()
     for entry in build_inventory(payload / "python").entries:
@@ -169,10 +198,11 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, Path, dict[str, object]]:
         "enterprise_source": {"repository": "MEIS-DaCaiTou/Infinite-Canvas-Enterprise", "commit": SHA1, "tree": TREE, "version": "2026.07.6", "version_file_sha256": hashes["VERSION"]},
         "upstream_source": {"repository": "hero8152/Infinite-Canvas", "commit": "f1dd6834a72f3e7ff8340be05a84347d931e9cb9", "tree": "ebcc3b2df68aa6ee4f43ffd5f9fc392ac7d70dbc", "version": "2026.07.6", "version_file_sha256": hashes["VERSION"]},
         "archive": {"filename": archive.name, "root_prefix": root, "size_bytes": archive_size, "sha256": archive_hash, "file_count": len(inventory.entries) + 1, "total_uncompressed_bytes": inventory.total_size_bytes + len(inventory.canonical_bytes), "payload_tree_sha256": inventory.tree_sha256, "inventory_sha256": inventory.sha256, "payload_excludes": ["release-manifest.json"]},
+        "payload_policy": {"schema_version": "ops-release-payload-policy-v1", "git_path": "release/windows/release-payload-policy.json", "git_blob_sha1": git_blob_sha1(payload_policy), "payload_path": "release-evidence/release-payload-policy.json", "sha256": hashes["release-evidence/release-payload-policy.json"]},
         "release_payload": {"inventory_schema": "ops-release-payload-inventory-v1", "inventory_path": inventory_path.name, "inventory_sha256": inventory.sha256, "tree_sha256": inventory.tree_sha256, "file_count": len(inventory.entries), "total_size_bytes": inventory.total_size_bytes, "static_tree_sha256": static_tree, "app_source_tree_sha256": app_source_inventory.tree_sha256, "embedded_manifest_path": "release-manifest.json", "archive_payload_excludes": ["release-manifest.json"]},
         "runtime": {"runtime_manifest_path": "runtime-manifest.json", "runtime_manifest_sha256": hashes["runtime-manifest.json"], "runtime_manifest_schema": "enterprise-windows-runtime-manifest-v1", "python_version": "3.14.6", "python_abi": "cp314", "architecture": "x64", "runtime_tree_sha256": runtime_tree, "runtime_archive_sha256": SHA, "runtime_provenance_report_sha256": hashes["release-evidence/runtime-provenance-report.json"], "runtime_source_policy_sha256": hashes["release-evidence/runtime-source-policy.json"], "requirements_lock_sha256": hashes["release-evidence/requirements.lock"], "wheelhouse_manifest_sha256": hashes["release-evidence/wheelhouse-inventory.json"], "installed_closure_sha256": installed_closure, "dependency_graph_sha256": dependency_graph},
         "sbom": {"format": "CycloneDX", "spec_version": "1.6", "path": "release-evidence/release-sbom.cdx.json", "sha256": hashes["release-evidence/release-sbom.cdx.json"], "component_count": 1, "dependency_edge_count": 1},
-        "licenses": {"machine_inventory_path": "release-evidence/third-party-licenses.json", "machine_inventory_sha256": hashes["release-evidence/third-party-licenses.json"], "human_notice_path": "THIRD-PARTY-LICENSES.txt", "human_notice_sha256": hashes["THIRD-PARTY-LICENSES.txt"], "component_count": 1, "unresolved_count": 0, "legal_review_complete": False, "inventory_complete": True},
+        "licenses": {"machine_inventory_path": "release-evidence/third-party-licenses.json", "machine_inventory_sha256": hashes["release-evidence/third-party-licenses.json"], "component_policy_path": "release-evidence/third-party-component-policy.json", "component_policy_sha256": hashes["release-evidence/third-party-component-policy.json"], "human_notice_path": "THIRD-PARTY-LICENSES.txt", "human_notice_sha256": hashes["THIRD-PARTY-LICENSES.txt"], "component_count": 1, "unresolved_count": 0, "legal_review_complete": False, "inventory_complete": True},
         "static_build": {"builder_version": "env-1b1a-static-builder-v2", "build_record_path": "release-evidence/static-build-report.json", "build_record_sha256": hashes["release-evidence/static-build-report.json"], "source_tree_sha256": SHA, "output_tree_sha256": static_tree, "html_build_id": SHA},
         "config_contract": {"schema_id": "enterprise-config-contract-v1", "schema_path": "release-evidence/config-contract.json", "schema_sha256": hashes["release-evidence/config-contract.json"], "secret_values_embedded": False},
         "database_contract": {"schema_id": "enterprise-database-contract-v1", "schema_snapshot_path": "release-evidence/database-schema.json", "schema_snapshot_sha256": hashes["release-evidence/database-schema.json"], "migration_ids": [], "migration_compatibility": "unclassified", "rollback_classification": "unclassified", "ops3b_activation_eligible": False},
@@ -193,8 +223,10 @@ def _rebind_fixture(manifest_path: Path, archive: Path, inventory_path: Path, ma
         ("runtime", "runtime_source_policy_sha256"): "release-evidence/runtime-source-policy.json",
         ("runtime", "requirements_lock_sha256"): "release-evidence/requirements.lock",
         ("runtime", "wheelhouse_manifest_sha256"): "release-evidence/wheelhouse-inventory.json",
+        ("payload_policy", "sha256"): "release-evidence/release-payload-policy.json",
         ("sbom", "sha256"): "release-evidence/release-sbom.cdx.json",
         ("licenses", "machine_inventory_sha256"): "release-evidence/third-party-licenses.json",
+        ("licenses", "component_policy_sha256"): "release-evidence/third-party-component-policy.json",
         ("licenses", "human_notice_sha256"): "THIRD-PARTY-LICENSES.txt",
         ("static_build", "build_record_sha256"): "release-evidence/static-build-report.json",
         ("config_contract", "schema_sha256"): "release-evidence/config-contract.json",
@@ -420,3 +452,257 @@ def test_cli_rejects_relative_paths_with_one_sanitized_json_line() -> None:
     assert result.stderr == ""
     assert result.stdout.strip() == '{"code":"RELEASE_CLI_PATH_NOT_ABSOLUTE","status":"blocked"}'
     assert "Traceback" not in result.stdout
+
+
+def test_manifest_requires_authoritative_payload_policy_binding(tmp_path: Path) -> None:
+    _manifest, _archive, _inventory, payload = _fixture(tmp_path)
+    assert "payload_policy" in payload
+
+
+def test_payload_policy_missing_include_fails_closed(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    payload = tmp_path / "payload"
+    source.mkdir(); payload.mkdir()
+    policy = {
+        "schema_version": "ops-release-payload-policy-v1",
+        "included_roots": ["missing-root", "static"],
+        "included_root_files": ["missing.txt"],
+        "excluded_globs": [],
+        "runtime_destination": "python",
+        "static_destination": "static",
+        "source_static_root": "static",
+    }
+    with pytest.raises(ReleaseManifestV2Error, match="RELEASE_PAYLOAD_POLICY_INVALID"):
+        _copy_git_payload(source, payload, policy)
+
+
+def test_app_source_inventory_must_cross_bind_global_payload(tmp_path: Path) -> None:
+    manifest_path, archive, inventory_path, manifest = _fixture(tmp_path)
+    app_inventory_path = tmp_path / "payload/release-evidence/app-source-inventory.json"
+    foreign = tmp_path / "foreign-source"
+    foreign.mkdir()
+    _write(foreign / "VERSION", b"not-the-payload-version")
+    foreign_inventory = build_inventory(foreign)
+    app_inventory_path.write_bytes(foreign_inventory.canonical_bytes)
+    manifest["release_payload"]["app_source_tree_sha256"] = foreign_inventory.tree_sha256
+    _rebind_fixture(manifest_path, archive, inventory_path, manifest)
+    with pytest.raises(ReleaseManifestV2Error, match="RELEASE_APP_SOURCE_CONTENT_INVALID"):
+        verify_release_manifest_v2(manifest_path, archive, inventory_path)
+
+
+def test_license_component_set_must_equal_sbom_component_set(tmp_path: Path) -> None:
+    manifest_path, archive, inventory_path, manifest = _fixture(tmp_path)
+    license_path = tmp_path / "payload/release-evidence/third-party-licenses.json"
+    payload = json.loads(license_path.read_text(encoding="utf-8"))
+    payload["components"][0]["bom_ref"] = "different-component"
+    license_path.write_bytes(canonical_json(payload))
+    _rebind_fixture(manifest_path, archive, inventory_path, manifest)
+    with pytest.raises(ReleaseManifestV2Error, match="RELEASE_LICENSE_CONTENT_INVALID"):
+        verify_release_manifest_v2(manifest_path, archive, inventory_path)
+
+
+def test_config_contract_matches_all_operator_inputs() -> None:
+    payload = json.loads(_config_contract())
+    assert {item["key"] for item in payload["keys"]} == {
+        "GATEWAY_PORT", "UPSTREAM_PORT", "JWT_SECRET", "JWT_EXPIRE_HOURS",
+        "ADMIN_USERNAME", "ADMIN_PASSWORD", "DB_PATH", "ENTERPRISE_REPO_URL",
+        "ENTERPRISE_UPDATE_ENABLED", "ENTERPRISE_HIDE_UPSTREAM_AUTHOR",
+        "ENTERPRISE_ENV", "ENTERPRISE_STRICT_SECURITY",
+    }
+
+
+def test_config_contract_does_not_drift_from_config_getenv_calls() -> None:
+    root = Path(__file__).parents[2]
+    tree = ast.parse((root / "enterprise/config.py").read_text(encoding="utf-8"))
+    actual = {
+        node.args[0].value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "os"
+        and node.func.attr == "getenv"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
+    }
+    contract = json.loads(_config_contract())
+    assert {item["key"] for item in contract["keys"]} == actual
+
+
+def test_release_manifest_reader_rejects_symlink(tmp_path: Path) -> None:
+    manifest, _archive, _inventory, _payload = _fixture(tmp_path)
+    link = tmp_path / "manifest-link.json"
+    try:
+        link.symlink_to(manifest)
+    except OSError:
+        pytest.skip("real symlink creation unavailable on this platform")
+    from enterprise.release.release_manifest_v2 import read_release_manifest_v2
+    with pytest.raises(ReleaseManifestV2Error, match="REPARSE"):
+        read_release_manifest_v2(link)
+
+
+@pytest.mark.parametrize("field", ["minimum_launcher_contract", "minimum_runtime_contract"])
+@pytest.mark.parametrize("value", [0, -1, True])
+def test_minimum_contract_is_a_strict_positive_integer(tmp_path: Path, field: str, value: object) -> None:
+    _manifest, _archive, _inventory, payload = _fixture(tmp_path)
+    payload["compatibility"][field] = value
+    with pytest.raises(ReleaseManifestV2Error, match="RELEASE_COMPATIBILITY_INVALID"):
+        parse_release_manifest_v2_bytes(canonical_json(payload))
+
+
+def test_git_symlink_mode_is_rejected_from_app_source(tmp_path: Path) -> None:
+    source = tmp_path / "source"; payload = tmp_path / "payload"
+    source.mkdir(); payload.mkdir(); (source / "static").mkdir()
+    (source / "VERSION").write_text("fixture", encoding="utf-8")
+    policy = {
+        "schema_version": "ops-release-payload-policy-v1",
+        "included_roots": ["static"], "included_root_files": ["VERSION"],
+        "excluded_globs": [], "runtime_destination": "python",
+        "static_destination": "static", "source_static_root": "static",
+    }
+    with pytest.raises(ReleaseManifestV2Error, match="RELEASE_GIT_SYMLINK_FORBIDDEN"):
+        _copy_git_payload(source, payload, policy, {"version": "120000"})
+
+
+def test_git_symlink_mode_cannot_be_silently_skipped(tmp_path: Path) -> None:
+    source = tmp_path / "source"; payload = tmp_path / "payload"
+    source.mkdir(); payload.mkdir(); (source / "static").mkdir()
+    (source / "VERSION").write_text("fixture", encoding="utf-8")
+    policy = {
+        "schema_version": "ops-release-payload-policy-v1",
+        "included_roots": ["static"], "included_root_files": ["VERSION"],
+        "excluded_globs": [], "runtime_destination": "python",
+        "static_destination": "static", "source_static_root": "static",
+    }
+    with pytest.raises(ReleaseManifestV2Error, match="RELEASE_GIT_SYMLINK_FORBIDDEN"):
+        _copy_git_payload(
+            source,
+            payload,
+            policy,
+            {"version": "100644", "static/dangling": "120000"},
+        )
+
+
+def test_payload_policy_git_blob_identity_is_verified(tmp_path: Path) -> None:
+    manifest_path, archive, inventory_path, manifest = _fixture(tmp_path)
+    manifest["payload_policy"]["git_blob_sha1"] = "0" * 40
+    manifest_path.write_bytes(canonical_json(manifest))
+    with pytest.raises(ReleaseManifestV2Error, match="RELEASE_PAYLOAD_POLICY_INVALID"):
+        verify_release_manifest_v2(manifest_path, archive, inventory_path)
+
+
+def test_manifest_reader_rejects_controlled_reparse_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, _archive, _inventory, _payload = _fixture(tmp_path)
+
+    def reject(_path: Path, *, allow_missing: bool = False) -> None:
+        raise PathSafetyError("fixture-reparse")
+
+    monkeypatch.setattr(release_manifest_v2, "assert_no_reparse_ancestors", reject)
+    with pytest.raises(ReleaseManifestV2Error, match="REPARSE"):
+        release_manifest_v2.read_release_manifest_v2(manifest)
+
+
+def test_builder_and_materializer_roots_must_not_overlap(tmp_path: Path) -> None:
+    with pytest.raises(ReleaseManifestV2Error, match="RELEASE_ROOT_OVERLAP_FORBIDDEN"):
+        assert_non_overlapping_roots(tmp_path, tmp_path / "child")
+
+
+@pytest.mark.parametrize("input_name", ["manifest", "archive", "inventory"])
+def test_detached_verifier_rejects_reparse_inputs(tmp_path: Path, input_name: str) -> None:
+    manifest, archive, inventory, _payload = _fixture(tmp_path)
+    targets = {"manifest": manifest, "archive": archive, "inventory": inventory}
+    link = tmp_path / f"{input_name}-link"
+    try:
+        link.symlink_to(targets[input_name])
+    except OSError:
+        pytest.skip("real symlink creation unavailable on this platform")
+    args = {
+        "manifest": (link, archive, inventory),
+        "archive": (manifest, link, inventory),
+        "inventory": (manifest, archive, link),
+    }[input_name]
+    with pytest.raises(ReleaseManifestV2Error):
+        verify_release_manifest_v2(*args)
+
+
+def test_component_policy_hash_and_payload_coverage_are_fail_closed(tmp_path: Path) -> None:
+    manifest_path, archive, inventory_path, manifest = _fixture(tmp_path)
+    policy_path = tmp_path / "payload/release-evidence/third-party-component-policy.json"
+    policy_path.write_bytes(canonical_json({
+        "schema_version": "ops-third-party-component-policy-v1",
+        "project_owned_payload_files": {},
+        "components": [{
+            "bom_ref": "fixture", "name": "fixture", "version": "1",
+            "source": "fixture", "license_expression": "LicenseRef-Fixture",
+            "license_source_path": "LICENSE",
+            "payload_files": {"VERSION": "0" * 64},
+        }],
+    }))
+    _rebind_fixture(manifest_path, archive, inventory_path, manifest)
+    with pytest.raises(ReleaseManifestV2Error, match="RELEASE_LICENSE_POLICY_INVALID"):
+        verify_release_manifest_v2(manifest_path, archive, inventory_path)
+
+
+def test_committed_vendor_policy_exactly_binds_vendored_payload_files(tmp_path: Path) -> None:
+    root = Path(__file__).parents[2]
+    policy = _third_party_policy((root / "release/windows/third-party-component-policy.json").read_bytes())
+    built_static = tmp_path / "built-static"
+    build_static_tree(root / "static", built_static, tmp_path / "static-build-report.json")
+    covered: set[str] = set()
+    for component in policy["components"]:
+        for relative, expected in component["payload_files"].items():
+            assert relative not in covered
+            covered.add(relative)
+            built_relative = Path(relative).relative_to("static")
+            assert sha256_file(built_static / built_relative)[0] == expected
+    for relative, expected in policy["project_owned_payload_files"].items():
+        assert relative not in covered
+        covered.add(relative)
+        built_relative = Path(relative).relative_to("static")
+        assert sha256_file(built_static / built_relative)[0] == expected
+    actual = {
+        "static/" + path.relative_to(built_static).as_posix()
+        for path in (built_static / "vendor").rglob("*")
+        if path.is_file()
+    }
+    assert covered == actual
+
+
+def test_release_sbom_has_per_vendor_components_not_one_aggregate(tmp_path: Path) -> None:
+    root = Path(__file__).parents[2]
+    policy = _third_party_policy((root / "release/windows/third-party-component-policy.json").read_bytes())
+    runtime = tmp_path / "runtime-sbom.json"
+    runtime.write_bytes(canonical_json({
+        "bomFormat": "CycloneDX", "specVersion": "1.6", "version": 1,
+        "metadata": {"component": {"bom-ref": "runtime", "name": "runtime", "type": "application"}, "properties": [{"name": "dependency_graph_sha256", "value": SHA}]},
+        "components": [{"bom-ref": "runtime-component", "name": "runtime-component", "type": "library", "version": "1"}],
+        "dependencies": [{"ref": "runtime", "dependsOn": ["runtime-component"]}, {"ref": "runtime-component", "dependsOn": []}],
+    }))
+    result, _count, _edges = _release_sbom(runtime, "2026.07.6", SHA1, policy)
+    components = json.loads(result)["components"]
+    refs = {item["bom-ref"] for item in components}
+    assert "pkg:generic/infinite-canvas-frontend-assets@" + "f1dd6834a72f3e7ff8340be05a84347d931e9cb9" not in refs
+    assert {item["bom_ref"] for item in policy["components"]}.issubset(refs)
+
+
+def test_distribution_without_own_license_evidence_never_falls_back_to_project_license(tmp_path: Path) -> None:
+    payload = tmp_path / "payload"; runtime = tmp_path / "runtime"
+    payload.mkdir(); (payload / "LICENSE").write_text("project", encoding="utf-8")
+    (runtime / "Lib/site-packages").mkdir(parents=True)
+    sbom = canonical_json({"components": [{"bom-ref": "pkg:pypi/missing@1", "name": "missing", "version": "1"}]})
+    with pytest.raises(ReleaseManifestV2Error, match="RELEASE_LICENSE_EVIDENCE_MISSING"):
+        _license_documents(sbom, payload, runtime, "2026.07.6", SHA1, {"components": []})
+
+
+def test_distribution_metadata_without_license_declaration_is_unresolved(tmp_path: Path) -> None:
+    payload = tmp_path / "payload"; runtime = tmp_path / "runtime"
+    payload.mkdir(); (payload / "LICENSE").write_text("project", encoding="utf-8")
+    dist = runtime / "Lib/site-packages/missing-1.dist-info"
+    dist.mkdir(parents=True)
+    (dist / "METADATA").write_text("Name: missing\nVersion: 1\n", encoding="utf-8")
+    sbom = canonical_json({"components": [{"bom-ref": "pkg:pypi/missing@1", "name": "missing", "version": "1"}]})
+    with pytest.raises(ReleaseManifestV2Error, match="RELEASE_LICENSE_EVIDENCE_MISSING"):
+        _license_documents(sbom, payload, runtime, "2026.07.6", SHA1, {"components": []})

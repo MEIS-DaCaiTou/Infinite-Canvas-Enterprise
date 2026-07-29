@@ -114,6 +114,7 @@ _DEFINITIONS: tuple[ErrorDefinition, ...] = (
     ErrorDefinition("PORTABLE_RELEASE_LAYOUT_INVALID", "portable", "portable Release layout is invalid"),
     ErrorDefinition("PORTABLE_RELEASE_POINTER_MISMATCH", "portable", "portable Release pointer does not identify this Release"),
     ErrorDefinition("PORTABLE_RELEASE_MANIFEST_INVALID", "portable", "portable Release Manifest v2 is invalid"),
+    ErrorDefinition("PORTABLE_RELEASE_CONTRACT_UNSUPPORTED", "portable", "portable Release requires a newer runtime contract"),
     ErrorDefinition("PORTABLE_CONTEXT_UNTRUSTED", "portable", "portable launch context identity is untrusted"),
     ErrorDefinition("PORTABLE_RUNTIME_OWNERSHIP_UNTRUSTED", "portable", "portable runtime ownership identity is untrusted"),
     ErrorDefinition("PORTABLE_STARTUP_NOT_READY", "readiness", "portable runtime startup is not ready"),

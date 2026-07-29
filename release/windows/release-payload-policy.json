@@ -8,7 +8,7 @@
     "logs/**", "backups/**", "state/**", "cache/**", "temp/**",
     "python/**", "wheelhouse/**"
   ],
-  "included_roots": ["API", "CLI", "enterprise", "enterprise-static", "static", "workflows"],
+  "included_roots": ["enterprise", "enterprise-static", "static", "workflows"],
   "included_root_files": [
     "ARCHITECTURE.md", "CODE_BOUNDARIES.md", "LICENSE", "PROJECT_SCOPE_LOCK.md",
     "README.md", "VERSION", "main.py", "requirements.txt", "启动企业版.bat",
