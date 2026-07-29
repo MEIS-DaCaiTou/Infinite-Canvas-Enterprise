@@ -1,0 +1,82 @@
+{
+  "components": [
+    {
+      "bom_ref": "pkg:npm/tailwindcss@3.4.17",
+      "license_expression": "MIT",
+      "license_source_path": "release/windows/license-evidence/tailwindcss-and-three-MIT.txt",
+      "name": "tailwindcss",
+      "payload_files": {
+        "static/vendor/js/tailwindcss-cdn.js": "f095de8d799a0281a19b0e349553ecb105c4b16dd4b94a2d568ad5fbd172cd79"
+      },
+      "source": "https://github.com/tailwindlabs/tailwindcss/tree/v3.4.17",
+      "version": "3.4.17"
+    },
+    {
+      "bom_ref": "pkg:npm/lucide@1.16.0",
+      "license_expression": "ISC AND MIT",
+      "license_source_path": "release/windows/license-evidence/lucide-ISC-and-feather-MIT.txt",
+      "name": "lucide",
+      "payload_files": {
+        "static/vendor/js/lucide.js": "82a83a2ffe91c253267e8fa4723df599911baf26f8aad22b39014bf4715f0301"
+      },
+      "source": "https://github.com/lucide-icons/lucide",
+      "version": "1.16.0"
+    },
+    {
+      "bom_ref": "pkg:npm/three@0.160.0",
+      "license_expression": "MIT",
+      "license_source_path": "release/windows/license-evidence/tailwindcss-and-three-MIT.txt",
+      "name": "three",
+      "payload_files": {
+        "static/vendor/js/three-0.160.0.module.js": "c6eacae1ec5fd832160227ca7441311c8b30dee0419af87954fb9df6d105bf1f"
+      },
+      "source": "https://github.com/mrdoob/three.js/tree/r160",
+      "version": "0.160.0"
+    },
+    {
+      "bom_ref": "pkg:generic/inter@payload-revision-eec66af7f233",
+      "license_expression": "OFL-1.1",
+      "license_source_path": "release/windows/license-evidence/vendored-fonts-OFL-1.1.txt",
+      "name": "Inter",
+      "payload_files": {
+        "static/vendor/fonts/inter-1.ttf": "eec66af7f2337bd34fe6e801cf92ededcb57a20c0d7bc40a61d4eefcbe3dd40c",
+        "static/vendor/fonts/inter-2.ttf": "e7a1aaf7eda9f2fad4131725fa556265ec75ca7b2d756260173a040363e8d4f7",
+        "static/vendor/fonts/inter-3.ttf": "8c883f63b2c4157d997319f2c8bc6995ed4357ef371940d31ca159004a4aae63",
+        "static/vendor/fonts/inter-4.ttf": "1b08e7fc267a5c7e1d614100f604b83e7e8a0be241f0f288faa2b3ac93a683ba",
+        "static/vendor/fonts/inter-5.ttf": "d0f4bc7faca468376e3db9b5e57afcdc2192134c9ac82a9511f32767b56853a4"
+      },
+      "source": "https://github.com/rsms/inter",
+      "version": "payload-revision-eec66af7f233"
+    },
+    {
+      "bom_ref": "pkg:generic/jetbrains-mono@payload-revision-a1d92abc6b02",
+      "license_expression": "OFL-1.1",
+      "license_source_path": "release/windows/license-evidence/vendored-fonts-OFL-1.1.txt",
+      "name": "JetBrains Mono",
+      "payload_files": {
+        "static/vendor/fonts/jetbrains-mono-6.ttf": "a1d92abc6b02a87faed23d98067ab1027e8e95242fd7c9978a072ea383b89d1a",
+        "static/vendor/fonts/jetbrains-mono-7.ttf": "44ce4a84f20d60f24539bd0cef11f79c29e38609e0f8adf18551c9794a5d9dc3"
+      },
+      "source": "https://github.com/JetBrains/JetBrainsMono",
+      "version": "payload-revision-a1d92abc6b02"
+    },
+    {
+      "bom_ref": "pkg:generic/space-grotesk@payload-revision-3e699ead1876",
+      "license_expression": "OFL-1.1",
+      "license_source_path": "release/windows/license-evidence/vendored-fonts-OFL-1.1.txt",
+      "name": "Space Grotesk",
+      "payload_files": {
+        "static/vendor/fonts/space-grotesk-10.ttf": "3e699ead1876244fa392243054ddefe7cf631b488438828a8a100731a22ab995",
+        "static/vendor/fonts/space-grotesk-8.ttf": "3e756954468ff1cb302dae0414262e72f76a67d87bef3fa1f3226cd0fb9b2d85",
+        "static/vendor/fonts/space-grotesk-9.ttf": "2f29b31d803a928d21f96dbe7a5f8bfa5c5c98917736c2d195bc7c737bc906ba"
+      },
+      "source": "https://github.com/floriankarsten/space-grotesk",
+      "version": "payload-revision-3e699ead1876"
+    }
+  ],
+  "project_owned_payload_files": {
+    "static/vendor/MANIFEST.md": "c06dad703d86feee63baa9efce3343b48b3eddf0b6561e735c33a5422cdcaad9",
+    "static/vendor/css/fonts.css": "fa703880bd6937f99c03937b661b34531e2fd8d698ced6257524156dcb28866a"
+  },
+  "schema_version": "ops-third-party-component-policy-v1"
+}

@@ -1,0 +1,21 @@
+{
+  "excluded_globs": [
+    ".git/**", ".github/**", ".agents/**", ".codex/**", "docs/**",
+    "enterprise/tests/**", "runtime/**", "release/**", "tools/**",
+    "**/__pycache__/**", "**/*.pyc", "**/*.db", "**/*.sqlite",
+    "**/*.sqlite3", "**/*.db-wal", "**/*.db-shm", "**/*.log",
+    "**/.env", "enterprise.env", "data/**", "uploads/**", "output/**",
+    "logs/**", "backups/**", "state/**", "cache/**", "temp/**",
+    "python/**", "wheelhouse/**"
+  ],
+  "included_roots": ["enterprise", "enterprise-static", "static", "workflows"],
+  "included_root_files": [
+    "ARCHITECTURE.md", "CODE_BOUNDARIES.md", "LICENSE", "PROJECT_SCOPE_LOCK.md",
+    "README.md", "VERSION", "main.py", "requirements.txt", "启动企业版.bat",
+    "停止企业版.bat", "重启企业版.bat", "查看企业版状态.bat", "企业版健康检查.bat"
+  ],
+  "runtime_destination": "python",
+  "schema_version": "ops-release-payload-policy-v1",
+  "static_destination": "static",
+  "source_static_root": "static"
+}

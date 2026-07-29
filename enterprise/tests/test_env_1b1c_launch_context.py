@@ -16,6 +16,7 @@ from enterprise.runtime.launch_context import (
     read_launch_context,
 )
 from enterprise.runtime.preflight import StartupPreflightResult
+from enterprise.tests.release_manifest_v2_fixture import preflight_v2_fields
 
 
 SHA = "a" * 64
@@ -29,6 +30,7 @@ def _context(instance_id: str = "1" * 32):
         app_root_relative="releases/release-A",
         path_roots_identity=SHA,
         current_release_sha256="b" * 64,
+        **preflight_v2_fields(),
         runtime_manifest_sha256="c" * 64,
         python_executable_sha256="d" * 64,
         python_implementation="CPython",

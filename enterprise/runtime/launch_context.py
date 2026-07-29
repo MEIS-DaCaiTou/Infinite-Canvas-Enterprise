@@ -20,7 +20,7 @@ from .preflight import StartupPreflightResult
 from .runtime_manifest import is_strict_cpython_314_version
 
 
-LAUNCH_CONTEXT_SCHEMA_VERSION = "env-1b1c-runtime-launch-context-v1"
+LAUNCH_CONTEXT_SCHEMA_VERSION = "env-1b1c-runtime-launch-context-v2"
 LAUNCH_CONTEXT_FILENAME = "launch-context.json"
 LAUNCH_CONTEXT_TEMP_FILENAME = "launch-context.json.new"
 LAUNCH_CONTEXT_MAX_BYTES = 16 * 1024
@@ -34,6 +34,10 @@ _FIELDS = frozenset({
     "app_root_relative",
     "path_roots_identity",
     "current_release_sha256",
+    "release_manifest_sha256",
+    "release_payload_tree_sha256",
+    "enterprise_commit",
+    "enterprise_tree",
     "runtime_manifest_sha256",
     "python_executable_sha256",
     "python_implementation",
@@ -76,12 +80,16 @@ def _validate_context_values(context: "RuntimeLaunchContext") -> None:
     for value in (
         context.path_roots_identity,
         context.current_release_sha256,
+        context.release_manifest_sha256,
+        context.release_payload_tree_sha256,
         context.runtime_manifest_sha256,
         context.python_executable_sha256,
         context.startup_preflight_sha256,
     ):
         if not isinstance(value, str) or not _SHA_RE.fullmatch(value):
             raise RuntimeContractError("LAUNCH_CONTEXT_INVALID")
+    if not re.fullmatch(r"[0-9a-f]{40}", context.enterprise_commit) or not re.fullmatch(r"[0-9a-f]{40}", context.enterprise_tree):
+        raise RuntimeContractError("LAUNCH_CONTEXT_INVALID")
 
 
 @dataclass(frozen=True)
@@ -92,6 +100,10 @@ class RuntimeLaunchContext:
     app_root_relative: str
     path_roots_identity: str
     current_release_sha256: str
+    release_manifest_sha256: str
+    release_payload_tree_sha256: str
+    enterprise_commit: str
+    enterprise_tree: str
     runtime_manifest_sha256: str
     python_executable_sha256: str
     python_implementation: str
@@ -111,6 +123,8 @@ class RuntimeLaunchContext:
             "architecture": self.architecture,
             "bytecode_policy": self.bytecode_policy,
             "current_release_sha256": self.current_release_sha256,
+            "enterprise_commit": self.enterprise_commit,
+            "enterprise_tree": self.enterprise_tree,
             "instance_id": self.instance_id,
             "mode": self.mode,
             "path_roots_identity": self.path_roots_identity,
@@ -119,6 +133,8 @@ class RuntimeLaunchContext:
             "python_implementation": self.python_implementation,
             "python_version": self.python_version,
             "release_id": self.release_id,
+            "release_manifest_sha256": self.release_manifest_sha256,
+            "release_payload_tree_sha256": self.release_payload_tree_sha256,
             "runtime_manifest_sha256": self.runtime_manifest_sha256,
             "schema_version": self.schema_version,
             "startup_preflight_sha256": self.startup_preflight_sha256,
@@ -151,6 +167,10 @@ def build_launch_context(preflight: StartupPreflightResult, *, instance_id: str)
         app_root_relative=preflight.app_root_relative,
         path_roots_identity=preflight.path_roots_identity,
         current_release_sha256=preflight.current_release_sha256,
+        release_manifest_sha256=preflight.release_manifest_sha256,
+        release_payload_tree_sha256=preflight.release_payload_tree_sha256,
+        enterprise_commit=preflight.enterprise_commit,
+        enterprise_tree=preflight.enterprise_tree,
         runtime_manifest_sha256=preflight.runtime_manifest_sha256,
         python_executable_sha256=preflight.python_executable_sha256,
         python_implementation=preflight.python_implementation,

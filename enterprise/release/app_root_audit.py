@@ -3,7 +3,7 @@
 The scanner is deliberately a conservative maintenance control, not a proof
 that static analysis can discover every possible write. It combines Python AST
 inspection, focused script inspection, stable call fingerprints, frozen
-operation counts, and W01-W43 flow anchors.
+operation counts, and W01-W44 flow anchors.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Iterable, Sequence
 
 
-_FLOW_IDS = frozenset(f"W{number:02d}" for number in range(1, 44))
+_FLOW_IDS = frozenset(f"W{number:02d}" for number in range(1, 45))
 _SCANNED_SUFFIXES = frozenset({".bat", ".cmd", ".js", ".ps1", ".py"})
 _EXCLUDED_PREFIXES = ("enterprise/tests/", "enterprise-static/", "static/")
 _PATH_METHODS = frozenset(
@@ -568,6 +568,14 @@ def _flow_for_operation(file: str, symbol: str) -> str:
         # roots; keep the build pipeline distinct from APP_ROOT release-state
         # and static-staging primitives.
         return "W43"
+    if file in {
+        "enterprise/release/release_builder_v2.py",
+        "enterprise/release/release_manifest_v2.py",
+    }:
+        # OPS Release Manifest v2 writes only into a caller-owned new build or
+        # fixture-materialization root. Keep it distinct from APP_ROOT runtime
+        # writes and from the Python Runtime builder represented by W43.
+        return "W44"
     if symbol == "<script>":
         return _SCRIPT_FLOW_BY_FILE[file]
     return _OTHER_FLOW_BY_SYMBOL[(file, symbol)]
@@ -577,7 +585,7 @@ def _flow_for_operation(file: str, symbol: str) -> str:
 # every mapped site as (file, symbol, operation, normalized-call fingerprint,
 # Wxx flow). Line numbers are deliberately excluded, while duplicate identical
 # calls remain duplicate records. Any added/removed/changed call drifts it.
-EXPECTED_SITE_MANIFEST_DIGEST = "b69cfffca2f40a4f6b39af5b92673efbfede91d8ac3740017fc28914a9c69c71"
+EXPECTED_SITE_MANIFEST_DIGEST = "b237e92a27ff6da88f70a6e542743ef0a6a6228fff7d5f9a9e47430cdd78299b"
 
 FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W01", "main.py", "startup_event"),
@@ -623,6 +631,7 @@ FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W41", "enterprise/release/current_release.py", "atomic_write_current_release"),
     FlowAnchor("W42", "enterprise/runtime/writable_probe.py", "probe_writable_root"),
     FlowAnchor("W43", "enterprise/release/windows_runtime_build.py", "build_runtime"),
+    FlowAnchor("W44", "enterprise/release/release_builder_v2.py", "build_release_v2"),
 )
 
 

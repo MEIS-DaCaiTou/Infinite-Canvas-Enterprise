@@ -51,6 +51,10 @@ def _config(args: argparse.Namespace, *, mode: str) -> SupervisorConfig:
     runtime_mode = getattr(args, "runtime_mode", "development")
     portable: dict[str, str | None] = {
         "release_id": None,
+        "release_manifest_sha256": None,
+        "release_payload_tree_sha256": None,
+        "enterprise_commit": None,
+        "enterprise_tree": None,
         "runtime_manifest_sha256": None,
         "startup_preflight_sha256": None,
         "launch_context_identity": None,
@@ -66,6 +70,10 @@ def _config(args: argparse.Namespace, *, mode: str) -> SupervisorConfig:
             raise RuntimeControlError("portable launch context is untrusted")
         portable = {
             "release_id": context.release_id,
+            "release_manifest_sha256": context.release_manifest_sha256,
+            "release_payload_tree_sha256": context.release_payload_tree_sha256,
+            "enterprise_commit": context.enterprise_commit,
+            "enterprise_tree": context.enterprise_tree,
             "runtime_manifest_sha256": context.runtime_manifest_sha256,
             "startup_preflight_sha256": context.startup_preflight_sha256,
             "launch_context_identity": context.identity,
