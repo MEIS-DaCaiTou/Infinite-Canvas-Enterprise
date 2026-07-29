@@ -273,4 +273,28 @@ function Write-ENV1B3CaseResult {
     return $document
 }
 
-Export-ModuleMember -Function Get-ENV1B3Sha256,Test-ENV1B3SafeRelativePath,Assert-ENV1B3AbsoluteSafePath,Read-ENV1B3Json,Read-ENV1B3Sums,Get-ENV1B3InventoryTree,Get-ENV1B3DirectoryTree,Assert-ENV1B3Inventory,Test-ENV1B3ReleaseArtifacts,Test-ENV1B3Handoff,Write-ENV1B3CaseResult
+function ConvertTo-ENV1B3UtcIso8601 {
+    [CmdletBinding()]
+    param([AllowNull()][object]$Value)
+
+    if ($null -eq $Value -or ($Value -is [string] -and [String]::IsNullOrWhiteSpace($Value))) {
+        return [ordered]@{value=$null; diagnostic='missing'}
+    }
+
+    if ($Value -is [DateTime]) {
+        return [ordered]@{value=$Value.ToUniversalTime().ToString('o', [Globalization.CultureInfo]::InvariantCulture); diagnostic='datetime'}
+    }
+
+    if ($Value -isnot [string]) {
+        return [ordered]@{value=$null; diagnostic='invalid_type'}
+    }
+
+    try {
+        $converted = [Management.ManagementDateTimeConverter]::ToDateTime($Value)
+        return [ordered]@{value=$converted.ToUniversalTime().ToString('o', [Globalization.CultureInfo]::InvariantCulture); diagnostic='dmtf'}
+    } catch {
+        return [ordered]@{value=$null; diagnostic='invalid_format'}
+    }
+}
+
+Export-ModuleMember -Function Get-ENV1B3Sha256,Test-ENV1B3SafeRelativePath,Assert-ENV1B3AbsoluteSafePath,Read-ENV1B3Json,Read-ENV1B3Sums,Get-ENV1B3InventoryTree,Get-ENV1B3DirectoryTree,Assert-ENV1B3Inventory,Test-ENV1B3ReleaseArtifacts,Test-ENV1B3Handoff,Write-ENV1B3CaseResult,ConvertTo-ENV1B3UtcIso8601

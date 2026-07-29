@@ -96,6 +96,81 @@ def _write_fixture(
     return manifest_path, archive_path, inventory_path
 
 
+def _generate_handoff(tmp_path: Path, *, sequence: str = "04", kit: Path = KIT) -> Path:
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    subprocess.run(["git", "init", "-q", repository], check=True)
+    subprocess.run(["git", "-C", repository, "config", "user.name", "ENV-1B3 fixture"], check=True)
+    subprocess.run(["git", "-C", repository, "config", "user.email", "fixture@example.invalid"], check=True)
+    (repository / "tracked.txt").write_text("fixture\n", encoding="utf-8")
+    subprocess.run(["git", "-C", repository, "add", "tracked.txt"], check=True)
+    subprocess.run(["git", "-C", repository, "commit", "-q", "-m", "fixture"], check=True)
+    commit = subprocess.check_output(["git", "-C", repository, "rev-parse", "HEAD"], text=True).strip()
+    tree = subprocess.check_output(["git", "-C", repository, "rev-parse", "HEAD^{tree}"], text=True).strip()
+
+    candidate = tmp_path / f"candidate-{sequence}"
+    candidate.mkdir()
+    build = candidate / "release-build"
+    _write_fixture(build, enterprise_commit=commit, enterprise_tree=tree)
+    taskbook = tmp_path / "taskbook.md"
+    taskbook.write_text("# Independent test-host taskbook\n", encoding="utf-8", newline="\n")
+    script = kit / "New-CandidateHandoff.ps1"
+    completed = subprocess.run(
+        [
+            POWERSHELL,
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(script),
+            "-Repository",
+            str(repository),
+            "-BuildRoot",
+            str(build),
+            "-CandidateRoot",
+            str(candidate),
+            "-CandidateSequence",
+            sequence,
+            "-TestHostTaskbook",
+            str(taskbook),
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        timeout=120,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    return candidate / "handoff"
+
+
+def _run_validation_entrypoint(
+    entrypoint: Path,
+    handoff: Path,
+    test_root: Path,
+    evidence_root: Path,
+    *,
+    prelude: str,
+) -> subprocess.CompletedProcess[str]:
+    def escaped(path: Path) -> str:
+        return str(path).replace("'", "''")
+
+    command = (
+        "Set-StrictMode -Version 2.0;"
+        + prelude
+        + f";& '{escaped(entrypoint)}' -Mode Verify -HandoffRoot '{escaped(handoff)}'"
+        + f" -TestRoot '{escaped(test_root)}' -EvidenceRoot '{escaped(evidence_root)}';"
+        + "$entrypointSucceeded=$?;"
+        + "if($entrypointSucceeded){exit 0};"
+        + "$exitVariable=Get-Variable -Name LASTEXITCODE -Scope Global -ErrorAction SilentlyContinue;"
+        + "if($null -ne $exitVariable){exit [int]$exitVariable.Value};exit 2"
+    )
+    return _run_powershell(command)
+
+
 @pytest.mark.skipif(POWERSHELL is None, reason="Windows PowerShell is required")
 def test_all_windows_validation_scripts_parse() -> None:
     escaped_kit = str(KIT).replace("'", "''")
@@ -184,6 +259,43 @@ def test_safe_relative_path_contract(candidate: str, allowed: bool) -> None:
 
 
 @pytest.mark.skipif(POWERSHELL is None, reason="Windows PowerShell is required")
+def test_install_date_normalization_is_nullable_invariant_and_locale_independent() -> None:
+    module = str(KIT / "ENV1B3.Validation.psm1").replace("'", "''")
+    command = (
+        f"Import-Module '{module}' -Force;"
+        "$date=[DateTime]::SpecifyKind([DateTime]::new(2026,2,4,10,48,36),[DateTimeKind]::Utc);"
+        "$dmtf=[Management.ManagementDateTimeConverter]::ToDmtfDateTime($date);"
+        "$oldCulture=[Threading.Thread]::CurrentThread.CurrentCulture;"
+        "$oldUi=[Threading.Thread]::CurrentThread.CurrentUICulture;"
+        "try {"
+        "$items=[ordered]@{};"
+        "$items.datetime=ConvertTo-ENV1B3UtcIso8601 $date;"
+        "$items.dmtf=ConvertTo-ENV1B3UtcIso8601 $dmtf;"
+        "$items.missing=ConvertTo-ENV1B3UtcIso8601 $null;"
+        "$items.invalid=ConvertTo-ENV1B3UtcIso8601 'not-a-dmtf-date';"
+        "[Threading.Thread]::CurrentThread.CurrentCulture=[Globalization.CultureInfo]::GetCultureInfo('zh-CN');"
+        "[Threading.Thread]::CurrentThread.CurrentUICulture=[Globalization.CultureInfo]::GetCultureInfo('zh-CN');"
+        "$items.zh=ConvertTo-ENV1B3UtcIso8601 $date;"
+        "[Threading.Thread]::CurrentThread.CurrentCulture=[Globalization.CultureInfo]::GetCultureInfo('en-US');"
+        "[Threading.Thread]::CurrentThread.CurrentUICulture=[Globalization.CultureInfo]::GetCultureInfo('en-US');"
+        "$items.en=ConvertTo-ENV1B3UtcIso8601 $date;"
+        "$items|ConvertTo-Json -Depth 5 -Compress"
+        "} finally {"
+        "[Threading.Thread]::CurrentThread.CurrentCulture=$oldCulture;"
+        "[Threading.Thread]::CurrentThread.CurrentUICulture=$oldUi"
+        "}"
+    )
+    result = _run_powershell(command)
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout.strip().splitlines()[-1])
+    assert payload["datetime"] == {"value": "2026-02-04T10:48:36.0000000Z", "diagnostic": "datetime"}
+    assert payload["dmtf"] == {"value": "2026-02-04T10:48:36.0000000Z", "diagnostic": "dmtf"}
+    assert payload["missing"] == {"value": None, "diagnostic": "missing"}
+    assert payload["invalid"] == {"value": None, "diagnostic": "invalid_format"}
+    assert payload["zh"] == payload["en"] == payload["datetime"]
+
+
+@pytest.mark.skipif(POWERSHELL is None, reason="Windows PowerShell is required")
 def test_offline_release_artifact_verification_and_tamper(tmp_path: Path) -> None:
     manifest, archive, inventory = _write_fixture(tmp_path / "fixture")
     module = str(KIT / "ENV1B3.Validation.psm1").replace("'", "''")
@@ -204,59 +316,12 @@ def test_offline_release_artifact_verification_and_tamper(tmp_path: Path) -> Non
 
 @pytest.mark.skipif(POWERSHELL is None, reason="Windows PowerShell is required")
 def test_candidate_handoff_readme_is_safe_and_bound(tmp_path: Path) -> None:
-    repository = tmp_path / "repository"
-    repository.mkdir()
-    subprocess.run(["git", "init", "-q", repository], check=True)
-    subprocess.run(["git", "-C", repository, "config", "user.name", "ENV-1B3 fixture"], check=True)
-    subprocess.run(["git", "-C", repository, "config", "user.email", "fixture@example.invalid"], check=True)
-    (repository / "tracked.txt").write_text("fixture\n", encoding="utf-8")
-    subprocess.run(["git", "-C", repository, "add", "tracked.txt"], check=True)
-    subprocess.run(["git", "-C", repository, "commit", "-q", "-m", "fixture"], check=True)
-    commit = subprocess.check_output(["git", "-C", repository, "rev-parse", "HEAD"], text=True).strip()
-    tree = subprocess.check_output(["git", "-C", repository, "rev-parse", "HEAD^{tree}"], text=True).strip()
-
-    candidate = tmp_path / "candidate-03"
-    candidate.mkdir()
-    build = candidate / "release-build"
-    _write_fixture(build, enterprise_commit=commit, enterprise_tree=tree)
-    taskbook = tmp_path / "taskbook.md"
-    taskbook.write_text("# Independent test-host taskbook\n", encoding="utf-8", newline="\n")
-    script = KIT / "New-CandidateHandoff.ps1"
-    completed = subprocess.run(
-        [
-            POWERSHELL,
-            "-NoLogo",
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            str(script),
-            "-Repository",
-            str(repository),
-            "-BuildRoot",
-            str(build),
-            "-CandidateRoot",
-            str(candidate),
-            "-CandidateSequence",
-            "03",
-            "-TestHostTaskbook",
-            str(taskbook),
-        ],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        timeout=120,
-        check=False,
-    )
-    assert completed.returncode == 0, completed.stdout + completed.stderr
-
-    handoff = candidate / "handoff"
+    handoff = _generate_handoff(tmp_path, sequence="04")
     readme_bytes = (handoff / "README-FIRST.md").read_bytes()
     assert not readme_bytes.startswith(b"\xef\xbb\xbf")
     assert all(value >= 0x20 or value in (0x09, 0x0A, 0x0D) for value in readme_bytes)
     readme = readme_bytes.decode("utf-8")
-    assert "fixture-release-candidate-03" in readme
+    assert "fixture-release-candidate-04" in readme
     assert "$candidateId" not in readme
     assert ".\\validation-kit\\Invoke-ENV1B3Validation.ps1" in readme
     assert "ENV-1B3-INDEPENDENT-WINDOWS-TEST-HOST-CODEX-TASK.md" in readme
@@ -272,3 +337,79 @@ def test_candidate_handoff_readme_is_safe_and_bound(tmp_path: Path) -> None:
     handoff_json = json.loads((handoff / "CANDIDATE-HANDOFF.json").read_text(encoding="utf-8"))
     copied_taskbook = handoff / "ENV-1B3-INDEPENDENT-WINDOWS-TEST-HOST-CODEX-TASK.md"
     assert handoff_json["expected_test_host_taskbook_sha256"] == _sha256(copied_taskbook.read_bytes())
+
+
+@pytest.mark.skipif(POWERSHELL is None, reason="Windows PowerShell is required")
+@pytest.mark.parametrize(
+    "prelude",
+    [
+        "Remove-Variable -Name LASTEXITCODE -Scope Global -ErrorAction SilentlyContinue",
+        "& $env:ComSpec /d /c exit 0 | Out-Null",
+        "& $env:ComSpec /d /c exit 7 | Out-Null",
+    ],
+)
+def test_entrypoint_ignores_unset_or_stale_native_exit_for_successful_powershell_step(
+    tmp_path: Path, prelude: str
+) -> None:
+    handoff = _generate_handoff(tmp_path / "fixture", sequence="04")
+    result = _run_validation_entrypoint(
+        KIT / "Invoke-ENV1B3Validation.ps1",
+        handoff,
+        tmp_path / "test-root",
+        tmp_path / "evidence",
+        prelude=prelude,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(result.stdout.strip().splitlines()[-1])["code"] == "ENV1B3_ARTIFACT_VERIFY_PASS"
+
+
+@pytest.mark.skipif(POWERSHELL is None, reason="Windows PowerShell is required")
+@pytest.mark.parametrize(("native_exit", "expected_exit"), [(0, 0), (7, 2)])
+def test_entrypoint_current_native_verifier_exit_is_fail_closed(
+    tmp_path: Path, native_exit: int, expected_exit: int
+) -> None:
+    handoff = _generate_handoff(tmp_path / "fixture", sequence="04")
+    test_kit = tmp_path / "validation-kit"
+    shutil.copytree(KIT, test_kit)
+    verifier = test_kit / "Invoke-ArtifactVerification.ps1"
+    verifier.write_text(
+        "Set-StrictMode -Version 2.0\n"
+        "$ErrorActionPreference='Stop'\n"
+        f"& $env:ComSpec /d /c exit {native_exit}\n"
+        "$code=$LASTEXITCODE\n"
+        "if($code -ne 0){throw [InvalidOperationException]::new('NATIVE_VERIFIER_FAILED')}\n"
+        "[ordered]@{code='FIXTURE_NATIVE_PASS';status='pass'}|ConvertTo-Json -Compress\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    result = _run_validation_entrypoint(
+        test_kit / "Invoke-ENV1B3Validation.ps1",
+        handoff,
+        tmp_path / "test-root",
+        tmp_path / "evidence",
+        prelude="Remove-Variable -Name LASTEXITCODE -Scope Global -ErrorAction SilentlyContinue",
+    )
+    assert result.returncode == expected_exit, result.stdout + result.stderr
+    payload = json.loads(result.stdout.strip().splitlines()[-1])
+    assert payload["code"] == ("FIXTURE_NATIVE_PASS" if expected_exit == 0 else "ENV1B3_ENTRYPOINT_POWERSHELL_STEP_FAILED")
+
+
+@pytest.mark.skipif(POWERSHELL is None, reason="Windows PowerShell is required")
+def test_entrypoint_powershell_step_exception_has_stable_failure(tmp_path: Path) -> None:
+    handoff = _generate_handoff(tmp_path / "fixture", sequence="04")
+    test_kit = tmp_path / "validation-kit"
+    shutil.copytree(KIT, test_kit)
+    (test_kit / "Invoke-ArtifactVerification.ps1").write_text(
+        "throw [InvalidOperationException]::new('fixture failure')\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    result = _run_validation_entrypoint(
+        test_kit / "Invoke-ENV1B3Validation.ps1",
+        handoff,
+        tmp_path / "test-root",
+        tmp_path / "evidence",
+        prelude="Remove-Variable -Name LASTEXITCODE -Scope Global -ErrorAction SilentlyContinue",
+    )
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert json.loads(result.stdout.strip().splitlines()[-1])["code"] == "ENV1B3_ENTRYPOINT_POWERSHELL_STEP_FAILED"

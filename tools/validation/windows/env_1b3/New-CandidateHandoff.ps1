@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory)][string]$Repository,
     [Parameter(Mandatory)][string]$BuildRoot,
     [Parameter(Mandatory)][string]$CandidateRoot,
-    [Parameter(Mandatory)][ValidatePattern('^0[1-3]$')][string]$CandidateSequence,
+    [Parameter(Mandatory)][ValidatePattern('^0[1-4]$')][string]$CandidateSequence,
     [Parameter(Mandatory)][string]$TestHostTaskbook
 )
 Set-StrictMode -Version 2.0

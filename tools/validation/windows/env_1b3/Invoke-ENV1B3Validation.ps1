@@ -20,8 +20,17 @@ $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 function Invoke-ScriptChecked([string]$Name, [hashtable]$Arguments) {
     $path = Join-Path $here $Name
-    & $path @Arguments
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    try {
+        & $path @Arguments
+        $powerShellSucceeded = $?
+    } catch {
+        [ordered]@{schema_version='env-1b3-entrypoint-error-v1';status='blocked';code='ENV1B3_ENTRYPOINT_POWERSHELL_STEP_FAILED';step=$Name;exit_code=2} | ConvertTo-Json -Compress
+        exit 2
+    }
+    if (-not $powerShellSucceeded) {
+        [ordered]@{schema_version='env-1b3-entrypoint-error-v1';status='blocked';code='ENV1B3_ENTRYPOINT_POWERSHELL_STEP_FAILED';step=$Name;exit_code=2} | ConvertTo-Json -Compress
+        exit 2
+    }
 }
 
 $common = @{HandoffRoot=$HandoffRoot; TestRoot=$TestRoot; EvidenceRoot=$EvidenceRoot}

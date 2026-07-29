@@ -29,6 +29,7 @@ try {
         $pyLauncherInventory = @(& py -0p 2>$null | Select-Object -First 32)
     }
     $os = Get-CimInstance Win32_OperatingSystem
+    $installTime = ConvertTo-ENV1B3UtcIso8601 $os.InstallDate
     $apps = @(Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue | Where-Object DisplayName)
     $defender = Get-MpComputerStatus -ErrorAction SilentlyContinue
     $localStateRoot = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'InfiniteCanvasEnterprise'
@@ -39,7 +40,8 @@ try {
         windows_version=[string]$os.Version
         windows_build=[string]$os.BuildNumber
         architecture=$env:PROCESSOR_ARCHITECTURE
-        install_time_utc=([Management.ManagementDateTimeConverter]::ToDateTime($os.InstallDate).ToUniversalTime().ToString('o'))
+        install_time_utc=$installTime.value
+        install_time_diagnostic=$installTime.diagnostic
         application_user_is_admin=$isAdmin
         elevation_used_for_application=$false
         installed_application_count=$apps.Count
@@ -51,7 +53,7 @@ try {
         defender_antivirus_enabled=($(if($null -eq $defender){$null}else{[bool]$defender.AntivirusEnabled}))
         defender_realtime_enabled=($(if($null -eq $defender){$null}else{[bool]$defender.RealTimeProtectionEnabled}))
     }
-    $valid = (-not $isAdmin) -and -not ($pythonCommands | Where-Object discoverable) -and -not $pythonRegistryPresent -and -not $preexistingProjectState
+    $valid = ($null -ne $installTime.value) -and (-not $isAdmin) -and -not ($pythonCommands | Where-Object discoverable) -and -not $pythonRegistryPresent -and -not $preexistingProjectState
     $result = Write-ENV1B3CaseResult -EvidenceRoot $EvidenceRoot -CaseId 'W01' -Result ($(if($valid){'PASS'}else{'FAIL'})) -Code ($(if($valid){'ENV1B3_BASELINE_PASS'}else{'ENV1B3_BASELINE_INVALID'})) -Evidence $evidence
     $result | ConvertTo-Json -Depth 8 -Compress
     if (-not $valid) { exit 2 }

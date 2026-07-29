@@ -4,6 +4,8 @@ This kit is the single test-host interface for `ENV-1B3-CLEAN-WINDOWS-VALIDATION
 
 The artifact verifier preserves the Manifest v2 inventory's required ordinal path order when deriving its canonical tree identity and accepts legitimate zero-length files while continuing to reject negative sizes, duplicate paths and any archive/inventory mismatch.
 
+The environment baseline normalizes both CIM `System.DateTime` and DMTF-string install dates to invariant UTC. Missing or invalid values remain nullable diagnostics and cannot produce a clean-host PASS. The public entrypoint treats PowerShell script success independently from native executable exit codes, so strict mode never consumes an unset or stale `$LASTEXITCODE`; scripts that invoke native tools capture that tool's exit code immediately.
+
 ## Safety boundary
 
 - Work only under explicit absolute `HandoffRoot`, `TestRoot`, and `EvidenceRoot` paths.
@@ -41,3 +43,5 @@ The authoritative case list and stable script mapping are in `matrix.json`. Each
 6. Entry `Export` only after W01-W14 all have PASS records.
 
 Any mandatory `FAIL` or `BLOCKED` prevents `clean_Windows_validation=true`.
+
+Candidate sequences 01-03 are the original bounded allowance. Sequence 04 is accepted only under the project-owner governance exception recorded after Candidate 03 exposed validation-tool defects before the clean-host matrix began; the generator does not accept later sequences.
