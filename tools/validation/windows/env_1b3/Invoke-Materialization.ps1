@@ -8,8 +8,8 @@ param(
 )
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
-Import-Module (Join-Path $PSScriptRoot 'ENV1B3.Validation.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'ENV1B3.Materialization.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'ENV1B3.Validation.psm1') -Force
 
 try {
     $handoff = Read-ENV1B3Json (Join-Path $HandoffRoot 'CANDIDATE-HANDOFF.json')
