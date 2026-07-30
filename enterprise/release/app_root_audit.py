@@ -590,7 +590,7 @@ def _flow_for_operation(file: str, symbol: str) -> str:
 # every mapped site as (file, symbol, operation, normalized-call fingerprint,
 # Wxx flow). Line numbers are deliberately excluded, while duplicate identical
 # calls remain duplicate records. Any added/removed/changed call drifts it.
-EXPECTED_SITE_MANIFEST_DIGEST = "d4b45c6a7b4679ed213e1836e78882522a9dbe0b9ba00fabb77cc034ba0ecaad"
+EXPECTED_SITE_MANIFEST_DIGEST = "8e1f01dc49f135da57af5ab424d92bdb65a0cbf40fa1eb45904702d215b18a85"
 
 FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W01", "main.py", "startup_event"),

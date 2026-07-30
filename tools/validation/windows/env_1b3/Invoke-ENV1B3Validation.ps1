@@ -12,6 +12,7 @@ param(
     [string]$ArchivePath,
     [string]$IsolatedLowDiskRoot,
     [string]$CandidateId,
+    [string]$DiagnosticProbeManifestPath,
     [int]$Port = 18000
 )
 Set-StrictMode -Version 2.0
@@ -33,7 +34,7 @@ function Invoke-ScriptChecked([string]$Name, [hashtable]$Arguments) {
     }
 }
 
-$common = @{HandoffRoot=$HandoffRoot; TestRoot=$TestRoot; EvidenceRoot=$EvidenceRoot}
+$common = @{HandoffRoot=$HandoffRoot; TestRoot=$TestRoot; EvidenceRoot=$EvidenceRoot; DiagnosticProbeManifestPath=$DiagnosticProbeManifestPath}
 switch ($Mode) {
     'Baseline' { Invoke-ScriptChecked 'Invoke-EnvironmentBaseline.ps1' @{TestRoot=$TestRoot; EvidenceRoot=$EvidenceRoot; Classification=$CleanHostClassification} }
     'Verify' { Invoke-ScriptChecked 'Invoke-ArtifactVerification.ps1' @{HandoffRoot=$HandoffRoot; EvidenceRoot=$EvidenceRoot} }
@@ -50,7 +51,7 @@ switch ($Mode) {
         Invoke-ScriptChecked 'Invoke-LifecycleMatrix.ps1' @{AppRoot=$caseAppRoot; EvidenceRoot=$EvidenceRoot; CaseId='W04'; DifferentCwd=([IO.Path]::GetPathRoot($TestRoot)); PolluteEnvironment=$true}
     }
     'LongPathMaterialize' {
-        Invoke-ScriptChecked 'Invoke-Materialization.ps1' @{HandoffRoot=$HandoffRoot;TestRoot=$TestRoot;EvidenceRoot=$EvidenceRoot;CaseId='W05'}
+        Invoke-ScriptChecked 'Invoke-Materialization.ps1' @{HandoffRoot=$HandoffRoot;TestRoot=$TestRoot;EvidenceRoot=$EvidenceRoot;CaseId='W05';DiagnosticProbeManifestPath=$DiagnosticProbeManifestPath}
         $handoff = Get-Content -Raw -LiteralPath (Join-Path $HandoffRoot 'CANDIDATE-HANDOFF.json') | ConvertFrom-Json
         $caseAppRoot = Join-Path $TestRoot ('install\releases\' + [string]$handoff.release_id)
         Invoke-ScriptChecked 'Invoke-LifecycleMatrix.ps1' @{AppRoot=$caseAppRoot;EvidenceRoot=$EvidenceRoot;CaseId='W05';DifferentCwd=([IO.Path]::GetPathRoot($TestRoot));PolluteEnvironment=$true}

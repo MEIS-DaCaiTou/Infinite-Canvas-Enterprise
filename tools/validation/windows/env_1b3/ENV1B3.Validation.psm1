@@ -251,6 +251,22 @@ function Test-ENV1B3Handoff {
         $name = [string]$handoff.($binding[0]); $hash = [string]$handoff.($binding[1])
         if (-not (Test-ENV1B3SafeRelativePath $name) -or (Get-ENV1B3Sha256 (Join-Path $root $name)) -ne $hash) { Throw-ENV1B3Error 'ENV1B3_HANDOFF_ARTIFACT_MISMATCH' $binding[0] }
     }
+    $verifierNameProperty = $handoff.PSObject.Properties['materialized_verifier_filename']
+    $verifierHashProperty = $handoff.PSObject.Properties['materialized_verifier_sha256']
+    if (($null -eq $verifierNameProperty) -xor ($null -eq $verifierHashProperty)) {
+        Throw-ENV1B3Error 'ENV1B3_HANDOFF_ARTIFACT_MISMATCH' 'materialized_verifier'
+    }
+    if ($null -ne $verifierNameProperty) {
+        $verifierName = [string]$verifierNameProperty.Value
+        $verifierHash = [string]$verifierHashProperty.Value
+        $verifierPath = Join-Path $root ($verifierName.Replace('/',[IO.Path]::DirectorySeparatorChar))
+        $actualVerifierHash = Get-ENV1B3Sha256 $verifierPath
+        if ($verifierName -ne 'validation-kit/verify_materialized_release.py' -or
+            $verifierHash -notmatch '^[0-9a-f]{64}$' -or
+            $actualVerifierHash -ne $verifierHash) {
+            Throw-ENV1B3Error 'ENV1B3_HANDOFF_ARTIFACT_MISMATCH' 'materialized_verifier'
+        }
+    }
     $artifact = Test-ENV1B3ReleaseArtifacts -ManifestPath (Join-Path $root $handoff.manifest_filename) -ArchivePath (Join-Path $root $handoff.archive_filename) -InventoryPath (Join-Path $root $handoff.inventory_filename)
     if ($artifact.release_id -ne $handoff.release_id -or $artifact.payload_tree_sha256 -ne $handoff.payload_tree_sha256) { Throw-ENV1B3Error 'ENV1B3_HANDOFF_ARTIFACT_MISMATCH' 'release' }
     return [ordered]@{result='pass'; candidate_id=[string]$handoff.candidate_id; candidate_sequence=[string]$handoff.candidate_sequence; release_id=[string]$handoff.release_id; artifact=$artifact; sums_count=$sums.Count}
@@ -409,4 +425,4 @@ function Test-ENV1B3CleanRuntimeBaseline {
     }
 }
 
-Export-ModuleMember -Function Get-ENV1B3Sha256,Test-ENV1B3SafeRelativePath,Assert-ENV1B3AbsoluteSafePath,Read-ENV1B3Json,Read-ENV1B3Sums,Get-ENV1B3InventoryTree,Get-ENV1B3DirectoryTree,Assert-ENV1B3Inventory,Test-ENV1B3ReleaseArtifacts,Test-ENV1B3Handoff,Write-ENV1B3CaseResult,ConvertTo-ENV1B3UtcIso8601,ConvertTo-ENV1B3WhereDiscoveryResult,Invoke-ENV1B3WhereLookup,Get-ENV1B3DisplayNames,Test-ENV1B3WindowsAppsAliasPath,Test-ENV1B3CleanRuntimeBaseline
+Export-ModuleMember -Function Get-ENV1B3Sha256,Test-ENV1B3SafeRelativePath,Assert-ENV1B3AbsoluteSafePath,Read-ENV1B3Json,Read-ENV1B3Sums,Get-ENV1B3InventoryTree,Get-ENV1B3DirectoryTree,Assert-ENV1B3Inventory,Test-ENV1B3ZipEntryUnsafe,Test-ENV1B3ReleaseArtifacts,Test-ENV1B3Handoff,Write-ENV1B3CaseResult,ConvertTo-ENV1B3UtcIso8601,ConvertTo-ENV1B3WhereDiscoveryResult,Invoke-ENV1B3WhereLookup,Get-ENV1B3DisplayNames,Test-ENV1B3WindowsAppsAliasPath,Test-ENV1B3CleanRuntimeBaseline

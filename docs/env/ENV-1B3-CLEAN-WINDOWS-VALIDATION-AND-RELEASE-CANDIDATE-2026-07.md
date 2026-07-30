@@ -26,6 +26,10 @@ Candidate 04 was transferred to a fresh Hyper-V Guest whose independent baseline
 
 The project owner explicitly authorized Candidate 05 as the sole final Windows matrix candidate. Its immutable handoff binds the independently passed Probe Head and evidence hash, the clean Guest S0 checkpoint source and the final-candidate status. Candidates 01-04 and the Probe remain immutable and preserved. Candidate 05 still requires the independent Guest's complete W01-W14 matrix; no clean-Windows acceptance is claimed by this repository-side build step.
 
+Candidate 05 then reached the restored independent Guest. Its outer/internal identities, W01, read-only W02 artifact verification, W12 and W13 passed, and the candidate remained unchanged. W02 materialization failed before W03-W11/W14 because the validation script incorrectly expected the repository build tool at `APP_ROOT/tools/build_release_manifest_v2.py`; the closed payload intentionally contains no `tools/` directory. This was a validation-tool responsibility defect, not a Release artifact identity failure.
+
+The corrected boundary keeps the build tool excluded. A standalone standard-library verifier is SHA-bound in the validation kit/handoff and runs under the staged Release's fixed CP314 `python.exe -I -B`. Materialization now extracts to an owned `.partial` staging directory, copies the detached manifest, verifies every declared payload file plus exact closure/tree/Manifest identity, atomically moves the verified tree to the final Release directory, and commits `current-release.json` last. Injected extraction, verifier, final-move and pointer failures clean the owned staging/final/temp state and preserve any earlier pointer. A diagnostic-only Remaining Matrix Probe is used against the original immutable Candidate 05; it is not Candidate 06 and cannot support final acceptance.
+
 ## Current state and limits
 
 ```text

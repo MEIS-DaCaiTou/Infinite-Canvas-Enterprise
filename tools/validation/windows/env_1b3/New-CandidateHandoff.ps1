@@ -45,6 +45,9 @@ try {
     Copy-Item -LiteralPath $PSScriptRoot -Destination (Join-Path $handoffRoot 'validation-kit') -Recurse
     $taskbookName='ENV-1B3-INDEPENDENT-WINDOWS-TEST-HOST-CODEX-TASK.md';[IO.File]::Copy($TestHostTaskbook,(Join-Path $handoffRoot $taskbookName),$false)
     $taskbookHash=Get-ENV1B3Sha256 (Join-Path $handoffRoot $taskbookName)
+    $materializedVerifierName='validation-kit/verify_materialized_release.py'
+    $materializedVerifierPath=Join-Path $handoffRoot ($materializedVerifierName.Replace('/',[IO.Path]::DirectorySeparatorChar))
+    $materializedVerifierHash=Get-ENV1B3Sha256 $materializedVerifierPath
     $document=[ordered]@{
         schema_version='env-1b3-candidate-handoff-v1';overall_task_id='ENV-1B3-CLEAN-WINDOWS-VALIDATION-AND-RELEASE-CANDIDATE';candidate_id=$candidateId;candidate_sequence=$CandidateSequence
         developer_head=$head;developer_tree=$tree;release_id=$releaseId
@@ -52,7 +55,8 @@ try {
         manifest_filename=[IO.Path]::GetFileName($manifestPath);manifest_sha256=$verified.manifest_sha256
         inventory_filename=[IO.Path]::GetFileName($inventoryPath);inventory_sha256=$verified.inventory_sha256
         payload_tree_sha256=[string]$manifest.release_payload.tree_sha256;runtime_tree_sha256=[string]$manifest.runtime.runtime_tree_sha256;static_tree_sha256=[string]$manifest.release_payload.static_tree_sha256
-        validation_matrix_version='env-1b3-windows-validation-matrix-v1';expected_test_host_taskbook_sha256=$taskbookHash;production_approved=$false
+        validation_matrix_version='env-1b3-windows-validation-matrix-v1';expected_test_host_taskbook_sha256=$taskbookHash
+        materialized_verifier_filename=$materializedVerifierName;materialized_verifier_sha256=$materializedVerifierHash;production_approved=$false
     }
     if ($CandidateSequence -eq '05') {
         $document['candidate_05_is_final_validation_candidate']=$true
