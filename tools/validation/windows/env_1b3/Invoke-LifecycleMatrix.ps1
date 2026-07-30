@@ -2,9 +2,12 @@
 param(
     [Parameter(Mandatory)][string]$AppRoot,
     [Parameter(Mandatory)][string]$EvidenceRoot,
-    [Parameter(Mandatory)][ValidateSet('W03','W04','W05','W07','W14')][string]$CaseId,
+    [Parameter(Mandatory)][ValidateSet('W03','W04','W05','W07','W11','W14')][string]$CaseId,
     [Parameter(Mandatory)][string]$DifferentCwd,
-    [switch]$PolluteEnvironment
+    [switch]$PolluteEnvironment,
+    [switch]$RequireOffline,
+    [switch]$RequireExternalPathRoots,
+    [string]$SubcheckId
 )
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
@@ -47,11 +50,44 @@ try {
     $expectedPython = [IO.Path]::GetFullPath((Join-Path $AppRoot 'python\python.exe'))
     if (-not (Test-Path -LiteralPath $expectedPython -PathType Leaf)) { throw [InvalidOperationException]::new('ENV1B3_FIXED_PYTHON_MISSING|python') }
     $appTreeBefore = Get-ENV1B3DirectoryTree $AppRoot
+    $candidatePythonDirectory = [IO.Path]::GetDirectoryName($expectedPython)
+    $pathEntries = @(([string]$env:PATH).Split([IO.Path]::PathSeparator) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $candidatePythonOnPath = $false
+    foreach ($entry in $pathEntries) {
+        try {
+            if ([string]::Compare([IO.Path]::GetFullPath($entry.Trim('"')), $candidatePythonDirectory, $true) -eq 0) {
+                $candidatePythonOnPath = $true
+            }
+        } catch { }
+    }
+    if ($RequireOffline -and $candidatePythonOnPath) { throw [InvalidOperationException]::new('ENV1B3_OFFLINE_CONTRACT_INVALID|path') }
+    $networkOffline = $null
+    if ($RequireOffline) {
+        $profiles = @(Get-NetConnectionProfile -ErrorAction Stop)
+        $internetProfiles = @($profiles | Where-Object {
+            [string]$_.IPv4Connectivity -eq 'Internet' -or [string]$_.IPv6Connectivity -eq 'Internet'
+        })
+        $networkOffline = $internetProfiles.Count -eq 0
+        if (-not $networkOffline) { throw [InvalidOperationException]::new('ENV1B3_OFFLINE_CONTRACT_INVALID|network') }
+    }
+    $pathRootsExternal = $null
+    if ($RequireExternalPathRoots) {
+        $releaseRoot = Split-Path -Parent $AppRoot
+        $installRoot = Split-Path -Parent $releaseRoot
+        $externalRoots = @('config','data','logs','backups','state','staging') | ForEach-Object { Join-Path $installRoot $_ }
+        $appPrefix = [IO.Path]::GetFullPath($AppRoot) + [IO.Path]::DirectorySeparatorChar
+        $pathRootsExternal = @($externalRoots | Where-Object {
+            (-not (Test-Path -LiteralPath $_ -PathType Container)) -or
+            [IO.Path]::GetFullPath($_).StartsWith($appPrefix, [StringComparison]::OrdinalIgnoreCase)
+        }).Count -eq 0
+        if (-not $pathRootsExternal) { throw [InvalidOperationException]::new('ENV1B3_PATH_ROOTS_EXTERNAL_INVALID|path_roots') }
+    }
     $oldHome = $env:PYTHONHOME; $oldPath = $env:PYTHONPATH
     if ($PolluteEnvironment) { $env:PYTHONHOME = '<INVALID-PYTHONHOME>'; $env:PYTHONPATH = '<INVALID-PYTHONPATH>' }
     $results = [ordered]@{}
     $livePythonPaths=@()
     $livePythonIdentityValid=$false
+    $candidateNonLoopbackConnectionCount=0
     try {
         $failureStage='wrapper_sequence'
         # Keep this Windows PowerShell 5.1 script ASCII-safe: PS 5.1 treats a
@@ -86,6 +122,16 @@ try {
                     $actual=[IO.Path]::GetFullPath([string]$property.Value)
                     $livePythonPaths+=$actual
                 }
+                if ($RequireOffline) {
+                    $connections = @(Get-NetTCPConnection -ErrorAction Stop | Where-Object { $pids -contains [int]$_.OwningProcess })
+                    $candidateNonLoopbackConnectionCount = @($connections | Where-Object {
+                        $remote = [string]$_.RemoteAddress
+                        $remote -notin @('127.0.0.1','::1','0.0.0.0','::','')
+                    }).Count
+                    if ($candidateNonLoopbackConnectionCount -ne 0) {
+                        throw [InvalidOperationException]::new('ENV1B3_OFFLINE_CONTRACT_INVALID|connection')
+                    }
+                }
                 $failureStage='live_python_identity_compare'
                 $livePythonIdentityValid=@($livePythonPaths|Where-Object{[string]::Compare($_,$expectedPython,$true)-ne 0}).Count -eq 0
                 if(-not $livePythonIdentityValid){throw [InvalidOperationException]::new('ENV1B3_LIFECYCLE_PROCESS_IDENTITY_INVALID|executable')}
@@ -109,7 +155,7 @@ try {
     $appRootUnchanged = $appTreeBefore.file_count -eq $appTreeAfter.file_count -and $appTreeBefore.tree_sha256 -eq $appTreeAfter.tree_sha256
     if (-not $identityValid -or -not $ready -or -not $owned -or -not $portRelease -or -not $appRootUnchanged) { throw [InvalidOperationException]::new('ENV1B3_LIFECYCLE_IDENTITY_INVALID|identity') }
     $failureStage='evidence_write'
-    $record = Write-ENV1B3CaseResult -EvidenceRoot $EvidenceRoot -CaseId $CaseId -Result 'PASS' -Code 'ENV1B3_LIFECYCLE_PASS' -Evidence @{
+    $evidence = @{
         application_user_is_admin=$false
         elevation_used_for_application=$false
         wrapper_exit_codes=@{start=0;status=0;health=0;stop=0}
@@ -122,6 +168,16 @@ try {
         app_root_tree_sha256=$appTreeAfter.tree_sha256
         different_cwd_verified=$true
         environment_pollution_enabled=[bool]$PolluteEnvironment
+        path_candidate_python_absent=(-not $candidatePythonOnPath)
+        network_offline=$(if ($RequireOffline) { [bool]$networkOffline } else { $null })
+        candidate_non_loopback_connection_count=$candidateNonLoopbackConnectionCount
+        download_behavior_observed=($candidateNonLoopbackConnectionCount -ne 0)
+        path_roots_external=$(if ($RequireExternalPathRoots) { [bool]$pathRootsExternal } else { $null })
+    }
+    if ([string]::IsNullOrWhiteSpace($SubcheckId)) {
+        $record = Write-ENV1B3CaseResult -EvidenceRoot $EvidenceRoot -CaseId $CaseId -Result 'PASS' -Code 'ENV1B3_LIFECYCLE_PASS' -Evidence $evidence
+    } else {
+        $record = Write-ENV1B3SubcheckResult -EvidenceRoot $EvidenceRoot -CaseId $CaseId -SubcheckId $SubcheckId -Result 'PASS' -Code 'ENV1B3_LIFECYCLE_PASS' -Evidence $evidence
     }
     $record | ConvertTo-Json -Depth 8 -Compress
 } catch {
@@ -131,6 +187,10 @@ try {
     } catch { }
     $code = 'ENV1B3_LIFECYCLE_FAILED'
     if ($_.Exception.Message -match '^([A-Z0-9_]+)\|') { $code=$Matches[1] }
-    Write-ENV1B3CaseResult -EvidenceRoot $EvidenceRoot -CaseId $CaseId -Result 'FAIL' -Code $code -Evidence @{failure_stage=$failureStage} | ConvertTo-Json -Compress
+    if ([string]::IsNullOrWhiteSpace($SubcheckId)) {
+        Write-ENV1B3CaseResult -EvidenceRoot $EvidenceRoot -CaseId $CaseId -Result 'FAIL' -Code $code -Evidence @{failure_stage=$failureStage} | ConvertTo-Json -Compress
+    } else {
+        Write-ENV1B3SubcheckResult -EvidenceRoot $EvidenceRoot -CaseId $CaseId -SubcheckId $SubcheckId -Result 'FAIL' -Code $code -Evidence @{failure_stage=$failureStage} | ConvertTo-Json -Compress
+    }
     exit 2
 }

@@ -17,7 +17,7 @@ try {
     $verifierHash = $null
     if (-not [String]::IsNullOrWhiteSpace($DiagnosticProbeManifestPath)) {
         $probe = Read-ENV1B3Json $DiagnosticProbeManifestPath
-        if ($probe.schema_version -ne 'env-1b3-remaining-matrix-probe-v1' -or
+        if ([string]$probe.schema_version -notin @('env-1b3-remaining-matrix-probe-v1','env-1b3-remaining-matrix-probe-v2') -or
             $probe.diagnostic_only -ne $true -or $probe.not_a_release_candidate -ne $true -or
             $probe.cannot_support_final_acceptance -ne $true -or $probe.production_approved -ne $false -or
             [string]$probe.expected_candidate_id -ne [string]$handoff.candidate_id) {

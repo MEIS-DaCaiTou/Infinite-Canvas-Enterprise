@@ -55,3 +55,20 @@ Candidate sequences 01-03 are the original bounded allowance. Sequence 04 is acc
 Candidate 05 is the project-owner-authorized final validation candidate. `New-CandidateHandoff.ps1` requires its independently passed W01 Probe Head, Probe evidence SHA-256 and `S0-WIN11-CLEAN-RUNTIME-BASELINE` checkpoint source and records them in `CANDIDATE-HANDOFF.json`. Test-host orchestration must read JSON with `Get-Content -Raw -Encoding UTF8` or byte-level UTF-8 decoding; Windows PowerShell's default ANSI code page is not an evidence parser.
 
 `New-RemainingMatrixProbe.ps1` creates a repository-external diagnostic-only bundle for Candidate 05. It binds the original immutable handoff ZIP and the standalone materialized verifier, supports W02-W11/W14 plus M01 injected-failure atomicity, and is explicitly neither a Release Candidate nor evidence capable of final acceptance.
+
+That first Remaining Matrix Probe remains preserved as an integrity-valid materialization diagnostic, but its public interface is not a complete W02-W14 execution contract. `New-RemainingMatrixProbeV2.ps1` creates the replacement diagnostic bundle without changing or repacking Candidate 05. Its versioned `matrix-contracts.json` names every mandatory subcheck, required context/fixture/evidence field, stable error code and all-subchecks-PASS aggregation rule. Subcheck evidence is written once under `subchecks/<case>/<subcheck>.json`; a later mode cannot overwrite an earlier branch.
+
+The Probe v2 public entry is `Invoke-RemainingMatrixProbeV2.ps1`. It exposes `W02`, `W03`, `W04`, `W05`, `W06`, `W07`, `W08`, `W09`, `W10`, `W11StoppedPrepare`, `W11StoppedResume`, `W11RunningPrepare`, `W11RunningResume`, `W12`, `W13`, `W14Prepare`, `W14Validate`, and `M01`. W11 requires an approved Guest restart or controlled abnormal termination between its prepare/resume phases. W14 requires the test-host operator to make the returned materialized APP_ROOT read-only for the standard application user after `W14Prepare` and before `W14Validate`. W12 requires an isolated non-system small VHDX; W13 keeps Defender enabled and adds no permanent exclusion. Probe v2 is diagnostic-only, is not Candidate 06, cannot support final acceptance, and must not be used until its independent execution-contract review authorizes Guest execution.
+
+Run every Probe v2 mode through the root entry, never an internal script:
+
+```powershell
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\Invoke-RemainingMatrixProbeV2.ps1 `
+  -Mode <W02|...|W14Validate|M01> `
+  -CandidateHandoffZip <CANDIDATE_05_HANDOFF_ZIP> `
+  -HandoffRoot <EXTRACTED_CANDIDATE_05_HANDOFF_ROOT> `
+  -TestRoot <CASE_TEST_ROOT> `
+  -EvidenceRoot <CASE_EVIDENCE_ROOT>
+```
+
+Mode-specific contract fixtures remain explicit: W06 adds `-DeniedRoot`; W08/W09 add `-SourceInstallRoot` and `-CaseRoot`; W10 adds the controlled `-Port`; W12 adds `-IsolatedLowDiskRoot`. The entry derives Candidate identity and the ordinary APP_ROOT only from the hash-bound handoff when those optional values are omitted.

@@ -315,11 +315,16 @@ def test_matrix_and_single_entrypoint_are_closed() -> None:
         "Invoke-TamperMatrix.ps1",
         "Invoke-W01StabilizationProbe.ps1",
         "Invoke-RemainingMatrixProbe.ps1",
+        "Invoke-RemainingMatrixProbeV2.ps1",
+        "Invoke-MatrixContractCase.ps1",
+        "Invoke-FinalIdentityMatrix.ps1",
         "New-CandidateHandoff.ps1",
         "New-RemainingMatrixProbe.ps1",
+        "New-RemainingMatrixProbeV2.ps1",
         "New-W01StabilizationProbe.ps1",
         "README.md",
         "matrix.json",
+        "matrix-contracts.json",
         "verify_materialized_release.py",
     }
     assert {path.name for path in KIT.iterdir() if path.is_file()} == expected_files

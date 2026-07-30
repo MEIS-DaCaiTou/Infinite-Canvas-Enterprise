@@ -278,15 +278,144 @@ function Write-ENV1B3CaseResult {
         [Parameter(Mandatory)][string]$CaseId,
         [Parameter(Mandatory)][ValidateSet('PASS','FAIL','BLOCKED')][string]$Result,
         [Parameter(Mandatory)][string]$Code,
-        [hashtable]$Evidence = @{}
+        [object]$Evidence = @{},
+        [switch]$NoOverwrite
     )
     [void](Assert-ENV1B3AbsoluteSafePath $EvidenceRoot -AllowMissingLeaf)
     [IO.Directory]::CreateDirectory($EvidenceRoot) | Out-Null
     $document = [ordered]@{schema_version='env-1b3-case-result-v1'; overall_task_id=$script:TaskId; matrix_version=$script:MatrixVersion; case_id=$CaseId; result=$Result; code=$Code; timestamp_utc=[DateTime]::UtcNow.ToString('o'); evidence=$Evidence}
     $json = $document | ConvertTo-Json -Depth 12 -Compress
     $path = Join-Path $EvidenceRoot ($CaseId + '.json')
-    [IO.File]::WriteAllText($path, $json + "`n", [Text.UTF8Encoding]::new($false))
+    if ($NoOverwrite) {
+        $bytes = [Text.UTF8Encoding]::new($false).GetBytes($json + "`n")
+        $stream = $null
+        try {
+            $stream = [IO.File]::Open($path, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+            $stream.Write($bytes, 0, $bytes.Length)
+            $stream.Flush($true)
+        } catch [IO.IOException] {
+            Throw-ENV1B3Error 'ENV1B3_EVIDENCE_OVERWRITE_FORBIDDEN' 'case_result'
+        } finally {
+            if ($null -ne $stream) { $stream.Dispose() }
+        }
+    } else {
+        [IO.File]::WriteAllText($path, $json + "`n", [Text.UTF8Encoding]::new($false))
+    }
     return $document
+}
+
+function Read-ENV1B3MatrixContracts {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$ContractPath)
+    $document = Read-ENV1B3Json $ContractPath
+    if ($document.schema_version -ne 'env-1b3-matrix-contracts-v2' -or
+        $document.overall_task_id -ne $script:TaskId -or
+        $document.matrix_version -ne $script:MatrixVersion) {
+        Throw-ENV1B3Error 'ENV1B3_MATRIX_CONTRACT_INVALID' 'identity'
+    }
+    $seen = @{}
+    foreach ($case in @($document.cases)) {
+        $caseId = [string]$case.case_id
+        if ($caseId -notmatch '^W(0[1-9]|1[0-4])$' -or $seen.ContainsKey($caseId)) {
+            Throw-ENV1B3Error 'ENV1B3_MATRIX_CONTRACT_INVALID' 'case'
+        }
+        $mandatory = @($case.mandatory_subchecks)
+        if ($mandatory.Count -lt 1) { Throw-ENV1B3Error 'ENV1B3_MATRIX_CONTRACT_INVALID' 'subchecks' }
+        $subcheckSeen = @{}
+        foreach ($subcheck in $mandatory) {
+            $value = [string]$subcheck
+            if ($value -notmatch '^[a-z0-9][a-z0-9_-]{0,63}$' -or $subcheckSeen.ContainsKey($value)) {
+                Throw-ENV1B3Error 'ENV1B3_MATRIX_CONTRACT_INVALID' 'subcheck'
+            }
+            $subcheckSeen[$value] = $true
+        }
+        foreach ($requiredField in @('required_execution_context','required_fixtures','required_evidence_fields','pass_aggregation_rule','stable_error_codes')) {
+            if ($null -eq $case.PSObject.Properties[$requiredField]) {
+                Throw-ENV1B3Error 'ENV1B3_MATRIX_CONTRACT_INVALID' 'field'
+            }
+        }
+        if ($case.subcheck_overwrite_allowed -ne $false) {
+            Throw-ENV1B3Error 'ENV1B3_MATRIX_CONTRACT_INVALID' 'overwrite'
+        }
+        $seen[$caseId] = $case
+    }
+    if ($seen.Count -ne 14) { Throw-ENV1B3Error 'ENV1B3_MATRIX_CONTRACT_INVALID' 'closure' }
+    return [ordered]@{document=$document; cases=$seen}
+}
+
+function Write-ENV1B3SubcheckResult {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$EvidenceRoot,
+        [Parameter(Mandatory)][ValidatePattern('^W(0[1-9]|1[0-4])$')][string]$CaseId,
+        [Parameter(Mandatory)][ValidatePattern('^[a-z0-9][a-z0-9_-]{0,63}$')][string]$SubcheckId,
+        [Parameter(Mandatory)][ValidateSet('PASS','FAIL','BLOCKED')][string]$Result,
+        [Parameter(Mandatory)][string]$Code,
+        [object]$Evidence = @{}
+    )
+    [void](Assert-ENV1B3AbsoluteSafePath $EvidenceRoot -AllowMissingLeaf)
+    $root = Join-Path $EvidenceRoot (Join-Path 'subchecks' $CaseId)
+    [IO.Directory]::CreateDirectory($root) | Out-Null
+    $document = [ordered]@{
+        schema_version='env-1b3-subcheck-result-v1'
+        overall_task_id=$script:TaskId
+        matrix_version=$script:MatrixVersion
+        case_id=$CaseId
+        subcheck_id=$SubcheckId
+        result=$Result
+        code=$Code
+        timestamp_utc=[DateTime]::UtcNow.ToString('o')
+        evidence=$Evidence
+    }
+    $json = $document | ConvertTo-Json -Depth 14 -Compress
+    $path = Join-Path $root ($SubcheckId + '.json')
+    $bytes = [Text.UTF8Encoding]::new($false).GetBytes($json + "`n")
+    $stream = $null
+    try {
+        $stream = [IO.File]::Open($path, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+        $stream.Write($bytes, 0, $bytes.Length)
+        $stream.Flush($true)
+    } catch [IO.IOException] {
+        Throw-ENV1B3Error 'ENV1B3_EVIDENCE_OVERWRITE_FORBIDDEN' 'subcheck'
+    } finally {
+        if ($null -ne $stream) { $stream.Dispose() }
+    }
+    return $document
+}
+
+function Complete-ENV1B3CaseResult {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$EvidenceRoot,
+        [Parameter(Mandatory)][ValidatePattern('^W(0[1-9]|1[0-4])$')][string]$CaseId,
+        [Parameter(Mandatory)][string]$ContractPath
+    )
+    $contracts = Read-ENV1B3MatrixContracts $ContractPath
+    $case = $contracts.cases[$CaseId]
+    if ($null -eq $case) { Throw-ENV1B3Error 'ENV1B3_MATRIX_CONTRACT_INVALID' 'case' }
+    $records = @()
+    $allPass = $true
+    foreach ($subcheckId in @($case.mandatory_subchecks)) {
+        $path = Join-Path $EvidenceRoot (Join-Path (Join-Path 'subchecks' $CaseId) ([string]$subcheckId + '.json'))
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            Throw-ENV1B3Error 'ENV1B3_MATRIX_SUBCHECK_MISSING' 'subcheck'
+        }
+        $record = Read-ENV1B3Json $path
+        if ($record.schema_version -ne 'env-1b3-subcheck-result-v1' -or
+            $record.case_id -ne $CaseId -or $record.subcheck_id -ne [string]$subcheckId) {
+            Throw-ENV1B3Error 'ENV1B3_MATRIX_SUBCHECK_INVALID' 'subcheck'
+        }
+        if ($record.result -ne 'PASS') { $allPass = $false }
+        $records += [ordered]@{subcheck_id=[string]$subcheckId;result=[string]$record.result;code=[string]$record.code}
+    }
+    $result = $(if ($allPass) { 'PASS' } else { 'FAIL' })
+    $code = $(if ($allPass) { 'ENV1B3_MATRIX_CASE_PASS' } else { 'ENV1B3_MATRIX_CASE_FAILED' })
+    return Write-ENV1B3CaseResult -EvidenceRoot $EvidenceRoot -CaseId $CaseId -Result $result -Code $code -Evidence @{
+        contract_schema='env-1b3-matrix-contracts-v2'
+        mandatory_subcheck_count=@($case.mandatory_subchecks).Count
+        subchecks=$records
+        aggregation_rule=[string]$case.pass_aggregation_rule
+    } -NoOverwrite
 }
 
 function ConvertTo-ENV1B3UtcIso8601 {
@@ -425,4 +554,4 @@ function Test-ENV1B3CleanRuntimeBaseline {
     }
 }
 
-Export-ModuleMember -Function Get-ENV1B3Sha256,Test-ENV1B3SafeRelativePath,Assert-ENV1B3AbsoluteSafePath,Read-ENV1B3Json,Read-ENV1B3Sums,Get-ENV1B3InventoryTree,Get-ENV1B3DirectoryTree,Assert-ENV1B3Inventory,Test-ENV1B3ZipEntryUnsafe,Test-ENV1B3ReleaseArtifacts,Test-ENV1B3Handoff,Write-ENV1B3CaseResult,ConvertTo-ENV1B3UtcIso8601,ConvertTo-ENV1B3WhereDiscoveryResult,Invoke-ENV1B3WhereLookup,Get-ENV1B3DisplayNames,Test-ENV1B3WindowsAppsAliasPath,Test-ENV1B3CleanRuntimeBaseline
+Export-ModuleMember -Function Get-ENV1B3Sha256,Test-ENV1B3SafeRelativePath,Assert-ENV1B3AbsoluteSafePath,Read-ENV1B3Json,Read-ENV1B3Sums,Get-ENV1B3InventoryTree,Get-ENV1B3DirectoryTree,Assert-ENV1B3Inventory,Test-ENV1B3ZipEntryUnsafe,Test-ENV1B3ReleaseArtifacts,Test-ENV1B3Handoff,Write-ENV1B3CaseResult,Read-ENV1B3MatrixContracts,Write-ENV1B3SubcheckResult,Complete-ENV1B3CaseResult,ConvertTo-ENV1B3UtcIso8601,ConvertTo-ENV1B3WhereDiscoveryResult,Invoke-ENV1B3WhereLookup,Get-ENV1B3DisplayNames,Test-ENV1B3WindowsAppsAliasPath,Test-ENV1B3CleanRuntimeBaseline

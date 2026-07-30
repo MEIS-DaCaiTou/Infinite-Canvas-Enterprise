@@ -13,7 +13,7 @@ Import-Module (Join-Path $PSScriptRoot 'ENV1B3.Validation.psm1') -Force
 try {
     $probe=Read-ENV1B3Json $ProbeManifestPath
     $handoff=Read-ENV1B3Json (Join-Path $HandoffRoot 'CANDIDATE-HANDOFF.json')
-    if($probe.schema_version -ne 'env-1b3-remaining-matrix-probe-v1' -or
+    if([string]$probe.schema_version -notin @('env-1b3-remaining-matrix-probe-v1','env-1b3-remaining-matrix-probe-v2') -or
        $probe.expected_candidate_id -ne $handoff.candidate_id -or
        $probe.diagnostic_only -ne $true -or $probe.not_a_release_candidate -ne $true -or
        $probe.cannot_support_final_acceptance -ne $true -or $probe.production_approved -ne $false){
