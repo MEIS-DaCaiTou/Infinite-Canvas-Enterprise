@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import shutil
@@ -147,6 +148,56 @@ def _generate_handoff(tmp_path: Path, *, sequence: str = "04", kit: Path = KIT) 
     return candidate / "handoff"
 
 
+def _generate_w01_probe_fixture(tmp_path: Path) -> tuple[Path, Path, str, str]:
+    repository = tmp_path / "probe-repository"
+    kit = repository / "tools" / "validation" / "windows" / "env_1b3"
+    kit.mkdir(parents=True)
+    for name in (
+        "ENV1B3.Validation.psm1",
+        "Invoke-EnvironmentBaseline.ps1",
+        "Invoke-W01StabilizationProbe.ps1",
+        "New-W01StabilizationProbe.ps1",
+    ):
+        shutil.copyfile(KIT / name, kit / name)
+    subprocess.run(["git", "init", "-q", repository], check=True)
+    subprocess.run(["git", "-C", repository, "config", "user.name", "ENV-1B3 fixture"], check=True)
+    subprocess.run(["git", "-C", repository, "config", "user.email", "fixture@example.invalid"], check=True)
+    subprocess.run(["git", "-C", repository, "add", "tools"], check=True)
+    subprocess.run(["git", "-C", repository, "commit", "-q", "-m", "fixture"], check=True)
+    head = subprocess.check_output(["git", "-C", repository, "rev-parse", "HEAD"], text=True).strip()
+    tree = subprocess.check_output(["git", "-C", repository, "rev-parse", "HEAD^{tree}"], text=True).strip()
+    output = tmp_path / "probe-output"
+    completed = subprocess.run(
+        [
+            POWERSHELL,
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(kit / "New-W01StabilizationProbe.ps1"),
+            "-Repository",
+            str(repository),
+            "-OutputRoot",
+            str(output),
+            "-ExpectedCandidateId",
+            "ice-2026.07.6-c14cd8341a25-candidate-04",
+            "-ExpectedCandidateHead",
+            "c14cd8341a25de08fdfec1d83f3b1581a10c2723",
+            "-ExpectedCandidateTree",
+            "b852d18e38f4615fb4bc9a8c0e26f24a2fbf194b",
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        timeout=120,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    return output / f"ENV-1B3-W01-STABILIZATION-PROBE-{head}.zip", output, head, tree
+
+
 def _run_validation_entrypoint(
     entrypoint: Path,
     handoff: Path,
@@ -199,7 +250,9 @@ def test_matrix_and_single_entrypoint_are_closed() -> None:
         "Invoke-RebootResume.ps1",
         "Invoke-ResourceInterferenceMatrix.ps1",
         "Invoke-TamperMatrix.ps1",
+        "Invoke-W01StabilizationProbe.ps1",
         "New-CandidateHandoff.ps1",
+        "New-W01StabilizationProbe.ps1",
         "README.md",
         "matrix.json",
     }
@@ -228,7 +281,8 @@ def test_test_host_kit_has_no_repository_mutation_or_python_fallback() -> None:
             continue
         text = path.read_text(encoding="utf-8").lower()
         assert not any(token in text for token in forbidden), (path, text)
-        assert "windowsapps" not in text
+        if path.name != "Invoke-EnvironmentBaseline.ps1":
+            assert "windowsapps" not in text
     lifecycle = (KIT / "Invoke-LifecycleMatrix.ps1").read_text(encoding="utf-8")
     materialize = (KIT / "Invoke-Materialization.ps1").read_text(encoding="utf-8")
     assert "$env:ComSpec" in lifecycle
@@ -296,6 +350,87 @@ def test_install_date_normalization_is_nullable_invariant_and_locale_independent
 
 
 @pytest.mark.skipif(POWERSHELL is None, reason="Windows PowerShell is required")
+@pytest.mark.parametrize("previous_exit", [0, 7])
+def test_where_lookup_treats_real_absence_as_normal_under_strict_stop(previous_exit: int) -> None:
+    module = str(KIT / "ENV1B3.Validation.psm1").replace("'", "''")
+    missing = f"env1b3-certainly-absent-{previous_exit}-f3b19.exe"
+    command = (
+        "Set-StrictMode -Version Latest;$ErrorActionPreference='Stop';"
+        f"Import-Module '{module}' -Force;"
+        f"& $env:ComSpec /d /c exit {previous_exit} | Out-Null;"
+        f"$missing=Invoke-ENV1B3WhereLookup '{missing}';"
+        "$found=Invoke-ENV1B3WhereLookup 'cmd.exe';"
+        "$failed=$null;try{ConvertTo-ENV1B3WhereDiscoveryResult -ExitCode 7 -Stdout '' -Stderr 'fixture'}catch{$failed=$_.Exception.Message};"
+        "[ordered]@{script_continues=$true;usable_external_python_present=$missing.found;baseline_collection_failed=$false;missing=$missing;found=$found;unexpected=$failed}|ConvertTo-Json -Depth 6 -Compress"
+    )
+    result = _run_powershell(command)
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout.strip().splitlines()[-1])
+    assert payload["script_continues"] is True
+    assert payload["usable_external_python_present"] is False
+    assert payload["baseline_collection_failed"] is False
+    assert payload["missing"]["exit_code"] == 1
+    assert payload["missing"]["found"] is False
+    assert payload["missing"]["diagnostic_failed"] is False
+    assert payload["found"]["exit_code"] == 0
+    assert payload["found"]["found"] is True
+    assert payload["unexpected"].startswith("ENV1B3_WHERE_DIAGNOSTIC_FAILED|")
+
+
+@pytest.mark.skipif(POWERSHELL is None, reason="Windows PowerShell is required")
+def test_display_name_filter_is_strict_mode_safe_for_mixed_registry_objects() -> None:
+    module = str(KIT / "ENV1B3.Validation.psm1").replace("'", "''")
+    command = (
+        "Set-StrictMode -Version Latest;$ErrorActionPreference='Stop';"
+        f"Import-Module '{module}' -Force;"
+        "$items=@("
+        "[pscustomobject]@{DisplayName='English App'},"
+        "[pscustomobject]@{Other='missing'},"
+        "[pscustomobject]@{DisplayName=$null},"
+        "[pscustomobject]@{DisplayName=''},"
+        "[pscustomobject]@{DisplayName=42},"
+        "[pscustomobject]@{DisplayName='中文应用'});"
+        "$json=@(Get-ENV1B3DisplayNames $items)|ConvertTo-Json -Compress;"
+        "[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json))"
+    )
+    result = _run_powershell(command)
+    assert result.returncode == 0, result.stdout + result.stderr
+    encoded = result.stdout.strip().splitlines()[-1]
+    assert json.loads(base64.b64decode(encoded).decode("utf-8")) == ["English App", "42", "中文应用"]
+
+
+@pytest.mark.skipif(POWERSHELL is None, reason="Windows PowerShell is required")
+def test_w01_clean_guest_fixture_passes_with_alias_and_recorded_bypassnro() -> None:
+    module = str(KIT / "ENV1B3.Validation.psm1").replace("'", "''")
+    command = (
+        "Set-StrictMode -Version Latest;$ErrorActionPreference='Stop';"
+        f"Import-Module '{module}' -Force;"
+        "$commands=@([ordered]@{name='python';found=$true;alias_stub=$true;usable=$false},"
+        "[pscustomobject]@{name='python3';found=$false;alias_stub=$false;usable=$false},"
+        "[pscustomobject]@{name='py';found=$false;alias_stub=$false;usable=$false});"
+        "$result=Test-ENV1B3CleanRuntimeBaseline -Classification fresh_vm_snapshot -ApplicationUserIsAdmin $false "
+        "-InstallTimePresent $true -PythonCommands $commands -PythonRegistryPresent $false "
+        "-MicrosoftStorePythonPresent $false -ProjectStatePreexisting $false -BypassNroRecorded $true;"
+        "$external=Test-ENV1B3CleanRuntimeBaseline -Classification fresh_vm_snapshot -ApplicationUserIsAdmin $false "
+        "-InstallTimePresent $true -PythonCommands @([ordered]@{usable=$true;alias_stub=$false}) -PythonRegistryPresent $false "
+        "-MicrosoftStorePythonPresent $false -ProjectStatePreexisting $false -BypassNroRecorded $false;"
+        "[ordered]@{clean=$result;external=$external}|ConvertTo-Json -Depth 6 -Compress"
+    )
+    result = _run_powershell(command)
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout.strip().splitlines()[-1])
+    clean = payload["clean"]
+    assert clean["result"] == "PASS"
+    assert clean["usable_external_python_present"] is False
+    assert clean["no_system_python_runtime"] is True
+    assert clean["recorded_oobe_deviation"] is True
+    assert clean["pristine_oobe_baseline"] is False
+    assert clean["clean_windows_runtime_baseline"] is True
+    assert payload["external"]["result"] == "FAIL"
+    assert payload["external"]["usable_external_python_present"] is True
+
+
+@pytest.mark.skipif(POWERSHELL is None, reason="Windows PowerShell is required")
 def test_offline_release_artifact_verification_and_tamper(tmp_path: Path) -> None:
     manifest, archive, inventory = _write_fixture(tmp_path / "fixture")
     module = str(KIT / "ENV1B3.Validation.psm1").replace("'", "''")
@@ -337,6 +472,95 @@ def test_candidate_handoff_readme_is_safe_and_bound(tmp_path: Path) -> None:
     handoff_json = json.loads((handoff / "CANDIDATE-HANDOFF.json").read_text(encoding="utf-8"))
     copied_taskbook = handoff / "ENV-1B3-INDEPENDENT-WINDOWS-TEST-HOST-CODEX-TASK.md"
     assert handoff_json["expected_test_host_taskbook_sha256"] == _sha256(copied_taskbook.read_bytes())
+
+
+@pytest.mark.skipif(POWERSHELL is None, reason="Windows PowerShell is required")
+def test_w01_probe_bundle_is_diagnostic_closed_and_fixture_passes(tmp_path: Path) -> None:
+    probe_zip, _, head, tree = _generate_w01_probe_fixture(tmp_path)
+    assert probe_zip.is_file()
+    extracted = tmp_path / "extracted-probe"
+    with zipfile.ZipFile(probe_zip) as archive:
+        assert set(archive.namelist()) == {
+            "ENV1B3.Validation.psm1",
+            "Invoke-EnvironmentBaseline.ps1",
+            "Invoke-W01StabilizationProbe.ps1",
+            "PROBE-MANIFEST.json",
+            "SHA256SUMS",
+        }
+        archive.extractall(extracted)
+    manifest = json.loads((extracted / "PROBE-MANIFEST.json").read_text(encoding="utf-8"))
+    assert manifest["developer_head"] == head
+    assert manifest["developer_tree"] == tree
+    assert manifest["expected_candidate_04_id"] == "ice-2026.07.6-c14cd8341a25-candidate-04"
+    assert manifest["diagnostic_only"] is True
+    assert manifest["not_a_release_candidate"] is True
+    assert manifest["cannot_support_final_acceptance"] is True
+    assert manifest["production_approved"] is False
+    sums = {}
+    for line in (extracted / "SHA256SUMS").read_text(encoding="utf-8").splitlines():
+        digest, name = line.split("  ", 1)
+        sums[name] = digest
+    payload_files = {path.name for path in extracted.iterdir() if path.is_file() and path.name != "SHA256SUMS"}
+    assert set(sums) == payload_files
+    assert all(_sha256((extracted / name).read_bytes()) == digest for name, digest in sums.items())
+
+    fixture = tmp_path / "clean-guest-fixture.json"
+    fixture.write_text(
+        json.dumps(
+            {
+                "schema_version": "env-1b3-w01-probe-fixture-v1",
+                "application_user_is_admin": False,
+                "install_time_present": True,
+                "python_commands": [
+                    {"name": "python", "found": True, "alias_stub": True, "usable": False},
+                    {"name": "python3", "found": False, "alias_stub": False, "usable": False},
+                    {"name": "py", "found": False, "alias_stub": False, "usable": False},
+                ],
+                "python_registry_present": False,
+                "microsoft_store_python_present": False,
+                "project_state_preexisting": False,
+                "bypass_nro_recorded": True,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    evidence = tmp_path / "probe-evidence"
+    completed = subprocess.run(
+        [
+            POWERSHELL,
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(extracted / "Invoke-W01StabilizationProbe.ps1"),
+            "-TestRoot",
+            str(tmp_path / "test-root"),
+            "-EvidenceRoot",
+            str(evidence),
+            "-Classification",
+            "fresh_vm_snapshot",
+            "-FixturePath",
+            str(fixture),
+        ],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        timeout=60,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    result = json.loads((evidence / "W01.json").read_text(encoding="utf-8"))
+    assert result["result"] == "PASS"
+    assert result["evidence"]["usable_external_python_present"] is False
+    assert result["evidence"]["no_system_python_runtime"] is True
+    assert result["evidence"]["recorded_oobe_deviation"] is True
+    assert result["evidence"]["pristine_oobe_baseline"] is False
+    assert result["evidence"]["clean_windows_runtime_baseline"] is True
 
 
 @pytest.mark.skipif(POWERSHELL is None, reason="Windows PowerShell is required")

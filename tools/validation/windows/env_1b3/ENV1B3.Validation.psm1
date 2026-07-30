@@ -297,4 +297,116 @@ function ConvertTo-ENV1B3UtcIso8601 {
     }
 }
 
-Export-ModuleMember -Function Get-ENV1B3Sha256,Test-ENV1B3SafeRelativePath,Assert-ENV1B3AbsoluteSafePath,Read-ENV1B3Json,Read-ENV1B3Sums,Get-ENV1B3InventoryTree,Get-ENV1B3DirectoryTree,Assert-ENV1B3Inventory,Test-ENV1B3ReleaseArtifacts,Test-ENV1B3Handoff,Write-ENV1B3CaseResult,ConvertTo-ENV1B3UtcIso8601
+function ConvertTo-ENV1B3WhereDiscoveryResult {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][int]$ExitCode,
+        [AllowNull()][string]$Stdout,
+        [AllowNull()][string]$Stderr
+    )
+    if ($ExitCode -notin @(0, 1)) {
+        Throw-ENV1B3Error 'ENV1B3_WHERE_DIAGNOSTIC_FAILED' 'where'
+    }
+    $stdoutText = if ($null -eq $Stdout) { '' } else { [string]$Stdout }
+    $stderrText = if ($null -eq $Stderr) { '' } else { [string]$Stderr }
+    if ($stdoutText.Length -gt 8192) { $stdoutText = $stdoutText.Substring(0, 8192) }
+    if ($stderrText.Length -gt 8192) { $stderrText = $stderrText.Substring(0, 8192) }
+    return [ordered]@{
+        exit_code=$ExitCode
+        found=($ExitCode -eq 0)
+        diagnostic_failed=$false
+        stdout=$stdoutText
+        stderr=$stderrText
+    }
+}
+
+function Invoke-ENV1B3WhereLookup {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9._-]{1,64}$')][string]$Name)
+
+    $wherePath = Join-Path ([Environment]::GetFolderPath('System')) 'where.exe'
+    if (-not (Test-Path -LiteralPath $wherePath -PathType Leaf)) {
+        Throw-ENV1B3Error 'ENV1B3_WHERE_DIAGNOSTIC_FAILED' 'where'
+    }
+    $startInfo = [Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $wherePath
+    $startInfo.Arguments = $Name
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $process = [Diagnostics.Process]::new()
+    $process.StartInfo = $startInfo
+    try {
+        if (-not $process.Start()) { Throw-ENV1B3Error 'ENV1B3_WHERE_DIAGNOSTIC_FAILED' 'where' }
+        $stdout = $process.StandardOutput.ReadToEnd()
+        $stderr = $process.StandardError.ReadToEnd()
+        $process.WaitForExit()
+        return ConvertTo-ENV1B3WhereDiscoveryResult -ExitCode $process.ExitCode -Stdout $stdout -Stderr $stderr
+    } catch [InvalidOperationException] {
+        throw
+    } catch {
+        Throw-ENV1B3Error 'ENV1B3_WHERE_DIAGNOSTIC_FAILED' 'where'
+    } finally {
+        $process.Dispose()
+    }
+}
+
+function Get-ENV1B3DisplayNames {
+    [CmdletBinding()]
+    param([AllowNull()][object[]]$Items)
+    $names = @()
+    foreach ($item in @($Items)) {
+        if ($null -eq $item) { continue }
+        $property = $item.PSObject.Properties['DisplayName']
+        if ($null -eq $property -or $null -eq $property.Value) { continue }
+        try { $text = [Convert]::ToString($property.Value, [Globalization.CultureInfo]::InvariantCulture) }
+        catch { continue }
+        if (-not [String]::IsNullOrWhiteSpace($text)) { $names += $text }
+    }
+    return $names
+}
+
+function Test-ENV1B3WindowsAppsAliasPath {
+    param([AllowNull()][string]$Value)
+    if ([String]::IsNullOrWhiteSpace($Value)) { return $false }
+    return $Value.Replace('/', '\') -match '(?i)\\Microsoft\\WindowsApps\\(?:python|python3|py)(?:\.exe)?$'
+}
+
+function Test-ENV1B3CleanRuntimeBaseline {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][ValidateSet('fresh_vm_snapshot','fresh_physical_image','dedicated_clean_test_host')][string]$Classification,
+        [Parameter(Mandatory)][bool]$ApplicationUserIsAdmin,
+        [Parameter(Mandatory)][bool]$InstallTimePresent,
+        [Parameter(Mandatory)][object[]]$PythonCommands,
+        [Parameter(Mandatory)][bool]$PythonRegistryPresent,
+        [Parameter(Mandatory)][bool]$MicrosoftStorePythonPresent,
+        [Parameter(Mandatory)][bool]$ProjectStatePreexisting,
+        [Parameter(Mandatory)][bool]$BypassNroRecorded
+    )
+    $usable = @($PythonCommands | Where-Object {
+        if ($_ -is [Collections.IDictionary]) { return $_.Contains('usable') -and $_['usable'] -eq $true }
+        $property = $_.PSObject.Properties['usable']
+        return $null -ne $property -and $property.Value -eq $true
+    }).Count -gt 0
+    $aliasStubs = @($PythonCommands | Where-Object {
+        if ($_ -is [Collections.IDictionary]) { return $_.Contains('alias_stub') -and $_['alias_stub'] -eq $true }
+        $property = $_.PSObject.Properties['alias_stub']
+        return $null -ne $property -and $property.Value -eq $true
+    }).Count -gt 0
+    $noSystemPython = (-not $usable) -and (-not $PythonRegistryPresent) -and (-not $MicrosoftStorePythonPresent)
+    $clean = $InstallTimePresent -and (-not $ApplicationUserIsAdmin) -and $noSystemPython -and (-not $ProjectStatePreexisting)
+    return [ordered]@{
+        result=$(if ($clean) { 'PASS' } else { 'FAIL' })
+        clean_host_classification=$Classification
+        usable_external_python_present=$usable
+        python_alias_stubs_present=$aliasStubs
+        no_system_python_runtime=$noSystemPython
+        recorded_oobe_deviation=$BypassNroRecorded
+        pristine_oobe_baseline=(-not $BypassNroRecorded)
+        clean_windows_runtime_baseline=$clean
+    }
+}
+
+Export-ModuleMember -Function Get-ENV1B3Sha256,Test-ENV1B3SafeRelativePath,Assert-ENV1B3AbsoluteSafePath,Read-ENV1B3Json,Read-ENV1B3Sums,Get-ENV1B3InventoryTree,Get-ENV1B3DirectoryTree,Assert-ENV1B3Inventory,Test-ENV1B3ReleaseArtifacts,Test-ENV1B3Handoff,Write-ENV1B3CaseResult,ConvertTo-ENV1B3UtcIso8601,ConvertTo-ENV1B3WhereDiscoveryResult,Invoke-ENV1B3WhereLookup,Get-ENV1B3DisplayNames,Test-ENV1B3WindowsAppsAliasPath,Test-ENV1B3CleanRuntimeBaseline

@@ -6,6 +6,8 @@ The artifact verifier preserves the Manifest v2 inventory's required ordinal pat
 
 The environment baseline normalizes both CIM `System.DateTime` and DMTF-string install dates to invariant UTC. Missing or invalid values remain nullable diagnostics and cannot produce a clean-host PASS. The public entrypoint treats PowerShell script success independently from native executable exit codes, so strict mode never consumes an unset or stale `$LASTEXITCODE`; scripts that invoke native tools capture that tool's exit code immediately.
 
+W01 invokes the fixed system `where.exe` through a controlled process wrapper: stdout, stderr and the current process exit code are captured independently; exit `0` means found, exit `1` is normal absence, and other codes fail closed. WindowsApps command aliases are recorded but do not count as usable external Python. Uninstall inventory reads inspect the `DisplayName` property before accessing it, so missing, null or blank values are ignored under strict mode. A recorded BypassNRO choice makes the baseline non-pristine but does not by itself invalidate a clean Windows Runtime baseline.
+
 ## Safety boundary
 
 - Work only under explicit absolute `HandoffRoot`, `TestRoot`, and `EvidenceRoot` paths.
@@ -45,3 +47,5 @@ The authoritative case list and stable script mapping are in `matrix.json`. Each
 Any mandatory `FAIL` or `BLOCKED` prevents `clean_Windows_validation=true`.
 
 Candidate sequences 01-03 are the original bounded allowance. Sequence 04 is accepted only under the project-owner governance exception recorded after Candidate 03 exposed validation-tool defects before the clean-host matrix began; the generator does not accept later sequences.
+
+`New-W01StabilizationProbe.ps1` builds a repository-external diagnostic bundle containing only the W01 module, collector, Probe entry, manifest and SHA256SUMS. The Probe is explicitly not a Release Candidate and cannot support final acceptance; its fixture mode exists only for developer-side regression, while the independent Guest runs the entry without fixture injection.

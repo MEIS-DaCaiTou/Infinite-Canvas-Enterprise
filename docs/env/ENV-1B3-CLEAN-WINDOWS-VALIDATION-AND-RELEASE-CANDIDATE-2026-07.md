@@ -22,6 +22,8 @@ Initial candidate evidence will remain repository-external. The Draft PR and can
 
 Candidate 03 reached the independent physical host, where W01 classified that host as not clean before W01-W14 execution began. Its artifact preflight passed, but the baseline exposed two validation-tool defects: CIM `InstallDate` could already be a `System.DateTime`, and the public entrypoint could read an unset `$LASTEXITCODE` after a successful PowerShell-only verification step. The project owner authorized one governance-exception Candidate 04 to correct only those tool defects while Hyper-V clean-host preparation proceeds independently. Candidates 01-03 remain immutable and preserved; no independent Windows matrix result has been inherited from the invalid physical-host baseline.
 
+Candidate 04 was transferred to a fresh Hyper-V Guest whose independent baseline established no usable system Python and a recorded BypassNRO deviation. W01 then stopped before the matrix because normal `where.exe` exit `1` was promoted by PowerShell error policy and a damaged uninstall record lacked `DisplayName`. The validation tool now handles both cases explicitly. A diagnostic-only W01 stabilization Probe is awaiting independent Guest confirmation; Candidate 05 has not been built and W01-W14 remain unexecuted.
+
 ## Current state and limits
 
 ```text
