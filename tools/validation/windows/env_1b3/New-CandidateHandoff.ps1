@@ -3,13 +3,28 @@ param(
     [Parameter(Mandatory)][string]$Repository,
     [Parameter(Mandatory)][string]$BuildRoot,
     [Parameter(Mandatory)][string]$CandidateRoot,
-    [Parameter(Mandatory)][ValidatePattern('^0[1-4]$')][string]$CandidateSequence,
-    [Parameter(Mandatory)][string]$TestHostTaskbook
+    [Parameter(Mandatory)][ValidatePattern('^0[1-5]$')][string]$CandidateSequence,
+    [Parameter(Mandatory)][string]$TestHostTaskbook,
+    [switch]$Candidate05IsFinalValidationCandidate,
+    [switch]$W01ProbeGuestPassed,
+    [ValidatePattern('^[0-9a-f]{40}$')][string]$ProbeHead,
+    [ValidatePattern('^[0-9a-f]{64}$')][string]$ProbeEvidenceSha256,
+    [string]$CleanGuestCheckpointSource
 )
 Set-StrictMode -Version 2.0
 $ErrorActionPreference='Stop'
 Import-Module (Join-Path $PSScriptRoot 'ENV1B3.Validation.psm1') -Force
 try {
+    if ($CandidateSequence -eq '05') {
+        if (-not $Candidate05IsFinalValidationCandidate -or -not $W01ProbeGuestPassed -or
+            $ProbeHead -notmatch '^[0-9a-f]{40}$' -or $ProbeEvidenceSha256 -notmatch '^[0-9a-f]{64}$' -or
+            $CleanGuestCheckpointSource -ne 'S0-WIN11-CLEAN-RUNTIME-BASELINE') {
+            throw [InvalidOperationException]::new('ENV1B3_CANDIDATE_05_GATE_INVALID|candidate')
+        }
+    } elseif ($Candidate05IsFinalValidationCandidate -or $W01ProbeGuestPassed -or $ProbeHead -or
+              $ProbeEvidenceSha256 -or $CleanGuestCheckpointSource) {
+        throw [InvalidOperationException]::new('ENV1B3_CANDIDATE_05_GATE_UNEXPECTED|candidate')
+    }
     foreach($path in @($Repository,$BuildRoot,$TestHostTaskbook)){[void](Assert-ENV1B3AbsoluteSafePath $path)}
     [void](Assert-ENV1B3AbsoluteSafePath $CandidateRoot -AllowMissingLeaf)
     if(-not (Test-Path -LiteralPath $CandidateRoot)){[IO.Directory]::CreateDirectory($CandidateRoot)|Out-Null}
@@ -39,6 +54,13 @@ try {
         payload_tree_sha256=[string]$manifest.release_payload.tree_sha256;runtime_tree_sha256=[string]$manifest.runtime.runtime_tree_sha256;static_tree_sha256=[string]$manifest.release_payload.static_tree_sha256
         validation_matrix_version='env-1b3-windows-validation-matrix-v1';expected_test_host_taskbook_sha256=$taskbookHash;production_approved=$false
     }
+    if ($CandidateSequence -eq '05') {
+        $document['candidate_05_is_final_validation_candidate']=$true
+        $document['w01_probe_guest_passed']=$true
+        $document['probe_head']=$ProbeHead
+        $document['probe_evidence_sha256']=$ProbeEvidenceSha256
+        $document['clean_guest_checkpoint_source']=$CleanGuestCheckpointSource
+    }
     [IO.File]::WriteAllText((Join-Path $handoffRoot 'CANDIDATE-HANDOFF.json'),($document|ConvertTo-Json -Depth 8 -Compress)+"`n",[Text.UTF8Encoding]::new($false))
     $readmeLines=@(
         '# Read first',
@@ -52,6 +74,8 @@ try {
         '5. Run the complete validation entrypoint with explicit roots and host classification:',
         '',
         'powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\validation-kit\Invoke-ENV1B3Validation.ps1 -Mode Full -HandoffRoot <HANDOFF_ROOT> -TestRoot <TEST_ROOT> -EvidenceRoot <EVIDENCE_ROOT> -CleanHostClassification <classification>',
+        '',
+        'Read JSON evidence with Get-Content -Raw -Encoding UTF8 or byte-level UTF-8 decoding; do not rely on the Windows PowerShell default ANSI code page.',
         '',
         'This is a Release Candidate, not a formal Release or production-approved payload.'
     )

@@ -117,8 +117,7 @@ def _generate_handoff(tmp_path: Path, *, sequence: str = "04", kit: Path = KIT) 
     taskbook = tmp_path / "taskbook.md"
     taskbook.write_text("# Independent test-host taskbook\n", encoding="utf-8", newline="\n")
     script = kit / "New-CandidateHandoff.ps1"
-    completed = subprocess.run(
-        [
+    arguments = [
             POWERSHELL,
             "-NoLogo",
             "-NoProfile",
@@ -137,7 +136,22 @@ def _generate_handoff(tmp_path: Path, *, sequence: str = "04", kit: Path = KIT) 
             sequence,
             "-TestHostTaskbook",
             str(taskbook),
-        ],
+        ]
+    if sequence == "05":
+        arguments.extend(
+            [
+                "-Candidate05IsFinalValidationCandidate",
+                "-W01ProbeGuestPassed",
+                "-ProbeHead",
+                "7b48fdbe20f8301a3d6a0f96894fc94171c78d8c",
+                "-ProbeEvidenceSha256",
+                "b629bbd1f60e9dbab94bb57159def76cb739220956055f25a2ffcd08492add87",
+                "-CleanGuestCheckpointSource",
+                "S0-WIN11-CLEAN-RUNTIME-BASELINE",
+            ]
+        )
+    completed = subprocess.run(
+        arguments,
         cwd=ROOT,
         text=True,
         capture_output=True,
@@ -472,6 +486,28 @@ def test_candidate_handoff_readme_is_safe_and_bound(tmp_path: Path) -> None:
     handoff_json = json.loads((handoff / "CANDIDATE-HANDOFF.json").read_text(encoding="utf-8"))
     copied_taskbook = handoff / "ENV-1B3-INDEPENDENT-WINDOWS-TEST-HOST-CODEX-TASK.md"
     assert handoff_json["expected_test_host_taskbook_sha256"] == _sha256(copied_taskbook.read_bytes())
+
+
+@pytest.mark.skipif(POWERSHELL is None, reason="Windows PowerShell is required")
+def test_candidate_05_handoff_binds_final_probe_gate_and_utf8_instructions(tmp_path: Path) -> None:
+    handoff = _generate_handoff(tmp_path, sequence="05")
+    document = json.loads((handoff / "CANDIDATE-HANDOFF.json").read_text(encoding="utf-8"))
+    assert document["candidate_sequence"] == "05"
+    assert document["candidate_id"] == "fixture-release-candidate-05"
+    assert document["candidate_05_is_final_validation_candidate"] is True
+    assert document["w01_probe_guest_passed"] is True
+    assert document["probe_head"] == "7b48fdbe20f8301a3d6a0f96894fc94171c78d8c"
+    assert document["probe_evidence_sha256"] == (
+        "b629bbd1f60e9dbab94bb57159def76cb739220956055f25a2ffcd08492add87"
+    )
+    assert document["clean_guest_checkpoint_source"] == "S0-WIN11-CLEAN-RUNTIME-BASELINE"
+    assert document["production_approved"] is False
+
+    readme_bytes = (handoff / "README-FIRST.md").read_bytes()
+    assert not readme_bytes.startswith(b"\xef\xbb\xbf")
+    readme = readme_bytes.decode("utf-8")
+    assert "Get-Content -Raw -Encoding UTF8" in readme
+    assert "byte-level UTF-8" in readme
 
 
 @pytest.mark.skipif(POWERSHELL is None, reason="Windows PowerShell is required")
