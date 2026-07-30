@@ -39,7 +39,18 @@ try{
         $relative=$file.FullName.Substring($root.Length).TrimStart('\').Replace('\','/');$lines+=(Get-ENV1B3Sha256 $file.FullName)+'  '+$relative
     }
     [IO.File]::WriteAllText((Join-Path $root 'SHA256SUMS'),($lines -join "`n")+"`n",[Text.UTF8Encoding]::new($false))
-    Compress-Archive -Path (Join-Path $root '*') -DestinationPath $zip -CompressionLevel Optimal
+    Add-Type -AssemblyName System.IO.Compression
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive=[IO.Compression.ZipFile]::Open($zip,[IO.Compression.ZipArchiveMode]::Create)
+    try{
+        foreach($file in @(Get-ChildItem -LiteralPath $root -File -Recurse|Sort-Object FullName)){
+            $relative=$file.FullName.Substring($root.Length).TrimStart('\').Replace('\','/')
+            if(-not(Test-ENV1B3SafeRelativePath $relative)){throw [InvalidOperationException]::new('ENV1B3_PROBE_ARCHIVE_PATH_INVALID|probe')}
+            $entry=$archive.CreateEntry($relative,[IO.Compression.CompressionLevel]::Optimal)
+            $input=[IO.File]::OpenRead($file.FullName);$output=$entry.Open()
+            try{$input.CopyTo($output)}finally{$output.Dispose();$input.Dispose()}
+        }
+    }finally{$archive.Dispose()}
     [ordered]@{result='pass';developer_head=$head;developer_tree=$tree;probe_zip=$zip;probe_zip_sha256=(Get-ENV1B3Sha256 $zip);materialized_verifier_sha256=$verifierHash}|ConvertTo-Json -Compress
 }catch{
     $code='ENV1B3_PROBE_BUILD_FAILED';if($_.Exception.Message -match '^([A-Z0-9_]+)\|'){$code=$Matches[1]};[ordered]@{status='blocked';code=$code}|ConvertTo-Json -Compress;exit 2
