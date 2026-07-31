@@ -304,6 +304,138 @@ function Write-ENV1B3CaseResult {
     return $document
 }
 
+function Invoke-ENV1B3ManagedProcess {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$FileName,
+        [AllowEmptyString()][string]$Arguments = '',
+        [Parameter(Mandatory)][string]$WorkingDirectory,
+        [ValidateRange(1, 900)][int]$TimeoutSeconds = 120
+    )
+    [void](Assert-ENV1B3AbsoluteSafePath $FileName)
+    [void](Assert-ENV1B3AbsoluteSafePath $WorkingDirectory)
+    $startInfo = [Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $FileName
+    $startInfo.Arguments = $Arguments
+    $startInfo.WorkingDirectory = $WorkingDirectory
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $process = [Diagnostics.Process]::new()
+    $process.StartInfo = $startInfo
+    $started = $false
+    try {
+        if (-not $process.Start()) {
+            Throw-ENV1B3Error 'ENV1B3_NATIVE_PROCESS_START_FAILED' 'process'
+        }
+        $started = $true
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        $completed = $process.WaitForExit($TimeoutSeconds * 1000)
+        if (-not $completed) {
+            try { $process.Kill() } catch { }
+            [void]$process.WaitForExit(5000)
+        } else {
+            $process.WaitForExit()
+        }
+        $stdout = [string]$stdoutTask.Result
+        $stderr = [string]$stderrTask.Result
+        if ($stdout.Length -gt 65536) { $stdout = $stdout.Substring($stdout.Length - 65536) }
+        if ($stderr.Length -gt 65536) { $stderr = $stderr.Substring($stderr.Length - 65536) }
+        return [ordered]@{
+            exit_code=$(if ($completed) { [int]$process.ExitCode } else { 2 })
+            timed_out=(-not $completed)
+            process_id=[int]$process.Id
+            stdout=$stdout
+            stderr=$stderr
+        }
+    } catch {
+        if ($started -and -not $process.HasExited) {
+            try { $process.Kill() } catch { }
+        }
+        if ($_.Exception.Message -match '^ENV1B3_') { throw }
+        Throw-ENV1B3Error 'ENV1B3_NATIVE_PROCESS_FAILED' 'process'
+    } finally {
+        $process.Dispose()
+    }
+}
+
+function Get-ENV1B3NonEmptyStringSet {
+    [CmdletBinding()]
+    param([AllowNull()][object[]]$Values)
+    $seen = @{}
+    foreach ($value in @($Values)) {
+        if ($null -eq $value) { continue }
+        $text = [string]$value
+        if ([String]::IsNullOrWhiteSpace($text)) { continue }
+        $normalized = $text.Trim()
+        $key = $normalized.ToUpperInvariant()
+        if (-not $seen.ContainsKey($key)) { $seen[$key] = $normalized }
+    }
+    return @($seen.Keys | Sort-Object | ForEach-Object { $seen[$_] })
+}
+
+function Write-ENV1B3DurableJson {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][object]$Document)
+    [void](Assert-ENV1B3AbsoluteSafePath $Path -AllowMissingLeaf)
+    $parent = Split-Path -Parent $Path
+    [IO.Directory]::CreateDirectory($parent) | Out-Null
+    $temp = $Path + '.new'
+    if (Test-Path -LiteralPath $temp) { Throw-ENV1B3Error 'ENV1B3_REBOOT_STATE_DURABILITY_FAILED' 'temp_exists' }
+    $bytes = [Text.UTF8Encoding]::new($false).GetBytes(($Document | ConvertTo-Json -Depth 16 -Compress) + "`n")
+    $stream = $null
+    try {
+        $stream = [IO.FileStream]::new($temp,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None,4096,[IO.FileOptions]::WriteThrough)
+        $stream.Write($bytes,0,$bytes.Length)
+        $stream.Flush($true)
+    } catch {
+        Throw-ENV1B3Error 'ENV1B3_REBOOT_STATE_DURABILITY_FAILED' 'write'
+    } finally {
+        if ($null -ne $stream) { $stream.Dispose() }
+    }
+    try {
+        $tempBytes = [IO.File]::ReadAllBytes($temp)
+        if ($tempBytes.Length -eq 0 -or @($tempBytes | Where-Object { $_ -ne 0 }).Count -eq 0) {
+            Throw-ENV1B3Error 'ENV1B3_REBOOT_STATE_DURABILITY_FAILED' 'zero_state'
+        }
+        [void](Read-ENV1B3Json $temp)
+        $sha = Get-ENV1B3Sha256 $temp
+        if (Test-Path -LiteralPath $Path) { [IO.File]::Replace($temp,$Path,$null) } else { [IO.File]::Move($temp,$Path) }
+        $finalBytes = [IO.File]::ReadAllBytes($Path)
+        if ($finalBytes.Length -eq 0 -or @($finalBytes | Where-Object { $_ -ne 0 }).Count -eq 0) {
+            Throw-ENV1B3Error 'ENV1B3_REBOOT_STATE_DURABILITY_FAILED' 'zero_state'
+        }
+        [void](Read-ENV1B3Json $Path)
+        if ((Get-ENV1B3Sha256 $Path) -ne $sha) { Throw-ENV1B3Error 'ENV1B3_REBOOT_STATE_DURABILITY_FAILED' 'hash' }
+        return $sha
+    } catch {
+        if ($_.Exception.Message -match '^ENV1B3_') { throw }
+        Throw-ENV1B3Error 'ENV1B3_REBOOT_STATE_DURABILITY_FAILED' 'commit'
+    } finally {
+        if (Test-Path -LiteralPath $temp) { try { Remove-Item -LiteralPath $temp -Force } catch {} }
+    }
+}
+
+function Read-ENV1B3DurableJson {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path,[Parameter(Mandatory)][ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedSha256)
+    try {
+        $bytes = [IO.File]::ReadAllBytes($Path)
+        if ($bytes.Length -eq 0 -or @($bytes | Where-Object { $_ -ne 0 }).Count -eq 0) {
+            Throw-ENV1B3Error 'ENV1B3_REBOOT_STATE_DURABILITY_FAILED' 'zero_state'
+        }
+        if ((Get-ENV1B3Sha256 $Path) -ne $ExpectedSha256) {
+            Throw-ENV1B3Error 'ENV1B3_REBOOT_STATE_DURABILITY_FAILED' 'hash'
+        }
+        return Read-ENV1B3Json $Path
+    } catch {
+        if ($_.Exception.Message -match '^ENV1B3_') { throw }
+        Throw-ENV1B3Error 'ENV1B3_REBOOT_STATE_DURABILITY_FAILED' 'read'
+    }
+}
+
 function Read-ENV1B3MatrixContracts {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$ContractPath)
@@ -408,8 +540,10 @@ function Complete-ENV1B3CaseResult {
         if ($record.result -ne 'PASS') { $allPass = $false }
         $records += [ordered]@{subcheck_id=[string]$subcheckId;result=[string]$record.result;code=[string]$record.code}
     }
-    $result = $(if ($allPass) { 'PASS' } else { 'FAIL' })
-    $code = $(if ($allPass) { 'ENV1B3_MATRIX_CASE_PASS' } else { 'ENV1B3_MATRIX_CASE_FAILED' })
+    $anyBlocked = @($records | Where-Object { $_.result -eq 'BLOCKED' }).Count -gt 0
+    $anyFailed = @($records | Where-Object { $_.result -eq 'FAIL' }).Count -gt 0
+    $result = $(if ($allPass) { 'PASS' } elseif ($anyBlocked -and -not $anyFailed) { 'BLOCKED' } else { 'FAIL' })
+    $code = $(if ($allPass) { 'ENV1B3_MATRIX_CASE_PASS' } elseif ($result -eq 'BLOCKED') { 'ENV1B3_MATRIX_CASE_BLOCKED' } else { 'ENV1B3_MATRIX_CASE_FAILED' })
     return Write-ENV1B3CaseResult -EvidenceRoot $EvidenceRoot -CaseId $CaseId -Result $result -Code $code -Evidence @{
         contract_schema='env-1b3-matrix-contracts-v2'
         mandatory_subcheck_count=@($case.mandatory_subchecks).Count
@@ -554,4 +688,4 @@ function Test-ENV1B3CleanRuntimeBaseline {
     }
 }
 
-Export-ModuleMember -Function Get-ENV1B3Sha256,Test-ENV1B3SafeRelativePath,Assert-ENV1B3AbsoluteSafePath,Read-ENV1B3Json,Read-ENV1B3Sums,Get-ENV1B3InventoryTree,Get-ENV1B3DirectoryTree,Assert-ENV1B3Inventory,Test-ENV1B3ZipEntryUnsafe,Test-ENV1B3ReleaseArtifacts,Test-ENV1B3Handoff,Write-ENV1B3CaseResult,Read-ENV1B3MatrixContracts,Write-ENV1B3SubcheckResult,Complete-ENV1B3CaseResult,ConvertTo-ENV1B3UtcIso8601,ConvertTo-ENV1B3WhereDiscoveryResult,Invoke-ENV1B3WhereLookup,Get-ENV1B3DisplayNames,Test-ENV1B3WindowsAppsAliasPath,Test-ENV1B3CleanRuntimeBaseline
+Export-ModuleMember -Function Get-ENV1B3Sha256,Test-ENV1B3SafeRelativePath,Assert-ENV1B3AbsoluteSafePath,Read-ENV1B3Json,Read-ENV1B3Sums,Get-ENV1B3InventoryTree,Get-ENV1B3DirectoryTree,Assert-ENV1B3Inventory,Test-ENV1B3ZipEntryUnsafe,Test-ENV1B3ReleaseArtifacts,Test-ENV1B3Handoff,Write-ENV1B3CaseResult,Invoke-ENV1B3ManagedProcess,Get-ENV1B3NonEmptyStringSet,Write-ENV1B3DurableJson,Read-ENV1B3DurableJson,Read-ENV1B3MatrixContracts,Write-ENV1B3SubcheckResult,Complete-ENV1B3CaseResult,ConvertTo-ENV1B3UtcIso8601,ConvertTo-ENV1B3WhereDiscoveryResult,Invoke-ENV1B3WhereLookup,Get-ENV1B3DisplayNames,Test-ENV1B3WindowsAppsAliasPath,Test-ENV1B3CleanRuntimeBaseline

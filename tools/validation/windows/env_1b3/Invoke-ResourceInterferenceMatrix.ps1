@@ -28,9 +28,13 @@ try{
     if($Mode-eq'PortConflict'){
         [void](Assert-ENV1B3AbsoluteSafePath $AppRoot)
         $listener=[Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,$Port);$listener.Start()
-        try{$output=@(& $env:ComSpec /d /c ('"'+(Join-Path $AppRoot '启动企业版.bat')+'"') 2>&1);$exitCode=$LASTEXITCODE;$stillOwned=$listener.Server.IsBound}finally{$listener.Stop()}
+        $wrapperName=(-join@([char]0x542F,[char]0x52A8,[char]0x4F01,[char]0x4E1A,[char]0x7248))+'.bat'
+        try{
+            $native=Invoke-ENV1B3ManagedProcess -FileName $env:ComSpec -Arguments ('/d /s /c ""'+(Join-Path $AppRoot $wrapperName)+'" "') -WorkingDirectory ([IO.Path]::GetPathRoot($AppRoot)) -TimeoutSeconds 90
+            $exitCode=[int]$native.exit_code;$stillOwned=$listener.Server.IsBound
+        }finally{$listener.Stop()}
         $pass=$exitCode-eq2-and$stillOwned
-        Write-ENV1B3CaseResult -EvidenceRoot $EvidenceRoot -CaseId W10 -Result $(if($pass){'PASS'}else{'FAIL'}) -Code $(if($pass){'ENV1B3_RESOURCE_INTERFERENCE_PASS'}else{'ENV1B3_RESOURCE_INTERFERENCE_FAILED'}) -Evidence @{start_exit=$exitCode;foreign_listener_survived=$stillOwned;port_label='controlled-test-port'}|ConvertTo-Json -Compress
+        Write-ENV1B3CaseResult -EvidenceRoot $EvidenceRoot -CaseId W10 -Result $(if($pass){'PASS'}else{'FAIL'}) -Code $(if($pass){'ENV1B3_RESOURCE_INTERFERENCE_PASS'}else{'ENV1B3_RESOURCE_INTERFERENCE_FAILED'}) -Evidence @{start_exit=$exitCode;foreign_listener_survived=$stillOwned;port_label='controlled-test-port';timed_out=[bool]$native.timed_out;failure_code=$(if($pass){$null}else{'ENV1B3_RESOURCE_INTERFERENCE_FAILED'});execution_context_controlled_loopback_listener=$true;fixture_materialized_release=$true}|ConvertTo-Json -Compress
         if(-not$pass){exit 2};exit 0
     }
 
@@ -64,10 +68,11 @@ try{
         try{$probeStream=[IO.File]::Open($writableProbe,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None);try{$large=New-Object byte[] 16777216;$probeStream.Write($large,0,$large.Length);$probeStream.Flush($true)}finally{$probeStream.Dispose()}}catch [IO.IOException]{$writeFailed=$true}finally{if(Test-Path -LiteralPath $writableProbe){Remove-Item -LiteralPath $writableProbe -Force}}
         Write-ENV1B3SubcheckResult -EvidenceRoot $EvidenceRoot -CaseId W12 -SubcheckId writable_root_low_space -Result $(if($writeFailed){'PASS'}else{'FAIL'}) -Code $(if($writeFailed){'ENV1B3_LOW_SPACE_WRITABLE_ROOT_PASS'}else{'ENV1B3_LOW_SPACE_WRITABLE_ROOT_FAILED'}) -Evidence @{bounded_write_failed_closed=$writeFailed}|Out-Null
         $atomicPass=$pointerSame-and$tempAbsent-and$noFinal
-        Write-ENV1B3SubcheckResult -EvidenceRoot $EvidenceRoot -CaseId W12 -SubcheckId pointer_atomicity -Result $(if($atomicPass){'PASS'}else{'FAIL'}) -Code $(if($atomicPass){'ENV1B3_LOW_SPACE_POINTER_ATOMICITY_PASS'}else{'ENV1B3_LOW_SPACE_POINTER_ATOMICITY_FAILED'}) -Evidence @{pointer_unchanged=$pointerSame;pointer_temp_absent=$tempAbsent;no_startable_partial=$noFinal}|Out-Null
         Remove-Item -LiteralPath $filler -Force
         & (Join-Path $PSScriptRoot 'Invoke-Materialization.ps1') -HandoffRoot $HandoffRoot -TestRoot $TestRoot -EvidenceRoot (Join-Path $EvidenceRoot 'w12-recovery-materialization') -CaseId W02 -DiagnosticProbeManifestPath $DiagnosticProbeManifestPath
-        if(-not$?){throw[InvalidOperationException]::new('ENV1B3_LOW_SPACE_RECOVERY_FAILED|retry')}
+        $retryPassed=$LASTEXITCODE-eq0
+        Write-ENV1B3SubcheckResult -EvidenceRoot $EvidenceRoot -CaseId W12 -SubcheckId pointer_atomicity -Result $(if($atomicPass-and$retryPassed){'PASS'}else{'FAIL'}) -Code $(if($atomicPass-and$retryPassed){'ENV1B3_LOW_SPACE_POINTER_ATOMICITY_PASS'}else{'ENV1B3_LOW_SPACE_POINTER_ATOMICITY_FAILED'}) -Evidence @{pointer_unchanged=$pointerSame;pointer_temp_absent=$tempAbsent;no_startable_partial=$noFinal;retry_after_cleanup_passed=$retryPassed;execution_context_isolated_non_system_small_vhdx=$true;fixture_candidate_handoff=$true;fixture_low_space_root=$true}|Out-Null
+        if(-not$retryPassed){throw[InvalidOperationException]::new('ENV1B3_LOW_SPACE_RECOVERY_FAILED|retry')}
         $aggregate=Complete-ENV1B3CaseResult -EvidenceRoot $EvidenceRoot -CaseId W12 -ContractPath $ContractPath;$aggregate|ConvertTo-Json -Depth 10 -Compress
         if($aggregate.result-ne'PASS'){exit 2};exit 0
     }
@@ -90,10 +95,11 @@ try{
         $detectionsAfter=@(Get-MpThreatDetection -ErrorAction SilentlyContinue).Count;$scanPass=$detectionsAfter-eq$detectionsBefore
         Write-ENV1B3SubcheckResult -EvidenceRoot $EvidenceRoot -CaseId W13 -SubcheckId controlled_scan_result -Result $(if($scanPass){'PASS'}else{'FAIL'}) -Code $(if($scanPass){'ENV1B3_DEFENDER_SCAN_PASS'}else{'ENV1B3_DEFENDER_SCAN_INTERFERENCE'}) -Evidence @{controlled_scan_completed=$true;detection_count_before=$detectionsBefore;detection_count_after=$detectionsAfter;candidate_quarantined=($detectionsAfter-gt$detectionsBefore)}|Out-Null
         $preferenceAfter=Get-MpPreference -ErrorAction Stop
-        $beforeExclusions=@($preferenceBefore.ExclusionPath)+@($preferenceBefore.ExclusionProcess)+@($preferenceBefore.ExclusionExtension)
-        $afterExclusions=@($preferenceAfter.ExclusionPath)+@($preferenceAfter.ExclusionProcess)+@($preferenceAfter.ExclusionExtension)
-        $exclusionsPass=$beforeExclusions.Count-eq0-and$afterExclusions.Count-eq0
-        Write-ENV1B3SubcheckResult -EvidenceRoot $EvidenceRoot -CaseId W13 -SubcheckId permanent_exclusions_absent -Result $(if($exclusionsPass){'PASS'}else{'FAIL'}) -Code $(if($exclusionsPass){'ENV1B3_DEFENDER_EXCLUSIONS_PASS'}else{'ENV1B3_DEFENDER_EXCLUSIONS_PRESENT'}) -Evidence @{permanent_exclusion_added=$false;exclusion_count_before=$beforeExclusions.Count;exclusion_count_after=$afterExclusions.Count}|Out-Null
+        $beforeExclusions=Get-ENV1B3NonEmptyStringSet (@($preferenceBefore.ExclusionPath)+@($preferenceBefore.ExclusionProcess)+@($preferenceBefore.ExclusionExtension))
+        $afterExclusions=Get-ENV1B3NonEmptyStringSet (@($preferenceAfter.ExclusionPath)+@($preferenceAfter.ExclusionProcess)+@($preferenceAfter.ExclusionExtension))
+        $difference=@(Compare-Object -ReferenceObject @($beforeExclusions) -DifferenceObject @($afterExclusions) -CaseSensitive:$false)
+        $exclusionsPass=$difference.Count-eq0
+        Write-ENV1B3SubcheckResult -EvidenceRoot $EvidenceRoot -CaseId W13 -SubcheckId permanent_exclusions_absent -Result $(if($exclusionsPass){'PASS'}else{'FAIL'}) -Code $(if($exclusionsPass){'ENV1B3_DEFENDER_EXCLUSIONS_PASS'}else{'ENV1B3_DEFENDER_EXCLUSIONS_PRESENT'}) -Evidence @{permanent_exclusion_added=(-not$exclusionsPass);exclusion_count_before=@($beforeExclusions).Count;exclusion_count_after=@($afterExclusions).Count;actual_exclusion_count=@($afterExclusions).Count;exclusions_unchanged=$exclusionsPass;scan_completed=$true;execution_context_defender_enabled_guest=$true;fixture_candidate_handoff=$true}|Out-Null
         $aggregate=Complete-ENV1B3CaseResult -EvidenceRoot $EvidenceRoot -CaseId W13 -ContractPath $ContractPath;$aggregate|ConvertTo-Json -Depth 10 -Compress
         if($aggregate.result-ne'PASS'){exit 2};exit 0
     }

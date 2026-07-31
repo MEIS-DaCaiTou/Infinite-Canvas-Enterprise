@@ -34,6 +34,10 @@ Independent review accepted that first Probe's artifact integrity, standalone ma
 
 The replacement diagnostic Probe v2 binds the same unchanged Candidate 05 handoff and adds a versioned W01-W14 contract. Each case declares mandatory subchecks, execution context, fixtures, required evidence, stable codes and all-subchecks-PASS aggregation. Subchecks use exclusive, non-overwriting evidence files before one aggregate `Wxx.json` is emitted. Its public dispatcher exposes both W09 branches, all four W11 prepare/resume phases, two-stage W14 preparation/validation, actual low-space and archive-lock materialization checks, Defender scan/exclusion evidence, complete tamper command behavior and M01 atomicity. Probe v2 remains diagnostic-only, cannot support final acceptance and awaits independent Guest authorization; Candidate 06 has neither been authorized nor built.
 
+The independent Probe v2 Guest execution verified the immutable bundle and Candidate 05 identities, then produced `7 PASS / 5 FAIL / 1 BLOCKED`. W02, W03, W04, W06, W07, W12, W14 and M01 passed; W05 was correctly blocked by the Guest's disabled long-path policy. W08/W09/W10/W11 and W13 exposed validation-tool evidence, process, encoding, state-durability, and null-exclusion defects. The run did not prove a Candidate Runtime defect.
+
+Failed-matrix closure Probe v3 is therefore limited to W05, W08, W09, W10, W11, a W12 evidence audit, W13 and an automated Contract Audit. Public modes propagate PASS as exit `0` and FAIL/BLOCKED as exit `2`. Tamper cases use bounded wrappers, independent roots and verified-owned cleanup; W09 writes every stage even when healthy start fails; W10 uses ASCII source and a controlled listener; W11 uses write-through/flush/re-read/hash state with a stable durability error and explicit graceful-versus-hard-reset classification; W12 records retry success; and W13 distinguishes existing exclusions from newly added exclusions. Candidate 05 remains immutable, Candidate 06 is not authorized or built, and Probe v3 still cannot support final acceptance.
+
 ## Current state and limits
 
 ```text

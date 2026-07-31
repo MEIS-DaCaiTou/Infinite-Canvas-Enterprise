@@ -7,6 +7,7 @@ param(
     [Parameter(Mandatory)][string]$ContractPath,
     [string]$DiagnosticProbeManifestPath,
     [string]$AppRoot,[string]$SourceInstallRoot,[string]$CaseRoot,[string]$DeniedRoot,[string]$IsolatedLowDiskRoot,[int]$Port=18000,[string]$CandidateId
+    ,[ValidateSet('graceful_guest_reboot','hyperv_hard_reset')][string]$RebootKind='graceful_guest_reboot'
 )
 Set-StrictMode -Version 2.0
 $ErrorActionPreference='Stop'
@@ -48,9 +49,34 @@ try{
             [void](Invoke-TranslatedLifecycle W04 unicode_space_different_cwd (Get-DefaultAppRoot) ([IO.Path]::GetPathRoot($TestRoot)) -Pollute);Complete-Translated W04
         }
         'W05'{
+            $longPathsValue=0
+            try{$longPathsValue=[int](Get-ItemPropertyValue -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled -ErrorAction Stop)}catch{$longPathsValue=0}
+            if($longPathsValue-ne1){
+                $blocked=@{long_paths_enabled=$false;longest_materialized_path_length=0;fixed_python_long_path_io=$false;powershell_materialization_passed=$false;lifecycle_passed=$false;execution_context_long_path_enabled=$false;execution_context_standard_non_admin_user=$true;fixture_candidate_handoff=$true}
+                Write-ENV1B3SubcheckResult -EvidenceRoot $EvidenceRoot -CaseId W05 -SubcheckId long_path_materialization -Result BLOCKED -Code ENV1B3_LONG_PATHS_DISABLED -Evidence $blocked|Out-Null
+                Write-ENV1B3SubcheckResult -EvidenceRoot $EvidenceRoot -CaseId W05 -SubcheckId long_path_lifecycle -Result BLOCKED -Code ENV1B3_LONG_PATHS_DISABLED -Evidence $blocked|Out-Null
+                Complete-Translated W05
+            }
             & (Join-Path $PSScriptRoot 'Invoke-Materialization.ps1') -HandoffRoot $HandoffRoot -TestRoot $TestRoot -EvidenceRoot (Join-Path $EvidenceRoot 'w05-materialization') -CaseId W05 -DiagnosticProbeManifestPath $DiagnosticProbeManifestPath
-            Write-ENV1B3SubcheckResult -EvidenceRoot $EvidenceRoot -CaseId W05 -SubcheckId long_path_materialization -Result PASS -Code ENV1B3_LONG_PATH_MATERIALIZATION_PASS -Evidence @{materialized=$true}|Out-Null
-            [void](Invoke-TranslatedLifecycle W05 long_path_lifecycle (Get-DefaultAppRoot) ([IO.Path]::GetPathRoot($TestRoot)) -Pollute);Complete-Translated W05
+            $root=Get-DefaultAppRoot;$longest=@(Get-ChildItem -LiteralPath $root -File -Recurse|Sort-Object {$_.FullName.Length} -Descending|Select-Object -First 1)
+            $longestLength=if($longest.Count){$longest[0].FullName.Length}else{0}
+            $python=Join-Path $root 'python\python.exe';$ioPass=$false
+            if($longestLength-gt260){
+                $io=Invoke-ENV1B3ManagedProcess -FileName $python -Arguments ('-I -B -c "import pathlib,sys;p=pathlib.Path(sys.argv[1]);p.open(''rb'').read(1)" "'+$longest[0].FullName+'"') -WorkingDirectory ([IO.Path]::GetPathRoot($root)) -TimeoutSeconds 60
+                $ioPass=$io.exit_code-eq0-and-not$io.timed_out
+            }
+            $materializedPass=$longestLength-gt260-and$ioPass
+            $common=@{long_paths_enabled=$true;longest_materialized_path_length=$longestLength;fixed_python_long_path_io=$ioPass;powershell_materialization_passed=$true;execution_context_long_path_enabled=$true;execution_context_standard_non_admin_user=$true;fixture_candidate_handoff=$true}
+            Write-ENV1B3SubcheckResult -EvidenceRoot $EvidenceRoot -CaseId W05 -SubcheckId long_path_materialization -Result $(if($materializedPass){'PASS'}else{'FAIL'}) -Code $(if($materializedPass){'ENV1B3_LONG_PATH_MATERIALIZATION_PASS'}else{'ENV1B3_MATERIALIZATION_FAILED'}) -Evidence $common|Out-Null
+            $lifeTemp=Join-Path $EvidenceRoot ('w05-lifecycle-'+[Guid]::NewGuid().ToString('N'))
+            try{
+                & (Join-Path $PSScriptRoot 'Invoke-LifecycleMatrix.ps1') -AppRoot $root -EvidenceRoot $lifeTemp -CaseId W05 -DifferentCwd ([IO.Path]::GetPathRoot($TestRoot)) -PolluteEnvironment
+                $life=Read-ENV1B3Json (Join-Path $lifeTemp 'W05.json');$lifeEvidence=$life.evidence
+                $lifeEvidence|Add-Member -NotePropertyName lifecycle_passed -NotePropertyValue ($life.result-eq'PASS') -Force
+                $lifeEvidence|Add-Member -NotePropertyName long_paths_enabled -NotePropertyValue $true -Force
+                Write-ENV1B3SubcheckResult -EvidenceRoot $EvidenceRoot -CaseId W05 -SubcheckId long_path_lifecycle -Result ([string]$life.result) -Code ([string]$life.code) -Evidence $lifeEvidence|Out-Null
+            }finally{if(Test-Path -LiteralPath $lifeTemp){Remove-Item -LiteralPath $lifeTemp -Recurse -Force}}
+            Complete-Translated W05
         }
         'W06'{& (Join-Path $PSScriptRoot 'Invoke-PermissionMatrix.ps1') -AppRoot $AppRoot -EvidenceRoot $EvidenceRoot -DeniedRoot $DeniedRoot -ContractPath $ContractPath}
         'W07'{if([string]::IsNullOrWhiteSpace($AppRoot)){$AppRoot=Get-DefaultAppRoot};& (Join-Path $PSScriptRoot 'Invoke-LifecycleMatrix.ps1') -AppRoot $AppRoot -EvidenceRoot $EvidenceRoot -CaseId W07 -DifferentCwd $TestRoot -PolluteEnvironment -RequireOffline -SubcheckId offline_polluted_environment;Complete-Translated W07}
@@ -60,7 +86,7 @@ try{
             $temporary=Join-Path $EvidenceRoot ('w10-'+[Guid]::NewGuid().ToString('N'));try{& (Join-Path $PSScriptRoot 'Invoke-ResourceInterferenceMatrix.ps1') -Mode PortConflict -EvidenceRoot $temporary -AppRoot $AppRoot -Port $Port;$r=Read-ENV1B3Json (Join-Path $temporary 'W10.json')}finally{if(Test-Path -LiteralPath $temporary){Remove-Item -LiteralPath $temporary -Recurse -Force}}
             Write-ENV1B3SubcheckResult -EvidenceRoot $EvidenceRoot -CaseId W10 -SubcheckId foreign_port_conflict -Result ([string]$r.result) -Code ([string]$r.code) -Evidence $r.evidence|Out-Null;Complete-Translated W10
         }
-        {$_-like'W11*'}{$phase=$Mode.Substring(3);& (Join-Path $PSScriptRoot 'Invoke-RebootResume.ps1') -Mode $phase -EvidenceRoot $EvidenceRoot -CandidateId $CandidateId -AppRoot $AppRoot -ContractPath $ContractPath}
+        {$_-like'W11*'}{$phase=$Mode.Substring(3);& (Join-Path $PSScriptRoot 'Invoke-RebootResume.ps1') -Mode $phase -EvidenceRoot $EvidenceRoot -CandidateId $CandidateId -AppRoot $AppRoot -ContractPath $ContractPath -RebootKind $RebootKind}
         'W12'{& (Join-Path $PSScriptRoot 'Invoke-ResourceInterferenceMatrix.ps1') -Mode W12Full -EvidenceRoot $EvidenceRoot -HandoffRoot $HandoffRoot -TestRoot $TestRoot -IsolatedLowDiskRoot $IsolatedLowDiskRoot -DiagnosticProbeManifestPath $DiagnosticProbeManifestPath -ContractPath $ContractPath}
         'W13'{& (Join-Path $PSScriptRoot 'Invoke-ResourceInterferenceMatrix.ps1') -Mode W13Full -EvidenceRoot $EvidenceRoot -HandoffRoot $HandoffRoot -TestRoot $TestRoot -DiagnosticProbeManifestPath $DiagnosticProbeManifestPath -ContractPath $ContractPath}
         'W14Prepare'{& (Join-Path $PSScriptRoot 'Invoke-FinalIdentityMatrix.ps1') -Mode Prepare -HandoffRoot $HandoffRoot -TestRoot $TestRoot -EvidenceRoot $EvidenceRoot -ContractPath $ContractPath -DiagnosticProbeManifestPath $DiagnosticProbeManifestPath}
