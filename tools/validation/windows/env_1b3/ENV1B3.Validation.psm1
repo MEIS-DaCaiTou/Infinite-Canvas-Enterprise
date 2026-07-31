@@ -520,7 +520,8 @@ function Complete-ENV1B3CaseResult {
     param(
         [Parameter(Mandatory)][string]$EvidenceRoot,
         [Parameter(Mandatory)][ValidatePattern('^W(0[1-9]|1[0-4])$')][string]$CaseId,
-        [Parameter(Mandatory)][string]$ContractPath
+        [Parameter(Mandatory)][string]$ContractPath,
+        [hashtable]$AdditionalEvidence = @{}
     )
     $contracts = Read-ENV1B3MatrixContracts $ContractPath
     $case = $contracts.cases[$CaseId]
@@ -544,12 +545,17 @@ function Complete-ENV1B3CaseResult {
     $anyFailed = @($records | Where-Object { $_.result -eq 'FAIL' }).Count -gt 0
     $result = $(if ($allPass) { 'PASS' } elseif ($anyBlocked -and -not $anyFailed) { 'BLOCKED' } else { 'FAIL' })
     $code = $(if ($allPass) { 'ENV1B3_MATRIX_CASE_PASS' } elseif ($result -eq 'BLOCKED') { 'ENV1B3_MATRIX_CASE_BLOCKED' } else { 'ENV1B3_MATRIX_CASE_FAILED' })
-    return Write-ENV1B3CaseResult -EvidenceRoot $EvidenceRoot -CaseId $CaseId -Result $result -Code $code -Evidence @{
+    $evidence = [ordered]@{
         contract_schema='env-1b3-matrix-contracts-v2'
         mandatory_subcheck_count=@($case.mandatory_subchecks).Count
         subchecks=$records
         aggregation_rule=[string]$case.pass_aggregation_rule
-    } -NoOverwrite
+    }
+    foreach ($key in @($AdditionalEvidence.Keys)) {
+        if ($evidence.Contains($key)) { Throw-ENV1B3Error 'ENV1B3_MATRIX_CASE_EVIDENCE_INVALID' 'duplicate' }
+        $evidence[$key] = $AdditionalEvidence[$key]
+    }
+    return Write-ENV1B3CaseResult -EvidenceRoot $EvidenceRoot -CaseId $CaseId -Result $result -Code $code -Evidence $evidence -NoOverwrite
 }
 
 function ConvertTo-ENV1B3UtcIso8601 {

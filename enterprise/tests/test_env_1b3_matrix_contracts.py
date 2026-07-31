@@ -30,10 +30,20 @@ EXPECTED_V3R1_MODES = {
     "W11StoppedPrepare", "W11StoppedResume", "W11RunningPrepare", "W11RunningResume",
     "W12EvidenceAudit", "W13", "ContractAudit",
 }
+EXPECTED_V3R2_GUEST_MODES = {
+    "W05", "W08Pointer", "W08ReleaseManifest", "W08RuntimeManifest", "W08Payload", "W08PythonDll",
+    "W09", "W10", "W11StoppedPrepare", "W11StoppedResume", "W11RunningPrepare", "W11RunningResume", "W13",
+}
+EXPECTED_V3R2_HOST_MODES = {"W08HostAggregate", "W12EvidenceAudit", "ContractAudit"}
 
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _canonical_hashes_sha256(values: dict[str, str]) -> str:
+    canonical = "".join(f"{key}={values[key]}\n" for key in sorted(values))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _run_ps(command: str, *, cwd: Path = ROOT) -> subprocess.CompletedProcess[str]:
@@ -114,6 +124,21 @@ def test_probe_v3r1_exposes_five_independent_w08_targets() -> None:
     assert "Read-FinalResult" in source
     assert "ENV1B3_PUBLIC_MODE_TIMEOUT" in source
     assert "ENV1B3_PUBLIC_MODE_OUTPUT_INVALID" in source
+
+
+def test_probe_v3r2_separates_guest_and_host_modes_and_deprecates_old_aggregate() -> None:
+    source = (KIT / "Invoke-FailedMatrixClosureProbeV3R2.ps1").read_text(encoding="utf-8")
+    match = re.search(r"ValidateSet\((.*?)\)\]\[string\]\$Mode", source, re.S)
+    assert match
+    assert set(re.findall(r"'([^']+)'", match.group(1))) == (
+        EXPECTED_V3R2_GUEST_MODES | EXPECTED_V3R2_HOST_MODES | {"W08Aggregate"}
+    )
+    assert "ENV1B3_DEPRECATED_W08_AGGREGATE_MODE" in source
+    host_branch = source[source.index("if ($Mode -eq 'W08HostAggregate')"):source.index("if ($Mode -eq 'ContractAudit')")]
+    assert "Invoke-W08HostAggregate.ps1" in host_branch
+    assert "Invoke-Child" not in host_branch
+    assert "Invoke-TamperMatrix.ps1" not in host_branch
+    assert "Mode='All'" not in source and "Mode=All" not in source
     assert "ENV1B3_PUBLIC_MODE_EXIT_CONTRACT_INVALID" in source
 
 
@@ -202,6 +227,7 @@ def _audit_fixture(root: Path) -> tuple[Path, Path]:
     manifest.write_text(json.dumps({
         "matrix_contract_sha256": _sha256(KIT / "matrix-contracts.json"),
         "expected_candidate_id": "candidate-fixture",
+        "expected_candidate_handoff_sha256": "3" * 64,
         "expected_probe_v2_evidence_sha256": "1" * 64,
         "expected_w12_evidence_sha256": "2" * 64,
     }) + "\n", encoding="utf-8")
@@ -233,15 +259,28 @@ def _audit_fixture(root: Path) -> tuple[Path, Path]:
             "case_id": case["case_id"], "result": "PASS", "code": "FIXTURE_PASS",
             "evidence": {"subchecks": listed},
         }
+        if case["case_id"] == "W08":
+            source_hashes = {subcheck: _sha256(sub_root / f"{subcheck}.json") for subcheck in case["mandatory_subchecks"]}
+            aggregate["evidence"].update({
+                "aggregation_source": "host_only_evidence_aggregator",
+                "source_evidence_sha256s": source_hashes,
+                "w08_evidence_set_sha256": _canonical_hashes_sha256(source_hashes),
+            })
         (case_root / f"{case['case_id']}.json").write_text(json.dumps(aggregate) + "\n", encoding="utf-8")
     w12 = matrix_root / "W12"
     w12.mkdir()
     (w12 / "W12-EVIDENCE-AUDIT.json").write_text(json.dumps({
-        "schema_version": "env-1b3-w12-evidence-audit-v2",
+        "schema_version": "env-1b3-w12-evidence-audit-v3",
         "overall_task_id": "ENV-1B3-CLEAN-WINDOWS-VALIDATION-AND-RELEASE-CANDIDATE",
         "matrix_version": "env-1b3-windows-validation-matrix-v1", "case_id": "W12",
         "result": "PASS", "code": "FIXTURE_PASS", "candidate_id": "candidate-fixture",
-        "probe_v2_evidence_sha256": "1" * 64, "w12_evidence_sha256": "2" * 64,
+        "source_probe_v2_zip_sha256": "1" * 64, "candidate_handoff_sha256": "3" * 64,
+        "candidate_modified": False, "w12_aggregate_sha256": "2" * 64,
+        "w12_subcheck_sha256s": {
+            "archive_preflight_low_space": "4" * 64, "materialization_low_space": "5" * 64,
+            "writable_root_low_space": "6" * 64, "pointer_atomicity": "7" * 64,
+        },
+        "recovery_evidence_sha256": "8" * 64, "w12_evidence_set_sha256": "9" * 64,
         "retry_after_cleanup_passed": True,
     }) + "\n", encoding="utf-8")
     return manifest, matrix_root
@@ -250,7 +289,8 @@ def _audit_fixture(root: Path) -> tuple[Path, Path]:
 @pytest.mark.skipif(POWERSHELL is None, reason="Windows PowerShell is required")
 @pytest.mark.parametrize("defect", [
     "false_context", "false_fixture", "bad_schema", "bad_case", "bad_subcheck",
-    "bad_result", "bad_aggregate", "w12_sha_mismatch",
+    "bad_result", "bad_aggregate", "w08_source_hash_mismatch", "w12_sha_mismatch",
+    "w12_candidate_modified", "w12_evidence_set_missing",
 ])
 def test_contract_audit_rejects_false_values_and_identity_mismatch(tmp_path: Path, defect: str) -> None:
     manifest, matrix_root = _audit_fixture(tmp_path)
@@ -275,10 +315,20 @@ def test_contract_audit_rejects_false_values_and_identity_mismatch(tmp_path: Pat
         aggregate = json.loads(aggregate_path.read_text(encoding="utf-8"))
         aggregate["result"] = "BLOCKED"
         aggregate_path.write_text(json.dumps(aggregate) + "\n", encoding="utf-8")
+    elif defect == "w08_source_hash_mismatch":
+        record_path = matrix_root / "W08" / "subchecks" / "W08" / "payload.json"
+        value = json.loads(record_path.read_text(encoding="utf-8"))
+        value["code"] = "CHANGED_AFTER_AGGREGATION"
+        record_path.write_text(json.dumps(value) + "\n", encoding="utf-8")
     else:
         supplemental = matrix_root / "W12" / "W12-EVIDENCE-AUDIT.json"
         value = json.loads(supplemental.read_text(encoding="utf-8"))
-        value["w12_evidence_sha256"] = "3" * 64
+        if defect == "w12_sha_mismatch":
+            value["w12_aggregate_sha256"] = "a" * 64
+        elif defect == "w12_candidate_modified":
+            value["candidate_modified"] = True
+        else:
+            value["w12_evidence_set_sha256"] = ""
         supplemental.write_text(json.dumps(value) + "\n", encoding="utf-8")
     completed = subprocess.run(
         [POWERSHELL, "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
@@ -305,60 +355,218 @@ def test_w13_preexisting_exclusion_is_unchanged_but_not_absent() -> None:
     assert json.loads(result.stdout.strip().splitlines()[-1]) == {"absent": False, "unchanged": True, "count": 1}
 
 
+W08_TARGETS = {
+    "current_release": "W08PointerEvidenceRoot",
+    "release_manifest": "W08ReleaseManifestEvidenceRoot",
+    "runtime_manifest": "W08RuntimeManifestEvidenceRoot",
+    "payload": "W08PayloadEvidenceRoot",
+    "python314_dll": "W08PythonDllEvidenceRoot",
+}
+
+
+def _make_w08_target(root: Path, subcheck: str) -> Path:
+    target = root / subcheck
+    output = target / "subchecks" / "W08"
+    output.mkdir(parents=True)
+    record = {
+        "schema_version": "env-1b3-subcheck-result-v1",
+        "overall_task_id": "ENV-1B3-CLEAN-WINDOWS-VALIDATION-AND-RELEASE-CANDIDATE",
+        "matrix_version": "env-1b3-windows-validation-matrix-v1",
+        "case_id": "W08", "subcheck_id": subcheck, "result": "PASS", "code": "FIXTURE_PASS",
+        "evidence": {
+            "start_failed_closed": True, "restart_failed_closed": True, "health_failed_closed": True,
+            "status_diagnostic": True, "owned_stop_succeeded": True, "foreign_process_survived": True,
+            "execution_context_isolated_case_copies": True, "fixture_materialized_release": True,
+        },
+    }
+    (output / f"{subcheck}.json").write_text(json.dumps(record) + "\n", encoding="utf-8")
+    return target
+
+
+def _run_w08_aggregate(roots: dict[str, Path], output: Path) -> subprocess.CompletedProcess[str]:
+    command = [
+        POWERSHELL, "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+        "-File", str(KIT / "Invoke-W08HostAggregate.ps1"),
+    ]
+    for subcheck, parameter in W08_TARGETS.items():
+        command.extend([f"-{parameter}", str(roots[subcheck])])
+    command.extend(["-ContractPath", str(KIT / "matrix-contracts.json"), "-EvidenceRoot", str(output)])
+    return subprocess.run(command, text=True, encoding="utf-8", capture_output=True, timeout=120, check=False)
+
+
 @pytest.mark.skipif(POWERSHELL is None, reason="Windows PowerShell is required")
-def test_w12_supplemental_audit_binds_candidate_probe_and_raw_evidence(tmp_path: Path) -> None:
+def test_w08_host_aggregate_reads_five_immutable_targets_without_tamper_or_process(tmp_path: Path) -> None:
+    roots = {subcheck: _make_w08_target(tmp_path / "inputs", subcheck) for subcheck in W08_TARGETS}
+    completed = _run_w08_aggregate(roots, tmp_path / "aggregate")
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    result = json.loads(completed.stdout.strip().splitlines()[-1])
+    assert result["result"] == "PASS"
+    assert result["evidence"]["aggregation_source"] == "host_only_evidence_aggregator"
+    assert set(result["evidence"]["source_evidence_sha256s"]) == set(W08_TARGETS)
+    assert result["evidence"]["w08_evidence_set_sha256"] == _canonical_hashes_sha256(
+        result["evidence"]["source_evidence_sha256s"]
+    )
+    source = (KIT / "Invoke-W08HostAggregate.ps1").read_text(encoding="utf-8")
+    assert "Invoke-TamperMatrix" not in source
+    assert "Invoke-ENV1B3ManagedProcess" not in source
+    assert "Diagnostics.Process" not in source
+
+
+@pytest.mark.skipif(POWERSHELL is None, reason="Windows PowerShell is required")
+@pytest.mark.parametrize("defect", ["missing", "duplicate", "unexpected", "identity", "not_pass"])
+def test_w08_host_aggregate_rejects_invalid_target_sets(tmp_path: Path, defect: str) -> None:
+    roots = {subcheck: _make_w08_target(tmp_path / "inputs", subcheck) for subcheck in W08_TARGETS}
+    target = roots["payload"] / "subchecks" / "W08" / "payload.json"
+    if defect == "missing":
+        target.unlink()
+    elif defect == "duplicate":
+        roots["payload"] = roots["current_release"]
+    elif defect == "unexpected":
+        (target.parent / "unexpected.json").write_text(target.read_text(encoding="utf-8"), encoding="utf-8")
+    else:
+        record = json.loads(target.read_text(encoding="utf-8"))
+        if defect == "identity":
+            record["subcheck_id"] = "current_release"
+        else:
+            record["result"] = "FAIL"
+        target.write_text(json.dumps(record) + "\n", encoding="utf-8")
+    completed = _run_w08_aggregate(roots, tmp_path / "aggregate")
+    assert completed.returncode == 2
+    assert json.loads(completed.stdout.strip().splitlines()[-1])["result"] == "FAIL"
+
+
+def _probe_v2_documents(candidate_id: str, handoff_sha: str, *, mutation: str | None = None) -> dict[str, bytes]:
     task = "ENV-1B3-CLEAN-WINDOWS-VALIDATION-AND-RELEASE-CANDIDATE"
     matrix = "env-1b3-windows-validation-matrix-v1"
-    source = tmp_path / "W12"
-    sub = source / "subchecks" / "W12"
-    sub.mkdir(parents=True)
     ids = ["archive_preflight_low_space", "materialization_low_space", "writable_root_low_space", "pointer_atomicity"]
-    for index, subcheck in enumerate(ids):
-        evidence = {}
-        if index == 0:
+    identity = {
+        "schema_version": "env-1b3-probe-v2-candidate-binding-v1",
+        "candidate_id": candidate_id, "zip_sha256": handoff_sha, "modified": False,
+    }
+    if mutation == "candidate_identity":
+        identity["candidate_id"] = "other-candidate"
+    elif mutation == "candidate_handoff":
+        identity["zip_sha256"] = "f" * 64
+    elif mutation == "candidate_modified":
+        identity["modified"] = True
+    documents: dict[str, object] = {"CANDIDATE-05-IDENTITY.json": identity}
+    listed = [{"subcheck_id": value, "result": "PASS", "code": "FIXTURE_PASS"} for value in ids]
+    documents["cases/W12/W12.json"] = {
+        "schema_version": "env-1b3-case-result-v1", "overall_task_id": task, "matrix_version": matrix,
+        "case_id": "W12", "result": "PASS", "code": "FIXTURE_PASS", "evidence": {"subchecks": listed},
+    }
+    for subcheck in ids:
+        evidence: dict[str, object] = {}
+        if subcheck == "materialization_low_space":
             evidence = {"no_final_app_root": True, "pointer_unchanged": True, "pointer_temp_absent": True}
-        if subcheck == "pointer_atomicity":
-            evidence.update({"pointer_unchanged": True, "pointer_temp_absent": True})
-        (sub / f"{subcheck}.json").write_text(json.dumps({
-            "schema_version": "env-1b3-subcheck-result-v1", "overall_task_id": task,
-            "matrix_version": matrix, "case_id": "W12", "subcheck_id": subcheck,
-            "result": "PASS", "code": "FIXTURE_PASS", "evidence": evidence,
-        }) + "\n", encoding="utf-8")
-    (source / "W12.json").write_text(json.dumps({
-        "schema_version": "env-1b3-case-result-v1", "overall_task_id": task,
-        "matrix_version": matrix, "case_id": "W12", "result": "PASS", "code": "FIXTURE_PASS",
-        "evidence": {"subchecks": [{"subcheck_id": value, "result": "PASS"} for value in ids]},
-    }) + "\n", encoding="utf-8")
-    recovery = source / "w12-recovery-materialization"
-    recovery.mkdir()
-    (recovery / "W02.json").write_text(json.dumps({"result": "PASS"}) + "\n", encoding="utf-8")
-    probe_zip = tmp_path / "probe-v2-evidence.zip"
-    probe_zip.write_bytes(b"probe-v2-evidence")
-    manifest = tmp_path / "manifest.json"
+        elif subcheck == "pointer_atomicity":
+            evidence = {"pointer_unchanged": True, "pointer_temp_absent": True}
+        documents[f"cases/W12/subchecks/W12/{subcheck}.json"] = {
+            "schema_version": "env-1b3-subcheck-result-v1", "overall_task_id": task, "matrix_version": matrix,
+            "case_id": "W12", "subcheck_id": subcheck, "result": "PASS", "code": "FIXTURE_PASS",
+            "evidence": evidence,
+        }
+    documents["cases/W12/w12-recovery-materialization/W02.json"] = {
+        "schema_version": "env-1b3-case-result-v1", "overall_task_id": task, "matrix_version": matrix,
+        "case_id": "W02", "result": "PASS", "code": "FIXTURE_PASS",
+        "evidence": {"candidate_id": candidate_id},
+    }
+    for index in range(50):
+        documents[f"filler/{index:02d}.json"] = {"fixture": index}
+    return {
+        path: (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+        for path, value in documents.items()
+    }
+
+
+def _build_probe_v2_zip(
+    root: Path, *, mutation: str | None = None, candidate_id: str = "candidate-fixture",
+    handoff_sha: str = "a" * 64,
+) -> tuple[Path, Path, dict[str, bytes]]:
+    documents = _probe_v2_documents(candidate_id, handoff_sha, mutation=mutation)
+    sums = {path: hashlib.sha256(value).hexdigest() for path, value in documents.items()}
+    if mutation == "internal_sums":
+        sums["filler/00.json"] = "0" * 64
+    elif mutation == "subcheck_hash":
+        sums["cases/W12/subchecks/W12/materialization_low_space.json"] = "0" * 64
+    elif mutation == "recovery_hash":
+        sums["cases/W12/w12-recovery-materialization/W02.json"] = "0" * 64
+    sums_text = "".join(f"{value} *{path.replace('/', chr(92))}\n" for path, value in sorted(sums.items()))
+    archive = root / f"probe-v2-{mutation or 'valid'}.zip"
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_STORED) as output:
+        for path, value in documents.items():
+            output.writestr(path.replace("/", "\\"), value)
+        output.writestr("SHA256SUMS", sums_text.encode("utf-8"))
+        if mutation == "unbound":
+            output.writestr("unbound.json", b"{}\n")
+        elif mutation == "unsafe":
+            output.writestr("../escape.json", b"{}\n")
+        elif mutation == "casefold":
+            output.writestr("FILLER\\00.JSON", b"{}\n")
+    manifest = root / f"manifest-{mutation or 'valid'}.json"
     manifest.write_text(json.dumps({
-        "expected_candidate_id": "candidate-fixture",
-        "expected_probe_v2_evidence_sha256": _sha256(probe_zip),
-        "expected_w12_evidence_sha256": _sha256(source / "W12.json"),
+        "expected_candidate_id": candidate_id,
+        "expected_candidate_handoff_sha256": handoff_sha,
+        "expected_probe_v2_evidence_sha256": "f" * 64 if mutation == "outer_sha" else _sha256(archive),
+        "expected_w12_evidence_sha256": hashlib.sha256(documents["cases/W12/W12.json"]).hexdigest(),
     }) + "\n", encoding="utf-8")
+    return archive, manifest, documents
+
+
+def _run_w12_audit(
+    archive: Path, manifest: Path, output: Path, mirror: Path | None = None,
+) -> subprocess.CompletedProcess[str]:
     command = [
         POWERSHELL, "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
         "-File", str(KIT / "Invoke-W12EvidenceAudit.ps1"), "-ProbeManifestPath", str(manifest),
-        "-ProbeV2EvidenceZip", str(probe_zip), "-W12EvidenceRoot", str(source),
-        "-CandidateId", "candidate-fixture", "-EvidenceRoot", str(tmp_path / "audit"),
+        "-ProbeV2EvidenceZip", str(archive), "-EvidenceRoot", str(output),
     ]
-    passed = subprocess.run(command, text=True, encoding="utf-8", capture_output=True, timeout=120, check=False)
+    if mirror is not None:
+        command.extend(["-W12EvidenceRoot", str(mirror)])
+    return subprocess.run(command, text=True, encoding="utf-8", capture_output=True, timeout=120, check=False)
+
+
+@pytest.mark.skipif(POWERSHELL is None, reason="Windows PowerShell is required")
+def test_w12_audit_reads_and_closes_probe_v2_zip_directly(tmp_path: Path) -> None:
+    archive, manifest, _ = _build_probe_v2_zip(tmp_path)
+    passed = _run_w12_audit(archive, manifest, tmp_path / "audit")
     assert passed.returncode == 0, passed.stdout + passed.stderr
     result = json.loads(passed.stdout.strip().splitlines()[-1])
+    assert result["schema_version"] == "env-1b3-w12-evidence-audit-v3"
     assert result["retry_after_cleanup_passed"] is True
-    assert result["probe_v2_evidence_sha256"] == _sha256(probe_zip)
-    invalid = json.loads(manifest.read_text(encoding="utf-8"))
-    invalid["expected_w12_evidence_sha256"] = "f" * 64
-    manifest.write_text(json.dumps(invalid) + "\n", encoding="utf-8")
-    failed_command = command.copy()
-    failed_command[failed_command.index("-EvidenceRoot") + 1] = str(tmp_path / "audit-failed")
-    failed = subprocess.run(failed_command, text=True, encoding="utf-8", capture_output=True, timeout=120, check=False)
-    assert failed.returncode == 2
-    assert "ENV1B3_W12_EVIDENCE_BINDING_INVALID" in failed.stdout
+    assert result["source_probe_v2_zip_sha256"] == _sha256(archive)
+    assert result["candidate_handoff_sha256"] == "a" * 64
+    assert result["candidate_modified"] is False
+    assert len(result["w12_subcheck_sha256s"]) == 4
+    assert re.fullmatch(r"[0-9a-f]{64}", result["w12_evidence_set_sha256"])
+    assert result["internal_sha256s_verified"] == 57
+
+
+@pytest.mark.skipif(POWERSHELL is None, reason="Windows PowerShell is required")
+@pytest.mark.parametrize("mutation", [
+    "outer_sha", "internal_sums", "unbound", "unsafe", "casefold", "candidate_identity",
+    "candidate_handoff", "candidate_modified", "subcheck_hash", "recovery_hash",
+])
+def test_w12_zip_audit_rejects_tamper_and_identity_drift(tmp_path: Path, mutation: str) -> None:
+    archive, manifest, _ = _build_probe_v2_zip(tmp_path, mutation=mutation)
+    completed = _run_w12_audit(archive, manifest, tmp_path / "audit")
+    assert completed.returncode == 2
+    assert json.loads(completed.stdout.strip().splitlines()[-1])["result"] == "FAIL"
+
+
+@pytest.mark.skipif(POWERSHELL is None, reason="Windows PowerShell is required")
+def test_w12_optional_mirror_must_match_zip_bytes(tmp_path: Path) -> None:
+    archive, manifest, documents = _build_probe_v2_zip(tmp_path)
+    mirror = tmp_path / "mirror"
+    for path, value in documents.items():
+        if path.startswith("cases/W12/"):
+            target = mirror / path.removeprefix("cases/W12/")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(value)
+    (mirror / "subchecks" / "W12" / "pointer_atomicity.json").write_text("{}\n", encoding="utf-8")
+    completed = _run_w12_audit(archive, manifest, tmp_path / "audit", mirror)
+    assert completed.returncode == 2
+    assert "ENV1B3_W12_EVIDENCE_BINDING_INVALID" in completed.stdout
 
 
 @pytest.mark.skipif(POWERSHELL is None, reason="Windows PowerShell is required")
@@ -484,7 +692,7 @@ def test_probe_v2_bundle_is_closed_and_binds_contract(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(POWERSHELL is None, reason="Windows PowerShell is required")
-def test_probe_v3r1_bundle_public_audit_and_blocked_passthrough(tmp_path: Path) -> None:
+def test_probe_v3r2_bundle_public_modes_and_blocked_passthrough(tmp_path: Path) -> None:
     repository = tmp_path / "repository"
     kit = repository / "tools" / "validation" / "windows" / "env_1b3"
     shutil.copytree(KIT, kit)
@@ -503,20 +711,21 @@ def test_probe_v3r1_bundle_public_audit_and_blocked_passthrough(tmp_path: Path) 
     output = tmp_path / "output"
     built = subprocess.run(
         [POWERSHELL, "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-         "-File", str(kit / "New-FailedMatrixClosureProbeV3R1.ps1"),
+         "-File", str(kit / "New-FailedMatrixClosureProbeV3R2.ps1"),
          "-Repository", str(repository), "-OutputRoot", str(output),
          "-ExpectedCandidateId", candidate_id, "-ExpectedCandidateHandoffSha256", candidate_sha,
          "-ExpectedProbeV2EvidenceSha256", probe_v2_sha, "-ExpectedW12EvidenceSha256", w12_sha],
         text=True, encoding="utf-8", capture_output=True, timeout=120, check=False,
     )
     assert built.returncode == 0, built.stdout + built.stderr
-    archive_path = output / f"ENV-1B3-FAILED-MATRIX-CLOSURE-PROBE-V3R1-{head}.zip"
+    archive_path = output / f"ENV-1B3-FAILED-MATRIX-CLOSURE-PROBE-V3R2-{head}.zip"
     extracted = tmp_path / "probe"
     with zipfile.ZipFile(archive_path) as archive:
         archive.extractall(extracted)
     manifest = json.loads((extracted / "PROBE-MANIFEST.json").read_text(encoding="utf-8"))
-    assert manifest["schema_version"] == "env-1b3-failed-matrix-closure-probe-v3r1"
-    assert set(manifest["executable_cases"]) == EXPECTED_V3R1_MODES - {"W08Aggregate"}
+    assert manifest["schema_version"] == "env-1b3-failed-matrix-closure-probe-v3r2"
+    assert set(manifest["guest_executable_cases"]) == EXPECTED_V3R2_GUEST_MODES
+    assert set(manifest["host_only_cases"]) == EXPECTED_V3R2_HOST_MODES
 
     handoff = tmp_path / "handoff"
     handoff.mkdir()
@@ -551,23 +760,35 @@ def test_probe_v3r1_bundle_public_audit_and_blocked_passthrough(tmp_path: Path) 
                      "overall_task_id": "ENV-1B3-CLEAN-WINDOWS-VALIDATION-AND-RELEASE-CANDIDATE",
                      "matrix_version": "env-1b3-windows-validation-matrix-v1", "case_id": case["case_id"],
                      "result": "PASS", "code": "FIXTURE_PASS", "evidence": {"subchecks": records}}
+        if case["case_id"] == "W08":
+            source_hashes = {subcheck: _sha256(sub_root / f"{subcheck}.json") for subcheck in case["mandatory_subchecks"]}
+            aggregate["evidence"].update({
+                "aggregation_source": "host_only_evidence_aggregator",
+                "source_evidence_sha256s": source_hashes,
+                "w08_evidence_set_sha256": _canonical_hashes_sha256(source_hashes),
+            })
         (case_root / f"{case['case_id']}.json").write_text(json.dumps(aggregate) + "\n", encoding="utf-8")
     w12_root = matrix_root / "W12"
     w12_root.mkdir()
     (w12_root / "W12-EVIDENCE-AUDIT.json").write_text(json.dumps({
-        "schema_version": "env-1b3-w12-evidence-audit-v2",
+        "schema_version": "env-1b3-w12-evidence-audit-v3",
         "overall_task_id": "ENV-1B3-CLEAN-WINDOWS-VALIDATION-AND-RELEASE-CANDIDATE",
         "matrix_version": "env-1b3-windows-validation-matrix-v1", "case_id": "W12",
         "result": "PASS", "code": "ENV1B3_W12_EVIDENCE_AUDIT_PASS", "candidate_id": candidate_id,
-        "probe_v2_evidence_sha256": probe_v2_sha, "w12_evidence_sha256": w12_sha,
+        "source_probe_v2_zip_sha256": probe_v2_sha, "candidate_handoff_sha256": candidate_sha,
+        "candidate_modified": False, "w12_aggregate_sha256": w12_sha,
+        "w12_subcheck_sha256s": {
+            "archive_preflight_low_space": "4" * 64, "materialization_low_space": "5" * 64,
+            "writable_root_low_space": "6" * 64, "pointer_atomicity": "7" * 64,
+        },
+        "recovery_evidence_sha256": "8" * 64, "w12_evidence_set_sha256": "9" * 64,
         "retry_after_cleanup_passed": True,
     }) + "\n", encoding="utf-8")
 
     evidence = tmp_path / "audit"
     common = [
         POWERSHELL, "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-        "-File", str(extracted / "Invoke-FailedMatrixClosureProbeV3R1.ps1"), "-Mode", "ContractAudit",
-        "-CandidateHandoffZip", str(candidate), "-HandoffRoot", str(handoff), "-TestRoot", str(tmp_path / "test"),
+        "-File", str(extracted / "Invoke-FailedMatrixClosureProbeV3R2.ps1"), "-Mode", "ContractAudit",
         "-EvidenceRoot", str(evidence), "-MatrixEvidenceRoot", str(matrix_root),
     ]
     passed = subprocess.run(common, text=True, encoding="utf-8", capture_output=True, timeout=120, check=False)
@@ -586,7 +807,7 @@ def test_probe_v3r1_bundle_public_audit_and_blocked_passthrough(tmp_path: Path) 
     blocked_evidence = tmp_path / "blocked"
     blocked = subprocess.run(
         [POWERSHELL, "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-         "-File", str(extracted / "Invoke-FailedMatrixClosureProbeV3R1.ps1"), "-Mode", "W05",
+         "-File", str(extracted / "Invoke-FailedMatrixClosureProbeV3R2.ps1"), "-Mode", "W05",
          "-CandidateHandoffZip", str(candidate), "-HandoffRoot", str(handoff), "-TestRoot", str(tmp_path / "test"),
          "-EvidenceRoot", str(blocked_evidence)],
         text=True, encoding="utf-8", capture_output=True, timeout=120, check=False,
@@ -595,3 +816,14 @@ def test_probe_v3r1_bundle_public_audit_and_blocked_passthrough(tmp_path: Path) 
     blocked_result = json.loads(blocked.stdout.strip().splitlines()[-1])
     assert blocked_result["result"] == "BLOCKED"
     assert blocked_result["code"] == "ENV1B3_LONG_PATHS_DISABLED"
+
+    deprecated = subprocess.run(
+        [POWERSHELL, "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+         "-File", str(extracted / "Invoke-FailedMatrixClosureProbeV3R2.ps1"), "-Mode", "W08Aggregate",
+         "-EvidenceRoot", str(tmp_path / "deprecated")],
+        text=True, encoding="utf-8", capture_output=True, timeout=120, check=False,
+    )
+    assert deprecated.returncode == 2
+    deprecated_result = json.loads(deprecated.stdout.strip().splitlines()[-1])
+    assert deprecated_result["result"] == "BLOCKED"
+    assert deprecated_result["code"] == "ENV1B3_DEPRECATED_W08_AGGREGATE_MODE"
