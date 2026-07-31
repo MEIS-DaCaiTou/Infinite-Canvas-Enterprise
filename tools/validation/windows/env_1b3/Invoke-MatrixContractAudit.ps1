@@ -8,42 +8,47 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference='Stop'
 Import-Module (Join-Path $PSScriptRoot 'ENV1B3.Validation.psm1') -Force
+$task='ENV-1B3-CLEAN-WINDOWS-VALIDATION-AND-RELEASE-CANDIDATE'
+$matrix='env-1b3-windows-validation-matrix-v1'
+function Test-Value([object]$Value){$null-ne$Value-and($Value-isnot[string]-or-not[String]::IsNullOrWhiteSpace([string]$Value))}
 try{
-    $manifest=Read-ENV1B3Json $ProbeManifestPath
-    $actualContractSha=Get-ENV1B3Sha256 $ContractPath
+    $manifest=Read-ENV1B3Json $ProbeManifestPath;$actualContractSha=Get-ENV1B3Sha256 $ContractPath
     if($actualContractSha-ne[string]$manifest.matrix_contract_sha256){throw[InvalidOperationException]::new('ENV1B3_MATRIX_CONTRACT_INVALID|hash')}
     $contracts=Read-ENV1B3MatrixContracts $ContractPath
-    $scope=@('W05','W08','W09','W10','W11','W13');$caseResults=@();$overall=$true
+    $scope=@('W05','W08','W09','W10','W11','W12','W13');$caseResults=@();$overall=$true
     foreach($caseId in $scope){
-        $case=$contracts.cases[$caseId];$caseRoot=Join-Path $MatrixEvidenceRoot $caseId
-        $subRoot=Join-Path $caseRoot (Join-Path 'subchecks' $caseId)
+        if($caseId-eq'W12'){
+            $audit=Read-ENV1B3Json (Join-Path $MatrixEvidenceRoot 'W12\W12-EVIDENCE-AUDIT.json')
+            $pass=$audit.schema_version-eq'env-1b3-w12-evidence-audit-v2'-and$audit.overall_task_id-eq$task-and$audit.matrix_version-eq$matrix-and$audit.case_id-eq'W12'-and$audit.result-eq'PASS'-and$audit.candidate_id-eq[string]$manifest.expected_candidate_id-and$audit.probe_v2_evidence_sha256-eq[string]$manifest.expected_probe_v2_evidence_sha256-and$audit.w12_evidence_sha256-eq[string]$manifest.expected_w12_evidence_sha256-and$audit.retry_after_cleanup_passed-eq$true
+            if(-not$pass){$overall=$false};$caseResults+=[ordered]@{case_id='W12';result=$(if($pass){'PASS'}else{'FAIL'});supplemental_binding_valid=$pass};continue
+        }
+        $case=$contracts.cases[$caseId];$caseRoot=Join-Path $MatrixEvidenceRoot $caseId;$subRoot=Join-Path $caseRoot (Join-Path 'subchecks' $caseId)
         $files=@(Get-ChildItem -LiteralPath $subRoot -File -Filter '*.json' -ErrorAction SilentlyContinue)
-        $names=@($files|ForEach-Object{$_.BaseName});$casefold=@($names|Group-Object {$_.ToLowerInvariant()}|Where-Object{$_.Count-ne1})
+        $names=@($files|ForEach-Object{$_.BaseName});$casefold=@($names|Group-Object{$_.ToLowerInvariant()}|Where-Object{$_.Count-ne1})
         $expected=@($case.mandatory_subchecks|ForEach-Object{[string]$_});$missing=@($expected|Where-Object{$_-notin$names});$unexpected=@($names|Where-Object{$_-notin$expected})
-        $records=@();$fields=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        $records=@();$invalidRecords=@();$values=@{}
         foreach($file in $files){
             $record=Read-ENV1B3Json $file.FullName;$records+=$record
-            foreach($property in $record.evidence.PSObject.Properties){[void]$fields.Add($property.Name)}
+            if($record.schema_version-ne'env-1b3-subcheck-result-v1'-or$record.overall_task_id-ne$task-or$record.matrix_version-ne$matrix-or$record.case_id-ne$caseId-or$record.subcheck_id-ne$file.BaseName-or$record.result-notin@('PASS','FAIL','BLOCKED')){$invalidRecords+=$file.BaseName}
+            foreach($property in $record.evidence.PSObject.Properties){if(Test-Value $property.Value){$values[$property.Name]=$property.Value}}
         }
-        $requiredMissing=@($case.required_evidence_fields|Where-Object{-not$fields.Contains([string]$_)})
-        $contextMissing=@($case.required_execution_context|Where-Object{-not$fields.Contains('execution_context_'+[string]$_)})
-        $fixtureMissing=@($case.required_fixtures|Where-Object{-not$fields.Contains('fixture_'+[string]$_)})
-        $aggregatePath=Join-Path $caseRoot ($caseId+'.json');$aggregateValid=$false
+        $requiredMissing=@($case.required_evidence_fields|Where-Object{-not$values.ContainsKey([string]$_)})
+        $contextMissing=@($case.required_execution_context|Where-Object{$values['execution_context_'+[string]$_]-ne$true})
+        $fixtureMissing=@($case.required_fixtures|Where-Object{$values['fixture_'+[string]$_]-ne$true})
+        $aggregateValid=$false;$aggregatePath=Join-Path $caseRoot ($caseId+'.json')
         if(Test-Path -LiteralPath $aggregatePath -PathType Leaf){
-            $aggregate=Read-ENV1B3Json $aggregatePath
-            $expectedResult=$(if(@($records|Where-Object{$_.result-eq'FAIL'}).Count){'FAIL'}elseif(@($records|Where-Object{$_.result-eq'BLOCKED'}).Count){'BLOCKED'}elseif($records.Count-eq$expected.Count){'PASS'}else{'FAIL'})
-            $aggregateValid=$aggregate.result-eq$expectedResult
+            $aggregate=Read-ENV1B3Json $aggregatePath;$listed=@($aggregate.evidence.subchecks)
+            $listedIds=@($listed|ForEach-Object{[string]$_.subcheck_id})
+            $aggregateValid=$aggregate.schema_version-eq'env-1b3-case-result-v1'-and$aggregate.overall_task_id-eq$task-and$aggregate.matrix_version-eq$matrix-and$aggregate.case_id-eq$caseId-and$aggregate.result-eq'PASS'-and@($records|Where-Object{$_.result-ne'PASS'}).Count-eq0-and@($listed|Where-Object{$_.result-ne'PASS'}).Count-eq0-and@($expected|Where-Object{$_-notin$listedIds}).Count-eq0-and$listedIds.Count-eq$expected.Count
         }
-        $pass=$missing.Count-eq0-and$unexpected.Count-eq0-and$casefold.Count-eq0-and$requiredMissing.Count-eq0-and$contextMissing.Count-eq0-and$fixtureMissing.Count-eq0-and$aggregateValid
+        $pass=$missing.Count-eq0-and$unexpected.Count-eq0-and$casefold.Count-eq0-and$invalidRecords.Count-eq0-and$requiredMissing.Count-eq0-and$contextMissing.Count-eq0-and$fixtureMissing.Count-eq0-and$aggregateValid
         if(-not$pass){$overall=$false}
-        $caseResults+=[ordered]@{case_id=$caseId;result=$(if($pass){'PASS'}else{'FAIL'});missing_subchecks=$missing;unexpected_subchecks=$unexpected;duplicate_subchecks=@($casefold|ForEach-Object{$_.Name});missing_fields=$requiredMissing;missing_context=$contextMissing;missing_fixtures=$fixtureMissing;aggregate_consistent=$aggregateValid}
+        $caseResults+=[ordered]@{case_id=$caseId;result=$(if($pass){'PASS'}else{'FAIL'});missing_subchecks=$missing;unexpected_subchecks=$unexpected;duplicate_subchecks=@($casefold|ForEach-Object{$_.Name});invalid_records=$invalidRecords;missing_fields=$requiredMissing;invalid_context=$contextMissing;invalid_fixtures=$fixtureMissing;aggregate_consistent=$aggregateValid}
     }
-    $document=[ordered]@{schema_version='env-1b3-matrix-contract-audit-v1';result=$(if($overall){'PASS'}else{'FAIL'});code=$(if($overall){'ENV1B3_MATRIX_CONTRACT_AUDIT_PASS'}else{'ENV1B3_MATRIX_CONTRACT_AUDIT_FAILED'});matrix_contract_sha256=$actualContractSha;cases=$caseResults;exit_code=$(if($overall){0}else{2})}
-    [IO.Directory]::CreateDirectory($EvidenceRoot)|Out-Null
-    [IO.File]::WriteAllText((Join-Path $EvidenceRoot 'MATRIX-CONTRACT-AUDIT.json'),($document|ConvertTo-Json -Depth 14 -Compress)+"`n",[Text.UTF8Encoding]::new($false))
-    $document|ConvertTo-Json -Depth 14 -Compress
+    $document=[ordered]@{schema_version='env-1b3-matrix-contract-audit-v2';overall_task_id=$task;matrix_version=$matrix;result=$(if($overall){'PASS'}else{'FAIL'});code=$(if($overall){'ENV1B3_MATRIX_CONTRACT_AUDIT_PASS'}else{'ENV1B3_MATRIX_CONTRACT_AUDIT_FAILED'});matrix_contract_sha256=$actualContractSha;cases=$caseResults;exit_code=$(if($overall){0}else{2})}
+    [IO.Directory]::CreateDirectory($EvidenceRoot)|Out-Null;[IO.File]::WriteAllText((Join-Path $EvidenceRoot 'MATRIX-CONTRACT-AUDIT.json'),($document|ConvertTo-Json -Depth 14 -Compress)+"`n",[Text.UTF8Encoding]::new($false));$document|ConvertTo-Json -Depth 14 -Compress
     if(-not$overall){exit 2}
 }catch{
     $code='ENV1B3_MATRIX_CONTRACT_AUDIT_FAILED';if($_.Exception.Message-match'^([A-Z0-9_]+)\|'){$code=$Matches[1]}
-    [ordered]@{schema_version='env-1b3-matrix-contract-audit-v1';result='FAIL';code=$code;exit_code=2}|ConvertTo-Json -Compress;exit 2
+    [ordered]@{schema_version='env-1b3-matrix-contract-audit-v2';result='FAIL';code=$code;exit_code=2}|ConvertTo-Json -Compress;exit 2
 }

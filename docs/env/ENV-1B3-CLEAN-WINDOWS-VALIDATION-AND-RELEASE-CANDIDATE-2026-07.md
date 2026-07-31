@@ -38,6 +38,10 @@ The independent Probe v2 Guest execution verified the immutable bundle and Candi
 
 Failed-matrix closure Probe v3 is therefore limited to W05, W08, W09, W10, W11, a W12 evidence audit, W13 and an automated Contract Audit. Public modes propagate PASS as exit `0` and FAIL/BLOCKED as exit `2`. Tamper cases use bounded wrappers, independent roots and verified-owned cleanup; W09 writes every stage even when healthy start fails; W10 uses ASCII source and a controlled listener; W11 uses write-through/flush/re-read/hash state with a stable durability error and explicit graceful-versus-hard-reset classification; W12 records retry success; and W13 distinguishes existing exclusions from newly added exclusions. Candidate 05 remains immutable, Candidate 06 is not authorized or built, and Probe v3 still cannot support final acceptance.
 
+The immutable Probe v3 artifact passed integrity review but its Guest execution contract was not authorized. Review found four tool-contract issues: W08 still shared one Runtime root across a multi-target loop; the audit checked presence rather than record/value identity; the public entry rewrote child BLOCKED as FAIL; and W13 described an unchanged set as absent.
+
+Probe v3R1 closes those issues without changing Candidate 05 or Probe v3. Each W08 target is a separate public mode that requires a restored clean checkpoint and blocks on any existing Runtime lock/state, related process or candidate port without deleting it. Public results preserve the child result and code with an exact `PASS/0`, `FAIL/2`, `BLOCKED/2` contract. ContractAudit covers W05–W13, validates record/filename/schema/task/matrix/case/subcheck/result identity, meaningful values, strict-true context/fixtures, PASS aggregates, and a Candidate/Probe-v2/W12-SHA-bound supplemental W12 audit. W13 now has separate mandatory absence and unchanged subchecks; a real pre-existing exclusion makes absence BLOCKED while unchanged remains factual. Probe v3R1 remains diagnostic-only and awaits independent review; Candidate 06 remains unauthorized and unbuilt.
+
 ## Current state and limits
 
 ```text

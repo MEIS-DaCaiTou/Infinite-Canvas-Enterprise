@@ -55,7 +55,9 @@ try{
                 $blocked=@{long_paths_enabled=$false;longest_materialized_path_length=0;fixed_python_long_path_io=$false;powershell_materialization_passed=$false;lifecycle_passed=$false;execution_context_long_path_enabled=$false;execution_context_standard_non_admin_user=$true;fixture_candidate_handoff=$true}
                 Write-ENV1B3SubcheckResult -EvidenceRoot $EvidenceRoot -CaseId W05 -SubcheckId long_path_materialization -Result BLOCKED -Code ENV1B3_LONG_PATHS_DISABLED -Evidence $blocked|Out-Null
                 Write-ENV1B3SubcheckResult -EvidenceRoot $EvidenceRoot -CaseId W05 -SubcheckId long_path_lifecycle -Result BLOCKED -Code ENV1B3_LONG_PATHS_DISABLED -Evidence $blocked|Out-Null
-                Complete-Translated W05
+                $blockedResult=Write-ENV1B3CaseResult -EvidenceRoot $EvidenceRoot -CaseId W05 -Result BLOCKED -Code ENV1B3_LONG_PATHS_DISABLED -Evidence @{long_paths_enabled=$false;reason='windows_long_paths_disabled'} -NoOverwrite
+                $blockedResult|ConvertTo-Json -Depth 8 -Compress
+                exit 2
             }
             & (Join-Path $PSScriptRoot 'Invoke-Materialization.ps1') -HandoffRoot $HandoffRoot -TestRoot $TestRoot -EvidenceRoot (Join-Path $EvidenceRoot 'w05-materialization') -CaseId W05 -DiagnosticProbeManifestPath $DiagnosticProbeManifestPath
             $root=Get-DefaultAppRoot;$longest=@(Get-ChildItem -LiteralPath $root -File -Recurse|Sort-Object {$_.FullName.Length} -Descending|Select-Object -First 1)

@@ -5,6 +5,7 @@ param(
     [Parameter(Mandatory)][string]$EvidenceRoot,
     [Parameter(Mandatory)][ValidateSet('All','Pointer','ReleaseManifest','RuntimeManifest','Payload','PythonDll','OwnedStop','ForeignStop','CombinedW09')][string]$Mode,
     [string]$ContractPath,
+    [string]$RuntimeRootForTest,
     [ValidateRange(5,300)][int]$WrapperTimeoutSeconds = 90
 )
 Set-StrictMode -Version 2.0
@@ -78,7 +79,38 @@ function Get-AppRoot([string]$InstallRoot) {
 }
 
 function Get-RuntimeRoot {
+    if (-not [String]::IsNullOrWhiteSpace($RuntimeRootForTest)) { return [IO.Path]::GetFullPath($RuntimeRootForTest) }
     return Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'InfiniteCanvasEnterprise\runtime'
+}
+
+function Get-W08RuntimeBaseline {
+    $runtimeRoot=Get-RuntimeRoot
+    $lockPath=Join-Path $runtimeRoot 'runtime-supervisor.lock'
+    $statePath=Join-Path $runtimeRoot 'runtime-state.json'
+    $processIds=@()
+    try {
+        $processIds=@(Get-CimInstance Win32_Process -ErrorAction Stop|Where-Object{
+            $command=$_.PSObject.Properties['CommandLine']
+            $null-ne$command -and -not[String]::IsNullOrWhiteSpace([string]$command.Value) -and
+            ([string]$command.Value -match '(?i)enterprise[\\/.]runtime|launcher\.py\s+portable')
+        }|ForEach-Object{[int]$_.ProcessId}|Sort-Object -Unique)
+    } catch { throw [InvalidOperationException]::new('ENV1B3_W08_RUNTIME_BASELINE_COLLECTION_FAILED|process') }
+    $listening=@()
+    try {
+        $listening=@(Get-NetTCPConnection -State Listen -ErrorAction Stop|Where-Object{$_.LocalPort-in@(3001,8000)}|ForEach-Object{[int]$_.LocalPort}|Sort-Object -Unique)
+    } catch [Microsoft.PowerShell.Cmdletization.Cim.CimJobException] {
+        throw [InvalidOperationException]::new('ENV1B3_W08_RUNTIME_BASELINE_COLLECTION_FAILED|port')
+    }
+    $clean=(-not(Test-Path -LiteralPath $lockPath -PathType Leaf))-and(-not(Test-Path -LiteralPath $statePath -PathType Leaf))-and$processIds.Count-eq0-and$listening.Count-eq0
+    $summary=[ordered]@{
+        runtime_root_label='<LOCALAPPDATA>/InfiniteCanvasEnterprise/runtime'
+        lock_present=(Test-Path -LiteralPath $lockPath -PathType Leaf)
+        state_present=(Test-Path -LiteralPath $statePath -PathType Leaf)
+        candidate_process_ids=$processIds
+        listening_candidate_ports=$listening
+        clean=$clean
+    }
+    return $summary
 }
 
 function Read-OptionalJson([string]$Path) {
@@ -335,6 +367,19 @@ try {
             execution_context_isolated_case_copies=$true
             fixture_materialized_release=$true
         }
+        $baseline=Get-W08RuntimeBaseline
+        $evidence.runtime_baseline=$baseline
+        if(-not$baseline.clean){
+            $evidence.stage='runtime_baseline'
+            $evidence.failure_code='ENV1B3_W08_RUNTIME_BASELINE_DIRTY'
+            Write-ENV1B3SubcheckResult -EvidenceRoot $EvidenceRoot -CaseId W08 -SubcheckId $subcheckId -Result BLOCKED -Code ENV1B3_W08_RUNTIME_BASELINE_DIRTY -Evidence $evidence|Out-Null
+            if($Mode-ne'All'){
+                $record=Read-ENV1B3Json (Join-Path $EvidenceRoot (Join-Path 'subchecks\W08' ($subcheckId+'.json')))
+                $record|ConvertTo-Json -Depth 14 -Compress
+                exit 2
+            }
+            continue
+        }
         try {
             $install = New-CaseCopy ('w08-' + $targetName.ToLowerInvariant())
             $app = Get-AppRoot $install
@@ -401,6 +446,12 @@ try {
         }
         $evidence.stage = $stage
         Write-ENV1B3SubcheckResult -EvidenceRoot $EvidenceRoot -CaseId W08 -SubcheckId $subcheckId -Result $(if($passed){'PASS'}else{'FAIL'}) -Code $(if($passed){'ENV1B3_TAMPER_TARGET_PASS'}else{'ENV1B3_TAMPER_FAIL_CLOSED_FAILED'}) -Evidence $evidence | Out-Null
+        if($Mode-ne'All'){
+            $record=Read-ENV1B3Json (Join-Path $EvidenceRoot (Join-Path 'subchecks\W08' ($subcheckId+'.json')))
+            $record|ConvertTo-Json -Depth 14 -Compress
+            if($record.result-ne'PASS'){exit 2}
+            exit 0
+        }
     }
     $aggregate = Complete-ENV1B3CaseResult -EvidenceRoot $EvidenceRoot -CaseId W08 -ContractPath $ContractPath
     $aggregate | ConvertTo-Json -Depth 10 -Compress

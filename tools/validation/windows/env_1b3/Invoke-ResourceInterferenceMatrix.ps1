@@ -98,8 +98,12 @@ try{
         $beforeExclusions=Get-ENV1B3NonEmptyStringSet (@($preferenceBefore.ExclusionPath)+@($preferenceBefore.ExclusionProcess)+@($preferenceBefore.ExclusionExtension))
         $afterExclusions=Get-ENV1B3NonEmptyStringSet (@($preferenceAfter.ExclusionPath)+@($preferenceAfter.ExclusionProcess)+@($preferenceAfter.ExclusionExtension))
         $difference=@(Compare-Object -ReferenceObject @($beforeExclusions) -DifferenceObject @($afterExclusions) -CaseSensitive:$false)
-        $exclusionsPass=$difference.Count-eq0
-        Write-ENV1B3SubcheckResult -EvidenceRoot $EvidenceRoot -CaseId W13 -SubcheckId permanent_exclusions_absent -Result $(if($exclusionsPass){'PASS'}else{'FAIL'}) -Code $(if($exclusionsPass){'ENV1B3_DEFENDER_EXCLUSIONS_PASS'}else{'ENV1B3_DEFENDER_EXCLUSIONS_PRESENT'}) -Evidence @{permanent_exclusion_added=(-not$exclusionsPass);exclusion_count_before=@($beforeExclusions).Count;exclusion_count_after=@($afterExclusions).Count;actual_exclusion_count=@($afterExclusions).Count;exclusions_unchanged=$exclusionsPass;scan_completed=$true;execution_context_defender_enabled_guest=$true;fixture_candidate_handoff=$true}|Out-Null
+        $unchanged=$difference.Count-eq0
+        $added=@($difference|Where-Object{$_.SideIndicator-eq'=>'})
+        $actualCount=@($afterExclusions).Count
+        $absent=$actualCount-eq0
+        Write-ENV1B3SubcheckResult -EvidenceRoot $EvidenceRoot -CaseId W13 -SubcheckId permanent_exclusions_absent -Result $(if($absent){'PASS'}else{'BLOCKED'}) -Code $(if($absent){'ENV1B3_DEFENDER_EXCLUSIONS_ABSENT'}else{'ENV1B3_DEFENDER_EXCLUSIONS_PRESENT'}) -Evidence @{actual_exclusion_count=$actualCount;permanent_exclusions_absent=$absent;scan_completed=$true;execution_context_defender_enabled_guest=$true;fixture_candidate_handoff=$true}|Out-Null
+        Write-ENV1B3SubcheckResult -EvidenceRoot $EvidenceRoot -CaseId W13 -SubcheckId permanent_exclusions_unchanged -Result $(if($unchanged){'PASS'}else{'FAIL'}) -Code $(if($unchanged){'ENV1B3_DEFENDER_EXCLUSIONS_UNCHANGED'}else{'ENV1B3_DEFENDER_EXCLUSIONS_CHANGED'}) -Evidence @{exclusion_count_before=@($beforeExclusions).Count;exclusion_count_after=$actualCount;actual_exclusion_count=$actualCount;exclusions_unchanged=$unchanged;permanent_exclusion_added=($added.Count-gt0);scan_completed=$true;execution_context_defender_enabled_guest=$true;fixture_candidate_handoff=$true}|Out-Null
         $aggregate=Complete-ENV1B3CaseResult -EvidenceRoot $EvidenceRoot -CaseId W13 -ContractPath $ContractPath;$aggregate|ConvertTo-Json -Depth 10 -Compress
         if($aggregate.result-ne'PASS'){exit 2};exit 0
     }
