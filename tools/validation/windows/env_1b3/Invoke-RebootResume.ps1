@@ -10,7 +10,7 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference='Stop'
 Import-Module (Join-Path $PSScriptRoot 'ENV1B3.Validation.psm1') -Force
-$statePath=Join-Path $EvidenceRoot 'REBOOT-RESUME.json'
+$statePath=Join-Path $EvidenceRoot $(if($Mode-like'Stopped*'){'REBOOT-RESUME-STOPPED.json'}else{'REBOOT-RESUME-RUNNING.json'})
 
 function Get-WrapperName([string]$Command){
     switch($Command){
@@ -38,7 +38,10 @@ function New-State([string]$Phase,[hashtable]$Ownership){
         updated_at_utc=[DateTime]::UtcNow.ToString('o');user_reboot_approval_required=$true
     }
 }
-function Write-State($Document){Write-ENV1B3DurableJson -Path $statePath -Document $Document}
+function Write-State($Document){
+    $sha=Write-ENV1B3DurableJson -Path $statePath -Document $Document
+    return [ordered]@{temp_write=$true;flush_true=$true;temp_parse=$true;commit=$true;final_parse=$true;final_sha=$sha;sha256=$sha}
+}
 function Read-State([string]$ExpectedPhase,[string]$PrepareSubcheck){
     $preparePath=Join-Path $EvidenceRoot (Join-Path 'subchecks\W11' ($PrepareSubcheck+'.json'))
     $prepare=Read-ENV1B3Json $preparePath
@@ -46,6 +49,8 @@ function Read-State([string]$ExpectedPhase,[string]$PrepareSubcheck){
     $state=Read-ENV1B3DurableJson -Path $statePath -ExpectedSha256 $sha
     if($state.schema_version-ne'env-1b3-reboot-resume-v3'-or$state.overall_task_id-ne'ENV-1B3-CLEAN-WINDOWS-VALIDATION-AND-RELEASE-CANDIDATE'-or$state.candidate_id-ne$CandidateId-or$state.phase-ne$ExpectedPhase-or$state.app_root-ne$AppRoot-or$state.reboot_kind-ne$RebootKind){throw[InvalidOperationException]::new('ENV1B3_REBOOT_STATE_INVALID|identity')}
     if($state.pointer_sha256-ne(Get-ENV1B3Sha256 (Get-PointerPath))){throw[InvalidOperationException]::new('ENV1B3_REBOOT_STATE_INVALID|pointer')}
+    $currentTree=Get-ENV1B3DirectoryTree $AppRoot
+    if($currentTree.file_count-ne$state.app_root_identity.file_count-or$currentTree.tree_sha256-ne$state.app_root_identity.tree_sha256){throw[InvalidOperationException]::new('ENV1B3_REBOOT_STATE_INVALID|app_root')}
     return $state
 }
 function Test-PidAlive([int]$ProcessId){try{$null-ne(Get-Process -Id $ProcessId -ErrorAction Stop)}catch{$false}}
@@ -61,12 +66,13 @@ function Common-Evidence($state){
 
 try{
     [void](Assert-ENV1B3AbsoluteSafePath $EvidenceRoot -AllowMissingLeaf);[void](Assert-ENV1B3AbsoluteSafePath $AppRoot)
+    if($RebootKind-ne'graceful_guest_reboot'){throw[InvalidOperationException]::new('ENV1B3_REBOOT_KIND_NOT_FORMAL|reboot_kind')}
     [IO.Directory]::CreateDirectory($EvidenceRoot)|Out-Null
     switch($Mode){
         StoppedPrepare{
             $stop=Invoke-Wrapper stop;$status=Invoke-Wrapper status;$pass=$stop.exit_code-eq0-and$status.exit_code-eq0
             $state=New-State 'stopped_prepare_waiting' @{state='stopped';status_exit=$status.exit_code;stop_exit=$stop.exit_code;portable_ownership_valid=$false}
-            $sha=Write-State $state;$e=Common-Evidence $state;$e.stop_exit=$stop.exit_code;$e.status_exit=$status.exit_code;$e.reboot_state_sha256=$sha
+            $durability=Write-State $state;$e=Common-Evidence $state;$e.stop_exit=$stop.exit_code;$e.status_exit=$status.exit_code;$e.reboot_state_sha256=$durability.sha256;$e.durability_stages=$durability
             Write-ENV1B3SubcheckResult -EvidenceRoot $EvidenceRoot -CaseId W11 -SubcheckId stopped_prepare -Result $(if($pass){'PASS'}else{'FAIL'}) -Code $(if($pass){'ENV1B3_REBOOT_STOPPED_PREPARED'}else{'ENV1B3_REBOOT_STOPPED_PREPARE_FAILED'}) -Evidence $e|ConvertTo-Json -Compress
             if(-not$pass){exit 2}
         }
@@ -80,7 +86,7 @@ try{
             $start=Invoke-Wrapper start;$status=Invoke-Wrapper status;$runtime=$status.payload.runtime_state
             $pass=$start.exit_code-eq0-and$status.exit_code-eq0-and$status.payload.portable_ownership_valid-eq$true-and$null-ne$runtime
             $ownership=@{state='running';instance_id=[string]$runtime.supervisor_instance_id;supervisor_pid=[int]$runtime.supervisor_pid;portable_ownership_valid=[bool]$status.payload.portable_ownership_valid}
-            $state=New-State 'running_prepare_waiting' $ownership;$sha=Write-State $state;$e=Common-Evidence $state;$e.reboot_state_sha256=$sha
+            $state=New-State 'running_prepare_waiting' $ownership;$durability=Write-State $state;$e=Common-Evidence $state;$e.reboot_state_sha256=$durability.sha256;$e.durability_stages=$durability
             Write-ENV1B3SubcheckResult -EvidenceRoot $EvidenceRoot -CaseId W11 -SubcheckId running_prepare -Result $(if($pass){'PASS'}else{'FAIL'}) -Code $(if($pass){'ENV1B3_REBOOT_RUNNING_PREPARED'}else{'ENV1B3_REBOOT_RUNNING_PREPARE_FAILED'}) -Evidence $e|ConvertTo-Json -Compress
             if(-not$pass){exit 2}
         }

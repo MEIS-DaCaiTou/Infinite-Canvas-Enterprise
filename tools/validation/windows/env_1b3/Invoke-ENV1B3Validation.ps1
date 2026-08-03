@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][ValidateSet('Full','FinalIdentity','Baseline','Verify','Materialize','Lifecycle','UnicodeLifecycle','LongPathMaterialize','Permission','OfflinePollution','Tamper','OwnedStop','ForeignStop','PortConflict','RebootPrepare','RebootResume','LowDisk','ArchiveLock','DefenderStatus','Export')][string]$Mode,
+    [Parameter(Mandatory)][ValidateSet('Full','FinalIdentity','Baseline','Verify','Materialize','Lifecycle','UnicodeLifecycle','LongPathMaterialize','Permission','OfflinePollution','Tamper','OwnedStop','ForeignStop','PortConflict','RebootPrepare','RebootResume','LowDisk','ArchiveLock','DefenderStatus','Export','W08PrepareHealthy','W08Pointer','W08ReleaseManifest','W08RuntimeManifest','W08Payload','W08PythonDll','W08Aggregate','W09','W10','W11StoppedPrepare','W11StoppedResume','W11RunningPrepare','W11RunningResume','W13')][string]$Mode,
     [Parameter(Mandatory)][string]$HandoffRoot,
     [Parameter(Mandatory)][string]$TestRoot,
     [Parameter(Mandatory)][string]$EvidenceRoot,
@@ -13,11 +13,13 @@ param(
     [string]$IsolatedLowDiskRoot,
     [string]$CandidateId,
     [string]$DiagnosticProbeManifestPath,
+    [string]$ContractPath,
     [int]$Port = 18000
 )
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
+if([String]::IsNullOrWhiteSpace($ContractPath)){$ContractPath=Join-Path $here 'matrix-contracts.json'}
 
 function Invoke-ScriptChecked([string]$Name, [hashtable]$Arguments) {
     $path = Join-Path $here $Name
@@ -61,12 +63,22 @@ switch ($Mode) {
     'Tamper' { Invoke-ScriptChecked 'Invoke-TamperMatrix.ps1' @{SourceInstallRoot=$SourceInstallRoot;CaseRoot=$CaseRoot;EvidenceRoot=$EvidenceRoot;Mode='All'} }
     'OwnedStop' { Invoke-ScriptChecked 'Invoke-TamperMatrix.ps1' @{SourceInstallRoot=$SourceInstallRoot;CaseRoot=$CaseRoot;EvidenceRoot=$EvidenceRoot;Mode='OwnedStop'} }
     'ForeignStop' { Invoke-ScriptChecked 'Invoke-TamperMatrix.ps1' @{SourceInstallRoot=$SourceInstallRoot;CaseRoot=$CaseRoot;EvidenceRoot=$EvidenceRoot;Mode='ForeignStop'} }
-    'PortConflict' { Invoke-ScriptChecked 'Invoke-ResourceInterferenceMatrix.ps1' @{Mode='PortConflict';EvidenceRoot=$EvidenceRoot;AppRoot=$AppRoot;Port=$Port} }
-    'RebootPrepare' { Invoke-ScriptChecked 'Invoke-RebootResume.ps1' @{Mode='Prepare';EvidenceRoot=$EvidenceRoot;CandidateId=$CandidateId} }
-    'RebootResume' { Invoke-ScriptChecked 'Invoke-RebootResume.ps1' @{Mode='Resume';EvidenceRoot=$EvidenceRoot;CandidateId=$CandidateId} }
+    'PortConflict' { Invoke-ScriptChecked 'Invoke-ResourceInterferenceMatrix.ps1' @{Mode='PortConflict';EvidenceRoot=$EvidenceRoot;AppRoot=$AppRoot} }
+    'RebootPrepare' { Invoke-ScriptChecked 'Invoke-RebootResume.ps1' @{Mode='StoppedPrepare';EvidenceRoot=$EvidenceRoot;CandidateId=$CandidateId;AppRoot=$AppRoot;ContractPath=$ContractPath;RebootKind='graceful_guest_reboot'} }
+    'RebootResume' { Invoke-ScriptChecked 'Invoke-RebootResume.ps1' @{Mode='StoppedResume';EvidenceRoot=$EvidenceRoot;CandidateId=$CandidateId;AppRoot=$AppRoot;ContractPath=$ContractPath;RebootKind='graceful_guest_reboot'} }
     'LowDisk' { Invoke-ScriptChecked 'Invoke-ResourceInterferenceMatrix.ps1' @{Mode='LowDisk';EvidenceRoot=$EvidenceRoot;IsolatedLowDiskRoot=$IsolatedLowDiskRoot} }
     'ArchiveLock' { Invoke-ScriptChecked 'Invoke-ResourceInterferenceMatrix.ps1' @{Mode='ArchiveLock';EvidenceRoot=$EvidenceRoot;ArchivePath=$ArchivePath} }
     'DefenderStatus' { Invoke-ScriptChecked 'Invoke-ResourceInterferenceMatrix.ps1' @{Mode='DefenderStatus';EvidenceRoot=$EvidenceRoot} }
+    'W08PrepareHealthy' { Invoke-ScriptChecked 'Invoke-MatrixContractCase.ps1' @{Mode='W08PrepareHealthy';HandoffRoot=$HandoffRoot;TestRoot=$TestRoot;EvidenceRoot=$EvidenceRoot;ContractPath=$ContractPath;DiagnosticProbeManifestPath=$DiagnosticProbeManifestPath} }
+    { $_ -in @('W08Pointer','W08ReleaseManifest','W08RuntimeManifest','W08Payload','W08PythonDll') } {
+        $targetMap=@{W08Pointer='Pointer';W08ReleaseManifest='ReleaseManifest';W08RuntimeManifest='RuntimeManifest';W08Payload='Payload';W08PythonDll='PythonDll'}
+        Invoke-ScriptChecked 'Invoke-TamperMatrix.ps1' @{SourceInstallRoot=$SourceInstallRoot;CaseRoot=$CaseRoot;EvidenceRoot=$EvidenceRoot;Mode=$targetMap[$Mode];ContractPath=$ContractPath}
+    }
+    'W08Aggregate' { Invoke-ScriptChecked 'Invoke-TamperMatrix.ps1' @{SourceInstallRoot=$SourceInstallRoot;CaseRoot=$CaseRoot;EvidenceRoot=$EvidenceRoot;Mode='All';ContractPath=$ContractPath} }
+    'W09' { Invoke-ScriptChecked 'Invoke-TamperMatrix.ps1' @{SourceInstallRoot=$SourceInstallRoot;CaseRoot=$CaseRoot;EvidenceRoot=$EvidenceRoot;Mode='CombinedW09';ContractPath=$ContractPath} }
+    'W10' { Invoke-ScriptChecked 'Invoke-ResourceInterferenceMatrix.ps1' @{Mode='PortConflict';EvidenceRoot=$EvidenceRoot;AppRoot=$AppRoot} }
+    { $_ -in @('W11StoppedPrepare','W11StoppedResume','W11RunningPrepare','W11RunningResume') } { Invoke-ScriptChecked 'Invoke-RebootResume.ps1' @{Mode=$Mode.Substring(3);EvidenceRoot=$EvidenceRoot;CandidateId=$CandidateId;AppRoot=$AppRoot;ContractPath=$ContractPath;RebootKind='graceful_guest_reboot'} }
+    'W13' { Invoke-ScriptChecked 'Invoke-ResourceInterferenceMatrix.ps1' @{Mode='W13Full';EvidenceRoot=$EvidenceRoot;HandoffRoot=$HandoffRoot;TestRoot=$TestRoot;DiagnosticProbeManifestPath=$DiagnosticProbeManifestPath;ContractPath=$ContractPath} }
     'Export' { Invoke-ScriptChecked 'Export-ValidationEvidence.ps1' @{HandoffRoot=$HandoffRoot; EvidenceRoot=$EvidenceRoot; OutputRoot=$TestRoot} }
     { $_ -in @('Full','FinalIdentity') } {
         Invoke-ScriptChecked 'Invoke-EnvironmentBaseline.ps1' @{TestRoot=$TestRoot; EvidenceRoot=$EvidenceRoot; Classification=$CleanHostClassification}

@@ -69,13 +69,27 @@ function New-CaseCopy([string]$Label) {
     if (Test-Path -LiteralPath $root) {
         throw [InvalidOperationException]::new('ENV1B3_TAMPER_CASE_EXISTS|case')
     }
-    Copy-Item -LiteralPath $SourceInstallRoot -Destination $root -Recurse
-    return $root
+    $sourceApp = Get-AppRoot $SourceInstallRoot
+    $python = Join-Path $sourceApp 'python\python.exe'
+    $helper = Join-Path $PSScriptRoot 'copy_install_fixture.py'
+    $arguments = '-I -B "' + $helper + '" --source-install-root "' + $SourceInstallRoot + '" --destination "' + $root + '"'
+    $copy = Invoke-ENV1B3ManagedProcess -FileName $python -Arguments $arguments -WorkingDirectory ([IO.Path]::GetPathRoot($SourceInstallRoot)) -TimeoutSeconds 300
+    $payload = ConvertFrom-BoundedJsonLine ([string]$copy.stdout + "`n" + [string]$copy.stderr)
+    if ($copy.exit_code -ne 0 -or $copy.timed_out -or $null -eq $payload -or $payload.result -ne 'PASS') {
+        throw [InvalidOperationException]::new('ENV1B3_W09_FIXTURE_COPY_FAILED|copy')
+    }
+    return [ordered]@{install_root=$root;file_count=[int]$payload.file_count;tree_sha256=[string]$payload.tree_sha256;release_id=[string]$payload.release_id;app_root_exists=[bool]$payload.app_root_exists}
 }
 
 function Get-AppRoot([string]$InstallRoot) {
-    $pointer = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $InstallRoot 'state\current-release.json') | ConvertFrom-Json
-    return Join-Path $InstallRoot ([string]$pointer.app_root_relative).Replace('/',[IO.Path]::DirectorySeparatorChar)
+    $pointerPath=Join-Path $InstallRoot 'state\current-release.json'
+    if(-not(Test-Path -LiteralPath $pointerPath -PathType Leaf)){throw[InvalidOperationException]::new('ENV1B3_W09_SOURCE_INSTALL_ROOT_INVALID|pointer')}
+    $pointer = Get-Content -Raw -Encoding UTF8 -LiteralPath $pointerPath | ConvertFrom-Json
+    $releaseId=[string]$pointer.release_id;$expected='releases/'+$releaseId
+    if(-not(Test-ENV1B3SafeRelativePath $releaseId)-or[string]$pointer.app_root_relative-ne$expected){throw[InvalidOperationException]::new('ENV1B3_W09_SOURCE_INSTALL_ROOT_INVALID|identity')}
+    $app=Join-Path $InstallRoot $expected.Replace('/',[IO.Path]::DirectorySeparatorChar)
+    if(-not(Test-Path -LiteralPath $app -PathType Container)-or-not(Test-Path -LiteralPath (Join-Path $app 'python\python.exe') -PathType Leaf)){throw[InvalidOperationException]::new('ENV1B3_W09_SOURCE_INSTALL_ROOT_INVALID|app_root')}
+    return $app
 }
 
 function Get-RuntimeRoot {
@@ -88,18 +102,20 @@ function Get-W08RuntimeBaseline {
     $lockPath=Join-Path $runtimeRoot 'runtime-supervisor.lock'
     $statePath=Join-Path $runtimeRoot 'runtime-state.json'
     $processIds=@()
-    try {
-        $processIds=@(Get-CimInstance Win32_Process -ErrorAction Stop|Where-Object{
-            $command=$_.PSObject.Properties['CommandLine']
-            $null-ne$command -and -not[String]::IsNullOrWhiteSpace([string]$command.Value) -and
-            ([string]$command.Value -match '(?i)enterprise[\\/.]runtime|launcher\.py\s+portable')
-        }|ForEach-Object{[int]$_.ProcessId}|Sort-Object -Unique)
-    } catch { throw [InvalidOperationException]::new('ENV1B3_W08_RUNTIME_BASELINE_COLLECTION_FAILED|process') }
     $listening=@()
-    try {
-        $listening=@(Get-NetTCPConnection -State Listen -ErrorAction Stop|Where-Object{$_.LocalPort-in@(3001,8000)}|ForEach-Object{[int]$_.LocalPort}|Sort-Object -Unique)
-    } catch [Microsoft.PowerShell.Cmdletization.Cim.CimJobException] {
-        throw [InvalidOperationException]::new('ENV1B3_W08_RUNTIME_BASELINE_COLLECTION_FAILED|port')
+    if ([String]::IsNullOrWhiteSpace($RuntimeRootForTest)) {
+        try {
+            $processIds=@(Get-CimInstance Win32_Process -ErrorAction Stop|Where-Object{
+                $command=$_.PSObject.Properties['CommandLine']
+                $null-ne$command -and -not[String]::IsNullOrWhiteSpace([string]$command.Value) -and
+                ([string]$command.Value -match '(?i)enterprise[\\/.]runtime|launcher\.py\s+portable')
+            }|ForEach-Object{[int]$_.ProcessId}|Sort-Object -Unique)
+        } catch { throw [InvalidOperationException]::new('ENV1B3_W08_RUNTIME_BASELINE_COLLECTION_FAILED|process') }
+        try {
+            $listening=@(Get-NetTCPConnection -State Listen -ErrorAction Stop|Where-Object{$_.LocalPort-in@(3001,8000)}|ForEach-Object{[int]$_.LocalPort}|Sort-Object -Unique)
+        } catch [Microsoft.PowerShell.Cmdletization.Cim.CimJobException] {
+            throw [InvalidOperationException]::new('ENV1B3_W08_RUNTIME_BASELINE_COLLECTION_FAILED|port')
+        }
     }
     $clean=(-not(Test-Path -LiteralPath $lockPath -PathType Leaf))-and(-not(Test-Path -LiteralPath $statePath -PathType Leaf))-and$processIds.Count-eq0-and$listening.Count-eq0
     $summary=[ordered]@{
@@ -237,24 +253,28 @@ try {
     [void](Assert-ENV1B3AbsoluteSafePath $SourceInstallRoot)
     [void](Assert-ENV1B3AbsoluteSafePath $CaseRoot -AllowMissingLeaf)
     [void](Assert-ENV1B3AbsoluteSafePath $EvidenceRoot -AllowMissingLeaf)
+    $sourceFull=[IO.Path]::GetFullPath($SourceInstallRoot).TrimEnd('\')
+    $caseFull=[IO.Path]::GetFullPath($CaseRoot).TrimEnd('\')
+    if($sourceFull.StartsWith($caseFull+'\',[StringComparison]::OrdinalIgnoreCase)-or$caseFull.StartsWith($sourceFull+'\',[StringComparison]::OrdinalIgnoreCase)-or[string]::Compare($sourceFull,$caseFull,$true)-eq0){throw[InvalidOperationException]::new('ENV1B3_W09_SOURCE_CASE_ROOT_OVERLAP|roots')}
     [IO.Directory]::CreateDirectory($CaseRoot) | Out-Null
     [IO.Directory]::CreateDirectory($EvidenceRoot) | Out-Null
 
     if ($Mode -in @('CombinedW09','OwnedStop','ForeignStop')) {
+        [void](Get-AppRoot $SourceInstallRoot)
         $stages = [ordered]@{}
         $app = $null
-        $failureStage = 'fixture_copy'
+        $failureStage = 'fixture_copy';$terminalCode='ENV1B3_W09_STAGE_FAILED'
         try {
             $prior = Get-RuntimeSummary ''
-            $install = New-CaseCopy 'w09-combined'
+            $copy = New-CaseCopy 'w09-combined';$install=$copy.install_root
             $app = Get-AppRoot $install
-            $stages.fixture_copy = @{result='PASS';app_root_symbol='<CASE_ROOT>/w09-combined/releases/<RELEASE_ID>'}
+            $stages.fixture_copy = @{result='PASS';file_count=$copy.file_count;tree_sha256=$copy.tree_sha256;pointer_release_id=$copy.release_id;app_root_exists=$copy.app_root_exists;app_root_symbol='<CASE_ROOT>/w09-combined/releases/<RELEASE_ID>'}
 
             $failureStage = 'healthy_start'
             $start = Invoke-Wrapper $app 'start'
             $summary = Get-RuntimeSummary $app
             $healthy = $start.exit_code -eq 0 -and -not $start.timed_out -and $summary.lock_present -and $summary.state_present
-            $stages.healthy_start = @{result=$(if($healthy){'PASS'}else{'FAIL'});wrapper_exit=$start.exit_code;timed_out=$start.timed_out;runtime=$summary;previous_owned_state_present=$prior.lock_present}
+            $stages.healthy_start = @{result=$(if($healthy){'PASS'}else{'FAIL'});wrapper_role='start';wrapper_exit=$start.exit_code;timed_out=$start.timed_out;stdout_stderr_tail=$start.output_tail;runtime=$summary;previous_owned_state_present=$prior.lock_present;app_root_exists=(Test-Path -LiteralPath $app -PathType Container)}
             if (-not $healthy) { throw [InvalidOperationException]::new('ENV1B3_W09_HEALTHY_START_FAILED|healthy_start') }
 
             $manifestPath = Join-Path $app 'release-manifest.json'
@@ -315,6 +335,7 @@ try {
         } catch {
             $message = [string]$_.Exception.Message
             $code = $(if ($message -match '^([A-Z0-9_]+)\|') { $Matches[1] } else { 'ENV1B3_W09_STAGE_FAILED' })
+            $terminalCode=$code
             $diagnostic = @{
                 failure_stage=$failureStage
                 failure_code=$code
@@ -333,8 +354,11 @@ try {
         }
         Write-StageRecord (Join-Path $EvidenceRoot 'W09-STAGES.json') $stages
         $aggregate = Complete-ENV1B3CaseResult -EvidenceRoot $EvidenceRoot -CaseId W09 -ContractPath $ContractPath
-        $aggregate | ConvertTo-Json -Depth 10 -Compress
-        if ($aggregate.result -ne 'PASS') { exit 2 }
+        if ($aggregate.result -ne 'PASS') {
+            [ordered]@{schema_version='env-1b3-w09-public-result-v1';result='FAIL';code=$terminalCode;exit_code=2;child_result='FAIL';child_code=$terminalCode;child_exit=2;aggregate=$aggregate}|ConvertTo-Json -Depth 12 -Compress
+            exit 2
+        }
+        [ordered]@{schema_version='env-1b3-w09-public-result-v1';result='PASS';code='ENV1B3_W09_PASS';exit_code=0;child_result='PASS';child_code='ENV1B3_W09_PASS';child_exit=0;aggregate=$aggregate}|ConvertTo-Json -Depth 12 -Compress
         exit 0
     }
 
@@ -368,7 +392,7 @@ try {
             fixture_materialized_release=$true
         }
         $baseline=Get-W08RuntimeBaseline
-        $evidence.runtime_baseline=$baseline
+        $evidence['runtime_baseline']=$baseline
         if(-not$baseline.clean){
             $evidence.stage='runtime_baseline'
             $evidence.failure_code='ENV1B3_W08_RUNTIME_BASELINE_DIRTY'
@@ -381,12 +405,12 @@ try {
             continue
         }
         try {
-            $install = New-CaseCopy ('w08-' + $targetName.ToLowerInvariant())
+            $copy = New-CaseCopy ('w08-' + $targetName.ToLowerInvariant());$install=$copy.install_root
             $app = Get-AppRoot $install
             $stage = 'healthy_start'
             $healthy = Invoke-Wrapper $app 'start'
-            $evidence.healthy_start_exit = $healthy.exit_code
-            $evidence.healthy_start_timed_out = $healthy.timed_out
+            $evidence['healthy_start_exit'] = $healthy.exit_code
+            $evidence['healthy_start_timed_out'] = $healthy.timed_out
             if ($healthy.exit_code -ne 0 -or $healthy.timed_out) {
                 throw [InvalidOperationException]::new('ENV1B3_TAMPER_SETUP_FAILED|healthy_start')
             }
@@ -394,7 +418,7 @@ try {
             if (-not $ownership.lock_present -or -not $ownership.state_present) {
                 throw [InvalidOperationException]::new('ENV1B3_TAMPER_SETUP_FAILED|ownership')
             }
-            $evidence.healthy_ownership_context = $ownership
+            $evidence['healthy_ownership_context'] = $ownership
             $evidence.process_before = @(Get-CandidatePids $app)
             $foreign = Start-ForeignSentinel
 
@@ -435,9 +459,9 @@ try {
             try {
                 if ($null -ne $app) {
                     $cleanup = Invoke-Wrapper $app 'stop'
-                    $evidence.cleanup_stop_exit = $cleanup.exit_code
+                    $evidence['cleanup_stop_exit'] = $cleanup.exit_code
                     if ($cleanup.exit_code -ne 0) {
-                        $evidence.verified_owned_cleanup_pids = @(Stop-VerifiedOwnedProcesses $app)
+                        $evidence['verified_owned_cleanup_pids'] = @(Stop-VerifiedOwnedProcesses $app)
                     }
                 }
             } catch { }

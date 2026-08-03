@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
+import sys
 import zipfile
 from pathlib import Path
 
@@ -49,7 +51,7 @@ def _canonical_hashes_sha256(values: dict[str, str]) -> str:
 def _run_ps(command: str, *, cwd: Path = ROOT) -> subprocess.CompletedProcess[str]:
     assert POWERSHELL is not None
     return subprocess.run(
-        [POWERSHELL, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command],
+        [POWERSHELL, "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", command],
         cwd=cwd,
         text=True,
         encoding="utf-8",
@@ -649,6 +651,119 @@ def test_all_validation_powershell_parses_under_windows_powershell_51() -> None:
     result = _run_ps(script)
     assert result.returncode == 0, result.stdout + result.stderr
     assert json.loads(result.stdout.strip().splitlines()[-1])["count"] == 0
+
+
+@pytest.mark.skipif(POWERSHELL is None, reason="Windows PowerShell is required")
+def test_diagnostic_manifest_uses_semantics_and_current_sums_not_schema_name(tmp_path: Path) -> None:
+    bundle = tmp_path / "diagnostic"
+    handoff = tmp_path / "handoff"
+    verifier = bundle / "validation-kit" / "verify_materialized_release.py"
+    verifier.parent.mkdir(parents=True)
+    handoff.mkdir()
+    verifier.write_text("# fixture\n", encoding="utf-8", newline="\n")
+    verifier_sha = _sha256(verifier)
+    candidate_sha = "a" * 64
+    (handoff / "CANDIDATE-HANDOFF.json").write_text(json.dumps({
+        "candidate_id": "candidate-final-fixture",
+        "materialized_verifier_filename": "validation-kit/verify_materialized_release.py",
+        "materialized_verifier_sha256": verifier_sha,
+    }), encoding="utf-8")
+    manifest = bundle / "PROBE-MANIFEST.json"
+    document = {
+        "schema_version": "env-1b3-future-diagnostic-fixture-v99",
+        "overall_task_id": "ENV-1B3-CLEAN-WINDOWS-VALIDATION-AND-RELEASE-CANDIDATE",
+        "expected_candidate_id": "candidate-final-fixture",
+        "expected_candidate_handoff_sha256": candidate_sha,
+        "materialized_verifier_filename": "validation-kit/verify_materialized_release.py",
+        "materialized_verifier_sha256": verifier_sha,
+        "diagnostic_only": True,
+        "not_a_release_candidate": True,
+        "cannot_support_final_acceptance": True,
+        "production_approved": False,
+    }
+    manifest.write_text(json.dumps(document), encoding="utf-8")
+    (bundle / "SHA256SUMS").write_text(
+        f"{_sha256(manifest)}  PROBE-MANIFEST.json\n{verifier_sha}  validation-kit/verify_materialized_release.py\n",
+        encoding="ascii",
+    )
+    module = str(KIT / "ENV1B3.Validation.psm1").replace("'", "''")
+    command = (
+        f"Import-Module '{module}' -Force;"
+        f"$r=Test-ENV1B3DiagnosticManifest -ManifestPath '{manifest}' -HandoffRoot '{handoff}' "
+        f"-ExpectedCandidateHandoffSha256 '{candidate_sha}';$r.schema_version"
+    )
+    accepted = _run_ps(command)
+    assert accepted.returncode == 0, accepted.stdout + accepted.stderr
+    assert "future-diagnostic-fixture-v99" in accepted.stdout
+
+    document["diagnostic_only"] = False
+    manifest.write_text(json.dumps(document), encoding="utf-8")
+    (bundle / "SHA256SUMS").write_text(
+        f"{_sha256(manifest)}  PROBE-MANIFEST.json\n{verifier_sha}  validation-kit/verify_materialized_release.py\n",
+        encoding="ascii",
+    )
+    rejected = _run_ps(command)
+    assert rejected.returncode != 0
+    assert "ENV1B3_DIAGNOSTIC_MANIFEST_IDENTITY_INVALID" in rejected.stderr
+
+
+def test_w09_copy_helper_requires_full_install_root_and_handles_long_paths(tmp_path: Path) -> None:
+    source = tmp_path / "source-install"
+    app = source / "releases" / "release-fixture"
+    (source / "state").mkdir(parents=True)
+    (app / "python").mkdir(parents=True)
+    (source / "state" / "current-release.json").write_text(json.dumps({
+        "release_id": "release-fixture",
+        "app_root_relative": "releases/release-fixture",
+    }), encoding="utf-8")
+    (app / "python" / "python.exe").write_bytes(b"fixture")
+    long_leaf = app / ("long-" + "x" * 90) / ("nested-" + "y" * 90) / "payload.txt"
+    os.makedirs("\\\\?\\" + str(long_leaf.parent))
+    with open("\\\\?\\" + str(long_leaf), "w", encoding="utf-8") as stream:
+        stream.write("payload\n")
+    destination = tmp_path / "case-install"
+    helper = KIT / "copy_install_fixture.py"
+    completed = subprocess.run(
+        [sys.executable, "-B", str(helper), "--source-install-root", str(source), "--destination", str(destination)],
+        text=True, encoding="utf-8", capture_output=True, timeout=60, check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    payload = json.loads(completed.stdout.strip())
+    assert payload["release_id"] == "release-fixture"
+    assert payload["app_root_exists"] is True
+    assert os.path.isfile("\\\\?\\" + str(destination / long_leaf.relative_to(source)))
+
+    invalid = subprocess.run(
+        [sys.executable, "-B", str(helper), "--source-install-root", str(app), "--destination", str(tmp_path / "invalid")],
+        text=True, encoding="utf-8", capture_output=True, timeout=60, check=False,
+    )
+    assert invalid.returncode == 2
+
+
+def test_final_matrix_scripts_keep_narrow_runtime_contracts() -> None:
+    entrypoint = (KIT / "Invoke-ENV1B3Validation.ps1").read_text(encoding="ascii")
+    assert "W08PrepareHealthy" in entrypoint
+    assert "Mode='All'" in entrypoint
+
+    resource = (KIT / "Invoke-ResourceInterferenceMatrix.ps1").read_text(encoding="ascii")
+    assert "Get-FormalPorts" in resource
+    assert "upstream_listener.port" in resource
+    assert "gateway_listener.port" in resource
+    assert "formal_status_runtime_config" in resource
+    assert "recovery_materialization_passed" in resource
+    assert "manifest_semantics_revalidated" in resource
+
+    reboot = (KIT / "Invoke-RebootResume.ps1").read_text(encoding="ascii")
+    assert "REBOOT-RESUME-STOPPED.json" in reboot
+    assert "REBOOT-RESUME-RUNNING.json" in reboot
+    for stage in ("temp_write", "flush_true", "temp_parse", "commit", "final_parse", "final_sha"):
+        assert stage in reboot
+    assert "ENV1B3_REBOOT_KIND_NOT_FORMAL" in reboot
+
+    tamper = (KIT / "Invoke-TamperMatrix.ps1").read_text(encoding="ascii")
+    assert "ENV1B3_W09_SOURCE_INSTALL_ROOT_INVALID" in tamper
+    assert "copy_install_fixture.py" in tamper
+    assert "child_result='FAIL'" in tamper
 
 
 @pytest.mark.skipif(POWERSHELL is None, reason="Windows PowerShell is required")

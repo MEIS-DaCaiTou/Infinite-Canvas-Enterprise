@@ -42,6 +42,7 @@ function Invoke-Wrapper([string]$Name) {
 
 try {
     $failureStage='path_preflight'
+    $lastWrapperRole=$null;$lastWrapperResult=$null
     [void](Assert-ENV1B3AbsoluteSafePath $AppRoot)
     [void](Assert-ENV1B3AbsoluteSafePath $DifferentCwd)
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -103,7 +104,7 @@ try {
             @('stop',$stopWrapper)
         )) {
             $failureStage='wrapper_'+$item[0]
-            $results[$item[0]] = Invoke-Wrapper $item[1]
+            $lastWrapperRole=[string]$item[0];$results[$item[0]] = Invoke-Wrapper $item[1];$lastWrapperResult=$results[$item[0]]
             if ($results[$item[0]].exit_code -ne 0) { throw [InvalidOperationException]::new('ENV1B3_LIFECYCLE_COMMAND_FAILED|' + $item[0]) }
             if($item[0] -eq 'status'){
                 $failureStage='live_python_identity_snapshot'
@@ -187,10 +188,12 @@ try {
     } catch { }
     $code = 'ENV1B3_LIFECYCLE_FAILED'
     if ($_.Exception.Message -match '^([A-Z0-9_]+)\|') { $code=$Matches[1] }
+    $runtimeRoot=Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'InfiniteCanvasEnterprise\runtime'
+    $failureEvidence=@{failure_stage=$failureStage;wrapper_role=$lastWrapperRole;wrapper_exit=$(if($null-ne$lastWrapperResult){$lastWrapperResult.exit_code}else{$null});stdout_stderr_tail=$(if($null-ne$lastWrapperResult){$lastWrapperResult.output_tail}else{''});different_cwd_exists=(Test-Path -LiteralPath $DifferentCwd -PathType Container);app_root_exists=(Test-Path -LiteralPath $AppRoot -PathType Container);runtime_summary=@{lock_present=(Test-Path -LiteralPath (Join-Path $runtimeRoot 'runtime-supervisor.lock'));state_present=(Test-Path -LiteralPath (Join-Path $runtimeRoot 'runtime-state.json'))}}
     if ([string]::IsNullOrWhiteSpace($SubcheckId)) {
-        Write-ENV1B3CaseResult -EvidenceRoot $EvidenceRoot -CaseId $CaseId -Result 'FAIL' -Code $code -Evidence @{failure_stage=$failureStage} | ConvertTo-Json -Compress
+        Write-ENV1B3CaseResult -EvidenceRoot $EvidenceRoot -CaseId $CaseId -Result 'FAIL' -Code $code -Evidence $failureEvidence | ConvertTo-Json -Compress
     } else {
-        Write-ENV1B3SubcheckResult -EvidenceRoot $EvidenceRoot -CaseId $CaseId -SubcheckId $SubcheckId -Result 'FAIL' -Code $code -Evidence @{failure_stage=$failureStage} | ConvertTo-Json -Compress
+        Write-ENV1B3SubcheckResult -EvidenceRoot $EvidenceRoot -CaseId $CaseId -SubcheckId $SubcheckId -Result 'FAIL' -Code $code -Evidence $failureEvidence | ConvertTo-Json -Compress
     }
     exit 2
 }

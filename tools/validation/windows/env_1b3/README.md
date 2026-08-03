@@ -81,4 +81,6 @@ powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\Invoke-Remaini
   -EvidenceRoot <CASE_EVIDENCE_ROOT>
 ```
 
-Mode-specific contract fixtures remain explicit: W06 adds `-DeniedRoot`; W08/W09 add `-SourceInstallRoot` and `-CaseRoot`; W10 adds the controlled `-Port`; W12 adds `-IsolatedLowDiskRoot`. The entry derives Candidate identity and the ordinary APP_ROOT only from the hash-bound handoff when those optional values are omitted.
+Mode-specific contract fixtures remain explicit: W06 adds `-DeniedRoot`; W08/W09 add `-SourceInstallRoot` and `-CaseRoot`; W10 derives the upstream and gateway ports from the formal status/config contract and accepts no operator-selected test port; W12 adds `-IsolatedLowDiskRoot`. The entry derives Candidate identity and the ordinary APP_ROOT only from the hash-bound handoff when those optional values are omitted.
+
+Final convergence adds `W08PrepareHealthy`, five independently executable W08 targets, combined W09, formal-port W10, four graceful Guest reboot phases and full W13 to the single final entrypoint. Diagnostic manifests are accepted by exact task/candidate/handoff/verifier/boolean semantics and their own current `SHA256SUMS` binding rather than by a historical Probe schema-name allowlist. W09 fixture copying requires a complete install root and runs the bounded standard-library copy helper with the Release's fixed CP314 interpreter.

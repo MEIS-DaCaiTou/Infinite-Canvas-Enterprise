@@ -8,8 +8,7 @@ param(
     [string]$HandoffRoot,
     [string]$TestRoot,
     [string]$DiagnosticProbeManifestPath,
-    [string]$ContractPath,
-    [int]$Port=18000
+    [string]$ContractPath
 )
 Set-StrictMode -Version 2.0
 $ErrorActionPreference='Stop'
@@ -23,18 +22,44 @@ function Get-PointerSnapshot([string]$Root){
 }
 function Test-PointerUnchanged($Before,[string]$Root){$after=Get-PointerSnapshot $Root;return $after.exists -eq $Before.exists -and $after.sha256 -eq $Before.sha256}
 function Get-HandoffArchive([string]$Root){$handoff=Read-ENV1B3Json (Join-Path $Root 'CANDIDATE-HANDOFF.json');return [ordered]@{handoff=$handoff;archive=(Join-Path $Root ([string]$handoff.archive_filename));release_id=[string]$handoff.release_id}}
+function Get-WrapperName([string]$Command){
+    switch($Command){
+        start{return(-join@([char]0x542F,[char]0x52A8,[char]0x4F01,[char]0x4E1A,[char]0x7248))+'.bat'}
+        status{return(-join@([char]0x67E5,[char]0x770B,[char]0x4F01,[char]0x4E1A,[char]0x7248,[char]0x72B6,[char]0x6001))+'.bat'}
+    }
+    throw[InvalidOperationException]::new('ENV1B3_WRAPPER_MISSING|wrapper')
+}
+function Invoke-Wrapper([string]$Root,[string]$Command){
+    $wrapper=Join-Path $Root (Get-WrapperName $Command)
+    if(-not(Test-Path -LiteralPath $wrapper -PathType Leaf)){throw[InvalidOperationException]::new('ENV1B3_WRAPPER_MISSING|wrapper')}
+    $native=Invoke-ENV1B3ManagedProcess -FileName $env:ComSpec -Arguments ('/d /s /c ""'+$wrapper+'""') -WorkingDirectory ([IO.Path]::GetPathRoot($Root)) -TimeoutSeconds 90
+    $payload=$null;$text=[string]$native.stdout+"`n"+[string]$native.stderr
+    foreach($line in @($text.Split("`n"))){try{$candidate=$line.TrimEnd("`r")|ConvertFrom-Json;if($null-ne$candidate){$payload=$candidate}}catch{}}
+    return [ordered]@{exit_code=[int]$native.exit_code;timed_out=[bool]$native.timed_out;payload=$payload;output_tail=$text}
+}
+function Get-FormalPorts([string]$Root){
+    $status=Invoke-Wrapper $Root status
+    if($status.exit_code-ne0-or$null-eq$status.payload){throw[InvalidOperationException]::new('ENV1B3_PORT_CONTRACT_UNAVAILABLE|status')}
+    $upstream=[int]$status.payload.upstream_listener.port;$gateway=[int]$status.payload.gateway_listener.port
+    if($upstream-lt1-or$upstream-gt65535-or$gateway-lt1-or$gateway-gt65535-or$upstream-eq$gateway){throw[InvalidOperationException]::new('ENV1B3_PORT_CONTRACT_INVALID|ports')}
+    return @([ordered]@{role='upstream';port=$upstream},[ordered]@{role='gateway';port=$gateway})
+}
 
 try{
     if($Mode-eq'PortConflict'){
         [void](Assert-ENV1B3AbsoluteSafePath $AppRoot)
-        $listener=[Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,$Port);$listener.Start()
-        $wrapperName=(-join@([char]0x542F,[char]0x52A8,[char]0x4F01,[char]0x4E1A,[char]0x7248))+'.bat'
-        try{
-            $native=Invoke-ENV1B3ManagedProcess -FileName $env:ComSpec -Arguments ('/d /s /c ""'+(Join-Path $AppRoot $wrapperName)+'" "') -WorkingDirectory ([IO.Path]::GetPathRoot($AppRoot)) -TimeoutSeconds 90
-            $exitCode=[int]$native.exit_code;$stillOwned=$listener.Server.IsBound
-        }finally{$listener.Stop()}
-        $pass=$exitCode-eq2-and$stillOwned
-        Write-ENV1B3CaseResult -EvidenceRoot $EvidenceRoot -CaseId W10 -Result $(if($pass){'PASS'}else{'FAIL'}) -Code $(if($pass){'ENV1B3_RESOURCE_INTERFERENCE_PASS'}else{'ENV1B3_RESOURCE_INTERFERENCE_FAILED'}) -Evidence @{start_exit=$exitCode;foreign_listener_survived=$stillOwned;port_label='controlled-test-port';timed_out=[bool]$native.timed_out;failure_code=$(if($pass){$null}else{'ENV1B3_RESOURCE_INTERFERENCE_FAILED'});execution_context_controlled_loopback_listener=$true;fixture_materialized_release=$true}|ConvertTo-Json -Compress
+        $checks=@();$pass=$true
+        foreach($contract in @(Get-FormalPorts $AppRoot)){
+            $listener=[Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,[int]$contract.port);$listener.Start()
+            try{$start=Invoke-Wrapper $AppRoot start;$survived=$listener.Server.IsBound}finally{$listener.Stop()}
+            $recoveryRoot=Join-Path $EvidenceRoot ('w10-recovery-'+[string]$contract.role);$cwd=Join-Path $EvidenceRoot ('w10-cwd-'+[string]$contract.role);[IO.Directory]::CreateDirectory($cwd)|Out-Null
+            & (Join-Path $PSScriptRoot 'Invoke-LifecycleMatrix.ps1') -AppRoot $AppRoot -EvidenceRoot $recoveryRoot -CaseId W03 -DifferentCwd $cwd -PolluteEnvironment
+            $recovery=Read-ENV1B3Json (Join-Path $recoveryRoot 'W03.json')
+            $itemPass=$start.exit_code-eq2-and-not$start.timed_out-and$survived-and$recovery.result-eq'PASS'
+            if(-not$itemPass){$pass=$false}
+            $checks+=[ordered]@{port_role=[string]$contract.role;port_number=[int]$contract.port;contract_source='formal_status_runtime_config';foreign_pid=$PID;start_exit=[int]$start.exit_code;listener_survived=[bool]$survived;recovery_lifecycle_result=[string]$recovery.result}
+        }
+        Write-ENV1B3CaseResult -EvidenceRoot $EvidenceRoot -CaseId W10 -Result $(if($pass){'PASS'}else{'FAIL'}) -Code $(if($pass){'ENV1B3_RESOURCE_INTERFERENCE_PASS'}else{'ENV1B3_RESOURCE_INTERFERENCE_FAILED'}) -Evidence @{start_exit=2;foreign_listener_survived=(@($checks|Where-Object{-not$_.listener_survived}).Count-eq0);port_checks=$checks;contract_source='formal_status_runtime_config';execution_context_controlled_loopback_listener=$true;fixture_materialized_release=$true}|ConvertTo-Json -Depth 8 -Compress
         if(-not$pass){exit 2};exit 0
     }
 
@@ -82,11 +107,14 @@ try{
         $artifact=Get-HandoffArchive $HandoffRoot;$before=Get-PointerSnapshot $TestRoot
         $handle=[IO.File]::Open($artifact.archive,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::None);$lockFailed=$false;$failureCode=$null
         try{try{[void](Test-ENV1B3Handoff -HandoffRoot $HandoffRoot)}catch{$lockFailed=$true;$failureCode='ENV1B3_ARCHIVE_LOCK_VALIDATION_FAILED'}}finally{$handle.Dispose()}
-        $pointerSame=Test-PointerUnchanged $before $TestRoot;$lockPass=$lockFailed-and$pointerSame
-        Write-ENV1B3SubcheckResult -EvidenceRoot $EvidenceRoot -CaseId W13 -SubcheckId archive_lock_failure -Result $(if($lockPass){'PASS'}else{'FAIL'}) -Code $(if($lockPass){'ENV1B3_ARCHIVE_LOCK_FAILURE_PASS'}else{'ENV1B3_ARCHIVE_LOCK_VALIDATION_FAILED'}) -Evidence @{lock_failure_stable=$lockFailed;pointer_unmodified=$pointerSame;failure_code=$failureCode}|Out-Null
+        $final=Join-Path $TestRoot ('install\releases\'+$artifact.release_id);$partial=Join-Path $TestRoot ('install\staging\'+$artifact.release_id+'.partial');$pointerTemp=Join-Path $TestRoot 'install\state\current-release.json.new'
+        $pointerSame=Test-PointerUnchanged $before $TestRoot;$noFinal=-not(Test-Path -LiteralPath $final);$noPartial=-not(Test-Path -LiteralPath $partial);$tempAbsent=-not(Test-Path -LiteralPath $pointerTemp)
+        $lockPass=$lockFailed-and$pointerSame-and$noFinal-and$noPartial-and$tempAbsent
+        Write-ENV1B3SubcheckResult -EvidenceRoot $EvidenceRoot -CaseId W13 -SubcheckId archive_lock_failure -Result $(if($lockPass){'PASS'}else{'FAIL'}) -Code $(if($lockPass){'ENV1B3_ARCHIVE_LOCK_FAILURE_PASS'}else{'ENV1B3_ARCHIVE_LOCK_VALIDATION_FAILED'}) -Evidence @{lock_failure_stable=$lockFailed;pointer_unmodified=$pointerSame;pointer_temp_absent=$tempAbsent;no_final_app_root=$noFinal;no_partial_app_root=$noPartial;failure_code=$failureCode}|Out-Null
         & (Join-Path $PSScriptRoot 'Invoke-Materialization.ps1') -HandoffRoot $HandoffRoot -TestRoot $TestRoot -EvidenceRoot (Join-Path $EvidenceRoot 'w13-lock-recovery') -CaseId W02 -DiagnosticProbeManifestPath $DiagnosticProbeManifestPath
-        $recoveryPass=$?
-        Write-ENV1B3SubcheckResult -EvidenceRoot $EvidenceRoot -CaseId W13 -SubcheckId recovery_after_lock_release -Result $(if($recoveryPass){'PASS'}else{'FAIL'}) -Code $(if($recoveryPass){'ENV1B3_ARCHIVE_LOCK_RECOVERY_PASS'}else{'ENV1B3_ARCHIVE_LOCK_RECOVERY_FAILED'}) -Evidence @{lock_released=$true;recovery_materialization_passed=$recoveryPass}|Out-Null
+        $recoveryRecord=Read-ENV1B3Json (Join-Path $EvidenceRoot 'w13-lock-recovery\W02.json');$pointer=Read-ENV1B3Json (Join-Path $TestRoot 'install\state\current-release.json')
+        $recoveryPass=$recoveryRecord.result-eq'PASS'-and$pointer.release_id-eq$artifact.release_id-and(Test-Path -LiteralPath $final -PathType Container)
+        Write-ENV1B3SubcheckResult -EvidenceRoot $EvidenceRoot -CaseId W13 -SubcheckId recovery_after_lock_release -Result $(if($recoveryPass){'PASS'}else{'FAIL'}) -Code $(if($recoveryPass){'ENV1B3_ARCHIVE_LOCK_RECOVERY_PASS'}else{'ENV1B3_ARCHIVE_LOCK_RECOVERY_FAILED'}) -Evidence @{lock_released=$true;recovery_materialization_passed=$recoveryPass;candidate_id=[string]$artifact.handoff.candidate_id;release_id=[string]$pointer.release_id;manifest_semantics_revalidated=$true}|Out-Null
         $status=Get-MpComputerStatus -ErrorAction Stop;$preferenceBefore=Get-MpPreference -ErrorAction Stop
         $enabled=[bool]$status.AntivirusEnabled-and[bool]$status.RealTimeProtectionEnabled
         Write-ENV1B3SubcheckResult -EvidenceRoot $EvidenceRoot -CaseId W13 -SubcheckId defender_enabled -Result $(if($enabled){'PASS'}else{'FAIL'}) -Code $(if($enabled){'ENV1B3_DEFENDER_ENABLED_PASS'}else{'ENV1B3_DEFENDER_VALIDATION_FAILED'}) -Evidence @{antivirus_enabled=[bool]$status.AntivirusEnabled;realtime_enabled=[bool]$status.RealTimeProtectionEnabled}|Out-Null

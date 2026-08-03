@@ -16,13 +16,7 @@ try {
     $verifierName = $null
     $verifierHash = $null
     if (-not [String]::IsNullOrWhiteSpace($DiagnosticProbeManifestPath)) {
-        $probe = Read-ENV1B3Json $DiagnosticProbeManifestPath
-        if ([string]$probe.schema_version -notin @('env-1b3-remaining-matrix-probe-v1','env-1b3-remaining-matrix-probe-v2') -or
-            $probe.diagnostic_only -ne $true -or $probe.not_a_release_candidate -ne $true -or
-            $probe.cannot_support_final_acceptance -ne $true -or $probe.production_approved -ne $false -or
-            [string]$probe.expected_candidate_id -ne [string]$handoff.candidate_id) {
-            throw [InvalidOperationException]::new('ENV1B3_DIAGNOSTIC_PROBE_IDENTITY_INVALID|probe')
-        }
+        $probe = Test-ENV1B3DiagnosticManifest -ManifestPath $DiagnosticProbeManifestPath -HandoffRoot $HandoffRoot
         $verifierName = [string]$probe.materialized_verifier_filename
         $verifierHash = [string]$probe.materialized_verifier_sha256
     } else {

@@ -272,6 +272,53 @@ function Test-ENV1B3Handoff {
     return [ordered]@{result='pass'; candidate_id=[string]$handoff.candidate_id; candidate_sequence=[string]$handoff.candidate_sequence; release_id=[string]$handoff.release_id; artifact=$artifact; sums_count=$sums.Count}
 }
 
+function Test-ENV1B3DiagnosticManifest {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$ManifestPath,
+        [Parameter(Mandatory)][string]$HandoffRoot,
+        [ValidatePattern('^$|^[0-9a-f]{64}$')][string]$ExpectedCandidateHandoffSha256
+    )
+    $manifestFull = Assert-ENV1B3AbsoluteSafePath $ManifestPath
+    $handoffFull = Assert-ENV1B3AbsoluteSafePath $HandoffRoot
+    $bundleRoot = Split-Path -Parent $manifestFull
+    $sumsPath = Join-Path $bundleRoot 'SHA256SUMS'
+    $relative = [IO.Path]::GetFileName($manifestFull)
+    if ($relative -ne 'PROBE-MANIFEST.json' -or -not (Test-Path -LiteralPath $sumsPath -PathType Leaf)) {
+        Throw-ENV1B3Error 'ENV1B3_DIAGNOSTIC_MANIFEST_IDENTITY_INVALID' 'manifest_binding'
+    }
+    $sums = Read-ENV1B3Sums -LiteralPath $sumsPath -Root $bundleRoot
+    $key = $relative.ToLowerInvariant()
+    if (-not $sums.ContainsKey($key) -or $sums[$key] -ne (Get-ENV1B3Sha256 $manifestFull)) {
+        Throw-ENV1B3Error 'ENV1B3_DIAGNOSTIC_MANIFEST_IDENTITY_INVALID' 'manifest_binding'
+    }
+    $manifest = Read-ENV1B3Json $manifestFull
+    $handoff = Read-ENV1B3Json (Join-Path $handoffFull 'CANDIDATE-HANDOFF.json')
+    if ([String]::IsNullOrWhiteSpace($ExpectedCandidateHandoffSha256)) {
+        $ExpectedCandidateHandoffSha256 = [string]$manifest.expected_candidate_handoff_sha256
+    }
+    $verifierName = [string]$manifest.materialized_verifier_filename
+    $verifierHash = [string]$manifest.materialized_verifier_sha256
+    $verifierPath = Join-Path $bundleRoot ($verifierName.Replace('/', [IO.Path]::DirectorySeparatorChar))
+    if ($manifest.overall_task_id -ne $script:TaskId -or
+        [string]$manifest.expected_candidate_id -ne [string]$handoff.candidate_id -or
+        $ExpectedCandidateHandoffSha256 -notmatch '^[0-9a-f]{64}$' -or
+        [string]$manifest.expected_candidate_handoff_sha256 -ne $ExpectedCandidateHandoffSha256 -or
+        $verifierName -ne 'validation-kit/verify_materialized_release.py' -or
+        $verifierHash -notmatch '^[0-9a-f]{64}$' -or
+        -not (Test-Path -LiteralPath $verifierPath -PathType Leaf) -or
+        (Get-ENV1B3Sha256 $verifierPath) -ne $verifierHash -or
+        [string]$handoff.materialized_verifier_filename -ne $verifierName -or
+        [string]$handoff.materialized_verifier_sha256 -ne $verifierHash -or
+        $manifest.diagnostic_only -ne $true -or
+        $manifest.not_a_release_candidate -ne $true -or
+        $manifest.cannot_support_final_acceptance -ne $true -or
+        $manifest.production_approved -ne $false) {
+        Throw-ENV1B3Error 'ENV1B3_DIAGNOSTIC_MANIFEST_IDENTITY_INVALID' 'semantics'
+    }
+    return $manifest
+}
+
 function Write-ENV1B3CaseResult {
     param(
         [Parameter(Mandatory)][string]$EvidenceRoot,
@@ -387,33 +434,32 @@ function Write-ENV1B3DurableJson {
     $bytes = [Text.UTF8Encoding]::new($false).GetBytes(($Document | ConvertTo-Json -Depth 16 -Compress) + "`n")
     $stream = $null
     try {
-        $stream = [IO.FileStream]::new($temp,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None,4096,[IO.FileOptions]::WriteThrough)
-        $stream.Write($bytes,0,$bytes.Length)
-        $stream.Flush($true)
-    } catch {
-        Throw-ENV1B3Error 'ENV1B3_REBOOT_STATE_DURABILITY_FAILED' 'write'
-    } finally {
-        if ($null -ne $stream) { $stream.Dispose() }
-    }
-    try {
-        $tempBytes = [IO.File]::ReadAllBytes($temp)
+        try {
+            $stream = [IO.FileStream]::new($temp,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None,4096,[IO.FileOptions]::WriteThrough)
+            $stream.Write($bytes,0,$bytes.Length)
+        } catch { Throw-ENV1B3Error 'ENV1B3_REBOOT_STATE_DURABILITY_FAILED' 'temp_write' }
+        try { $stream.Flush($true) } catch { Throw-ENV1B3Error 'ENV1B3_REBOOT_STATE_DURABILITY_FAILED' 'flush_true' }
+        $stream.Dispose();$stream=$null
+        try { $tempBytes = [IO.File]::ReadAllBytes($temp) } catch { Throw-ENV1B3Error 'ENV1B3_REBOOT_STATE_DURABILITY_FAILED' 'temp_parse' }
         if ($tempBytes.Length -eq 0 -or @($tempBytes | Where-Object { $_ -ne 0 }).Count -eq 0) {
-            Throw-ENV1B3Error 'ENV1B3_REBOOT_STATE_DURABILITY_FAILED' 'zero_state'
+            Throw-ENV1B3Error 'ENV1B3_REBOOT_STATE_DURABILITY_FAILED' 'temp_parse'
         }
-        [void](Read-ENV1B3Json $temp)
+        try { [void](Read-ENV1B3Json $temp) } catch { Throw-ENV1B3Error 'ENV1B3_REBOOT_STATE_DURABILITY_FAILED' 'temp_parse' }
         $sha = Get-ENV1B3Sha256 $temp
-        if (Test-Path -LiteralPath $Path) { [IO.File]::Replace($temp,$Path,$null) } else { [IO.File]::Move($temp,$Path) }
-        $finalBytes = [IO.File]::ReadAllBytes($Path)
+        try { if (Test-Path -LiteralPath $Path) { [IO.File]::Replace($temp,$Path,$null) } else { [IO.File]::Move($temp,$Path) } }
+        catch { Throw-ENV1B3Error 'ENV1B3_REBOOT_STATE_DURABILITY_FAILED' 'commit' }
+        try { $finalBytes = [IO.File]::ReadAllBytes($Path) } catch { Throw-ENV1B3Error 'ENV1B3_REBOOT_STATE_DURABILITY_FAILED' 'final_parse' }
         if ($finalBytes.Length -eq 0 -or @($finalBytes | Where-Object { $_ -ne 0 }).Count -eq 0) {
-            Throw-ENV1B3Error 'ENV1B3_REBOOT_STATE_DURABILITY_FAILED' 'zero_state'
+            Throw-ENV1B3Error 'ENV1B3_REBOOT_STATE_DURABILITY_FAILED' 'final_parse'
         }
-        [void](Read-ENV1B3Json $Path)
-        if ((Get-ENV1B3Sha256 $Path) -ne $sha) { Throw-ENV1B3Error 'ENV1B3_REBOOT_STATE_DURABILITY_FAILED' 'hash' }
+        try { [void](Read-ENV1B3Json $Path) } catch { Throw-ENV1B3Error 'ENV1B3_REBOOT_STATE_DURABILITY_FAILED' 'final_parse' }
+        if ((Get-ENV1B3Sha256 $Path) -ne $sha) { Throw-ENV1B3Error 'ENV1B3_REBOOT_STATE_DURABILITY_FAILED' 'final_sha' }
         return $sha
     } catch {
         if ($_.Exception.Message -match '^ENV1B3_') { throw }
-        Throw-ENV1B3Error 'ENV1B3_REBOOT_STATE_DURABILITY_FAILED' 'commit'
+        Throw-ENV1B3Error 'ENV1B3_REBOOT_STATE_DURABILITY_FAILED' 'unknown'
     } finally {
+        if ($null -ne $stream) { $stream.Dispose() }
         if (Test-Path -LiteralPath $temp) { try { Remove-Item -LiteralPath $temp -Force } catch {} }
     }
 }
@@ -694,4 +740,4 @@ function Test-ENV1B3CleanRuntimeBaseline {
     }
 }
 
-Export-ModuleMember -Function Get-ENV1B3Sha256,Test-ENV1B3SafeRelativePath,Assert-ENV1B3AbsoluteSafePath,Read-ENV1B3Json,Read-ENV1B3Sums,Get-ENV1B3InventoryTree,Get-ENV1B3DirectoryTree,Assert-ENV1B3Inventory,Test-ENV1B3ZipEntryUnsafe,Test-ENV1B3ReleaseArtifacts,Test-ENV1B3Handoff,Write-ENV1B3CaseResult,Invoke-ENV1B3ManagedProcess,Get-ENV1B3NonEmptyStringSet,Write-ENV1B3DurableJson,Read-ENV1B3DurableJson,Read-ENV1B3MatrixContracts,Write-ENV1B3SubcheckResult,Complete-ENV1B3CaseResult,ConvertTo-ENV1B3UtcIso8601,ConvertTo-ENV1B3WhereDiscoveryResult,Invoke-ENV1B3WhereLookup,Get-ENV1B3DisplayNames,Test-ENV1B3WindowsAppsAliasPath,Test-ENV1B3CleanRuntimeBaseline
+Export-ModuleMember -Function Get-ENV1B3Sha256,Test-ENV1B3SafeRelativePath,Assert-ENV1B3AbsoluteSafePath,Read-ENV1B3Json,Read-ENV1B3Sums,Get-ENV1B3InventoryTree,Get-ENV1B3DirectoryTree,Assert-ENV1B3Inventory,Test-ENV1B3ZipEntryUnsafe,Test-ENV1B3ReleaseArtifacts,Test-ENV1B3Handoff,Test-ENV1B3DiagnosticManifest,Write-ENV1B3CaseResult,Invoke-ENV1B3ManagedProcess,Get-ENV1B3NonEmptyStringSet,Write-ENV1B3DurableJson,Read-ENV1B3DurableJson,Read-ENV1B3MatrixContracts,Write-ENV1B3SubcheckResult,Complete-ENV1B3CaseResult,ConvertTo-ENV1B3UtcIso8601,ConvertTo-ENV1B3WhereDiscoveryResult,Invoke-ENV1B3WhereLookup,Get-ENV1B3DisplayNames,Test-ENV1B3WindowsAppsAliasPath,Test-ENV1B3CleanRuntimeBaseline

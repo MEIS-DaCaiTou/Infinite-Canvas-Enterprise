@@ -11,14 +11,8 @@ Import-Module (Join-Path $PSScriptRoot 'ENV1B3.Materialization.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'ENV1B3.Validation.psm1') -Force
 
 try {
-    $probe=Read-ENV1B3Json $ProbeManifestPath
     $handoff=Read-ENV1B3Json (Join-Path $HandoffRoot 'CANDIDATE-HANDOFF.json')
-    if([string]$probe.schema_version -notin @('env-1b3-remaining-matrix-probe-v1','env-1b3-remaining-matrix-probe-v2') -or
-       $probe.expected_candidate_id -ne $handoff.candidate_id -or
-       $probe.diagnostic_only -ne $true -or $probe.not_a_release_candidate -ne $true -or
-       $probe.cannot_support_final_acceptance -ne $true -or $probe.production_approved -ne $false){
-        throw [InvalidOperationException]::new('ENV1B3_DIAGNOSTIC_PROBE_IDENTITY_INVALID|probe')
-    }
+    $probe=Test-ENV1B3DiagnosticManifest -ManifestPath $ProbeManifestPath -HandoffRoot $HandoffRoot
     $verifier=Join-Path $PSScriptRoot 'verify_materialized_release.py'
     $verifierHash=[string]$probe.materialized_verifier_sha256
     $releaseId=[string]$handoff.release_id

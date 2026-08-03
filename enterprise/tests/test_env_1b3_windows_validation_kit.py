@@ -20,7 +20,7 @@ TASK_ID = "ENV-1B3-CLEAN-WINDOWS-VALIDATION-AND-RELEASE-CANDIDATE"
 def _run_powershell(script: str) -> subprocess.CompletedProcess[str]:
     assert POWERSHELL is not None
     return subprocess.run(
-        [POWERSHELL, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+        [POWERSHELL, "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
         cwd=ROOT,
         text=True,
         encoding="utf-8",
@@ -335,6 +335,7 @@ def test_matrix_and_single_entrypoint_are_closed() -> None:
         "matrix.json",
         "matrix-contracts.json",
         "verify_materialized_release.py",
+        "copy_install_fixture.py",
     }
     assert {path.name for path in KIT.iterdir() if path.is_file()} == expected_files
     matrix = json.loads((KIT / "matrix.json").read_text(encoding="utf-8"))
