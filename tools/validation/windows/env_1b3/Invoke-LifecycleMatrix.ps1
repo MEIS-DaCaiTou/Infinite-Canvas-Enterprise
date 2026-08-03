@@ -48,7 +48,7 @@ try {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $isAdmin = ([Security.Principal.WindowsPrincipal]::new($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     if ($isAdmin) { throw [InvalidOperationException]::new('ENV1B3_APPLICATION_USER_ADMIN_FORBIDDEN|user') }
-    $expectedPython = [IO.Path]::GetFullPath((Join-Path $AppRoot 'python\python.exe'))
+    $expectedPython = ConvertTo-ENV1B3ComparableProcessPath (Join-Path $AppRoot 'python\python.exe')
     if (-not (Test-Path -LiteralPath $expectedPython -PathType Leaf)) { throw [InvalidOperationException]::new('ENV1B3_FIXED_PYTHON_MISSING|python') }
     $appTreeBefore = Get-ENV1B3DirectoryTree $AppRoot
     $candidatePythonDirectory = [IO.Path]::GetDirectoryName($expectedPython)
@@ -120,7 +120,7 @@ try {
                     if($null -eq $property -or [String]::IsNullOrWhiteSpace([string]$property.Value)){
                         throw [InvalidOperationException]::new('ENV1B3_LIFECYCLE_PROCESS_IDENTITY_INVALID|executable')
                     }
-                    $actual=[IO.Path]::GetFullPath([string]$property.Value)
+                    $actual=ConvertTo-ENV1B3ComparableProcessPath ([string]$property.Value)
                     $livePythonPaths+=$actual
                 }
                 if ($RequireOffline) {

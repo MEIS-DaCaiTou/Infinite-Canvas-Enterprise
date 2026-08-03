@@ -23,6 +23,20 @@ function Get-ENV1B3Sha256 {
     } finally { $stream.Dispose() }
 }
 
+function ConvertTo-ENV1B3ComparableProcessPath {
+    param([Parameter(Mandatory)][string]$LiteralPath)
+    if ([String]::IsNullOrWhiteSpace($LiteralPath)) {
+        Throw-ENV1B3Error 'ENV1B3_PROCESS_PATH_INVALID' 'path'
+    }
+    $value = $LiteralPath
+    if ($value.StartsWith('\\?\UNC\', [StringComparison]::OrdinalIgnoreCase)) {
+        $value = '\\' + $value.Substring(8)
+    } elseif ($value -match '^\\\\\?\\[A-Za-z]:\\') {
+        $value = $value.Substring(4)
+    }
+    return [IO.Path]::GetFullPath($value)
+}
+
 function Test-ENV1B3SafeRelativePath {
     param([Parameter(Mandatory)][string]$Value)
     if ([string]::IsNullOrWhiteSpace($Value) -or $Value.Length -gt 240) { return $false }
@@ -740,4 +754,4 @@ function Test-ENV1B3CleanRuntimeBaseline {
     }
 }
 
-Export-ModuleMember -Function Get-ENV1B3Sha256,Test-ENV1B3SafeRelativePath,Assert-ENV1B3AbsoluteSafePath,Read-ENV1B3Json,Read-ENV1B3Sums,Get-ENV1B3InventoryTree,Get-ENV1B3DirectoryTree,Assert-ENV1B3Inventory,Test-ENV1B3ZipEntryUnsafe,Test-ENV1B3ReleaseArtifacts,Test-ENV1B3Handoff,Test-ENV1B3DiagnosticManifest,Write-ENV1B3CaseResult,Invoke-ENV1B3ManagedProcess,Get-ENV1B3NonEmptyStringSet,Write-ENV1B3DurableJson,Read-ENV1B3DurableJson,Read-ENV1B3MatrixContracts,Write-ENV1B3SubcheckResult,Complete-ENV1B3CaseResult,ConvertTo-ENV1B3UtcIso8601,ConvertTo-ENV1B3WhereDiscoveryResult,Invoke-ENV1B3WhereLookup,Get-ENV1B3DisplayNames,Test-ENV1B3WindowsAppsAliasPath,Test-ENV1B3CleanRuntimeBaseline
+Export-ModuleMember -Function Get-ENV1B3Sha256,ConvertTo-ENV1B3ComparableProcessPath,Test-ENV1B3SafeRelativePath,Assert-ENV1B3AbsoluteSafePath,Read-ENV1B3Json,Read-ENV1B3Sums,Get-ENV1B3InventoryTree,Get-ENV1B3DirectoryTree,Assert-ENV1B3Inventory,Test-ENV1B3ZipEntryUnsafe,Test-ENV1B3ReleaseArtifacts,Test-ENV1B3Handoff,Test-ENV1B3DiagnosticManifest,Write-ENV1B3CaseResult,Invoke-ENV1B3ManagedProcess,Get-ENV1B3NonEmptyStringSet,Write-ENV1B3DurableJson,Read-ENV1B3DurableJson,Read-ENV1B3MatrixContracts,Write-ENV1B3SubcheckResult,Complete-ENV1B3CaseResult,ConvertTo-ENV1B3UtcIso8601,ConvertTo-ENV1B3WhereDiscoveryResult,Invoke-ENV1B3WhereLookup,Get-ENV1B3DisplayNames,Test-ENV1B3WindowsAppsAliasPath,Test-ENV1B3CleanRuntimeBaseline

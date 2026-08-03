@@ -399,6 +399,22 @@ def test_safe_relative_path_contract(candidate: str, allowed: bool) -> None:
 
 
 @pytest.mark.skipif(POWERSHELL is None, reason="Windows PowerShell is required")
+def test_process_identity_path_comparison_normalizes_only_win32_extended_namespace() -> None:
+    module = str(KIT / "ENV1B3.Validation.psm1").replace("'", "''")
+    result = _run_powershell(
+        f"Import-Module '{module}' -Force;"
+        "$drive=ConvertTo-ENV1B3ComparableProcessPath '\\\\?\\C:\\Release\\python\\python.exe';"
+        "$ordinary=ConvertTo-ENV1B3ComparableProcessPath 'C:\\Release\\python\\python.exe';"
+        "$unc=ConvertTo-ENV1B3ComparableProcessPath '\\\\?\\UNC\\server\\share\\python.exe';"
+        "[ordered]@{drive=$drive;ordinary=$ordinary;unc=$unc}|ConvertTo-Json -Compress"
+    )
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout.strip().splitlines()[-1])
+    assert payload["drive"].lower() == payload["ordinary"].lower()
+    assert payload["unc"].lower() == r"\\server\share\python.exe"
+
+
+@pytest.mark.skipif(POWERSHELL is None, reason="Windows PowerShell is required")
 def test_install_date_normalization_is_nullable_invariant_and_locale_independent() -> None:
     module = str(KIT / "ENV1B3.Validation.psm1").replace("'", "''")
     command = (

@@ -170,7 +170,7 @@ function Stop-VerifiedOwnedProcesses([string]$AppRoot) {
     $runtimeRoot = Get-RuntimeRoot
     $state = Read-OptionalJson (Join-Path $runtimeRoot 'runtime-state.json')
     if ($null -eq $state) { return @() }
-    $expectedPython = [IO.Path]::GetFullPath((Join-Path $AppRoot 'python\python.exe'))
+    $expectedPython = ConvertTo-ENV1B3ComparableProcessPath (Join-Path $AppRoot 'python\python.exe')
     $terminated = @()
     foreach ($identity in @(
         [ordered]@{pid=$state.supervisor_pid;created=$state.supervisor_process_created_at;executable=$state.supervisor_executable}
@@ -180,11 +180,11 @@ function Stop-VerifiedOwnedProcesses([string]$AppRoot) {
         $process = Get-CimInstance Win32_Process -Filter ('ProcessId = ' + $pid) -ErrorAction Stop
         $pathProperty = $process.PSObject.Properties['ExecutablePath']
         if ($null -eq $pathProperty -or [String]::IsNullOrWhiteSpace([string]$pathProperty.Value)) { continue }
-        $actualPath = [IO.Path]::GetFullPath([string]$pathProperty.Value)
+        $actualPath = ConvertTo-ENV1B3ComparableProcessPath ([string]$pathProperty.Value)
         $actualCreated = ([DateTime]$process.CreationDate).ToUniversalTime().ToFileTimeUtc()
         if ([string]::Compare($actualPath,$expectedPython,$true) -ne 0 -or
             [int64]$actualCreated -ne [int64]$identity.created -or
-            [string]::Compare([IO.Path]::GetFullPath([string]$identity.executable),$expectedPython,$true) -ne 0) {
+            [string]::Compare((ConvertTo-ENV1B3ComparableProcessPath ([string]$identity.executable)),$expectedPython,$true) -ne 0) {
             continue
         }
         Stop-Process -Id $pid -Force -ErrorAction Stop
