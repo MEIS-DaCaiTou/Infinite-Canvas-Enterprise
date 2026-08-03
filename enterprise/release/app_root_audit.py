@@ -530,6 +530,7 @@ _OTHER_FLOW_BY_SYMBOL: dict[tuple[str, str], str] = {
     ("enterprise/runtime/logging.py", "RuntimeLogs.__init__"): "W27",
     ("enterprise/runtime/process.py", "graceful_stop"): "W28",
     ("enterprise/runtime/process.py", "start_process"): "W26",
+    ("enterprise/runtime/portable.py", "_prepare_writable_probe_roots"): "W42",
     ("enterprise/runtime/state.py", "RuntimeStateStore.acquire_foreground_lock"): "W26",
     ("enterprise/runtime/state.py", "RuntimeStateStore.clear_stale_lock"): "W26",
     ("enterprise/runtime/state.py", "RuntimeStateStore.consume_commands"): "W26",
@@ -590,7 +591,7 @@ def _flow_for_operation(file: str, symbol: str) -> str:
 # every mapped site as (file, symbol, operation, normalized-call fingerprint,
 # Wxx flow). Line numbers are deliberately excluded, while duplicate identical
 # calls remain duplicate records. Any added/removed/changed call drifts it.
-EXPECTED_SITE_MANIFEST_DIGEST = "3dff59d8a3b3c82fdab982d9c77dbc9f78798ab10f7e683ffce1b4acbdc0ee6a"
+EXPECTED_SITE_MANIFEST_DIGEST = "4d8d78573e7c6f1981b2e3939443ee0f5259099f27e3228299d2d880c80fdeb1"
 
 FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W01", "main.py", "startup_event"),

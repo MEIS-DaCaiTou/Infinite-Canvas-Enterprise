@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 from dataclasses import replace
 from pathlib import Path
 
@@ -118,6 +119,29 @@ def test_portable_preflight_cross_binds_pointer_manifest_python_and_roots(tmp_pa
     assert tuple(item.root_label for item in evidence.writable_probes) == (
         "DATA_ROOT", "LOG_ROOT", "RUNTIME_ROOT", "CACHE_ROOT", "TEMP_ROOT"
     )
+
+
+def test_portable_preflight_prepares_missing_writable_roots_before_probe(tmp_path: Path) -> None:
+    app, local, probe = _fixture(tmp_path)
+    writable_roots = (
+        app.parents[1] / "data",
+        app.parents[1] / "logs",
+        local / "InfiniteCanvasEnterprise" / "runtime",
+        local / "Infinite-Canvas-Enterprise" / "cache",
+        local / "Infinite-Canvas-Enterprise" / "temp",
+    )
+    for root in writable_roots:
+        shutil.rmtree(root)
+
+    evidence = build_portable_preflight(
+        app,
+        local_app_data_resolver=lambda: local,
+        executable=app / "python" / "python.exe",
+        python_probe=probe,
+    )
+
+    assert evidence.result.result == "pass"
+    assert all(root.is_dir() for root in writable_roots)
 
 
 def test_pointer_must_identify_launcher_release(tmp_path: Path) -> None:

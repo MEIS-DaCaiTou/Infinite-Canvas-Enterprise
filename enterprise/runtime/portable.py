@@ -58,6 +58,26 @@ _PROBE_ROOTS = (
 )
 
 
+def _prepare_writable_probe_roots(roots: PathRoots) -> None:
+    """Create the bounded portable writable roots before probing them.
+
+    A clean Windows profile has no per-user runtime/cache/temp directories yet.
+    Creation therefore uses the existing pre-use/post-create reparse checks;
+    the subsequent writable probes remain the authoritative preflight check.
+    """
+
+    for attribute, label in _PROBE_ROOTS:
+        root = Path(getattr(roots, attribute))
+        try:
+            assert_no_reparse_ancestors(root, allow_missing=True)
+            root.mkdir(parents=True, exist_ok=True)
+            assert_no_reparse_ancestors(root)
+            if not root.is_dir() or has_reparse_point(root):
+                raise PathSafetyError("path-invalid")
+        except (OSError, PathSafetyError) as exc:
+            raise RuntimeContractError("WRITABLE_PROBE_CREATE_FAILED", details={"label": label}) from exc
+
+
 def _same_path(left: Path, right: Path) -> bool:
     return os.path.normcase(os.path.abspath(os.path.normpath(os.fspath(left)))) == os.path.normcase(
         os.path.abspath(os.path.normpath(os.fspath(right)))
@@ -193,6 +213,7 @@ def build_portable_preflight(
         expected_executable=fixed_executable,
         expected_runtime_root=roots.PYTHON_RUNTIME,
     )
+    _prepare_writable_probe_roots(roots)
     probes = tuple(probe(Path(getattr(roots, attribute)), label) for attribute, label in _PROBE_ROOTS)
     result = build_startup_preflight_result(
         mode=parse_runtime_mode("portable-release"),
