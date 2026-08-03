@@ -78,7 +78,8 @@ try{
             $longestLength=if($longest.Count){$longest[0].FullName.Length}else{0}
             $python=Join-Path $root 'python\python.exe';$ioPass=$false;$ioCode='ENV1B3_FIXED_PYTHON_LONG_PATH_IO_FAILED'
             if($longestLength-gt260){
-                $io=Invoke-ENV1B3ManagedProcess -FileName $python -Arguments ('-I -B -c "import pathlib,sys;p=pathlib.Path(sys.argv[1]);p.open(''rb'').read(1)" "'+$longest[0].FullName+'"') -WorkingDirectory ([IO.Path]::GetPathRoot($root)) -TimeoutSeconds 60
+                $longPathFile=ConvertTo-ENV1B3FileSystemPath $longest[0].FullName
+                $io=Invoke-ENV1B3ManagedProcess -FileName $python -Arguments ('-I -B -c "import pathlib,sys;p=pathlib.Path(sys.argv[1]);p.open(''rb'').read(1)" "'+$longPathFile+'"') -WorkingDirectory ([IO.Path]::GetPathRoot($root)) -TimeoutSeconds 60
                 $ioPass=$io.exit_code-eq0-and-not$io.timed_out
             }
             $materializedPass=$longestLength-gt260-and$ioPass

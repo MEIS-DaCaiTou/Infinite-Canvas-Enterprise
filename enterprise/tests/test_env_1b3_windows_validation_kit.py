@@ -415,6 +415,21 @@ def test_process_identity_path_comparison_normalizes_only_win32_extended_namespa
 
 
 @pytest.mark.skipif(POWERSHELL is None, reason="Windows PowerShell is required")
+def test_validation_file_system_path_uses_extended_namespace_for_long_path_io() -> None:
+    module = str(KIT / "ENV1B3.Validation.psm1").replace("'", "''")
+    result = _run_powershell(
+        f"Import-Module '{module}' -Force;"
+        "$drive=ConvertTo-ENV1B3FileSystemPath 'C:\\Release\\payload.txt';"
+        "$unc=ConvertTo-ENV1B3FileSystemPath '\\\\server\\share\\payload.txt';"
+        "[ordered]@{drive=$drive;unc=$unc}|ConvertTo-Json -Compress"
+    )
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout.strip().splitlines()[-1])
+    assert payload["drive"].lower() == r"\\?\c:\release\payload.txt"
+    assert payload["unc"].lower() == r"\\?\unc\server\share\payload.txt"
+
+
+@pytest.mark.skipif(POWERSHELL is None, reason="Windows PowerShell is required")
 def test_install_date_normalization_is_nullable_invariant_and_locale_independent() -> None:
     module = str(KIT / "ENV1B3.Validation.psm1").replace("'", "''")
     command = (

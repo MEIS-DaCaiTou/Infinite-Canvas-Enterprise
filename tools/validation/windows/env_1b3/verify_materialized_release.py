@@ -38,6 +38,30 @@ class VerificationError(RuntimeError):
         self.code = code
 
 
+def _strip_windows_namespace(value: str) -> str:
+    """Return the logical Windows path without changing non-namespace input."""
+    if value.startswith("\\\\?\\UNC\\"):
+        return "\\\\" + value[8:]
+    if value.startswith("\\\\?\\") and len(value) >= 7 and value[5] == ":" and value[6] in "\\/":
+        return value[4:]
+    return value
+
+
+def _filesystem_path(path: Path) -> Path:
+    """Use Win32's extended namespace for long-path-safe read-only access."""
+    absolute = str(path.absolute())
+    if os.name != "nt" or absolute.startswith("\\\\?\\"):
+        return Path(absolute)
+    if absolute.startswith("\\\\"):
+        return Path("\\\\?\\UNC\\" + absolute[2:])
+    return Path("\\\\?\\" + absolute)
+
+
+def _comparison_path(path: Path) -> str:
+    value = _strip_windows_namespace(os.path.abspath(os.fspath(path)))
+    return os.path.normcase(value)
+
+
 def _no_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key, value in pairs:
@@ -242,9 +266,9 @@ def verify_materialized_release(
     *,
     require_cp314: bool = True,
 ) -> dict[str, Any]:
-    app_root = app_root.absolute()
-    inventory_path = inventory_path.absolute()
-    manifest_path = manifest_path.absolute()
+    app_root = _filesystem_path(app_root)
+    inventory_path = _filesystem_path(inventory_path)
+    manifest_path = _filesystem_path(manifest_path)
     handoff_path = handoff_path.absolute()
     _assert_no_reparse_ancestors(app_root)
     _lstat_regular(app_root, directory=True)
@@ -307,7 +331,7 @@ def verify_materialized_release(
         ):
             raise VerificationError("ENV1B3_MATERIALIZED_FIXED_PYTHON_INVALID")
         try:
-            if os.path.normcase(os.path.abspath(sys.executable)) != os.path.normcase(os.path.abspath(python_executable)):
+            if _comparison_path(Path(sys.executable)) != _comparison_path(python_executable):
                 raise VerificationError("ENV1B3_MATERIALIZED_FIXED_PYTHON_INVALID")
         except OSError as exc:
             raise VerificationError("ENV1B3_MATERIALIZED_FIXED_PYTHON_INVALID") from exc

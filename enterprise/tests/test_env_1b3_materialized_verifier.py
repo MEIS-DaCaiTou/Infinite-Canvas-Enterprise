@@ -121,6 +121,14 @@ def test_standalone_verifier_accepts_closed_payload_without_tools_and_is_read_on
     assert _tree_digest(paths[0]) == before
 
 
+def test_standalone_verifier_normalizes_only_well_formed_windows_extended_namespaces() -> None:
+    module = _load_verifier()
+    assert module._strip_windows_namespace(r"\\?\C:\Release\python\python.exe") == r"C:\Release\python\python.exe"
+    assert module._strip_windows_namespace(r"\\?\UNC\server\share\python.exe") == r"\\server\share\python.exe"
+    assert module._strip_windows_namespace(r"\\?\relative") == r"\\?\relative"
+    assert module._strip_windows_namespace(r"C:\Release\python\python.exe") == r"C:\Release\python\python.exe"
+
+
 @pytest.mark.parametrize(
     ("mutation", "expected_code"),
     [

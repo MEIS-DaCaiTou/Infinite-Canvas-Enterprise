@@ -10,12 +10,21 @@ function Throw-ENV1B3Error {
     throw [InvalidOperationException]::new("$Code|$Message")
 }
 
+function ConvertTo-ENV1B3FileSystemPath {
+    param([Parameter(Mandatory)][string]$LiteralPath)
+    $full = [IO.Path]::GetFullPath($LiteralPath)
+    if ($full.StartsWith('\\?\')) { return $full }
+    if ($full.StartsWith('\\')) { return '\\?\UNC\' + $full.Substring(2) }
+    return '\\?\' + $full
+}
+
 function Get-ENV1B3Sha256 {
     param([Parameter(Mandatory)][string]$LiteralPath)
-    if (-not (Test-Path -LiteralPath $LiteralPath -PathType Leaf)) {
+    $fileSystemPath = ConvertTo-ENV1B3FileSystemPath $LiteralPath
+    if (-not [IO.File]::Exists($fileSystemPath)) {
         Throw-ENV1B3Error 'ENV1B3_FILE_MISSING' 'file'
     }
-    $stream = [IO.File]::Open($LiteralPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+    $stream = [IO.File]::Open($fileSystemPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
     try {
         $hasher = [Security.Cryptography.SHA256]::Create()
         try { return ([BitConverter]::ToString($hasher.ComputeHash($stream))).Replace('-', '').ToLowerInvariant() }
@@ -754,4 +763,4 @@ function Test-ENV1B3CleanRuntimeBaseline {
     }
 }
 
-Export-ModuleMember -Function Get-ENV1B3Sha256,ConvertTo-ENV1B3ComparableProcessPath,Test-ENV1B3SafeRelativePath,Assert-ENV1B3AbsoluteSafePath,Read-ENV1B3Json,Read-ENV1B3Sums,Get-ENV1B3InventoryTree,Get-ENV1B3DirectoryTree,Assert-ENV1B3Inventory,Test-ENV1B3ZipEntryUnsafe,Test-ENV1B3ReleaseArtifacts,Test-ENV1B3Handoff,Test-ENV1B3DiagnosticManifest,Write-ENV1B3CaseResult,Invoke-ENV1B3ManagedProcess,Get-ENV1B3NonEmptyStringSet,Write-ENV1B3DurableJson,Read-ENV1B3DurableJson,Read-ENV1B3MatrixContracts,Write-ENV1B3SubcheckResult,Complete-ENV1B3CaseResult,ConvertTo-ENV1B3UtcIso8601,ConvertTo-ENV1B3WhereDiscoveryResult,Invoke-ENV1B3WhereLookup,Get-ENV1B3DisplayNames,Test-ENV1B3WindowsAppsAliasPath,Test-ENV1B3CleanRuntimeBaseline
+Export-ModuleMember -Function Get-ENV1B3Sha256,ConvertTo-ENV1B3FileSystemPath,ConvertTo-ENV1B3ComparableProcessPath,Test-ENV1B3SafeRelativePath,Assert-ENV1B3AbsoluteSafePath,Read-ENV1B3Json,Read-ENV1B3Sums,Get-ENV1B3InventoryTree,Get-ENV1B3DirectoryTree,Assert-ENV1B3Inventory,Test-ENV1B3ZipEntryUnsafe,Test-ENV1B3ReleaseArtifacts,Test-ENV1B3Handoff,Test-ENV1B3DiagnosticManifest,Write-ENV1B3CaseResult,Invoke-ENV1B3ManagedProcess,Get-ENV1B3NonEmptyStringSet,Write-ENV1B3DurableJson,Read-ENV1B3DurableJson,Read-ENV1B3MatrixContracts,Write-ENV1B3SubcheckResult,Complete-ENV1B3CaseResult,ConvertTo-ENV1B3UtcIso8601,ConvertTo-ENV1B3WhereDiscoveryResult,Invoke-ENV1B3WhereLookup,Get-ENV1B3DisplayNames,Test-ENV1B3WindowsAppsAliasPath,Test-ENV1B3CleanRuntimeBaseline

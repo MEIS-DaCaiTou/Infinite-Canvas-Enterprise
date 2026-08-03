@@ -102,11 +102,29 @@ def git_blob_sha1(data: bytes) -> str:
     return hashlib.sha1(header + data).hexdigest()
 
 
+def _strip_windows_namespace(value: str) -> str:
+    if value.startswith("\\\\?\\UNC\\"):
+        return "\\\\" + value[8:]
+    if value.startswith("\\\\?\\") and len(value) >= 7 and value[5] == ":" and value[6] in "\\/":
+        return value[4:]
+    return value
+
+
+def _filesystem_path(path: Path) -> Path:
+    """Use an extended Windows path for trusted, already-validated file I/O."""
+    absolute = str(Path(path).absolute())
+    if os.name != "nt" or absolute.startswith("\\\\?\\"):
+        return Path(absolute)
+    if absolute.startswith("\\\\"):
+        return Path("\\\\?\\UNC\\" + absolute[2:])
+    return Path("\\\\?\\" + absolute)
+
+
 def sha256_file(path: Path, *, maximum: int = MAX_SINGLE_FILE_BYTES) -> tuple[str, int]:
     digest = hashlib.sha256()
     received = 0
     try:
-        with Path(path).open("rb") as handle:
+        with _filesystem_path(Path(path)).open("rb") as handle:
             while True:
                 chunk = handle.read(COPY_CHUNK_BYTES)
                 if not chunk:
@@ -124,7 +142,7 @@ def sha256_file(path: Path, *, maximum: int = MAX_SINGLE_FILE_BYTES) -> tuple[st
 
 def _read_bounded(path: Path, maximum: int, *, missing: str, failed: str, oversized: str) -> bytes:
     try:
-        handle: BinaryIO = Path(path).open("rb")
+        handle: BinaryIO = _filesystem_path(Path(path)).open("rb")
     except FileNotFoundError as exc:
         raise ReleaseManifestV2Error(missing) from exc
     except OSError as exc:
@@ -561,8 +579,9 @@ def payload_tree_sha256(entries: tuple[InventoryEntry, ...]) -> str:
 
 
 def build_inventory(root: Path) -> ReleasePayloadInventory:
-    root = Path(root)
-    _assert_directory(root, "RELEASE_PAYLOAD_ROOT_INVALID")
+    logical_root = Path(root)
+    _assert_directory(logical_root, "RELEASE_PAYLOAD_ROOT_INVALID")
+    root = _filesystem_path(logical_root)
     entries: list[InventoryEntry] = []
     seen: set[str] = set()
     for path in sorted(root.rglob("*"), key=lambda p: p.relative_to(root).as_posix()):
