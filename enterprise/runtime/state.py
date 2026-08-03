@@ -17,6 +17,7 @@ from .ownership import ProcessIdentity, process_identity, same_process
 STATE_SCHEMA = "runtime-supervisor-state-v1"
 LOCK_FILENAME = "runtime-supervisor.lock"
 STATE_FILENAME = "runtime-state.json"
+RECONCILE_FILENAME = "runtime-reconcile.lock"
 VALID_COMMANDS = frozenset({"stop", "restart"})
 STARTUP_LOCK_GRACE_SECONDS = 75
 CONTROL_TTL_SECONDS = 15 * 60
@@ -92,6 +93,7 @@ class RuntimeStateStore:
         self.state_path = self.root / STATE_FILENAME
         self.lock_path = self.root / LOCK_FILENAME
         self.control_root = self.root / "control"
+        self.reconcile_path = self.root / RECONCILE_FILENAME
 
     def initialize(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
@@ -154,6 +156,7 @@ class RuntimeStateStore:
         instance_id: str,
         owner: ProcessIdentity,
         runtime_identity: dict[str, str] | None = None,
+        supervisor_command_identity: str | None = None,
     ) -> bool:
         """Only the short-lived launcher may create a ``reserved`` lock."""
         self.initialize()
@@ -178,6 +181,14 @@ class RuntimeStateStore:
             ):
                 raise RuntimeStateError("runtime identity is invalid")
             payload.update(runtime_identity)
+        if runtime_identity is not None and (
+            not isinstance(supervisor_command_identity, str) or len(supervisor_command_identity) != 64
+        ):
+            raise RuntimeStateError("supervisor command identity is invalid")
+        if supervisor_command_identity is not None:
+            payload["supervisor_command_identity"] = supervisor_command_identity
+        if self.reconcile_path.exists():
+            return False
         try:
             with self.lock_path.open("x", encoding="utf-8", newline="") as handle:
                 handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
@@ -194,6 +205,7 @@ class RuntimeStateStore:
         owner: ProcessIdentity,
         supervisor: ProcessIdentity,
         expected_runtime_identity: dict[str, str] | None = None,
+        expected_supervisor_command_identity: str | None = None,
         grace_seconds: int = STARTUP_LOCK_GRACE_SECONDS,
     ) -> bool:
         """Adopt a fresh reservation only after validating the launcher's identity."""
@@ -203,6 +215,12 @@ class RuntimeStateStore:
             set(expected_runtime_identity) == set(PORTABLE_IDENTITY_FIELDS)
             and all(lock and lock.get(name) == expected_runtime_identity[name] for name in PORTABLE_IDENTITY_FIELDS)
         )
+        if expected_runtime_identity is not None:
+            identity_matches = bool(
+                identity_matches
+                and isinstance(expected_supervisor_command_identity, str)
+                and len(expected_supervisor_command_identity) == 64
+            )
         if (
             not lock
             or lock.get("supervisor_instance_id") != instance_id
@@ -212,6 +230,7 @@ class RuntimeStateStore:
             or not same_process(owner, self.lock_owner_identity(lock))
             or not same_process(owner, process_identity(owner.pid))
             or not identity_matches
+            or lock.get("supervisor_command_identity") != expected_supervisor_command_identity
         ):
             return False
         payload = dict(lock)
@@ -272,6 +291,57 @@ class RuntimeStateStore:
             return True
         except FileNotFoundError:
             return False
+
+    def reconcile_reboot_stale_state(
+        self,
+        *,
+        expected_lock: dict[str, Any],
+        expected_state: dict[str, Any],
+    ) -> bool:
+        """Atomically claim and reconcile one fully validated reboot-stale instance."""
+
+        self.initialize()
+        try:
+            with self.reconcile_path.open("x", encoding="ascii", newline="") as handle:
+                handle.write(str(expected_state.get("supervisor_instance_id")) + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+        except FileExistsError:
+            return False
+        try:
+            if self.read_lock() != expected_lock or self.read_state() != expected_state:
+                return False
+            instance_id = expected_state.get("supervisor_instance_id")
+            recovered = dict(expected_state)
+            recovered.update(
+                {
+                    "state": "stopped",
+                    "active_control_request": None,
+                    "active_control_command": None,
+                    "active_control_request_id": None,
+                    "stop_phase": None,
+                    "reboot_stale_reconciled": True,
+                }
+            )
+            for role in ("upstream", "gateway"):
+                value = dict(recovered.get(role) or {})
+                value.update({"pid": None, "process_created_at": None, "executable": None, "state": "stopped"})
+                recovered[role] = value
+            self.write_state(recovered)
+            if self.read_lock() != expected_lock:
+                return False
+            current = self.read_state()
+            if not current or current.get("supervisor_instance_id") != instance_id or current.get("reboot_stale_reconciled") is not True:
+                return False
+            self.lock_path.unlink()
+            return True
+        except (FileNotFoundError, OSError, RuntimeStateError):
+            return False
+        finally:
+            try:
+                self.reconcile_path.unlink()
+            except FileNotFoundError:
+                pass
 
     def submit_command(
         self,
@@ -430,6 +500,7 @@ def initial_state(
     mode: str,
     runtime_mode: str = "development",
     runtime_identity: dict[str, str] | None = None,
+    supervisor_command_identity: str | None = None,
 ) -> dict[str, Any]:
     if mode not in {"foreground", "service-host"}:
         raise RuntimeStateError("runtime mode is invalid")
@@ -452,6 +523,10 @@ def initial_state(
         runtime_identity is None or set(runtime_identity) != set(PORTABLE_IDENTITY_FIELDS)
     ):
         raise RuntimeStateError("runtime identity is invalid")
+    if runtime_mode == "portable-release" and (
+        not isinstance(supervisor_command_identity, str) or len(supervisor_command_identity) != 64
+    ):
+        raise RuntimeStateError("supervisor command identity is invalid")
     state = {
         "schema_version": STATE_SCHEMA,
         "supervisor_instance_id": instance_id,
@@ -464,6 +539,7 @@ def initial_state(
         "runtime_mode": runtime_mode,
         "state": "starting",
         "state_generation": 0,
+        "supervisor_command_identity": supervisor_command_identity,
         "active_control_request": None,
         "active_control_command": None,
         "active_control_request_id": None,

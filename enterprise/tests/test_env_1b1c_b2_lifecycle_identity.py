@@ -1,16 +1,17 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
 import pytest
 
 from enterprise.runtime.control import RuntimeController
-from enterprise.runtime.ownership import PortListenerSnapshot, ProcessIdentity
+from enterprise.runtime.ownership import PortListenerSnapshot, ProcessIdentity, portable_supervisor_command_identity
 from enterprise.runtime.preflight import StartupPreflightResult
-from enterprise.runtime.process import default_commands
+from enterprise.runtime.process import default_commands, windows_extended_process_path
 from enterprise.runtime.readiness import classify_portable_readiness
-from enterprise.runtime.state import RuntimeStateStore, initial_state
+from enterprise.runtime.state import RuntimeStateError, RuntimeStateStore, initial_state
 from enterprise.runtime.supervisor import RuntimeStartBlocked, SupervisorConfig
 from enterprise.tests.release_manifest_v2_fixture import preflight_v2_fields, portable_config_v2_fields, runtime_identity_v2_fields
 
@@ -82,23 +83,42 @@ def test_existing_lock_reservation_and_adoption_carry_one_portable_identity(tmp_
     owner = ProcessIdentity(100, 200, "python.exe")
     supervisor = ProcessIdentity(101, 201, "python.exe")
     identity = _identity("e" * 64)
-    assert store.reserve_lock(instance_id="f" * 32, owner=owner, runtime_identity=identity)
+    command_identity = "d" * 64
+    assert store.reserve_lock(
+        instance_id="f" * 32,
+        owner=owner,
+        runtime_identity=identity,
+        supervisor_command_identity=command_identity,
+    )
     lock = store.read_lock()
     assert lock is not None and all(lock[name] == value for name, value in identity.items())
+    assert lock["supervisor_command_identity"] == command_identity
     monkeypatch.setattr("enterprise.runtime.state.process_identity", lambda pid: owner if pid == owner.pid else supervisor)
     assert not store.adopt_lock(
         instance_id="f" * 32,
         owner=owner,
         supervisor=supervisor,
         expected_runtime_identity={**identity, "release_id": "release-B"},
+        expected_supervisor_command_identity=command_identity,
     )
     assert store.adopt_lock(
         instance_id="f" * 32,
         owner=owner,
         supervisor=supervisor,
         expected_runtime_identity=identity,
+        expected_supervisor_command_identity=command_identity,
     )
     assert store.read_lock()["lock_phase"] == "adopted"
+
+
+def test_portable_lock_reservation_rejects_missing_supervisor_command_identity(tmp_path: Path) -> None:
+    store = RuntimeStateStore(tmp_path / "runtime")
+    with pytest.raises(RuntimeStateError, match="supervisor command identity"):
+        store.reserve_lock(
+            instance_id="f" * 32,
+            owner=ProcessIdentity(100, 200, "python.exe"),
+            runtime_identity=_identity("e" * 64),
+        )
 
 
 def test_runtime_state_splits_runtime_mode_from_host_style() -> None:
@@ -109,11 +129,13 @@ def test_runtime_state_splits_runtime_mode_from_host_style() -> None:
         mode="service-host",
         runtime_mode="portable-release",
         runtime_identity=_identity("e" * 64),
+        supervisor_command_identity="d" * 64,
     )
     assert state["runtime_mode"] == "portable-release"
     assert state["host_style"] == "service-host"
     assert state["mode"] == "service-host"
     assert state["launch_context_identity"] == "e" * 64
+    assert state["supervisor_command_identity"] == "d" * 64
 
 
 def test_portable_control_document_is_context_bound(tmp_path: Path) -> None:
@@ -225,14 +247,29 @@ def test_portable_start_reserves_then_publishes_context_then_starts_existing_hos
         def poll(self):
             return None
 
+    popen_kwargs: dict[str, object] = {}
+
     def popen(*args, **kwargs):
         events.append("host")
+        popen_kwargs.update(kwargs)
         return Host()
 
     monkeypatch.setattr("enterprise.runtime.control.subprocess.Popen", popen)
     result = controller.start(preflight=preflight, wait_seconds=1)
     assert result["result"] == "started"
     assert events == ["instance", "inspect", "reserve", "publish", "host", "inspect"]
+    assert popen_kwargs["executable"] == windows_extended_process_path(str(python))
+    assert popen_kwargs["cwd"] == windows_extended_process_path(controller.config.app_root)
+
+
+def test_windows_extended_process_path_preserves_unc_and_adds_extended_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("enterprise.runtime.process.os.name", "nt")
+    monkeypatch.setattr("enterprise.runtime.process.os.path.abspath", lambda value: str(value))
+    assert windows_extended_process_path(r"C:\candidate root\releases\release-A") == r"\\?\C:\candidate root\releases\release-A"
+    assert windows_extended_process_path(r"\\server\share\release-A") == r"\\?\UNC\server\share\release-A"
+    assert windows_extended_process_path(r"\\?\C:\already") == r"\\?\C:\already"
 
 
 @pytest.mark.parametrize(
@@ -418,8 +455,18 @@ def _portable_ownership_case(tmp_path: Path):
         "startup_preflight_sha256": preflight.identity,
         "launch_context_identity": context.identity,
     }
+    command_identity = portable_supervisor_command_identity(
+        app_root=tmp_path / "install" / "releases" / "release-A",
+        runtime_root=runtime,
+        instance_id=context.instance_id,
+        launch_context_identity=context.identity,
+        python_executable=str(python),
+        upstream_port=3001,
+        gateway_port=8000,
+    )
     state = {
         **identity,
+        "supervisor_command_identity": command_identity,
         "supervisor_instance_id": context.instance_id,
         "supervisor_pid": supervisor.pid,
         "supervisor_process_created_at": supervisor.created_at,
@@ -430,6 +477,7 @@ def _portable_ownership_case(tmp_path: Path):
     }
     lock = {
         **identity,
+        "supervisor_command_identity": command_identity,
         "supervisor_instance_id": context.instance_id,
         "supervisor_pid": supervisor.pid,
         "supervisor_process_created_at": supervisor.created_at,
@@ -478,6 +526,107 @@ def test_portable_identity_snapshot_binds_context_lock_state_processes_and_liste
     result = _portable_identity_snapshot(config, snapshot, upstream_ports, gateway_ports)
     assert result["portable_ownership_valid"] is False
     assert result["readiness"]["ready"] is False
+
+
+def test_portable_identity_snapshot_rejects_supervisor_command_identity_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from enterprise.runtime.control import _portable_identity_snapshot
+
+    config, snapshot, upstream_ports, gateway_ports, supervisor = _portable_ownership_case(tmp_path)
+    monkeypatch.setattr(
+        "enterprise.runtime.control.process_identity",
+        lambda pid: supervisor if pid == supervisor.pid else None,
+    )
+    snapshot["lock"]["supervisor_command_identity"] = "0" * 64
+    result = _portable_identity_snapshot(config, snapshot, upstream_ports, gateway_ports)
+    assert result["portable_ownership_valid"] is False
+    assert result["readiness"]["ready"] is False
+
+
+def test_running_reboot_state_reconciles_only_when_processes_are_absent_and_identity_matches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config, snapshot, _upstream_ports, _gateway_ports, _supervisor = _portable_ownership_case(tmp_path)
+    controller = RuntimeController(config)
+    called: list[tuple[object, object]] = []
+    monkeypatch.setattr("enterprise.runtime.control.process_identity", lambda _pid: None)
+    monkeypatch.setattr(
+        "enterprise.runtime.control._port_snapshots",
+        lambda _config: (PortListenerSnapshot(3001, (), (), ()), PortListenerSnapshot(8000, (), (), ())),
+    )
+    monkeypatch.setattr(
+        controller.store,
+        "reconcile_reboot_stale_state",
+        lambda *, expected_lock, expected_state: called.append((expected_lock, expected_state)) or True,
+    )
+    assert controller.reconcile_reboot_stale_runtime(snapshot) is True
+    assert called == [(snapshot["lock"], snapshot["runtime_state"])]
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ("pid_reused_creation", "pid_reused_executable", "live_owned", "command", "release"),
+)
+def test_running_reboot_state_reconciliation_rejects_foreign_or_mismatched_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str
+) -> None:
+    config, snapshot, _upstream_ports, _gateway_ports, supervisor = _portable_ownership_case(tmp_path)
+    controller = RuntimeController(config)
+    monkeypatch.setattr(
+        "enterprise.runtime.control._port_snapshots",
+        lambda _config: (PortListenerSnapshot(3001, (), (), ()), PortListenerSnapshot(8000, (), (), ())),
+    )
+    monkeypatch.setattr("enterprise.runtime.control.process_identity", lambda _pid: None)
+    if mutation == "pid_reused_creation":
+        monkeypatch.setattr(
+            "enterprise.runtime.control.process_identity",
+            lambda pid: ProcessIdentity(pid, supervisor.created_at + 1, supervisor.executable)
+            if pid == supervisor.pid
+            else None,
+        )
+    elif mutation == "pid_reused_executable":
+        monkeypatch.setattr(
+            "enterprise.runtime.control.process_identity",
+            lambda pid: ProcessIdentity(pid, supervisor.created_at, "foreign.exe")
+            if pid == supervisor.pid
+            else None,
+        )
+    elif mutation == "live_owned":
+        monkeypatch.setattr(
+            "enterprise.runtime.control.process_identity",
+            lambda pid: supervisor if pid == supervisor.pid else None,
+        )
+    elif mutation == "command":
+        snapshot["runtime_state"]["supervisor_command_identity"] = "0" * 64
+    else:
+        snapshot["lock"]["release_id"] = "release-B"
+    assert controller.reconcile_reboot_stale_runtime(snapshot) is False
+
+
+def test_runtime_store_reconciles_exact_reboot_state_and_removes_only_matching_lock(tmp_path: Path) -> None:
+    store = RuntimeStateStore(tmp_path / "runtime")
+    store.initialize()
+    state = {
+        "schema_version": "runtime-supervisor-state-v1",
+        "supervisor_instance_id": "a" * 32,
+        "state": "healthy",
+        "upstream": {"pid": 11, "process_created_at": 101, "executable": "python.exe", "state": "healthy"},
+        "gateway": {"pid": 12, "process_created_at": 102, "executable": "python.exe", "state": "healthy"},
+    }
+    lock = {"schema_version": "runtime-supervisor-state-v1", "supervisor_instance_id": "a" * 32}
+    store.write_state(state)
+    expected_state = store.read_state()
+    assert expected_state is not None
+    store.lock_path.write_text(json.dumps(lock), encoding="utf-8")
+    expected_lock = store.read_lock()
+    assert expected_lock is not None
+    assert store.reconcile_reboot_stale_state(expected_lock=expected_lock, expected_state=expected_state) is True
+    assert store.read_lock() is None
+    recovered = store.read_state()
+    assert recovered is not None and recovered["state"] == "stopped"
+    assert recovered["reboot_stale_reconciled"] is True
+    assert recovered["upstream"]["pid"] is None and recovered["gateway"]["pid"] is None
 
 
 @pytest.mark.parametrize(

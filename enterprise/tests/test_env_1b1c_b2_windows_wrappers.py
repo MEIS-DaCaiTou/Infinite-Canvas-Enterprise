@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import shutil
 import subprocess
@@ -28,6 +29,8 @@ def test_formal_windows_wrapper_has_fixed_direct_portable_entry(name: str, comma
     text = (ROOT / name).read_text(encoding="utf-8-sig").lower()
     assert "%~dp0python\\python.exe" in text
     assert "%~dp0enterprise\\runtime\\launcher.py" in text
+    assert "%~dp0enterprise\\runtime\\fixed_python_preflight.ps1" in text
+    assert text.index("fixed_python_preflight.ps1") < text.index('"%pyexe%" -i -b')
     assert f"portable {command}" in text
     assert " -i -b " in text
     assert "portable_python_missing" in text
@@ -35,6 +38,72 @@ def test_formal_windows_wrapper_has_fixed_direct_portable_entry(name: str, comma
     assert "py.exe" not in text
     assert "set \"pyexe=python\"" not in text
     assert "pip" not in text and "firewall" not in text and "start http" not in text
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows PowerShell 5.1 contract is Windows-only")
+def test_fixed_python_dll_preflight_returns_stable_results_without_loading_python(tmp_path: Path) -> None:
+    app_root = tmp_path / "candidate with space"
+    python_root = app_root / "python"
+    python_root.mkdir(parents=True)
+    dll = python_root / "python314.dll"
+    original = b"fixed-python-dll"
+    dll.write_bytes(original)
+    manifest = {
+        "core_files": [
+            {
+                "filename": "python314.dll",
+                "sha256": hashlib.sha256(original).hexdigest(),
+                "size_bytes": len(original),
+            }
+        ]
+    }
+    (app_root / "runtime-manifest.json").write_text(
+        json.dumps(manifest, sort_keys=True, separators=(",", ":")), encoding="utf-8"
+    )
+    script = ROOT / "enterprise" / "runtime" / "fixed_python_preflight.ps1"
+
+    def run(command: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                "powershell.exe",
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(script),
+                "-AppRoot",
+                str(app_root),
+                "-Command",
+                command,
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="strict",
+            timeout=20,
+            shell=False,
+            check=False,
+        )
+
+    valid = run("start")
+    assert valid.returncode == 0 and valid.stdout == "" and valid.stderr == ""
+    dll.write_bytes(b"tampered")
+    start = run("start")
+    assert start.returncode == 2 and start.stderr == ""
+    assert json.loads(start.stdout) == {
+        "schema_version": "env-1b3-fixed-python-preflight-v1",
+        "status": "blocked",
+        "code": "PORTABLE_FIXED_PYTHON_INTEGRITY_INVALID",
+        "runtime_integrity_valid": False,
+    }
+    status = run("status")
+    assert status.returncode == 0 and status.stderr == ""
+    assert json.loads(status.stdout)["code"] == "PORTABLE_FIXED_PYTHON_INTEGRITY_INVALID"
+    stop = run("stop")
+    assert stop.returncode == 2 and stop.stderr == ""
+    assert json.loads(stop.stdout)["code"] == "PORTABLE_RUNTIME_OWNERSHIP_UNTRUSTED"
 
 
 def test_formal_launcher_grammar_has_no_operator_trust_overrides(capsys: pytest.CaptureFixture[str]) -> None:

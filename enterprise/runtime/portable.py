@@ -343,12 +343,12 @@ def execute_portable_command(*, app_root: Path, command: str) -> tuple[dict[str,
     if command not in PORTABLE_COMMANDS:
         raise RuntimeContractError("RELEASE_MISMATCH_COMMAND_INVALID")
     preflight: PortablePreflight | None = None
-    manifest_error: RuntimeContractError | None = None
+    manifest_error: BaseException | None = None
     try:
-        preflight = build_portable_preflight(app_root, verify_full_payload=command in {"start", "restart"})
+        preflight = build_portable_preflight(app_root, verify_full_payload=command in {"start", "restart", "health"})
         roots = install_path_roots_for_process(preflight.roots)
         portable_identity: StartupPreflightResult | RuntimeLaunchContext = preflight.result
-    except RuntimeContractError as exc:
+    except (RuntimeContractError, CurrentReleaseError) as exc:
         if command not in {"status", "stop"}:
             raise
         manifest_error = exc
@@ -363,7 +363,7 @@ def execute_portable_command(*, app_root: Path, command: str) -> tuple[dict[str,
         except RuntimeContractError:
             if command == "status":
                 return {
-                    "release_manifest_error_code": manifest_error.code,
+                    "release_manifest_error_code": str(getattr(manifest_error, "code", "CURRENT_RELEASE_INVALID")),
                     "release_manifest_v2_valid": False,
                     "status": "invalid",
                 }, 0
@@ -409,16 +409,20 @@ def execute_portable_command(*, app_root: Path, command: str) -> tuple[dict[str,
         gateway_port=int(getattr(enterprise_config, "GATEWAY_PORT", 8000)),
         secret_values=secrets_to_redact,
     )
+    controller = RuntimeController(config)
     snapshot = inspect_runtime(config)
+    if command == "start" and snapshot.get("start_disposition") in {"startup_in_progress", "stale_runtime_state"}:
+        if controller.reconcile_reboot_stale_runtime(snapshot):
+            snapshot = inspect_runtime(config)
     if manifest_error is not None:
         snapshot["release_manifest_v2_valid"] = False
-        snapshot["release_manifest_error_code"] = manifest_error.code
+        snapshot["release_manifest_error_code"] = str(getattr(manifest_error, "code", "CURRENT_RELEASE_INVALID"))
         public = _public_runtime_snapshot(snapshot)
         if command == "status":
             return public, 0
         if snapshot.get("portable_ownership_valid") is not True:
             return {"code": "PORTABLE_RUNTIME_OWNERSHIP_UNTRUSTED", "status": "blocked"}, 2
-        payload = RuntimeController(config).send_command("stop")
+        payload = controller.send_command("stop")
         result = str(payload.get("result"))
         return _public_runtime_snapshot(payload), 0 if result in {"stopped", "already_stopped"} else 2
     decision = decide_release_mismatch(
@@ -453,7 +457,6 @@ def execute_portable_command(*, app_root: Path, command: str) -> tuple[dict[str,
             "release_gate": decision.as_dict(),
             "status": "blocked",
         }, 2
-    controller = RuntimeController(config)
     if command == "start":
         assert preflight is not None
         payload = controller.start(preflight=preflight.result)

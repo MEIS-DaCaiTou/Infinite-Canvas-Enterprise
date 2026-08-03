@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import zipfile
@@ -586,6 +587,18 @@ def test_candidate_05_handoff_binds_final_probe_gate_and_utf8_instructions(tmp_p
 
 
 @pytest.mark.skipif(POWERSHELL is None, reason="Windows PowerShell is required")
+def test_candidate_handoff_accepts_only_the_bounded_authorized_sequence_07(tmp_path: Path) -> None:
+    handoff = _generate_handoff(tmp_path, sequence="07")
+    document = json.loads((handoff / "CANDIDATE-HANDOFF.json").read_text(encoding="utf-8"))
+    assert document["candidate_sequence"] == "07"
+    assert document["candidate_id"] == "fixture-release-candidate-07"
+    assert document["production_approved"] is False
+    source = (KIT / "New-CandidateHandoff.ps1").read_text(encoding="utf-8")
+    assert "^0[1-7]$" in source
+    assert "^0[1-9]$" not in source
+
+
+@pytest.mark.skipif(POWERSHELL is None, reason="Windows PowerShell is required")
 def test_atomic_materialization_uses_external_verifier_and_commits_pointer_last(tmp_path: Path) -> None:
     handoff = _generate_handoff(tmp_path / "fixture", sequence="05")
     document = json.loads((handoff / "CANDIDATE-HANDOFF.json").read_text(encoding="utf-8"))
@@ -857,3 +870,90 @@ def test_entrypoint_powershell_step_exception_has_stable_failure(tmp_path: Path)
     )
     assert result.returncode == 2, result.stdout + result.stderr
     assert json.loads(result.stdout.strip().splitlines()[-1])["code"] == "ENV1B3_ENTRYPOINT_POWERSHELL_STEP_FAILED"
+
+
+@pytest.mark.skipif(POWERSHELL is None, reason="Windows PowerShell is required")
+def test_w14_entrypoint_uses_process_scoped_bypass_and_executes_path_preflight(tmp_path: Path) -> None:
+    test_kit = tmp_path / "validation kit"
+    shutil.copytree(KIT, test_kit)
+    fixture_script = test_kit / "Invoke-FinalIdentityMatrix.ps1"
+    fixture_script.write_text(
+        "param([string]$Mode,[string]$HandoffRoot,[string]$TestRoot,[string]$EvidenceRoot,[string]$ContractPath,[string]$DiagnosticProbeManifestPath)\n"
+        "Set-StrictMode -Version 2.0\n"
+        "$ErrorActionPreference='Stop'\n"
+        "Import-Module (Join-Path $PSScriptRoot 'ENV1B3.Validation.psm1') -Force\n"
+        "[void](Assert-ENV1B3AbsoluteSafePath $HandoffRoot)\n"
+        "[void](Assert-ENV1B3AbsoluteSafePath $TestRoot -AllowMissingLeaf)\n"
+        "[void](Assert-ENV1B3AbsoluteSafePath $EvidenceRoot -AllowMissingLeaf)\n"
+        "[IO.Directory]::CreateDirectory($EvidenceRoot)|Out-Null\n"
+        "$payload=[ordered]@{mode=$Mode;policy=[string][Environment]::GetEnvironmentVariable('PSExecutionPolicyPreference','Process');paths_checked=$true;path_roots_external=$true;read_only_app_root_required=$true;offline_required=$true}\n"
+        "$json=$payload|ConvertTo-Json -Compress\n"
+        "[IO.File]::WriteAllText((Join-Path $EvidenceRoot 'w14-child.json'),$json,[Text.UTF8Encoding]::new($false))\n"
+        "$json\n",
+        encoding="ascii",
+        newline="\n",
+    )
+    handoff = tmp_path / "handoff"
+    handoff.mkdir()
+    test_root = tmp_path / "test root"
+    evidence = tmp_path / "evidence root"
+    contract = tmp_path / "contract.json"
+    contract.write_text("{}", encoding="ascii")
+    before = os.environ.get("PSExecutionPolicyPreference")
+    completed = subprocess.run(
+        [
+            POWERSHELL,
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(test_kit / "Invoke-ENV1B3Validation.ps1"),
+            "-Mode",
+            "W14Validate",
+            "-HandoffRoot",
+            str(handoff),
+            "-TestRoot",
+            str(test_root),
+            "-EvidenceRoot",
+            str(evidence),
+            "-ContractPath",
+            str(contract),
+        ],
+        cwd=tmp_path,
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    after = os.environ.get("PSExecutionPolicyPreference")
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    payload = json.loads((evidence / "w14-child.json").read_text(encoding="utf-8"))
+    assert payload == {
+        "mode": "Validate",
+        "policy": "Bypass",
+        "paths_checked": True,
+        "path_roots_external": True,
+        "read_only_app_root_required": True,
+        "offline_required": True,
+    }
+    assert before == after
+
+
+def test_w14_final_identity_reports_exact_path_and_lifecycle_stages() -> None:
+    source = (KIT / "Invoke-FinalIdentityMatrix.ps1").read_text(encoding="utf-8")
+    for stage in (
+        "module_import",
+        "app_root_path",
+        "read_only_app_root",
+        "external_roots",
+        "different_cwd_path",
+        "offline_context",
+        "fixed_python",
+        "app_root_tree",
+        "ports",
+    ):
+        assert f"$failureStage='{stage}'" in source
+    assert "failure_stage=$failureStage" in source
