@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -101,6 +102,31 @@ def test_r3_prefix_identity_binds_the_runtime_root_not_only_basename(tmp_path: P
     second_identity = build_python_identity(second_exe, _probe(second_exe), expected_executable=second_exe, expected_runtime_root=second)
     assert first_identity.prefix_identity != second_identity.prefix_identity
     assert first_identity.base_prefix_identity != second_identity.base_prefix_identity
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Win32 extended-length namespace is Windows-only")
+def test_extended_length_prefixes_bind_to_the_exact_runtime_root(tmp_path: Path) -> None:
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    executable = runtime / "python.exe"
+    executable.write_bytes(b"fake")
+    extended_runtime = "\\\\?\\" + str(runtime)
+
+    identity = build_python_identity(
+        executable,
+        _probe(executable, prefix=extended_runtime, base_prefix=extended_runtime),
+        expected_executable=executable,
+        expected_runtime_root=runtime,
+    )
+
+    ordinary = build_python_identity(
+        executable,
+        _probe(executable),
+        expected_executable=executable,
+        expected_runtime_root=runtime,
+    )
+    assert identity.prefix_identity == ordinary.prefix_identity
+    assert identity.base_prefix_identity == ordinary.base_prefix_identity
 
 
 def test_r3_prefix_escape_from_expected_runtime_is_rejected(tmp_path: Path) -> None:
