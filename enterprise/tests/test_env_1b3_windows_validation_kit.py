@@ -618,14 +618,14 @@ def test_candidate_05_handoff_binds_final_probe_gate_and_utf8_instructions(tmp_p
 
 
 @pytest.mark.skipif(POWERSHELL is None, reason="Windows PowerShell is required")
-def test_candidate_handoff_accepts_only_the_bounded_authorized_sequence_07(tmp_path: Path) -> None:
-    handoff = _generate_handoff(tmp_path, sequence="07")
+def test_candidate_handoff_accepts_only_the_bounded_authorized_sequence_08(tmp_path: Path) -> None:
+    handoff = _generate_handoff(tmp_path, sequence="08")
     document = json.loads((handoff / "CANDIDATE-HANDOFF.json").read_text(encoding="utf-8"))
-    assert document["candidate_sequence"] == "07"
-    assert document["candidate_id"] == "fixture-release-candidate-07"
+    assert document["candidate_sequence"] == "08"
+    assert document["candidate_id"] == "fixture-release-candidate-08"
     assert document["production_approved"] is False
     source = (KIT / "New-CandidateHandoff.ps1").read_text(encoding="utf-8")
-    assert "^0[1-7]$" in source
+    assert "^0[1-8]$" in source
     assert "^0[1-9]$" not in source
 
 
@@ -977,7 +977,13 @@ def test_w14_final_identity_reports_exact_path_and_lifecycle_stages() -> None:
     source = (KIT / "Invoke-FinalIdentityMatrix.ps1").read_text(encoding="utf-8")
     for stage in (
         "module_import",
+        "state_schema",
+        "candidate_id",
+        "release_id",
         "app_root_path",
+        "pointer_sha256",
+        "app_root_tree_read",
+        "app_root_tree_sha256",
         "read_only_app_root",
         "external_roots",
         "different_cwd_path",
@@ -988,3 +994,202 @@ def test_w14_final_identity_reports_exact_path_and_lifecycle_stages() -> None:
     ):
         assert f"$failureStage='{stage}'" in source
     assert "failure_stage=$failureStage" in source
+    assert "apply read-and-execute (without write) to every APP_ROOT directory and file" in source
+
+
+@pytest.mark.skipif(POWERSHELL is None, reason="Windows PowerShell is required")
+@pytest.mark.parametrize(
+    ("stage", "mutation"),
+    (
+        ("state_schema", "schema"),
+        ("candidate_id", "candidate"),
+        ("release_id", "release"),
+        ("app_root_path", "app_root"),
+        ("pointer_sha256", "pointer"),
+        ("app_root_tree_read", "missing_tree"),
+        ("app_root_tree_sha256", "tree_sha"),
+    ),
+)
+def test_w14_validate_reports_each_exact_comparison(
+    tmp_path: Path,
+    stage: str,
+    mutation: str,
+) -> None:
+    handoff = tmp_path / "handoff"
+    test_root = tmp_path / "test root"
+    evidence = tmp_path / "evidence"
+    app_root = test_root / "install" / "releases" / "release-fixture"
+    pointer = test_root / "install" / "state" / "current-release.json"
+    handoff.mkdir()
+    app_root.mkdir(parents=True)
+    pointer.parent.mkdir(parents=True)
+    evidence.mkdir()
+    (app_root / "payload.txt").write_text("payload\n", encoding="utf-8")
+    pointer.write_text('{"release_id":"release-fixture"}\n', encoding="utf-8")
+    (handoff / "CANDIDATE-HANDOFF.json").write_text(
+        json.dumps({"candidate_id": "candidate-fixture", "release_id": "release-fixture"}),
+        encoding="utf-8",
+    )
+    state = {
+        "schema_version": "env-1b3-w14-prepare-v1",
+        "candidate_id": "candidate-fixture",
+        "release_id": "release-fixture",
+        "app_root": str(app_root),
+        "app_root_tree": {"file_count": 1, "tree_sha256": "0" * 64},
+        "pointer_sha256": hashlib.sha256(pointer.read_bytes()).hexdigest(),
+    }
+    if mutation == "schema":
+        state["schema_version"] = "wrong-schema"
+    elif mutation == "candidate":
+        state["candidate_id"] = "wrong-candidate"
+    elif mutation == "release":
+        state["release_id"] = "wrong-release"
+    elif mutation == "app_root":
+        state["app_root"] = str(test_root / "other-release")
+    elif mutation == "pointer":
+        state["pointer_sha256"] = "f" * 64
+    elif mutation == "missing_tree":
+        shutil.rmtree(app_root)
+    elif mutation != "tree_sha":
+        raise AssertionError(mutation)
+    (evidence / "W14-PREPARE.json").write_text(json.dumps(state), encoding="utf-8")
+    contract = tmp_path / "matrix-contracts.json"
+    contract.write_text("{}", encoding="utf-8")
+
+    completed = subprocess.run(
+        [
+            POWERSHELL,
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(KIT / "Invoke-FinalIdentityMatrix.ps1"),
+            "-Mode",
+            "Validate",
+            "-HandoffRoot",
+            str(handoff),
+            "-TestRoot",
+            str(test_root),
+            "-EvidenceRoot",
+            str(evidence),
+            "-ContractPath",
+            str(contract),
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="strict",
+        timeout=30,
+        shell=False,
+        check=False,
+    )
+    assert completed.returncode == 2, completed.stdout + completed.stderr
+    payload = json.loads(completed.stdout.strip().splitlines()[-1])
+    assert payload["failure_stage"] == stage
+    comparison = payload["comparison"]
+    assert comparison["comparison_name"] == stage
+    assert set(("expected", "actual", "normalized_expected", "normalized_actual")) <= comparison.keys()
+    assert str(tmp_path) not in json.dumps(payload)
+
+
+@pytest.mark.skipif(POWERSHELL is None, reason="Windows PowerShell is required")
+def test_w14_validate_fixture_passes_split_identity_and_lifecycle_chain(tmp_path: Path) -> None:
+    test_kit = tmp_path / "validation kit"
+    shutil.copytree(KIT, test_kit)
+    handoff = tmp_path / "handoff"
+    test_root = tmp_path / "test root"
+    evidence = tmp_path / "evidence"
+    app_root = test_root / "install" / "releases" / "release-fixture"
+    pointer = test_root / "install" / "state" / "current-release.json"
+    handoff.mkdir()
+    app_root.mkdir(parents=True)
+    pointer.parent.mkdir(parents=True)
+    evidence.mkdir()
+    payload_bytes = b"payload\n"
+    payload = app_root / "payload.txt"
+    payload.write_bytes(payload_bytes)
+    pointer.write_text('{"release_id":"release-fixture"}\n', encoding="utf-8")
+    (handoff / "CANDIDATE-HANDOFF.json").write_text(
+        json.dumps({"candidate_id": "candidate-fixture", "release_id": "release-fixture"}),
+        encoding="utf-8",
+    )
+    payload_sha = hashlib.sha256(payload_bytes).hexdigest()
+    tree_line = f"payload.txt\0{len(payload_bytes)}\0{payload_sha}\n".encode()
+    tree_sha = hashlib.sha256(tree_line).hexdigest()
+    state = {
+        "schema_version": "env-1b3-w14-prepare-v1",
+        "candidate_id": "candidate-fixture",
+        "release_id": "release-fixture",
+        "app_root": str(app_root),
+        "app_root_tree": {"file_count": 1, "tree_sha256": tree_sha},
+        "pointer_sha256": hashlib.sha256(pointer.read_bytes()).hexdigest(),
+    }
+    (evidence / "W14-PREPARE.json").write_text(json.dumps(state), encoding="utf-8")
+    prepare_record = {
+        "schema_version": "env-1b3-subcheck-result-v1",
+        "overall_task_id": TASK_ID,
+        "matrix_version": "env-1b3-windows-validation-matrix-v1",
+        "case_id": "W14",
+        "subcheck_id": "prepare",
+        "result": "PASS",
+        "code": "ENV1B3_FINAL_IDENTITY_PREPARE_PASS",
+        "timestamp_utc": "2026-08-04T00:00:00Z",
+        "evidence": {"app_root_tree_sha256": tree_sha},
+    }
+    subchecks = evidence / "subchecks" / "W14"
+    subchecks.mkdir(parents=True)
+    (subchecks / "prepare.json").write_text(json.dumps(prepare_record), encoding="utf-8")
+    (test_kit / "Invoke-PermissionMatrix.ps1").write_text(
+        "param([string]$AppRoot,[string]$EvidenceRoot,[string]$Mode)\n"
+        "Import-Module (Join-Path $PSScriptRoot 'ENV1B3.Validation.psm1') -Force\n"
+        "Write-ENV1B3CaseResult -EvidenceRoot $EvidenceRoot -CaseId W06 -Result PASS -Code FIXTURE_PERMISSION_PASS -Evidence @{app_root_write_denied=$true}|Out-Null\n",
+        encoding="ascii",
+        newline="\n",
+    )
+    (test_kit / "Invoke-LifecycleMatrix.ps1").write_text(
+        "param([string]$AppRoot,[string]$EvidenceRoot,[string]$CaseId,[string]$DifferentCwd,[switch]$PolluteEnvironment,[switch]$RequireOffline,[switch]$RequireExternalPathRoots,[string]$SubcheckId)\n"
+        "Import-Module (Join-Path $PSScriptRoot 'ENV1B3.Validation.psm1') -Force\n"
+        "Write-ENV1B3SubcheckResult -EvidenceRoot $EvidenceRoot -CaseId W14 -SubcheckId $SubcheckId -Result PASS -Code FIXTURE_LIFECYCLE_PASS -Evidence @{path_roots_external=$true;fixed_python_all_roles=$true;app_root_tree_unchanged=$true;port_release_verified=$true}|Out-Null\n",
+        encoding="ascii",
+        newline="\n",
+    )
+
+    completed = subprocess.run(
+        [
+            POWERSHELL,
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(test_kit / "Invoke-FinalIdentityMatrix.ps1"),
+            "-Mode",
+            "Validate",
+            "-HandoffRoot",
+            str(handoff),
+            "-TestRoot",
+            str(test_root),
+            "-EvidenceRoot",
+            str(evidence),
+            "-ContractPath",
+            str(test_kit / "matrix-contracts.json"),
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="strict",
+        timeout=60,
+        shell=False,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    aggregate = json.loads((evidence / "W14.json").read_text(encoding="utf-8"))
+    assert aggregate["result"] == "PASS"
+    assert [item["subcheck_id"] for item in aggregate["evidence"]["subchecks"]] == [
+        "prepare",
+        "readonly_app_root",
+        "offline_non_admin_lifecycle",
+    ]

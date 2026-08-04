@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory)][string]$Repository,
     [Parameter(Mandatory)][string]$BuildRoot,
     [Parameter(Mandatory)][string]$CandidateRoot,
-    [Parameter(Mandatory)][ValidatePattern('^0[1-7]$')][string]$CandidateSequence,
+    [Parameter(Mandatory)][ValidatePattern('^0[1-8]$')][string]$CandidateSequence,
     [Parameter(Mandatory)][string]$TestHostTaskbook,
     [switch]$Candidate05IsFinalValidationCandidate,
     [switch]$W01ProbeGuestPassed,

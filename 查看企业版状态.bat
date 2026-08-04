@@ -7,7 +7,9 @@ echo {"code":"PORTABLE_PYTHON_MISSING","status":"blocked"}
 exit /b 2
 :python_ready
 powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%~dp0enterprise\runtime\fixed_python_preflight.ps1" -AppRoot "%~dp0." -Command status
-if errorlevel 1 exit /b %errorlevel%
+set "PREFLIGHT_EXIT=%ERRORLEVEL%"
+if "%PREFLIGHT_EXIT%"=="3" exit /b 0
+if not "%PREFLIGHT_EXIT%"=="0" exit /b %PREFLIGHT_EXIT%
 set "PYTHONHOME="
 set "PYTHONPATH="
 set "PYTHONDONTWRITEBYTECODE=1"

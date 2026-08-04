@@ -99,11 +99,61 @@ def test_fixed_python_dll_preflight_returns_stable_results_without_loading_pytho
         "runtime_integrity_valid": False,
     }
     status = run("status")
-    assert status.returncode == 0 and status.stderr == ""
+    assert status.returncode == 3 and status.stderr == ""
     assert json.loads(status.stdout)["code"] == "PORTABLE_FIXED_PYTHON_INTEGRITY_INVALID"
     stop = run("stop")
     assert stop.returncode == 2 and stop.stderr == ""
     assert json.loads(stop.stdout)["code"] == "PORTABLE_RUNTIME_OWNERSHIP_UNTRUSTED"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="cmd.exe contract is Windows-only")
+def test_status_wrapper_treats_invalid_fixed_python_as_terminal_diagnostic(tmp_path: Path) -> None:
+    package = tmp_path / "candidate 中文 space"
+    runtime_root = package / "enterprise" / "runtime"
+    python_root = package / "python"
+    runtime_root.mkdir(parents=True)
+    python_root.mkdir()
+    shutil.copyfile(ROOT / "查看企业版状态.bat", package / "查看企业版状态.bat")
+    shutil.copyfile(ROOT / "enterprise" / "runtime" / "fixed_python_preflight.ps1", runtime_root / "fixed_python_preflight.ps1")
+    # A real native executable makes any accidental second-stage launch observable
+    # through its exit/output without relying on a Python installation.
+    where_exe = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "where.exe"
+    shutil.copyfile(where_exe, python_root / "python.exe")
+    expected = b"trusted-dll"
+    (python_root / "python314.dll").write_bytes(b"tampered-dll")
+    (package / "runtime-manifest.json").write_text(
+        json.dumps(
+            {
+                "core_files": [
+                    {
+                        "filename": "python314.dll",
+                        "sha256": hashlib.sha256(expected).hexdigest(),
+                        "size_bytes": len(expected),
+                    }
+                ]
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/c", "call", str(package / "查看企业版状态.bat")],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="strict",
+        timeout=20,
+        shell=False,
+        check=False,
+    )
+    assert completed.returncode == 0
+    assert completed.stderr == ""
+    assert completed.stdout.splitlines() == [
+        '{"schema_version":"env-1b3-fixed-python-preflight-v1","status":"diagnostic","code":"PORTABLE_FIXED_PYTHON_INTEGRITY_INVALID","runtime_integrity_valid":false}'
+    ]
 
 
 def test_formal_launcher_grammar_has_no_operator_trust_overrides(capsys: pytest.CaptureFixture[str]) -> None:

@@ -12,6 +12,39 @@ $ErrorActionPreference='Stop'
 $failureStage='module_import'
 Import-Module (Join-Path $PSScriptRoot 'ENV1B3.Validation.psm1') -Force
 $statePath=Join-Path $EvidenceRoot 'W14-PREPARE.json'
+$comparisonEvidence=$null
+
+function Protect-ENV1B3DiagnosticPath([string]$Value){
+    if([String]::IsNullOrWhiteSpace($Value)){return $Value}
+    $profile=[Environment]::GetFolderPath('UserProfile')
+    if(-not[String]::IsNullOrWhiteSpace($profile)-and$Value.StartsWith($profile,[StringComparison]::OrdinalIgnoreCase)){
+        return '<USERPROFILE>'+$Value.Substring($profile.Length)
+    }
+    return $Value
+}
+function Get-ENV1B3PathShape([string]$Value){
+    $namespace=$(if($Value.StartsWith('\\?\UNC\',[StringComparison]::OrdinalIgnoreCase)){'extended_unc'}elseif($Value.StartsWith('\\?\',[StringComparison]::OrdinalIgnoreCase)){'extended_drive'}else{'normal'})
+    $trailing=$Value.EndsWith('\')-or$Value.EndsWith('/')
+    $comparable=ConvertTo-ENV1B3ComparableProcessPath $Value
+    $root=[IO.Path]::GetPathRoot($comparable)
+    return [ordered]@{drive=$root;relative_suffix=(Protect-ENV1B3DiagnosticPath $comparable.Substring($root.Length));namespace=$namespace;trailing_separator=$trailing;canonical=(Protect-ENV1B3DiagnosticPath $comparable)}
+}
+function Assert-ENV1B3Comparison([string]$Name,[object]$Expected,[object]$Actual,[ValidateSet('ordinal','hash','path')][string]$Kind='ordinal'){
+    $script:failureStage=$Name
+    $expectedText=[string]$Expected;$actualText=[string]$Actual
+    if($Kind-eq'path'){
+        $expectedShape=Get-ENV1B3PathShape $expectedText;$actualShape=Get-ENV1B3PathShape $actualText
+        $equal=[String]::Equals($expectedText,$actualText,[StringComparison]::OrdinalIgnoreCase)
+        if(-not$equal){
+            $script:comparisonEvidence=[ordered]@{comparison_name=$Name;expected=(Protect-ENV1B3DiagnosticPath $expectedText);actual=(Protect-ENV1B3DiagnosticPath $actualText);normalized_expected=$expectedShape.canonical;normalized_actual=$actualShape.canonical;expected_path=$expectedShape;actual_path=$actualShape}
+        }
+    }else{
+        $comparison=$(if($Kind-eq'hash'){[StringComparison]::OrdinalIgnoreCase}else{[StringComparison]::Ordinal})
+        $equal=[String]::Equals($expectedText,$actualText,$comparison)
+        if(-not$equal){$script:comparisonEvidence=[ordered]@{comparison_name=$Name;expected=$expectedText;actual=$actualText;normalized_expected=$expectedText;normalized_actual=$actualText}}
+    }
+    if(-not$equal){throw[InvalidOperationException]::new('ENV1B3_FINAL_IDENTITY_VALIDATE_FAILED|comparison')}
+}
 try{
     $failureStage='app_root_path'
     [void](Assert-ENV1B3AbsoluteSafePath $HandoffRoot);[void](Assert-ENV1B3AbsoluteSafePath $TestRoot -AllowMissingLeaf);[void](Assert-ENV1B3AbsoluteSafePath $EvidenceRoot -AllowMissingLeaf)
@@ -25,16 +58,30 @@ try{
         if(-not$?){throw[InvalidOperationException]::new('ENV1B3_FINAL_IDENTITY_PREPARE_FAILED|materialization')}
         $tree=Get-ENV1B3DirectoryTree $appRoot
         $pointer=Join-Path $TestRoot 'install\state\current-release.json'
-        $state=[ordered]@{schema_version='env-1b3-w14-prepare-v1';candidate_id=[string]$handoff.candidate_id;release_id=[string]$handoff.release_id;app_root=$appRoot;app_root_tree=$tree;pointer_sha256=(Get-ENV1B3Sha256 $pointer);payload_tree_sha256=[string]$artifact.artifact.payload_tree_sha256;next_action='set app root read-only for the application user, then run W14Validate'}
+        $state=[ordered]@{schema_version='env-1b3-w14-prepare-v1';candidate_id=[string]$handoff.candidate_id;release_id=[string]$handoff.release_id;app_root=$appRoot;app_root_tree=$tree;pointer_sha256=(Get-ENV1B3Sha256 $pointer);payload_tree_sha256=[string]$artifact.artifact.payload_tree_sha256;next_action='apply read-and-execute (without write) to every APP_ROOT directory and file for the application user, verify a payload file remains readable, then run W14Validate'}
         [IO.File]::WriteAllText($statePath,($state|ConvertTo-Json -Depth 8 -Compress)+"`n",[Text.UTF8Encoding]::new($false))
         Write-ENV1B3SubcheckResult -EvidenceRoot $EvidenceRoot -CaseId W14 -SubcheckId prepare -Result PASS -Code ENV1B3_FINAL_IDENTITY_PREPARE_PASS -Evidence @{candidate_id=$state.candidate_id;release_id=$state.release_id;app_root_tree_sha256=$tree.tree_sha256;pointer_sha256=$state.pointer_sha256;lifecycle_executed=$false}|ConvertTo-Json -Depth 8 -Compress
         exit 0
     }
     $state=Read-ENV1B3Json $statePath
-    $failureStage='app_root_path'
-    if($state.schema_version-ne'env-1b3-w14-prepare-v1'-or$state.candidate_id-ne[string]$handoff.candidate_id-or$state.app_root-ne$appRoot-or$state.pointer_sha256-ne(Get-ENV1B3Sha256 (Join-Path $TestRoot 'install\state\current-release.json'))){throw[InvalidOperationException]::new('ENV1B3_FINAL_IDENTITY_VALIDATE_FAILED|state')}
-    $treeBefore=Get-ENV1B3DirectoryTree $appRoot
-    if($treeBefore.tree_sha256-ne$state.app_root_tree.tree_sha256){throw[InvalidOperationException]::new('ENV1B3_FINAL_IDENTITY_VALIDATE_FAILED|tree')}
+    $failureStage='state_schema';Assert-ENV1B3Comparison state_schema 'env-1b3-w14-prepare-v1' $state.schema_version
+    $failureStage='candidate_id';Assert-ENV1B3Comparison candidate_id ([string]$handoff.candidate_id) $state.candidate_id
+    $failureStage='release_id';Assert-ENV1B3Comparison release_id ([string]$handoff.release_id) $state.release_id
+    $failureStage='app_root_path';Assert-ENV1B3Comparison app_root_path $appRoot $state.app_root path
+    $pointerPath=Join-Path $TestRoot 'install\state\current-release.json'
+    $failureStage='pointer_sha256';Assert-ENV1B3Comparison pointer_sha256 $state.pointer_sha256 (Get-ENV1B3Sha256 $pointerPath) hash
+    $failureStage='app_root_tree_read'
+    try{$treeBefore=Get-ENV1B3DirectoryTree $appRoot}catch{
+        $exceptionCursor=$_.Exception;$treeReadActual='read_failed'
+        while($null-ne$exceptionCursor){
+            if($exceptionCursor-is[UnauthorizedAccessException]){$treeReadActual='access_denied';break}
+            if($exceptionCursor-is[IO.DirectoryNotFoundException]-or$exceptionCursor-is[IO.FileNotFoundException]){$treeReadActual='missing';break}
+            $exceptionCursor=$exceptionCursor.InnerException
+        }
+        $comparisonEvidence=[ordered]@{comparison_name='app_root_tree_read';expected='readable_directory_tree';actual=$treeReadActual;normalized_expected='readable_directory_tree';normalized_actual=$treeReadActual}
+        throw[InvalidOperationException]::new('ENV1B3_FINAL_IDENTITY_VALIDATE_FAILED|tree_read')
+    }
+    $failureStage='app_root_tree_sha256';Assert-ENV1B3Comparison app_root_tree_sha256 $state.app_root_tree.tree_sha256 $treeBefore.tree_sha256 hash
     $permissionEvidence=Join-Path $EvidenceRoot ('w14-permission-'+[Guid]::NewGuid().ToString('N'))
     try{
         $failureStage='read_only_app_root'
@@ -64,5 +111,7 @@ try{
 }catch{
     $code=$(if($Mode-eq'Prepare'){'ENV1B3_FINAL_IDENTITY_PREPARE_FAILED'}else{'ENV1B3_FINAL_IDENTITY_VALIDATE_FAILED'})
     if($_.Exception.Message-match'^([A-Z0-9_]+)\|'){$code=$Matches[1]}
-    [ordered]@{schema_version='env-1b3-w14-error-v1';result='FAIL';code=$code;phase=$Mode;failure_stage=$failureStage;exit_code=2}|ConvertTo-Json -Compress;exit 2
+    $errorPayload=[ordered]@{schema_version='env-1b3-w14-error-v1';result='FAIL';code=$code;phase=$Mode;failure_stage=$failureStage;exit_code=2}
+    if($null-ne$comparisonEvidence){$errorPayload.comparison=$comparisonEvidence}
+    $errorPayload|ConvertTo-Json -Depth 8 -Compress;exit 2
 }

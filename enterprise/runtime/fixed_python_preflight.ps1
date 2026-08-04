@@ -90,7 +90,10 @@ try{
     $record=$records[0]
     $valid=(Test-Path -LiteralPath $dllPath -PathType Leaf)-and([IO.FileInfo]$dllPath).Length-eq[int64]$record.size_bytes-and(Get-Sha256 $dllPath)-eq[string]$record.sha256
     if($valid){exit 0}
-    if($Command-eq'status'){Write-Result diagnostic PORTABLE_FIXED_PYTHON_INTEGRITY_INVALID 0 @{runtime_integrity_valid=$false}}
+    # Exit 3 is private to the status wrapper: the diagnostic is complete and
+    # the fixed interpreter must not be loaded.  The wrapper maps it to the
+    # public status success exit 0.
+    if($Command-eq'status'){Write-Result diagnostic PORTABLE_FIXED_PYTHON_INTEGRITY_INVALID 3 @{runtime_integrity_valid=$false}}
     if($Command-eq'stop'){Invoke-OwnedStop $root}
     Write-Result blocked PORTABLE_FIXED_PYTHON_INTEGRITY_INVALID 2 @{runtime_integrity_valid=$false}
 }catch{Write-Result blocked PORTABLE_FIXED_PYTHON_PREFLIGHT_FAILED 2}
