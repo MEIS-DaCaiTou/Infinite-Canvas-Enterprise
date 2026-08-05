@@ -2,7 +2,7 @@
 
 更新时间：2026-08-05
 
-最后一次代码事实核对基线：`main@105f3ca47f81207d2820fbd9acfa0a6d7b65770a`（PR #90 merge commit）。Manifest v2 不可变 Candidate、fixed CP314、portable lifecycle 与独立 clean-Windows W01-W14 `14/0/0` 前置门禁已完成批准范围；Candidate 08 不是 formal Release、已激活 Release 或 Production Baseline。OPS-3B 尚未开始，仍后置于 DATA-1、Fresh Install Bootstrap、新基线 backup/restore rehearsal 和 controlled upgrade/rollback rehearsal 输入。生产路线以 [ADR-OPS-007](../decisions/ADR-OPS-007-GREENFIELD-PRODUCTION-BASELINE-AND-LEGACY-NON-MIGRATION-2026-07.md) 为准：不原地升级或迁移旧生产；首次真实 OPS-3B 执行只服务 Greenfield 新生产部署后的版本迭代。完整顺序以 [总体路线图](../roadmap/DEVELOPMENT-ROADMAP-2026-2027.md) 为准。
+最后一次代码事实核对基线：`main@105f3ca47f81207d2820fbd9acfa0a6d7b65770a`（PR #90 merge commit）。Manifest v2 不可变 Candidate、fixed CP314、portable lifecycle 与独立 clean-Windows W01-W14 `14/0/0` 前置门禁已完成批准范围；Candidate 08 不是 formal Release、已激活 Release 或 Production Baseline。OPS-3B 尚未开始，其 repository implementation 后置于 DATA-1、Fresh Install Bootstrap、migration compatibility 和新基线 backup/restore rehearsal；随后才使用全新隔离数据执行 controlled apply / switch / health / rollback / restore rehearsal，以验证 OPS-3B repository implementation。生产路线以 [ADR-OPS-007](../decisions/ADR-OPS-007-GREENFIELD-PRODUCTION-BASELINE-AND-LEGACY-NON-MIGRATION-2026-07.md) 为准：不原地升级或迁移旧生产；首次真实 OPS-3B 执行只服务 Greenfield 新生产部署后的版本迭代。完整顺序以 [总体路线图](../roadmap/DEVELOPMENT-ROADMAP-2026-2027.md) 为准。
 
 ## 1. OPS 总目标
 
@@ -122,7 +122,7 @@ Implementation details: `docs/ops/OPS-3A-ONLINE-UPDATE-CORE-IMPLEMENTATION-2026-
 
 OPS-3 规划：
 
-- OPS-3B：在 Production Baseline 批准前完成 repository implementation，并使用 Fresh Install Bootstrap 建立的全新隔离数据完成 controlled `apply-upgrade`、switch、health、rollback 和 restore 演练；不用于旧生产原地升级。
+- OPS-3B：在 DATA-1、Fresh Install Bootstrap、migration compatibility 和新基线 backup/restore rehearsal 完成后实施 repository capability；随后使用 Fresh Install Bootstrap 建立的全新隔离数据完成 controlled `apply-upgrade`、switch、health、rollback 和 restore 演练，以验证该 implementation；不用于旧生产原地升级。
 - OPS-3C：在 Production Baseline 后单独实现 Update Center page and allowlisted backend OPS API；不是首次生产部署前置条件。
 - 维护窗口确认。
 - 二次确认。
@@ -131,13 +131,14 @@ OPS-3 规划：
 
 OPS-3C 才开始接入网页 Update Center。网页端只能调用白名单 OPS API，不得执行任意 shell。
 
-不可变 Candidate、Manifest v2、Runtime lifecycle 与 clean-Windows validation 已完成批准范围；OPS-3B 仓库实现仍后置于 DATA-1、Fresh Install Bootstrap、正式 backup、restore rehearsal、migration compatibility 和 controlled upgrade/rollback rehearsal 输入，并必须在 Production Baseline 批准前完成。旧生产 OPS-2A / OPS-2B 结果只保留历史证据，不能满足这些门禁。
+不可变 Candidate、Manifest v2、Runtime lifecycle 与 clean-Windows validation 已完成批准范围。后续顺序固定为：DATA-1 与 migration compatibility、Fresh Install Bootstrap、新基线正式 backup/restore rehearsal、OPS-3B repository implementation、再以 controlled apply / switch / health / rollback / restore rehearsal 验证 OPS-3B；这些门禁都必须在 Production Baseline 批准前完成。旧生产 OPS-2A / OPS-2B 结果只保留历史证据，不能满足这些门禁。
 
 ### Greenfield 新生产 OPS 边界
 
 Production Baseline 获批前必须在干净 Windows 环境使用全新数据库、账号和配置完成：
 
 - 使用已通过 W01-W14 的不可变 Candidate 作为后续全新安装与升级演练输入；该 Candidate 当前未激活或部署。
+- DATA-1、migration compatibility、数据完整性和数据库回滚基础；不迁移或修复旧生产数据。
 - Fresh Install Bootstrap；该能力尚未实现，SEC-1B2 不能替代。
 - 首次启动、status / health 与业务验收。
 - 针对全新基线数据的正式 backup execute 和 restore rehearsal。

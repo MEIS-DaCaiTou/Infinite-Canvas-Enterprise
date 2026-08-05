@@ -5,7 +5,6 @@
 ## 1. 当前主线与运行事实
 
 - 企业版仓库：`MEIS-DaCaiTou/Infinite-Canvas-Enterprise`
-- `current_main`：以仓库 GitHub `main` HEAD 为准。
 - `current_main` / `last_verified_code_baseline`：`105f3ca47f81207d2820fbd9acfa0a6d7b65770a`（PR #90 merge commit；tree `5a5fd040974ca9f74f0b2aa916edbb20c42dbd67`）。
 - ENV-1B0 / DOC-2 / DOC-2A：PR #80 已合并，merge commit `be5573ae416b4ce81f8cc26ae282868a7efa7672`；完成架构决策冻结、Greenfield 路线和文档事实同步。
 - ENV-1B1A：PR #81 已合并，merge commit `a53885b026a6c2440acb0fbde72d6571ff6f7723`；APP_ROOT 写入审计、CSS 传递依赖哈希、统一 HTML build ID、确定性 static staging builder、`main.py` 最小不可变 Release 补丁和 Git tracked fingerprint/Wxx 漂移门禁已进入 `main`。
