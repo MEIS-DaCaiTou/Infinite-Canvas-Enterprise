@@ -8,13 +8,19 @@ import threading
 import time
 import uuid
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 from .health import HealthResult, gateway_health, tcp_check, upstream_health
 from .logging import RuntimeLogs, utc_now
-from .ownership import ProcessIdentity, inspect_port_listeners, process_identity, same_process
+from .ownership import (
+    ProcessIdentity,
+    inspect_port_listeners,
+    portable_supervisor_command_identity,
+    process_identity,
+    same_process,
+)
 from .process import (
     CommandSpec,
     ManagedProcess,
@@ -88,6 +94,7 @@ class SupervisorConfig:
     startup_preflight_sha256: str | None = None
     launch_context_identity: str | None = None
     python_executable: str | None = None
+    supervisor_command_identity: str | None = None
 
     def __post_init__(self) -> None:
         if self.mode not in {"foreground", "service-host"}:
@@ -106,8 +113,13 @@ class SupervisorConfig:
         )
         if self.runtime_mode == "portable-release" and any(not isinstance(value, str) or not value for value in portable_values):
             raise ValueError("portable runtime identity is incomplete")
+        if self.supervisor_command_identity is not None and (
+            not isinstance(self.supervisor_command_identity, str)
+            or len(self.supervisor_command_identity) != 64
+        ):
+            raise ValueError("portable supervisor command identity is invalid")
         if self.runtime_mode != "portable-release" and any(
-            value is not None for value in (*portable_values, self.launch_context_identity)
+            value is not None for value in (*portable_values, self.launch_context_identity, self.supervisor_command_identity)
         ):
             raise ValueError("development runtime cannot carry portable identity")
         for name, value, minimum, maximum in (
@@ -171,8 +183,21 @@ class RuntimeSupervisor:
     """Own and supervise exactly two fixed child roles in one Windows Job."""
 
     def __init__(self, config: SupervisorConfig, *, instance_id: str | None = None) -> None:
-        self.config = config
         self.instance_id = instance_id or uuid.uuid4().hex
+        if config.runtime_mode == "portable-release" and config.supervisor_command_identity is None:
+            config = replace(
+                config,
+                supervisor_command_identity=portable_supervisor_command_identity(
+                    app_root=config.app_root,
+                    runtime_root=config.runtime_root,
+                    instance_id=self.instance_id,
+                    launch_context_identity=str(config.launch_context_identity),
+                    python_executable=str(config.python_executable),
+                    upstream_port=config.upstream_port,
+                    gateway_port=config.gateway_port,
+                ),
+            )
+        self.config = config
         self.store = RuntimeStateStore(config.runtime_root)
         if config.runtime_mode == "portable-release":
             from .portable import validate_portable_process_binding
@@ -216,6 +241,7 @@ class RuntimeSupervisor:
             mode=config.mode,
             runtime_mode=config.runtime_mode,
             runtime_identity=config.runtime_identity,
+            supervisor_command_identity=config.supervisor_command_identity,
         )
         self._job: ProcessJob | None = None
         self._acquired = False
@@ -368,6 +394,7 @@ class RuntimeSupervisor:
                 owner=owner,
                 supervisor=self.supervisor_identity,
                 expected_runtime_identity=self.config.runtime_identity,
+                expected_supervisor_command_identity=self.config.supervisor_command_identity,
                 grace_seconds=STARTUP_LOCK_GRACE_SECONDS,
             ):
                 raise RuntimeStartBlocked("runtime startup reservation could not be adopted")

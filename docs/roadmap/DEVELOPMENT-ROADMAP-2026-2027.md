@@ -53,7 +53,7 @@ OPS-2A / OPS-2B 已进入 main，项目负责人曾在旧生产侧人工完成 d
 
 ## 3. 当前阶段
 
-当前已确认状态为 **ENV-1B1C-B1/B2 已合并，ENV-1B2A 已由 PR #87 合并；ENV-1B2B 的 Python 3.14.6 / cp314 active Runtime 与 OPS Release Manifest v2 repository implementation 已独立验收**。`ENV_1B2_completed=true`、`ENV_1B3_started=false`；clean Windows、activation、formal Release 与生产批准仍未完成。正常上游功能同步在 ENV-1 期间冻结；紧急安全漏洞修复可以单独评估并受控引入。
+当前已确认状态为 **ENV-1B1C-B1/B2 已合并，ENV-1B2A 已由 PR #87 合并；ENV-1B2B 的 Python 3.14.6 / cp314 active Runtime 与 OPS Release Manifest v2 repository implementation 已独立验收**。`ENV_1B2_completed=true`、`ENV_1B3_started=true`；W01-W14 repository validation kit 已进入单一 Draft PR，独立 clean Windows 矩阵、activation、formal Release 与生产批准仍未完成。正常上游功能同步在 ENV-1 期间冻结；紧急安全漏洞修复可以单独评估并受控引入。
 
 Greenfield Production Baseline 路线按以下顺序执行，后项不能绕过前项门禁：
 
@@ -67,7 +67,7 @@ Greenfield Production Baseline 路线按以下顺序执行，后项不能绕过�
 7. ENV-1B2A：固定 Python 3.10 layout 的官方来源、依赖锁、离线双重建、`pip check`、SBOM、deterministic archive 和 B2 fixed-Python fixture；已由 PR #87 合并并保留为 rollback baseline。
 8. ENV-1B2B：资格门禁选择 CPython 3.14.6；cp314 active policy、离线双构建、三层 provenance 与真实 formal-entry fixture 已完成并通过 repository implementation 独立验收，`ENV_1B2_completed=true`。
 9. OPS Release Manifest v2：repository implementation 已独立验收，Release candidate payload 可构建并离线验证，portable startup 已绑定 v2；不含 activation 或 OPS-3B。
-10. ENV-1B3：干净 Windows VM、无系统 Python、非管理员、中文/空格/长路径、低磁盘、重启、损坏 DLL/manifest、杀毒软件和 APP_ROOT 只读验证。
+10. ENV-1B3：已启动单一 Draft PR，提供 W01-W14 Windows 原生验证工具和不可变候选交接；干净 Windows VM、无系统 Python、非管理员、中文/空格/长路径、低磁盘、重启、损坏 DLL/manifest、杀毒软件和 APP_ROOT 只读矩阵仍须由独立测试主机执行。
 11. 形成首个不可变 Windows Release Candidate；Release Candidate 不等于 Production Baseline。
 12. DATA-1：Repository、schema version、migration history、新版本 migration compatibility、数据完整性和数据库回滚基础；不迁移或修复旧生产数据。
 13. Fresh Install Bootstrap：面向空环境建立目标 Schema、mandatory audit、首个 `super_admin` 和不可变 lifecycle marker。

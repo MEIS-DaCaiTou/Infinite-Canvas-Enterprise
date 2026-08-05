@@ -40,6 +40,12 @@ from enterprise.release.static_build import build_static_tree
 
 
 SHA1 = "a" * 40
+
+
+def test_release_manifest_verifier_normalizes_only_well_formed_windows_extended_namespaces() -> None:
+    assert release_manifest_v2._strip_windows_namespace(r"\\?\C:\Release\payload.bin") == r"C:\Release\payload.bin"
+    assert release_manifest_v2._strip_windows_namespace(r"\\?\UNC\server\share\payload.bin") == r"\\server\share\payload.bin"
+    assert release_manifest_v2._strip_windows_namespace(r"\\?\relative") == r"\\?\relative"
 TREE = "b" * 40
 SHA = "c" * 64
 

@@ -58,6 +58,26 @@ _PROBE_ROOTS = (
 )
 
 
+def _prepare_writable_probe_roots(roots: PathRoots) -> None:
+    """Create the bounded portable writable roots before probing them.
+
+    A clean Windows profile has no per-user runtime/cache/temp directories yet.
+    Creation therefore uses the existing pre-use/post-create reparse checks;
+    the subsequent writable probes remain the authoritative preflight check.
+    """
+
+    for attribute, label in _PROBE_ROOTS:
+        root = Path(getattr(roots, attribute))
+        try:
+            assert_no_reparse_ancestors(root, allow_missing=True)
+            root.mkdir(parents=True, exist_ok=True)
+            assert_no_reparse_ancestors(root)
+            if not root.is_dir() or has_reparse_point(root):
+                raise PathSafetyError("path-invalid")
+        except (OSError, PathSafetyError) as exc:
+            raise RuntimeContractError("WRITABLE_PROBE_CREATE_FAILED", details={"label": label}) from exc
+
+
 def _same_path(left: Path, right: Path) -> bool:
     return os.path.normcase(os.path.abspath(os.path.normpath(os.fspath(left)))) == os.path.normcase(
         os.path.abspath(os.path.normpath(os.fspath(right)))
@@ -193,6 +213,7 @@ def build_portable_preflight(
         expected_executable=fixed_executable,
         expected_runtime_root=roots.PYTHON_RUNTIME,
     )
+    _prepare_writable_probe_roots(roots)
     probes = tuple(probe(Path(getattr(roots, attribute)), label) for attribute, label in _PROBE_ROOTS)
     result = build_startup_preflight_result(
         mode=parse_runtime_mode("portable-release"),
@@ -322,12 +343,12 @@ def execute_portable_command(*, app_root: Path, command: str) -> tuple[dict[str,
     if command not in PORTABLE_COMMANDS:
         raise RuntimeContractError("RELEASE_MISMATCH_COMMAND_INVALID")
     preflight: PortablePreflight | None = None
-    manifest_error: RuntimeContractError | None = None
+    manifest_error: BaseException | None = None
     try:
-        preflight = build_portable_preflight(app_root, verify_full_payload=command in {"start", "restart"})
+        preflight = build_portable_preflight(app_root, verify_full_payload=command in {"start", "restart", "health"})
         roots = install_path_roots_for_process(preflight.roots)
         portable_identity: StartupPreflightResult | RuntimeLaunchContext = preflight.result
-    except RuntimeContractError as exc:
+    except (RuntimeContractError, CurrentReleaseError) as exc:
         if command not in {"status", "stop"}:
             raise
         manifest_error = exc
@@ -342,7 +363,7 @@ def execute_portable_command(*, app_root: Path, command: str) -> tuple[dict[str,
         except RuntimeContractError:
             if command == "status":
                 return {
-                    "release_manifest_error_code": manifest_error.code,
+                    "release_manifest_error_code": str(getattr(manifest_error, "code", "CURRENT_RELEASE_INVALID")),
                     "release_manifest_v2_valid": False,
                     "status": "invalid",
                 }, 0
@@ -388,16 +409,20 @@ def execute_portable_command(*, app_root: Path, command: str) -> tuple[dict[str,
         gateway_port=int(getattr(enterprise_config, "GATEWAY_PORT", 8000)),
         secret_values=secrets_to_redact,
     )
+    controller = RuntimeController(config)
     snapshot = inspect_runtime(config)
+    if command == "start" and snapshot.get("start_disposition") in {"startup_in_progress", "stale_runtime_state"}:
+        if controller.reconcile_reboot_stale_runtime(snapshot):
+            snapshot = inspect_runtime(config)
     if manifest_error is not None:
         snapshot["release_manifest_v2_valid"] = False
-        snapshot["release_manifest_error_code"] = manifest_error.code
+        snapshot["release_manifest_error_code"] = str(getattr(manifest_error, "code", "CURRENT_RELEASE_INVALID"))
         public = _public_runtime_snapshot(snapshot)
         if command == "status":
             return public, 0
         if snapshot.get("portable_ownership_valid") is not True:
             return {"code": "PORTABLE_RUNTIME_OWNERSHIP_UNTRUSTED", "status": "blocked"}, 2
-        payload = RuntimeController(config).send_command("stop")
+        payload = controller.send_command("stop")
         result = str(payload.get("result"))
         return _public_runtime_snapshot(payload), 0 if result in {"stopped", "already_stopped"} else 2
     decision = decide_release_mismatch(
@@ -432,7 +457,6 @@ def execute_portable_command(*, app_root: Path, command: str) -> tuple[dict[str,
             "release_gate": decision.as_dict(),
             "status": "blocked",
         }, 2
-    controller = RuntimeController(config)
     if command == "start":
         assert preflight is not None
         payload = controller.start(preflight=preflight.result)

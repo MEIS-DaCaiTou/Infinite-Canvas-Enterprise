@@ -12,8 +12,15 @@ from typing import Any
 
 from .health import gateway_health, tcp_check, upstream_health
 from .logging import RuntimeLogs
-from .ownership import ProcessIdentity, PortListenerSnapshot, inspect_port_listeners, process_identity, same_process
-from .process import bundled_python
+from .ownership import (
+    ProcessIdentity,
+    PortListenerSnapshot,
+    inspect_port_listeners,
+    portable_supervisor_command_identity,
+    process_identity,
+    same_process,
+)
+from .process import bundled_python, windows_extended_process_path
 from .launch_context import (
     LAUNCH_CONTEXT_FILENAME,
     RuntimeLaunchContext,
@@ -295,6 +302,23 @@ def _portable_identity_snapshot(
         and state.get("launch_context_identity") == context.identity == lock.get("launch_context_identity")
         and lock.get("lock_phase") == "adopted"
     )
+    command_identity_match = False
+    if context is not None and type(state) is dict and type(lock) is dict and isinstance(instance_id, str):
+        expected_command_identity = portable_supervisor_command_identity(
+            app_root=config.app_root,
+            runtime_root=config.runtime_root,
+            instance_id=instance_id,
+            launch_context_identity=context.identity,
+            python_executable=str(config.python_executable),
+            upstream_port=config.upstream_port,
+            gateway_port=config.gateway_port,
+        )
+        command_identity_match = (
+            state.get("supervisor_command_identity")
+            == expected_command_identity
+            == lock.get("supervisor_command_identity")
+        )
+    identity_fields_match = identity_fields_match and command_identity_match
     role_ownership = bool(
         type(state) is dict
         and supervisor_lock_binding
@@ -371,6 +395,66 @@ class RuntimeController:
             return self.store.clear_stale_lock(expected_instance_id=lock.get("supervisor_instance_id"))
         return False
 
+    def reconcile_reboot_stale_runtime(self, snapshot: dict[str, Any]) -> bool:
+        """Recover only an identity-complete owned instance proven absent after reboot."""
+
+        if self.config.runtime_mode != "portable-release":
+            return False
+        state = snapshot.get("runtime_state")
+        lock = snapshot.get("lock")
+        if type(state) is not dict or type(lock) is not dict or lock.get("lock_phase") != "adopted":
+            return False
+        try:
+            context = read_launch_context(self.config.runtime_root / LAUNCH_CONTEXT_FILENAME)
+        except Exception:
+            return False
+        instance_id = state.get("supervisor_instance_id")
+        state_supervisor = _supervisor_identity_from_state(state)
+        lock_supervisor = _supervisor_identity_from_state(lock)
+        if (
+            not isinstance(instance_id, str)
+            or not instance_id
+            or state_supervisor is None
+            or lock_supervisor is None
+            or not same_process(state_supervisor, lock_supervisor)
+            or process_identity(state_supervisor.pid) is not None
+            or context.instance_id != instance_id
+            or lock.get("supervisor_instance_id") != instance_id
+        ):
+            return False
+        for role in ("upstream", "gateway"):
+            identity = _identity_from_role(state.get(role))
+            if identity is not None and process_identity(identity.pid) is not None:
+                return False
+        upstream, gateway = _port_snapshots(self.config)
+        if not _ports_are_confirmed_clear(upstream, gateway):
+            return False
+        expected_command = portable_supervisor_command_identity(
+            app_root=self.config.app_root,
+            runtime_root=self.config.runtime_root,
+            instance_id=instance_id,
+            launch_context_identity=context.identity,
+            python_executable=str(self.config.python_executable),
+            upstream_port=self.config.upstream_port,
+            gateway_port=self.config.gateway_port,
+        )
+        identity_matches = bool(
+            state.get("supervisor_command_identity") == expected_command == lock.get("supervisor_command_identity")
+            and state.get("runtime_mode") == "portable-release" == lock.get("runtime_mode")
+            and state.get("release_id") == context.release_id == lock.get("release_id") == self.config.release_id
+            and state.get("release_manifest_sha256") == context.release_manifest_sha256 == lock.get("release_manifest_sha256") == self.config.release_manifest_sha256
+            and state.get("release_payload_tree_sha256") == context.release_payload_tree_sha256 == lock.get("release_payload_tree_sha256") == self.config.release_payload_tree_sha256
+            and state.get("runtime_manifest_sha256") == context.runtime_manifest_sha256 == lock.get("runtime_manifest_sha256") == self.config.runtime_manifest_sha256
+            and state.get("enterprise_commit") == context.enterprise_commit == lock.get("enterprise_commit") == self.config.enterprise_commit
+            and state.get("enterprise_tree") == context.enterprise_tree == lock.get("enterprise_tree") == self.config.enterprise_tree
+            and state.get("startup_preflight_sha256") == context.startup_preflight_sha256 == lock.get("startup_preflight_sha256") == self.config.startup_preflight_sha256
+            and state.get("launch_context_identity") == context.identity == lock.get("launch_context_identity")
+        )
+        return identity_matches and self.store.reconcile_reboot_stale_state(
+            expected_lock=lock,
+            expected_state=state,
+        )
+
     @staticmethod
     def _stop_owned_start_host(host: subprocess.Popen[bytes]) -> bool:
         """End only the host this launcher just created after startup failure."""
@@ -439,12 +523,26 @@ class RuntimeController:
                 expected_existing_context = read_launch_context(
                     self.config.runtime_root / LAUNCH_CONTEXT_FILENAME
                 ).identity
-            self.config = replace(self.config, launch_context_identity=context.identity)
+            command_identity = portable_supervisor_command_identity(
+                app_root=self.config.app_root,
+                runtime_root=self.config.runtime_root,
+                instance_id=instance_id,
+                launch_context_identity=context.identity,
+                python_executable=str(self.config.python_executable),
+                upstream_port=self.config.upstream_port,
+                gateway_port=self.config.gateway_port,
+            )
+            self.config = replace(
+                self.config,
+                launch_context_identity=context.identity,
+                supervisor_command_identity=command_identity,
+            )
         self.store.initialize()
         if not self.store.reserve_lock(
             instance_id=instance_id,
             owner=owner,
             runtime_identity=self.config.runtime_identity,
+            supervisor_command_identity=self.config.supervisor_command_identity,
         ):
             raise RuntimeStartBlocked("runtime startup is already in progress")
         if context is not None:
@@ -524,7 +622,8 @@ class RuntimeController:
                 )
             host = subprocess.Popen(
                 arguments,
-                cwd=str(self.config.app_root),
+                executable=windows_extended_process_path(str(executable)),
+                cwd=windows_extended_process_path(self.config.app_root),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -538,7 +637,13 @@ class RuntimeController:
             self.store.release_lock(instance_id)
             if bootstrap_path is not None:
                 _discard_bootstrap_failure(bootstrap_path, logs=logs)
-            raise RuntimeControlError("runtime service host could not be started") from exc
+            details: dict[str, object] = {"failure_stage": "service_host_create"}
+            if isinstance(exc, OSError):
+                if type(exc.errno) is int:
+                    details["errno"] = exc.errno
+                if type(getattr(exc, "winerror", None)) is int:
+                    details["winerror"] = exc.winerror
+            raise RuntimeControlError("runtime service host could not be started", public_details=details) from exc
         deadline = time.monotonic() + wait_seconds
         while time.monotonic() < deadline:
             current = inspect_runtime(self.config)

@@ -21,6 +21,17 @@ class ProcessControlError(RuntimeError):
     code = "RUNTIME_PROCESS_ERROR"
 
 
+def windows_extended_process_path(value: str | Path) -> str:
+    """Return an OS-facing extended path while retaining canonical identities elsewhere."""
+
+    path = os.path.abspath(os.fspath(value))
+    if os.name != "nt" or path.startswith("\\\\?\\"):
+        return path
+    if path.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + path[2:]
+    return "\\\\?\\" + path
+
+
 @dataclass(frozen=True)
 class CommandSpec:
     role: str
@@ -167,7 +178,8 @@ def start_process(
     try:
         process = subprocess.Popen(
             arguments,
-            cwd=str(app_root),
+            executable=windows_extended_process_path(arguments[0]),
+            cwd=windows_extended_process_path(app_root),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

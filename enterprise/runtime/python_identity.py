@@ -109,6 +109,16 @@ def _probe_path(probe: dict[str, Any], field: str) -> Path:
     value = probe.get(field)
     if not isinstance(value, str) or not value:
         raise RuntimeContractError("PYTHON_IDENTITY_PREFIX_MISMATCH")
+    if os.name == "nt":
+        # CPython can preserve the Win32 extended-length namespace in
+        # sys.prefix/base_prefix when it starts with an extended cwd, while
+        # sys.executable and the trusted Runtime root remain ordinary absolute
+        # paths.  Normalize only these two well-formed namespace spellings
+        # before the existing reparse/root/equality gates; do not relax them.
+        if value.startswith("\\\\?\\UNC\\"):
+            value = "\\\\" + value[8:]
+        elif re.match(r"^\\\\\?\\[A-Za-z]:\\", value):
+            value = value[4:]
     return Path(value)
 
 

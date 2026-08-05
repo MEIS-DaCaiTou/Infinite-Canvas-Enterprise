@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import ctypes
+import hashlib
+import json
 import os
 import subprocess
 from dataclasses import asdict, dataclass
@@ -19,6 +21,34 @@ class ProcessIdentity:
 
     def snapshot(self) -> dict[str, Any]:
         return asdict(self)
+
+
+def portable_supervisor_command_identity(
+    *,
+    app_root: Path,
+    runtime_root: Path,
+    instance_id: str,
+    launch_context_identity: str,
+    python_executable: str,
+    upstream_port: int,
+    gateway_port: int,
+) -> str:
+    """Bind the fixed portable service-host command without exposing it publicly."""
+
+    payload = {
+        "app_root": os.path.normcase(os.path.abspath(os.fspath(app_root))),
+        "entrypoint": os.path.normcase(
+            os.path.abspath(os.fspath(Path(app_root) / "enterprise" / "runtime" / "host.py"))
+        ),
+        "gateway_port": gateway_port,
+        "instance_id": instance_id,
+        "launch_context_identity": launch_context_identity,
+        "python_executable": os.path.normcase(os.path.abspath(python_executable)),
+        "runtime_root": os.path.normcase(os.path.abspath(os.fspath(runtime_root))),
+        "upstream_port": upstream_port,
+    }
+    encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("ascii")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 @dataclass(frozen=True)

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+from types import SimpleNamespace
+import shutil
 from dataclasses import replace
 from pathlib import Path
 
@@ -11,6 +13,7 @@ from enterprise.path_safety import PathSafetyError
 from enterprise.release import release_manifest_v2
 from enterprise.release.current_release import (
     CurrentRelease,
+    CurrentReleaseError,
     canonical_json,
     read_current_release_result_from_state_root,
 )
@@ -118,6 +121,29 @@ def test_portable_preflight_cross_binds_pointer_manifest_python_and_roots(tmp_pa
     assert tuple(item.root_label for item in evidence.writable_probes) == (
         "DATA_ROOT", "LOG_ROOT", "RUNTIME_ROOT", "CACHE_ROOT", "TEMP_ROOT"
     )
+
+
+def test_portable_preflight_prepares_missing_writable_roots_before_probe(tmp_path: Path) -> None:
+    app, local, probe = _fixture(tmp_path)
+    writable_roots = (
+        app.parents[1] / "data",
+        app.parents[1] / "logs",
+        local / "InfiniteCanvasEnterprise" / "runtime",
+        local / "Infinite-Canvas-Enterprise" / "cache",
+        local / "Infinite-Canvas-Enterprise" / "temp",
+    )
+    for root in writable_roots:
+        shutil.rmtree(root)
+
+    evidence = build_portable_preflight(
+        app,
+        local_app_data_resolver=lambda: local,
+        executable=app / "python" / "python.exe",
+        python_probe=probe,
+    )
+
+    assert evidence.result.result == "pass"
+    assert all(root.is_dir() for root in writable_roots)
 
 
 def test_pointer_must_identify_launcher_release(tmp_path: Path) -> None:
@@ -291,3 +317,80 @@ def test_status_reports_damaged_manifest_without_context_as_read_only_invalid(
         "release_manifest_v2_valid": False,
         "status": "invalid",
     }
+
+
+def test_health_requests_full_payload_verification_before_runtime_inspection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[bool] = []
+
+    def fail_preflight(_app_root: Path, *, verify_full_payload: bool = False):
+        calls.append(verify_full_payload)
+        raise RuntimeContractError("PORTABLE_RELEASE_MANIFEST_INVALID")
+
+    monkeypatch.setattr("enterprise.runtime.portable.build_portable_preflight", fail_preflight)
+    with pytest.raises(RuntimeContractError) as exc:
+        execute_portable_command(app_root=tmp_path / "install/releases/release-A", command="health")
+    assert exc.value.code == "PORTABLE_RELEASE_MANIFEST_INVALID"
+    assert calls == [True]
+
+
+@pytest.mark.parametrize(("command", "expected_exit"), (("status", 0), ("stop", 0)))
+def test_current_release_damage_uses_retained_context_for_diagnostic_or_owned_stop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+    expected_exit: int,
+) -> None:
+    app_root = (tmp_path / "install" / "releases" / "release-A").absolute()
+    runtime_root = tmp_path / "runtime"
+    roots = SimpleNamespace(
+        APP_ROOT=app_root,
+        RUNTIME_ROOT=runtime_root,
+        LOG_ROOT=tmp_path / "logs",
+        PYTHON_RUNTIME=app_root / "python",
+        root_identity="a" * 64,
+    )
+    context = SimpleNamespace(
+        identity="b" * 64,
+        instance_id="c" * 32,
+        release_id="release-A",
+        path_roots_identity=roots.root_identity,
+        runtime_manifest_sha256="d" * 64,
+        release_manifest_sha256="e" * 64,
+        release_payload_tree_sha256="f" * 64,
+        enterprise_commit="1" * 40,
+        enterprise_tree="2" * 40,
+        startup_preflight_sha256="3" * 64,
+    )
+
+    monkeypatch.setattr(
+        "enterprise.runtime.portable.build_portable_preflight",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(CurrentReleaseError("CURRENT_RELEASE_JSON_INVALID")),
+    )
+    monkeypatch.setattr("enterprise.runtime.portable._derive_install_root", lambda _app: tmp_path / "install")
+    monkeypatch.setattr("enterprise.runtime.portable.windows_local_app_data_known_folder", lambda: tmp_path / "local")
+    monkeypatch.setattr("enterprise.runtime.portable.derive_portable_path_roots", lambda *_args, **_kwargs: roots)
+    monkeypatch.setattr("enterprise.runtime.portable.read_launch_context", lambda _path: context)
+    monkeypatch.setattr("enterprise.runtime.portable.install_path_roots_for_process", lambda value: value)
+    monkeypatch.setattr("enterprise.paths.prepare_application_directories", lambda _roots: None)
+    monkeypatch.setattr("enterprise.paths.prepare_runtime_directories", lambda _roots: None)
+
+    class FakeController:
+        def __init__(self, _config):
+            pass
+
+        def send_command(self, value: str):
+            assert value == "stop"
+            return {"result": "stopped", "status": "stopped"}
+
+    snapshot = {"portable_ownership_valid": True, "status": "healthy"}
+    monkeypatch.setattr("enterprise.runtime.control.RuntimeController", FakeController)
+    monkeypatch.setattr("enterprise.runtime.control.inspect_runtime", lambda _config: dict(snapshot))
+    payload, exit_code = execute_portable_command(app_root=app_root, command=command)
+    assert exit_code == expected_exit
+    if command == "status":
+        assert payload["release_manifest_error_code"] == "CURRENT_RELEASE_JSON_INVALID"
+        assert payload["release_manifest_v2_valid"] is False
+    else:
+        assert payload["result"] == "stopped"
