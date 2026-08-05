@@ -2,7 +2,7 @@
 
 本文档描述当前仓库已实现的 Infinite Canvas 企业多用户运行架构和主要模块职责；它不证明相同仓库基线已经部署到生产。
 
-> 最后一次代码事实核对基线：`main@6610218aecc0b864df5f075cb6824e041daedfd7`。PR #80 至 #84 已合并；ENV-1B1C-B1 已进入 `main` 并通过独立验收。B2 repository implementation 在既有 STAB-1 生命周期上接入 fixed launcher、Release identity、preflight、launch context 和 readiness，不创建第二套 controller/supervisor/state/lock；该 repository implementation 与 D1–D10 实现已通过独立代码审查。真实 bundled Runtime 验证、完整 APP_ROOT 只读、Manifest v2、Fresh Install Bootstrap、OPS-3B、formal Release、Production Baseline、restore 和 rollback 尚未完成。
+> 最后一次代码事实核对基线：`main@105f3ca47f81207d2820fbd9acfa0a6d7b65770a`（PR #90 merge commit；tree `5a5fd040974ca9f74f0b2aa916edbb20c42dbd67`）。当前仓库具备 Manifest-v2-bound 不可变 Candidate 构建/materialization、fixed CP314 Runtime 信任链和复用 STAB-1 的 portable lifecycle；Candidate 08 已在独立 Windows Guest 完成 W01-W14 `14 PASS / 0 FAIL / 0 BLOCKED`。Fresh Install Bootstrap、DATA-1、Release activation、OPS-3B、formal Release、Production Baseline、restore rehearsal 和生产部署尚未完成。
 
 ---
 
@@ -39,11 +39,15 @@ enterprise/runtime supervisor
 
 企业网关是对外入口。上游 Infinite Canvas 只在本机内部端口运行，不直接暴露给局域网用户。
 
+正式候选启动链以 detached Manifest v2、闭合 payload inventory 和 `current-release.json` 绑定不可变 APP_ROOT，再由 APP_ROOT 内 fixed CP314 `python.exe -I -B` 进入 portable preflight、现有 runtime lock/state/supervisor、host 和 child。PR #90 的 clean-Windows 验证证明了该链在无系统 Python、标准非管理员、中文/空格/长路径、篡改、重启、资源干扰和只读 APP_ROOT 场景下的 W01-W14 行为；它没有改变 gateway/upstream 的业务拓扑。
+
 ### 部署状态边界
 
 - 旧生产仍运行历史版本，现定义为待退役遗留系统；本任务未停止、归档或删除旧生产。
-- 当前仓库继续形成 Production Baseline，不应把仓库合并或开发设备验证描述为生产采用。
+- Candidate 08 是首个通过独立 clean-Windows 矩阵的不可变 Release Candidate；它不是 formal Release、已激活 Release 或 Production Baseline。
+- 当前仓库继续形成 Production Baseline，不应把仓库合并、开发设备验证或独立 Guest 验证描述为生产采用。
 - 未来新生产按 [ADR-OPS-007](docs/decisions/ADR-OPS-007-GREENFIELD-PRODUCTION-BASELINE-AND-LEGACY-NON-MIGRATION-2026-07.md) 使用干净环境、全新数据库、全新账号和全新配置进行 Greenfield 部署；新生产尚未部署，旧生产数据不迁移。
+- 当前没有 Release activation、OPS-3B、Windows Service、分布式/高可用平台或生产验证。
 
 ---
 
@@ -151,7 +155,7 @@ enterprise/runtime supervisor
 - `enterprise/tests/smoke.ps1`
 - `enterprise/tests/test_start_stop.ps1`
 
-PR #78 已将生命周期迁移到本地 supervisor：upstream 与 gateway 独立监督，持久化脱敏日志和 runtime state，并通过完整进程 identity、generation-bound command/ACK、优雅 child shutdown 与 Windows Job Object 进行受控停止。PR #79 修复 detached service-host 的直接脚本导入和启动早期诊断。仓库实现已合并不代表生产服务已切换，也不代表安装了 Windows Service。
+PR #78 已将生命周期迁移到本地 supervisor：upstream 与 gateway 独立监督，持久化脱敏日志和 runtime state，并通过完整进程 identity、generation-bound command/ACK、优雅 child shutdown 与 Windows Job Object 进行受控停止。PR #79 修复 detached service-host 的直接脚本导入和启动早期诊断；PR #86 在同一 lifecycle 上接入 fixed launcher、Release/preflight/launch-context identity、ownership 和 readiness；PR #90 进一步以 Candidate 08 在独立 clean Windows Guest 完成 W01-W14 `14/0/0`。这些仓库与验证事实不代表生产服务已切换，也不代表安装了 Windows Service。
 
 测试脚本统一放在 `enterprise/tests/`，不得散落到项目根目录或上游目录。
 

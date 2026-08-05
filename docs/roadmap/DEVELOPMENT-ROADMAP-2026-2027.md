@@ -1,9 +1,9 @@
 # Infinite-Canvas-Enterprise 开发路线图（2026-2027）
 
-更新时间：2026-07-29
-最后一次代码事实核对基线：`main@ea71a9a73c80244f679487c35a960ceea7732876`
+更新时间：2026-08-05
+最后一次代码事实核对基线：`main@105f3ca47f81207d2820fbd9acfa0a6d7b65770a`
 
-当前 repository HEAD 以 GitHub `main` 为准；PR #80、PR #81、PR #82、PR #83、PR #84、PR #86 和 PR #87 已合并。ENV-1B2A 的 Python 3.10 可复现 Runtime 已进入 `main` 并保留为 rollback baseline；ENV-1B2B 已将唯一 active Runtime 迁移到 CPython 3.14.6 / cp314，其 repository implementation 与 OPS Release Manifest v2 repository implementation 已通过独立代码与证据审查。
+当前 repository HEAD 以 GitHub `main` 为准；PR #80 至 PR #90 的已授权 ENV、Runtime、Manifest 和 clean-Windows validation 阶段均已合并。PR #90 merge commit 为 `105f3ca47f81207d2820fbd9acfa0a6d7b65770a`；Candidate 08 已完成独立 W01-W14 `14 PASS / 0 FAIL / 0 BLOCKED`，成为首个接受的不可变 clean-Windows RC。它不是 formal Release、activation、Production Baseline 或生产部署。
 
 当前实施事实以 [CURRENT_PROJECT_STATUS](../CURRENT_PROJECT_STATUS.md) 为准；架构决策以 [ADR 索引](../README.md) 为准。本文负责阶段顺序，不重复定义实现状态。
 
@@ -46,14 +46,15 @@
 | ENV-1B1C-B1 | 已合并并独立验收，PR #84 | Runtime mode、manifest startup view、Python identity、preflight、launch context、writable probe、release/ownership gate 和 path safety 的纯契约与测试基础；不接入正式 lifecycle。 |
 | ENV-1B1C-B2 | 已合并，PR #86 | 固定 direct-script launcher、Release Python/preflight/launch-context 信任链、复用 STAB-1 lifecycle 的 host/supervisor/child identity、ownership、readiness 和 Windows wrappers。 |
 | ENV-1B2A | 已合并，PR #87 | 固定 CPython 3.10.11 x64，完成官方 source、hash lock、闭合 wheelhouse、双 clean build、pip check、SBOM、deterministic archive 和真实 B2 fixture；作为历史证据和 rollback baseline 保留。 |
-| ENV-1B2B | Repository implementation 已独立验收 | 唯一 active Runtime 迁移到 ordinary-GIL CPython 3.14.6 / cp314，`ENV_1B2_completed=true`；clean Windows、formal Release 和 production approval 尚未完成。 |
+| ENV-1B2B | Repository implementation 已独立验收 | 唯一 active Runtime 迁移到 ordinary-GIL CPython 3.14.6 / cp314，`ENV_1B2_completed=true`；后续 ENV-1B3 已完成 clean-Windows 验证，formal Release 和 production approval 尚未完成。 |
 | OPS Release Manifest v2 | Repository implementation 已独立验收 | Release candidate payload 可构建、离线验证，portable startup 已绑定 Manifest v2；activation、OPS-3B 与 formal Release 尚未完成。 |
+| ENV-1B3 | 已完成并合并，PR #90 | Candidate 08 在独立 Windows Guest 完成 W01-W14 `14/0/0`，`clean_Windows_validation=true`、`ENV_1B3_completed=true`；不等于 formal Release、Production Baseline 或生产部署。 |
 
 OPS-2A / OPS-2B 已进入 main，项目负责人曾在旧生产侧人工完成 dry-run 和一次单独确认的正式备份。这些是历史运维事实，不代表 restore、upgrade、apply-upgrade 或 rollback 已实现，也不再作为旧到新迁移输入。旧生产 `check-data` warning 和其中的 unowned、orphan map、missing file 不再阻塞新生产基线；旧数据仍未被自动修复或删除。
 
 ## 3. 当前阶段
 
-当前已确认状态为 **ENV-1B1C-B1/B2 已合并，ENV-1B2A 已由 PR #87 合并；ENV-1B2B 的 Python 3.14.6 / cp314 active Runtime 与 OPS Release Manifest v2 repository implementation 已独立验收**。`ENV_1B2_completed=true`、`ENV_1B3_started=true`；W01-W14 repository validation kit 已进入单一 Draft PR，独立 clean Windows 矩阵、activation、formal Release 与生产批准仍未完成。正常上游功能同步在 ENV-1 期间冻结；紧急安全漏洞修复可以单独评估并受控引入。
+当前已确认状态为 **ENV-1B1C-B1/B2、ENV-1B2A/B2B、OPS Release Manifest v2 与 ENV-1B3 已完成各自批准范围**。`ENV_1B2_completed=true`、`ENV_1B3_completed=true`、`clean_Windows_validation=true`；当前阶段移至 DATA-1 与 Fresh Install Bootstrap 准备。Release activation、OPS-3B、formal Release、Production Baseline 和生产批准仍未完成。正常上游功能同步继续受控；紧急安全漏洞修复可单独评估并引入。
 
 Greenfield Production Baseline 路线按以下顺序执行，后项不能绕过前项门禁：
 
@@ -67,8 +68,8 @@ Greenfield Production Baseline 路线按以下顺序执行，后项不能绕过�
 7. ENV-1B2A：固定 Python 3.10 layout 的官方来源、依赖锁、离线双重建、`pip check`、SBOM、deterministic archive 和 B2 fixed-Python fixture；已由 PR #87 合并并保留为 rollback baseline。
 8. ENV-1B2B：资格门禁选择 CPython 3.14.6；cp314 active policy、离线双构建、三层 provenance 与真实 formal-entry fixture 已完成并通过 repository implementation 独立验收，`ENV_1B2_completed=true`。
 9. OPS Release Manifest v2：repository implementation 已独立验收，Release candidate payload 可构建并离线验证，portable startup 已绑定 v2；不含 activation 或 OPS-3B。
-10. ENV-1B3：已启动单一 Draft PR，提供 W01-W14 Windows 原生验证工具和不可变候选交接；干净 Windows VM、无系统 Python、非管理员、中文/空格/长路径、低磁盘、重启、损坏 DLL/manifest、杀毒软件和 APP_ROOT 只读矩阵仍须由独立测试主机执行。
-11. 形成首个不可变 Windows Release Candidate；Release Candidate 不等于 Production Baseline。
+10. ENV-1B3：已由 PR #90 合并；Candidate 08 在独立 Windows Guest 完成无系统 Python、标准非管理员、中文/空格/长路径、低磁盘、重启、损坏 DLL/manifest、杀毒软件和只读 APP_ROOT 等 W01-W14 `14/0/0`。
+11. 首个不可变 clean-Windows Release Candidate 已接受；Release Candidate 仍不等于 formal Release 或 Production Baseline。
 12. DATA-1：Repository、schema version、migration history、新版本 migration compatibility、数据完整性和数据库回滚基础；不迁移或修复旧生产数据。
 13. Fresh Install Bootstrap：面向空环境建立目标 Schema、mandatory audit、首个 `super_admin` 和不可变 lifecycle marker。
 14. 在干净 Windows 环境完成全新安装与初始化验收。
@@ -84,7 +85,7 @@ Greenfield Production Baseline 路线按以下顺序执行，后项不能绕过�
 24. Linux 单服务器适配。
 25. PostgreSQL、对象存储、queue、Redis 和多实例按真实需求引入。
 
-第 0 至 9 项已完成各自的 repository 范围；第 8 项 ENV-1B2B 的 CPython 3.14.6 active Runtime 和第 9 项 OPS Release Manifest v2 repository implementation 已通过独立代码与证据审查。后续仍须依次完成 ENV-1B3 干净 Windows 验证与后续门禁。Fresh Install Bootstrap、新生产部署、OPS-3B、Linux、PostgreSQL、Redis、durable queue、多实例、Windows Service、正式 Windows Runtime Release 和 Production Baseline 当前都不是已完成能力。
+第 0 至 11 项已完成各自批准范围；当前依次进入：DATA-1、Fresh Install Bootstrap、clean-Windows 全新安装/初始化验收、P0/ARCH-3/PERF-1/OBS-1/browser/provider 收口、backup/restore rehearsal、OPS-3B repository implementation、apply/switch/health/rollback/restore rehearsal、Production Baseline 批准和 Greenfield 生产部署。Linux、PostgreSQL、Redis、对象存储、durable queue、多实例、Windows Service、formal Release 和 Production Baseline 当前仍不是已完成能力。
 
 ## 4. 历史拆解参考
 
@@ -200,15 +201,16 @@ DATA-1 服务于全新数据库和未来新版本 migration，不导入旧生产
 
 建议顺序：
 
-1. release builder 与 release validator 增强；ENV-1B1A 已提供确定性 static staging builder，ENV-1B2P 已提供分层 Runtime 证据验证，ENV-1B1B 已提供路径根/pointer 原语，ENV-1B1C-B1 已提供 Runtime 纯契约；完整 Release builder / validator 仍属后续。
-2. Fresh Install Bootstrap 和干净环境安装验收。
-3. 使用新基线数据完成 backup / restore rehearsal。
-4. 完成 OPS-3B 仓库实现。
-5. 使用 Fresh Install Bootstrap 建立的全新隔离数据，在干净 Windows 环境完成 apply / switch / health / rollback / restore rehearsal。
-6. 项目负责人批准 Production Baseline。
-7. 在生产设备 Greenfield 部署 Production Baseline。
-8. 后续正式 Release 进入新生产版本迭代，首次真实 OPS-3B 执行只能由项目负责人在生产设备本地执行。
-9. OPS-3C / Update Center 在 Production Baseline 后单独评估和实施，不是首次生产部署前置条件。
+1. Manifest v2 Release builder/verifier、fixed CP314 和首个 clean-Windows immutable Candidate 已完成批准范围；不包含 activation。
+2. 完成 DATA-1 与 Fresh Install Bootstrap，并在 clean Windows 上完成全新安装/初始化验收。
+3. 收口 P0/ARCH-3/PERF-1/OBS-1、browser/provider 门禁。
+4. 使用新基线数据完成 backup / restore rehearsal。
+5. 完成 OPS-3B 仓库实现。
+6. 使用 Fresh Install Bootstrap 建立的全新隔离数据，在干净 Windows 环境完成 apply / switch / health / rollback / restore rehearsal。
+7. 项目负责人批准 Production Baseline。
+8. 在生产设备 Greenfield 部署 Production Baseline。
+9. 后续正式 Release 进入新生产版本迭代，首次真实 OPS-3B 执行只能由项目负责人在生产设备本地执行。
+10. OPS-3C / Update Center 在 Production Baseline 后单独评估和实施，不是首次生产部署前置条件。
 
 `prepare-upgrade` 只生成 plan。OPS-3B 不用于旧生产原地升级；其仓库实现和隔离演练是 Production Baseline 前置门禁，但不构成生产执行。OPS-3 / OPS-4 不得被描述为当前已实现；网页端未来也只能调用白名单、计划驱动、可审计的 OPS API，不能执行任意 shell。
 
