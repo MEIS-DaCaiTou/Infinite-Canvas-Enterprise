@@ -1,14 +1,16 @@
 ﻿# 无限画布企业版 · 开发规范文档
 
 > **面向 Agent / 开发者**：接手此项目二次开发前，必须完整阅读本文档。  
-> 本文档是企业化改造的长期规范；当前真实状态和路线以 `AGENT_CONTEXT.md`、`DEVELOPMENT_PLAN.md` 为第一入口。
+> 本文档是企业化改造的长期规范；当前真实状态和路线应从 `docs/README.md` 与 `docs/CURRENT_PROJECT_STATUS.md` 开始读取。`AGENT_CONTEXT.md`、`HANDOVER.md` 和 `PROJECT_HANDOFF_FOR_NEW_AGENT.md` 仅保留为历史交接材料。
 
 **推荐阅读顺序**：
 
-1. `AGENT_CONTEXT.md`：当前真实状态、风险和维护边界。
-2. `ENTERPRISE_DOCS.md`：企业层完整开发规范。
-3. `enterprise/tests/SMOKE_CHECKLIST.md`：上游更新后的验证清单。
-4. `DEVELOPMENT_PLAN.md`：后续开发规划。
+1. `docs/README.md`：权威文档索引与事实源规则。
+2. `docs/CURRENT_PROJECT_STATUS.md`：当前实现、验证基线和未实现边界。
+3. `ARCHITECTURE.md`：当前运行架构与职责边界。
+4. `docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md`：中长期阶段顺序。
+5. 与任务域对应的 ADR、当前 implementation record 和 acceptance evidence。
+6. `AGENT_CONTEXT.md`、`HANDOVER.md`、`PROJECT_HANDOFF_FOR_NEW_AGENT.md` 等历史交接材料，仅作历史参考。
 
 ---
 
@@ -26,7 +28,7 @@ Infinite-Canvas 持续维护
 
 **核心原则：企业功能不应修改上游文件。** 企业能力优先通过"代理拦截层"实现。
 
-如果确认是上游项目自身 bug，可以做最小本地热修用于验证，但必须同步提交上游 issue/PR，并在 `AGENT_CONTEXT.md` 中记录。上游合并后，应移除本地热修偏差，恢复跟随上游。
+如果确认是上游项目自身 bug，可以做最小本地热修用于验证，但必须同步提交上游 issue/PR，并在当前任务的 implementation / evidence record 中记录。上游合并后，应移除本地热修偏差，恢复跟随上游。
 
 ### 1.2 运行架构
 

@@ -5,7 +5,9 @@
 ## 1. 当前主线与运行事实
 
 - 企业版仓库：`MEIS-DaCaiTou/Infinite-Canvas-Enterprise`
-- `current_main` / `last_verified_code_baseline`：`105f3ca47f81207d2820fbd9acfa0a6d7b65770a`（PR #90 merge commit；tree `5a5fd040974ca9f74f0b2aa916edbb20c42dbd67`）。
+- `current_main`：动态 GitHub 事实；每次评审或新任务开始时实时查询 GitHub / `origin/main`，本文档不固定一个永久“当前”的 SHA。
+- `last_verified_code_baseline`：`105f3ca47f81207d2820fbd9acfa0a6d7b65770a`（PR #90 merge commit；tree `5a5fd040974ca9f74f0b2aa916edbb20c42dbd67`；Candidate 08 独立 Windows 验证所对应的最后代码基线）。
+- `last_documentation_closeout`：PR #91 merge commit `470d48fb1750f04c124385762a5b774754235987`（tree `33dfab2296138698588cc96438fc626b86756021`；docs-only 收口，不改变 `last_verified_code_baseline`）。
 - ENV-1B0 / DOC-2 / DOC-2A：PR #80 已合并，merge commit `be5573ae416b4ce81f8cc26ae282868a7efa7672`；完成架构决策冻结、Greenfield 路线和文档事实同步。
 - ENV-1B1A：PR #81 已合并，merge commit `a53885b026a6c2440acb0fbde72d6571ff6f7723`；APP_ROOT 写入审计、CSS 传递依赖哈希、统一 HTML build ID、确定性 static staging builder、`main.py` 最小不可变 Release 补丁和 Git tracked fingerprint/Wxx 漂移门禁已进入 `main`。
 - ENV-1B2P：PR #82 已合并，merge commit `240f6a2b93268a415cddc3c9af9951f334c8e4e1`；只读核验仓库外既有 Runtime 证据，真实结果仍为 core `true`、dependency `false`、archive `false`、`production_approved=false`，不代表正式 Runtime 获批。

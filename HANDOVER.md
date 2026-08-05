@@ -221,9 +221,11 @@ UPSTREAM_PORT=3001        # 上游内部端口
 JWT_SECRET=<改为随机字符串>   # ← 生产环境必须修改！
 JWT_EXPIRE_HOURS=168      # Token 有效期（小时）
 ADMIN_USERNAME=admin
-ADMIN_PASSWORD=admin123   # ← 生产环境必须修改！
+ADMIN_PASSWORD=<generate-a-strong-unique-password>
 DB_PATH=./data/enterprise.db
 ```
+
+禁止在共享环境、测试主机、staging 或生产环境使用固定默认管理员密码；每个环境都必须生成唯一强密码。本历史交接示例不包含可直接使用的密码。
 
 ---
 
