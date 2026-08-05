@@ -1,8 +1,8 @@
 # OPS 路线图（2026-07）
 
-更新时间：2026-07-17
+更新时间：2026-08-05
 
-最后一次代码事实核对基线：`main@be5573ae416b4ce81f8cc26ae282868a7efa7672`；当前 repository HEAD 以 GitHub `main` 为准。PR #80 已合并；ENV-1B1A 当前只在 Draft PR 分支实现 static staging builder 和写入审计，完整不可变 Release 仍未形成。OPS-3A 与 STAB-1 / OPS-L1 已合并；OPS-3B 尚未开始，并后置于不可变 Release、路径根、Runtime evidence、Manifest v2、DATA-1 和 restore rehearsal。生产路线以 [ADR-OPS-007](../decisions/ADR-OPS-007-GREENFIELD-PRODUCTION-BASELINE-AND-LEGACY-NON-MIGRATION-2026-07.md) 为准：不原地升级或迁移旧生产；OPS-3B 仓库实现和隔离演练是 Production Baseline 前置门禁，首次真实生产执行则只服务 Greenfield 新生产部署后的版本迭代。完整顺序以 [总体路线图](../roadmap/DEVELOPMENT-ROADMAP-2026-2027.md) 为准。
+最后一次代码事实核对基线：`main@105f3ca47f81207d2820fbd9acfa0a6d7b65770a`（PR #90 merge commit）。Manifest v2 不可变 Candidate、fixed CP314、portable lifecycle 与独立 clean-Windows W01-W14 `14/0/0` 前置门禁已完成批准范围；Candidate 08 不是 formal Release、已激活 Release 或 Production Baseline。OPS-3B 尚未开始，仍后置于 DATA-1、Fresh Install Bootstrap、新基线 backup/restore rehearsal 和 controlled upgrade/rollback rehearsal 输入。生产路线以 [ADR-OPS-007](../decisions/ADR-OPS-007-GREENFIELD-PRODUCTION-BASELINE-AND-LEGACY-NON-MIGRATION-2026-07.md) 为准：不原地升级或迁移旧生产；首次真实 OPS-3B 执行只服务 Greenfield 新生产部署后的版本迭代。完整顺序以 [总体路线图](../roadmap/DEVELOPMENT-ROADMAP-2026-2027.md) 为准。
 
 ## 1. OPS 总目标
 
@@ -131,12 +131,13 @@ OPS-3 规划：
 
 OPS-3C 才开始接入网页 Update Center。网页端只能调用白名单 OPS API，不得执行任意 shell。
 
-OPS-3B 仓库实现后置于不可变 Release、Manifest v2、DATA-1、Fresh Install Bootstrap、正式 backup、restore rehearsal、migration compatibility 和 Runtime lifecycle 验证，但必须在 Production Baseline 批准前完成。旧生产 OPS-2A / OPS-2B 结果只保留历史证据，不能满足这些门禁。
+不可变 Candidate、Manifest v2、Runtime lifecycle 与 clean-Windows validation 已完成批准范围；OPS-3B 仓库实现仍后置于 DATA-1、Fresh Install Bootstrap、正式 backup、restore rehearsal、migration compatibility 和 controlled upgrade/rollback rehearsal 输入，并必须在 Production Baseline 批准前完成。旧生产 OPS-2A / OPS-2B 结果只保留历史证据，不能满足这些门禁。
 
 ### Greenfield 新生产 OPS 边界
 
 Production Baseline 获批前必须在干净 Windows 环境使用全新数据库、账号和配置完成：
 
+- 使用已通过 W01-W14 的不可变 Candidate 作为后续全新安装与升级演练输入；该 Candidate 当前未激活或部署。
 - Fresh Install Bootstrap；该能力尚未实现，SEC-1B2 不能替代。
 - 首次启动、status / health 与业务验收。
 - 针对全新基线数据的正式 backup execute 和 restore rehearsal。
@@ -220,6 +221,6 @@ OPS 安全边界：
 - 高危功能必须 feature flag 控制。
 - 远程日志不得泄露敏感信息。
 
-OPS 能力上线后仍必须保持 Draft PR、主对话复核和项目负责人验收流程。
+OPS 能力上线前仍必须保持独立 PR、主对话复核和项目负责人验收流程；本路线图不授权任何生产执行。
 
 OPS-4 / 后续升级演练使用 Greenfield 新基线数据，后置于 Fresh Install Bootstrap、正式备份、restore rehearsal 和回滚方案复核；旧生产 dry-run 不再构成上线输入。

@@ -1,6 +1,6 @@
 # ENV-1B3 clean Windows validation and Release Candidate
 
-Status: implementation in one Draft PR; independent Windows test-host validation pending.
+Status: completed and merged by PR #90; independent Windows W01-W14 validation passed.
 
 ## Scope
 
@@ -48,16 +48,39 @@ Final convergence stops further Probe-framework expansion and preserves all earl
 
 The final clean-root development fixture then established one narrow Runtime defect that prior Guest evidence had not proven: a fresh Windows profile has no per-user Runtime/cache/temp directories, but portable preflight probed its five writable roots before any later directory-preparation call. The corrected preflight creates only those derived roots under the existing pre-use/post-create no-reparse protocol and then executes the unchanged self-cleaning writable probes. Controller, supervisor, ownership, Manifest and activation behavior remain unchanged. Candidate 06 remains a repository-external artifact that may be published only after the final development gates pass; its exact post-commit identity belongs in the immutable handoff and Draft PR rather than being predicted here.
 
-Candidate 06 subsequently completed the independent Windows matrix with `10 PASS / 4 FAIL / 0 BLOCKED`. Candidate 07 closed W05, W08 `current_release`/`payload`, and W11, then its independent affected-case retest produced `4 PASS / 2 FAIL / 0 BLOCKED` (`12 PASS / 2 FAIL / 0 BLOCKED` effective W01-W14): only W08 `python314.dll` status and W14 remained. Candidate 08 is the final strictly bounded correction. Its status preflight uses an internal terminal-diagnostic result so the Batch wrapper returns public status exit `0` without loading damaged CP314. W14 now reports separate schema, Candidate, Release, APP_ROOT, pointer, tree-read and tree-hash comparisons. Development reproduction localized the old generic W14 result to child files made unreadable by the test-host ACL operation, not to an APP_ROOT/pointer/tree semantic mismatch; the handoff contract now requires recursive read-and-execute without write before validation, while all identity checks remain fail closed. Candidates 06 and 07 remain immutable. Candidate 08 still requires the independent physical-Windows retest of only W08 `python314.dll` and W14 and does not establish clean-Windows acceptance.
+Candidate 06 subsequently completed the independent Windows matrix with `10 PASS / 4 FAIL / 0 BLOCKED`. Candidate 07 closed W05, W08 `current_release`/`payload`, and W11, then its independent affected-case retest produced `4 PASS / 2 FAIL / 0 BLOCKED` (`12 PASS / 2 FAIL / 0 BLOCKED` effective W01-W14): only W08 `python314.dll` status and W14 remained. Candidate 08 is the final strictly bounded correction. Its status preflight uses an internal terminal-diagnostic result so the Batch wrapper returns public status exit `0` without loading damaged CP314. W14 now reports separate schema, Candidate, Release, APP_ROOT, pointer, tree-read and tree-hash comparisons. Development reproduction localized the old generic W14 result to child files made unreadable by the test-host ACL operation, not to an APP_ROOT/pointer/tree semantic mismatch; the handoff contract now requires recursive read-and-execute without write before validation, while all identity checks remain fail closed. Candidates 06 and 07 remain immutable. At Candidate 08 handoff time, only the independent physical-Windows retest of W08 `python314.dll` and W14 remained; the final acceptance below supersedes that historical pending state.
+
+## Final acceptance
+
+PR #90 merged to `main` as `105f3ca47f81207d2820fbd9acfa0a6d7b65770a`, preserving tree `5a5fd040974ca9f74f0b2aa916edbb20c42dbd67` from evidence-bearing Head `7593abdd54db55a137a9e8501dd01012d0ec3bab`. The accepted immutable Candidate is `ice-2026.07.6-7593abdd54db-candidate-08`, Release ID `ice-2026.07.6-7593abdd54db`.
+
+Artifact identity:
+
+```text
+handoff_sha256=f267f047c0338e6973ad159ba02839cf2816ae5ce5445121a6d2087e0967c23e
+release_archive_sha256=a48450cbe18804f9b849e456272e154087b0988e84621e12bed61e7c3c0a41df
+detached_manifest_sha256=100ee4dd87aae2b4c91058fd76240d3529f6db2a90c5fee5dbff56e4e07de7f5
+external_inventory_sha256=3351c7a53918f5f343b7fc1efc46983ed8bc47027a19462d0c3cc36b91387f7c
+payload_tree_sha256=b4be84d7504eedf31a337460f44d99ef1f97d74686ddadba1ef681e2eb2b1581
+runtime_tree_sha256=8962745ff0cc17029ffdf6d9a667a4abe6f5553a96d2952dd71ccabdefdceb03
+static_tree_sha256=df3052f9bc2b90069e7bf1762bacc5088c555f2b1b1cbd2d535a78b830bffd2c
+```
+
+The final physical-Windows evidence bundle `ENV-1B3-ice-2026.07.6-7593abdd54db-candidate-08-FINAL-TWO-CASES-WINDOWS-RETEST-EVIDENCE.zip` is `32,843` bytes with SHA-256 `5138f17a77b94d16657b138546ab323406c23e0c820a5a3fd751615b2fd90c57` and internal closure `34/34`. W08 `python314.dll` and W14 both passed, producing the final effective W01-W14 result `14 PASS / 0 FAIL / 0 BLOCKED`. The test host did not modify the Candidate or repository; original checkpoints were preserved, Guest networking was restored, the physical host was not rebooted, and production was untouched.
+
+Developer regression remained distinct from physical-host validation: CPython 3.11.9 x64 ran `739 passed / 10 skipped / 0 failed / 9 warnings`; no collected count was recorded and `github_ci_verified=false`. The compact identity and boundary record is [ENV-1B3 Final Acceptance / Closeout](./evidence/ENV-1B3-FINAL-ACCEPTANCE-CLOSEOUT-2026-08-05.md).
 
 ## Current state and limits
 
 ```text
 ENV_1B3_started=true
 ENV_1B3_validation_kit_repository_implementation=true
-ENV_1B3_completed=false
-clean_Windows_validation=false
-Release_candidate_independently_tested_on_separate_Windows_host=false
+ENV_1B3_completed=true
+clean_Windows_validation=true
+Release_candidate_independently_tested_on_separate_Windows_host=true
+Candidate_08_immutable=true
+Candidate_08_physical_windows_validation_passed=true
+first_clean_Windows_RC_accepted=true
 
 Release_activation_implemented=false
 OPS_3B_implemented=false
@@ -66,6 +89,8 @@ formal_release_deployed=false
 Production_Baseline_approved=false
 production_approved=false
 production_validation=false
+production_deployment=false
+github_ci_verified=false
 ```
 
-Candidate sequence and artifact identity are recorded in each immutable repository-external handoff and in the Draft PR, rather than as a transient value in this tracked document. A Release Candidate is a validation artifact, not a formal Release, activation, deployment or Production Baseline.
+Candidate 01–07 and the diagnostic Probes remain historical immutable repository-external artifacts; Candidate 08 is the accepted clean-Windows RC. A Release Candidate is a validation artifact, not a formal Release, activation, deployment or Production Baseline. The next active gates are DATA-1 and Fresh Install Bootstrap.
