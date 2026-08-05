@@ -1,11 +1,20 @@
 # Infinite Canvas Enterprise 文档索引与事实源
 
 更新时间：2026-08-05
-最后一次代码事实核对基线：`main@105f3ca47f81207d2820fbd9acfa0a6d7b65770a`
+最后一次独立验证代码基线：`105f3ca47f81207d2820fbd9acfa0a6d7b65770a`（tree `5a5fd040974ca9f74f0b2aa916edbb20c42dbd67`）
 
-当前 repository HEAD：以 GitHub `main` 分支为准；PR #80 至 #90 的已授权 ENV/Manifest/Windows-validation 阶段均已合并。PR #90 merge commit 为 `105f3ca47f81207d2820fbd9acfa0a6d7b65770a`；Candidate 08 已在独立 Windows Guest 完成 W01-W14 `14 PASS / 0 FAIL / 0 BLOCKED`，`ENV_1B3_completed=true`、`clean_Windows_validation=true`。当前焦点转为 DATA-1 与 Fresh Install Bootstrap；formal Release、Release activation、OPS-3B、Production Baseline、生产部署和 production approval 仍未完成。
+`current_main` 是动态 GitHub 事实，必须在评审或新任务开始时查询 GitHub / `origin/main`，静态文档中的固定 SHA 不得被解释为永久当前值。PR #80 至 #90 的已授权 ENV/Manifest/Windows-validation 阶段均已合并。PR #90 merge commit 为 `105f3ca47f81207d2820fbd9acfa0a6d7b65770a`；Candidate 08 已在独立 Windows Guest 完成 W01-W14 `14 PASS / 0 FAIL / 0 BLOCKED`，`ENV_1B3_completed=true`、`clean_Windows_validation=true`。DATA-1 与 Fresh Install Bootstrap 仍处于讨论和规划阶段，尚未开始实施；formal Release、Release activation、OPS-3B、Production Baseline、生产部署和 production approval 仍未完成。PR #91 merge commit `470d48fb1750f04c124385762a5b774754235987`（tree `33dfab2296138698588cc96438fc626b86756021`）仅为 docs-only 收口，不改变上述最后验证代码基线。
 
 本索引用于避免当前事实、目标架构、历史实施记录和未来规划相互覆盖。新任务应先读取当前事实源，再按任务域读取 ADR 和专项文档。
+
+## 权威阅读顺序
+
+1. [文档索引与事实源](./README.md)
+2. [当前项目状态](./CURRENT_PROJECT_STATUS.md)
+3. [当前架构](../ARCHITECTURE.md)
+4. [开发路线图](./roadmap/DEVELOPMENT-ROADMAP-2026-2027.md)
+5. 与任务域对应的 ADR、当前 implementation record 和 acceptance evidence
+6. `AGENT_CONTEXT.md`、`HANDOVER.md`、`PROJECT_HANDOFF_FOR_NEW_AGENT.md` 等历史交接材料（仅作历史参考）
 
 ## 唯一事实源
 
@@ -85,4 +94,6 @@ ADR 的 `Accepted` 只表示决策冻结，不表示对应能力已经实现或�
 4. 每个实现 PR 同步 CURRENT_PROJECT_STATUS、对应路线和测试 README。
 5. 每个 ADR 记录状态、事实基线、实施状态、后果和重新评估条件。
 6. 文档不得包含 secret、本机绝对路径、生产数据或临时 runtime 证据路径。
-7. 当前 main 前进后，旧 SHA 可以作为历史基线保留，但不能继续标为当前 main。
+7. `current_main` 必须实时查询；静态文档不得把固定 SHA 表述为永久当前 main。
+8. `docs/CURRENT_PROJECT_STATUS.md` 分别记录最后验证代码基线与最近一次 docs-only 收口；二者不得合并为一个字段。
+9. docs-only merge 可以推进 main，但不会自动改变最后验证代码基线；旧 SHA 可以作为明确标注的历史或验证基线保留。

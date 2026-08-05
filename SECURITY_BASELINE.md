@@ -48,7 +48,7 @@ python -c "import secrets; print(secrets.token_hex(32))"
 
 ## 3. 默认管理员密码风险
 
-默认 `ADMIN_PASSWORD=admin123` 只适合本地开发验证。任何局域网或服务器部署都必须修改。
+配置时必须使用 `ADMIN_PASSWORD=<generate-a-strong-unique-password>`。固定默认管理员密码仅允许出现在隔离、可丢弃的本地 fixture 中；共享环境、测试主机、staging 和生产环境一律禁止使用固定默认值。
 
 企业层启动时如果检测到默认或示例管理员密码，会输出安全警告，但不会阻断本地开发启动。
 
