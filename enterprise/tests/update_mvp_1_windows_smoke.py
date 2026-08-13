@@ -22,6 +22,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+if os.fspath(REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, os.fspath(REPOSITORY_ROOT))
+
+
 def _json_bytes(value: object) -> bytes:
     return (json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
 
