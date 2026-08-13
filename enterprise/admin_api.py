@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from enterprise import db as edb
 from enterprise import security_user_governance as user_governance
 from enterprise.migrations.sec_1b1_role_auth import ROLE_AUTH_READY
+from enterprise.roles import ROLE_ADMIN, ROLE_SUPER_ADMIN
 
 router = APIRouter()
 
@@ -53,6 +54,48 @@ def _require_ready_principal(request: Request) -> dict:
             detail={"code": "STALE_AUTHENTICATION", "message": "Authentication is no longer current"},
         )
     return user
+
+
+def _require_current_super_admin(request: Request) -> dict:
+    """Re-authorize a high-risk policy write from current persisted facts."""
+    principal = _require_ready_principal(request)
+    current = edb.get_user_by_id(principal["user_id"])
+    if (
+        not isinstance(current, dict)
+        or current.get("is_active") is not True
+        or current.get("auth_version") != principal["auth_version"]
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "STALE_AUTHENTICATION", "message": "Authentication is no longer current"},
+        )
+    if current.get("role") != ROLE_SUPER_ADMIN:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "SYSTEM_UPDATE_SUPER_ADMIN_REQUIRED", "message": "Super administrator authorization is required"},
+        )
+    return {
+        "user_id": current["id"],
+        "username": current.get("username", ""),
+        "role": current["role"],
+        "auth_version": current["auth_version"],
+        "is_admin": True,
+    }
+
+
+def _ensure_system_update_target_is_admin(target: dict) -> None:
+    if target.get("role") != ROLE_ADMIN or target.get("is_active") is not True:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "SYSTEM_UPDATE_TARGET_INVALID", "message": "Only an active administrator may receive an update override"},
+        )
+
+
+def _canonical_feature_key(feature_key: object) -> str:
+    key = str(feature_key or "").strip()
+    if not edb.is_known_feature_key(key):
+        raise HTTPException(status_code=400, detail="未知权限开关")
+    return key
 
 
 def _audit_user_action(actor: dict, action: str, target: dict, summary: str, extra: dict | None = None) -> None:
@@ -458,7 +501,8 @@ async def list_feature_flags(request: Request):
 
 @router.put("/api/feature-flags/{feature_key}")
 async def update_feature_flag(feature_key: str, request: Request):
-    current = _require_admin(request)
+    feature_key = _canonical_feature_key(feature_key)
+    current = _require_current_super_admin(request) if feature_key == "system_update" else _require_admin(request)
     body = await request.json()
     if "enabled" not in body or not isinstance(body.get("enabled"), bool):
         raise HTTPException(status_code=400, detail="enabled 必须是布尔值")
@@ -490,6 +534,8 @@ async def list_user_feature_overrides(user_id: str, request: Request):
         "user_id": target["id"],
         "username": target.get("username", ""),
         "is_admin": bool(target.get("is_admin")),
+        "role": target.get("role"),
+        "auth_version": target.get("auth_version"),
     }
     features = []
     for feature in edb.list_feature_flags():
@@ -524,8 +570,11 @@ async def list_user_feature_overrides(user_id: str, request: Request):
 
 @router.put("/api/users/{user_id}/feature-overrides/{feature_key}")
 async def update_user_feature_override(user_id: str, feature_key: str, request: Request):
-    current = _require_admin(request)
+    feature_key = _canonical_feature_key(feature_key)
+    current = _require_current_super_admin(request) if feature_key == "system_update" else _require_admin(request)
     target = _target_user_or_404(user_id)
+    if feature_key == "system_update":
+        _ensure_system_update_target_is_admin(target)
     body = await request.json()
     mode = str(body.get("mode") or "").strip().lower()
     try:
@@ -544,13 +593,27 @@ async def update_user_feature_override(user_id: str, feature_key: str, request: 
             "mode": new.get("mode") if new else "inherit",
         },
     )
+    if feature_key == "system_update":
+        _audit_permission_action(
+            current,
+            "system_update_permission_granted" if new and new.get("mode") == "allow" else "system_update_permission_revoked",
+            {
+                "feature_key": "system_update",
+                "target_user_id": target["id"],
+                "old_value": old.get("mode") if old else "inherit",
+                "new_value": new.get("mode") if new else "inherit",
+            },
+        )
     return {"success": True, "override": new, "mode": new.get("mode") if new else "inherit"}
 
 
 @router.delete("/api/users/{user_id}/feature-overrides/{feature_key}")
 async def delete_user_feature_override(user_id: str, feature_key: str, request: Request):
-    current = _require_admin(request)
+    feature_key = _canonical_feature_key(feature_key)
+    current = _require_current_super_admin(request) if feature_key == "system_update" else _require_admin(request)
     target = _target_user_or_404(user_id)
+    if feature_key == "system_update":
+        _ensure_system_update_target_is_admin(target)
     try:
         old, new = edb.clear_user_feature_override(user_id, feature_key, current["user_id"])
     except ValueError as exc:
@@ -567,6 +630,17 @@ async def delete_user_feature_override(user_id: str, feature_key: str, request: 
             "mode": "inherit",
         },
     )
+    if feature_key == "system_update":
+        _audit_permission_action(
+            current,
+            "system_update_permission_revoked",
+            {
+                "feature_key": "system_update",
+                "target_user_id": target["id"],
+                "old_value": old.get("mode") if old else "inherit",
+                "new_value": "inherit",
+            },
+        )
     return {"success": True, "override": new, "mode": "inherit"}
 
 
@@ -575,7 +649,24 @@ async def purge_user_feature_overrides(user_id: str, request: Request):
     current = _require_admin(request)
     target = _target_user_or_404(user_id)
     confirmation = await _confirmed_user_action_body(request, target)
-    old = edb.clear_all_user_feature_overrides(user_id, current["user_id"])
+    existing = edb.get_user_feature_overrides(user_id)
+    has_system_update = any(item.get("feature_key") == "system_update" for item in existing)
+    if has_system_update:
+        current = _require_current_super_admin(request)
+    if current.get("role") == ROLE_SUPER_ADMIN:
+        old = edb.clear_all_user_feature_overrides(user_id, current["user_id"])
+    else:
+        # Preserve the high-risk override even if one appears concurrently
+        # after the snapshot above. Ordinary admins clear only the explicitly
+        # enumerated non-system settings.
+        old = []
+        for item in existing:
+            key = item.get("feature_key")
+            if key == "system_update":
+                continue
+            previous, _new = edb.clear_user_feature_override(user_id, str(key), current["user_id"])
+            if previous is not None:
+                old.append(previous)
     old_values = [
         {"feature_key": item.get("feature_key"), "mode": item.get("mode")}
         for item in old

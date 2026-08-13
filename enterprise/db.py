@@ -23,6 +23,7 @@ from enterprise.migrations.sec_1b1_role_auth import (
 from enterprise.roles import (
     LEGACY_AUTH_VERSION,
     ROLE_ADMIN,
+    ROLE_SUPER_ADMIN,
     ROLE_USER,
     is_admin_role,
     normalize_auth_version,
@@ -1865,6 +1866,44 @@ def clear_all_user_feature_overrides(user_id: str, updated_by: str = "") -> list
 def get_effective_feature_value(user: dict, feature_key: str) -> dict:
     key = _normalize_feature_key(feature_key)
     flag = get_feature_flag(key)
+    uid = str((user or {}).get("user_id") or (user or {}).get("id") or "").strip()
+    override = get_user_feature_override(uid, key) if uid else None
+
+    # ``system_update`` is deliberately narrower than ordinary feature
+    # switches.  It is the only feature whose activation changes the running
+    # trusted Release, so the legacy blanket administrator bypass must never
+    # authorize it.  Keep the existing flag/override storage model, but bind
+    # this high-risk decision to the current persisted role.
+    if key == "system_update":
+        try:
+            role = normalize_role((user or {}).get("role"))
+        except ValueError:
+            role = None
+        global_enabled = bool(flag["enabled"])
+        explicit_admin_allow = bool(
+            role == ROLE_ADMIN
+            and override is not None
+            and override.get("mode") == "allow"
+        )
+        allowed = bool(global_enabled and (role == ROLE_SUPER_ADMIN or explicit_admin_allow))
+        if not global_enabled:
+            source = "global_disabled"
+        elif role == ROLE_SUPER_ADMIN:
+            source = "super_admin"
+        elif explicit_admin_allow:
+            source = "user_override"
+        else:
+            source = "role_denied"
+        return {
+            "feature_key": key,
+            "allowed": allowed,
+            "mode": override.get("mode") if override else "inherit",
+            "source": source,
+            "global_enabled": global_enabled,
+            "default_enabled": bool(flag["default_enabled"]),
+            "updated_by": override.get("updated_by") if override else flag.get("updated_by"),
+            "updated_at": override.get("updated_at") if override else flag.get("updated_at"),
+        }
     if user and bool(user.get("is_admin")):
         return {
             "feature_key": key,
@@ -1874,8 +1913,6 @@ def get_effective_feature_value(user: dict, feature_key: str) -> dict:
             "global_enabled": bool(flag["enabled"]),
             "default_enabled": bool(flag["default_enabled"]),
         }
-    uid = str((user or {}).get("user_id") or (user or {}).get("id") or "").strip()
-    override = get_user_feature_override(uid, key) if uid else None
     if override and override.get("mode") == "allow":
         allowed = True
         source = "user_override"

@@ -58,3 +58,20 @@ class ReleaseManifest:
     package: ReleasePackage
     compatibility: ReleaseCompatibility
     release_notes: str
+
+
+@dataclass(frozen=True)
+class ReleaseMetadataV2:
+    """Fixed GitHub asset identities for the Manifest v2 update path."""
+
+    provider_release_id: str
+    tag_name: str
+    version: str
+    published_at: str
+    release_notes: str
+    manifest_url: str
+    manifest_size_bytes: int
+    inventory_url: str
+    inventory_size_bytes: int
+    archive_url: str
+    archive_size_bytes: int

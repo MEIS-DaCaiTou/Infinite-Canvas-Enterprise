@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 import uuid
 from datetime import datetime, timezone
@@ -18,7 +19,8 @@ STATE_SCHEMA = "runtime-supervisor-state-v1"
 LOCK_FILENAME = "runtime-supervisor.lock"
 STATE_FILENAME = "runtime-state.json"
 RECONCILE_FILENAME = "runtime-reconcile.lock"
-VALID_COMMANDS = frozenset({"stop", "restart"})
+VALID_COMMANDS = frozenset({"stop", "restart", "update-handoff"})
+_UPDATE_JOB_ID = re.compile(r"^[0-9a-f]{32}$")
 STARTUP_LOCK_GRACE_SECONDS = 75
 CONTROL_TTL_SECONDS = 15 * 60
 PORTABLE_IDENTITY_FIELDS = (
@@ -350,6 +352,7 @@ class RuntimeStateStore:
         supervisor_instance_id: str,
         expected_state_generation: int,
         launch_context_identity: str | None = None,
+        update_job_id: str | None = None,
     ) -> str:
         if (
             command not in VALID_COMMANDS
@@ -374,6 +377,12 @@ class RuntimeStateStore:
             if not isinstance(launch_context_identity, str) or not launch_context_identity:
                 raise RuntimeStateError("runtime command is invalid")
             payload["launch_context_identity"] = launch_context_identity
+        if command == "update-handoff":
+            if not isinstance(update_job_id, str) or not _UPDATE_JOB_ID.fullmatch(update_job_id):
+                raise RuntimeStateError("runtime update handoff identifier is invalid")
+            payload["update_job_id"] = update_job_id
+        elif update_job_id is not None:
+            raise RuntimeStateError("runtime command is invalid")
         path = self.control_root / f"cmd-{request_id[:16]}.json"
         _atomic_json_replace(path, payload)
         return request_id
@@ -407,6 +416,11 @@ class RuntimeStateStore:
                 and payload.get("command") in VALID_COMMANDS
                 and isinstance(payload.get("request_id"), str)
                 and type(payload.get("expected_state_generation")) is int
+                and (
+                    payload.get("command") != "update-handoff"
+                    or isinstance(payload.get("update_job_id"), str)
+                    and _UPDATE_JOB_ID.fullmatch(payload["update_job_id"]) is not None
+                )
                 and (
                     expected_launch_context_identity is None
                     or payload.get("launch_context_identity") == expected_launch_context_identity

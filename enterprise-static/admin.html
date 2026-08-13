@@ -285,6 +285,13 @@
       cursor: pointer; outline: none; max-width: 130px;
     }
     .select-user:focus { border-color: var(--text); }
+    .update-grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:16px; }
+    .update-card { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:18px; }
+    .update-card h3 { margin:0 0 8px; font-size:15px; }
+    .update-card p { color:var(--muted); font-size:12px; line-height:1.6; }
+    .update-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:14px; }
+    .update-kv { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:11px; line-height:1.7; white-space:pre-wrap; overflow-wrap:anywhere; }
+    @media(max-width:820px){ .update-grid{grid-template-columns:1fr;} }
   </style>
 </head>
 <body>
@@ -317,6 +324,7 @@
       <button class="tab-btn" onclick="switchTab('canvases', this)">画布归属</button>
       <button class="tab-btn" onclick="switchTab('conversations', this)">对话归属</button>
       <button class="tab-btn" onclick="switchTab('features', this)">权限开关</button>
+      <button class="tab-btn" id="updateCenterTab" onclick="switchTab('updates', this)">更新中心</button>
     </nav>
 
     <!-- Tab：用户管理 -->
@@ -478,7 +486,7 @@
       <div class="feature-layout">
         <div class="feature-card">
           <h3>全局功能开关</h3>
-          <p>全局默认值会影响未设置用户覆盖的普通用户。管理员始终允许。</p>
+          <p>普通功能保留管理员放行；系统更新必须同时开启全局开关，并由超级管理员或获得明确授权的管理员执行。</p>
           <div id="featureFlagList" class="feature-list">
             <div style="color:var(--faint);font-size:12px;font-weight:800;">加载中…</div>
           </div>
@@ -501,6 +509,59 @@
       </div>
     </div><!-- /tab-features -->
 
+    <!-- Tab：更新中心 -->
+    <div class="tab-panel" id="tab-updates">
+      <div id="updateAccessNotice" class="update-card" style="display:none;"></div>
+      <div class="update-grid">
+        <section class="update-card">
+          <h3>版本检查与准备</h3>
+          <p>仅接受固定 GitHub 仓库的完整 Manifest v2 Release；准备阶段会下载、校验并安全物化，不切换当前版本。</p>
+          <div id="updateReleaseSummary" class="update-kv">尚未检查</div>
+          <div class="update-actions update-dangerous">
+            <button class="action-btn" onclick="checkSystemUpdate()">检查更新</button>
+            <button class="action-btn primary" id="prepareUpdateBtn" onclick="prepareSystemUpdate()" disabled>下载、校验并准备</button>
+          </div>
+        </section>
+        <section class="update-card">
+          <h3>升级作业</h3>
+          <p>执行后页面连接会暂时断开。可使用 Job ID 重连查询；目标启动或健康检查失败会自动回滚到源 Release。</p>
+          <div id="updateJobSummary" class="update-kv">暂无准备完成的作业</div>
+          <div class="update-actions update-dangerous">
+            <button class="action-btn primary" id="executeUpdateBtn" onclick="openUpdateConfirm()" disabled>确认切换并重启</button>
+            <button class="action-btn" onclick="refreshUpdateJob()">刷新状态</button>
+          </div>
+        </section>
+        <section class="update-card" style="grid-column:1/-1;">
+          <h3>诊断与脱敏日志</h3>
+          <p>仅显示有界的 Runtime/更新日志；密码、Token、Cookie、Authorization 和 Provider/GitHub 凭据不会返回。</p>
+          <div class="update-actions">
+            <input id="updateLogKeyword" type="search" placeholder="关键字" style="max-width:220px;" />
+            <select id="updateLogLevel" class="select-user"><option value="">全部级别</option><option value="error">error</option><option value="warning">warning</option></select>
+            <button class="action-btn" onclick="loadUpdateDiagnostics()">刷新日志</button>
+            <button class="action-btn" onclick="downloadUpdateDiagnostics()">导出 ZIP</button>
+          </div>
+          <div id="updateDiagnostics" class="update-kv" style="margin-top:12px;max-height:320px;overflow:auto;">暂无日志</div>
+        </section>
+      </div>
+    </div><!-- /tab-updates -->
+
+  </div>
+</div>
+
+<!-- 更新执行确认 -->
+<div class="modal-backdrop" id="updateConfirmModal">
+  <div class="modal">
+    <h3>确认执行在线升级</h3>
+    <p id="updateConfirmSummary" style="color:var(--muted);font-size:12.5px;font-weight:700;line-height:1.7;"></p>
+    <div class="field">
+      <span class="label">当前账号密码（仅本次验证，不会保存）</span>
+      <div class="field-frame"><input type="password" id="updateConfirmPassword" autocomplete="current-password" /></div>
+    </div>
+    <div class="error-inline" id="updateConfirmError"></div>
+    <div class="modal-actions">
+      <button class="action-btn" onclick="closeUpdateConfirm()">取消</button>
+      <button class="action-btn primary" onclick="executeSystemUpdate()">开始升级</button>
+    </div>
   </div>
 </div>
 
@@ -602,6 +663,9 @@
   let _memberRoleFilter = 'all';
   let _memberSearchQuery = '';
   let _memberSortMode = 'last_login';
+  let _updateAccess = null;
+  let _latestUpdate = null;
+  let _preparedUpdate = null;
   const _paginationState = {
     member: { page: 1, pageSize: 25 },
     projects: { page: 1, pageSize: 25 },
@@ -641,6 +705,7 @@
     let detail = '';
     if (payloadData && typeof payloadData === 'object') {
       detail = payloadData.detail || payloadData.error || payloadData.message || '';
+      if (detail && typeof detail === 'object') detail = detail.code || detail.message || '';
     }
     if (!detail && payloadText) detail = payloadText.trim();
     if (!detail && res.status === 404) detail = '接口不存在，请确认企业服务已重启';
@@ -1184,16 +1249,21 @@
     } else if (name === 'features') {
       primaryBtn.style.display = 'none';
       loadFeatureFlags();
+    } else if (name === 'updates') {
+      primaryBtn.style.display = 'none';
+      loadUpdateCenter();
     }
   }
 
   // ── 项目归属管理
   async function loadFeatureFlags() {
     try {
-      const [flagData, users] = await Promise.all([
+      const [flagData, users, access] = await Promise.all([
         apiFetch('/enterprise/api/feature-flags'),
         _users.length ? Promise.resolve(_users) : apiFetch('/enterprise/api/users'),
+        apiFetch('/enterprise/api/update-mvp/access'),
       ]);
+      _updateAccess = access;
       _featureFlags = flagData.features || [];
       if (!_users.length) _users = users;
       renderFeatureFlags();
@@ -1216,6 +1286,8 @@
       const keyHtml = escapeHtml(feature.feature_key);
       const titleHtml = escapeHtml(feature.title || feature.feature_key);
       const enabled = boolFlag(feature.enabled);
+      const systemUpdate = feature.feature_key === 'system_update';
+      const canManage = !systemUpdate || (_updateAccess && _updateAccess.role === 'super_admin');
       return `
         <div class="feature-row">
           <div>
@@ -1224,7 +1296,7 @@
             <div class="feature-desc">${escapeHtml(feature.description || '')}</div>
           </div>
           <span class="badge ${enabled ? 'badge-active' : 'badge-disabled'}">${enabled ? '全局允许' : '全局禁止'}</span>
-          <button class="row-btn" onclick="toggleFeatureFlag('${key}', ${!enabled})">${enabled ? '禁用' : '启用'}</button>
+          ${canManage ? `<button class="row-btn" onclick="toggleFeatureFlag('${key}', ${!enabled})">${enabled ? '禁用' : '启用'}</button>` : '<span class="feature-desc">仅超级管理员可修改</span>'}
         </div>`;
     }).join('');
   }
@@ -1282,6 +1354,8 @@
       const titleHtml = escapeHtml(feature.title || feature.feature_key);
       const allowed = boolFlag(feature.effective_allowed);
       const mode = feature.mode || 'inherit';
+      const systemUpdate = feature.feature_key === 'system_update';
+      const canManage = !systemUpdate || (_updateAccess && _updateAccess.role === 'super_admin');
       const globalText = boolFlag(feature.global_enabled) ? '允许' : '禁止';
       const effectiveText = allowed ? '允许' : '禁止';
       return `
@@ -1294,7 +1368,7 @@
             <span class="badge ${allowed ? 'badge-active' : 'badge-disabled'}">生效：${effectiveText}</span>
           </div>
           <div class="feature-desc">全局：${globalText} · 当前覆盖：${mode}</div>
-          <select class="select-user" onchange="setFeatureOverride('${key}', this.value)">
+          <select class="select-user" onchange="setFeatureOverride('${key}', this.value)" ${canManage ? '' : 'disabled'}>
             <option value="inherit" ${mode === 'inherit' ? 'selected' : ''}>inherit</option>
             <option value="allow" ${mode === 'allow' ? 'selected' : ''}>allow</option>
             <option value="deny" ${mode === 'deny' ? 'selected' : ''}>deny</option>
@@ -1323,6 +1397,143 @@
       showToast('保存用户权限失败: ' + e.message, 'error');
       await loadFeatureOverrides();
     }
+  }
+
+  async function loadUpdateCenter() {
+    try {
+      _updateAccess = await apiFetch('/enterprise/api/update-mvp/access');
+      const notice = document.getElementById('updateAccessNotice');
+      const allowed = boolFlag(_updateAccess.can_operate);
+      notice.style.display = allowed ? 'none' : 'block';
+      notice.textContent = allowed
+        ? ''
+        : '当前账号没有 system_update 明确授权，或系统更新全局总开关已关闭。危险操作已隐藏；后端同样会返回 403。';
+      document.querySelectorAll('.update-dangerous').forEach(el => { el.style.display = allowed ? 'flex' : 'none'; });
+      const rememberedJob = sessionStorage.getItem('enterprise_update_job_id');
+      if (rememberedJob && /^[0-9a-f]{32}$/.test(rememberedJob)) {
+        _preparedUpdate = { job_id: rememberedJob };
+        await refreshUpdateJob();
+      }
+      if (allowed) await checkSystemUpdate();
+    } catch (e) {
+      showToast('加载更新中心失败: ' + e.message, 'error');
+    }
+  }
+
+  async function checkSystemUpdate() {
+    const target = document.getElementById('updateReleaseSummary');
+    target.textContent = '正在检查…';
+    try {
+      const data = await apiFetch('/enterprise/api/update-mvp/check');
+      _latestUpdate = data.latest;
+      target.textContent = [
+        `当前 Release：${data.current_release_id}`,
+        `当前版本：${data.current_version}`,
+        _latestUpdate ? `最新版本：${_latestUpdate.version} (${_latestUpdate.tag_name})` : '没有发现完整、稳定的 Manifest v2 Release',
+        _latestUpdate ? `发布时间：${_latestUpdate.published_at}` : '',
+        _latestUpdate && _latestUpdate.release_notes ? `更新说明：${_latestUpdate.release_notes}` : '',
+      ].filter(Boolean).join('\n');
+      document.getElementById('prepareUpdateBtn').disabled = !_latestUpdate;
+    } catch (e) {
+      target.textContent = '检查失败';
+      showToast('检查更新失败: ' + e.message, 'error');
+    }
+  }
+
+  async function prepareSystemUpdate() {
+    if (!_latestUpdate) return;
+    const button = document.getElementById('prepareUpdateBtn');
+    button.disabled = true;
+    try {
+      _preparedUpdate = await apiFetch('/enterprise/api/update-mvp/prepare', {
+        method: 'POST',
+        body: JSON.stringify({ provider_release_id: _latestUpdate.provider_release_id }),
+      });
+      sessionStorage.setItem('enterprise_update_job_id', _preparedUpdate.job_id);
+      document.getElementById('updateJobSummary').textContent = [
+        `Job ID：${_preparedUpdate.job_id}`,
+        `状态：${_preparedUpdate.state}`,
+        `源 Release：${_preparedUpdate.source_release_id}`,
+        `目标 Release：${_preparedUpdate.target_release_id}`,
+        '兼容性：同 Schema / 无迁移（可在线切换）',
+        `Manifest SHA-256：${_preparedUpdate.target_manifest_sha256}`,
+      ].join('\n');
+      document.getElementById('executeUpdateBtn').disabled = false;
+      showToast('候选版本已下载、校验并准备完成');
+    } catch (e) {
+      showToast('准备更新失败: ' + e.message, 'error');
+      button.disabled = false;
+    }
+  }
+
+  function openUpdateConfirm() {
+    if (!_preparedUpdate) return;
+    document.getElementById('updateConfirmSummary').textContent =
+      `将从 ${_preparedUpdate.source_release_id} 切换到 ${_preparedUpdate.target_release_id}。服务会重启；失败时自动回滚。`;
+    document.getElementById('updateConfirmPassword').value = '';
+    document.getElementById('updateConfirmError').textContent = '';
+    document.getElementById('updateConfirmModal').classList.add('show');
+  }
+
+  function closeUpdateConfirm() {
+    document.getElementById('updateConfirmPassword').value = '';
+    document.getElementById('updateConfirmModal').classList.remove('show');
+  }
+
+  async function executeSystemUpdate() {
+    if (!_preparedUpdate) return;
+    const password = document.getElementById('updateConfirmPassword').value;
+    try {
+      const data = await apiFetch(`/enterprise/api/update-mvp/jobs/${encodeURIComponent(_preparedUpdate.job_id)}/execute`, {
+        method: 'POST', body: JSON.stringify({ password }),
+      });
+      sessionStorage.setItem('enterprise_update_job_id', data.job_id);
+      document.getElementById('updateConfirmPassword').value = '';
+      closeUpdateConfirm();
+      document.getElementById('updateJobSummary').textContent = `Job ID：${data.job_id}\n状态：${data.state}\n页面连接可能暂时中断，请稍后刷新状态。`;
+      showToast('升级交接已启动');
+      setTimeout(refreshUpdateJob, 5000);
+    } catch (e) {
+      document.getElementById('updateConfirmPassword').value = '';
+      document.getElementById('updateConfirmError').textContent = e.message;
+    }
+  }
+
+  async function refreshUpdateJob() {
+    if (!_preparedUpdate) return;
+    try {
+      const data = await apiFetch(`/enterprise/api/update-mvp/jobs/${encodeURIComponent(_preparedUpdate.job_id)}`);
+      _preparedUpdate = { ..._preparedUpdate, ...data };
+      document.getElementById('updateJobSummary').textContent = [
+        `Job ID：${data.job_id}`, `状态：${data.state}`, `结果代码：${data.result_code}`,
+        `源 Release：${data.source_release_id || '—'}`, `目标 Release：${data.target_release_id || '—'}`,
+        `更新时间：${data.updated_at}`,
+      ].join('\n');
+      document.getElementById('executeUpdateBtn').disabled = data.state !== 'READY';
+      if (!['SUCCEEDED','ROLLED_BACK','FAILED'].includes(data.state)) setTimeout(refreshUpdateJob, 5000);
+    } catch (e) {
+      document.getElementById('updateJobSummary').textContent += '\n连接暂不可用；可稍后重新打开页面并使用同一 Job ID 查询。';
+      setTimeout(refreshUpdateJob, 5000);
+    }
+  }
+
+  async function loadUpdateDiagnostics() {
+    const params = new URLSearchParams({ limit: '150' });
+    if (_preparedUpdate) params.set('job_id', _preparedUpdate.job_id);
+    const keyword = document.getElementById('updateLogKeyword').value.trim();
+    const level = document.getElementById('updateLogLevel').value;
+    if (keyword) params.set('keyword', keyword);
+    if (level) params.set('level', level);
+    try {
+      const data = await apiFetch('/enterprise/api/update-mvp/diagnostics?' + params.toString());
+      document.getElementById('updateDiagnostics').textContent = (data.records || []).map(item => `[${item.source}] ${item.line}`).join('\n') || '暂无匹配日志';
+    } catch (e) { showToast('加载诊断失败: ' + e.message, 'error'); }
+  }
+
+  function downloadUpdateDiagnostics() {
+    const params = new URLSearchParams({ limit: '500', download: '1' });
+    if (_preparedUpdate) params.set('job_id', _preparedUpdate.job_id);
+    window.location.href = '/enterprise/api/update-mvp/diagnostics?' + params.toString();
   }
 
   let _projects = [];

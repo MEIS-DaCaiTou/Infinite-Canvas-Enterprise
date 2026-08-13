@@ -14,6 +14,9 @@ import json
 import os
 import sys
 import tempfile
+import sqlite3
+import time
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -83,10 +86,19 @@ async def _run_checks() -> None:
         user_a = insert_ready_user_fixture(edb.DB_PATH, username="feature_a", password_hash=edb._hash_password("password-a"), display_name="Feature A")
         user_b = insert_ready_user_fixture(edb.DB_PATH, username="feature_b", password_hash=edb._hash_password("password-b"), display_name="Feature B")
         admin = edb.get_user_by_username("admin")
+        super_id = uuid.uuid4().hex
+        conn = sqlite3.connect(edb.DB_PATH)
+        conn.execute(
+            "INSERT INTO users (id, username, password_hash, display_name, is_admin, role, auth_version, is_active, created_at) VALUES (?, ?, ?, ?, 1, 'super_admin', 1, 1, ?)",
+            (super_id, "feature_super", edb._hash_password("super-password"), "Feature Super", int(time.time() * 1000)),
+        )
+        conn.commit(); conn.close()
+        super_admin = edb.get_user_by_id(super_id)
 
         actor_a = {"user_id": user_a["id"], "username": "feature_a", "is_admin": False}
         actor_b = {"user_id": user_b["id"], "username": "feature_b", "is_admin": False}
-        actor_admin = {"user_id": admin["id"], "username": "admin", "is_admin": True}
+        actor_admin = {"user_id": admin["id"], "username": "admin", "is_admin": True, "role": "admin", "auth_version": admin["auth_version"]}
+        actor_super = {"user_id": super_admin["id"], "username": "feature_super", "is_admin": True, "role": "super_admin", "auth_version": super_admin["auth_version"]}
 
         default_deny = {"api_settings_access", "workflow_settings_access", "system_update"}
         default_allow = {
@@ -102,7 +114,8 @@ async def _run_checks() -> None:
         for key in default_deny:
             assert edb.can_use_feature(actor_a, key) is False, key
             assert listed[key]["enabled"] is False, key
-            assert edb.can_use_feature(actor_admin, key) is True, key
+            assert edb.can_use_feature(actor_admin, key) is (key != "system_update"), key
+        assert edb.can_use_feature(actor_super, "system_update") is False
         for key in default_allow:
             assert edb.can_use_feature(actor_a, key) is True, key
             assert listed[key]["enabled"] is True, key
@@ -238,7 +251,7 @@ async def _run_checks() -> None:
         assert interceptors.can_access_resource(actor_a, "/assets/uploads/owned-a.png") is True
         assert interceptors.can_access_resource(actor_b, "/assets/uploads/owned-a.png") is False
 
-        # History delete and system update are gated independently.
+        # History delete and the legacy in-place updater are gated independently.
         await admin_api.update_user_feature_override(
             user_a["id"],
             "history_batch_delete",
@@ -246,32 +259,77 @@ async def _run_checks() -> None:
         )
         await _assert_forbidden("api/history/delete", "POST", actor_a, {"timestamp": 1})
         await _assert_forbidden("api/update-from-github", "POST", actor_a, {"auto_restart": False})
+        await _assert_forbidden("api/update-from-github", "POST", actor_admin, {"auto_restart": False})
+        await _assert_forbidden("api/update-from-github", "POST", actor_super, {"auto_restart": False})
+
+        # system_update is the one narrow high-risk exception to the ordinary
+        # admin bypass: total switch first, then super-admin or explicit admin
+        # allow. Users and unknown roles remain denied even with a DB override.
+        try:
+            await admin_api.update_feature_flag("system_update", FakeRequest(actor_admin, {"enabled": True}))
+            raise AssertionError("ordinary admin changed system_update global flag")
+        except Exception as exc:
+            assert getattr(exc, "status_code", None) == 403
+        try:
+            await admin_api.update_feature_flag("system_update ", FakeRequest(actor_admin, {"enabled": True}))
+            raise AssertionError("ordinary admin bypassed system_update with whitespace")
+        except Exception as exc:
+            assert getattr(exc, "status_code", None) == 403
+        try:
+            await admin_api.update_user_feature_override(
+                admin["id"],
+                "system_update",
+                FakeRequest(actor_admin, {"mode": "allow"}),
+            )
+            raise AssertionError("ordinary admin granted its own system_update override")
+        except Exception as exc:
+            assert getattr(exc, "status_code", None) == 403
+        await admin_api.update_feature_flag("system_update", FakeRequest(actor_super, {"enabled": True}))
+        assert edb.can_use_feature(actor_super, "system_update") is True
+        assert edb.can_use_feature(actor_admin, "system_update") is False
+        edb.set_user_feature_override(user_a["id"], "system_update", "allow", actor_super["user_id"])
+        assert edb.can_use_feature({**actor_a, "role": "user"}, "system_update") is False
+        assert edb.can_use_feature({**actor_a, "role": "unexpected"}, "system_update") is False
         await admin_api.update_user_feature_override(
-            user_a["id"],
+            admin["id"],
             "system_update",
-            FakeRequest(actor_admin, {"mode": "allow"}),
+            FakeRequest(actor_super, {"mode": "allow"}),
         )
-        await _assert_allowed("api/update-from-github", "POST", actor_a, {"auto_restart": False})
+        assert edb.can_use_feature(actor_admin, "system_update") is True
+        await admin_api.update_feature_flag("system_update", FakeRequest(actor_super, {"enabled": False}))
+        assert edb.can_use_feature(actor_super, "system_update") is False
+        assert edb.can_use_feature(actor_admin, "system_update") is False
+        await admin_api.update_feature_flag("system_update", FakeRequest(actor_super, {"enabled": True}))
 
         # Admin API readback includes effective values.
         readback = await admin_api.list_user_feature_overrides(
-            user_a["id"],
-            FakeRequest(actor_admin),
+            admin["id"],
+            FakeRequest(actor_super),
         )
         readback_map = {item["feature_key"]: item for item in readback["features"]}
         assert readback_map["system_update"]["mode"] == "allow"
         assert readback_map["system_update"]["effective_allowed"] is True
+        await admin_api.delete_user_feature_override(
+            admin["id"],
+            "system_update",
+            FakeRequest(actor_super),
+        )
+        assert edb.can_use_feature(actor_admin, "system_update") is False
 
         logs, _total = edb.get_logs(limit=200)
         actions = {row["action"] for row in logs}
         assert "feature_flag_changed" in actions
         assert "user_feature_override_changed" in actions
         assert "permission_policy_updated" in actions
+        assert "system_update_permission_granted" in actions
+        assert "system_update_permission_revoked" in actions
 
         logs_html = (ROOT / "enterprise-static" / "logs.html").read_text(encoding="utf-8")
         assert 'value="feature_flag_changed"' in logs_html
         assert 'value="user_feature_override_changed"' in logs_html
         assert 'value="permission_policy_updated"' in logs_html
+        assert 'value="system_update_permission_granted"' in logs_html
+        assert 'value="system_update_rolled_back"' in logs_html
 
     print("feature flag checks passed")
 

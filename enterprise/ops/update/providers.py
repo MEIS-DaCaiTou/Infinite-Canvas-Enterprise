@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 
 from enterprise.ops.update.errors import ReleaseProviderError
 from enterprise.ops.update.http_client import SafeHttpClient, UrlPolicy
-from enterprise.ops.update.models import ReleaseMetadata
+from enterprise.ops.update.models import ReleaseMetadata, ReleaseMetadataV2
 from enterprise.ops.update.versions import parse_version
 
 
@@ -26,6 +26,8 @@ GITHUB_ALLOWED_HOSTS = frozenset(
     }
 )
 GITHUB_MANIFEST_ASSET = "ops-release-manifest-v1.json"
+GITHUB_MANIFEST_V2_ASSET = "ops-release-manifest-v2.json"
+GITHUB_INVENTORY_V2_ASSET = "release-payload-inventory.json"
 GITHUB_METADATA_ACCEPT = "application/vnd.github+json"
 GITHUB_ASSET_ACCEPT = "application/octet-stream"
 GITHUB_API_VERSION = "2022-11-28"
@@ -278,6 +280,76 @@ class GitHubReleasesProvider:
                 skip("invalid_or_incomplete_release_skipped")
         self.diagnostics = tuple(diagnostics)
         return releases
+
+    def list_release_v2_candidates(self) -> list[ReleaseMetadataV2]:
+        """Return complete, non-draft Manifest v2 release candidates only."""
+        url = f"https://api.github.com/repos/{self.repository}/releases?per_page=50"
+        headers = {"Accept": GITHUB_METADATA_ACCEPT, "User-Agent": GITHUB_USER_AGENT}
+        token = os.environ.get("GITHUB_TOKEN")
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        self._asset_request_headers = {"Authorization": headers["Authorization"]} if "Authorization" in headers else {}
+        payload = self.http_client.read_json(url, maximum_bytes=MAX_GITHUB_METADATA_BYTES, headers=headers)
+        if type(payload) is not list or len(payload) > 50:
+            raise ReleaseProviderError("GitHub release metadata is invalid")
+        candidates: list[ReleaseMetadataV2] = []
+        diagnostics: list[str] = []
+        for release in payload:
+            if (
+                type(release) is not dict
+                or release.get("draft") is not False
+                or release.get("prerelease") is not False
+            ):
+                continue
+            try:
+                assets = release.get("assets")
+                if type(assets) is not list:
+                    raise ReleaseProviderError("GitHub release assets are invalid")
+                manifest = self._release_asset(assets, exact_name=GITHUB_MANIFEST_V2_ASSET)
+                inventory = self._release_asset(assets, exact_name=GITHUB_INVENTORY_V2_ASSET)
+                archives = [
+                    item for item in assets
+                    if type(item) is dict
+                    and isinstance(item.get("name"), str)
+                    and item["name"].endswith("-win-x64.zip")
+                ]
+                if len(archives) != 1:
+                    raise ReleaseProviderError("GitHub release archive is ambiguous or incomplete")
+                archive = self._release_asset(archives, exact_name=str(archives[0]["name"]))
+                version = _tag_to_version(release.get("tag_name"))
+                parse_version(version)
+                sizes = (manifest.get("size_bytes"), inventory.get("size_bytes"), archive.get("size_bytes"))
+                if any(type(value) is not int or value < 1 for value in sizes):
+                    raise ReleaseProviderError("GitHub release asset size is invalid")
+                candidates.append(
+                    ReleaseMetadataV2(
+                        provider_release_id=_release_id(release.get("id")),
+                        tag_name=_required_text(release.get("tag_name"), "release tag", 128),
+                        version=version,
+                        published_at=_required_text(release.get("published_at"), "release publication time", 64),
+                        release_notes=str(release.get("body") or "")[: 16 * 1024],
+                        manifest_url=str(manifest["api_url"]),
+                        manifest_size_bytes=int(manifest["size_bytes"]),
+                        inventory_url=str(inventory["api_url"]),
+                        inventory_size_bytes=int(inventory["size_bytes"]),
+                        archive_url=str(archive["api_url"]),
+                        archive_size_bytes=int(archive["size_bytes"]),
+                    )
+                )
+            except (ReleaseProviderError, ValueError):
+                if len(diagnostics) < MAX_PROVIDER_DIAGNOSTICS:
+                    diagnostics.append("invalid_or_incomplete_v2_release_skipped")
+        self.diagnostics = tuple(diagnostics)
+        return sorted(candidates, key=lambda item: parse_version(item.version), reverse=True)
+
+    def release_v2_asset_request_headers(self, url: str) -> Mapping[str, str]:
+        self._validate_asset_api_url(url, asset_id=None)
+        return {
+            "Accept": GITHUB_ASSET_ACCEPT,
+            "X-GitHub-Api-Version": GITHUB_API_VERSION,
+            "User-Agent": GITHUB_USER_AGENT,
+            **self._asset_request_headers,
+        }
 
     def release_asset_request_headers(
         self,

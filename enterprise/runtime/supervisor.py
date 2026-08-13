@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import threading
 import time
 import uuid
@@ -250,6 +251,7 @@ class RuntimeSupervisor:
         self._restart_request: dict[str, Any] | None = None
         self._restart_in_progress: dict[str, Any] | None = None
         self._restart_before: dict[str, ProcessIdentity | None] = {}
+        self._update_handoff_request: dict[str, Any] | None = None
         self._last_health_at = 0.0
         self._last_state_fingerprint: str | None = None
         self._wake = threading.Event()
@@ -691,9 +693,69 @@ class RuntimeSupervisor:
                     self._persist_state()
             elif value == "restart" and self._restart_request is None and self._restart_in_progress is None:
                 self._restart_request = command
+            elif (
+                value == "update-handoff"
+                and self._update_handoff_request is None
+                and self._restart_request is None
+                and self._restart_in_progress is None
+                and self._stop_request is None
+            ):
+                self._update_handoff_request = command
             else:
                 before = self._command_snapshot()
                 self._ack(command, result="rejected_busy", before=before, after=before)
+
+    def _perform_update_handoff(self) -> None:
+        request = self._update_handoff_request
+        self._update_handoff_request = None
+        if request is None:
+            return
+        before = self._command_snapshot()
+        job_id = request.get("update_job_id")
+        worker = self.config.app_root / "enterprise" / "ops" / "update" / "handoff.py"
+        python = Path(str(self.config.python_executable or ""))
+        if (
+            self.config.runtime_mode != "portable-release"
+            or not isinstance(job_id, str)
+            or not worker.is_file()
+            or not python.is_file()
+        ):
+            self._ack(request, result="update_handoff_rejected", before=before, after=before)
+            return
+        environment = dict(os.environ)
+        for name in ("PYTHONHOME", "PYTHONPATH", "PYTHONSTARTUP", "PYTHONINSPECT"):
+            environment.pop(name, None)
+        environment["PYTHONNOUSERSITE"] = "1"
+        environment["PYTHONDONTWRITEBYTECODE"] = "1"
+        creationflags = 0
+        if os.name == "nt":
+            creationflags = int(getattr(subprocess, "DETACHED_PROCESS", 0)) | int(
+                getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            )
+        try:
+            process = subprocess.Popen(
+                [str(python), "-I", "-B", str(worker), "--job-id", job_id],
+                cwd=str(self.config.app_root),
+                env=environment,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True,
+                creationflags=creationflags,
+                shell=False,
+            )
+        except OSError:
+            self._ack(request, result="update_handoff_failed", before=before, after=before)
+            return
+        identity = process_identity(process.pid)
+        if process.poll() is not None or identity is None or os.path.normcase(identity.executable) != os.path.normcase(str(python)):
+            self._ack(request, result="update_handoff_failed", before=before, after=before)
+            return
+        after = self._command_snapshot()
+        after["update_worker_pid"] = process.pid
+        self._ack(request, result="update_handoff_started", before=before, after=after)
+        self._log("update_handoff_started", request_id=request["request_id"], update_job_id=job_id)
+        self._stopping = True
 
     def _perform_restart(self) -> None:
         request = self._restart_request
@@ -748,6 +810,8 @@ class RuntimeSupervisor:
             return
         if self._restart_request is not None and not self._stopping:
             self._perform_restart()
+        if self._update_handoff_request is not None and not self._stopping:
+            self._perform_update_handoff()
         for role in ROLES:
             runtime = self.roles[role]
             if runtime.process is not None:

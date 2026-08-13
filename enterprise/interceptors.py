@@ -1950,8 +1950,11 @@ async def pre_process(
     """
     is_admin = _is_admin(user)
 
-    # ── 上游更新接口：企业版只允许管理员操作 ─────────────────
-    # 这些接口会写入 main.py / VERSION / static/，普通成员不能触发。
+    # ── 上游原地更新接口：企业版一律禁用 ─────────────────────
+    # UPDATE-MVP-1 only permits the detached Manifest v2 Update Center.  The
+    # inherited endpoints write the live APP_ROOT and can run an arbitrary Git
+    # pull/rollback path, so even an authorized update operator must not bypass
+    # the immutable Release activation protocol through them.
     update_paths = {
         "api/check-update",
         "api/update-connectivity",
@@ -1960,11 +1963,7 @@ async def pre_process(
         "api/update-rollback",
     }
     if path in update_paths or path.startswith("api/update-"):
-        if not ENTERPRISE_UPDATE_ENABLED:
-            return _deny_forbidden("企业版更新入口已关闭")
-        if edb.can_use_feature(user, FEATURE_SYSTEM_UPDATE):
-            return None
-        return _deny_forbidden("需要管理员权限才能执行项目更新")
+        return _deny_forbidden("企业版已禁用上游原地更新，请使用受控更新中心")
 
     if path == "api/config/token" and method.upper() == "GET" and not is_admin:
         return JSONResponse(
