@@ -10,6 +10,7 @@ import pytest
 from fastapi import BackgroundTasks, HTTPException
 
 from enterprise.ops.update.diagnostics import diagnostics_zip, recent_diagnostics
+from enterprise.ops.update.handoff import _emit_terminal_audit, _finalize_terminal_failure
 from enterprise.ops.update.mvp import (
     UpdateJobStore,
     UpdateMvpError,
@@ -149,6 +150,118 @@ def test_one_active_update_reservation_blocks_a_second_job(tmp_path: Path):
         store.reserve_execution(first)
     handle = store.acquire_execution_lock(first)
     store.release_execution_lock(handle, first)
+
+
+def _reserved_worker_job(tmp_path: Path):
+    roots = _roots(tmp_path)
+    store = UpdateJobStore(roots)
+    job_id, root = store.create("actor-1")
+    store.write_plan(job_id, {
+        "job_id": job_id, "actor_user_id": "actor-1",
+        "source_release_id": "release-A", "target_release_id": "release-B",
+    })
+    store.write_status(
+        job_id, "UPDATING", actor_user_id="actor-1",
+        result_code="SYSTEM_UPDATE_STARTED",
+    )
+    store.reserve_execution(job_id)
+    return roots, store, job_id, root
+
+
+def test_source_stop_timeout_finalizes_evidence_and_releases_matching_reservation(tmp_path: Path, monkeypatch):
+    roots, store, job_id, root = _reserved_worker_job(tmp_path)
+    audits = []
+    monkeypatch.setattr(
+        "enterprise.ops.update.handoff._emit_terminal_audit",
+        lambda plan, code: audits.append((dict(plan), code)),
+    )
+    assert _finalize_terminal_failure(
+        roots, job_id, "SYSTEM_UPDATE_SOURCE_STOP_TIMEOUT"
+    ) is True
+    status = store.read_status(job_id)
+    assert status["state"] == "FAILED"
+    assert status["result_code"] == "SYSTEM_UPDATE_SOURCE_STOP_TIMEOUT"
+    events = [json.loads(line) for line in (root / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert events[-1]["state"] == "FAILED"
+    assert events[-1]["code"] == "SYSTEM_UPDATE_SOURCE_STOP_TIMEOUT"
+    assert audits == [(
+        store.read_plan(job_id), "SYSTEM_UPDATE_SOURCE_STOP_TIMEOUT"
+    )]
+    assert not store.lock_path.exists()
+
+    subsequent, _ = store.create("actor-2")
+    store.reserve_execution(subsequent)
+    handle = store.acquire_execution_lock(subsequent)
+    store.release_execution_lock(handle, subsequent)
+
+
+def test_terminal_failure_preserves_foreign_reservation(tmp_path: Path, monkeypatch):
+    roots = _roots(tmp_path)
+    store = UpdateJobStore(roots)
+    current_job, _ = store.create("actor-1")
+    foreign_job, _ = store.create("actor-2")
+    store.write_plan(current_job, {
+        "job_id": current_job, "actor_user_id": "actor-1",
+        "source_release_id": "release-A", "target_release_id": "release-B",
+    })
+    store.write_status(
+        current_job, "UPDATING", actor_user_id="actor-1",
+        result_code="SYSTEM_UPDATE_STARTED",
+    )
+    store.reserve_execution(foreign_job)
+    before = store.lock_path.read_bytes()
+    monkeypatch.setattr("enterprise.ops.update.handoff._emit_terminal_audit", lambda *_args: None)
+    assert _finalize_terminal_failure(
+        roots, current_job, "SYSTEM_UPDATE_SOURCE_STOP_TIMEOUT"
+    ) is False
+    assert store.lock_path.read_bytes() == before
+    with pytest.raises(UpdateMvpError, match="SYSTEM_UPDATE_ALREADY_ACTIVE"):
+        store.reserve_execution(current_job)
+    handle = store.acquire_execution_lock(foreign_job)
+    store.release_execution_lock(handle, foreign_job)
+
+
+def test_terminal_failure_evidence_is_bounded_nonsecret_and_not_false_rollback(tmp_path: Path, monkeypatch):
+    roots, store, job_id, root = _reserved_worker_job(tmp_path)
+    audits = []
+    monkeypatch.setattr(
+        "enterprise.ops.update.handoff._emit_terminal_audit",
+        lambda plan, code: audits.append({
+            "job_id": plan["job_id"], "source_release_id": plan["source_release_id"],
+            "target_release_id": plan["target_release_id"], "result_code": code,
+        }),
+    )
+    assert _finalize_terminal_failure(roots, job_id, "SYSTEM_UPDATE_WORKER_FAILED") is True
+    evidence = (
+        (root / "status.json").read_text(encoding="utf-8")
+        + (root / "events.jsonl").read_text(encoding="utf-8")
+        + json.dumps(audits)
+    )
+    lowered = evidence.casefold()
+    for forbidden in ("password", "authorization", "bearer", "token", "traceback", str(tmp_path).casefold()):
+        assert forbidden not in lowered
+    assert "rolled_back" not in lowered
+
+
+def test_terminal_failure_audit_is_fixed_bounded_and_nonsecret(monkeypatch):
+    calls = []
+    monkeypatch.setattr("enterprise.db.log_action", lambda *args: calls.append(args))
+    _emit_terminal_audit(
+        {
+            "job_id": "a" * 32,
+            "actor_user_id": "actor-1",
+            "source_release_id": "release-A",
+            "target_release_id": "release-B",
+            "ignored": "password=not-exported Authorization: Bearer not-exported",
+        },
+        "SYSTEM_UPDATE_SOURCE_STOP_TIMEOUT",
+    )
+    assert calls[0][0:2] == ("actor-1", "system_update_failed")
+    detail = json.loads(calls[0][2])
+    assert set(detail) == {"job_id", "source_release_id", "target_release_id", "result_code"}
+    assert detail["result_code"] == "SYSTEM_UPDATE_SOURCE_STOP_TIMEOUT"
+    assert len(calls[0][2].encode("utf-8")) < 1024
+    assert "password" not in calls[0][2].casefold() and "bearer" not in calls[0][2].casefold()
 
 
 @dataclass

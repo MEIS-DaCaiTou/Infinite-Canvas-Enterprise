@@ -21,6 +21,59 @@ def _arguments() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _emit_terminal_audit(plan: dict[str, object], result_code: str) -> None:
+    """Emit only the bounded, non-secret terminal audit payload."""
+    from enterprise import db as edb
+
+    detail = {
+        "job_id": plan.get("job_id"),
+        "source_release_id": plan.get("source_release_id"),
+        "target_release_id": plan.get("target_release_id"),
+        "result_code": result_code,
+    }
+    edb.log_action(
+        str(plan.get("actor_user_id") or ""),
+        "system_update_failed",
+        json.dumps(detail, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+    )
+
+
+def _finalize_terminal_failure(roots: object, job_id: str, result_code: str) -> bool:
+    """Persist terminal evidence and release only this job's reservation.
+
+    The existing lock adoption path verifies both the canonical lock payload
+    and the open-file identity.  A foreign, replaced, malformed, or missing
+    lock is therefore never removed here.
+    """
+    from enterprise.ops.update.mvp import UpdateJobStore
+
+    store = UpdateJobStore(roots)
+    plan = store.read_plan(job_id)
+    actor = str(plan.get("actor_user_id") or "")
+    store.write_status(
+        job_id,
+        "FAILED",
+        actor_user_id=actor,
+        result_code=result_code,
+        source_release_id=plan.get("source_release_id"),
+        target_release_id=plan.get("target_release_id"),
+    )
+    store.append_event(job_id, "FAILED", result_code)
+    audit_written = True
+    try:
+        _emit_terminal_audit(plan, result_code)
+    except Exception:  # audit failure must not strand the reservation
+        audit_written = False
+    released = False
+    try:
+        handle = store.acquire_execution_lock(job_id)
+        store.release_execution_lock(handle, job_id)
+        released = not store.lock_path.exists()
+    except Exception:
+        released = False
+    return released and audit_written
+
+
 def main() -> int:
     arguments = _arguments()
     roots = None
@@ -43,16 +96,7 @@ def main() -> int:
         while supervisor_lock.exists() and time.monotonic() < deadline:
             time.sleep(0.1)
         if supervisor_lock.exists():
-            store = UpdateJobStore(roots)
-            plan = store.read_plan(job_id)
-            store.write_status(
-                job_id,
-                "FAILED",
-                actor_user_id=str(plan.get("actor_user_id") or ""),
-                result_code="SYSTEM_UPDATE_SOURCE_STOP_TIMEOUT",
-                source_release_id=plan.get("source_release_id"),
-                target_release_id=plan.get("target_release_id"),
-            )
+            _finalize_terminal_failure(roots, job_id, "SYSTEM_UPDATE_SOURCE_STOP_TIMEOUT")
             return 2
         result = execute_update_job(roots, job_id)
         try:
@@ -78,21 +122,7 @@ def main() -> int:
     except Exception:
         if roots is not None and job_id:
             try:
-                from enterprise.ops.update.mvp import UpdateJobStore
-
-                store = UpdateJobStore(roots)
-                plan = store.read_plan(job_id)
-                store.write_status(
-                    job_id,
-                    "FAILED",
-                    actor_user_id=str(plan.get("actor_user_id") or ""),
-                    result_code="SYSTEM_UPDATE_WORKER_FAILED",
-                    source_release_id=plan.get("source_release_id"),
-                    target_release_id=plan.get("target_release_id"),
-                )
-                store.append_event(job_id, "FAILED", "SYSTEM_UPDATE_WORKER_FAILED")
-                lock = store.acquire_execution_lock(job_id)
-                store.release_execution_lock(lock, job_id)
+                _finalize_terminal_failure(roots, job_id, "SYSTEM_UPDATE_WORKER_FAILED")
             except Exception:
                 pass
         return 2
