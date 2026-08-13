@@ -202,6 +202,72 @@ def _read_status(path: Path) -> dict[str, object] | None:
         return None
 
 
+def _runtime_identities(status: dict[str, object]) -> tuple[object, ...]:
+    """Capture only the process identities the formal status response owns."""
+    from enterprise.runtime.ownership import ProcessIdentity
+
+    state = status.get("runtime_state")
+    if type(state) is not dict:
+        return ()
+    values: list[object] = []
+    supervisor = (
+        state.get("supervisor_pid"),
+        state.get("supervisor_process_created_at"),
+        state.get("supervisor_executable"),
+    )
+    if type(supervisor[0]) is int and type(supervisor[1]) is int and isinstance(supervisor[2], str):
+        values.append(ProcessIdentity(supervisor[0], supervisor[1], supervisor[2]))
+    for role in ("upstream", "gateway"):
+        item = state.get(role)
+        if type(item) is not dict:
+            continue
+        identity = (item.get("pid"), item.get("process_created_at"), item.get("executable"))
+        if type(identity[0]) is int and type(identity[1]) is int and isinstance(identity[2], str):
+            values.append(ProcessIdentity(identity[0], identity[1], identity[2]))
+    return tuple(values)
+
+
+def _owned_identities_absent(identities: tuple[object, ...]) -> bool:
+    from enterprise.runtime.ownership import process_identity, same_process
+
+    return all(not same_process(expected, process_identity(expected.pid)) for expected in identities)
+
+
+def _update_worker_pids(python_executable: Path, job_id: str) -> tuple[int, ...]:
+    """Find only this fixture's detached worker without capturing its command line."""
+    environment = dict(os.environ)
+    environment["ICE_R1_WORKER_EXE"] = os.fspath(python_executable)
+    environment["ICE_R1_WORKER_JOB"] = job_id
+    command = (
+        "$items=@(Get-CimInstance Win32_Process | Where-Object { "
+        "$_.ExecutablePath -and $_.CommandLine -and "
+        "$_.ExecutablePath.Equals($env:ICE_R1_WORKER_EXE,[System.StringComparison]::OrdinalIgnoreCase) -and "
+        "$_.CommandLine.Contains('handoff.py') -and $_.CommandLine.Contains($env:ICE_R1_WORKER_JOB) "
+        "} | ForEach-Object {[int]$_.ProcessId}); "
+        "ConvertTo-Json -Compress -InputObject @($items)"
+    )
+    completed = subprocess.run(
+        ["powershell.exe", "-NoLogo", "-NoProfile", "-Command", command],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=10,
+        check=False,
+        env=environment,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError("UPDATE_MVP_R1_WORKER_INSPECTION_FAILED")
+    try:
+        values = json.loads(completed.stdout.decode("utf-8-sig"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("UPDATE_MVP_R1_WORKER_INSPECTION_FAILED") from exc
+    if type(values) is int:
+        values = [values]
+    if type(values) is not list or any(type(value) is not int or value < 1 for value in values):
+        raise RuntimeError("UPDATE_MVP_R1_WORKER_INSPECTION_FAILED")
+    return tuple(sorted(set(values)))
+
+
 def _run_scenario(script: Path, build_root: Path, scenario_root: Path, local_base: Path, scenario: str) -> dict[str, object]:
     from enterprise.ops.update.mvp import UpdateJobStore, UpdateMvpService
     from enterprise.release.current_release import atomic_write_current_release, read_current_release_result_from_state_root
@@ -273,7 +339,10 @@ def _run_scenario(script: Path, build_root: Path, scenario_root: Path, local_bas
     handoff = _last_json(invoke.stdout)
     if invoke.returncode != 0 or handoff.get("result") != "update_handoff_started":
         raise RuntimeError("UPDATE_MVP_R1_HANDOFF_NOT_STARTED")
-    worker_pid = int(handoff["ack"]["after"]["update_worker_pid"])
+    # The supervisor emits this ACK only after Popen succeeded and the fixed
+    # Python process identity was observed.  The public ACK deliberately does
+    # not expose the transient PID, so exit is checked by an exact executable
+    # and job-id process query below.
     terminal = _wait(
         lambda: (value if (value := _read_status(status_path)) and value.get("state") in {"SUCCEEDED", "ROLLED_BACK", "FAILED"} else None),
         seconds=300,
@@ -295,11 +364,17 @@ def _run_scenario(script: Path, build_root: Path, scenario_root: Path, local_bas
     health_exit, active_health = _launcher(active_root, "health")
     if status_exit != 0 or health_exit != 0 or active_health.get("readiness", {}).get("ready") is not True:
         raise RuntimeError("UPDATE_MVP_R1_ACTIVE_RELEASE_NOT_HEALTHY")
-    target_pid = int(active_status["runtime_state"]["supervisor_pid"])
+    target_identities = _runtime_identities(active_status)
+    if len(target_identities) != 3:
+        raise RuntimeError("UPDATE_MVP_R1_TARGET_IDENTITIES_INCOMPLETE")
     source_gone = process_identity(source_pid) is None
     if not source_gone:
         raise RuntimeError("UPDATE_MVP_R1_SOURCE_SUPERVISOR_REMAINED")
-    worker_gone = _wait(lambda: process_identity(worker_pid) is None, seconds=60, label="worker-exit")
+    worker_gone = _wait(
+        lambda: not _update_worker_pids(source_root / "python" / "python.exe", prepared.job_id),
+        seconds=60,
+        label="worker-exit",
+    )
     events = [json.loads(line) for line in (store.job_root(prepared.job_id) / "events.jsonl").read_text(encoding="utf-8").splitlines()]
     if not events or events[-1]["state"] != expected_state:
         raise RuntimeError("UPDATE_MVP_R1_TERMINAL_EVENT_MISSING")
@@ -316,8 +391,7 @@ def _run_scenario(script: Path, build_root: Path, scenario_root: Path, local_bas
         raise RuntimeError(f"UPDATE_MVP_R1_CLEANUP_STOP_FAILED:{stop_payload.get('code')}")
     _wait(lambda: not (roots.RUNTIME_ROOT / "runtime-supervisor.lock").exists(), seconds=60, label="runtime-lock-release")
     _wait(lambda: not _port_open(upstream_port) and not _port_open(gateway_port), seconds=60, label="listener-release")
-    if process_identity(target_pid) is not None:
-        raise RuntimeError("UPDATE_MVP_R1_OWNED_PROCESS_REMAINED")
+    _wait(lambda: _owned_identities_absent(target_identities), seconds=60, label="owned-process-release")
     return {
         "schema_version": "update-mvp-1-r1-windows-smoke-v1",
         "scenario": scenario,
@@ -357,6 +431,31 @@ def _safe_generated_remove(path: Path, local_base: Path) -> None:
         shutil.rmtree(path)
 
 
+def _stop_current_install(install_root: Path) -> None:
+    """Stop only the Release named by this fixture's current pointer."""
+    pointer_path = install_root / "state" / "current-release.json"
+    if not pointer_path.is_file():
+        return
+    try:
+        release_id = json.loads(pointer_path.read_text(encoding="utf-8"))["release_id"]
+        from enterprise.paths import validate_release_component
+
+        release_id = validate_release_component(release_id)
+        app_root = install_root / "releases" / release_id
+        if app_root.is_dir() and (app_root / "python" / "python.exe").is_file():
+            status_exit, status = _launcher(app_root, "status")
+            identities = _runtime_identities(status) if status_exit in {0, 2} else ()
+            exit_code, _ = _launcher(app_root, "stop")
+            if exit_code != 0:
+                raise RuntimeError("UPDATE_MVP_R1_FORMAL_CLEANUP_FAILED")
+            runtime_lock = Path(os.environ["LOCALAPPDATA"]) / "InfiniteCanvasEnterprise" / "runtime" / "runtime-supervisor.lock"
+            _wait(lambda: not runtime_lock.exists(), seconds=60, label="formal-cleanup-lock-release")
+            if identities:
+                _wait(lambda: _owned_identities_absent(identities), seconds=60, label="formal-cleanup-process-release")
+    except (KeyError, json.JSONDecodeError, OSError) as exc:
+        raise RuntimeError("UPDATE_MVP_R1_FORMAL_CLEANUP_IDENTITY_INVALID") from exc
+
+
 def _run_all(script: Path, build_root: Path, evidence_root: Path) -> int:
     if os.name != "nt":
         raise RuntimeError("UPDATE_MVP_R1_WINDOWS_REQUIRED")
@@ -368,6 +467,11 @@ def _run_all(script: Path, build_root: Path, evidence_root: Path) -> int:
     local_base = windows_local_app_data_known_folder()
     names = ("InfiniteCanvasEnterprise", "Infinite-Canvas-Enterprise")
     nonce = uuid.uuid4().hex
+    workspace_parent = Path(evidence_root.anchor) / "_ICE_UPDATE_R1"
+    workspace_root = workspace_parent / nonce
+    if workspace_root.exists():
+        raise RuntimeError("UPDATE_MVP_R1_WORKSPACE_COLLISION")
+    workspace_root.mkdir(parents=True, exist_ok=False)
     backups: list[tuple[Path, Path]] = []
     results: list[dict[str, object]] = []
     try:
@@ -382,9 +486,13 @@ def _run_all(script: Path, build_root: Path, evidence_root: Path) -> int:
                 os.replace(current, backup)
                 backups.append((current, backup))
         for scenario in ("success", "rollback"):
-            scenario_root = evidence_root / scenario
+            scenario_root = workspace_root / scenario
             scenario_root.mkdir()
-            result = _run_scenario(script, build_root, scenario_root, local_base, scenario)
+            try:
+                result = _run_scenario(script, build_root, scenario_root, local_base, scenario)
+            except Exception:
+                _stop_current_install(scenario_root / "install")
+                raise
             (evidence_root / f"WU-{scenario.upper()}.json").write_bytes(_json_bytes(result))
             results.append(result)
             for name in names:
@@ -406,12 +514,21 @@ def _run_all(script: Path, build_root: Path, evidence_root: Path) -> int:
         print(json.dumps(summary, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
         return 0
     finally:
+        if workspace_root.is_dir():
+            for scenario in ("success", "rollback"):
+                scenario_install = workspace_root / scenario / "install"
+                if scenario_install.is_dir():
+                    _stop_current_install(scenario_install)
         for name in names:
             _safe_generated_remove(local_base / name, local_base)
         for current, backup in reversed(backups):
             if current.exists() or not backup.exists():
                 raise RuntimeError("UPDATE_MVP_R1_LOCAL_BACKUP_RESTORE_BLOCKED")
             os.replace(backup, current)
+        if workspace_root.is_dir():
+            if workspace_root.parent != workspace_parent or workspace_parent.parent != Path(evidence_root.anchor):
+                raise RuntimeError("UPDATE_MVP_R1_WORKSPACE_IDENTITY_INVALID")
+            shutil.rmtree(workspace_root)
 
 
 def _parser() -> argparse.ArgumentParser:
