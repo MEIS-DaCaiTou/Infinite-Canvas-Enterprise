@@ -1,12 +1,12 @@
 # Infinite Canvas Enterprise 当前项目状态
 
-更新时间：2026-08-05
+更新时间：2026-08-13
 
 ## 1. 当前主线与运行事实
 
 - 企业版仓库：`MEIS-DaCaiTou/Infinite-Canvas-Enterprise`
 - `current_main`：动态 GitHub 事实；每次评审或新任务开始时实时查询 GitHub / `origin/main`，本文档不固定一个永久“当前”的 SHA。
-- `last_verified_code_baseline`：`105f3ca47f81207d2820fbd9acfa0a6d7b65770a`（PR #90 merge commit；tree `5a5fd040974ca9f74f0b2aa916edbb20c42dbd67`；Candidate 08 独立 Windows 验证所对应的最后代码基线）。
+- `last_verified_code_baseline`：`4142e831d5866b0ea755921e4626a28aed96c9cf`（PR #93 accepted code/evidence Head；tree `16162f673c8b68ffe0d50262484e2c6f9fde9714`；UPDATE-MVP-1 repository implementation 已独立接受。PR #93 当前尚未合并，后续 R2/R2.1 仅为 docs-only，不改变该 verified code baseline）。
 - `last_documentation_closeout`：PR #91 merge commit `470d48fb1750f04c124385762a5b774754235987`（tree `33dfab2296138698588cc96438fc626b86756021`；docs-only 收口，不改变 `last_verified_code_baseline`）。
 - ENV-1B0 / DOC-2 / DOC-2A：PR #80 已合并，merge commit `be5573ae416b4ce81f8cc26ae282868a7efa7672`；完成架构决策冻结、Greenfield 路线和文档事实同步。
 - ENV-1B1A：PR #81 已合并，merge commit `a53885b026a6c2440acb0fbde72d6571ff6f7723`；APP_ROOT 写入审计、CSS 传递依赖哈希、统一 HTML build ID、确定性 static staging builder、`main.py` 最小不可变 Release 补丁和 Git tracked fingerprint/Wxx 漂移门禁已进入 `main`。
