@@ -22,6 +22,8 @@ Job 使用外部 `STAGING_ROOT/update-mvp` 的 bounded canonical JSON/JSONL，�
 
 Gateway 在返回 `202` 后只向通过 ownership/readiness 二次检查的现有 supervisor 提交固定 `update-handoff` 命令。Supervisor 只能用当前 Release 的固定 Python、`-I -B` 和固定 `enterprise/ops/update/handoff.py --job-id <32 hex>` 启动一次性无网络 worker；worker 不接受 shell、URL 或命令，等待源 supervisor 释放 lock 后执行并退出。页面把 job ID 保存在 session storage，Gateway 重启期间持续重试，最终状态只以 durable job 为准。
 
+R1 为 worker 增加了窄范围 terminal-failure finalization。合法 Job 在 source-stop timeout 或其它 worker early terminal failure 时，按 `FAILED status → FAILED event → bounded system_update_failed audit → release matching reservation` 顺序收口。reservation 仍通过既有 create-only lock adoption 验证精确 `job_id`；无法解析、缺失或属于其它 Job 的 lock 均 fail closed，不会被删除，也没有引入通用 reconciliation 或后台清理服务。
+
 执行前重新验证 source/target materialized Release、Manifest identity、payload tree、数据库兼容性和 expected-current pointer。切换后 target `start` 或 `health` 失败才进入 code rollback；切换前失败准确记录为 `FAILED`，不会伪报 `ROLLED_BACK`。若源 Release 无法重新达到 health，最终同样是 `FAILED`。
 
 ## 4. 数据库契约
@@ -44,18 +46,20 @@ Update Center 显示当前/最新版本、release notes、兼容性、prepare/ex
 
 ## 6. 验证与限制
 
-Focused evidence 覆盖权限矩阵、自授权与路由键绕过、密码二次确认、同 job/异 job 并发、Manifest v2/database contract、expected-current、source/target verification、成功切换、broken-target 自动回滚、固定 handoff、页面重连、日志脱敏和 diagnostics ZIP。Windows A→B 与 failed-B→A 使用隔离临时根和等价 API/core fixture，不访问生产或临时业务测试部署。
+Focused evidence 覆盖权限矩阵、自授权与路由键绕过、密码二次确认、同 job/异 job 并发、Manifest v2/database contract、expected-current、source/target verification、成功切换、broken-target 自动回滚、固定 handoff、页面重连、日志脱敏和 diagnostics ZIP。R1 另增加真实 Windows 跨进程 smoke：使用 repository-external install/state/data/log/staging/release roots、非生产随机端口和 fixture 数据库，实际经过 fixed CP314 Release A、portable supervisor、RuntimeController handoff、supervisor command consumption、detached one-shot worker、source lock release、current-release CAS、Release B start/health；回滚场景在 B 启动阶段以受控非生产端口冲突触发失败，随后真实停止 B、CAS 回 A 并验证 A start/health。该 smoke 未 monkeypatch handoff、supervisor consumption、worker Popen、pointer write、launcher 或 health，也未访问生产或临时业务测试部署。
 
 由于本任务扩展了 Manifest v2 的唯一允许 database-contract 分类，相关 Manifest、materialization、portable lifecycle 和 APP_ROOT audit repository regressions必须通过；本 Draft 不把历史 Candidate 08 物理 W01-W14 证据冒充为新 Head 的独立验证。最终测试结果见下方“验证结果”，且仍等待独立复核。
 
 ## 验证结果
 
-- UPDATE-MVP-1 focused：`18 passed`。
-- 权限、Manifest v2、current-release、portable lifecycle、Windows wrappers、STAB-1 等组合回归：`228 passed / 4 skipped / 0 failed`。
-- 直接脚本：`test_ops_3a_online_update.py`、`test_ops_runner.py`、`test_sec_1b1_role_auth.py` 均通过。
+- UPDATE-MVP-1 focused：`22 passed`；包含 source-stop timeout matching reservation 清理、后续 Job 可 reserve、foreign lock 保留、FAILED event/audit 脱敏和不伪报 rollback。
+- 权限、Manifest v2、current-release、portable lifecycle、Windows wrappers、STAB-1、OPS-3A/runner 等 R1 组合回归：`223 passed / 4 skipped / 0 failed`。
+- Windows WU1：Release `ice-2026.07.5-eefac7f5694e` → `ice-2026.07.6-eefac7f5694e`，真实跨进程 handoff，Job=`SUCCEEDED`，B ownership/readiness/health 通过；worker、active update lock、runtime lock、owned processes 和 listeners 最终均为零。
+- Windows WU2：broken B → A，Job=`ROLLED_BACK`，pointer 恢复 A，A ownership/readiness/health 通过；B 不再运行，worker、active update lock、runtime lock、owned processes 和 listeners 最终均为零。
+- R1 Release build：commit=`eefac7f5694eb8c3bdbe9157871b9f20c6af3416`，tree=`0515acce2289853aaf841c24ec32b78edfdc49de`，archive SHA-256=`db2c04daecf4a291f2f1ecd5f6d1738e56179469b7f224e6731df3624b73cadb`，Manifest SHA-256=`0c6882bdaa31bbb6f24dc1898a5bbebdeed2268279b35df9d9fc668502fb0371`，inventory SHA-256=`db601bc04fd591dd122bde3bb33aec3684dcb62c4d14d0d11ed4907d51307b62`，payload tree=`22cfd497edbf99dc34a5dc0c08655c4a889e6c736dd2023954a299e861c12d2c`；accepted CP314 Runtime 未重建或修改。
 - `python -m compileall enterprise tools`：通过。
 - APP_ROOT audit：`scanned=136`、`excluded=294`、`detected=405`、`mapped=405`、`uncovered=0`、`stale=0`、`missing=0`，digest=`e86368690a7e37276ae189f306a24c3ad765d318c7be72d2411ffeb66386f8d6`。
-- 最终 enterprise full suite：固定 CPython 3.11.9 x64，`757 passed / 10 skipped / 0 failed / 8 warnings`，exit `0`；仅在最终候选暂存后运行一次，结果回填后未重跑。
+- 最终 enterprise full suite：固定 CPython 3.11.9 x64，`761 passed / 10 skipped / 0 failed / 8 warnings`，exit `0`；R1 仅运行一次，结果回填后未重跑。
 - `github_ci_verified=false`；新 Head 尚未获得独立物理 Windows W01-W14 验证；生产设备与临时业务测试部署均未访问。
 
 ```text
