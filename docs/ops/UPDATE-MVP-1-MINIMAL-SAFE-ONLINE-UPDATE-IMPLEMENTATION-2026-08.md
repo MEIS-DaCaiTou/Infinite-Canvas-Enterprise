@@ -1,6 +1,6 @@
 # UPDATE-MVP-1：最小安全在线升级与诊断实施记录
 
-状态：Repository implementation present; awaiting independent review
+状态：Repository implementation independently accepted
 基线：`main@646616b36233282088baed787c30075f355923b3`
 生产操作：未授权、未执行
 
@@ -48,7 +48,7 @@ Update Center 显示当前/最新版本、release notes、兼容性、prepare/ex
 
 Focused evidence 覆盖权限矩阵、自授权与路由键绕过、密码二次确认、同 job/异 job 并发、Manifest v2/database contract、expected-current、source/target verification、成功切换、broken-target 自动回滚、固定 handoff、页面重连、日志脱敏和 diagnostics ZIP。R1 另增加真实 Windows 跨进程 smoke：使用 repository-external install/state/data/log/staging/release roots、非生产随机端口和 fixture 数据库，实际经过 fixed CP314 Release A、portable supervisor、RuntimeController handoff、supervisor command consumption、detached one-shot worker、source lock release、current-release CAS、Release B start/health；回滚场景在 B 启动阶段以受控非生产端口冲突触发失败，随后真实停止 B、CAS 回 A 并验证 A start/health。该 smoke 未 monkeypatch handoff、supervisor consumption、worker Popen、pointer write、launcher 或 health，也未访问生产或临时业务测试部署。
 
-由于本任务扩展了 Manifest v2 的唯一允许 database-contract 分类，相关 Manifest、materialization、portable lifecycle 和 APP_ROOT audit repository regressions必须通过；本 Draft 不把历史 Candidate 08 物理 W01-W14 证据冒充为新 Head 的独立验证。最终测试结果见下方“验证结果”，且仍等待独立复核。
+由于本任务扩展了 Manifest v2 的唯一允许 database-contract 分类，相关 Manifest、materialization、portable lifecycle 和 APP_ROOT audit repository regressions必须通过；本 Draft 不把历史 Candidate 08 物理 W01-W14 证据冒充为本实现的独立验证。独立复核已接受 repository implementation 与 R1 隔离 Windows WU1/WU2 real-process smoke，但该结论不代表新一轮完整 W01-W14、生产验证或生产部署。
 
 ## 验证结果
 
@@ -64,18 +64,27 @@ Focused evidence 覆盖权限矩阵、自授权与路由键绕过、密码二次
 
 ```text
 UPDATE_MVP_1_repository_implementation=true
-UPDATE_MVP_1_repository_implementation_independently_accepted=false
+UPDATE_MVP_1_repository_implementation_independently_accepted=true
+WU1_real_process_chain_accepted=true
+WU1_result=SUCCEEDED
+WU2_real_process_chain_accepted=true
+WU2_result=ROLLED_BACK
 system_update_super_admin_default=true
 system_update_admin_explicit_grant_required=true
 database_migration_supported=false
 database_restore_supported=false
 code_release_rollback_supported=true
-DATA_1_STARTED=false
+DATA_1_started=false
 Release_activation_implemented=false
 OPS_3B_implemented=false
 formal_Release_created=false
 Production_Baseline_approved=false
 production_approved=false
 production_validation=false
+production_deployed=false
 production_touched=false
+code_changed=false
+test_code_changed=false
+runtime_changed=false
+previous_test_evidence_reused=true
 ```

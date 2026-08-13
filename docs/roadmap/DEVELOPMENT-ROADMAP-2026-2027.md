@@ -49,13 +49,13 @@
 | ENV-1B2B | Repository implementation 已独立验收 | 唯一 active Runtime 迁移到 ordinary-GIL CPython 3.14.6 / cp314，`ENV_1B2_completed=true`；后续 ENV-1B3 已完成 clean-Windows 验证，formal Release 和 production approval 尚未完成。 |
 | OPS Release Manifest v2 | Repository implementation 已独立验收 | Release candidate payload 可构建、离线验证，portable startup 已绑定 Manifest v2；activation、OPS-3B 与 formal Release 尚未完成。 |
 | ENV-1B3 | 已完成并合并，PR #90 | Candidate 08 在独立 Windows Guest 完成 W01-W14 `14/0/0`，`clean_Windows_validation=true`、`ENV_1B3_completed=true`；不等于 formal Release、Production Baseline 或生产部署。 |
-| UPDATE-MVP-1 | Repository implementation 待独立复核 | 项目负责人已调整优先级：先形成同 Schema/无 migration 的最小页面更新、代码回滚和诊断能力；DATA-1 暂停。本项不是完整 OPS-3B/OPS-3C、数据库升级或生产执行。 |
+| UPDATE-MVP-1 | Repository implementation 已独立接受 | 同 Schema/无 migration 的最小页面更新、代码回滚和诊断能力及隔离 Windows WU1/WU2 已通过独立复核；DATA-1 暂停。本项不是完整 OPS-3B/OPS-3C、数据库升级或生产执行。 |
 
 OPS-2A / OPS-2B 已进入 main，项目负责人曾在旧生产侧人工完成 dry-run 和一次单独确认的正式备份。这些是历史运维事实，不代表 restore、upgrade、apply-upgrade 或 rollback 已实现，也不再作为旧到新迁移输入。旧生产 `check-data` warning 和其中的 unowned、orphan map、missing file 不再阻塞新生产基线；旧数据仍未被自动修复或删除。
 
 ## 3. 当前阶段
 
-当前已确认状态为 **ENV-1B1C-B1/B2、ENV-1B2A/B2B、OPS Release Manifest v2 与 ENV-1B3 已完成各自批准范围**。`ENV_1B2_completed=true`、`ENV_1B3_completed=true`、`clean_Windows_validation=true`。项目负责人已授权 UPDATE-MVP-1 优先实施，当前 repository implementation 等待独立复核；DATA-1 暂停。完整 Release activation、OPS-3B、formal Release、Production Baseline 和生产批准仍未完成。
+当前已确认状态为 **ENV-1B1C-B1/B2、ENV-1B2A/B2B、OPS Release Manifest v2 与 ENV-1B3 已完成各自批准范围**。`ENV_1B2_completed=true`、`ENV_1B3_completed=true`、`clean_Windows_validation=true`。UPDATE-MVP-1 repository implementation 及隔离 Windows WU1/WU2 已通过独立复核；DATA-1 暂停。完整 Release activation、OPS-3B、formal Release、Production Baseline 和生产批准仍未完成。
 
 Greenfield Production Baseline 路线按以下顺序执行，后项不能绕过前项门禁：
 
@@ -71,7 +71,7 @@ Greenfield Production Baseline 路线按以下顺序执行，后项不能绕过�
 9. OPS Release Manifest v2：repository implementation 已独立验收，Release candidate payload 可构建并离线验证，portable startup 已绑定 v2；不含 activation 或 OPS-3B。
 10. ENV-1B3：已由 PR #90 合并；Candidate 08 在独立 Windows Guest 完成无系统 Python、标准非管理员、中文/空格/长路径、低磁盘、重启、损坏 DLL/manifest、杀毒软件和只读 APP_ROOT 等 W01-W14 `14/0/0`。
 11. 首个不可变 clean-Windows Release Candidate 已接受；Release Candidate 仍不等于 formal Release 或 Production Baseline。
-12. UPDATE-MVP-1：同 Schema/无 migration 的最小页面更新、代码 Release 自动回滚与 bounded diagnostics；repository implementation 等待独立复核，不代替完整 OPS-3B/OPS-3C。
+12. UPDATE-MVP-1：同 Schema/无 migration 的最小页面更新、代码 Release 自动回滚与 bounded diagnostics；repository implementation 及隔离 Windows WU1/WU2 已独立接受，不代替完整 OPS-3B/OPS-3C。
 13. DATA-1：当前暂停；恢复后实现 Repository、schema version、migration history、新版本 migration compatibility、数据完整性和数据库回滚基础；不迁移或修复旧生产数据。
 14. Fresh Install Bootstrap：面向空环境建立目标 Schema、mandatory audit、首个 `super_admin` 和不可变 lifecycle marker。
 15. 在干净 Windows 环境完成全新安装与初始化验收。
@@ -87,7 +87,7 @@ Greenfield Production Baseline 路线按以下顺序执行，后项不能绕过�
 25. Linux 单服务器适配。
 26. PostgreSQL、对象存储、queue、Redis 和多实例按真实需求引入。
 
-第 0 至 11 项已完成各自批准范围；当前 UPDATE-MVP-1 repository implementation 等待独立复核，DATA-1 暂停。此后仍需 Fresh Install Bootstrap、clean-Windows 全新安装/初始化验收、P0/ARCH-3/PERF-1/OBS-1/browser/provider 收口、backup/restore rehearsal、OPS-3B repository implementation、完整 apply/switch/health/rollback/restore rehearsal、Production Baseline 批准和 Greenfield 生产部署。Linux、PostgreSQL、Redis、对象存储、durable queue、多实例、Windows Service、formal Release 和 Production Baseline 当前仍不是已完成能力。
+第 0 至 12 项已完成各自批准范围；UPDATE-MVP-1 repository implementation 及隔离 Windows WU1/WU2 已独立接受，DATA-1 暂停。此后仍需 Fresh Install Bootstrap、clean-Windows 全新安装/初始化验收、P0/ARCH-3/PERF-1/OBS-1/browser/provider 收口、backup/restore rehearsal、OPS-3B repository implementation、完整 apply/switch/health/rollback/restore rehearsal、Production Baseline 批准和 Greenfield 生产部署。Linux、PostgreSQL、Redis、对象存储、durable queue、多实例、Windows Service、formal Release 和 Production Baseline 当前仍不是已完成能力。
 
 ## 4. 历史拆解参考
 
