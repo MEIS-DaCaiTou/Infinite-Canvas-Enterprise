@@ -52,6 +52,7 @@ from enterprise.interceptors import (
     upstream_conversation_user_id,
 )
 from enterprise.admin_api import router as admin_router
+from enterprise.update_api import router as update_router
 from starlette.middleware.base import BaseHTTPMiddleware
 
 # ── 应用初始化 ────────────────────────────────────────────
@@ -78,6 +79,7 @@ class AuthStateMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(AuthStateMiddleware)
 app.include_router(admin_router, prefix="/enterprise")
+app.include_router(update_router, prefix="/enterprise")
 
 # 共享 httpx 客户端（保持连接池）
 _http_client: Optional[httpx.AsyncClient] = None
@@ -231,7 +233,9 @@ def _build_enterprise_shell_guard(user: dict) -> str:
         "isAdmin": bool(user.get("is_admin")),
         "canApiSettings": bool(can_use_feature(user, "api_settings_access")),
         "canWorkflowSettings": bool(can_use_feature(user, "workflow_settings_access")),
-        "updateEnabled": bool(ENTERPRISE_UPDATE_ENABLED and can_use_feature(user, "system_update")),
+        # The upstream in-place updater is permanently disabled. Authorized
+        # operators use the separate Manifest v2 Update Center instead.
+        "updateEnabled": False,
         "hideUpstreamAuthor": bool(ENTERPRISE_HIDE_UPSTREAM_AUTHOR or not user.get("is_admin")),
     }
     script = r'''

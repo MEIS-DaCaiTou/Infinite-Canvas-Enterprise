@@ -19,6 +19,7 @@
 - ENV-1B2B：资格门禁选择的 ordinary-GIL CPython `3.14.6` Windows x64 / ABI `cp314` 已成为唯一 active Runtime repository policy；30 项应用依赖锁、3 项 bootstrap wheel、builder/verifier、Runtime identity/preflight、仓库外 Build A/B、三层 provenance 和真实 formal-entry fixture 已通过独立代码与证据审查。`ENV_1B2B_repository_implementation_independently_accepted=true`、`Python_3_14_Runtime_candidate_independently_accepted=true`、`new_Python_version_repository_implemented=true`、`ENV_1B2_completed=true`。测试边界保持 `target_CP314_full_enterprise_suite_run=false`、`github_ci_verified=false`；后续 ENV-1B3 已独立形成 `clean_Windows_validation=true`，但 `production_validation=false`、`production_approved=false`。实现边界见 [ENV-1B2B 实施记录](./env/ENV-1B2B-PYTHON-314-RUNTIME-IMPLEMENTATION-2026-07.md)。
 - OPS Release Manifest v2：detached manifest、Git-tree payload、闭合 inventory、deterministic archive、Runtime/static/SBOM/licenses/config/database 绑定、offline verifier/materializer 与 portable v2 identity 的 repository implementation 已通过独立审查。`OPS_RELEASE_MANIFEST_V2_repository_implementation_independently_accepted=true`、`Manifest_v2_repository_implementation=true`、`Release_candidate_payload_buildable=true`、`Release_candidate_payload_offline_verifiable=true`、`portable_startup_bound_to_Manifest_v2=true`；`original_independent_review_blockers_closed=5`、`remaining_code_blockers=0`、`remaining_evidence_blockers=0`、`remaining_test_blockers=0`。后续 ENV-1B3 已验证其候选构建、离线验证和 materialization 链，但仍不是 activation、OPS-3B、formal Release 或 production approval。实现边界见 [OPS Release Manifest v2 实施记录](./ops/OPS-RELEASE-MANIFEST-V2-IMPLEMENTATION-2026-07.md)。
 - ENV-1B3：PR #90 已合并，merge commit `105f3ca47f81207d2820fbd9acfa0a6d7b65770a`。不可变 Candidate `ice-2026.07.6-7593abdd54db-candidate-08`（Release ID `ice-2026.07.6-7593abdd54db`）在独立物理 Windows Guest 完成 W01-W14：`14 PASS / 0 FAIL / 0 BLOCKED`。最终证据 `ENV-1B3-ice-2026.07.6-7593abdd54db-candidate-08-FINAL-TWO-CASES-WINDOWS-RETEST-EVIDENCE.zip` 为 `32,843` bytes、SHA-256 `5138f17a77b94d16657b138546ab323406c23e0c820a5a3fd751615b2fd90c57`、内部 `34/34`；Candidate 与仓库未被测试主机修改。`Candidate_08_immutable=true`、`Candidate_08_physical_windows_validation_passed=true`、`clean_Windows_validation=true`、`ENV_1B3_completed=true`、`first_clean_Windows_RC_accepted=true`。这不是 formal Release、activation、Production Baseline 或 production validation。详见 [ENV-1B3 实施记录](./env/ENV-1B3-CLEAN-WINDOWS-VALIDATION-AND-RELEASE-CANDIDATE-2026-07.md) 与 [最终验收收口](./env/evidence/ENV-1B3-FINAL-ACCEPTANCE-CLOSEOUT-2026-08-05.md)。
+- UPDATE-MVP-1：最小安全在线更新 repository implementation 已形成并等待独立复核。它只允许 Manifest v2 明确标记的同 Schema/无 migration 单跳，在实时 `system_update` 权限、当前密码确认和单一 durable job 下完成新 Release materialization、expected-current pointer 切换、现有 Runtime start/health 与失败代码回滚；同时提供 bounded/redacted diagnostics。`UPDATE_MVP_1_repository_implementation=true`、`UPDATE_MVP_1_repository_implementation_independently_accepted=false`、`system_update_super_admin_default=true`、`system_update_admin_explicit_grant_required=true`、`database_migration_supported=false`、`database_restore_supported=false`、`code_release_rollback_supported=true`、`production_touched=false`。DATA-1 已由项目负责人暂停；完整 activation、OPS-3B、formal Release 与生产授权仍未完成。见 [实施记录](./ops/UPDATE-MVP-1-MINIMAL-SAFE-ONLINE-UPDATE-IMPLEMENTATION-2026-08.md)。
 - PR #90 最终开发侧仓库回归证据：`full_repository_regression_passed=true`、`full_repository_regression_interpreter=CPython 3.11.9 x64`、`passed=739`、`skipped=10`、`failed=0`、`warnings=9`、`interpreter_switching=false`、`github_ci_verified=false`。任务未记录 collected count，不作推断。物理 Guest 使用 fixed CP314 验证正式入口和矩阵，不替代开发解释器上的 enterprise suite。
 - 临时业务测试部署仍为 `Infinite-Canvas-Enterprise-TEST-240f6a2-win-x64.zip`（SHA-256 `7111243ec661d5f1caf90a207161ff1e57d0b46737d5abccdb81b001ffadc3c9`）：Gateway `8000`、upstream `3001` loopback，`LAN_UI_verified=true`。`temporary_test_business_deployment_active=true`、`temporary_test_business_deployment_updated_by_PR84=false`、`controlled_LAN_or_VPN_only=true`、`public_exposure=false`、`copy_to_more_devices=false`、`migration_guarantee=false`；它不是 formal Release 或 Production Baseline。
 - ADR-OPS-007：项目负责人已接受 Greenfield 全新生产路线；旧生产迁移计划取消。
@@ -105,6 +106,7 @@ SEC-1B2 已完成仓库实现和临时数据库验证，由 PR #75 承载。该�
 | ENV-1B2B | Repository implementation 已独立验收 | 唯一 active Runtime 已迁移到 ordinary-GIL CPython 3.14.6 / cp314，`ENV_1B2_completed=true`；后续 ENV-1B3 已完成 clean-Windows 验证，activation、formal Release 和 production approval 仍未完成。 |
 | OPS Release Manifest v2 | Repository implementation 已独立验收 | Release candidate payload 可确定性构建并离线验证，portable startup 已绑定 Manifest v2；不含 activation、OPS-3B、formal Release 或 production approval。 |
 | ENV-1B3 | 已完成并合并，PR #90，merge `105f3ca` | Candidate 08 在独立 Windows Guest 完成 W01-W14 `14/0/0`，`clean_Windows_validation=true`、`first_clean_Windows_RC_accepted=true`；仍不是 formal Release、activation、Production Baseline 或生产部署。 |
+| UPDATE-MVP-1 | Repository implementation 待独立复核 | 只支持同 Schema/无 migration 的 Manifest v2 单跳；`super_admin` 默认、admin 显式 grant、密码再确认、durable job、existing Runtime handoff、target health 与自动代码回滚已实现。DATA-1 暂停；不含 migration、restore、完整 OPS-3B 或生产执行。 |
 
 ## 4. 当前能力矩阵摘要
 
@@ -159,19 +161,20 @@ ARCH-2A、SEC-1A、SEC-1B1、SEC-1F0、SEC-1C0 和 SEC-1B2 仓库实现已完成
 4. ENV-1B1B：已由 PR #83 合并；`ENV_1B1B_scoped_contract_acceptance_passed=true`，但 `ENV_1B1B_full_release_acceptance_passed=false`。
 5. ENV-1B1C-B1：已由 PR #84 合并并通过独立 contract-foundation 验收；Final Acceptance evidence 已由独立 docs-only closeout commit 持久化，且该文档收口不接入 Runtime lifecycle。
 6. ENV-1B1C-B2、ENV-1B2B 与 OPS Release Manifest v2 已完成各自 repository/independent-review 门禁；ENV-1B3 已由 PR #90 合并，Candidate 08 完成独立 clean-Windows W01-W14 `14/0/0`，首个不可变 clean-Windows RC 已接受。
-7. DATA-1：建立新生产所需 schema version、migration history、兼容分类和数据完整性基础，不迁移旧生产数据。
-8. 独立设计、实现并验证尚不存在的 Fresh Install Bootstrap。
-9. 在干净 Windows 环境完成全新安装与初始化验收。
-10. 收口 P0 安全、ARCH-3、PERF-1 / OBS-1、浏览器回归和真实 Provider 验收。
-11. 使用全新基线数据完成正式 backup 和 restore rehearsal。
-12. 完成 OPS-3B 仓库实现；OPS-3B 不用于旧生产，当前尚未开始。
-13. 在干净 Windows 环境使用 Fresh Install Bootstrap 建立的全新隔离数据，完成 apply / switch / health / rollback / restore 演练；这是开发或隔离验证，不是生产执行。
-14. 由项目负责人确认已经具备经过验证的持续升级和失败恢复能力，并明确批准 Production Baseline。
-15. 在生产设备使用全新数据库、账号、配置和凭据进行 Greenfield 部署；新生产尚未部署。
-16. 后续正式 Release 才进入新生产版本迭代；OPS-3B 的首次真实生产执行只能发生在 Greenfield 新生产部署以后，并由项目负责人在生产设备本地执行。
-17. 完成新生产业务验收后，再由项目负责人单独决定旧生产停止、归档或删除。
-18. OPS-3C / Update Center 可在 Production Baseline 后独立实施，不是首次生产部署前置条件。
-19. Linux 单服务器后置；PostgreSQL、对象存储、queue、Redis 和多实例按真实需求引入。
+7. UPDATE-MVP-1：已获授权并形成 repository implementation，等待独立代码、权限绕过、故障恢复、日志脱敏与测试证据复核；只提供同 Schema/无 migration 单跳和代码 Release 回滚，不等于 OPS-3B 或生产授权。
+8. DATA-1：当前暂停；恢复后建立新生产所需 schema version、migration history、兼容分类和数据完整性基础，不迁移旧生产数据。
+9. 独立设计、实现并验证尚不存在的 Fresh Install Bootstrap。
+10. 在干净 Windows 环境完成全新安装与初始化验收。
+11. 收口 P0 安全、ARCH-3、PERF-1 / OBS-1、浏览器回归和真实 Provider 验收。
+12. 使用全新基线数据完成正式 backup 和 restore rehearsal。
+13. 完成 OPS-3B 仓库实现；OPS-3B 不用于旧生产，当前尚未开始。
+14. 在干净 Windows 环境使用 Fresh Install Bootstrap 建立的全新隔离数据，完成 apply / switch / health / rollback / restore 演练；这是开发或隔离验证，不是生产执行。
+15. 由项目负责人确认已经具备经过验证的持续升级和失败恢复能力，并明确批准 Production Baseline。
+16. 在生产设备使用全新数据库、账号、配置和凭据进行 Greenfield 部署；新生产尚未部署。
+17. 后续正式 Release 才进入新生产版本迭代；OPS-3B 的首次真实生产执行只能发生在 Greenfield 新生产部署以后，并由项目负责人在生产设备本地执行。
+18. 完成新生产业务验收后，再由项目负责人单独决定旧生产停止、归档或删除。
+19. 完整 OPS-3C / Update Center 能力可在 Production Baseline 后独立实施；UPDATE-MVP-1 不等于 OPS-3C 完成。
+20. Linux 单服务器后置；PostgreSQL、对象存储、queue、Redis 和多实例按真实需求引入。
 
 3G-8 浏览器级自动化回归、3G-6 外部 provider 成功链路补验和长期协作 ACL 仍保留，但不得挤占 P0 安全与数据一致性优先级。
 

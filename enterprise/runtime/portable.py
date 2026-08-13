@@ -483,3 +483,32 @@ def execute_portable_command(*, app_root: Path, command: str) -> tuple[dict[str,
         "release_gate": decision.as_dict(),
         "status": "blocked",
     }, 2
+
+
+def request_portable_update_handoff(*, app_root: Path, job_id: str) -> dict[str, object]:
+    """Submit a fixed one-shot update handoff through the owned supervisor."""
+    preflight = build_portable_preflight(Path(app_root), verify_full_payload=True)
+    roots = install_path_roots_for_process(preflight.roots)
+    from enterprise import config as enterprise_config
+    from enterprise.runtime.control import RuntimeController
+    from enterprise.runtime.supervisor import SupervisorConfig
+
+    result = preflight.result
+    config = SupervisorConfig(
+        app_root=roots.APP_ROOT,
+        runtime_root=roots.RUNTIME_ROOT,
+        log_root=roots.LOG_ROOT / "runtime",
+        mode="service-host",
+        runtime_mode="portable-release",
+        release_id=result.release_id,
+        runtime_manifest_sha256=result.runtime_manifest_sha256,
+        release_manifest_sha256=result.release_manifest_sha256,
+        release_payload_tree_sha256=result.release_payload_tree_sha256,
+        enterprise_commit=result.enterprise_commit,
+        enterprise_tree=result.enterprise_tree,
+        startup_preflight_sha256=result.identity,
+        python_executable=str(roots.PYTHON_RUNTIME / "python.exe"),
+        upstream_port=int(getattr(enterprise_config, "UPSTREAM_PORT", 3001)),
+        gateway_port=int(getattr(enterprise_config, "GATEWAY_PORT", 8000)),
+    )
+    return RuntimeController(config).send_update_handoff(job_id)

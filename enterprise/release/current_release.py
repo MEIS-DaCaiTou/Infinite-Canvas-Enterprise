@@ -314,6 +314,7 @@ def atomic_write_current_release(
     release: CurrentRelease,
     *,
     expected_manifest_sha256: str | None = None,
+    expected_existing_raw_sha256: str | None = None,
 ) -> CurrentReleaseWriteResult:
     try:
         validate_path_roots_for_use(roots)
@@ -331,6 +332,12 @@ def atomic_write_current_release(
             _assert_no_reparse(roots.STATE_ROOT, "STATE_ROOT")
             if not roots.STATE_ROOT.is_dir():
                 raise CurrentReleaseError("CURRENT_RELEASE_STATE_ROOT_MISSING")
+            if expected_existing_raw_sha256 is not None:
+                if not _SHA_RE.fullmatch(expected_existing_raw_sha256):
+                    raise CurrentReleaseError("CURRENT_RELEASE_EXPECTED_IDENTITY_INVALID")
+                existing = read_current_release_result_from_state_root(roots.STATE_ROOT)
+                if existing.raw_sha256 != expected_existing_raw_sha256:
+                    raise CurrentReleaseError("CURRENT_RELEASE_EXPECTED_IDENTITY_MISMATCH")
             if temporary.exists():
                 raise CurrentReleaseError("CURRENT_RELEASE_TEMP_EXISTS")
             with temporary.open("xb") as handle:

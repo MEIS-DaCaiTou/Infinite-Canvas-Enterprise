@@ -504,7 +504,22 @@ def _validate_manifest(payload: object, raw: bytes) -> ReleaseManifestV2:
         raise ReleaseManifestV2Error("RELEASE_CONFIG_CONTRACT_INVALID")
     database = sections["database_contract"]
     _safe_relative(database["schema_snapshot_path"]); _sha(database["schema_snapshot_sha256"])
-    if database["schema_id"] != "enterprise-database-contract-v1" or type(database["migration_ids"]) is not list or database["migration_compatibility"] != "unclassified" or database["rollback_classification"] != "unclassified" or database["ops3b_activation_eligible"] is not False:
+    inactive_database_contract = (
+        database["migration_compatibility"] == "unclassified"
+        and database["rollback_classification"] == "unclassified"
+        and database["ops3b_activation_eligible"] is False
+    )
+    online_update_database_contract = (
+        database["migration_compatibility"] == "same-schema-no-migration"
+        and database["rollback_classification"] == "code-release-pointer"
+        and database["ops3b_activation_eligible"] is True
+    )
+    if (
+        database["schema_id"] != "enterprise-database-contract-v1"
+        or type(database["migration_ids"]) is not list
+        or any(not isinstance(item, str) or not item for item in database["migration_ids"])
+        or not (inactive_database_contract or online_update_database_contract)
+    ):
         raise ReleaseManifestV2Error("RELEASE_DATABASE_CONTRACT_INVALID")
     compatibility = sections["compatibility"]
     _strict_positive_int(compatibility["minimum_launcher_contract"], "RELEASE_COMPATIBILITY_INVALID")

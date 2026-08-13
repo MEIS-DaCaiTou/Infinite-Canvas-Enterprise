@@ -841,3 +841,51 @@ class RuntimeController:
                     return {"result": result, "ack": ack, "status": inspect_runtime(self.config)}
             time.sleep(0.2)
         return {"result": "control_timeout", "status": inspect_runtime(self.config)}
+
+    def send_update_handoff(self, job_id: str, *, wait_seconds: int = 15) -> dict[str, Any]:
+        """Ask the owned supervisor to launch one fixed update worker."""
+        if not isinstance(job_id, str) or len(job_id) != 32 or any(ch not in "0123456789abcdef" for ch in job_id):
+            raise RuntimeControlError("runtime update job identifier is invalid")
+        snapshot = inspect_runtime(self.config)
+        state = snapshot.get("runtime_state")
+        if (
+            snapshot.get("portable_ownership_valid") is not True
+            or snapshot.get("running_release_mismatch") is True
+            or type(snapshot.get("readiness")) is not dict
+            or snapshot["readiness"].get("ready") is not True
+            or type(state) is not dict
+        ):
+            return {"result": "ownership_unavailable", "status": snapshot}
+        instance_id = state.get("supervisor_instance_id")
+        generation = state.get("state_generation")
+        if not isinstance(instance_id, str) or type(generation) is not int:
+            return {"result": "ownership_unavailable", "status": snapshot}
+        verified = inspect_runtime(self.config)
+        verified_state = verified.get("runtime_state")
+        if (
+            verified.get("portable_ownership_valid") is not True
+            or verified.get("running_release_mismatch") is True
+            or type(verified.get("readiness")) is not dict
+            or verified["readiness"].get("ready") is not True
+            or type(verified_state) is not dict
+            or verified_state.get("supervisor_instance_id") != instance_id
+            or verified_state.get("state_generation") != generation
+            or verified.get("launch_context_identity") != snapshot.get("launch_context_identity")
+        ):
+            return {"result": "ownership_unavailable", "status": verified}
+        request_id = self.store.submit_command(
+            command="update-handoff",
+            supervisor_instance_id=instance_id,
+            expected_state_generation=generation,
+            launch_context_identity=snapshot.get("launch_context_identity"),
+            update_job_id=job_id,
+        )
+        deadline = time.monotonic() + wait_seconds
+        while time.monotonic() < deadline:
+            ack = self.store.read_ack(request_id, instance_id=instance_id)
+            if ack is not None:
+                result = ack.get("result")
+                self.store.remove_ack(request_id, instance_id=instance_id)
+                return {"result": result, "ack": ack, "status": inspect_runtime(self.config)}
+            time.sleep(0.1)
+        return {"result": "control_timeout", "status": inspect_runtime(self.config)}

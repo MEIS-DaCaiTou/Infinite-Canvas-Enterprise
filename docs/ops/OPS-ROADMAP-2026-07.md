@@ -123,15 +123,16 @@ Implementation details: `docs/ops/OPS-3A-ONLINE-UPDATE-CORE-IMPLEMENTATION-2026-
 OPS-3 规划：
 
 - OPS-3B：在 DATA-1、Fresh Install Bootstrap、migration compatibility 和新基线 backup/restore rehearsal 完成后实施 repository capability；随后使用 Fresh Install Bootstrap 建立的全新隔离数据完成 controlled `apply-upgrade`、switch、health、rollback 和 restore 演练，以验证该 implementation；不用于旧生产原地升级。
-- OPS-3C：在 Production Baseline 后单独实现 Update Center page and allowlisted backend OPS API；不是首次生产部署前置条件。
+- UPDATE-MVP-1：项目负责人已例外前置授权最小 Update Center，只处理 Manifest v2 同 Schema/无 migration 单跳、existing Runtime handoff、代码 Release 回滚与 bounded diagnostics；不包含 database migration/restore、通用 apply engine 或生产执行。
+- OPS-3C：完整 Update Center / allowlisted backend OPS API 仍在 Production Baseline 后单独实施；UPDATE-MVP-1 不等于 OPS-3C 完成。
 - 维护窗口确认。
 - 二次确认。
 - audit log。
 - job log 展示。
 
-OPS-3C 才开始接入网页 Update Center。网页端只能调用白名单 OPS API，不得执行任意 shell。
+UPDATE-MVP-1 先接入严格受限的网页更新入口；完整 OPS-3C 才扩展通用 allowlisted OPS API。两者都不得执行任意 shell。
 
-不可变 Candidate、Manifest v2、Runtime lifecycle 与 clean-Windows validation 已完成批准范围。后续顺序固定为：DATA-1 与 migration compatibility、Fresh Install Bootstrap、新基线正式 backup/restore rehearsal、OPS-3B repository implementation、再以 controlled apply / switch / health / rollback / restore rehearsal 验证 OPS-3B；这些门禁都必须在 Production Baseline 批准前完成。旧生产 OPS-2A / OPS-2B 结果只保留历史证据，不能满足这些门禁。
+不可变 Candidate、Manifest v2、Runtime lifecycle 与 clean-Windows validation 已完成批准范围。项目负责人已授权 UPDATE-MVP-1 优先形成同 Schema/无 migration 单跳与代码回滚，DATA-1 暂停。UPDATE-MVP-1 独立验收后仍须恢复 DATA-1 与 migration compatibility、Fresh Install Bootstrap、新基线正式 backup/restore rehearsal、OPS-3B repository implementation，再以 controlled apply / switch / health / rollback / restore rehearsal 验证 OPS-3B；这些门禁都必须在 Production Baseline 批准前完成。旧生产 OPS-2A / OPS-2B 结果只保留历史证据，不能满足这些门禁。
 
 ### Greenfield 新生产 OPS 边界
 

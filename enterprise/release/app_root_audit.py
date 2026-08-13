@@ -3,7 +3,7 @@
 The scanner is deliberately a conservative maintenance control, not a proof
 that static analysis can discover every possible write. It combines Python AST
 inspection, focused script inspection, stable call fingerprints, frozen
-operation counts, and W01-W45 flow anchors.
+operation counts, and W01-W46 flow anchors.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Iterable, Sequence
 
 
-_FLOW_IDS = frozenset(f"W{number:02d}" for number in range(1, 46))
+_FLOW_IDS = frozenset(f"W{number:02d}" for number in range(1, 47))
 _SCANNED_SUFFIXES = frozenset({".bat", ".cmd", ".js", ".ps1", ".py"})
 _EXCLUDED_PREFIXES = ("enterprise/tests/", "enterprise-static/", "static/")
 _PATH_METHODS = frozenset(
@@ -578,6 +578,14 @@ def _flow_for_operation(file: str, symbol: str) -> str:
         # fixture-materialization root. Keep it distinct from APP_ROOT runtime
         # writes and from the Python Runtime builder represented by W43.
         return "W44"
+    if file in {
+        "enterprise/ops/update/mvp.py",
+        "enterprise/update_api.py",
+    }:
+        # UPDATE-MVP-1 uses external staging/state/release roots and publishes
+        # only a newly materialized immutable Release plus pointer state. It
+        # never writes the running APP_ROOT in place.
+        return "W46"
     if file.startswith("tools/validation/windows/env_1b3/"):
         # ENV-1B3 writes only to explicit test-host roots, isolated tamper
         # copies, or development-owned candidate/evidence roots. It never
@@ -592,7 +600,7 @@ def _flow_for_operation(file: str, symbol: str) -> str:
 # every mapped site as (file, symbol, operation, normalized-call fingerprint,
 # Wxx flow). Line numbers are deliberately excluded, while duplicate identical
 # calls remain duplicate records. Any added/removed/changed call drifts it.
-EXPECTED_SITE_MANIFEST_DIGEST = "c197d5f6ce697dd86ccc607ca6db26fc2785ae581b424f37c2eb296961ba2a1d"
+EXPECTED_SITE_MANIFEST_DIGEST = "e86368690a7e37276ae189f306a24c3ad765d318c7be72d2411ffeb66386f8d6"
 
 FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W01", "main.py", "startup_event"),
@@ -640,6 +648,7 @@ FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W43", "enterprise/release/windows_runtime_build.py", "build_runtime"),
     FlowAnchor("W44", "enterprise/release/release_builder_v2.py", "build_release_v2"),
     FlowAnchor("W45", "tools/validation/windows/env_1b3/Invoke-ENV1B3Validation.ps1"),
+    FlowAnchor("W46", "enterprise/ops/update/mvp.py", "UpdateMvpService.prepare_from_artifacts"),
 )
 
 

@@ -740,7 +740,8 @@ def _run_checks() -> None:
         current_admin_token = auth.create_token(default_admin["id"])
         current_admin = auth.verify_token(current_admin_token)
         assert current_admin["is_admin"] is True
-        assert edb.can_use_feature(current_admin, "system_update") is True
+        # UPDATE-MVP-1 removes the blanket admin bypass for system_update.
+        assert edb.can_use_feature(current_admin, "system_update") is False
         assert gateway.verify_token(current_admin_token) == current_admin
 
         login_response = asyncio.run(_login(gateway, "admin", TEST_ADMIN_PASSWORD))
