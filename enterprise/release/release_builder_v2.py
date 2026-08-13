@@ -502,6 +502,11 @@ def build_release_v2(*, repo: Path, output_root: Path, runtime_root: Path, runti
     try:
         _extract_git_tree(repo, commit, source_export)
         app_source_inventory = _copy_git_payload(source_export, payload, policy, git_modes)
+        # ``git archive`` may apply the host's checkout line-ending policy on
+        # Windows.  VERSION is a manifest authority, so publish its exact Git
+        # blob bytes rather than environment-dependent checkout bytes.
+        (payload / "VERSION").write_bytes(version_bytes)
+        app_source_inventory = build_inventory(payload)
         static_report_path = payload / "release-evidence/static-build-report.json"
         static_report_path.parent.mkdir(parents=True, exist_ok=True)
         static_report = build_static_tree(source_export / "static", payload / "static", static_report_path)
