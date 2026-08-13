@@ -1,6 +1,6 @@
 # RELEASE-MVP-1：首个真实可升级 GitHub Release 准备记录
 
-- 状态：Gate A repository preparation completed; awaiting independent review
+- 状态：Gate A repository preparation independently accepted; awaiting project-owner Ready/Merge decision
 - 任务基线：`main@0454bb3e62c55c566ac3f7589d2f667079352c49`
 - 证据代码 Head：`cc642885a00b48a6b990089770734cecb64c0acb`（tree `c0c32f46b91fbb80a22b2805dbcdc97c3725cdbf`）
 - 目标版本 / tag：`2026.08.1`
@@ -61,13 +61,33 @@ database_restore_supported=false
 - `python -m compileall enterprise tools`：通过。
 - APP_ROOT write audit、Git diff check、相对链接与 changed-file 范围、secret/本机路径扫描：通过。
 
-这些是 Gate A repository/rehearsal 自证，等待独立复核；不冒充 GitHub CI、公开 Release 或远程升级 E2E。
+这些 Gate A repository implementation、测试与 rehearsal identity 事实已经独立复核接受；它们不冒充 GitHub CI、公开 Release 或远程升级 E2E。
 
-## 5. 冻结状态
+## 5. 独立验收与 evidence 边界
+
+独立复核确认 PR diff 符合 Gate A 范围，evidence-bearing Head/tree、Gate A evidence JSON 与本文 rehearsal identity 一致；复核时 GitHub 不存在目标 tag 或 Release object，Gate B 尚未开始。三项 repository-external rehearsal binary assets 未作为 ChatGPT 附件逐字节重新计算哈希，因此准确边界为：
 
 ```text
-Gate_A_repository_preparation=true
-Gate_A_independently_accepted=false
+Gate_A_rehearsal_identity_consistency_accepted=true
+Gate_A_binary_assets_independently_rehashed_by_chatgpt=false
+```
+
+该边界不是 Gate A Ready blocker。Gate B 仍必须从 merged main 重建最终 Target B，重新执行 Manifest verify 与 Release preflight，再发布并完成真实 remote GitHub E2E；Gate A rehearsal bytes 不得冒充 Gate B final Release bytes。
+
+## 6. 冻结状态
+
+```text
+RELEASE_MVP_1_Gate_A_repository_preparation=true
+RELEASE_MVP_1_Gate_A_independently_accepted=true
+Gate_A_code_blockers=0
+Gate_A_evidence_blockers=0
+Gate_A_docs_blockers=0
+
+Gate_A_independently_accepted=true
+target_VERSION=2026.08.1
+target_tag=2026.08.1
+database_migration_supported=false
+database_restore_supported=false
 Gate_B_GitHub_Release_published=false
 Gate_B_remote_update_E2E=false
 
