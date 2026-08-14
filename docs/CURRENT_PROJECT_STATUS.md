@@ -1,12 +1,12 @@
 # Infinite Canvas Enterprise 当前项目状态
 
-更新时间：2026-08-13
+更新时间：2026-08-14
 
 ## 1. 当前主线与运行事实
 
 - 企业版仓库：`MEIS-DaCaiTou/Infinite-Canvas-Enterprise`
 - `current_main`：动态 GitHub 事实；每次评审或新任务开始时实时查询 GitHub / `origin/main`，本文档不固定一个永久“当前”的 SHA。
-- `last_verified_code_baseline`：`4142e831d5866b0ea755921e4626a28aed96c9cf`（PR #93 accepted code/evidence Head；tree `16162f673c8b68ffe0d50262484e2c6f9fde9714`；UPDATE-MVP-1 repository implementation 已独立接受。PR #93 当前尚未合并，后续 R2/R2.1 仅为 docs-only，不改变该 verified code baseline）。
+- `last_verified_code_baseline`：`dc00fdb9c127de927ca898bc65f96c68481dbf56`（tree `8c3fc38905888327f935f47f27137e25c929fbd0`）。PR #95 的产品修复已通过独立代码与 Windows liveness 验收，PR #96 仅修改权威 `VERSION`；merged `main@dc00fdb` 重建为公开 `2026.08.3` 后，Target bytes 经 GitHub 重新下载验证，真实公开 `2026.08.2 -> 2026.08.3` 在线升级最终达到 durable job `SUCCEEDED`、Target health `PASS`。这是最新已验证仓库 / Release 代码基线，不是 Production Baseline。
 - `last_documentation_closeout`：PR #91 merge commit `470d48fb1750f04c124385762a5b774754235987`（tree `33dfab2296138698588cc96438fc626b86756021`；docs-only 收口，不改变 `last_verified_code_baseline`）。
 - ENV-1B0 / DOC-2 / DOC-2A：PR #80 已合并，merge commit `be5573ae416b4ce81f8cc26ae282868a7efa7672`；完成架构决策冻结、Greenfield 路线和文档事实同步。
 - ENV-1B1A：PR #81 已合并，merge commit `a53885b026a6c2440acb0fbde72d6571ff6f7723`；APP_ROOT 写入审计、CSS 传递依赖哈希、统一 HTML build ID、确定性 static staging builder、`main.py` 最小不可变 Release 补丁和 Git tracked fingerprint/Wxx 漂移门禁已进入 `main`。
@@ -20,7 +20,7 @@
 - OPS Release Manifest v2：detached manifest、Git-tree payload、闭合 inventory、deterministic archive、Runtime/static/SBOM/licenses/config/database 绑定、offline verifier/materializer 与 portable v2 identity 的 repository implementation 已通过独立审查。`OPS_RELEASE_MANIFEST_V2_repository_implementation_independently_accepted=true`、`Manifest_v2_repository_implementation=true`、`Release_candidate_payload_buildable=true`、`Release_candidate_payload_offline_verifiable=true`、`portable_startup_bound_to_Manifest_v2=true`；`original_independent_review_blockers_closed=5`、`remaining_code_blockers=0`、`remaining_evidence_blockers=0`、`remaining_test_blockers=0`。后续 ENV-1B3 已验证其候选构建、离线验证和 materialization 链，但仍不是 activation、OPS-3B、formal Release 或 production approval。实现边界见 [OPS Release Manifest v2 实施记录](./ops/OPS-RELEASE-MANIFEST-V2-IMPLEMENTATION-2026-07.md)。
 - ENV-1B3：PR #90 已合并，merge commit `105f3ca47f81207d2820fbd9acfa0a6d7b65770a`。不可变 Candidate `ice-2026.07.6-7593abdd54db-candidate-08`（Release ID `ice-2026.07.6-7593abdd54db`）在独立物理 Windows Guest 完成 W01-W14：`14 PASS / 0 FAIL / 0 BLOCKED`。最终证据 `ENV-1B3-ice-2026.07.6-7593abdd54db-candidate-08-FINAL-TWO-CASES-WINDOWS-RETEST-EVIDENCE.zip` 为 `32,843` bytes、SHA-256 `5138f17a77b94d16657b138546ab323406c23e0c820a5a3fd751615b2fd90c57`、内部 `34/34`；Candidate 与仓库未被测试主机修改。`Candidate_08_immutable=true`、`Candidate_08_physical_windows_validation_passed=true`、`clean_Windows_validation=true`、`ENV_1B3_completed=true`、`first_clean_Windows_RC_accepted=true`。这不是 formal Release、activation、Production Baseline 或 production validation。详见 [ENV-1B3 实施记录](./env/ENV-1B3-CLEAN-WINDOWS-VALIDATION-AND-RELEASE-CANDIDATE-2026-07.md) 与 [最终验收收口](./env/evidence/ENV-1B3-FINAL-ACCEPTANCE-CLOSEOUT-2026-08-05.md)。
 - UPDATE-MVP-1：最小安全在线更新 repository implementation 已通过独立复核。它只允许 Manifest v2 明确标记的同 Schema/无 migration 单跳，在实时 `system_update` 权限、当前密码确认和单一 durable job 下完成 immutable Release prepare/materialization、one-shot Runtime handoff、expected-current CAS、目标 start/health 与失败代码回滚；同时提供 bounded/redacted diagnostics。隔离 Windows real-process smoke 已证明 WU1 A→B=`SUCCEEDED`、WU2 broken B→A=`ROLLED_BACK`。`UPDATE_MVP_1_repository_implementation=true`、`UPDATE_MVP_1_repository_implementation_independently_accepted=true`、`system_update_super_admin_default=true`、`system_update_admin_explicit_grant_required=true`、`database_migration_supported=false`、`database_restore_supported=false`、`code_release_rollback_supported=true`、`production_touched=false`。DATA-1 已由项目负责人暂停；完整 activation、OPS-3B、formal Release 与生产授权仍未完成。见 [实施记录](./ops/UPDATE-MVP-1-MINIMAL-SAFE-ONLINE-UPDATE-IMPLEMENTATION-2026-08.md)。
-- RELEASE-MVP-1 Gate A：从 `main@0454bb3e62c55c566ac3f7589d2f667079352c49` 准备 `VERSION=2026.08.1` 的三资产 Release rehearsal，并新增复用正式 Manifest v2 verifier 的窄 preflight；同 Schema/同 snapshot/同 migrations、asset closure 和外层 metadata 泄漏门禁均通过。Gate A repository preparation 已独立接受：`RELEASE_MVP_1_Gate_A_repository_preparation=true`、`RELEASE_MVP_1_Gate_A_independently_accepted=true`、code/evidence/docs blockers 均为 `0`。`Gate_A_rehearsal_identity_consistency_accepted=true`，但三项 rehearsal binary 未作为 ChatGPT 附件逐字节复哈希，`Gate_A_binary_assets_independently_rehashed_by_chatgpt=false`；Gate B 必须从 merged main 重建并重新验证最终 bytes。`Gate_B_GitHub_Release_published=false`、`Gate_B_remote_update_E2E=false`、`GitHub_Release_object_created=false`、`project_formal_Release_created=false`、`production_touched=false`。见 [Gate A 准备记录](./ops/RELEASE-MVP-1-FIRST-REAL-UPGRADEABLE-RELEASE-2026-08.md)。
+- RELEASE-MVP-1：Gate A repository preparation 与 Gate B 真实 GitHub 发布 / 在线升级闭环均已完成并通过独立验收。公开 `2026.08.2` 使用 bundled CPython `3.14.6` 作为 Source，真实 `GitHubReleasesProvider`、GitHub API 与 HTTPS 下载发现并获取公开 `2026.08.3`；Source 稳定观察 `75.516s`，gateway / upstream restart delta、health failure 与 PID change 均为 `0`。受保护升级链完成 `check -> prepare READY -> wrong-password deny -> password reconfirm -> execute -> handoff -> reconnect -> SUCCEEDED`，最终 `current-release=2026.08.3`、Target health `PASS`，且无旧 owned process、错误 listener、worker 或 active update lock。`RELEASE_MVP_1_completed=true`、`RELEASE_MVP_1_Gate_B_completed=true`、`RELEASE_MVP_1_remote_update_E2E=true`、`RELEASE_MVP_1_independently_accepted=true`、`GitHub_Release_object_created=true`。R3-C R1 已确认旧 `upstream_restarts=1` 是累计计数门禁误用，`ROOT_CAUSE_CLASSIFICATION=HARNESS_GATE_DEFECT`、`new_product_defect_confirmed=false`。公开 `.1/.2/.3` 均保留；`.1` 是历史测试 Release，最终验收 Source / Target 是 `.2 -> .3`。GitHub Release object 不等于项目 Formal Release；`project_formal_Release_created=false`、`Production_Baseline_approved=false`、`production_touched_by_RELEASE_MVP_1=false`。见 [RELEASE-MVP-1 最终记录](./ops/RELEASE-MVP-1-FIRST-REAL-UPGRADEABLE-RELEASE-2026-08.md)。
 - PR #90 最终开发侧仓库回归证据：`full_repository_regression_passed=true`、`full_repository_regression_interpreter=CPython 3.11.9 x64`、`passed=739`、`skipped=10`、`failed=0`、`warnings=9`、`interpreter_switching=false`、`github_ci_verified=false`。任务未记录 collected count，不作推断。物理 Guest 使用 fixed CP314 验证正式入口和矩阵，不替代开发解释器上的 enterprise suite。
 - 临时业务测试部署仍为 `Infinite-Canvas-Enterprise-TEST-240f6a2-win-x64.zip`（SHA-256 `7111243ec661d5f1caf90a207161ff1e57d0b46737d5abccdb81b001ffadc3c9`）：Gateway `8000`、upstream `3001` loopback，`LAN_UI_verified=true`。`temporary_test_business_deployment_active=true`、`temporary_test_business_deployment_updated_by_PR84=false`、`controlled_LAN_or_VPN_only=true`、`public_exposure=false`、`copy_to_more_devices=false`、`migration_guarantee=false`；它不是 formal Release 或 Production Baseline。
 - ADR-OPS-007：项目负责人已接受 Greenfield 全新生产路线；旧生产迁移计划取消。
@@ -108,6 +108,7 @@ SEC-1B2 已完成仓库实现和临时数据库验证，由 PR #75 承载。该�
 | OPS Release Manifest v2 | Repository implementation 已独立验收 | Release candidate payload 可确定性构建并离线验证，portable startup 已绑定 Manifest v2；不含 activation、OPS-3B、formal Release 或 production approval。 |
 | ENV-1B3 | 已完成并合并，PR #90，merge `105f3ca` | Candidate 08 在独立 Windows Guest 完成 W01-W14 `14/0/0`，`clean_Windows_validation=true`、`first_clean_Windows_RC_accepted=true`；仍不是 formal Release、activation、Production Baseline 或生产部署。 |
 | UPDATE-MVP-1 | Repository implementation 已独立接受 | 只支持同 Schema/无 migration 的 Manifest v2 单跳；`super_admin` 默认、admin 显式 `system_update=allow`、密码再确认、durable job、one-shot Runtime handoff、target health 与自动代码回滚已实现；WU1/WU2 隔离 Windows real-process smoke 已接受。DATA-1 暂停；不含 migration、restore、完整 OPS-3B 或生产执行。 |
+| RELEASE-MVP-1 | 已完成并独立验收 | 公开 GitHub Release `2026.08.2 -> 2026.08.3` 已通过真实 Provider/API/HTTPS 在线升级 E2E：durable job `SUCCEEDED`、Target health `PASS`、运行时清理闭合；GitHub Release object 仍不等于项目 Formal Release、Production Baseline 或生产部署。 |
 
 ## 4. 当前能力矩阵摘要
 
@@ -127,7 +128,7 @@ SEC-1B2 已完成仓库实现和临时数据库验证，由 PR #75 承载。该�
 | OPS / Runtime | OPS-2A / OPS-2B / OPS-3A、STAB-1 / OPS-L1 和 PR #79 hotfix 已进入 main。已有 `start/stop/restart/status/health`、独立角色恢复、持久日志、runtime state、完整 identity、ACK 和 Job Object。上述能力不代表生产已升级或切换，也不代表 apply-upgrade / restore / rollback、Windows Service、Docker / 1Panel 或 PostgreSQL 已实现。 |
 | 超级管理员 / Capability | SEC-1B1 只建立固定 role 基础，不创建 super_admin，也不实现 Capability；旧生产仍使用历史 `is_admin` 数据。面向新生产空环境的 Fresh Install Bootstrap 尚未实现。 |
 | 强制安全审计 | SEC-1F0 已提供仓库底层和临时数据库证明；旧生产未建表且不再计划 activation，现有在线管理操作仍使用原 `usage_logs`；新生产必须从 Fresh Install Bootstrap 建立 mandatory audit，完整查询 / 导出 / 保留 / 归档仍未实现。 |
-| ENV / 不可变 Release | ENV-1B0 至 ENV-1B3 的已授权 repository/validation 阶段均已合并。Candidate 08 已成为首个通过独立 clean-Windows W01-W14 `14/0/0` 的不可变 RC，`ENV_1B3_completed=true`、`clean_Windows_validation=true`。它仍不是 formal Release 或 Production Baseline；activation、OPS-3B、生产部署和 production approval 均未完成。 |
+| ENV / 不可变 Release | ENV-1B0 至 ENV-1B3 均已合并；Candidate 08 已通过独立 clean-Windows W01-W14 `14/0/0`。RELEASE-MVP-1 又完成公开 `.2 -> .3` 真实 GitHub 在线升级 E2E，`RELEASE_MVP_1_completed=true`、`job_state=SUCCEEDED`、`target_health=PASS`。公开 GitHub Release object 仍不是项目 Formal Release 或 Production Baseline；activation、OPS-3B、生产部署和 production approval 均未完成。 |
 
 ## 5. 当前人工确认
 
@@ -162,7 +163,7 @@ ARCH-2A、SEC-1A、SEC-1B1、SEC-1F0、SEC-1C0 和 SEC-1B2 仓库实现已完成
 4. ENV-1B1B：已由 PR #83 合并；`ENV_1B1B_scoped_contract_acceptance_passed=true`，但 `ENV_1B1B_full_release_acceptance_passed=false`。
 5. ENV-1B1C-B1：已由 PR #84 合并并通过独立 contract-foundation 验收；Final Acceptance evidence 已由独立 docs-only closeout commit 持久化，且该文档收口不接入 Runtime lifecycle。
 6. ENV-1B1C-B2、ENV-1B2B 与 OPS Release Manifest v2 已完成各自 repository/independent-review 门禁；ENV-1B3 已由 PR #90 合并，Candidate 08 完成独立 clean-Windows W01-W14 `14/0/0`，首个不可变 clean-Windows RC 已接受。
-7. UPDATE-MVP-1：repository implementation、权限绕过防护、升级故障恢复、日志脱敏及 WU1/WU2 隔离 Windows real-process 证据已通过独立复核；只提供同 Schema/无 migration 单跳和代码 Release 回滚，不等于 OPS-3B、formal activation 或生产授权。
+7. UPDATE-MVP-1 repository implementation 已独立接受；RELEASE-MVP-1 已进一步完成公开 `2026.08.2 -> 2026.08.3` 真实 GitHub 在线升级 E2E。该闭环只提供同 Schema/无 migration 单跳与代码 Release 回滚，不等于 OPS-3B、formal activation、项目 Formal Release、Production Baseline 或生产授权。
 8. DATA-1：当前暂停；恢复后建立新生产所需 schema version、migration history、兼容分类和数据完整性基础，不迁移旧生产数据。
 9. 独立设计、实现并验证尚不存在的 Fresh Install Bootstrap。
 10. 在干净 Windows 环境完成全新安装与初始化验收。
@@ -218,7 +219,7 @@ git rev-parse HEAD
 git status --short --untracked-files=all
 ```
 
-从 GitHub 最新 `main` 开始新任务；`105f3ca47f81207d2820fbd9acfa0a6d7b65770a` 是 PR #90 merge commit 和当前最后验证基线。`b444197a`、`d3885a9`、`4d9cc4e`、`240f6a2`、`a53885b`、`be5573a`、`396cccc` 和 `a095ce2e` 只作为历史核对基线。main 前进后先读取 `docs/README.md`、本文件、当前 ADR 和最近 PR。
+从 GitHub 最新 `main` 开始新任务；`dc00fdb9c127de927ca898bc65f96c68481dbf56`（tree `8c3fc38905888327f935f47f27137e25c929fbd0`）是当前最后验证的仓库 / Release 代码基线。`105f3ca`、`b444197a`、`d3885a9`、`4d9cc4e`、`240f6a2`、`a53885b`、`be5573a`、`396cccc` 和 `a095ce2e` 只作为历史核对基线。main 前进后先读取 `docs/README.md`、本文件、当前 ADR 和最近 PR。
 
 每个新任务必须：
 
