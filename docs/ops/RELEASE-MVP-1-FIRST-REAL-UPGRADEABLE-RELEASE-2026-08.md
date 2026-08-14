@@ -1,102 +1,203 @@
-# RELEASE-MVP-1：首个真实可升级 GitHub Release 准备记录
+# RELEASE-MVP-1：首个真实可升级 GitHub Release 最终记录
 
-- 状态：Gate A repository preparation independently accepted; awaiting project-owner Ready/Merge decision
-- 任务基线：`main@0454bb3e62c55c566ac3f7589d2f667079352c49`
-- 证据代码 Head：`cc642885a00b48a6b990089770734cecb64c0acb`（tree `c0c32f46b91fbb80a22b2805dbcdc97c3725cdbf`）
-- 目标版本 / tag：`2026.08.1`
+- 状态：Gate A / Gate B 已完成，repository / Release / 远程升级证据已独立验收
+- 最后验证代码基线：`main@dc00fdb9c127de927ca898bc65f96c68481dbf56`
+- tree：`8c3fc38905888327f935f47f27137e25c929fbd0`
+- 最终 Source / Target：公开 `2026.08.2 -> 2026.08.3`
 - 生产操作：未授权、未执行
 
-## 1. Gate A 范围
+## 1. 最终结论
 
-本阶段只把已进入 `main` 的 Manifest v2、portable Runtime 与 UPDATE-MVP-1 组合成可供人工审查的三资产 Release rehearsal。权威 `VERSION` 已从 `2026.07.6` 更新到 `2026.08.1`；新增的窄 preflight 使用显式绝对路径并复用正式 Manifest v2 verifier，不建立第二套 verifier、更新器、Runtime controller 或发布平台。
-
-Preflight 同时验证 canonical 版本顺序和 tag、精确三资产集合、Manifest/inventory/archive/payload identity、同 Schema/无 migration 数据库契约，以及发布资产外层必要 metadata 的 bounded secret/本机路径扫描。成功输出单行 JSON 和 exit `0`；阻断输出稳定 code、单行 JSON 和 exit `2`，不向普通 release operator 输出 traceback。
-
-Windows `git archive` 会按宿主 checkout 策略把新 `VERSION` blob 的 LF 转为 CRLF，导致正式 verifier 返回 `RELEASE_ENTERPRISE_VERSION_MISMATCH`。Gate A 对现有 builder 做了最小确定性修正：与既有 requirements lock 处理相同，payload 中的 `VERSION` 明确使用精确 Git blob bytes。Verifier 未被放宽，accepted CP314 Runtime 未重建或修改。
-
-## 2. Release rehearsal identity
+RELEASE-MVP-1 已完成从确定性三资产构建、公开 GitHub Release 发布，到真实 Source 使用 GitHub Provider / API / HTTPS 发现并升级至公开 Target 的完整最小闭环：
 
 ```text
-source_version=2026.07.6
-target_version=2026.08.1
-release_id=ice-2026.08.1-cc642885a00b
+RELEASE_MVP_1_completed=true
+RELEASE_MVP_1_Gate_B_completed=true
+RELEASE_MVP_1_remote_update_E2E=true
+RELEASE_MVP_1_independently_accepted=true
 
-manifest_sha256=5355b37b16cbf97097961e7d6778f877f0c86c81b3223b26ab83815bf2a4d803
-inventory_sha256=631d7c0559c4d8eb85fd55d780aae0d72ce4e84ccd998f384174744c9c951d89
-archive_sha256=44f1efc9742120401164721d4f6708d06bd11e06e7862b1d82637295f128f4a8
-payload_tree_sha256=eb8851eb8adfe9fdd708bad09681b66f49f252d23513c415e35f62519ec7043e
-
-expected_asset_count=3
-missing_asset_count=0
-unexpected_asset_count=0
-manifest_v2_verify=pass
-preflight=pass
-runtime_reused=true
-runtime_rebuilt=false
+source=2026.08.2
+target=2026.08.3
+job_state=SUCCEEDED
+target_health=PASS
 ```
 
-三项拟发布资产仅为 detached `ops-release-manifest-v2.json`、`release-payload-inventory.json` 和由 Manifest 派生名称的 Windows x64 archive。Gate A evidence 保存在仓库外，不属于拟发布资产，也未提交到 Git。
+这证明当前仓库的同 Schema / 无 migration 单跳更新可以由真实公开 Release 驱动，并在隔离 Windows 环境完成 durable handoff、指针切换、目标启动与健康确认。公开 GitHub Release object 不等于项目 Formal Release、Production Baseline 或生产部署。
 
-## 3. 数据库兼容边界
+## 2. 阶段演进
 
-Source A 与 Target B 的 `schema_id`、`schema_snapshot_sha256` 和完整 `migration_ids` 相同；目标继续严格声明：
+### Gate A：repository preparation
+
+Gate A 从 `main@0454bb3e62c55c566ac3f7589d2f667079352c49` 准备 `2026.08.1` 三资产 rehearsal，增加复用正式 Manifest v2 verifier 的窄 Release preflight，并验证版本 / tag、资产闭合、Manifest / inventory / archive / payload identity、同 Schema / 无 migration 数据库契约和 bounded metadata 扫描。PR #94 合并为 `8c97af7ad108ec29e90a3ac61b0b25e5d47b720d`。
+
+Gate A repository preparation 与 rehearsal identity 已独立接受。其仓库外 rehearsal binary 未作为当时 ChatGPT 附件逐字节复哈希；Gate B 按要求从 merged main 重新构建并验证公开 bytes，没有将 Gate A rehearsal 冒充正式发布资产。
+
+### Gate B：公开发布与真实远程升级
+
+1. `2026.08.1` 首次建立真实 GitHub Release / Gate B 路径，暴露 async prepare 同步阻塞 Gateway event loop，以及 Supervisor 将 `startup_timeout` 错用于已经 healthy 角色的两个产品缺陷。
+2. PR #95 对上述两个缺陷作窄修并通过独立代码与 Windows liveness 验收，合并为 `f73134b34195a86631916734b349e2b6f854cfc0`；该精确 commit 构建并发布为 `2026.08.2`。
+3. PR #96 只修改权威 `VERSION`，合并为 `dc00fdb9c127de927ca898bc65f96c68481dbf56`；该精确 merged main 构建并发布为 `2026.08.3`。
+4. R3-C R1 修正 restart counter 证据语义后，使用公开 `2026.08.2` 原始 bytes 作为 Source、公开 `2026.08.3` 作为 Target，完成真实 GitHub 在线升级 E2E。
+
+`2026.08.1` 继续保留为历史测试 Release，不是最终在线升级验收基线；公开 `.2` / `.3` 未删除、未替换、未重发。
+
+## 3. 公开 Release 身份
+
+### Source：2026.08.2
+
+```text
+github_release_id=370312441
+tag_target=f73134b34195a86631916734b349e2b6f854cfc0
+
+manifest_sha256=824fba41142c9afe5838c936c332f762e54fedcb451f022cafb51f07b77425dc
+inventory_sha256=5476af4ba40e4cfc522d21f6d7d72d0df0278ac6c638e6352d31642a0006ee39
+archive_sha256=b2f0bc91f412d247c523e945a305a8c53dd052ccf7c8e74d4aec0126b3fb337c
+```
+
+### Target：2026.08.3
+
+```text
+github_release_id=370324665
+tag_target=dc00fdb9c127de927ca898bc65f96c68481dbf56
+release_id=ice-2026.08.3-dc00fdb9c127
+
+manifest_sha256=6afdf17084ca20467f52c0ad3851b306cf2f3f88be1e9e3dc46c3ba89c84b8fa
+inventory_sha256=e67b0f0c1a843aa6b11e177f1bca373be910a491d4551a451bc45903688e0d8a
+archive_sha256=048a2215454668b28f1a532ca316a0e29e1788755c4a65127d71d80fe8ffbfed
+```
+
+Source 三资产重新从真实 GitHub Release 下载并通过正式 Manifest verify；Target 发布后三资产也经 GitHub 重新下载、哈希与 preflight 验证。Source 使用其 bundled CPython `3.14.6`、portable launcher、supervisor、gateway 和 upstream，不从 Git checkout 重建，也不是 synthetic Source。
+
+## 4. R3-C R1 restart-counter 收口
+
+初次 R3-C 只保存了最终累计 `upstream_restarts=1`，没有保存 75 秒窗口起点计数，因此不能证明窗口内发生了重启。R3-C R1 从公开 Source 的 Supervisor 生命周期开始重新完整采集：
+
+```text
+gateway_restart_count_before_first_healthy=0
+upstream_restart_count_before_first_healthy=0
+
+gateway_restart_count_start=0
+gateway_restart_count_end=0
+gateway_restart_delta=0
+
+upstream_restart_count_start=0
+upstream_restart_count_end=0
+upstream_restart_delta=0
+
+gateway_health_failures=0
+upstream_health_failures=0
+gateway_pid_changed=false
+upstream_pid_changed=false
+stable_75s=true
+
+ROOT_CAUSE_CLASSIFICATION=HARNESS_GATE_DEFECT
+previous_gate_used_cumulative_restart_count=true
+new_product_defect_confirmed=false
+```
+
+旧 evidence 未保存此前累计增量对应的原始 restart event，因此不事后猜测其精确来源；受控重检中该计数未复现，完整 timeline 也没有 restart、crash、startup timeout 或 start failure。最终结论只纠正门禁语义，不把旧累计值描述为已确认产品 Runtime 故障。
+
+## 5. 真实公开 `.2 -> .3` E2E
+
+隔离 Windows fixture 使用 repository-external install / state / data / log / staging / release roots、非生产端口与非生产数据库。执行链与结果为：
+
+```text
+Source_public_bytes_exact=true
+Source_bundled_CPython_3_14_6=true
+
+GitHubReleasesProvider=true
+real_GitHub_API=true
+real_HTTPS_download=true
+
+source_stable_75s=true
+check=pass
+prepare=READY
+prepare_gateway_health_failures=0
+prepare_upstream_health_failures=0
+
+wrong_password_denied=true
+password_reconfirm=pass
+execute=pass
+handoff=pass
+reconnect=pass
+
+job_state=SUCCEEDED
+current_release_after=2026.08.3
+target_health=PASS
+
+old_owned_processes=0
+wrong_listeners=0
+worker_processes=0
+active_update_lock_present=false
+diagnostics_export_recorded_pass=true
+```
+
+`prepare` 期间 gateway / upstream health failure、restart delta 与 PID change 均为 `0`。错误密码以稳定错误拒绝；正确密码重新确认后生成 durable job，Source supervisor 真实停止并释放 lock，one-shot worker 完成 expected-current CAS、Target start / health 和最终清理。
+
+## 6. Evidence 身份与边界
+
+最终 R3-C R1 evidence：
+
+```text
+bundle=RELEASE-MVP-1-GATE-B-R3C-R1-EVIDENCE.zip
+zip_sha256=30562e64fbad7fad02876fb01e04924f91d47e3e170ca071a4d51c354bf1daf8
+SHA256SUMS_sha256=c1e474c43fd1d02c2887676322b409e6f9f09bdb071be134b3e31ef82e5813ad
+
+checksum_entries=18
+checksum_entries_present=18
+checksum_entries_matching=18
+```
+
+独立复核重新解压并确认 ZIP hash、`SHA256SUMS.txt` 自身 hash 与内部 `18/18` 条目闭合。准确的 diagnostics 边界为：
+
+```text
+diagnostics_export_recorded_pass=true
+delivered_sanitized_evidence_independently_verified=true
+raw_diagnostics_export_independently_rehashed=false
+```
+
+raw diagnostics 含 repository-external 隔离 fixture 路径，因此没有进入交付 ZIP；不得声称独立复哈希了 raw export。交付 evidence 的 secret / 本机路径扫描通过，该边界不构成 RELEASE-MVP-1 technical acceptance blocker。
+
+## 7. 数据库与生产边界
+
+RELEASE-MVP-1 继续只支持：
 
 ```text
 migration_compatibility=same-schema-no-migration
 rollback_classification=code-release-pointer
-ops3b_activation_eligible=true
 database_migration_supported=false
 database_restore_supported=false
 ```
 
-任何 Schema、snapshot 或 migration IDs 漂移都会由 preflight 以 `RELEASE_MVP_DATABASE_CONTRACT_UNSUPPORTED` fail closed。本阶段没有启动 DATA-1、migration、restore、OPS-3B 或 Activation framework。
-
-## 4. 测试与审计
-
-- RELEASE-MVP-1 focused：`19 passed`。
-- Manifest v2 与新 preflight 复核：`76 passed / 4 skipped`。
-- Manifest v2、OPS-3A、UPDATE-MVP-1、current-release、portable lifecycle 组合回归：`155 passed / 4 skipped`。
-- APP_ROOT audit 与 Gate A focused 最终核验：`20 passed`。
-- 首次 full-suite 尝试：`779 passed / 10 skipped / 1 failed`；唯一失败是新增受审计 Release 模块后预期 site-manifest digest 陈旧，扫描本身仍为 `406/406 mapped`、`0 uncovered`、`0 parse failure`。同步既有安全门禁 digest 后，最终 full suite 为 `780 passed / 10 skipped / 0 failed / 8 warnings`，解释器为专用 CPython `3.11.9 x64`。
-- `python -m compileall enterprise tools`：通过。
-- APP_ROOT write audit、Git diff check、相对链接与 changed-file 范围、secret/本机路径扫描：通过。
-
-这些 Gate A repository implementation、测试与 rehearsal identity 事实已经独立复核接受；它们不冒充 GitHub CI、公开 Release 或远程升级 E2E。
-
-## 5. 独立验收与 evidence 边界
-
-独立复核确认 PR diff 符合 Gate A 范围，evidence-bearing Head/tree、Gate A evidence JSON 与本文 rehearsal identity 一致；复核时 GitHub 不存在目标 tag 或 Release object，Gate B 尚未开始。三项 repository-external rehearsal binary assets 未作为 ChatGPT 附件逐字节重新计算哈希，因此准确边界为：
+任何 Schema、snapshot 或 migration IDs 漂移继续 fail closed。本阶段没有启动 DATA-1、OPS-3B、migration、restore、formal Activation 或生产操作。
 
 ```text
-Gate_A_rehearsal_identity_consistency_accepted=true
-Gate_A_binary_assets_independently_rehashed_by_chatgpt=false
-```
-
-该边界不是 Gate A Ready blocker。Gate B 仍必须从 merged main 重建最终 Target B，重新执行 Manifest verify 与 Release preflight，再发布并完成真实 remote GitHub E2E；Gate A rehearsal bytes 不得冒充 Gate B final Release bytes。
-
-## 6. 冻结状态
-
-```text
-RELEASE_MVP_1_Gate_A_repository_preparation=true
-RELEASE_MVP_1_Gate_A_independently_accepted=true
-Gate_A_code_blockers=0
-Gate_A_evidence_blockers=0
-Gate_A_docs_blockers=0
-
-Gate_A_independently_accepted=true
-target_VERSION=2026.08.1
-target_tag=2026.08.1
-database_migration_supported=false
-database_restore_supported=false
-Gate_B_GitHub_Release_published=false
-Gate_B_remote_update_E2E=false
-
-GitHub_Release_object_created=false
-project_formal_Release_created=false
 DATA_1_started=false
 OPS_3B_started=false
+project_formal_Release_created=false
+Production_Baseline_approved=false
+production_approved=false
+production_deployed=false
+production_validated=false
+production_touched_by_RELEASE_MVP_1=false
+temporary_business_environment_touched_by_RELEASE_MVP_1=false
+```
+
+## 8. 最终冻结状态
+
+```text
+RELEASE_MVP_1_completed=true
+RELEASE_MVP_1_Gate_B_completed=true
+RELEASE_MVP_1_remote_update_E2E=true
+RELEASE_MVP_1_independently_accepted=true
+
+GitHub_Release_object_created=true
+source_version=2026.08.2
+target_version=2026.08.3
+job_state=SUCCEEDED
+target_health=PASS
+
+project_formal_Release_created=false
 Production_Baseline_approved=false
 production_touched=false
 ```
-
-Gate B 只有在本 Draft PR 经独立复核、由项目负责人 Merge，并再次明确授权 `CONTINUE_RELEASE_MVP_1_GATE_B=true` 后才可开始。
