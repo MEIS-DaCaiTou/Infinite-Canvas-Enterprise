@@ -9,6 +9,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import Response
+from starlette.concurrency import run_in_threadpool
 
 from enterprise import db as edb
 from enterprise.config import (
@@ -135,49 +136,54 @@ async def prepare_update(request: Request):
         provider_release_id = str(body.get("provider_release_id") or "").strip() if isinstance(body, dict) else ""
         if not provider_release_id or len(provider_release_id) > 64:
             raise UpdateMvpError("SYSTEM_UPDATE_RELEASE_ID_INVALID")
-        provider = _provider()
-        metadata = _metadata_by_id(provider, provider_release_id)
-        incoming = PATH_ROOTS.STAGING_ROOT / "update-mvp" / "incoming" / uuid.uuid4().hex
-        incoming.mkdir(parents=True, exist_ok=False)
-        try:
-            manifest_path = incoming / "ops-release-manifest-v2.json"
-            inventory_path = incoming / "release-payload-inventory.json"
-            archive_path = incoming / "release.zip"
-            headers = provider.release_v2_asset_request_headers(metadata.manifest_url)
-            atomic_download(provider.http_client, url=metadata.manifest_url, destination=manifest_path, maximum_bytes=MANIFEST_MAX_BYTES, expected_size_bytes=metadata.manifest_size_bytes, headers=headers)
-            manifest = read_release_manifest_v2(manifest_path)
-            if manifest.section("identity")["release_version"] != metadata.version:
-                raise UpdateMvpError("SYSTEM_UPDATE_PROVIDER_MANIFEST_IDENTITY_MISMATCH")
-            archive = manifest.section("archive")
-            payload = manifest.section("release_payload")
-            if archive["size_bytes"] != metadata.archive_size_bytes:
-                raise UpdateMvpError("SYSTEM_UPDATE_PROVIDER_MANIFEST_SIZE_MISMATCH")
-            atomic_download(
-                provider.http_client,
-                url=metadata.inventory_url,
-                destination=inventory_path,
-                maximum_bytes=INVENTORY_MAX_BYTES,
-                expected_size_bytes=metadata.inventory_size_bytes,
-                expected_sha256=str(payload["inventory_sha256"]),
-                headers=provider.release_v2_asset_request_headers(metadata.inventory_url),
-            )
-            atomic_download(
-                provider.http_client,
-                url=metadata.archive_url,
-                destination=archive_path,
-                maximum_bytes=MAX_ARCHIVE_BYTES,
-                expected_size_bytes=int(archive["size_bytes"]),
-                expected_sha256=str(archive["sha256"]),
-                headers=provider.release_v2_asset_request_headers(metadata.archive_url),
-            )
-            prepared = UpdateMvpService(PATH_ROOTS).prepare_from_artifacts(
-                actor_user_id=actor["id"], manifest_path=manifest_path, archive_path=archive_path, inventory_path=inventory_path
-            )
-            return {"state": "READY", **prepared.public(), "release_notes": metadata.release_notes}
-        finally:
-            shutil.rmtree(incoming, ignore_errors=True)
+        return await run_in_threadpool(_prepare_update_sync, actor["id"], provider_release_id)
     except Exception as exc:
         _error(exc)
+
+
+def _prepare_update_sync(actor_user_id: str, provider_release_id: str) -> dict[str, object]:
+    """Complete one prepare workflow outside the Gateway asyncio event loop."""
+    provider = _provider()
+    metadata = _metadata_by_id(provider, provider_release_id)
+    incoming = PATH_ROOTS.STAGING_ROOT / "update-mvp" / "incoming" / uuid.uuid4().hex
+    incoming.mkdir(parents=True, exist_ok=False)
+    try:
+        manifest_path = incoming / "ops-release-manifest-v2.json"
+        inventory_path = incoming / "release-payload-inventory.json"
+        archive_path = incoming / "release.zip"
+        headers = provider.release_v2_asset_request_headers(metadata.manifest_url)
+        atomic_download(provider.http_client, url=metadata.manifest_url, destination=manifest_path, maximum_bytes=MANIFEST_MAX_BYTES, expected_size_bytes=metadata.manifest_size_bytes, headers=headers)
+        manifest = read_release_manifest_v2(manifest_path)
+        if manifest.section("identity")["release_version"] != metadata.version:
+            raise UpdateMvpError("SYSTEM_UPDATE_PROVIDER_MANIFEST_IDENTITY_MISMATCH")
+        archive = manifest.section("archive")
+        payload = manifest.section("release_payload")
+        if archive["size_bytes"] != metadata.archive_size_bytes:
+            raise UpdateMvpError("SYSTEM_UPDATE_PROVIDER_MANIFEST_SIZE_MISMATCH")
+        atomic_download(
+            provider.http_client,
+            url=metadata.inventory_url,
+            destination=inventory_path,
+            maximum_bytes=INVENTORY_MAX_BYTES,
+            expected_size_bytes=metadata.inventory_size_bytes,
+            expected_sha256=str(payload["inventory_sha256"]),
+            headers=provider.release_v2_asset_request_headers(metadata.inventory_url),
+        )
+        atomic_download(
+            provider.http_client,
+            url=metadata.archive_url,
+            destination=archive_path,
+            maximum_bytes=MAX_ARCHIVE_BYTES,
+            expected_size_bytes=int(archive["size_bytes"]),
+            expected_sha256=str(archive["sha256"]),
+            headers=provider.release_v2_asset_request_headers(metadata.archive_url),
+        )
+        prepared = UpdateMvpService(PATH_ROOTS).prepare_from_artifacts(
+            actor_user_id=actor_user_id, manifest_path=manifest_path, archive_path=archive_path, inventory_path=inventory_path
+        )
+        return {"state": "READY", **prepared.public(), "release_notes": metadata.release_notes}
+    finally:
+        shutil.rmtree(incoming, ignore_errors=True)
 
 
 def _launch_handoff(job_id: str, actor_user_id: str) -> None:

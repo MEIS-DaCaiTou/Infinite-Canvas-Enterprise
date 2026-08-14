@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 import asyncio
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import pytest
-from fastapi import BackgroundTasks, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 
 from enterprise.ops.update.diagnostics import diagnostics_zip, recent_diagnostics
 from enterprise.ops.update.handoff import _emit_terminal_audit, _finalize_terminal_failure
@@ -36,6 +38,72 @@ def _roots(tmp_path: Path):
     for path in (roots.RELEASE_ROOT, roots.STAGING_ROOT, roots.LOG_ROOT, roots.RUNTIME_ROOT):
         path.mkdir(parents=True, exist_ok=True)
     return roots
+
+
+def test_prepare_sync_workflow_does_not_block_gateway_event_loop(monkeypatch):
+    from enterprise import update_api
+
+    started = threading.Event()
+    release = threading.Event()
+    completed = threading.Event()
+    worker_thread_ids: list[int] = []
+
+    def slow_prepare(actor_user_id: str, provider_release_id: str):
+        worker_thread_ids.append(threading.get_ident())
+        assert actor_user_id == "actor-1"
+        assert provider_release_id == "release-2"
+        started.set()
+        assert release.wait(5), "slow prepare fixture was not released"
+        completed.set()
+        return {"state": "READY", "job_id": "a" * 32}
+
+    current = {
+        "id": "actor-1", "role": "super_admin", "is_admin": True,
+        "is_active": True, "auth_version": 1,
+    }
+    monkeypatch.setattr(update_api, "ENTERPRISE_UPDATE_ENABLED", True)
+    monkeypatch.setattr(update_api.edb, "get_user_by_id", lambda _uid: current)
+    monkeypatch.setattr(update_api.edb, "can_use_feature", lambda *_args: True)
+    monkeypatch.setattr(update_api, "_prepare_update_sync", slow_prepare)
+
+    app = FastAPI()
+
+    @app.middleware("http")
+    async def fixture_identity(request: Request, call_next):
+        request.state.user = {
+            "user_id": "actor-1", "role": "super_admin", "is_admin": True,
+            "auth_version": 1,
+        }
+        return await call_next(request)
+
+    @app.get("/probe")
+    async def probe():
+        return {"responsive": True}
+
+    app.include_router(update_api.router, prefix="/enterprise")
+
+    async def exercise():
+        event_loop_thread_id = threading.get_ident()
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://fixture") as client:
+            prepare = asyncio.create_task(client.post(
+                "/enterprise/api/update-mvp/prepare",
+                json={"provider_release_id": "release-2"},
+            ))
+            assert await asyncio.to_thread(started.wait, 2)
+            concurrent = await asyncio.wait_for(client.get("/probe"), timeout=1)
+            assert concurrent.status_code == 200
+            assert concurrent.json() == {"responsive": True}
+            assert prepare.done() is False
+            release.set()
+            prepared = await asyncio.wait_for(prepare, timeout=2)
+        return event_loop_thread_id, prepared
+
+    event_loop_thread_id, prepared = asyncio.run(exercise())
+    assert completed.is_set()
+    assert worker_thread_ids and worker_thread_ids[0] != event_loop_thread_id
+    assert prepared.status_code == 200
+    assert prepared.json() == {"state": "READY", "job_id": "a" * 32}
 
 
 def _eligible_manifest():
