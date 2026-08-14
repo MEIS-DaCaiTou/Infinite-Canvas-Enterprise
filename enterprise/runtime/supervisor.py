@@ -618,7 +618,8 @@ class RuntimeSupervisor:
         runtime.health = result.category
         runtime.health_failures += 1
         startup_expired = (
-            runtime.started_at_monotonic is not None
+            runtime.state == "starting"
+            and runtime.started_at_monotonic is not None
             and time.monotonic() - runtime.started_at_monotonic >= self.config.startup_timeout_seconds
         )
         if startup_expired or runtime.health_failures >= self.config.health_failure_threshold:

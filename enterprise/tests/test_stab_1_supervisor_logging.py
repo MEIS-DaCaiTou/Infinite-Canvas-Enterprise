@@ -37,7 +37,7 @@ from enterprise.runtime.control import (
     inspect_runtime,
     validate_runtime_root,
 )
-from enterprise.runtime.health import tcp_check
+from enterprise.runtime.health import HealthResult, tcp_check
 from enterprise.runtime.logging import RotatingTextLog, RuntimeLogs, StreamPump, redact_text
 from enterprise.runtime.ownership import PortListenerSnapshot, ProcessIdentity, inspect_port_listeners, pid_exists, port_identities, process_identity
 from enterprise.runtime.process import CommandSpec, default_commands, exit_code_snapshot
@@ -114,6 +114,69 @@ def build_supervisor(
     supervisor = RuntimeSupervisor(config)
     supervisor.fixture_upstream_down_file = upstream_down_file  # type: ignore[attr-defined]
     return supervisor
+
+
+def _configure_failed_health_probe(
+    supervisor: RuntimeSupervisor,
+    *,
+    state: str,
+    health_failures: int,
+) -> None:
+    runtime = supervisor.roles["gateway"]
+    identity = process_identity(os.getpid())
+    assert identity is not None
+    runtime.process = type("FixtureProcess", (), {"identity": identity})()
+    runtime.state = state
+    runtime.health = "ok" if state == "healthy" else "unknown"
+    runtime.health_failures = health_failures
+    runtime.started_at_monotonic = time.monotonic() - supervisor.config.startup_timeout_seconds - 1
+
+
+def test_old_healthy_role_one_failed_probe_does_not_restart() -> None:
+    with tempfile.TemporaryDirectory(prefix="ice-stab1-old-healthy-") as raw:
+        supervisor = build_supervisor(Path(raw) / "runtime")
+        _configure_failed_health_probe(supervisor, state="healthy", health_failures=0)
+        with patch.object(
+            supervisor, "_health_for", return_value=HealthResult(False, "read_timeout")
+        ), patch.object(supervisor, "_stop_role") as stop, patch.object(
+            supervisor, "_schedule_restart"
+        ) as restart:
+            supervisor._check_role_health("gateway")
+        assert supervisor.roles["gateway"].health_failures == 1
+        stop.assert_not_called()
+        restart.assert_not_called()
+
+
+def test_healthy_role_threshold_failure_still_restarts() -> None:
+    with tempfile.TemporaryDirectory(prefix="ice-stab1-healthy-threshold-") as raw:
+        supervisor = build_supervisor(Path(raw) / "runtime")
+        _configure_failed_health_probe(
+            supervisor,
+            state="healthy",
+            health_failures=supervisor.config.health_failure_threshold - 1,
+        )
+        with patch.object(
+            supervisor, "_health_for", return_value=HealthResult(False, "read_timeout")
+        ), patch.object(supervisor, "_stop_role") as stop, patch.object(
+            supervisor, "_schedule_restart"
+        ) as restart:
+            supervisor._check_role_health("gateway")
+        stop.assert_called_once_with("gateway", reason="health_failure")
+        restart.assert_called_once_with("gateway", reason="health_failure", exit_code=None)
+
+
+def test_starting_role_still_honors_startup_timeout() -> None:
+    with tempfile.TemporaryDirectory(prefix="ice-stab1-startup-timeout-") as raw:
+        supervisor = build_supervisor(Path(raw) / "runtime")
+        _configure_failed_health_probe(supervisor, state="starting", health_failures=0)
+        with patch.object(
+            supervisor, "_health_for", return_value=HealthResult(False, "read_timeout")
+        ), patch.object(supervisor, "_stop_role") as stop, patch.object(
+            supervisor, "_schedule_restart"
+        ) as restart:
+            supervisor._check_role_health("gateway")
+        stop.assert_called_once_with("gateway", reason="health_failure")
+        restart.assert_called_once_with("gateway", reason="startup_timeout", exit_code=None)
 
 
 def start_supervisor(supervisor: RuntimeSupervisor) -> threading.Thread:
