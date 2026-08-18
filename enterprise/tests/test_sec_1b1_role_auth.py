@@ -268,9 +268,7 @@ def _run_checks() -> None:
         assert legacy_admin["role"] == ROLE_ADMIN
         assert legacy_admin["auth_version"] == 0
         assert legacy_admin["is_admin"] is True
-        inserted_legacy_admin = edb.get_user_by_username("admin")
-        assert inserted_legacy_admin["role"] == ROLE_ADMIN
-        assert inserted_legacy_admin["auth_version"] == 0
+        assert edb.get_user_by_username("admin") is None
 
         # C. Explicit migration, preservation, idempotency, and rollback.
         migration_db = tmp / "migration.db"
@@ -406,12 +404,14 @@ def _run_checks() -> None:
         assert rollback_inspection["current_state"] == SCHEMA_PARTIAL
         assert rollback_inspection["main_user_triggers"] == ["reject_sec_1b1_update"]
 
-        # D. Fresh schema and legacy is_admin creation compatibility.
+        # D. Fresh schema is user-free; explicit legacy bootstrap remains compatible.
         fresh_db = tmp / "fresh.db"
         edb.DB_PATH = str(fresh_db)
         edb.init_db()
         fresh_columns = set(_columns(fresh_db))
         assert {"role", "auth_version", "role_updated_at", "role_updated_by"} <= fresh_columns
+        assert edb.get_user_by_username("admin") is None
+        edb.create_legacy_default_admin_explicit()
         default_admin = edb.get_user_by_username("admin")
         assert default_admin["role"] == ROLE_ADMIN
         assert default_admin["is_admin"] is True

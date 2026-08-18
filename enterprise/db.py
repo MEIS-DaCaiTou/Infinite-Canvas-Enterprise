@@ -144,11 +144,13 @@ def _public_user_record(user: dict) -> dict:
     return public
 
 
-def init_db() -> None:
-    """初始化数据库表结构，并创建默认管理员账号"""
-    conn = get_db()
-    try:
-        conn.executescript("""
+def ensure_db_schema_in_connection(conn: sqlite3.Connection) -> str:
+    """Ensure the current enterprise application schema without creating users."""
+    if not isinstance(conn, sqlite3.Connection):
+        raise TypeError("conn must be a sqlite3.Connection")
+    if conn.in_transaction:
+        raise RuntimeError("schema initialization requires an idle connection")
+    conn.executescript("""
             CREATE TABLE IF NOT EXISTS users (
                 id          TEXT PRIMARY KEY,
                 username    TEXT UNIQUE NOT NULL,
@@ -281,45 +283,67 @@ def init_db() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_enterprise_user_feature_overrides_feature
                 ON enterprise_user_feature_overrides (feature_key);
-        """)
-        for column in ("parent_library_id", "parent_category_id"):
-            try:
-                conn.execute(f"ALTER TABLE user_asset_object_map ADD COLUMN {column} TEXT")
-            except sqlite3.OperationalError:
-                pass
-        user_schema_state = _user_schema_state(conn)
-        if user_schema_state == ROLE_AUTH_READY:
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_users_role_active ON users (role, is_active)"
-            )
-        conn.commit()
+    """)
+    for column in ("parent_library_id", "parent_category_id"):
+        try:
+            conn.execute(f"ALTER TABLE user_asset_object_map ADD COLUMN {column} TEXT")
+        except sqlite3.OperationalError:
+            pass
+    user_schema_state = _user_schema_state(conn)
+    if user_schema_state == ROLE_AUTH_READY:
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_users_role_active ON users (role, is_active)"
+        )
+    return user_schema_state
 
-        # 如果管理员不存在则创建
+
+def ensure_db_schema() -> None:
+    """Create/ensure tables only; normal runtime startup never creates a user."""
+    conn = get_db()
+    try:
+        ensure_db_schema_in_connection(conn)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def init_db() -> None:
+    """Compatibility name for the schema-only initializer."""
+    ensure_db_schema()
+
+
+def create_legacy_default_admin_explicit() -> dict[str, object]:
+    """Explicit legacy/test-only bootstrap; never called by normal runtime startup."""
+    ensure_db_schema()
+    conn = get_db()
+    try:
+        user_schema_state = _user_schema_state(conn)
         existing = conn.execute(
             "SELECT id FROM users WHERE username = ?", (ADMIN_USERNAME,)
         ).fetchone()
-        if not existing:
-            uid = uuid.uuid4().hex
-            ph = _hash_password(ADMIN_PASSWORD)
-            now = int(time.time() * 1000)
-            if user_schema_state == ROLE_AUTH_READY:
-                conn.execute(
-                    """
-                    INSERT INTO users (
-                        id, username, password_hash, display_name,
-                        is_admin, role, auth_version, created_at
-                    ) VALUES (?, ?, ?, ?, 1, ?, 1, ?)
-                    """,
-                    (uid, ADMIN_USERNAME, ph, "管理员", ROLE_ADMIN, now),
-                )
-            else:
-                conn.execute(
-                    "INSERT INTO users (id, username, password_hash, display_name, is_admin, created_at) "
-                    "VALUES (?, ?, ?, ?, 1, ?)",
-                    (uid, ADMIN_USERNAME, ph, "管理员", now),
-                )
-            conn.commit()
-            print(f"[企业版] 已创建管理员账号: {ADMIN_USERNAME}")
+        if existing:
+            return {"created": False, "user_id": str(existing[0])}
+        uid = uuid.uuid4().hex
+        ph = _hash_password(ADMIN_PASSWORD)
+        now = int(time.time() * 1000)
+        if user_schema_state == ROLE_AUTH_READY:
+            conn.execute(
+                """
+                INSERT INTO users (
+                    id, username, password_hash, display_name,
+                    is_admin, role, auth_version, created_at
+                ) VALUES (?, ?, ?, ?, 1, ?, 1, ?)
+                """,
+                (uid, ADMIN_USERNAME, ph, "管理员", ROLE_ADMIN, now),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO users (id, username, password_hash, display_name, is_admin, created_at) "
+                "VALUES (?, ?, ?, ?, 1, ?)",
+                (uid, ADMIN_USERNAME, ph, "管理员", now),
+            )
+        conn.commit()
+        return {"created": True, "user_id": uid}
     finally:
         conn.close()
 

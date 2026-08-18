@@ -1169,6 +1169,7 @@ def _run_checks() -> None:
         edb.ADMIN_USERNAME = "admin"
         edb.ADMIN_PASSWORD = "temporary-admin-password"
         edb.init_db()
+        edb.create_legacy_default_admin_explicit()
         assert inspect_security_audit_schema(fresh_app_db)["current_state"] == audit.SECURITY_AUDIT_MISSING
         default_admin = edb.get_user_by_username("admin")
         assert default_admin and default_admin["role"] == "admin"

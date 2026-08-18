@@ -278,6 +278,7 @@ def _run_checks() -> None:
             missing_audit_db = tmp / "ready-audit-missing.db"
             edb.DB_PATH = str(missing_audit_db)
             edb.init_db()
+            edb.create_legacy_default_admin_explicit()
             missing_admin = edb.get_user_by_username("admin")
             missing_user = _add_ready_user(
                 missing_audit_db,
@@ -356,6 +357,7 @@ def _run_checks() -> None:
             ready_db = tmp / "ready.db"
             edb.DB_PATH = str(ready_db)
             edb.init_db()
+            edb.create_legacy_default_admin_explicit()
             default_admin = edb.get_user_by_username("admin")
             _apply_audit(ready_db, default_admin["id"])
             admin = {
@@ -711,6 +713,7 @@ def _run_checks() -> None:
             single_super_db = tmp / "single-super.db"
             edb.DB_PATH = str(single_super_db)
             edb.init_db()
+            edb.create_legacy_default_admin_explicit()
             single_admin = edb.get_user_by_username("admin")
             _apply_audit(single_super_db, single_admin["id"])
             single_super = _add_ready_user(
@@ -733,6 +736,7 @@ def _run_checks() -> None:
             two_super_db = tmp / "two-super.db"
             edb.DB_PATH = str(two_super_db)
             edb.init_db()
+            edb.create_legacy_default_admin_explicit()
             two_admin = edb.get_user_by_username("admin")
             first_super = _add_ready_user(
                 two_super_db, username="first-super", role=ROLE_SUPER_ADMIN

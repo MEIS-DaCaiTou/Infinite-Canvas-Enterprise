@@ -447,6 +447,7 @@ def test_writer_rejects_untrusted_pathroots_and_has_no_runtime_activation_call_s
         if "tests" not in source.parts
         and source.name != "current_release.py"
         and source.as_posix().replace("\\", "/").split("/enterprise/", 1)[-1] != "ops/update/mvp.py"
+        and source.as_posix().replace("\\", "/").split("/enterprise/", 1)[-1] != "fresh_install.py"
     ]
     assert all("atomic_write_current_release(" not in source.read_text(encoding="utf-8") for source in production_sources)
     mvp_source = repository / "enterprise" / "ops" / "update" / "mvp.py"

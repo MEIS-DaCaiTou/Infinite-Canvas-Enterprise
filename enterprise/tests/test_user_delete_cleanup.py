@@ -68,6 +68,7 @@ async def _run_checks() -> None:
         )
 
         edb.init_db()
+        edb.create_legacy_default_admin_explicit()
         insert_ready_user_fixture(
             edb.DB_PATH,
             username="delete_a",
