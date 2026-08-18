@@ -66,6 +66,7 @@ INVENTORY_NAME = "release-payload-inventory.json"
 CONFIG_NAME = "enterprise.env"
 DATABASE_NAME = "enterprise.db"
 INSTALL_LOCK_NAME = "install-mvp-active.lock"
+MAX_RELEASE_DIRECTORY_ENTRIES = 1024
 DEFAULT_PASSWORDS = frozenset({"admin123", "change-me-before-production"})
 REQUIRED_BUSINESS_TABLES = frozenset(
     {
@@ -178,15 +179,26 @@ def verify_release_assets(release_dir: Path) -> VerifiedReleaseAssets:
         assert_no_reparse_ancestors(release_dir)
         if not release_dir.is_dir():
             _fail("INSTALL_RELEASE_ASSET_SET_INVALID")
-        entries = list(release_dir.iterdir())
-        if any(not item.is_file() or item.is_symlink() for item in entries):
+        files: list[Path] = []
+        for index, item in enumerate(release_dir.iterdir()):
+            if index >= MAX_RELEASE_DIRECTORY_ENTRIES:
+                _fail("INSTALL_RELEASE_ASSET_SET_INVALID")
+            state = lexical_path_state(item)
+            if state != "regular" or item.is_symlink():
+                _fail("INSTALL_RELEASE_ASSET_SET_INVALID")
+            if item.is_file():
+                files.append(item)
+            elif not item.is_dir():
+                _fail("INSTALL_RELEASE_ASSET_SET_INVALID")
+        file_names = {item.name for item in files}
+        if MANIFEST_NAME not in file_names or INVENTORY_NAME not in file_names:
             _fail("INSTALL_RELEASE_ASSET_SET_INVALID")
         manifest_path = release_dir / MANIFEST_NAME
         inventory_path = release_dir / INVENTORY_NAME
         manifest = read_release_manifest_v2(manifest_path)
         archive_path = release_dir / str(manifest.section("archive")["filename"])
         expected = {MANIFEST_NAME, INVENTORY_NAME, archive_path.name}
-        if {item.name for item in entries} != expected:
+        if file_names != expected or len(files) != len(expected):
             _fail("INSTALL_RELEASE_ASSET_SET_INVALID")
         verification = verify_release_manifest_v2(manifest_path, archive_path, inventory_path)
         enforce_portable_contract_compatibility(manifest)

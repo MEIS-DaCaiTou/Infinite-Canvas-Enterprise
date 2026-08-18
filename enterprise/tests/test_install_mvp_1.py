@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -319,7 +321,221 @@ def test_existing_nonempty_database_schema_ensure_preserves_users(monkeypatch, t
 
 
 def test_cli_has_no_password_argument_or_environment_input() -> None:
-    source = (Path(__file__).resolve().parents[2] / "tools" / "install_mvp.py").read_text(encoding="utf-8")
-    assert "add_argument(\"--password" not in source
-    assert "getpass.getpass" in source
-    assert "os.environ" not in source
+    root = Path(__file__).resolve().parents[2]
+    tool_source = (root / "tools" / "install_mvp.py").read_text(encoding="utf-8")
+    formal_source = (root / "enterprise" / "install_cli.py").read_text(encoding="utf-8")
+    assert "add_argument(\"--password" not in tool_source + formal_source
+    assert "getpass.getpass" in formal_source
+    assert "os.environ" not in tool_source
+
+
+def test_formal_install_entry_and_development_tool_share_one_cli() -> None:
+    root = Path(__file__).resolve().parents[2]
+    formal = root / "enterprise" / "install_cli.py"
+    wrapper = root / "首次安装企业版.bat"
+    assert formal.is_file()
+    assert wrapper.is_file()
+    formal_source = formal.read_text(encoding="utf-8")
+    tool_source = (root / "tools" / "install_mvp.py").read_text(encoding="utf-8")
+    assert "def development_main" in formal_source
+    assert "from enterprise.install_cli import development_main" in tool_source
+    assert "getpass.getpass" not in tool_source
+    assert "install_greenfield" not in tool_source
+
+
+def test_formal_install_wrapper_is_fixed_python_first_install_entry() -> None:
+    root = Path(__file__).resolve().parents[2]
+    source = (root / "首次安装企业版.bat").read_text(encoding="utf-8-sig").lower()
+    assert "%~dp0python\\python.exe" in source
+    assert "%~dp0enterprise\\runtime\\fixed_python_preflight.ps1" in source
+    assert "%~dp0enterprise\\install_cli.py" in source
+    assert source.index("fixed_python_preflight.ps1") < source.index('"%pyexe%" -i -b')
+    assert "launcher.py" not in source
+    assert "portable start" not in source
+    assert "py.exe" not in source
+    assert "pip" not in source
+    assert "pause" in source
+
+
+def test_release_asset_discovery_is_bounded_and_supports_extract_all_layout(tmp_path: Path) -> None:
+    from enterprise.install_cli import discover_release_asset_directory
+
+    raw_root = tmp_path / "downloads" / "outer" / "raw payload"
+    raw_root.mkdir(parents=True)
+    asset_root = raw_root.parent.parent
+    calls: list[Path] = []
+
+    def verify(candidate: Path) -> VerifiedReleaseAssets:
+        calls.append(candidate)
+        if candidate == asset_root:
+            return _assets()
+        raise FreshInstallError("INSTALL_RELEASE_ASSET_SET_INVALID")
+
+    resolved = discover_release_asset_directory(
+        raw_root,
+        verify=verify,
+        input_func=lambda _prompt: pytest.fail("fallback must not be used"),
+        emit=lambda _payload: pytest.fail("input-required result must not be emitted"),
+    )
+    assert resolved == asset_root
+    assert calls == [raw_root, raw_root.parent, raw_root.parent.parent]
+
+
+def test_release_asset_discovery_has_one_interactive_directory_fallback(tmp_path: Path) -> None:
+    from enterprise.install_cli import discover_release_asset_directory
+
+    raw_root = tmp_path / "raw"
+    raw_root.mkdir()
+    supplied = tmp_path / "three-assets"
+    supplied.mkdir()
+    emitted: list[dict[str, object]] = []
+    prompts: list[str] = []
+
+    def verify(candidate: Path) -> VerifiedReleaseAssets:
+        if candidate == supplied:
+            return _assets()
+        raise FreshInstallError("INSTALL_RELEASE_ASSET_SET_INVALID")
+
+    def input_path(prompt: str) -> str:
+        prompts.append(prompt)
+        return str(supplied)
+
+    resolved = discover_release_asset_directory(
+        raw_root,
+        verify=verify,
+        input_func=input_path,
+        emit=emitted.append,
+    )
+    assert resolved == supplied.absolute()
+    assert len(prompts) == 1
+    assert emitted == [
+        {
+            "schema_version": "install-mvp-1-result-v1",
+            "status": "input_required",
+            "code": "INSTALL_RELEASE_ASSETS_REQUIRED",
+        }
+    ]
+    assert all("PORTABLE_RELEASE_LAYOUT_INVALID" not in json.dumps(item) for item in emitted)
+
+
+def test_release_asset_verifier_allows_only_a_sibling_extracted_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import enterprise.fresh_install as fresh
+
+    asset_root = tmp_path / "downloads"
+    asset_root.mkdir()
+    archive_name = f"Infinite-Canvas-Enterprise-{RELEASE_ID}-win-x64.zip"
+    (asset_root / fresh.MANIFEST_NAME).write_text("{}", encoding="utf-8")
+    (asset_root / fresh.INVENTORY_NAME).write_text("{}", encoding="utf-8")
+    (asset_root / archive_name).write_bytes(b"archive")
+    (asset_root / "extracted payload").mkdir()
+    monkeypatch.setattr(fresh, "read_release_manifest_v2", lambda _path: _Manifest())
+    monkeypatch.setattr(
+        fresh,
+        "verify_release_manifest_v2",
+        lambda *_args: SimpleNamespace(payload_tree_sha256=PAYLOAD_SHA),
+    )
+    monkeypatch.setattr(fresh, "enforce_portable_contract_compatibility", lambda _manifest: None)
+    assert fresh.verify_release_assets(asset_root).archive_path.name == archive_name
+    (asset_root / "unrelated.txt").write_text("reject", encoding="utf-8")
+    with pytest.raises(FreshInstallError, match="INSTALL_RELEASE_ASSET_SET_INVALID"):
+        fresh.verify_release_assets(asset_root)
+
+
+def test_raw_bootstrap_identity_does_not_require_releases_parent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from enterprise import install_cli
+
+    app_root = tmp_path / "raw extracted payload"
+    script = app_root / "enterprise" / "install_cli.py"
+    python_executable = app_root / "python" / "python.exe"
+    script.parent.mkdir(parents=True)
+    python_executable.parent.mkdir()
+    script.write_text("# fixture", encoding="utf-8")
+    python_executable.write_bytes(b"fixture")
+    (app_root / "runtime-manifest.json").write_text("{}", encoding="utf-8")
+    (app_root / "VERSION").write_text("2026.08.4\n", encoding="utf-8")
+    (app_root / "首次安装企业版.bat").write_text("@echo off\n", encoding="utf-8")
+    monkeypatch.setattr(sys, "executable", str(python_executable))
+    assert install_cli._bootstrap_identity(script) == app_root
+    assert app_root.parent.name.casefold() != "releases"
+
+
+def test_formal_install_uses_known_folder_default_and_returns_install_domain(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from enterprise.install_cli import DEFAULT_INSTALL_RELATIVE, run_interactive_install
+
+    forged = tmp_path / "forged-localappdata"
+    trusted = tmp_path / "known-folder"
+    monkeypatch.setenv("LOCALAPPDATA", str(forged))
+    observed: dict[str, object] = {}
+
+    class _Result:
+        def public_dict(self) -> dict[str, object]:
+            return {"release_id": RELEASE_ID}
+
+    def installer(**kwargs: object) -> _Result:
+        observed.update(kwargs)
+        return _Result()
+
+    payload = run_interactive_install(
+        raw_app_root=tmp_path / "raw",
+        release_dir=tmp_path / "assets",
+        input_func=lambda _prompt: "first-admin",
+        password_func=lambda _prompt: FIXTURE_PASSWORD,
+        known_folder_resolver=lambda: trusted,
+        verify=lambda _path: _assets(),
+        installer=installer,
+    )
+    assert observed["install_root"] == trusted / DEFAULT_INSTALL_RELATIVE
+    assert observed["local_app_data_base"] == trusted
+    assert forged not in Path(observed["install_root"]).parents
+    assert payload["status"] == "succeeded"
+    assert payload["code"] == "INSTALL_SUCCEEDED"
+    assert "PORTABLE_RELEASE_LAYOUT_INVALID" not in json.dumps(payload)
+
+
+def test_formal_cli_checks_isolation_and_identity_before_enterprise_import() -> None:
+    source = (Path(__file__).resolve().parents[1] / "install_cli.py").read_text(encoding="utf-8")
+    main_body = source[source.index("def main(") :]
+    isolation = main_body.index("if not _python_isolation_ready():")
+    sanitize = main_body.index("_sanitize_python_environment()")
+    bootstrap = main_body.index("_bootstrap_identity(Path(__file__))")
+    execute = main_body.index("return _execute(raw_app_root=app_root)")
+    assert isolation < sanitize < bootstrap < execute
+    assert "from enterprise." not in source[: source.index("def run_interactive_install(")]
+    assert "shell=True" not in source
+
+
+@pytest.mark.parametrize(
+    ("flags", "expected_code"),
+    [
+        (("-s", "-B"), "INSTALL_PYTHON_ISOLATION_REQUIRED"),
+        (("-I", "-B"), "INSTALL_PYTHON_MISSING"),
+    ],
+)
+def test_direct_formal_installer_fails_in_install_domain_before_business_import(
+    flags: tuple[str, ...], expected_code: str
+) -> None:
+    script = Path(__file__).resolve().parents[1] / "install_cli.py"
+    completed = subprocess.run(
+        [sys.executable, *flags, str(script)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="strict",
+        timeout=20,
+        shell=False,
+        check=False,
+    )
+    assert completed.returncode == 2
+    assert completed.stderr == ""
+    assert json.loads(completed.stdout) == {
+        "schema_version": "install-mvp-1-result-v1",
+        "status": "blocked",
+        "code": expected_code,
+    }
+    assert "PORTABLE_RELEASE_LAYOUT_INVALID" not in completed.stdout

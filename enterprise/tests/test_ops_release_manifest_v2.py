@@ -437,6 +437,7 @@ def test_release_payload_policy_includes_every_formal_wrapper() -> None:
     root = Path(__file__).parents[2]
     payload = json.loads((root / "release" / "windows" / "release-payload-policy.json").read_text(encoding="utf-8"))
     assert {
+        "首次安装企业版.bat",
         "启动企业版.bat",
         "停止企业版.bat",
         "重启企业版.bat",
