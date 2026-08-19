@@ -166,6 +166,18 @@ def test_greenfield_install_creates_one_super_admin_and_pointer_last(monkeypatch
         audit_contexts = [row[0] for row in conn.execute("SELECT context_json FROM security_audit_events")]
         assert all(FIXTURE_PASSWORD not in value for value in audit_contexts)
         assert all(first["password_hash"] not in value for value in audit_contexts)
+        assert conn.execute(
+            "SELECT COUNT(*) FROM security_audit_events "
+            "WHERE action='security.audit.foundation.activate'"
+        ).fetchone()[0] == 0
+        assert conn.execute(
+            "SELECT COUNT(*) FROM security_audit_events "
+            "WHERE context_json LIKE '%sec_1f0_security_audit%'"
+        ).fetchone()[0] == 0
+        assert conn.execute(
+            "SELECT COUNT(*) FROM security_audit_events "
+            "WHERE action='security.super_admin.bootstrap'"
+        ).fetchone()[0] == 1
         password_hash = first["password_hash"]
 
     for path in roots.INSTALL_ROOT.rglob("*"):
@@ -275,17 +287,28 @@ def test_invalid_release_is_denied_before_target_creation(tmp_path: Path) -> Non
     assert not install_root.exists()
 
 
-def test_failure_before_pointer_removes_only_operation_owned_state(monkeypatch, tmp_path: Path) -> None:
+@pytest.mark.parametrize("preexisting_install_root", [False, True])
+def test_failure_before_pointer_cleans_owned_directories_and_retry_succeeds(
+    monkeypatch, tmp_path: Path, preexisting_install_root: bool
+) -> None:
     import enterprise.fresh_install as fresh
 
     monkeypatch.setattr(fresh, "verify_release_assets", lambda _path: _assets())
     monkeypatch.setattr(fresh, "materialize_release_fixture", _fake_materialize)
-    monkeypatch.setattr(
-        fresh,
-        "append_security_audit_event",
-        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("fixture audit failure")),
-    )
+    real_create_database = fresh._create_greenfield_database
+    attempts = 0
+
+    def fail_once(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("fixture pre-publication failure")
+        return real_create_database(*args, **kwargs)
+
+    monkeypatch.setattr(fresh, "_create_greenfield_database", fail_once)
     install_root = tmp_path / "install"
+    if preexisting_install_root:
+        install_root.mkdir()
     with pytest.raises(FreshInstallError) as caught:
         install_greenfield(
             release_dir=tmp_path / "assets",
@@ -296,9 +319,42 @@ def test_failure_before_pointer_removes_only_operation_owned_state(monkeypatch, 
             local_app_data_base=tmp_path / "local",
         )
     assert caught.value.code == "INSTALL_FAILED"
+    assert not (install_root / "config" / "enterprise.env").exists()
     assert not (install_root / "data" / "enterprise.db").exists()
     assert not (install_root / "state" / "current-release.json").exists()
     assert not (install_root / "releases" / RELEASE_ID).exists()
+    if preexisting_install_root:
+        assert install_root.is_dir()
+        assert list(install_root.iterdir()) == []
+    else:
+        assert not install_root.exists()
+
+    result = install_greenfield(
+        release_dir=tmp_path / "assets",
+        install_root=install_root,
+        username="first-admin",
+        password=FIXTURE_PASSWORD,
+        password_confirmation=FIXTURE_PASSWORD,
+        local_app_data_base=tmp_path / "local",
+    )
+    assert result.pointer_published is True
+    assert attempts == 2
+
+
+def test_owned_empty_directory_cleanup_preserves_replacement_identity(tmp_path: Path) -> None:
+    import enterprise.fresh_install as fresh
+
+    owned = tmp_path / "owned"
+    owned.mkdir()
+    identity = fresh._identity(owned)
+    displaced = tmp_path / "displaced"
+    owned.rename(displaced)
+    owned.mkdir()
+
+    fresh._remove_owned_empty_directory(owned, identity)
+
+    assert owned.is_dir()
+    assert displaced.is_dir()
 
 
 def test_existing_nonempty_database_schema_ensure_preserves_users(monkeypatch, tmp_path: Path) -> None:

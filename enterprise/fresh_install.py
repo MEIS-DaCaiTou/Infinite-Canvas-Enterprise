@@ -28,7 +28,6 @@ from enterprise.migrations.sec_1b2_activation import (
     inspect_bootstrap_lifecycle_schema,
 )
 from enterprise.migrations.sec_1f0_security_audit import (
-    apply_security_audit_migration_in_transaction,
     inspect_security_audit_schema,
 )
 from enterprise.path_safety import PathSafetyError, assert_no_reparse_ancestors, lexical_path_state
@@ -37,7 +36,6 @@ from enterprise.paths import (
     PathRootsError,
     PortableRootInputs,
     derive_portable_path_roots,
-    prepare_install_state_directories,
     resolve_database_path,
     validate_path_roots_for_use,
 )
@@ -58,6 +56,7 @@ from enterprise.roles import ROLE_SUPER_ADMIN
 from enterprise.security_audit import (
     SECURITY_AUDIT_READY,
     append_security_audit_event,
+    ensure_security_audit_schema_in_transaction,
 )
 
 
@@ -152,6 +151,56 @@ def _remove_owned_directory(path: Path, identity: tuple[int, int] | None) -> Non
             shutil.rmtree(path)
     except OSError:
         pass
+
+
+def _remove_owned_empty_directory(path: Path, identity: tuple[int, int] | None) -> None:
+    """Remove only the same operation-created directory when it is empty."""
+
+    if identity is None:
+        return
+    try:
+        if _identity(path) == identity:
+            path.rmdir()
+    except OSError:
+        pass
+
+
+def _ensure_operation_directory(
+    path: Path,
+    created: dict[Path, tuple[int, int]],
+    *,
+    parents: bool = False,
+) -> None:
+    """Create and identity-bind missing directories for rollback cleanup."""
+
+    candidates = [path]
+    if parents:
+        candidates = []
+        current = path
+        while lexical_path_state(current) == "missing":
+            candidates.append(current)
+            if current == current.parent:
+                break
+            current = current.parent
+        candidates.reverse()
+    try:
+        for candidate in candidates:
+            try:
+                candidate.mkdir()
+            except FileExistsError:
+                pass
+            else:
+                created[candidate] = _identity(candidate)
+            assert_no_reparse_ancestors(candidate)
+            if lexical_path_state(candidate) != "regular" or not candidate.is_dir():
+                _fail("INSTALL_TARGET_UNSAFE")
+        assert_no_reparse_ancestors(path)
+        if lexical_path_state(path) != "regular" or not path.is_dir():
+            _fail("INSTALL_TARGET_UNSAFE")
+    except FreshInstallError:
+        raise
+    except (OSError, PathSafetyError) as exc:
+        _fail("INSTALL_TARGET_UNSAFE", exc)
 
 
 def _normalized_username(value: object) -> str:
@@ -281,14 +330,25 @@ def _validate_release_database_contract(manifest: ReleaseManifestV2) -> None:
 def _create_greenfield_database(
     database_path: Path,
     *,
+    expected_identity: tuple[int, int],
     username: str,
     password: str,
     manifest: ReleaseManifestV2,
     operation_id: str,
 ) -> dict[str, object]:
     _validate_release_database_contract(manifest)
-    if database_path.exists():
-        _fail("INSTALL_TARGET_NOT_GREENFIELD")
+    try:
+        if (
+            _identity(database_path) != expected_identity
+            or lexical_path_state(database_path) != "regular"
+            or not database_path.is_file()
+            or database_path.stat().st_size != 0
+        ):
+            _fail("INSTALL_TARGET_NOT_GREENFIELD")
+    except FreshInstallError:
+        raise
+    except OSError as exc:
+        _fail("INSTALL_DATABASE_WRITE_FAILED", exc)
     user_id = uuid.uuid4().hex
     password_hash = db._hash_password(password)
     now = int(time.time() * 1000)
@@ -318,13 +378,7 @@ def _create_greenfield_database(
             """,
             ("Greenfield first-install update capability", user_id, now),
         )
-        apply_security_audit_migration_in_transaction(
-            conn,
-            actor_user_id=user_id,
-            actor_label="local-first-install",
-            operation_id=operation_id,
-            reason="Initialize mandatory security audit for Greenfield installation",
-        )
+        ensure_security_audit_schema_in_transaction(conn)
         ensure_bootstrap_lifecycle_schema_in_transaction(conn)
         marker = (
             1,
@@ -433,14 +487,30 @@ def _create_greenfield_database(
 def _write_config_temp(path: Path) -> tuple[str, tuple[int, int]]:
     jwt_secret = secrets.token_urlsafe(48)
     encoded = f"ENTERPRISE_ENV=production\nJWT_SECRET={jwt_secret}\n".encode("utf-8")
+    identity: tuple[int, int] | None = None
     try:
         with path.open("xb") as handle:
+            identity = _identity(path)
             handle.write(encoded)
             handle.flush()
             os.fsync(handle.fileno())
-        return jwt_secret, _identity(path)
+        return jwt_secret, identity
     except OSError as exc:
+        _remove_owned_file(path, identity)
         _fail("INSTALL_CONFIG_WRITE_FAILED", exc)
+
+
+def _create_database_temp(path: Path) -> tuple[int, int]:
+    identity: tuple[int, int] | None = None
+    try:
+        with path.open("xb") as handle:
+            identity = _identity(path)
+            handle.flush()
+            os.fsync(handle.fileno())
+        return identity
+    except OSError as exc:
+        _remove_owned_file(path, identity)
+        _fail("INSTALL_DATABASE_WRITE_FAILED", exc)
 
 
 def _validate_config(path: Path, expected_secret: str) -> None:
@@ -519,13 +589,18 @@ def install_greenfield(
     pointer_path = roots.STATE_ROOT / "current-release.json"
     operation_id = f"install-{uuid.uuid4().hex}"
     committed = False
+    created_directories: dict[Path, tuple[int, int]] = {}
     try:
-        roots.INSTALL_ROOT.mkdir(parents=True, exist_ok=True)
+        _ensure_operation_directory(roots.INSTALL_ROOT, created_directories, parents=True)
         if any(roots.INSTALL_ROOT.iterdir()):
             _fail("INSTALL_TARGET_NOT_GREENFIELD")
-        roots.RELEASE_ROOT.mkdir(parents=True, exist_ok=True)
-        roots.DATA_ROOT.mkdir(parents=True, exist_ok=True)
-        prepare_install_state_directories(roots)
+        for directory in (
+            roots.RELEASE_ROOT,
+            roots.DATA_ROOT,
+            roots.CONFIG_ROOT,
+            roots.STATE_ROOT,
+        ):
+            _ensure_operation_directory(directory, created_directories)
         for candidate in (config_final, database_final, pointer_path):
             if candidate.exists() or candidate.is_symlink():
                 _fail("INSTALL_TARGET_NOT_GREENFIELD")
@@ -544,14 +619,15 @@ def install_greenfield(
         release_identity = _identity(roots.APP_ROOT)
         jwt_secret, config_temp_identity = _write_config_temp(config_temp)
         _validate_config(config_temp, jwt_secret)
+        database_temp_identity = _create_database_temp(database_temp)
         database = _create_greenfield_database(
             database_temp,
+            expected_identity=database_temp_identity,
             username=normalized_username,
             password=accepted_password,
             manifest=assets.manifest,
             operation_id=operation_id,
         )
-        database_temp_identity = _identity(database_temp)
         config_identity = _publish_new_file(config_temp, config_final, "INSTALL_CONFIG_PUBLISH_FAILED")
         database_identity = _publish_new_file(database_temp, database_final, "INSTALL_DATABASE_PUBLISH_FAILED")
 
@@ -598,3 +674,9 @@ def install_greenfield(
             _remove_owned_file(config_final, config_identity)
             _remove_owned_file(database_final, database_identity)
             _remove_owned_directory(roots.APP_ROOT, release_identity)
+            for directory in sorted(
+                created_directories,
+                key=lambda item: len(item.parts),
+                reverse=True,
+            ):
+                _remove_owned_empty_directory(directory, created_directories[directory])

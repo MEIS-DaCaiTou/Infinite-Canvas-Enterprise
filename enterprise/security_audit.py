@@ -475,6 +475,49 @@ def inspect_security_audit_connection(conn: sqlite3.Connection) -> dict[str, Any
     }
 
 
+def ensure_security_audit_schema_in_transaction(
+    conn: sqlite3.Connection,
+) -> dict[str, Any]:
+    """Create the canonical audit schema without recording migration history.
+
+    Greenfield database construction and historical SEC-1F0 activation share
+    the same DDL, but only the latter is a migration event.  The caller owns
+    the active transaction so schema creation can remain atomic with its
+    surrounding bootstrap or activation operation.
+    """
+
+    if not isinstance(conn, sqlite3.Connection) or not conn.in_transaction:
+        raise SecurityAuditSchemaError(
+            "security audit schema creation requires an active caller transaction"
+        )
+    inspection = inspect_security_audit_connection(conn)
+    state = inspection["current_state"]
+    if state == SECURITY_AUDIT_READY:
+        return inspection
+    if state == SECURITY_AUDIT_PARTIAL:
+        raise SecurityAuditSchemaError(
+            "partial security audit schema requires manual review"
+        )
+    if state != SECURITY_AUDIT_MISSING:
+        raise SecurityAuditSchemaError("security audit schema state is unsupported")
+    try:
+        conn.execute(SECURITY_AUDIT_CREATE_TABLE_SQL)
+        for definition in SECURITY_AUDIT_INDEX_DEFINITIONS.values():
+            conn.execute(definition["sql"])
+        for statement in SECURITY_AUDIT_TRIGGER_DEFINITIONS.values():
+            conn.execute(statement)
+    except sqlite3.Error as exc:
+        raise SecurityAuditSchemaError(
+            "canonical security audit schema could not be created"
+        ) from exc
+    result = inspect_security_audit_connection(conn)
+    if result["current_state"] != SECURITY_AUDIT_READY:
+        raise SecurityAuditSchemaError(
+            "canonical security audit schema did not reach the ready state"
+        )
+    return result
+
+
 def _required_text(name: str, value: object, *, maximum: int) -> str:
     if not isinstance(value, str) or not value or value.isspace():
         raise SecurityAuditValidationError(f"{name} must be a non-empty string")
