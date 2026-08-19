@@ -412,10 +412,78 @@ class RuntimeSupervisor:
     def _control_path(self, prefix: str, role: str, suffix: str) -> Path:
         return self.config.runtime_root / "control" / f"{prefix}-{self.instance_id[:12]}-{role}.{suffix}"
 
+    def _reconcile_owned_role_process(
+        self,
+        role: str,
+        managed: ManagedProcess,
+        *,
+        force: bool,
+        reason: str,
+    ) -> dict[str, object]:
+        """Retire one exact child generation and prove its role port is free."""
+
+        forced_result: str | None = None
+        ownership_verified = same_process(managed.identity, process_identity(managed.identity.pid))
+        if managed.poll() is None:
+            if not ownership_verified:
+                return {
+                    "replacement_safe": False,
+                    "owned_process_released": False,
+                    "port_release": "not_checked",
+                    "forced_result": None,
+                    "failure_category": "process_ownership_mismatch",
+                }
+            if not force:
+                return {
+                    "replacement_safe": False,
+                    "owned_process_released": False,
+                    "port_release": "not_checked",
+                    "forced_result": None,
+                    "failure_category": "owned_process_still_running",
+                }
+            try:
+                forced_result = force_stop(managed)
+            except ProcessControlError:
+                return {
+                    "replacement_safe": False,
+                    "owned_process_released": False,
+                    "port_release": "not_checked",
+                    "forced_result": "ownership_or_stop_failed",
+                    "failure_category": "owned_process_stop_failed",
+                }
+        else:
+            managed.close_pumps()
+
+        owned_process_released = not same_process(managed.identity, process_identity(managed.identity.pid))
+        port_release, _foreign = self._wait_for_port_release(managed.spec.port, managed.identity)
+        replacement_safe = owned_process_released and port_release == "released"
+        failure_category = None if replacement_safe else (
+            "owned_process_remaining" if not owned_process_released else port_release
+        )
+        self._log(
+            "role_generation_reconciled",
+            role=role,
+            pid=managed.identity.pid,
+            reason=reason,
+            forced_result=forced_result,
+            owned_process_released=owned_process_released,
+            port_release=port_release,
+            replacement_safe=replacement_safe,
+            failure_category=failure_category,
+        )
+        return {
+            "replacement_safe": replacement_safe,
+            "owned_process_released": owned_process_released,
+            "port_release": port_release,
+            "forced_result": forced_result,
+            "failure_category": failure_category,
+        }
+
     def _start_role(self, role: str) -> None:
         runtime = self.roles[role]
         if self._stopping or runtime.state == "crash_loop" or runtime.process is not None:
             return
+        process: ManagedProcess | None = None
         try:
             process = start_process(
                 self.commands[role],
@@ -429,13 +497,32 @@ class RuntimeSupervisor:
                 expected = os.path.normcase(os.path.abspath(str(self.config.python_executable)))
                 actual = os.path.normcase(os.path.abspath(process.identity.executable))
                 if actual != expected:
-                    force_stop(process)
                     raise ProcessControlError("portable child executable identity mismatch")
             if self._job is not None:
                 self._job.add(process.process)
-        except (ProcessControlError, JobObjectError):
+        except (ProcessControlError, JobObjectError) as exc:
+            cleanup: dict[str, object] | None = None
+            if process is not None:
+                cleanup = self._reconcile_owned_role_process(
+                    role,
+                    process,
+                    force=True,
+                    reason="post_spawn_start_failure",
+                )
+            if cleanup is not None and cleanup.get("replacement_safe") is not True:
+                if same_process(process.identity, process_identity(process.identity.pid)):
+                    runtime.process = process
+                runtime.state = "crash_loop"
+                runtime.health = "failed"
+                runtime.restart_at = None
+                self._log(
+                    "role_start_cleanup_failed",
+                    role=role,
+                    failure_category=cleanup.get("failure_category") or "start_cleanup_unproven",
+                )
+                return
             self._schedule_restart(role, reason="start_failure", exit_code=None)
-            self._log("role_start_failed", role=role, failure_category="start_failure")
+            self._log("role_start_failed", role=role, failure_category=_failure_category(exc))
             return
         runtime.process = process
         runtime.state = "starting"
@@ -458,18 +545,34 @@ class RuntimeSupervisor:
         runtime.restart_at = None
         if managed is None:
             runtime.state = "stopped"
-            return {"role": role, "result": "already_stopped", "graceful_timeout": False, "pid": None}
+            return {
+                "role": role,
+                "result": "already_stopped",
+                "graceful_timeout": False,
+                "pid": None,
+                "replacement_safe": True,
+                "owned_process_released": True,
+                "port_release": "released",
+            }
         try:
             result = graceful_stop(managed)
             timed_out = result == "graceful_timeout"
             marker_present = bool(managed.shutdown_marker and managed.shutdown_marker.is_file())
-            if not timed_out:
-                managed.close_pumps()
+            reconciliation = self._reconcile_owned_role_process(
+                role,
+                managed,
+                force=timed_out,
+                reason=reason,
+            )
+            if reconciliation["owned_process_released"] is True:
                 runtime.last_exit_code = managed.poll()
                 runtime.last_exit_at = utc_now()
                 runtime.process = None
-                runtime.state = "stopped"
+                runtime.state = "stopped" if reconciliation["replacement_safe"] is True else "degraded"
                 runtime.health = "unknown"
+            else:
+                runtime.state = "degraded"
+                runtime.health = "failed"
             self._log(
                 "role_stop_requested",
                 role=role,
@@ -484,11 +587,20 @@ class RuntimeSupervisor:
                 "graceful_timeout": timed_out,
                 "graceful_marker_present": marker_present,
                 "pid": managed.identity.pid,
+                **reconciliation,
             }
         except ProcessControlError:
             runtime.state = "degraded"
             self._log("role_stop_ownership_failed", role=role, failure_category="ownership")
-            return {"role": role, "result": "ownership_failed", "graceful_timeout": False, "pid": managed.identity.pid}
+            return {
+                "role": role,
+                "result": "ownership_failed",
+                "graceful_timeout": False,
+                "pid": managed.identity.pid,
+                "replacement_safe": False,
+                "owned_process_released": False,
+                "port_release": "not_checked",
+            }
 
     def _stop_children(self, *, reason: str) -> tuple[list[dict[str, object]], bool]:
         self._stopping = True
@@ -506,25 +618,21 @@ class RuntimeSupervisor:
             for role in ROLES:
                 runtime = self.roles[role]
                 managed = runtime.process
-                if managed is None or not same_process(managed.identity, process_identity(managed.identity.pid)):
+                if managed is None:
                     continue
-                try:
-                    forced_result = force_stop(managed)
-                    managed.close_pumps()
+                reconciliation = self._reconcile_owned_role_process(
+                    role,
+                    managed,
+                    force=True,
+                    reason=f"{reason}_after_job_termination",
+                )
+                result_by_role[role].update(reconciliation)
+                if reconciliation["owned_process_released"] is True:
                     runtime.last_exit_code = managed.poll()
                     runtime.last_exit_at = utc_now()
                     runtime.process = None
-                    runtime.state = "stopped"
+                    runtime.state = "stopped" if reconciliation["replacement_safe"] is True else "degraded"
                     runtime.health = "unknown"
-                    result_by_role[role]["forced_owned_process_result"] = forced_result
-                    self._log(
-                        "forced_owned_process_termination",
-                        role=role,
-                        pid=managed.identity.pid,
-                        failure_category="job_descendant_remaining",
-                    )
-                except ProcessControlError:
-                    result_by_role[role]["forced_owned_process_result"] = "ownership_failed"
         return results, job_termination_required
 
     def _schedule_restart(self, role: str, *, reason: str, exit_code: int | None) -> None:
@@ -588,7 +696,27 @@ class RuntimeSupervisor:
         self._schedule_restart(role, reason="unexpected_exit", exit_code=code)
 
     def _health_for(self, role: str) -> HealthResult:
+        runtime = self.roles[role]
+        managed = runtime.process
+        if managed is None:
+            return HealthResult(False, "managed_process_missing")
+        if managed.poll() is not None:
+            return HealthResult(False, "managed_process_exited")
+        actual = process_identity(managed.identity.pid)
+        if not same_process(managed.identity, actual):
+            return HealthResult(False, "managed_process_identity_mismatch")
         spec = self.commands[role]
+        listeners = inspect_port_listeners(spec.port)
+        if listeners.inspection_failed:
+            return HealthResult(False, "listener_inspection_failed")
+        if listeners.unresolved_listener_pids:
+            return HealthResult(False, "listener_identity_unresolved")
+        if not listeners.has_listeners:
+            return HealthResult(False, "listener_missing")
+        if not any(same_process(managed.identity, item) for item in listeners.resolved_identities):
+            return HealthResult(False, "listener_identity_mismatch")
+        if any(not same_process(managed.identity, item) for item in listeners.resolved_identities):
+            return HealthResult(False, "foreign_co_listener")
         return upstream_health(spec.host, spec.port) if role == "upstream" else gateway_health(spec.host, spec.port)
 
     def _check_role_health(self, role: str) -> None:
@@ -623,8 +751,18 @@ class RuntimeSupervisor:
             and time.monotonic() - runtime.started_at_monotonic >= self.config.startup_timeout_seconds
         )
         if startup_expired or runtime.health_failures >= self.config.health_failure_threshold:
-            self._stop_role(role, reason="health_failure")
-            self._schedule_restart(role, reason="startup_timeout" if startup_expired else "health_failure", exit_code=None)
+            stop_result = self._stop_role(role, reason="health_failure")
+            if stop_result.get("replacement_safe", True):
+                self._schedule_restart(role, reason="startup_timeout" if startup_expired else "health_failure", exit_code=None)
+            else:
+                runtime.state = "crash_loop"
+                runtime.health = "failed"
+                runtime.restart_at = None
+                self._log(
+                    "role_replacement_blocked",
+                    role=role,
+                    failure_category=stop_result.get("failure_category") or stop_result.get("port_release") or "cleanup_unproven",
+                )
 
     def _ack(self, command: dict[str, Any], *, result: str, before: dict[str, Any], after: dict[str, Any]) -> None:
         self.store.write_ack(
@@ -763,13 +901,21 @@ class RuntimeSupervisor:
         self._restart_request = None
         if request is None:
             return
+        before = self._command_snapshot()
         self._restart_in_progress = request
         self._restart_before = {
             role: self.roles[role].process.identity if self.roles[role].process else None for role in ROLES
         }
         self._stopping = True
-        self._stop_children(reason="explicit_restart")
+        child_results, _job_termination_required = self._stop_children(reason="explicit_restart")
         self._stopping = False
+        if any(item.get("replacement_safe") is not True for item in child_results):
+            after = self._command_snapshot()
+            self._ack(request, result="restart_incomplete", before=before, after=after)
+            self._restart_in_progress = None
+            self._restart_before = {}
+            self._log("explicit_restart_blocked", request_id=request["request_id"], failure_category="cleanup_unproven")
+            return
         for runtime in self.roles.values():
             runtime.restart_events.clear()
             runtime.restart_count = 0

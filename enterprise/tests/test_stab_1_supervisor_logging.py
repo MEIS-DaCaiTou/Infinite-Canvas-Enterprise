@@ -21,7 +21,7 @@ import time
 import ctypes
 from dataclasses import replace
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -40,9 +40,11 @@ from enterprise.runtime.control import (
 from enterprise.runtime.health import HealthResult, tcp_check
 from enterprise.runtime.logging import RotatingTextLog, RuntimeLogs, StreamPump, redact_text
 from enterprise.runtime.ownership import PortListenerSnapshot, ProcessIdentity, inspect_port_listeners, pid_exists, port_identities, process_identity
-from enterprise.runtime.process import CommandSpec, default_commands, exit_code_snapshot
+from enterprise.runtime import process as runtime_process
+from enterprise.runtime.process import CommandSpec, ManagedProcess, default_commands, exit_code_snapshot, start_process
 from enterprise.runtime.state import RuntimeStateStore, initial_state
 from enterprise.runtime.supervisor import RuntimeStartBlocked, RuntimeSupervisor, SupervisorConfig
+from enterprise.runtime.windows import JobObjectError
 import enterprise.runtime.ownership as runtime_ownership
 
 
@@ -60,8 +62,12 @@ def fixture_spec(
     upstream_down_file: Path | None = None,
     ignore_runtime_stop: bool = False,
 ) -> CommandSpec:
+    # The Windows venv launcher can retain a PID/creation time while changing
+    # its process image to the base interpreter. Real fixed Release Python has
+    # no such indirection, so fixtures use the actual base executable.
+    fixture_python = str(getattr(sys, "_base_executable", sys.executable)) if os.name == "nt" else sys.executable
     arguments = [
-        sys.executable,
+        fixture_python,
         str(ROOT / "enterprise" / "tests" / "runtime_fixture_service.py"),
         "--role",
         role,
@@ -177,6 +183,224 @@ def test_starting_role_still_honors_startup_timeout() -> None:
             supervisor._check_role_health("gateway")
         stop.assert_called_once_with("gateway", reason="health_failure")
         restart.assert_called_once_with("gateway", reason="startup_timeout", exit_code=None)
+
+
+def _managed_fixture(spec: CommandSpec, identity: ProcessIdentity) -> ManagedProcess:
+    process = MagicMock()
+    process.pid = identity.pid
+    process.poll.return_value = None
+    return ManagedProcess(
+        spec=spec,
+        process=process,
+        identity=identity,
+        parent_pid=os.getpid(),
+        started_monotonic=time.monotonic(),
+    )
+
+
+def test_health_requires_live_managed_listener_identity() -> None:
+    with tempfile.TemporaryDirectory(prefix="ice-stab1-health-owner-") as raw:
+        supervisor = build_supervisor(Path(raw) / "runtime")
+        role = supervisor.roles["upstream"]
+        managed_identity = ProcessIdentity(pid=4001, created_at=10, executable="managed.exe")
+        foreign_identity = ProcessIdentity(pid=4002, created_at=11, executable="foreign.exe")
+        role.process = _managed_fixture(supervisor.commands["upstream"], managed_identity)
+        role.state = "starting"
+        foreign_snapshot = PortListenerSnapshot(
+            supervisor.config.upstream_port,
+            (foreign_identity.pid,),
+            (foreign_identity,),
+            (),
+            False,
+        )
+        with patch("enterprise.runtime.supervisor.process_identity", return_value=managed_identity), patch(
+            "enterprise.runtime.supervisor.inspect_port_listeners", return_value=foreign_snapshot
+        ), patch("enterprise.runtime.supervisor.upstream_health", return_value=HealthResult(True, "http_ok", 200)) as app_health:
+            result = supervisor._health_for("upstream")
+        assert result == HealthResult(False, "listener_identity_mismatch")
+        app_health.assert_not_called()
+
+        mixed_snapshot = PortListenerSnapshot(
+            supervisor.config.upstream_port,
+            (managed_identity.pid, foreign_identity.pid),
+            (managed_identity, foreign_identity),
+            (),
+            False,
+        )
+        with patch("enterprise.runtime.supervisor.process_identity", return_value=managed_identity), patch(
+            "enterprise.runtime.supervisor.inspect_port_listeners", return_value=mixed_snapshot
+        ):
+            assert supervisor._health_for("upstream") == HealthResult(False, "foreign_co_listener")
+
+
+def test_stale_managed_identity_cannot_become_healthy_from_http_200() -> None:
+    with tempfile.TemporaryDirectory(prefix="ice-stab1-stale-owner-") as raw:
+        supervisor = build_supervisor(Path(raw) / "runtime")
+        expected = ProcessIdentity(pid=5001, created_at=20, executable="managed.exe")
+        replacement = ProcessIdentity(pid=5001, created_at=21, executable="foreign.exe")
+        supervisor.roles["upstream"].process = _managed_fixture(supervisor.commands["upstream"], expected)
+        with patch("enterprise.runtime.supervisor.process_identity", return_value=replacement), patch(
+            "enterprise.runtime.supervisor.upstream_health", return_value=HealthResult(True, "http_ok", 200)
+        ) as app_health:
+            result = supervisor._health_for("upstream")
+        assert result == HealthResult(False, "managed_process_identity_mismatch")
+        app_health.assert_not_called()
+
+
+def test_post_spawn_job_attach_failure_retires_exact_child_before_restart() -> None:
+    with tempfile.TemporaryDirectory(prefix="ice-stab1-attach-failure-") as raw:
+        supervisor = build_supervisor(Path(raw) / "runtime")
+        captured: dict[str, ManagedProcess] = {}
+        real_start = start_process
+
+        def recording_start(*args, **kwargs):
+            managed = real_start(*args, **kwargs)
+            captured["managed"] = managed
+            return managed
+
+        class BrokenJob:
+            def add(self, _process):
+                raise JobObjectError("injected attach failure")
+
+        supervisor._job = BrokenJob()  # type: ignore[assignment]
+        with patch("enterprise.runtime.supervisor.start_process", side_effect=recording_start):
+            supervisor._start_role("upstream")
+        managed = captured["managed"]
+        assert managed.poll() is not None
+        assert not pid_exists(managed.identity.pid)
+        assert not tcp_check("127.0.0.1", supervisor.config.upstream_port).ok
+        assert supervisor.roles["upstream"].process is None
+        assert supervisor.roles["upstream"].state == "restarting"
+
+
+def test_post_spawn_cleanup_failure_blocks_duplicate_generation() -> None:
+    with tempfile.TemporaryDirectory(prefix="ice-stab1-attach-blocked-") as raw:
+        supervisor = build_supervisor(Path(raw) / "runtime")
+        identity = ProcessIdentity(pid=6001, created_at=30, executable="managed.exe")
+        managed = _managed_fixture(supervisor.commands["upstream"], identity)
+
+        class BrokenJob:
+            def add(self, _process):
+                raise JobObjectError("injected attach failure")
+
+        supervisor._job = BrokenJob()  # type: ignore[assignment]
+        with patch("enterprise.runtime.supervisor.start_process", return_value=managed), patch.object(
+            supervisor,
+            "_reconcile_owned_role_process",
+            return_value={
+                "replacement_safe": False,
+                "owned_process_released": False,
+                "port_release": "not_checked",
+                "failure_category": "owned_process_stop_failed",
+            },
+        ), patch("enterprise.runtime.supervisor.process_identity", return_value=identity), patch.object(
+            supervisor, "_schedule_restart"
+        ) as restart:
+            supervisor._start_role("upstream")
+        assert supervisor.roles["upstream"].state == "crash_loop"
+        assert supervisor.roles["upstream"].process is managed
+        restart.assert_not_called()
+
+
+def test_cleanup_never_terminates_reused_foreign_pid() -> None:
+    with tempfile.TemporaryDirectory(prefix="ice-stab1-foreign-cleanup-") as raw:
+        supervisor = build_supervisor(Path(raw) / "runtime")
+        expected = ProcessIdentity(pid=6501, created_at=31, executable="managed.exe")
+        foreign = ProcessIdentity(pid=6501, created_at=32, executable="foreign.exe")
+        managed = _managed_fixture(supervisor.commands["upstream"], expected)
+        with patch("enterprise.runtime.supervisor.process_identity", return_value=foreign), patch(
+            "enterprise.runtime.supervisor.force_stop"
+        ) as forced:
+            result = supervisor._reconcile_owned_role_process(
+                "upstream", managed, force=True, reason="test_foreign_reuse"
+            )
+        assert result["replacement_safe"] is False
+        assert result["failure_category"] == "process_ownership_mismatch"
+        forced.assert_not_called()
+
+
+def test_background_children_use_no_window_without_changing_foreground() -> None:
+    with tempfile.TemporaryDirectory(prefix="ice-stab1-window-flags-") as raw:
+        app_root = Path(raw)
+        flags: list[int] = []
+
+        class FakePopen:
+            pid = 7001
+            stdout = None
+            stderr = None
+
+            def __init__(self, *_args, **kwargs):
+                flags.append(int(kwargs["creationflags"]))
+
+            def poll(self):
+                return None
+
+            def terminate(self):
+                return None
+
+        logs = MagicMock()
+        logs.stream_pumps.return_value = (MagicMock(), MagicMock())
+        identity = ProcessIdentity(pid=7001, created_at=40, executable=sys.executable)
+        spec = fixture_spec("upstream", free_port())
+        with patch("enterprise.runtime.process.subprocess.Popen", FakePopen), patch(
+            "enterprise.runtime.process.process_identity", return_value=identity
+        ):
+            for foreground in (False, True):
+                start_process(
+                    spec,
+                    app_root=app_root,
+                    logs=logs,
+                    foreground=foreground,
+                    shutdown_file=app_root / f"stop-{foreground}",
+                    shutdown_marker=app_root / f"marker-{foreground}",
+                )
+        assert flags[0] & subprocess.CREATE_NEW_PROCESS_GROUP
+        assert flags[0] & subprocess.CREATE_NO_WINDOW
+        assert flags[1] & subprocess.CREATE_NEW_PROCESS_GROUP
+        assert not flags[1] & subprocess.CREATE_NO_WINDOW
+
+
+def _visible_windows_for_pid(pid: int) -> list[int]:
+    if os.name != "nt":
+        return []
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    windows: list[int] = []
+    callback_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+
+    @callback_type
+    def visit(window, _parameter):
+        process_id = ctypes.c_ulong()
+        user32.GetWindowThreadProcessId(window, ctypes.byref(process_id))
+        if int(process_id.value) == pid and user32.IsWindowVisible(window):
+            windows.append(int(window))
+        return True
+
+    if not user32.EnumWindows(visit, 0):
+        raise ctypes.WinError(ctypes.get_last_error())
+    return windows
+
+
+def test_service_host_child_has_no_visible_window() -> None:
+    if os.name != "nt":
+        return
+    with tempfile.TemporaryDirectory(prefix="ice-stab1-no-window-") as raw:
+        root = Path(raw)
+        spec = fixture_spec("upstream", free_port())
+        logs = RuntimeLogs(root / "logs")
+        managed = start_process(
+            spec,
+            app_root=ROOT,
+            logs=logs,
+            foreground=False,
+            shutdown_file=root / "stop.request",
+            shutdown_marker=root / "stop.complete",
+        )
+        try:
+            wait_for(lambda: tcp_check("127.0.0.1", spec.port).ok, seconds=10)
+            assert _visible_windows_for_pid(managed.identity.pid) == []
+        finally:
+            if managed.poll() is None:
+                assert runtime_process.graceful_stop(managed, timeout_seconds=2) == "graceful_shutdown"
 
 
 def start_supervisor(supervisor: RuntimeSupervisor) -> threading.Thread:
@@ -1023,6 +1247,81 @@ def test_forced_job_termination_and_stop_during_backoff() -> None:
         assert not pid_exists(ack["upstream_before_pid"])
 
 
+def test_health_recovery_forces_stubborn_owned_child_before_replacement() -> None:
+    with tempfile.TemporaryDirectory(prefix="ice-stab1-health-timeout-recovery-") as raw:
+        supervisor = build_supervisor(Path(raw) / "runtime", ignore_upstream_stop=True)
+        original_graceful_stop = runtime_process.graceful_stop
+        thread = start_supervisor(supervisor)
+        try:
+            wait_for(lambda: supervisor.state["state"] == "healthy")
+            original = supervisor.roles["upstream"].process
+            assert original is not None
+            original_identity = original.identity
+            original_health = supervisor._health_for
+
+            def fail_only_original(role: str) -> HealthResult:
+                current = supervisor.roles[role].process
+                if role == "upstream" and current is not None and current.identity == original_identity:
+                    return HealthResult(False, "injected_health_failure")
+                return original_health(role)
+
+            with patch(
+                "enterprise.runtime.supervisor.graceful_stop",
+                side_effect=lambda managed: original_graceful_stop(managed, timeout_seconds=0.3),
+            ), patch.object(supervisor, "_health_for", side_effect=fail_only_original):
+                wait_for(
+                    lambda: supervisor.roles["upstream"].process is not None
+                    and supervisor.roles["upstream"].process.identity != original_identity
+                    and supervisor.roles["upstream"].state == "healthy",
+                    seconds=12,
+                    message="stubborn unhealthy child was not reconciled and replaced",
+                )
+                assert not pid_exists(original_identity.pid)
+                assert supervisor.roles["upstream"].restart_count == 1
+                stop_supervisor(supervisor, thread)
+        finally:
+            if thread.is_alive():
+                stop_supervisor(supervisor, thread)
+
+
+def test_explicit_restart_reconciles_stubborn_owned_child() -> None:
+    with tempfile.TemporaryDirectory(prefix="ice-stab1-explicit-stubborn-") as raw:
+        supervisor = build_supervisor(Path(raw) / "runtime", ignore_upstream_stop=True)
+        original_graceful_stop = runtime_process.graceful_stop
+        thread = start_supervisor(supervisor)
+        try:
+            wait_for(lambda: supervisor.state["state"] == "healthy")
+            before = {
+                role: supervisor.roles[role].process.identity  # type: ignore[union-attr]
+                for role in ("upstream", "gateway")
+            }
+            with patch(
+                "enterprise.runtime.supervisor.graceful_stop",
+                side_effect=lambda managed: original_graceful_stop(managed, timeout_seconds=0.3),
+            ):
+                request_id = supervisor.store.submit_command(
+                    command="restart",
+                    supervisor_instance_id=supervisor.instance_id,
+                    expected_state_generation=supervisor.state["state_generation"],
+                )
+                wait_for(
+                    lambda: (supervisor.store.read_ack(request_id, instance_id=supervisor.instance_id) or {}).get("result")
+                    == "restarted",
+                    seconds=15,
+                    message="explicit restart did not reconcile the stubborn generation",
+                )
+                assert all(not pid_exists(identity.pid) for identity in before.values())
+                assert all(
+                    supervisor.roles[role].process is not None
+                    and supervisor.roles[role].process.identity != before[role]
+                    for role in ("upstream", "gateway")
+                )
+                stop_supervisor(supervisor, thread)
+        finally:
+            if thread.is_alive():
+                stop_supervisor(supervisor, thread)
+
+
 def test_instance_bound_command_acknowledgements() -> None:
     with tempfile.TemporaryDirectory(prefix="ice-stab1-ack-") as raw:
         supervisor = build_supervisor(Path(raw) / "runtime")
@@ -1151,6 +1450,12 @@ def test_real_cli_lifecycle_and_acknowledgements() -> None:
 
 
 CASES = {
+    "role-recovery": test_health_recovery_forces_stubborn_owned_child_before_replacement,
+    "attach-cleanup": test_post_spawn_job_attach_failure_retires_exact_child_before_restart,
+    "listener-ownership": test_health_requires_live_managed_listener_identity,
+    "explicit-stubborn-restart": test_explicit_restart_reconciles_stubborn_owned_child,
+    "background-window": test_background_children_use_no_window_without_changing_foreground,
+    "background-window-real": test_service_host_child_has_no_visible_window,
     "role-isolation": test_role_isolation_and_stop,
     "crash-loop": test_crash_loop_and_explicit_stop,
     "logging-state": test_logs_state_rotation_and_secret_redaction,
@@ -1312,6 +1617,15 @@ def test_auth_jwt_dependency_is_declared() -> None:
 
 
 def run_all() -> None:
+    test_health_requires_live_managed_listener_identity()
+    test_stale_managed_identity_cannot_become_healthy_from_http_200()
+    test_post_spawn_job_attach_failure_retires_exact_child_before_restart()
+    test_post_spawn_cleanup_failure_blocks_duplicate_generation()
+    test_cleanup_never_terminates_reused_foreign_pid()
+    test_background_children_use_no_window_without_changing_foreground()
+    test_service_host_child_has_no_visible_window()
+    test_health_recovery_forces_stubborn_owned_child_before_replacement()
+    test_explicit_restart_reconciles_stubborn_owned_child()
     test_auth_jwt_dependency_is_declared()
     test_windows_process_smoke()
     test_start_gate_and_atomic_state()

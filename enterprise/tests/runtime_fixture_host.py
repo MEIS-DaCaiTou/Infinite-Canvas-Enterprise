@@ -24,16 +24,17 @@ def main() -> int:
     parser.add_argument("--gateway-port", type=int, required=True)
     args = parser.parse_args()
     fixture = ROOT / "enterprise" / "tests" / "runtime_fixture_service.py"
+    fixture_python = str(getattr(sys, "_base_executable", sys.executable))
     commands = {
         "upstream": CommandSpec(
             role="upstream",
-            arguments=(sys.executable, str(fixture), "--role", "upstream", "--port", str(args.upstream_port)),
+            arguments=(fixture_python, str(fixture), "--role", "upstream", "--port", str(args.upstream_port)),
             host="127.0.0.1",
             port=args.upstream_port,
         ),
         "gateway": CommandSpec(
             role="gateway",
-            arguments=(sys.executable, str(fixture), "--role", "gateway", "--port", str(args.gateway_port)),
+            arguments=(fixture_python, str(fixture), "--role", "gateway", "--port", str(args.gateway_port)),
             host="127.0.0.1",
             port=args.gateway_port,
         ),
