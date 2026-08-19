@@ -73,13 +73,7 @@ class ManagedProcess:
 
 def bundled_python(app_root: Path) -> str:
     candidate = app_root / "python" / "python.exe"
-    if candidate.is_file():
-        return str(candidate.resolve())
-    # A Windows venv launcher may keep the same PID while its process image
-    # becomes the base interpreter. Launch that actual interpreter directly so
-    # the captured child identity remains stable for listener ownership checks.
-    fallback = getattr(sys, "_base_executable", sys.executable) if os.name == "nt" else sys.executable
-    return str(Path(fallback).resolve())
+    return str(candidate.resolve()) if candidate.is_file() else str(Path(sys.executable).resolve())
 
 
 def default_commands(
@@ -181,11 +175,6 @@ def start_process(
     flags = 0
     if os.name == "nt":
         flags = subprocess.CREATE_NEW_PROCESS_GROUP
-        if not foreground:
-            # Service-host children must not create or inherit an interactive
-            # console window.  Foreground mode intentionally preserves the
-            # existing console behavior for operator diagnostics.
-            flags |= subprocess.CREATE_NO_WINDOW
     try:
         process = subprocess.Popen(
             arguments,

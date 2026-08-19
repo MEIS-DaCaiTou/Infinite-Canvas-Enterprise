@@ -708,7 +708,16 @@ class RuntimeSupervisor:
         spec = self.commands[role]
         listeners = inspect_port_listeners(spec.port)
         if listeners.inspection_failed:
-            return HealthResult(False, "listener_inspection_failed")
+            application = (
+                upstream_health(spec.host, spec.port)
+                if role == "upstream"
+                else gateway_health(spec.host, spec.port)
+            )
+            return HealthResult(
+                False,
+                "ownership_unverified" if application.ok else "ownership_unverified_http_unhealthy",
+                application.status_code,
+            )
         if listeners.unresolved_listener_pids:
             return HealthResult(False, "listener_identity_unresolved")
         if not listeners.has_listeners:
@@ -738,6 +747,16 @@ class RuntimeSupervisor:
             runtime.health = "ok"
             runtime.health_failures = 0
             return
+        if result.category == "ownership_unverified":
+            # HTTP proves service availability, but without a listener identity
+            # proof it is unsafe to stop or replace any process. Keep the exact
+            # managed generation and recover automatically when inspection is
+            # available again.
+            runtime.state = "degraded"
+            runtime.health = "ownership_unverified"
+            runtime.health_failures = 0
+            runtime.restart_at = None
+            return
         if role == "gateway" and result.category == "upstream_unavailable":
             runtime.state = "degraded"
             runtime.health = "upstream_unavailable"
@@ -755,8 +774,8 @@ class RuntimeSupervisor:
             if stop_result.get("replacement_safe", True):
                 self._schedule_restart(role, reason="startup_timeout" if startup_expired else "health_failure", exit_code=None)
             else:
-                runtime.state = "crash_loop"
-                runtime.health = "failed"
+                runtime.state = "degraded"
+                runtime.health = "recovery_blocked"
                 runtime.restart_at = None
                 self._log(
                     "role_replacement_blocked",

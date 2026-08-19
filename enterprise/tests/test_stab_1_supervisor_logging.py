@@ -54,6 +54,18 @@ def free_port() -> int:
         return int(sock.getsockname()[1])
 
 
+def _fixture_python() -> str:
+    # A Windows venv launcher can keep a PID while its process image becomes
+    # the base interpreter. Release Python has no launcher indirection, so the
+    # real-process fixture uses the base executable without changing the
+    # production bundled_python() fallback contract.
+    return (
+        str(getattr(sys, "_base_executable", sys.executable))
+        if os.name == "nt"
+        else sys.executable
+    )
+
+
 def fixture_spec(
     role: str,
     port: int,
@@ -62,12 +74,8 @@ def fixture_spec(
     upstream_down_file: Path | None = None,
     ignore_runtime_stop: bool = False,
 ) -> CommandSpec:
-    # The Windows venv launcher can retain a PID/creation time while changing
-    # its process image to the base interpreter. Real fixed Release Python has
-    # no such indirection, so fixtures use the actual base executable.
-    fixture_python = str(getattr(sys, "_base_executable", sys.executable)) if os.name == "nt" else sys.executable
     arguments = [
-        fixture_python,
+        _fixture_python(),
         str(ROOT / "enterprise" / "tests" / "runtime_fixture_service.py"),
         "--role",
         role,
@@ -233,6 +241,80 @@ def test_health_requires_live_managed_listener_identity() -> None:
             assert supervisor._health_for("upstream") == HealthResult(False, "foreign_co_listener")
 
 
+def test_listener_inspection_unavailable_with_http_health_is_non_destructive_and_recovers() -> None:
+    with tempfile.TemporaryDirectory(prefix="ice-stab1-health-unverified-") as raw:
+        supervisor = build_supervisor(Path(raw) / "runtime")
+        role = supervisor.roles["upstream"]
+        managed_identity = ProcessIdentity(pid=4101, created_at=12, executable="managed.exe")
+        role.process = _managed_fixture(supervisor.commands["upstream"], managed_identity)
+        role.state = "healthy"
+        role.health = "ok"
+        role.restart_count = 3
+        unavailable = PortListenerSnapshot(supervisor.config.upstream_port, (), (), (), True)
+        exact = PortListenerSnapshot(
+            supervisor.config.upstream_port,
+            (managed_identity.pid,),
+            (managed_identity,),
+            (),
+            False,
+        )
+        with patch("enterprise.runtime.supervisor.process_identity", return_value=managed_identity), patch(
+            "enterprise.runtime.supervisor.inspect_port_listeners", return_value=unavailable
+        ), patch(
+            "enterprise.runtime.supervisor.upstream_health", return_value=HealthResult(True, "http_ok", 200)
+        ), patch.object(supervisor, "_stop_role") as stop, patch.object(supervisor, "_schedule_restart") as restart:
+            for _ in range(supervisor.config.health_failure_threshold + 2):
+                supervisor._check_role_health("upstream")
+        assert role.process is not None and role.process.identity == managed_identity
+        assert role.state == "degraded"
+        assert role.health == "ownership_unverified"
+        assert role.health_failures == 0
+        assert role.restart_count == 3
+        stop.assert_not_called()
+        restart.assert_not_called()
+
+        with patch("enterprise.runtime.supervisor.process_identity", return_value=managed_identity), patch(
+            "enterprise.runtime.supervisor.inspect_port_listeners", return_value=exact
+        ), patch(
+            "enterprise.runtime.supervisor.upstream_health", return_value=HealthResult(True, "http_ok", 200)
+        ):
+            supervisor._check_role_health("upstream")
+        assert role.process is not None and role.process.identity == managed_identity
+        assert role.state == "healthy"
+        assert role.health == "ok"
+        assert role.restart_count == 3
+
+
+def test_listener_inspection_unavailable_with_http_failure_blocks_replacement() -> None:
+    with tempfile.TemporaryDirectory(prefix="ice-stab1-health-unverified-down-") as raw:
+        supervisor = build_supervisor(Path(raw) / "runtime")
+        role = supervisor.roles["upstream"]
+        managed_identity = ProcessIdentity(pid=4201, created_at=13, executable="managed.exe")
+        role.process = _managed_fixture(supervisor.commands["upstream"], managed_identity)
+        role.state = "healthy"
+        unavailable = PortListenerSnapshot(supervisor.config.upstream_port, (), (), (), True)
+        blocked_stop = {
+            "replacement_safe": False,
+            "owned_process_released": True,
+            "port_release": "port_inspection_failed",
+            "failure_category": "port_inspection_failed",
+        }
+        with patch("enterprise.runtime.supervisor.process_identity", return_value=managed_identity), patch(
+            "enterprise.runtime.supervisor.inspect_port_listeners", return_value=unavailable
+        ), patch(
+            "enterprise.runtime.supervisor.upstream_health", return_value=HealthResult(False, "connect_failed")
+        ), patch.object(supervisor, "_stop_role", return_value=blocked_stop) as stop, patch.object(
+            supervisor, "_schedule_restart"
+        ) as restart:
+            for _ in range(supervisor.config.health_failure_threshold):
+                supervisor._check_role_health("upstream")
+        stop.assert_called_once_with("upstream", reason="health_failure")
+        restart.assert_not_called()
+        assert role.state == "degraded"
+        assert role.health == "recovery_blocked"
+        assert role.restart_count == 0
+
+
 def test_stale_managed_identity_cannot_become_healthy_from_http_200() -> None:
     with tempfile.TemporaryDirectory(prefix="ice-stab1-stale-owner-") as raw:
         supervisor = build_supervisor(Path(raw) / "runtime")
@@ -319,7 +401,7 @@ def test_cleanup_never_terminates_reused_foreign_pid() -> None:
         forced.assert_not_called()
 
 
-def test_background_children_use_no_window_without_changing_foreground() -> None:
+def test_managed_children_preserve_process_group_without_forced_console_policy() -> None:
     with tempfile.TemporaryDirectory(prefix="ice-stab1-window-flags-") as raw:
         app_root = Path(raw)
         flags: list[int] = []
@@ -355,9 +437,34 @@ def test_background_children_use_no_window_without_changing_foreground() -> None
                     shutdown_marker=app_root / f"marker-{foreground}",
                 )
         assert flags[0] & subprocess.CREATE_NEW_PROCESS_GROUP
-        assert flags[0] & subprocess.CREATE_NO_WINDOW
+        assert not flags[0] & subprocess.CREATE_NO_WINDOW
         assert flags[1] & subprocess.CREATE_NEW_PROCESS_GROUP
         assert not flags[1] & subprocess.CREATE_NO_WINDOW
+
+
+def test_netstat_listener_inspection_uses_no_window_and_fixed_arguments() -> None:
+    if os.name != "nt":
+        return
+    captured: dict[str, object] = {}
+
+    def fake_run(arguments, **kwargs):
+        captured["arguments"] = arguments
+        captured.update(kwargs)
+        return subprocess.CompletedProcess(arguments, 0, stdout="", stderr="")
+
+    with patch("enterprise.runtime.ownership.subprocess.run", side_effect=fake_run):
+        assert inspect_port_listeners(43123) == PortListenerSnapshot(43123, (), (), (), False)
+    assert captured["arguments"] == ["netstat", "-ano", "-p", "tcp"]
+    assert captured["shell"] is False
+    assert captured["check"] is False
+    assert captured["capture_output"] is True
+    assert captured["timeout"] == 3
+    assert int(captured["creationflags"]) & subprocess.CREATE_NO_WINDOW
+
+
+def test_bundled_python_missing_candidate_falls_back_to_sys_executable() -> None:
+    with tempfile.TemporaryDirectory(prefix="ice-stab1-python-fallback-") as raw:
+        assert runtime_process.bundled_python(Path(raw)) == str(Path(sys.executable).resolve())
 
 
 def _visible_windows_for_pid(pid: int) -> list[int]:
@@ -428,14 +535,17 @@ def stop_supervisor(supervisor: RuntimeSupervisor, thread: threading.Thread) -> 
         supervisor_instance_id=supervisor.instance_id,
         expected_state_generation=supervisor.state["state_generation"],
     )
-    thread.join(timeout=15)
+    # The two roles can each consume their bounded graceful-stop interval
+    # before exact-identity reconciliation, so the test-side join must cover
+    # both serialized bounds without changing production timeouts.
+    thread.join(timeout=25)
     assert not thread.is_alive(), "supervisor did not stop"
 
 
 def run_cli(command: str, *, runtime_root: Path, upstream_port: int, gateway_port: int, timeout: float = 25.0) -> dict[str, object]:
     output_path = runtime_root.parent / f"cli-{command}-{time.time_ns()}.jsonl"
     arguments = [
-        sys.executable,
+        _fixture_python(),
         "-m",
         "enterprise.runtime.cli",
         command,
@@ -1453,9 +1563,13 @@ CASES = {
     "role-recovery": test_health_recovery_forces_stubborn_owned_child_before_replacement,
     "attach-cleanup": test_post_spawn_job_attach_failure_retires_exact_child_before_restart,
     "listener-ownership": test_health_requires_live_managed_listener_identity,
+    "listener-unavailable-healthy": test_listener_inspection_unavailable_with_http_health_is_non_destructive_and_recovers,
+    "listener-unavailable-unhealthy": test_listener_inspection_unavailable_with_http_failure_blocks_replacement,
     "explicit-stubborn-restart": test_explicit_restart_reconciles_stubborn_owned_child,
-    "background-window": test_background_children_use_no_window_without_changing_foreground,
+    "background-window": test_managed_children_preserve_process_group_without_forced_console_policy,
     "background-window-real": test_service_host_child_has_no_visible_window,
+    "netstat-window": test_netstat_listener_inspection_uses_no_window_and_fixed_arguments,
+    "python-fallback": test_bundled_python_missing_candidate_falls_back_to_sys_executable,
     "role-isolation": test_role_isolation_and_stop,
     "crash-loop": test_crash_loop_and_explicit_stop,
     "logging-state": test_logs_state_rotation_and_secret_redaction,
@@ -1618,12 +1732,16 @@ def test_auth_jwt_dependency_is_declared() -> None:
 
 def run_all() -> None:
     test_health_requires_live_managed_listener_identity()
+    test_listener_inspection_unavailable_with_http_health_is_non_destructive_and_recovers()
+    test_listener_inspection_unavailable_with_http_failure_blocks_replacement()
     test_stale_managed_identity_cannot_become_healthy_from_http_200()
     test_post_spawn_job_attach_failure_retires_exact_child_before_restart()
     test_post_spawn_cleanup_failure_blocks_duplicate_generation()
     test_cleanup_never_terminates_reused_foreign_pid()
-    test_background_children_use_no_window_without_changing_foreground()
+    test_managed_children_preserve_process_group_without_forced_console_policy()
     test_service_host_child_has_no_visible_window()
+    test_netstat_listener_inspection_uses_no_window_and_fixed_arguments()
+    test_bundled_python_missing_candidate_falls_back_to_sys_executable()
     test_health_recovery_forces_stubborn_owned_child_before_replacement()
     test_explicit_restart_reconciles_stubborn_owned_child()
     test_auth_jwt_dependency_is_declared()

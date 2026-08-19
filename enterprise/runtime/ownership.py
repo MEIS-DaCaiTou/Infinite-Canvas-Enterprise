@@ -183,6 +183,7 @@ def inspect_port_listeners(port: int) -> PortListenerSnapshot:
         raise ValueError("port is invalid")
     if os.name != "nt":
         return PortListenerSnapshot(port, (), (), (), False)
+    creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
     try:
         result = subprocess.run(
             ["netstat", "-ano", "-p", "tcp"],
@@ -191,6 +192,7 @@ def inspect_port_listeners(port: int) -> PortListenerSnapshot:
             timeout=3,
             check=False,
             shell=False,
+            creationflags=creationflags,
         )
     except (OSError, subprocess.SubprocessError):
         return PortListenerSnapshot(port, (), (), (), True)
