@@ -71,6 +71,7 @@ async def _run_checks() -> None:
         edb.CANVAS_DATA_DIR = str(canvas_dir)
 
         edb.init_db()
+        edb.create_legacy_default_admin_explicit()
         user_a = insert_ready_user_fixture(edb.DB_PATH, username="upload_a", password_hash=edb._hash_password("password-a"), display_name="Upload A")
         user_b = insert_ready_user_fixture(edb.DB_PATH, username="upload_b", password_hash=edb._hash_password("password-b"), display_name="Upload B")
         admin = edb.get_user_by_username("admin")

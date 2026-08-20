@@ -6,18 +6,16 @@ from typing import Any
 
 from enterprise.migrations.sqlite_existing import open_existing_sqlite
 from enterprise.security_audit import (
-    SECURITY_AUDIT_CREATE_TABLE_SQL,
-    SECURITY_AUDIT_INDEX_DEFINITIONS,
     SECURITY_AUDIT_INDEXES,
     SECURITY_AUDIT_MIGRATION_ID,
     SECURITY_AUDIT_MISSING,
     SECURITY_AUDIT_PARTIAL,
     SECURITY_AUDIT_READY,
     SECURITY_AUDIT_TABLE,
-    SECURITY_AUDIT_TRIGGER_DEFINITIONS,
     SECURITY_AUDIT_TRIGGERS,
     SecurityAuditError,
     append_security_audit_event,
+    ensure_security_audit_schema_in_transaction,
     inspect_security_audit_connection,
     resolve_security_audit_activation_actor_role,
 )
@@ -141,11 +139,7 @@ def apply_security_audit_migration_in_transaction(
 
     try:
         actor_role = resolve_security_audit_activation_actor_role(conn, actor_user_id)
-        conn.execute(SECURITY_AUDIT_CREATE_TABLE_SQL)
-        for definition in SECURITY_AUDIT_INDEX_DEFINITIONS.values():
-            conn.execute(definition["sql"])
-        for statement in SECURITY_AUDIT_TRIGGER_DEFINITIONS.values():
-            conn.execute(statement)
+        ensure_security_audit_schema_in_transaction(conn)
         activation_event = append_security_audit_event(
             action="security.audit.foundation.activate",
             risk_level="L3",

@@ -270,6 +270,54 @@ def test_direct_launcher_complete_isolation_precedes_release_layout(
     assert "forged" not in completed.stdout
 
 
+@pytest.mark.skipif(os.name != "nt", reason="cmd.exe contract is Windows-only")
+def test_raw_start_wrapper_preserves_portable_release_layout_gate(tmp_path: Path) -> None:
+    package = tmp_path / "raw 下载 package"
+    runtime = package / "enterprise" / "runtime"
+    runtime.mkdir(parents=True)
+    shutil.copyfile(ROOT / "启动企业版.bat", package / "启动企业版.bat")
+    shutil.copyfile(ROOT / "enterprise" / "runtime" / "launcher.py", runtime / "launcher.py")
+    shutil.copyfile(
+        ROOT / "enterprise" / "runtime" / "fixed_python_preflight.ps1",
+        runtime / "fixed_python_preflight.ps1",
+    )
+    python_root = package / "python"
+    junction = subprocess.run(
+        [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/c", "mklink", "/J", str(python_root), str(Path(sys.base_prefix))],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        shell=False,
+        check=False,
+    )
+    assert junction.returncode == 0
+    try:
+        completed = subprocess.run(
+            [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/c", "call", str(package / "启动企业版.bat")],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="strict",
+            timeout=20,
+            shell=False,
+            check=False,
+        )
+    finally:
+        subprocess.run(
+            [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/c", "rmdir", str(python_root)],
+            capture_output=True,
+            shell=False,
+            check=False,
+        )
+    assert completed.returncode == 2
+    assert completed.stderr == ""
+    assert completed.stdout.splitlines() == [
+        '{"code":"PORTABLE_RELEASE_LAYOUT_INVALID","status":"blocked"}'
+    ]
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Known Folder API is Windows-only")
 def test_windows_known_folder_resolver_ignores_forged_localappdata(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

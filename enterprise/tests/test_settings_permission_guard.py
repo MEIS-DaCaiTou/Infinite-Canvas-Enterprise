@@ -97,6 +97,7 @@ async def _run_checks() -> None:
         globals()["interceptors"] = enterprise_interceptors
 
         edb.init_db()
+        edb.create_legacy_default_admin_explicit()
         user_a = insert_ready_user_fixture(edb.DB_PATH, username="settings_a", password_hash=edb._hash_password("password-a"), display_name="Settings A")
         user_b = insert_ready_user_fixture(edb.DB_PATH, username="settings_b", password_hash=edb._hash_password("password-b"), display_name="Settings B")
         admin = edb.get_user_by_username("admin")

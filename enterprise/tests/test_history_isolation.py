@@ -81,6 +81,7 @@ async def _run_checks() -> None:
         interceptors._HISTORY_FILE = history_path
 
         edb.init_db()
+        edb.create_legacy_default_admin_explicit()
         user_a = insert_ready_user_fixture(edb.DB_PATH, username="hist_a", password_hash=edb._hash_password("password-a"), display_name="History A")
         user_b = insert_ready_user_fixture(edb.DB_PATH, username="hist_b", password_hash=edb._hash_password("password-b"), display_name="History B")
         admin = edb.get_user_by_username("admin")

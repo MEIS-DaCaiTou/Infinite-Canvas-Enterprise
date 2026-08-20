@@ -11,7 +11,7 @@
   "included_roots": ["enterprise", "enterprise-static", "static", "workflows"],
   "included_root_files": [
     "ARCHITECTURE.md", "CODE_BOUNDARIES.md", "LICENSE", "PROJECT_SCOPE_LOCK.md",
-    "README.md", "VERSION", "main.py", "requirements.txt", "启动企业版.bat",
+    "README.md", "VERSION", "main.py", "requirements.txt", "首次安装企业版.bat", "启动企业版.bat",
     "停止企业版.bat", "重启企业版.bat", "查看企业版状态.bat", "企业版健康检查.bat"
   ],
   "runtime_destination": "python",

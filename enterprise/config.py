@@ -52,7 +52,7 @@ EXAMPLE_ADMIN_PASSWORD = "change-me-before-production"
 JWT_SECRET: str = os.getenv("JWT_SECRET", DEFAULT_JWT_SECRET)
 JWT_EXPIRE_HOURS: int = int(os.getenv("JWT_EXPIRE_HOURS", "168"))  # 默认7天
 
-# ── 管理员默认账号（首次启动自动创建） ─────────────────────
+# ── 历史显式 bootstrap 兼容值（正常启动与 Greenfield 安装不使用） ──
 ADMIN_USERNAME: str = os.getenv("ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD: str = os.getenv("ADMIN_PASSWORD", DEFAULT_ADMIN_PASSWORD)
 
@@ -96,10 +96,6 @@ def security_warnings() -> list[str]:
     elif len(JWT_SECRET) < 32:
         warnings.append("JWT_SECRET is shorter than 32 characters. Use a longer random secret before production.")
 
-    if ADMIN_PASSWORD in {DEFAULT_ADMIN_PASSWORD, EXAMPLE_ADMIN_PASSWORD, ""}:
-        warnings.append(
-            "ADMIN_PASSWORD is using a default or placeholder value. Change it in enterprise.env before exposing the service."
-        )
     return warnings
 
 

@@ -33,15 +33,18 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from enterprise.config import (
+    DB_PATH,
     ENTERPRISE_HIDE_UPSTREAM_AUTHOR,
     ENTERPRISE_REPO_URL,
     ENTERPRISE_STATIC_DIR,
     ENTERPRISE_UPDATE_ENABLED,
     GATEWAY_PORT,
+    PATH_ROOTS,
     UPSTREAM_URL,
 )
 from enterprise.auth import authenticate, create_token, verify_token
-from enterprise.db import init_db, log_action, can_use_feature
+from enterprise.db import ensure_db_schema, log_action, can_use_feature
+from enterprise.fresh_install import require_gateway_database_ready
 from enterprise import ws as enterprise_ws
 from enterprise.interceptors import (
     is_static_asset,
@@ -88,7 +91,8 @@ _http_client: Optional[httpx.AsyncClient] = None
 @app.on_event("startup")
 async def startup() -> None:
     global _http_client
-    init_db()
+    require_gateway_database_ready(PATH_ROOTS, DB_PATH)
+    ensure_db_schema()
     _http_client = httpx.AsyncClient(
         base_url=UPSTREAM_URL,
         timeout=httpx.Timeout(connect=10, read=300, write=300, pool=10),
