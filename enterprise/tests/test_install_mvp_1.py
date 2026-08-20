@@ -567,18 +567,37 @@ def test_formal_cli_checks_isolation_and_identity_before_enterprise_import() -> 
 
 
 @pytest.mark.parametrize(
-    ("flags", "expected_code"),
+    ("flags", "expected_code", "bundled_python_present"),
     [
-        (("-s", "-B"), "INSTALL_PYTHON_ISOLATION_REQUIRED"),
-        (("-I", "-B"), "INSTALL_PYTHON_MISSING"),
+        (("-s", "-B"), "INSTALL_PYTHON_ISOLATION_REQUIRED", False),
+        (("-I", "-B"), "INSTALL_PYTHON_MISSING", False),
+        (("-I", "-B"), "INSTALL_PYTHON_IDENTITY_INVALID", True),
     ],
 )
 def test_direct_formal_installer_fails_in_install_domain_before_business_import(
-    flags: tuple[str, ...], expected_code: str
+    tmp_path: Path,
+    flags: tuple[str, ...],
+    expected_code: str,
+    bundled_python_present: bool,
 ) -> None:
-    script = Path(__file__).resolve().parents[1] / "install_cli.py"
+    source = Path(__file__).resolve().parents[1] / "install_cli.py"
+    script = tmp_path / "raw" / "enterprise" / "install_cli.py"
+    script.parent.mkdir(parents=True)
+    script.write_bytes(source.read_bytes())
+    expected_python = script.parent.parent / "python" / "python.exe"
+    if bundled_python_present:
+        expected_python.parent.mkdir()
+        expected_python.write_bytes(b"fixture identity only")
+
+    # A bundled-looking Python outside the raw APP_ROOT models a contaminated
+    # long-lived checkout without making the declared bootstrap precondition
+    # depend on repository-local ignored files or the current working directory.
+    ambient = tmp_path / "ambient checkout"
+    (ambient / "python").mkdir(parents=True)
+    (ambient / "python" / "python.exe").write_bytes(b"ambient fixture")
     completed = subprocess.run(
         [sys.executable, *flags, str(script)],
+        cwd=ambient,
         capture_output=True,
         text=True,
         encoding="utf-8",
