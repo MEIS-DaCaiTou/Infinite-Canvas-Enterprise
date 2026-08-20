@@ -529,17 +529,105 @@ def wait_for(predicate, *, seconds: float = 15.0, message: str = "condition time
     raise AssertionError(message)
 
 
-def stop_supervisor(supervisor: RuntimeSupervisor, thread: threading.Thread) -> None:
-    supervisor.store.submit_command(
-        command="stop",
-        supervisor_instance_id=supervisor.instance_id,
-        expected_state_generation=supervisor.state["state_generation"],
-    )
-    # The two roles can each consume their bounded graceful-stop interval
-    # before exact-identity reconciliation, so the test-side join must cover
-    # both serialized bounds without changing production timeouts.
-    thread.join(timeout=25)
-    assert not thread.is_alive(), "supervisor did not stop"
+_TEST_STOP_DEADLINE_SECONDS = 25.0
+_TEST_STOP_STALE_RETRY_LIMIT = 5
+_TEST_STOP_RESULTS = frozenset(
+    {"stopped", "foreign_port_occupant", "unresolved_port_occupant", "stop_incomplete"}
+)
+
+
+def _current_stop_generation(supervisor: RuntimeSupervisor) -> int:
+    state = supervisor.store.read_state()
+    assert state is not None, "supervisor state was unavailable before stop"
+    assert state.get("supervisor_instance_id") == supervisor.instance_id, "supervisor state identity changed before stop"
+    generation = state.get("state_generation")
+    assert type(generation) is int and generation >= 0, "supervisor state generation was invalid before stop"
+    return generation
+
+
+def stop_supervisor(supervisor: RuntimeSupervisor, thread: threading.Thread) -> dict[str, object]:
+    deadline = time.monotonic() + _TEST_STOP_DEADLINE_SECONDS
+    stale_retries = 0
+    request_ids: list[str] = []
+    submitted_generations: list[int] = []
+    acknowledgement_results: list[str] = []
+
+    while True:
+        generation = _current_stop_generation(supervisor)
+        request_id = supervisor.store.submit_command(
+            command="stop",
+            supervisor_instance_id=supervisor.instance_id,
+            expected_state_generation=generation,
+        )
+        request_ids.append(request_id)
+        submitted_generations.append(generation)
+
+        while True:
+            acknowledgement = supervisor.store.read_ack(request_id, instance_id=supervisor.instance_id)
+            if acknowledgement is not None:
+                result = acknowledgement.get("result")
+                assert isinstance(result, str), "supervisor stop acknowledgement result was invalid"
+                acknowledgement_results.append(result)
+                if result == "rejected_stale_generation":
+                    stale_retries += 1
+                    assert stale_retries <= _TEST_STOP_STALE_RETRY_LIMIT, "supervisor stop exceeded stale-generation retry limit"
+                    supervisor.store.remove_ack(request_id, instance_id=supervisor.instance_id)
+                    assert thread.is_alive(), "supervisor exited after rejecting a stale stop request"
+                    break
+                assert result in _TEST_STOP_RESULTS, f"unexpected supervisor stop acknowledgement: {result}"
+                remaining = deadline - time.monotonic()
+                assert remaining > 0, "supervisor stop exceeded global deadline after acknowledgement"
+                thread.join(timeout=remaining)
+                assert not thread.is_alive(), "supervisor did not exit after completed stop acknowledgement"
+                return {
+                    "request_ids": request_ids,
+                    "submitted_generations": submitted_generations,
+                    "acknowledgement_results": acknowledgement_results,
+                    "stale_generation_retries": stale_retries,
+                    "global_deadline_seconds": _TEST_STOP_DEADLINE_SECONDS,
+                    "final_acknowledgement": acknowledgement,
+                }
+
+            remaining = deadline - time.monotonic()
+            assert remaining > 0, "supervisor stop acknowledgement exceeded global deadline"
+            if not thread.is_alive():
+                raise AssertionError("supervisor exited without an exact stop acknowledgement")
+            thread.join(timeout=min(0.05, remaining))
+
+
+def test_stop_supervisor_retries_exact_stale_generation_ack() -> None:
+    with tempfile.TemporaryDirectory(prefix="ice-stab1-stop-generation-retry-") as raw:
+        supervisor = build_supervisor(Path(raw) / "runtime")
+        thread = start_supervisor(supervisor)
+        wait_for(lambda: supervisor.state["state"] == "healthy")
+        original_submit = supervisor.store.submit_command
+        submitted: list[tuple[str, int]] = []
+
+        def reject_first_generation(**kwargs: object) -> str:
+            generation = kwargs.get("expected_state_generation")
+            assert type(generation) is int
+            if not submitted:
+                kwargs["expected_state_generation"] = generation - 1
+            request_id = original_submit(**kwargs)  # type: ignore[arg-type]
+            submitted.append((request_id, int(kwargs["expected_state_generation"])))
+            return request_id
+
+        try:
+            started = time.monotonic()
+            with patch.object(supervisor.store, "submit_command", side_effect=reject_first_generation):
+                result = stop_supervisor(supervisor, thread)
+            assert time.monotonic() - started < _TEST_STOP_DEADLINE_SECONDS
+            assert result["acknowledgement_results"] == ["rejected_stale_generation", "stopped"]
+            assert result["stale_generation_retries"] == 1
+            assert result["global_deadline_seconds"] == _TEST_STOP_DEADLINE_SECONDS
+            assert len(submitted) == 2
+            assert submitted[0][0] != submitted[1][0]
+            assert submitted[1][1] > submitted[0][1]
+            assert result["request_ids"] == [item[0] for item in submitted]
+            assert supervisor.state["state"] == "stopped"
+        finally:
+            if thread.is_alive():
+                stop_supervisor(supervisor, thread)
 
 
 def run_cli(command: str, *, runtime_root: Path, upstream_port: int, gateway_port: int, timeout: float = 25.0) -> dict[str, object]:
