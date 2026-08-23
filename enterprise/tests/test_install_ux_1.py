@@ -320,6 +320,10 @@ def test_installer_source_is_single_user_gui_and_keeps_credentials_off_process_s
     assert "-I -B" in source
     assert "install_setup_bridge.py" in source
     assert "GetSHA256OfFile" in source
+    assert "Utf8Encode(Value)" in source
+    assert "Utf8Decode(Value)" in source
+    assert "WideCharToMultiByte" not in source
+    assert "MultiByteToWideChar" not in source
     assert "desktopicon" in source
     assert "查看企业版状态.bat" in source
     assert "企业版健康检查.bat" in source

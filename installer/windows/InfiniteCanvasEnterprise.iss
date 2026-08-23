@@ -76,7 +76,6 @@ const
   INVALID_HANDLE_VALUE = -1;
   DRIVE_FIXED = 3;
   INVALID_FILE_ATTRIBUTES = $FFFFFFFF;
-  CP_UTF8 = 65001;
   MaxFrameBytes = 16384;
   PipeWaitMilliseconds = 45000;
   HexDigits = '0123456789abcdef';
@@ -109,42 +108,14 @@ function GetDriveTypeW(lpRootPathName: String): Cardinal;
   external 'GetDriveTypeW@kernel32.dll stdcall';
 function GetFileAttributesW(lpFileName: String): Cardinal;
   external 'GetFileAttributesW@kernel32.dll stdcall';
-function WideCharToMultiByte(CodePage, dwFlags: Cardinal; lpWideCharStr: String;
-  cchWideChar: Integer; var lpMultiByteStr: AnsiString; cbMultiByte: Integer;
-  lpDefaultChar, lpUsedDefaultChar: LongWord): Integer;
-  external 'WideCharToMultiByte@kernel32.dll stdcall';
-function MultiByteToWideChar(CodePage, dwFlags: Cardinal; lpMultiByteStr: AnsiString;
-  cbMultiByte: Integer; var lpWideCharStr: String; cchWideChar: Integer): Integer;
-  external 'MultiByteToWideChar@kernel32.dll stdcall';
-
 function UTF8Bytes(const Value: String): AnsiString;
-var
-  Required: Integer;
 begin
-  Result := '';
-  if Value = '' then
-    exit;
-  Required := WideCharToMultiByte(CP_UTF8, 0, Value, Length(Value), Result, 0, 0, 0);
-  if Required <= 0 then
-    RaiseException('INSTALL_SETUP_BRIDGE_ENCODING_FAILED');
-  SetLength(Result, Required);
-  if WideCharToMultiByte(CP_UTF8, 0, Value, Length(Value), Result, Required, 0, 0) <> Required then
-    RaiseException('INSTALL_SETUP_BRIDGE_ENCODING_FAILED');
+  Result := Utf8Encode(Value);
 end;
 
 function UTF8Text(const Value: AnsiString): String;
-var
-  Required: Integer;
 begin
-  Result := '';
-  if Value = '' then
-    exit;
-  Required := MultiByteToWideChar(CP_UTF8, $8, Value, Length(Value), Result, 0);
-  if Required <= 0 then
-    RaiseException('INSTALL_SETUP_BRIDGE_RESPONSE_INVALID');
-  SetLength(Result, Required);
-  if MultiByteToWideChar(CP_UTF8, $8, Value, Length(Value), Result, Required) <> Required then
-    RaiseException('INSTALL_SETUP_BRIDGE_RESPONSE_INVALID');
+  Result := Utf8Decode(Value);
 end;
 
 function HexFixed(Value, Digits: Integer): String;
@@ -478,8 +449,10 @@ begin
   InstallProgress.Show;
   try
     SetStage('验证安装包', 1);
+    LastStableCode := 'INSTALL_TEMP_ROOT_UNSAFE';
     if HasExistingReparseLeaf(ExpandConstant('{tmp}')) then
       RaiseException('INSTALL_TEMP_ROOT_UNSAFE');
+    LastStableCode := 'INSTALL_EMBEDDED_ASSET_EXTRACTION_FAILED';
     ExtractTemporaryFile('install-ux-bundle\{#ArchiveFilename}');
     ExtractTemporaryFile('install-ux-bundle\{#ManifestFilename}');
     ExtractTemporaryFile('install-ux-bundle\{#InventoryFilename}');
@@ -488,17 +461,20 @@ begin
     ManifestPath := BundleRoot + '\{#ManifestFilename}';
     InventoryPath := BundleRoot + '\{#InventoryFilename}';
     MetadataPath := ExpandConstant('{tmp}\install-ux-metadata\installer-metadata.json');
+    LastStableCode := 'INSTALL_EMBEDDED_ASSET_VERIFICATION_FAILED';
     RequireEmbeddedFile(ArchivePath, '{#ArchiveSha256}', StrToInt64('{#ArchiveSize}'));
     RequireEmbeddedFile(ManifestPath, '{#ManifestSha256}', StrToInt64('{#ManifestSize}'));
     RequireEmbeddedFile(InventoryPath, '{#InventorySha256}', StrToInt64('{#InventorySize}'));
     RequireEmbeddedFile(MetadataPath, '{#MetadataSha256}', StrToInt64('{#MetadataSize}'));
 
     SetStage('准备程序文件', 2);
+    LastStableCode := 'INSTALL_ARCHIVE_EXTRACTION_FAILED';
     RawDir := BundleRoot + '\raw';
     ForceDirectories(RawDir);
     ExtractArchive(ArchivePath, RawDir, '', True, nil);
 
     SetStage('初始化企业数据库', 3);
+    LastStableCode := 'INSTALL_SETUP_BRIDGE_FAILED';
     if not RunBridge(LastStableCode) then begin
       Result := '安装未完成，系统已恢复到安全状态。' + #13#10 +
         '错误代码：' + LastStableCode;
