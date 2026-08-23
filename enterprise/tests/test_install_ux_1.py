@@ -324,6 +324,32 @@ def test_installer_source_is_single_user_gui_and_keeps_credentials_off_process_s
     assert "Utf8Decode(Value)" in source
     assert "WideCharToMultiByte" not in source
     assert "MultiByteToWideChar" not in source
+    assert "if Pos('INSTALL_', ExceptionCode) = 1 then" in source
+    assert "LastStableCode := ExceptionCode" in source
+    assert "ExtractTemporaryFile('{#ArchiveFilename}')" in source
+    assert "ExtractTemporaryFile('install-ux-bundle\\" not in source
+    assert "MoveExtractedAssetToBundle('{#ArchiveFilename}')" in source
+    assert "WaitForPipeServer(PipeName)" in source
+    assert "WaitNamedPipeW(PipeName, PipeWaitMilliseconds)" not in source
+    assert "Deadline := GetTickCount64 + PipeWaitMilliseconds" in source
+    assert "THandleStream.Create(Handle)" in source
+    assert "WriteAll(Stream, Frame)" in source
+    assert "ReadExact(Stream, 8, Header)" in source
+    assert "PipeExchange(PipeSuffix, Request, Response)" in source
+    assert "function PipeExchange(const PipeSuffix, Request: String; var Response: String): Boolean;" in source
+    assert "LastStableCode := 'INSTALL_SETUP_BRIDGE_REQUEST_BUILD_FAILED';" in source
+    assert "LastStableCode := 'INSTALL_SETUP_BRIDGE_PIPE_NAME_FAILED';" in source
+    assert "IntToStr(GetTickCount64)" in source
+    assert "GetDateTimeString('yyyymmddhhnnsszzz'" not in source
+    assert "INSTALL_SETUP_BRIDGE_PIPE_NOT_READY" in source
+    assert "INSTALL_SETUP_BRIDGE_PIPE_OPEN_FAILED" in source
+    assert "INSTALL_SETUP_BRIDGE_WRITE_FAILED" in source
+    assert "INSTALL_SETUP_BRIDGE_READ_FAILED" in source
+    assert "WriteFile@kernel32.dll" not in source
+    assert "ReadFile@kernel32.dll" not in source
+    files_section = source[source.index("[Files]") : source.index("[Icons]")]
+    assert 'DestDir: "install-ux-bundle"' not in files_section
+    assert 'DestDir: "install-ux-metadata"' not in files_section
     assert "desktopicon" in source
     assert "查看企业版状态.bat" in source
     assert "企业版健康检查.bat" in source

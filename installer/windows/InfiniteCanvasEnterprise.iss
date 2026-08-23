@@ -20,7 +20,6 @@ AppName={#ProductName}
 AppVerName={#ProductNameZh} {#AppVersion}
 AppVersion={#AppVersion}
 AppPublisher=MEIS-DaCaiTou
-AppPublisherURL=https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise
 DefaultDirName={localappdata}\Infinite-Canvas-Enterprise\install
 CreateAppDir=no
 DisableProgramGroupPage=yes
@@ -54,10 +53,10 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; Flags: checkedonce
 Name: "launchafter"; Description: "安装完成后立即启动"; Flags: checkedonce
 
 [Files]
-Source: "{#AssetDir}\{#ArchiveFilename}"; DestDir: "install-ux-bundle"; DestName: "{#ArchiveFilename}"; Flags: dontcopy noencryption notimestamp
-Source: "{#AssetDir}\{#ManifestFilename}"; DestDir: "install-ux-bundle"; DestName: "{#ManifestFilename}"; Flags: dontcopy noencryption notimestamp
-Source: "{#AssetDir}\{#InventoryFilename}"; DestDir: "install-ux-bundle"; DestName: "{#InventoryFilename}"; Flags: dontcopy noencryption notimestamp
-Source: "{#MetadataPath}"; DestDir: "install-ux-metadata"; DestName: "installer-metadata.json"; Flags: dontcopy noencryption notimestamp
+Source: "{#AssetDir}\{#ArchiveFilename}"; Flags: dontcopy noencryption notimestamp
+Source: "{#AssetDir}\{#ManifestFilename}"; Flags: dontcopy noencryption notimestamp
+Source: "{#AssetDir}\{#InventoryFilename}"; Flags: dontcopy noencryption notimestamp
+Source: "{#MetadataPath}"; Flags: dontcopy noencryption notimestamp
 
 [Icons]
 Name: "{autoprograms}\无限画布企业版"; Filename: "{code:GetInstalledEntry|start}"
@@ -96,18 +95,14 @@ function CreateFileW(lpFileName: String; dwDesiredAccess, dwShareMode: Cardinal;
   external 'CreateFileW@kernel32.dll stdcall';
 function WaitNamedPipeW(lpNamedPipeName: String; nTimeOut: Cardinal): Boolean;
   external 'WaitNamedPipeW@kernel32.dll stdcall';
-function WriteFile(hFile: THandle; Buffer: AnsiString; nNumberOfBytesToWrite: Cardinal;
-  var lpNumberOfBytesWritten: Cardinal; lpOverlapped: LongWord): Boolean;
-  external 'WriteFile@kernel32.dll stdcall';
-function ReadFile(hFile: THandle; var Buffer: AnsiString; nNumberOfBytesToRead: Cardinal;
-  var lpNumberOfBytesRead: Cardinal; lpOverlapped: LongWord): Boolean;
-  external 'ReadFile@kernel32.dll stdcall';
 function CloseHandle(hObject: THandle): Boolean;
   external 'CloseHandle@kernel32.dll stdcall';
 function GetDriveTypeW(lpRootPathName: String): Cardinal;
   external 'GetDriveTypeW@kernel32.dll stdcall';
 function GetFileAttributesW(lpFileName: String): Cardinal;
   external 'GetFileAttributesW@kernel32.dll stdcall';
+function GetTickCount64: Int64;
+  external 'GetTickCount64@kernel32.dll stdcall';
 function UTF8Bytes(const Value: String): AnsiString;
 begin
   Result := Utf8Encode(Value);
@@ -168,65 +163,88 @@ begin
     JsonEscape(CredentialPage.Values[0]) + '"}';
 end;
 
-function WriteAll(Handle: THandle; const Data: AnsiString): Boolean;
+function WriteAll(Stream: THandleStream; const Data: AnsiString): Boolean;
 var
-  Offset, Written: Cardinal;
+  Offset, Written: Integer;
   Chunk: AnsiString;
 begin
   Result := False;
   Offset := 1;
-  while Offset <= Cardinal(Length(Data)) do begin
+  while Offset <= Length(Data) do begin
     Chunk := Copy(Data, Offset, 4096);
-    Written := 0;
-    if not WriteFile(Handle, Chunk, Length(Chunk), Written, 0) then exit;
-    if Written = 0 then exit;
+    Written := Stream.Write(Chunk, Length(Chunk));
+    if Written <= 0 then exit;
     Offset := Offset + Written;
   end;
   Result := True;
 end;
 
-function ReadExact(Handle: THandle; Count: Cardinal; var Data: AnsiString): Boolean;
+function ReadExact(Stream: THandleStream; Count: Integer; var Data: AnsiString): Boolean;
 var
-  Received: Cardinal;
+  Received: Integer;
   Chunk: AnsiString;
 begin
   Result := False;
   Data := '';
-  while Cardinal(Length(Data)) < Count do begin
-    SetLength(Chunk, Count - Cardinal(Length(Data)));
-    Received := 0;
-    if not ReadFile(Handle, Chunk, Length(Chunk), Received, 0) then exit;
-    if Received = 0 then exit;
+  while Length(Data) < Count do begin
+    SetLength(Chunk, Count - Length(Data));
+    Received := Stream.Read(Chunk, Length(Chunk));
+    if Received <= 0 then exit;
     SetLength(Chunk, Received);
     Data := Data + Chunk;
   end;
   Result := True;
 end;
 
+function WaitForPipeServer(const PipeName: String): Boolean;
+var
+  Deadline: Int64;
+begin
+  Result := False;
+  Deadline := GetTickCount64 + PipeWaitMilliseconds;
+  repeat
+    if WaitNamedPipeW(PipeName, 250) then begin
+      Result := True;
+      exit;
+    end;
+    Sleep(50);
+  until GetTickCount64 >= Deadline;
+end;
+
 function PipeExchange(const PipeSuffix, Request: String; var Response: String): Boolean;
 var
   PipeName: String;
   Handle: THandle;
+  Stream: THandleStream;
   Payload, Frame, Header, ResponseBytes: AnsiString;
   ResponseLength: Integer;
 begin
   Result := False;
   PipeName := '\\.\pipe\InfiniteCanvasEnterprise-InstallUX1-' + PipeSuffix;
-  if not WaitNamedPipeW(PipeName, PipeWaitMilliseconds) then exit;
+  LastStableCode := 'INSTALL_SETUP_BRIDGE_PIPE_NOT_READY';
+  if not WaitForPipeServer(PipeName) then exit;
+  LastStableCode := 'INSTALL_SETUP_BRIDGE_PIPE_OPEN_FAILED';
   Handle := CreateFileW(PipeName, GENERIC_READ or GENERIC_WRITE, 0, 0, OPEN_EXISTING, 0, 0);
   if Handle = INVALID_HANDLE_VALUE then exit;
+  Stream := THandleStream.Create(Handle);
   try
     Payload := UTF8Bytes(Request);
+    LastStableCode := 'INSTALL_SETUP_BRIDGE_REQUEST_INVALID';
     if (Length(Payload) < 1) or (Length(Payload) > MaxFrameBytes) then exit;
     Frame := AnsiString(HexFixed(Length(Payload), 8)) + Payload;
-    if not WriteAll(Handle, Frame) then exit;
-    if not ReadExact(Handle, 8, Header) then exit;
+    LastStableCode := 'INSTALL_SETUP_BRIDGE_WRITE_FAILED';
+    if not WriteAll(Stream, Frame) then exit;
+    LastStableCode := 'INSTALL_SETUP_BRIDGE_READ_FAILED';
+    if not ReadExact(Stream, 8, Header) then exit;
     ResponseLength := StrToIntDef('$' + String(Header), -1);
+    LastStableCode := 'INSTALL_SETUP_BRIDGE_RESPONSE_INVALID';
     if (ResponseLength < 1) or (ResponseLength > MaxFrameBytes) then exit;
-    if not ReadExact(Handle, ResponseLength, ResponseBytes) then exit;
+    LastStableCode := 'INSTALL_SETUP_BRIDGE_READ_FAILED';
+    if not ReadExact(Stream, ResponseLength, ResponseBytes) then exit;
     Response := UTF8Text(ResponseBytes);
     Result := True;
   finally
+    Stream.Free;
     CloseHandle(Handle);
   end;
 end;
@@ -325,14 +343,24 @@ begin
     RaiseException('INSTALL_EMBEDDED_ASSET_HASH_MISMATCH');
 end;
 
+procedure MoveExtractedAssetToBundle(const FileName: String);
+var
+  SourcePath, TargetPath: String;
+begin
+  SourcePath := AddBackslash(ExpandConstant('{tmp}')) + FileName;
+  TargetPath := AddBackslash(BundleRoot) + FileName;
+  if not RenameFile(SourcePath, TargetPath) then
+    RaiseException('INSTALL_EMBEDDED_ASSET_EXTRACTION_FAILED');
+end;
+
 function BuildPipeSuffix: String;
 begin
   Result := Lowercase(Copy(GetSHA256OfUnicodeString(
-    GetDateTimeString('yyyymmddhhnnsszzz', '', '') + '|' +
+    IntToStr(GetTickCount64) + '|' +
     IntToStr(Random(2147483647)) + '|' + ExpandConstant('{tmp}')), 1, 32));
 end;
 
-function RunBridge(var StableCode: String): Boolean;
+function RunBridge: Boolean;
 var
   RawRoot, PythonExe, BridgePath, PipeSuffix, Parameters: String;
   Request, Response: String;
@@ -343,25 +371,26 @@ begin
   PythonExe := RawRoot + '\python\python.exe';
   BridgePath := RawRoot + '\enterprise\install_setup_bridge.py';
   if not FileExists(PythonExe) or not FileExists(BridgePath) then begin
-    StableCode := 'INSTALL_BOOTSTRAP_INVALID';
+    LastStableCode := 'INSTALL_BOOTSTRAP_INVALID';
     exit;
   end;
+  LastStableCode := 'INSTALL_SETUP_BRIDGE_PIPE_NAME_FAILED';
   PipeSuffix := BuildPipeSuffix;
   Parameters := '-I -B "' + BridgePath + '" --pipe-name ' + PipeSuffix;
+  LastStableCode := 'INSTALL_SETUP_BRIDGE_LAUNCH_FAILED';
   if not Exec(PythonExe, Parameters, RawRoot, SW_HIDE, ewNoWait, ProcessResult) then begin
-    StableCode := 'INSTALL_SETUP_BRIDGE_LAUNCH_FAILED';
     exit;
   end;
+  LastStableCode := 'INSTALL_SETUP_BRIDGE_REQUEST_BUILD_FAILED';
   Request := RequestJson;
   CredentialPage.Values[1] := '';
   CredentialPage.Values[2] := '';
   if not PipeExchange(PipeSuffix, Request, Response) then begin
     Request := '';
-    StableCode := 'INSTALL_SETUP_BRIDGE_COMMUNICATION_FAILED';
     exit;
   end;
   Request := '';
-  StableCode := ExtractCode(Response);
+  LastStableCode := ExtractCode(Response);
   Result := Pos('"status":"succeeded"', Response) > 0;
   Response := '';
 end;
@@ -441,7 +470,7 @@ end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
-  MetadataPath, ArchivePath, ManifestPath, InventoryPath, RawDir: String;
+  MetadataPath, ArchivePath, ManifestPath, InventoryPath, RawDir, ExceptionCode: String;
 begin
   Result := '';
   LastStableCode := 'INSTALL_SETUP_FAILED';
@@ -453,14 +482,20 @@ begin
     if HasExistingReparseLeaf(ExpandConstant('{tmp}')) then
       RaiseException('INSTALL_TEMP_ROOT_UNSAFE');
     LastStableCode := 'INSTALL_EMBEDDED_ASSET_EXTRACTION_FAILED';
-    ExtractTemporaryFile('install-ux-bundle\{#ArchiveFilename}');
-    ExtractTemporaryFile('install-ux-bundle\{#ManifestFilename}');
-    ExtractTemporaryFile('install-ux-bundle\{#InventoryFilename}');
-    ExtractTemporaryFile('install-ux-metadata\installer-metadata.json');
+    ExtractTemporaryFile('{#ArchiveFilename}');
+    ExtractTemporaryFile('{#ManifestFilename}');
+    ExtractTemporaryFile('{#InventoryFilename}');
+    ExtractTemporaryFile('installer-metadata.json');
+    if DirExists(BundleRoot) then
+      RaiseException('INSTALL_TEMP_ROOT_UNSAFE');
+    ForceDirectories(BundleRoot);
+    MoveExtractedAssetToBundle('{#ArchiveFilename}');
+    MoveExtractedAssetToBundle('{#ManifestFilename}');
+    MoveExtractedAssetToBundle('{#InventoryFilename}');
     ArchivePath := BundleRoot + '\{#ArchiveFilename}';
     ManifestPath := BundleRoot + '\{#ManifestFilename}';
     InventoryPath := BundleRoot + '\{#InventoryFilename}';
-    MetadataPath := ExpandConstant('{tmp}\install-ux-metadata\installer-metadata.json');
+    MetadataPath := ExpandConstant('{tmp}\installer-metadata.json');
     LastStableCode := 'INSTALL_EMBEDDED_ASSET_VERIFICATION_FAILED';
     RequireEmbeddedFile(ArchivePath, '{#ArchiveSha256}', StrToInt64('{#ArchiveSize}'));
     RequireEmbeddedFile(ManifestPath, '{#ManifestSha256}', StrToInt64('{#ManifestSize}'));
@@ -475,7 +510,7 @@ begin
 
     SetStage('初始化企业数据库', 3);
     LastStableCode := 'INSTALL_SETUP_BRIDGE_FAILED';
-    if not RunBridge(LastStableCode) then begin
+    if not RunBridge then begin
       Result := '安装未完成，系统已恢复到安全状态。' + #13#10 +
         '错误代码：' + LastStableCode;
       exit;
@@ -484,9 +519,9 @@ begin
     SetStage('配置运行环境', 5);
     SetStage('完成安装', 6);
   except
-    LastStableCode := GetExceptionMessage;
-    if Pos('INSTALL_', LastStableCode) <> 1 then
-      LastStableCode := 'INSTALL_SETUP_FAILED';
+    ExceptionCode := GetExceptionMessage;
+    if Pos('INSTALL_', ExceptionCode) = 1 then
+      LastStableCode := ExceptionCode;
     Result := '安装未完成，系统已恢复到安全状态。' + #13#10 +
       '错误代码：' + LastStableCode;
   finally
