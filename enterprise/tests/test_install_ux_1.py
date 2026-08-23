@@ -21,6 +21,7 @@ from enterprise.install_setup_bridge import (
     _decode_request,
     _encode_frame,
     _paths_overlap,
+    _release_asset_directory,
     _serve_once,
     _validated_install_root,
 )
@@ -132,6 +133,18 @@ def test_target_overlap_and_network_are_rejected(
         )
     assert _paths_overlap(raw, raw / "child") is True
     assert _paths_overlap(raw, tmp_path / "other") is False
+
+
+def test_setup_asset_directory_is_derived_from_private_bundle_topology(tmp_path: Path) -> None:
+    asset_root = tmp_path / "install-ux-bundle"
+    raw_app_root = asset_root / "raw" / "release-id"
+    raw_app_root.mkdir(parents=True)
+    assert _release_asset_directory(raw_app_root) == asset_root
+
+    invalid = tmp_path / "untrusted" / "raw" / "release-id"
+    invalid.mkdir(parents=True)
+    with pytest.raises(SetupBridgeError, match="INSTALL_RELEASE_ASSETS_REQUIRED"):
+        _release_asset_directory(invalid)
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows named-pipe contract")

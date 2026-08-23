@@ -246,24 +246,29 @@ def _validated_install_root(
     return target
 
 
+def _release_asset_directory(raw_app_root: Path) -> Path:
+    """Resolve the Setup-owned three-asset directory without user discovery."""
+
+    raw_root = raw_app_root.parent
+    asset_root = raw_root.parent
+    if raw_root.name != "raw" or asset_root.name != "install-ux-bundle":
+        raise SetupBridgeError("INSTALL_RELEASE_ASSETS_REQUIRED")
+    if not _safe_existing_path(asset_root, directory=True):
+        raise SetupBridgeError("INSTALL_RELEASE_ASSETS_REQUIRED")
+    return asset_root
+
+
 def _run_install_request(
     request: dict[str, object],
     *,
     raw_app_root: Path,
 ) -> dict[str, object]:
-    from enterprise.install_cli import discover_release_asset_directory
     from enterprise.fresh_install import install_greenfield, verify_release_assets
     from enterprise.runtime.portable import windows_local_app_data_known_folder
 
     known_folder = windows_local_app_data_known_folder()
-    assets = discover_release_asset_directory(
-        raw_app_root,
-        verify=verify_release_assets,
-        input_func=lambda _prompt: (_ for _ in ()).throw(
-            SetupBridgeError("INSTALL_RELEASE_ASSETS_REQUIRED")
-        ),
-        emit=lambda _payload: None,
-    )
+    assets = _release_asset_directory(raw_app_root)
+    verify_release_assets(assets)
     target = _validated_install_root(
         request,
         raw_app_root=raw_app_root,
