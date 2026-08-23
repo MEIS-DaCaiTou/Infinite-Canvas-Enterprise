@@ -96,9 +96,21 @@ def _sanitize_python_environment() -> None:
     sys.dont_write_bytecode = True
 
 
-def _bootstrap_identity(script_path: Path) -> Path:
+def _bootstrap_fixed_install_entry(
+    script_path: Path,
+    *,
+    expected_name: str,
+    additional_required_files: tuple[str, ...] = (),
+) -> Path:
+    """Validate a fixed-Python install entry before enterprise imports.
+
+    The console installer and the one-shot GUI setup bridge intentionally
+    share this small stdlib-only identity gate.  It does not perform install
+    business logic and it never falls back to an ambient interpreter.
+    """
+
     script = script_path.absolute()
-    if not _safe_existing_path(script, directory=False) or script.name != "install_cli.py":
+    if not _safe_existing_path(script, directory=False) or script.name != expected_name:
         raise InstallCliError("INSTALL_BOOTSTRAP_INVALID")
     app_root = script.parent.parent
     expected_python = app_root / "python" / "python.exe"
@@ -114,6 +126,7 @@ def _bootstrap_identity(script_path: Path) -> Path:
         (app_root / "runtime-manifest.json", False),
         (app_root / "VERSION", False),
         (app_root / "首次安装企业版.bat", False),
+        *((app_root / relative, False) for relative in additional_required_files),
     ):
         if not _safe_existing_path(path, directory=directory):
             raise InstallCliError("INSTALL_BOOTSTRAP_INVALID")
@@ -125,6 +138,10 @@ def _bootstrap_identity(script_path: Path) -> Path:
     if not 1 <= manifest_size <= 1024 * 1024 or not 1 <= version_size <= 128:
         raise InstallCliError("INSTALL_BOOTSTRAP_INVALID")
     return app_root
+
+
+def _bootstrap_identity(script_path: Path) -> Path:
+    return _bootstrap_fixed_install_entry(script_path, expected_name="install_cli.py")
 
 
 def discover_release_asset_directory(

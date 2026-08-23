@@ -1,0 +1,16 @@
+{
+  "compiler_architecture": "x64",
+  "compiler_closure": {
+    "ISCC.exe": "d06ebd38f38e3cee60a3c50cc45bd449d77e0bc6a5cabc607ea9886808e4de1a",
+    "ISCmplr.dll": "a7a58961ca61bfb2570e66a29b40021b887c9a41d3cbf3ae79611538257864ee",
+    "Setup.e64": "ad12a06d09afefa9d1283c6616ef4d56289dc14a7137a12b24653a12637216bb"
+  },
+  "compiler_entry": "ISCC.exe",
+  "license": "Inno Setup License",
+  "official_installer_filename": "innosetup-7.1.0-x64.exe",
+  "official_installer_sha256": "0362a383ed217d4c4239b5933866dd96d3eb2102737da92f80f6057a4b40df2f",
+  "official_installer_url": "https://github.com/jrsoftware/issrc/releases/download/is-7_1_0/innosetup-7.1.0-x64.exe",
+  "publisher": "Pyrsys B.V.",
+  "schema_version": "install-ux-1-inno-toolchain-policy-v1",
+  "version": "7.1.0"
+}

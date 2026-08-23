@@ -1,0 +1,35 @@
+{
+  "archive_safety": {
+    "allow_ads": false,
+    "allow_absolute_paths": false,
+    "allow_casefold_collisions": false,
+    "allow_device_names": false,
+    "allow_duplicate_paths": false,
+    "allow_reparse_entries": false,
+    "allow_traversal": false,
+    "maximum_entries": 20000,
+    "maximum_uncompressed_bytes": 4294967296
+  },
+  "credential_channel": {
+    "encoding": "utf-8",
+    "frame_header": "8-byte lowercase hexadecimal length",
+    "maximum_payload_bytes": 16384,
+    "pipe_instances": 1,
+    "request_schema": "install-ux-1-request-v1",
+    "result_schema": "install-ux-1-result-v1",
+    "scope": "current-user-only"
+  },
+  "core_asset_count": 3,
+  "core_asset_names": [
+    "ops-release-manifest-v2.json",
+    "release-payload-inventory.json"
+  ],
+  "default_install_relative": "Infinite-Canvas-Enterprise/install",
+  "installer_architecture": "x64",
+  "installer_filename_pattern": "Infinite-Canvas-Enterprise-Setup-<version>-x64.exe",
+  "installer_source": "installer/windows/InfiniteCanvasEnterprise.iss",
+  "privileges": "current-user-lowest",
+  "schema_version": "install-ux-1-build-policy-v1",
+  "security_authority": "enterprise.fresh_install.install_greenfield",
+  "uninstaller_created": false
+}
