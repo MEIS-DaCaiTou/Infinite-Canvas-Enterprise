@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
+import io
 import json
 import os
 import shutil
@@ -218,8 +220,9 @@ def build(args: argparse.Namespace) -> dict[str, object]:
     commit, tree = _require_clean_repo(repo)
 
     sys.path.insert(0, os.fspath(repo))
-    from enterprise.fresh_install import verify_release_assets
-    from enterprise.release.release_manifest_v2 import verify_release_manifest_v2
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        from enterprise.fresh_install import verify_release_assets
+        from enterprise.release.release_manifest_v2 import verify_release_manifest_v2
 
     policy_path = repo / "installer" / "windows" / "install-ux-1-build-policy.json"
     tool_policy_path = repo / "installer" / "windows" / "inno-setup-toolchain-policy.json"
