@@ -573,10 +573,13 @@ def _flow_for_operation(file: str, symbol: str) -> str:
     if file in {
         "enterprise/release/release_builder_v2.py",
         "enterprise/release/release_manifest_v2.py",
+        "tools/build_install_ux_1.py",
     }:
         # OPS Release Manifest v2 writes only into a caller-owned new build or
-        # fixture-materialization root. Keep it distinct from APP_ROOT runtime
-        # writes and from the Python Runtime builder represented by W43.
+        # fixture-materialization root. INSTALL-UX-1 likewise copies verified
+        # Release assets and compiler output only into caller-owned new
+        # artifact roots. Keep both distinct from APP_ROOT runtime writes and
+        # from the Python Runtime builder represented by W43.
         return "W44"
     if file in {
         "enterprise/ops/update/mvp.py",
@@ -606,7 +609,7 @@ def _flow_for_operation(file: str, symbol: str) -> str:
 # every mapped site as (file, symbol, operation, normalized-call fingerprint,
 # Wxx flow). Line numbers are deliberately excluded, while duplicate identical
 # calls remain duplicate records. Any added/removed/changed call drifts it.
-EXPECTED_SITE_MANIFEST_DIGEST = "b87e15cd6d463a02872d40422af18867dc6587d100f488ac68298006c18bfd8b"
+EXPECTED_SITE_MANIFEST_DIGEST = "6e5abfc4d9589b3e4fb411514fa90216d0564618bb996fa22939539a3f1e95b4"
 
 FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W01", "main.py", "startup_event"),
