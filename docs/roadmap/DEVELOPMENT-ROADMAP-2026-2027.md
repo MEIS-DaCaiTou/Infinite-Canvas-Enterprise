@@ -1,9 +1,9 @@
 # Infinite-Canvas-Enterprise 开发路线图（2026-2027）
 
-更新时间：2026-08-05
-最后一次代码事实核对基线：`main@105f3ca47f81207d2820fbd9acfa0a6d7b65770a`
+更新时间：2026-08-24
+最后一次代码事实核对基线：`42824290c6d778d72f45640dd3e5d640c7ed1a03`（tree `66993a44ca6438b65e1a576ea8dd15c271693d3e`；PR #102 merge `0f2a2676ac0c231f0e722893dab1ced3f13e576d` 具有相同 tree）
 
-当前 repository HEAD 以 GitHub `main` 为准；PR #80 至 PR #90 的已授权 ENV、Runtime、Manifest 和 clean-Windows validation 阶段均已合并。PR #90 merge commit 为 `105f3ca47f81207d2820fbd9acfa0a6d7b65770a`；Candidate 08 已完成独立 W01-W14 `14 PASS / 0 FAIL / 0 BLOCKED`，成为首个接受的不可变 clean-Windows RC。它不是 formal Release、activation、Production Baseline 或生产部署。
+当前 repository HEAD 以 GitHub `main` 为准。ENV/Runtime/Manifest、UPDATE-MVP-1、RELEASE-MVP-1、INSTALL-MVP-1 与 INSTALL-UX-1 Gate A 已完成各自批准范围；INSTALL-UX-1 Gate A 由 PR #102 合并并独立验收。现有公开 `2026.08.4` 仍是严格三资产 Release；Gate B、新版本、正式代码签名、signed public installer、Production Baseline 或生产部署均未获本次收口授权。
 
 当前实施事实以 [CURRENT_PROJECT_STATUS](../CURRENT_PROJECT_STATUS.md) 为准；架构决策以 [ADR 索引](../README.md) 为准。本文负责阶段顺序，不重复定义实现状态。
 
@@ -50,12 +50,14 @@
 | OPS Release Manifest v2 | Repository implementation 已独立验收 | Release candidate payload 可构建、离线验证，portable startup 已绑定 Manifest v2；activation、OPS-3B 与 formal Release 尚未完成。 |
 | ENV-1B3 | 已完成并合并，PR #90 | Candidate 08 在独立 Windows Guest 完成 W01-W14 `14/0/0`，`clean_Windows_validation=true`、`ENV_1B3_completed=true`；不等于 formal Release、Production Baseline 或生产部署。 |
 | UPDATE-MVP-1 | Repository implementation 已独立接受 | 同 Schema/无 migration 的最小页面更新、代码回滚和诊断能力及隔离 Windows WU1/WU2 已通过独立复核；DATA-1 暂停。本项不是完整 OPS-3B/OPS-3C、数据库升级或生产执行。 |
+| INSTALL-MVP-1 | Repository implementation 已合并，公开 `2026.08.4` 已发布 | Greenfield 空环境直接建立当前 Schema、mandatory audit、exactly-one super_admin、immutable APP_ROOT 和 pointer-last；不支持 migration/restore，也不是生产部署。 |
+| INSTALL-UX-1 Gate A | 已合并并独立验收，PR #102 | Inno Setup 单文件 GUI、固定三资产、bundled CP314、current-user named pipe 与唯一 `install_greenfield()` 安全链已进入 main；Gate B、新版本与正式签名均待单独批准。 |
 
 OPS-2A / OPS-2B 已进入 main，项目负责人曾在旧生产侧人工完成 dry-run 和一次单独确认的正式备份。这些是历史运维事实，不代表 restore、upgrade、apply-upgrade 或 rollback 已实现，也不再作为旧到新迁移输入。旧生产 `check-data` warning 和其中的 unowned、orphan map、missing file 不再阻塞新生产基线；旧数据仍未被自动修复或删除。
 
 ## 3. 当前阶段
 
-当前已确认状态为 **ENV-1B1C-B1/B2、ENV-1B2A/B2B、OPS Release Manifest v2 与 ENV-1B3 已完成各自批准范围**。`ENV_1B2_completed=true`、`ENV_1B3_completed=true`、`clean_Windows_validation=true`。UPDATE-MVP-1 repository implementation 及隔离 Windows WU1/WU2 已通过独立复核；DATA-1 暂停。完整 Release activation、OPS-3B、formal Release、Production Baseline 和生产批准仍未完成。
+当前已确认状态为 **ENV-1B1C-B1/B2、ENV-1B2A/B2B、OPS Release Manifest v2、ENV-1B3、UPDATE-MVP-1、INSTALL-MVP-1 与 INSTALL-UX-1 Gate A 已完成各自批准范围**。`ENV_1B2_completed=true`、`ENV_1B3_completed=true`、`clean_Windows_validation=true`。DATA-1 暂停；INSTALL-UX-1 Gate B、完整 Release activation、OPS-3B、Production Baseline 和生产批准仍未完成。
 
 Greenfield Production Baseline 路线按以下顺序执行，后项不能绕过前项门禁：
 
@@ -73,8 +75,8 @@ Greenfield Production Baseline 路线按以下顺序执行，后项不能绕过�
 11. 首个不可变 clean-Windows Release Candidate 已接受；Release Candidate 仍不等于 formal Release 或 Production Baseline。
 12. UPDATE-MVP-1：同 Schema/无 migration 的最小页面更新、代码 Release 自动回滚与 bounded diagnostics；repository implementation 及隔离 Windows WU1/WU2 已独立接受，不代替完整 OPS-3B/OPS-3C。
 13. DATA-1：当前暂停；恢复后实现 Repository、schema version、migration history、新版本 migration compatibility、数据完整性和数据库回滚基础；不迁移或修复旧生产数据。
-14. Fresh Install Bootstrap：面向空环境建立目标 Schema、mandatory audit、首个 `super_admin` 和不可变 lifecycle marker。
-15. 在干净 Windows 环境完成全新安装与初始化验收。
+14. INSTALL-MVP-1 Fresh Install Bootstrap repository implementation 已由 PR #98 合并，公开 `2026.08.4` 已发布；它仍不等于生产部署或 database migration/restore。
+15. INSTALL-UX-1 Gate A 已由 PR #102 合并并独立验收；项目负责人另行批准版本、正式签名与 Gate B 后，才能在干净 Windows 环境验证 signed Setup 全新安装与初始化，且不得修改既有 `2026.08.4`。
 16. 收口 ARCH-3、P0 安全、PERF-1 / OBS-1、浏览器回归和真实 Provider 成功链路。
 17. 使用全新基线数据完成正式 backup 和 restore rehearsal。
 18. OPS-3B repository implementation：实现计划驱动的 apply / switch / health / rollback / restore；不用于旧生产。
@@ -87,7 +89,7 @@ Greenfield Production Baseline 路线按以下顺序执行，后项不能绕过�
 25. Linux 单服务器适配。
 26. PostgreSQL、对象存储、queue、Redis 和多实例按真实需求引入。
 
-第 0 至 12 项已完成各自批准范围；UPDATE-MVP-1 repository implementation 及隔离 Windows WU1/WU2 已独立接受，DATA-1 暂停。此后仍需 Fresh Install Bootstrap、clean-Windows 全新安装/初始化验收、P0/ARCH-3/PERF-1/OBS-1/browser/provider 收口、backup/restore rehearsal、OPS-3B repository implementation、完整 apply/switch/health/rollback/restore rehearsal、Production Baseline 批准和 Greenfield 生产部署。Linux、PostgreSQL、Redis、对象存储、durable queue、多实例、Windows Service、formal Release 和 Production Baseline 当前仍不是已完成能力。
+第 0 至 12 项已完成各自批准范围，第 14 项 Fresh Install repository implementation 已完成；第 13 项 DATA-1 暂停，第 15 项 INSTALL-UX-1 Gate B 尚未开始。此后仍需 P0/ARCH-3/PERF-1/OBS-1/browser/provider 收口、backup/restore rehearsal、OPS-3B repository implementation、完整 apply/switch/health/rollback/restore rehearsal、Production Baseline 批准和 Greenfield 生产部署。Linux、PostgreSQL、Redis、对象存储、durable queue、多实例、Windows Service、项目 Formal Release 和 Production Baseline 当前仍不是已完成能力。
 
 ## 4. 历史拆解参考
 
@@ -204,7 +206,7 @@ DATA-1 服务于全新数据库和未来新版本 migration，不导入旧生产
 建议顺序：
 
 1. Manifest v2 Release builder/verifier、fixed CP314 和首个 clean-Windows immutable Candidate 已完成批准范围；不包含 activation。
-2. 完成 DATA-1 与 Fresh Install Bootstrap，并在 clean Windows 上完成全新安装/初始化验收。
+2. DATA-1 当前暂停；Fresh Install Bootstrap repository implementation 已完成。另行批准 INSTALL-UX-1 Gate B 后，在 clean Windows 上完成 signed Setup 全新安装/初始化验收。
 3. 收口 P0/ARCH-3/PERF-1/OBS-1、browser/provider 门禁。
 4. 使用新基线数据完成 backup / restore rehearsal。
 5. 完成 OPS-3B 仓库实现。
@@ -238,7 +240,7 @@ DATA-1 服务于全新数据库和未来新版本 migration，不导入旧生产
 | --- | --- |
 | ARCH-3 | P0 默认拒绝策略和关键会话安全已建立，现有 A/B/admin 回归可运行。 |
 | DATA-1 migration 实现 | schema / backup / rollback 设计通过，临时数据库测试可重复。 |
-| Fresh Install Bootstrap | 目标 Schema、mandatory audit、首个 super_admin、本机交互和重复执行拒绝设计通过；不得复用 SEC-1B2 的现有 admin 前提。 |
+| INSTALL-UX-1 Gate B | Gate A 已独立验收并合并；项目负责人已分别批准新版本、正式代码签名和 Gate B；签名环境、RFC 3161 与 clean Windows 主机可用。 |
 | OPS-3B repository implementation | 不可变 Release、Manifest v2、DATA-1、Fresh Install Bootstrap、正式 backup、restore rehearsal、migration compatibility 和 Runtime lifecycle 验证已经完成；不使用旧生产数据。 |
 | Production Baseline 批准 | 使用 Fresh Install Bootstrap 建立的全新隔离数据完成 release validation、data-check 以及 OPS-3B apply / switch / health / rollback / restore 演练；旧生产 warning 不作为输入。 |
 | OPS-3B 首次真实生产执行 | Greenfield 新生产已经部署，且项目负责人在生产设备本地对后续正式 Release 另行执行；不得用于旧生产。 |

@@ -1,12 +1,12 @@
 # Infinite Canvas Enterprise 当前项目状态
 
-更新时间：2026-08-14
+更新时间：2026-08-24
 
 ## 1. 当前主线与运行事实
 
 - 企业版仓库：`MEIS-DaCaiTou/Infinite-Canvas-Enterprise`
 - `current_main`：动态 GitHub 事实；每次评审或新任务开始时实时查询 GitHub / `origin/main`，本文档不固定一个永久“当前”的 SHA。
-- `last_verified_code_baseline`：`dc00fdb9c127de927ca898bc65f96c68481dbf56`（tree `8c3fc38905888327f935f47f27137e25c929fbd0`）。PR #95 的产品修复已通过独立代码与 Windows liveness 验收，PR #96 仅修改权威 `VERSION`；merged `main@dc00fdb` 重建为公开 `2026.08.3` 后，Target bytes 经 GitHub 重新下载验证，真实公开 `2026.08.2 -> 2026.08.3` 在线升级最终达到 durable job `SUCCEEDED`、Target health `PASS`。这是最新已验证仓库 / Release 代码基线，不是 Production Baseline。
+- `last_verified_code_baseline`：`42824290c6d778d72f45640dd3e5d640c7ed1a03`（tree `66993a44ca6438b65e1a576ea8dd15c271693d3e`）。这是 PR #102 的 INSTALL-UX-1 Gate A evidence-bearing Head；PR #102 merge commit `0f2a2676ac0c231f0e722893dab1ced3f13e576d` 具有相同 tree。该基线已通过独立 Gate A 代码与开发设备证据验收，但不是 Gate B 签名分发、Production Baseline 或 production validation。
 - `last_documentation_closeout`：PR #91 merge commit `470d48fb1750f04c124385762a5b774754235987`（tree `33dfab2296138698588cc96438fc626b86756021`；docs-only 收口，不改变 `last_verified_code_baseline`）。
 - ENV-1B0 / DOC-2 / DOC-2A：PR #80 已合并，merge commit `be5573ae416b4ce81f8cc26ae282868a7efa7672`；完成架构决策冻结、Greenfield 路线和文档事实同步。
 - ENV-1B1A：PR #81 已合并，merge commit `a53885b026a6c2440acb0fbde72d6571ff6f7723`；APP_ROOT 写入审计、CSS 传递依赖哈希、统一 HTML build ID、确定性 static staging builder、`main.py` 最小不可变 Release 补丁和 Git tracked fingerprint/Wxx 漂移门禁已进入 `main`。
@@ -21,6 +21,8 @@
 - ENV-1B3：PR #90 已合并，merge commit `105f3ca47f81207d2820fbd9acfa0a6d7b65770a`。不可变 Candidate `ice-2026.07.6-7593abdd54db-candidate-08`（Release ID `ice-2026.07.6-7593abdd54db`）在独立物理 Windows Guest 完成 W01-W14：`14 PASS / 0 FAIL / 0 BLOCKED`。最终证据 `ENV-1B3-ice-2026.07.6-7593abdd54db-candidate-08-FINAL-TWO-CASES-WINDOWS-RETEST-EVIDENCE.zip` 为 `32,843` bytes、SHA-256 `5138f17a77b94d16657b138546ab323406c23e0c820a5a3fd751615b2fd90c57`、内部 `34/34`；Candidate 与仓库未被测试主机修改。`Candidate_08_immutable=true`、`Candidate_08_physical_windows_validation_passed=true`、`clean_Windows_validation=true`、`ENV_1B3_completed=true`、`first_clean_Windows_RC_accepted=true`。这不是 formal Release、activation、Production Baseline 或 production validation。详见 [ENV-1B3 实施记录](./env/ENV-1B3-CLEAN-WINDOWS-VALIDATION-AND-RELEASE-CANDIDATE-2026-07.md) 与 [最终验收收口](./env/evidence/ENV-1B3-FINAL-ACCEPTANCE-CLOSEOUT-2026-08-05.md)。
 - UPDATE-MVP-1：最小安全在线更新 repository implementation 已通过独立复核。它只允许 Manifest v2 明确标记的同 Schema/无 migration 单跳，在实时 `system_update` 权限、当前密码确认和单一 durable job 下完成 immutable Release prepare/materialization、one-shot Runtime handoff、expected-current CAS、目标 start/health 与失败代码回滚；同时提供 bounded/redacted diagnostics。隔离 Windows real-process smoke 已证明 WU1 A→B=`SUCCEEDED`、WU2 broken B→A=`ROLLED_BACK`。`UPDATE_MVP_1_repository_implementation=true`、`UPDATE_MVP_1_repository_implementation_independently_accepted=true`、`system_update_super_admin_default=true`、`system_update_admin_explicit_grant_required=true`、`database_migration_supported=false`、`database_restore_supported=false`、`code_release_rollback_supported=true`、`production_touched=false`。DATA-1 已由项目负责人暂停；完整 activation、OPS-3B、formal Release 与生产授权仍未完成。见 [实施记录](./ops/UPDATE-MVP-1-MINIMAL-SAFE-ONLINE-UPDATE-IMPLEMENTATION-2026-08.md)。
 - RELEASE-MVP-1：Gate A repository preparation 与 Gate B 真实 GitHub 发布 / 在线升级闭环均已完成并通过独立验收。公开 `2026.08.2` 使用 bundled CPython `3.14.6` 作为 Source，真实 `GitHubReleasesProvider`、GitHub API 与 HTTPS 下载发现并获取公开 `2026.08.3`；Source 稳定观察 `75.516s`，gateway / upstream restart delta、health failure 与 PID change 均为 `0`。受保护升级链完成 `check -> prepare READY -> wrong-password deny -> password reconfirm -> execute -> handoff -> reconnect -> SUCCEEDED`，最终 `current-release=2026.08.3`、Target health `PASS`，且无旧 owned process、错误 listener、worker 或 active update lock。`RELEASE_MVP_1_completed=true`、`RELEASE_MVP_1_Gate_B_completed=true`、`RELEASE_MVP_1_remote_update_E2E=true`、`RELEASE_MVP_1_independently_accepted=true`、`GitHub_Release_object_created=true`。R3-C R1 已确认旧 `upstream_restarts=1` 是累计计数门禁误用，`ROOT_CAUSE_CLASSIFICATION=HARNESS_GATE_DEFECT`、`new_product_defect_confirmed=false`。公开 `.1/.2/.3` 均保留；`.1` 是历史测试 Release，最终验收 Source / Target 是 `.2 -> .3`。GitHub Release object 不等于项目 Formal Release；`project_formal_Release_created=false`、`Production_Baseline_approved=false`、`production_touched_by_RELEASE_MVP_1=false`。见 [RELEASE-MVP-1 最终记录](./ops/RELEASE-MVP-1-FIRST-REAL-UPGRADEABLE-RELEASE-2026-08.md)。
+- INSTALL-MVP-1：面向空环境的 Greenfield Fresh Install repository implementation 已由 PR #98 合并，后续 PR #99/#100/#101 保留 STAB 运行时契约并修正测试稳定性。公开 `2026.08.4` 已从 `main@fe3fc73b74e0310f9415bc1456b7fe791ef7a0b0` 构建并发布，仍固定为 Release archive、detached Manifest v2、external inventory 三个资产。该能力直接创建当前目标 Schema、mandatory security audit、exactly-one `super_admin`、配置、immutable APP_ROOT 和 pointer-last；不回放历史 migration，不包含 database migration/restore，也不代表 clean isolated Windows 最终安装验收或生产部署。
+- INSTALL-UX-1：Gate A repository implementation 与开发设备证据已独立验收，PR #102 merge `0f2a2676ac0c231f0e722893dab1ced3f13e576d`。仓库已具备 Inno Setup 单文件图形安装器、固定三资产绑定、bundled CP314 `-I -B`、current-user named-pipe credential channel，并继续以 `install_greenfield()` 为唯一安装安全权威；没有第二套 install/update engine。`INSTALL_UX_1_repository_implementation_present=true`、`INSTALL_UX_1_repository_implementation_independently_accepted=true`、`INSTALL_UX_1_Gate_A_completed=true`。仍保持 `signed_public_installer_published=false`、`INSTALL_UX_1_Gate_B_started=false`；版本号、正式签名与 Gate B 均须项目负责人另行批准，现有公开 `2026.08.4` 不得追加或重发 Setup。见 [INSTALL-UX-1 实施记录](./ops/INSTALL-UX-1-SIGNED-ONE-CLICK-WINDOWS-INSTALLER-IMPLEMENTATION-2026-08.md)。
 - PR #90 最终开发侧仓库回归证据：`full_repository_regression_passed=true`、`full_repository_regression_interpreter=CPython 3.11.9 x64`、`passed=739`、`skipped=10`、`failed=0`、`warnings=9`、`interpreter_switching=false`、`github_ci_verified=false`。任务未记录 collected count，不作推断。物理 Guest 使用 fixed CP314 验证正式入口和矩阵，不替代开发解释器上的 enterprise suite。
 - 临时业务测试部署仍为 `Infinite-Canvas-Enterprise-TEST-240f6a2-win-x64.zip`（SHA-256 `7111243ec661d5f1caf90a207161ff1e57d0b46737d5abccdb81b001ffadc3c9`）：Gateway `8000`、upstream `3001` loopback，`LAN_UI_verified=true`。`temporary_test_business_deployment_active=true`、`temporary_test_business_deployment_updated_by_PR84=false`、`controlled_LAN_or_VPN_only=true`、`public_exposure=false`、`copy_to_more_devices=false`、`migration_guarantee=false`；它不是 formal Release 或 Production Baseline。
 - ADR-OPS-007：项目负责人已接受 Greenfield 全新生产路线；旧生产迁移计划取消。
@@ -64,7 +66,7 @@ SEC-1F0 已完成仓库实现和临时数据库验证，由 PR #73 承载。该�
 
 SEC-1C0 已完成仓库实现和临时数据库验证，由 PR #74 承载。该实现增加首次 bootstrap 前的 actor / target 过渡矩阵、READY 敏感治理与 mandatory audit 原子提交、在线角色关闭、旧 mutator 防绕过、TEMP users 防护和最后 active super_admin helper；不代表 production migration 已激活，不代表 super_admin 已创建，也不代表 Capability、Step-up 或 Operation Token 已实现。旧生产仍为历史 LEGACY 状态且不再计划 activation，详细边界见 [SEC-1C0 实施文档](./security/SEC-1C0-SUPER-ADMIN-TRANSITIONAL-PROTECTION-2026-07.md)。
 
-SEC-1B2 已完成仓库实现和临时数据库验证，由 PR #75 承载。该实现增加面向现有 LEGACY 数据库和 active admin 的本机受控 activation plan、正式备份 manifest 与数据库指纹门禁、`BEGIN EXCLUSIVE` 原子迁移、不可变 bootstrap marker、生命周期检查和首次本机 bootstrap runner；代码仍保留，但根据 ADR-OPS-007 不在旧生产执行。SEC-1B2 不是面向空环境的 Fresh Install Bootstrap；后者尚未实现。详细历史实现边界见 [SEC-1B2 实施文档](./security/SEC-1B2-CONTROLLED-ACTIVATION-BOOTSTRAP-2026-07.md) 与 [SEC-1B2 受控 activation runbook](./runbooks/SEC-1B2-PRODUCTION-ACTIVATION-RUNBOOK-2026-07.md)。
+SEC-1B2 已完成仓库实现和临时数据库验证，由 PR #75 承载。该实现增加面向现有 LEGACY 数据库和 active admin 的本机受控 activation plan、正式备份 manifest 与数据库指纹门禁、`BEGIN EXCLUSIVE` 原子迁移、不可变 bootstrap marker、生命周期检查和首次本机 bootstrap runner；代码仍保留，但根据 ADR-OPS-007 不在旧生产执行。SEC-1B2 不是面向空环境的 Fresh Install Bootstrap；后者已由 INSTALL-MVP-1 作为独立 Greenfield 能力实现，且不复用 SEC-1B2 的现有 admin / 历史 migration 前提。详细历史实现边界见 [SEC-1B2 实施文档](./security/SEC-1B2-CONTROLLED-ACTIVATION-BOOTSTRAP-2026-07.md) 与 [SEC-1B2 受控 activation runbook](./runbooks/SEC-1B2-PRODUCTION-ACTIVATION-RUNBOOK-2026-07.md)。
 
 ## 3. 已完成任务一览
 
@@ -109,6 +111,8 @@ SEC-1B2 已完成仓库实现和临时数据库验证，由 PR #75 承载。该�
 | ENV-1B3 | 已完成并合并，PR #90，merge `105f3ca` | Candidate 08 在独立 Windows Guest 完成 W01-W14 `14/0/0`，`clean_Windows_validation=true`、`first_clean_Windows_RC_accepted=true`；仍不是 formal Release、activation、Production Baseline 或生产部署。 |
 | UPDATE-MVP-1 | Repository implementation 已独立接受 | 只支持同 Schema/无 migration 的 Manifest v2 单跳；`super_admin` 默认、admin 显式 `system_update=allow`、密码再确认、durable job、one-shot Runtime handoff、target health 与自动代码回滚已实现；WU1/WU2 隔离 Windows real-process smoke 已接受。DATA-1 暂停；不含 migration、restore、完整 OPS-3B 或生产执行。 |
 | RELEASE-MVP-1 | 已完成并独立验收 | 公开 GitHub Release `2026.08.2 -> 2026.08.3` 已通过真实 Provider/API/HTTPS 在线升级 E2E：durable job `SUCCEEDED`、Target health `PASS`、运行时清理闭合；GitHub Release object 仍不等于项目 Formal Release、Production Baseline 或生产部署。 |
+| INSTALL-MVP-1 | Repository implementation 已合并，公开 `2026.08.4` 已发布 | Greenfield 空环境直接建立当前 Schema、mandatory audit、exactly-one super_admin、immutable Release 和 pointer-last；不支持 migration/restore，也不等于 clean isolated Windows 最终安装验收或生产部署。 |
+| INSTALL-UX-1 Gate A | 已合并并独立验收，PR #102 | 单文件 Inno Setup GUI、固定三资产、bundled CP314、current-user named pipe 与唯一 `install_greenfield()` 安全链已进入 main；Gate B、正式签名、新版本和 signed public installer 均未授权。 |
 
 ## 4. 当前能力矩阵摘要
 
@@ -126,8 +130,8 @@ SEC-1B2 已完成仓库实现和临时数据库验证，由 PR #75 承载。该�
 | API / 工作流权限 | 已分类的高风险设置与功能已有 feature flag + user override + 审计；管理员 bypass 与未分类路由默认策略列入 P0 整改。 |
 | 上游同步 | U-2 已受控同步到 `2026.07.6`，未直接 merge upstream。 |
 | OPS / Runtime | OPS-2A / OPS-2B / OPS-3A、STAB-1 / OPS-L1 和 PR #79 hotfix 已进入 main。已有 `start/stop/restart/status/health`、独立角色恢复、持久日志、runtime state、完整 identity、ACK 和 Job Object。上述能力不代表生产已升级或切换，也不代表 apply-upgrade / restore / rollback、Windows Service、Docker / 1Panel 或 PostgreSQL 已实现。 |
-| 超级管理员 / Capability | SEC-1B1 只建立固定 role 基础，不创建 super_admin，也不实现 Capability；旧生产仍使用历史 `is_admin` 数据。面向新生产空环境的 Fresh Install Bootstrap 尚未实现。 |
-| 强制安全审计 | SEC-1F0 已提供仓库底层和临时数据库证明；旧生产未建表且不再计划 activation，现有在线管理操作仍使用原 `usage_logs`；新生产必须从 Fresh Install Bootstrap 建立 mandatory audit，完整查询 / 导出 / 保留 / 归档仍未实现。 |
+| 超级管理员 / Capability | SEC-1B1 建立固定 role 基础；INSTALL-MVP-1 Greenfield Fresh Install 可在新空环境原子创建 exactly-one super_admin。旧生产仍使用历史 `is_admin` 数据，Capability 仍未实现。 |
+| 强制安全审计 | SEC-1F0 提供仓库底层；INSTALL-MVP-1 Greenfield Fresh Install 直接建立当前 mandatory audit Schema 与 bootstrap event，不回放历史 activation。旧生产未建表且不再计划 activation，完整查询 / 导出 / 保留 / 归档仍未实现。 |
 | ENV / 不可变 Release | ENV-1B0 至 ENV-1B3 均已合并；Candidate 08 已通过独立 clean-Windows W01-W14 `14/0/0`。RELEASE-MVP-1 又完成公开 `.2 -> .3` 真实 GitHub 在线升级 E2E，`RELEASE_MVP_1_completed=true`、`job_state=SUCCEEDED`、`target_health=PASS`。公开 GitHub Release object 仍不是项目 Formal Release 或 Production Baseline；activation、OPS-3B、生产部署和 production approval 均未完成。 |
 
 ## 5. 当前人工确认
@@ -151,7 +155,7 @@ OPS-2A / OPS-2B 旧生产侧历史人工确认：
 
 ## 6. 后续任务队列
 
-ARCH-2A、SEC-1A、SEC-1B1、SEC-1F0、SEC-1C0 和 SEC-1B2 仓库实现已完成。SEC-1B1、SEC-1F0、SEC-1C0 与 SEC-1B2 均不代表 production migration 已激活，也没有创建真实 super_admin。ADR-OPS-007 已取消旧生产数据迁移和原地升级路线；不再计划在旧生产执行 SEC-1B2 activation。SEC-1B2 代码继续保留，但它要求现有 active admin，不是面向空环境的 Fresh Install Bootstrap；Fresh Install Bootstrap 尚未实现。
+ARCH-2A、SEC-1A、SEC-1B1、SEC-1F0、SEC-1C0 和 SEC-1B2 仓库实现已完成。SEC-1B1、SEC-1F0、SEC-1C0 与 SEC-1B2 均不代表 production migration 已激活。ADR-OPS-007 已取消旧生产数据迁移和原地升级路线；不再计划在旧生产执行 SEC-1B2 activation。SEC-1B2 代码继续保留，但它要求现有 active admin；面向空环境的 Fresh Install Bootstrap 已由 INSTALL-MVP-1 独立实现，并由 INSTALL-UX-1 Gate A 提供受控 GUI 编排。上述仓库能力仍未部署到生产。
 
 每个 P0 安全事项必须使用独立 Issue、独立分支和独立 Draft PR，不将全部 P0 项目打包到一个大 PR。
 
@@ -165,8 +169,8 @@ ARCH-2A、SEC-1A、SEC-1B1、SEC-1F0、SEC-1C0 和 SEC-1B2 仓库实现已完成
 6. ENV-1B1C-B2、ENV-1B2B 与 OPS Release Manifest v2 已完成各自 repository/independent-review 门禁；ENV-1B3 已由 PR #90 合并，Candidate 08 完成独立 clean-Windows W01-W14 `14/0/0`，首个不可变 clean-Windows RC 已接受。
 7. UPDATE-MVP-1 repository implementation 已独立接受；RELEASE-MVP-1 已进一步完成公开 `2026.08.2 -> 2026.08.3` 真实 GitHub 在线升级 E2E。该闭环只提供同 Schema/无 migration 单跳与代码 Release 回滚，不等于 OPS-3B、formal activation、项目 Formal Release、Production Baseline 或生产授权。
 8. DATA-1：当前暂停；恢复后建立新生产所需 schema version、migration history、兼容分类和数据完整性基础，不迁移旧生产数据。
-9. 独立设计、实现并验证尚不存在的 Fresh Install Bootstrap。
-10. 在干净 Windows 环境完成全新安装与初始化验收。
+9. INSTALL-MVP-1 Fresh Install repository implementation 与公开 `2026.08.4` 三资产 Release 已完成；INSTALL-UX-1 Gate A repository implementation 已合并并独立验收。
+10. 由项目负责人另行批准版本、正式代码签名与 Gate B 后，从精确 merged main 构建 signed Setup，并在干净 Windows 环境完成全新安装与初始化验收；不得修改或重发既有公开 `2026.08.4`。
 11. 收口 P0 安全、ARCH-3、PERF-1 / OBS-1、浏览器回归和真实 Provider 验收。
 12. 使用全新基线数据完成正式 backup 和 restore rehearsal。
 13. 完成 OPS-3B 仓库实现；OPS-3B 不用于旧生产，当前尚未开始。

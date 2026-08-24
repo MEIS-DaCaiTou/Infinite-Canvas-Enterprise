@@ -1,8 +1,8 @@
 # OPS 路线图（2026-07）
 
-更新时间：2026-08-05
+更新时间：2026-08-24
 
-最后一次代码事实核对基线：`main@105f3ca47f81207d2820fbd9acfa0a6d7b65770a`（PR #90 merge commit）。Manifest v2 不可变 Candidate、fixed CP314、portable lifecycle 与独立 clean-Windows W01-W14 `14/0/0` 前置门禁已完成批准范围；Candidate 08 不是 formal Release、已激活 Release 或 Production Baseline。OPS-3B 尚未开始，其 repository implementation 后置于 DATA-1、Fresh Install Bootstrap、migration compatibility 和新基线 backup/restore rehearsal；随后才使用全新隔离数据执行 controlled apply / switch / health / rollback / restore rehearsal，以验证 OPS-3B repository implementation。生产路线以 [ADR-OPS-007](../decisions/ADR-OPS-007-GREENFIELD-PRODUCTION-BASELINE-AND-LEGACY-NON-MIGRATION-2026-07.md) 为准：不原地升级或迁移旧生产；首次真实 OPS-3B 执行只服务 Greenfield 新生产部署后的版本迭代。完整顺序以 [总体路线图](../roadmap/DEVELOPMENT-ROADMAP-2026-2027.md) 为准。
+最后一次代码事实核对基线：`42824290c6d778d72f45640dd3e5d640c7ed1a03`（tree `66993a44ca6438b65e1a576ea8dd15c271693d3e`；PR #102 merge `0f2a2676ac0c231f0e722893dab1ced3f13e576d` 具有相同 tree）。Manifest v2、fixed CP314、portable lifecycle、独立 clean-Windows W01-W14、Fresh Install repository implementation 与 INSTALL-UX-1 Gate A 已完成各自批准范围。OPS-3B 尚未开始，其 repository implementation 仍后置于 DATA-1、migration compatibility 和新基线 backup/restore rehearsal；随后才使用 Fresh Install 建立的全新隔离数据执行 controlled apply / switch / health / rollback / restore rehearsal。生产路线以 [ADR-OPS-007](../decisions/ADR-OPS-007-GREENFIELD-PRODUCTION-BASELINE-AND-LEGACY-NON-MIGRATION-2026-07.md) 为准：不原地升级或迁移旧生产。INSTALL-UX-1 Gate B、新版本和正式签名是单独分发门禁，不因 Gate A 合并自动开始。
 
 ## 1. OPS 总目标
 
@@ -122,7 +122,7 @@ Implementation details: `docs/ops/OPS-3A-ONLINE-UPDATE-CORE-IMPLEMENTATION-2026-
 
 OPS-3 规划：
 
-- OPS-3B：在 DATA-1、Fresh Install Bootstrap、migration compatibility 和新基线 backup/restore rehearsal 完成后实施 repository capability；随后使用 Fresh Install Bootstrap 建立的全新隔离数据完成 controlled `apply-upgrade`、switch、health、rollback 和 restore 演练，以验证该 implementation；不用于旧生产原地升级。
+- OPS-3B：Fresh Install Bootstrap repository implementation 已完成；仍需在 DATA-1、migration compatibility 和新基线 backup/restore rehearsal 完成后实施 repository capability，随后使用 Fresh Install 建立的全新隔离数据完成 controlled `apply-upgrade`、switch、health、rollback 和 restore 演练；不用于旧生产原地升级。
 - UPDATE-MVP-1：项目负责人已例外前置授权最小 Update Center，只处理 Manifest v2 同 Schema/无 migration 单跳、existing Runtime handoff、代码 Release 回滚与 bounded diagnostics；不包含 database migration/restore、通用 apply engine 或生产执行。
 - OPS-3C：完整 Update Center / allowlisted backend OPS API 仍在 Production Baseline 后单独实施；UPDATE-MVP-1 不等于 OPS-3C 完成。
 - 维护窗口确认。
@@ -132,7 +132,7 @@ OPS-3 规划：
 
 UPDATE-MVP-1 先接入严格受限的网页更新入口；完整 OPS-3C 才扩展通用 allowlisted OPS API。两者都不得执行任意 shell。
 
-不可变 Candidate、Manifest v2、Runtime lifecycle 与 clean-Windows validation 已完成批准范围。项目负责人已授权 UPDATE-MVP-1 优先形成同 Schema/无 migration 单跳与代码回滚，DATA-1 暂停。UPDATE-MVP-1 独立验收后仍须恢复 DATA-1 与 migration compatibility、Fresh Install Bootstrap、新基线正式 backup/restore rehearsal、OPS-3B repository implementation，再以 controlled apply / switch / health / rollback / restore rehearsal 验证 OPS-3B；这些门禁都必须在 Production Baseline 批准前完成。旧生产 OPS-2A / OPS-2B 结果只保留历史证据，不能满足这些门禁。
+不可变 Candidate、Manifest v2、Runtime lifecycle、clean-Windows validation 与 Fresh Install repository implementation 已完成批准范围；INSTALL-UX-1 Gate A 也已独立验收并合并，但 Gate B 尚未授权。DATA-1 暂停；恢复后仍须完成 migration compatibility、新基线正式 backup/restore rehearsal、OPS-3B repository implementation，再以 controlled apply / switch / health / rollback / restore rehearsal 验证 OPS-3B。这些门禁都必须在 Production Baseline 批准前完成，旧生产 OPS-2A / OPS-2B 结果不能替代。
 
 ### Greenfield 新生产 OPS 边界
 
@@ -140,14 +140,14 @@ Production Baseline 获批前必须在干净 Windows 环境使用全新数据库
 
 - 使用已通过 W01-W14 的不可变 Candidate 作为后续全新安装与升级演练输入；该 Candidate 当前未激活或部署。
 - DATA-1、migration compatibility、数据完整性和数据库回滚基础；不迁移或修复旧生产数据。
-- Fresh Install Bootstrap；该能力尚未实现，SEC-1B2 不能替代。
+- INSTALL-MVP-1 Fresh Install Bootstrap repository implementation 已完成；它不复用 SEC-1B2 的现有 admin / 历史 migration 前提，但尚未成为 Production Baseline 或生产部署。
 - 首次启动、status / health 与业务验收。
 - 针对全新基线数据的正式 backup execute 和 restore rehearsal。
 - OPS-3B repository implementation。
 - 使用 Fresh Install Bootstrap 建立的全新隔离数据，完成 Release Candidate 之间的 apply / switch / health / rollback / restore 演练。
 - 配置、数据库、JSON、资源和启动链路恢复验证。
 
-这些是尚未完成的开发或隔离环境基线资格门禁，不表示新生产已经部署或发生生产执行。Production Baseline 获批时必须已经具备经过验证的持续升级和失败恢复能力。OPS-3B 的首次真实生产执行只能发生在 Greenfield 新生产部署后，并由项目负责人在生产设备本地执行；新生产业务验收通过后，旧生产的停止、归档或删除仍需项目负责人单独授权。
+除已经完成的 Fresh Install repository implementation 外，上述其余项目仍是尚未完成的开发或隔离环境基线资格门禁，不表示新生产已经部署或发生生产执行。Production Baseline 获批时必须已经具备经过验证的持续升级和失败恢复能力。OPS-3B 的首次真实生产执行只能发生在 Greenfield 新生产部署后，并由项目负责人在生产设备本地执行；新生产业务验收通过后，旧生产的停止、归档或删除仍需项目负责人单独授权。
 
 ### STAB-1 / OPS-L1 Supervisor Foundation
 

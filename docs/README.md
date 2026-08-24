@@ -1,9 +1,9 @@
 # Infinite Canvas Enterprise 文档索引与事实源
 
-更新时间：2026-08-05
-最后一次独立验证代码基线：`105f3ca47f81207d2820fbd9acfa0a6d7b65770a`（tree `5a5fd040974ca9f74f0b2aa916edbb20c42dbd67`）
+更新时间：2026-08-24
+最后一次独立验证代码基线：`42824290c6d778d72f45640dd3e5d640c7ed1a03`（tree `66993a44ca6438b65e1a576ea8dd15c271693d3e`）
 
-`current_main` 是动态 GitHub 事实，必须在评审或新任务开始时查询 GitHub / `origin/main`，静态文档中的固定 SHA 不得被解释为永久当前值。PR #80 至 #90 的已授权 ENV/Manifest/Windows-validation 阶段均已合并。PR #90 merge commit 为 `105f3ca47f81207d2820fbd9acfa0a6d7b65770a`；Candidate 08 已在独立 Windows Guest 完成 W01-W14 `14 PASS / 0 FAIL / 0 BLOCKED`，`ENV_1B3_completed=true`、`clean_Windows_validation=true`。DATA-1 与 Fresh Install Bootstrap 仍处于讨论和规划阶段，尚未开始实施；formal Release、Release activation、OPS-3B、Production Baseline、生产部署和 production approval 仍未完成。PR #91 merge commit `470d48fb1750f04c124385762a5b774754235987`（tree `33dfab2296138698588cc96438fc626b86756021`）仅为 docs-only 收口，不改变上述最后验证代码基线。
+`current_main` 是动态 GitHub 事实，必须在评审或新任务开始时查询 GitHub / `origin/main`，静态文档中的固定 SHA 不得被解释为永久当前值。INSTALL-MVP-1 Greenfield Fresh Install 已由 PR #98 合并，公开 `2026.08.4` 保持严格三个核心资产；INSTALL-UX-1 Gate A evidence-bearing Head `42824290c6d778d72f45640dd3e5d640c7ed1a03` 已独立验收，并由 PR #102 merge commit `0f2a2676ac0c231f0e722893dab1ced3f13e576d` 以相同 tree 合并。Gate A 只接受 repository implementation、unsigned GUI rehearsal、测试证书结构签名和开发设备 real-process 证据；Gate B、新版本、正式 Authenticode/RFC 3161、signed public installer、Production Baseline、生产部署和 production approval 均未授权。
 
 本索引用于避免当前事实、目标架构、历史实施记录和未来规划相互覆盖。新任务应先读取当前事实源，再按任务域读取 ADR 和专项文档。
 
@@ -33,6 +33,7 @@
 | ENV-1B3 Windows validation | [ENV-1B3 clean Windows validation and Release Candidate](./env/ENV-1B3-CLEAN-WINDOWS-VALIDATION-AND-RELEASE-CANDIDATE-2026-07.md) | PR #90 已合并；Candidate 08 已通过独立 W01-W14 `14/0/0`，但不是 formal Release、activation 或 Production Baseline |
 | ENV-1B3 最终验收收口 | [ENV-1B3 Final Acceptance / Closeout](./env/evidence/ENV-1B3-FINAL-ACCEPTANCE-CLOSEOUT-2026-08-05.md) | 固定 PR #90/main/Candidate/evidence 身份、开发与物理 Windows 证据边界及下一阶段交接 |
 | UPDATE-MVP-1 | [最小安全在线升级与诊断实施记录](./ops/UPDATE-MVP-1-MINIMAL-SAFE-ONLINE-UPDATE-IMPLEMENTATION-2026-08.md) | 同 Schema/无 migration 的 Manifest v2 单跳更新、代码 Release 回滚与 bounded diagnostics；repository implementation 及隔离 Windows WU1/WU2 已独立接受，不是 OPS-3B、formal activation 或生产授权 |
+| INSTALL-UX-1 | [Signed One-Click Windows Installer 实施记录](./ops/INSTALL-UX-1-SIGNED-ONE-CLICK-WINDOWS-INSTALLER-IMPLEMENTATION-2026-08.md) | Gate A repository implementation 已由 PR #102 合并并独立验收；Gate B、新版本、正式签名、clean-Windows signed Setup 和公开安装器仍须单独批准 |
 | ENV-1B1B 路径根与版本指针 | [ENV-1B1B PathRoots 与 Current Release 实施记录](./env/ENV-1B1B-PATH-ROOTS-AND-CURRENT-RELEASE-IMPLEMENTATION-2026-07.md) | 已合并：核心路径迁移和严格 pointer 原语，不等于 activation 或完整只读 APP_ROOT |
 | ENV-1B1C Runtime 入口与自检 | [ENV-1B1C Runtime 入口与自检实施记录](./env/ENV-1B1C-RUNTIME-ENTRYPOINT-SELF-CHECK-IMPLEMENTATION-2026-07.md) | B1 已独立验收；B2 repository implementation 与 D1–D10 实现已通过独立代码审查 |
 | ENV-1B1C-B2 portable lifecycle | [ENV-1B1C-B2 Portable Runtime Lifecycle 实施记录](./env/ENV-1B1C-B2-PORTABLE-RUNTIME-LIFECYCLE-IMPLEMENTATION-2026-07.md) | 固定 launcher、Release identity、STAB-1 integration 与 readiness 的实现和验证边界 |
@@ -60,12 +61,12 @@
 - [ADR-OPS-007：全新生产基线部署与旧生产非迁移](./decisions/ADR-OPS-007-GREENFIELD-PRODUCTION-BASELINE-AND-LEGACY-NON-MIGRATION-2026-07.md)（当前生产路线权威决策）
 - [ADR SEC-1A：超级管理员与高风险治理](./decisions/ADR-SEC-1A-SUPER-ADMIN-CAPABILITY-GOVERNANCE-2026-07.md)
 
-ADR 的 `Accepted` 只表示决策冻结，不表示对应能力已经实现或生产已经采用。ADR-OPS-007 已冻结 Greenfield 全新生产路线，但新生产尚未部署，Fresh Install Bootstrap 尚未实现，旧生产也未因该决策停止或删除。
+ADR 的 `Accepted` 只表示决策冻结，不表示对应能力已经实现或生产已经采用。ADR-OPS-007 已冻结 Greenfield 全新生产路线；Fresh Install Bootstrap repository implementation 已由 INSTALL-MVP-1 完成，但新生产尚未部署，旧生产也未因该决策停止或删除。
 
 ## 专项参考
 
 - Architecture：[architecture/](./architecture/)
-- ENV：ADR-ENV-001 至 ADR-ENV-005 已由 PR #80 冻结；ENV-1B1A 至 ENV-1B3 的已授权 repository/validation 阶段已分别合并。CPython 3.14.6 / cp314、OPS Release Manifest v2 与独立 clean-Windows Candidate 08 均已有对应证据，`ENV_1B2_completed=true`、`ENV_1B3_completed=true`。UPDATE-MVP-1 repository implementation 及隔离 Windows WU1/WU2 已通过独立复核，DATA-1 暂停；完整 activation、OPS-3B、formal Release、Production Baseline 和 production approval 均未完成。
+- ENV：ADR-ENV-001 至 ADR-ENV-005 已由 PR #80 冻结；ENV-1B1A 至 ENV-1B3 的已授权 repository/validation 阶段已分别合并。CPython 3.14.6 / cp314、OPS Release Manifest v2 与独立 clean-Windows Candidate 08 均已有对应证据，`ENV_1B2_completed=true`、`ENV_1B3_completed=true`。UPDATE-MVP-1、INSTALL-MVP-1 与 INSTALL-UX-1 Gate A repository implementation 均已完成相应批准范围；DATA-1 暂停，INSTALL-UX-1 Gate B、完整 activation、OPS-3B、Production Baseline 和 production approval 均未完成。
 - OPS：[ops/](./ops/)
 - Security：[security/](./security/)、[runbooks/](./runbooks/)
 - Upstream：[upstream/](./upstream/)
