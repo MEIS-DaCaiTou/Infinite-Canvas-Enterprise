@@ -75,6 +75,14 @@ def _require_admin_view(request: Request) -> dict:
 
 def _require_update_operator(request: Request) -> dict:
     current = _require_admin_view(request)
+    if current.get("role") != ROLE_SUPER_ADMIN:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "SYSTEM_UPDATE_SUPER_ADMIN_REQUIRED",
+                "message": "System update requires the current super administrator role",
+            },
+        )
     if not ENTERPRISE_UPDATE_ENABLED:
         raise HTTPException(status_code=403, detail={"code": "SYSTEM_UPDATE_EMERGENCY_SWITCH_DISABLED", "message": "System update is disabled"})
     if not edb.can_use_feature(current, "system_update"):

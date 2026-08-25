@@ -1893,40 +1893,33 @@ def get_effective_feature_value(user: dict, feature_key: str) -> dict:
     uid = str((user or {}).get("user_id") or (user or {}).get("id") or "").strip()
     override = get_user_feature_override(uid, key) if uid else None
 
-    # ``system_update`` is deliberately narrower than ordinary feature
-    # switches.  It is the only feature whose activation changes the running
-    # trusted Release, so the legacy blanket administrator bypass must never
-    # authorize it.  Keep the existing flag/override storage model, but bind
-    # this high-risk decision to the current persisted role.
+    # ``system_update`` changes the running trusted Release.  USER-GOV-MVP-1
+    # therefore binds it only to the current persisted super-admin role.
+    # Historical per-user rows remain stored for evidence compatibility but
+    # are deliberately ignored and cannot authorize any account.
     if key == "system_update":
         try:
             role = normalize_role((user or {}).get("role"))
         except ValueError:
             role = None
         global_enabled = bool(flag["enabled"])
-        explicit_admin_allow = bool(
-            role == ROLE_ADMIN
-            and override is not None
-            and override.get("mode") == "allow"
-        )
-        allowed = bool(global_enabled and (role == ROLE_SUPER_ADMIN or explicit_admin_allow))
+        allowed = bool(global_enabled and role == ROLE_SUPER_ADMIN)
         if not global_enabled:
             source = "global_disabled"
         elif role == ROLE_SUPER_ADMIN:
             source = "super_admin"
-        elif explicit_admin_allow:
-            source = "user_override"
         else:
             source = "role_denied"
         return {
             "feature_key": key,
             "allowed": allowed,
-            "mode": override.get("mode") if override else "inherit",
+            "mode": "ignored" if override else "inherit",
             "source": source,
+            "override_ignored": override is not None,
             "global_enabled": global_enabled,
             "default_enabled": bool(flag["default_enabled"]),
-            "updated_by": override.get("updated_by") if override else flag.get("updated_by"),
-            "updated_at": override.get("updated_at") if override else flag.get("updated_at"),
+            "updated_by": flag.get("updated_by"),
+            "updated_at": flag.get("updated_at"),
         }
     if user and bool(user.get("is_admin")):
         return {

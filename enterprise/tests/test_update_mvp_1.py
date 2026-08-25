@@ -496,7 +496,7 @@ def test_update_api_denies_unprivileged_roles_before_provider_or_filesystem(monk
     }
     monkeypatch.setattr(update_api, "ENTERPRISE_UPDATE_ENABLED", True)
     monkeypatch.setattr(update_api.edb, "get_user_by_id", lambda uid: users[uid])
-    monkeypatch.setattr(update_api.edb, "can_use_feature", lambda *_args: False)
+    monkeypatch.setattr(update_api.edb, "can_use_feature", lambda *_args: True)
     monkeypatch.setattr(
         update_api,
         "_provider",
@@ -532,7 +532,7 @@ def test_execute_reconfirms_current_password_without_persisting_it(tmp_path: Pat
     })
     store.write_status(job_id, "READY", actor_user_id="actor-1", result_code="SYSTEM_UPDATE_READY")
     current_user = {
-        "id": "actor-1", "user_id": "actor-1", "username": "admin-a", "role": "admin",
+        "id": "actor-1", "user_id": "actor-1", "username": "admin-a", "role": "super_admin",
         "is_admin": True, "is_active": True, "auth_version": 7, "password_hash": "stored-hash",
     }
     monkeypatch.setattr(update_api, "PATH_ROOTS", roots)
@@ -547,7 +547,7 @@ def test_execute_reconfirms_current_password_without_persisting_it(tmp_path: Pat
         "read_current_release_result_from_state_root",
         lambda _root: SimpleNamespace(raw_sha256="a" * 64, release=SimpleNamespace(release_id="release-A")),
     )
-    principal = {"user_id": "actor-1", "role": "admin", "is_admin": True, "auth_version": 7}
+    principal = {"user_id": "actor-1", "role": "super_admin", "is_admin": True, "auth_version": 7}
     tasks = BackgroundTasks()
     result = asyncio.run(update_api.execute_update(job_id, _Request(principal, {"password": "correct-password"}), tasks))
     assert result["state"] == "UPDATING" and len(tasks.tasks) == 1

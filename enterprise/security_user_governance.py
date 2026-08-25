@@ -1,4 +1,4 @@
-"""SEC-1C0 pre-bootstrap user-governance protections."""
+"""Transactional fixed-role user governance and SEC-1C0 protections."""
 
 import sqlite3
 import time
@@ -45,6 +45,11 @@ class UserGovernancePolicyDenied(UserGovernanceError):
     status_code = 403
     code = "TRANSITIONAL_POLICY_DENIED"
     public_message = "User governance policy denied this operation"
+
+
+class UserGovernancePasswordInvalid(UserGovernancePolicyDenied):
+    code = "CURRENT_PASSWORD_INVALID"
+    public_message = "Current password is incorrect"
 
 
 class UserGovernanceNotFound(UserGovernanceError):
@@ -172,6 +177,12 @@ def _load_actor(conn: sqlite3.Connection, actor_user_id: str) -> dict[str, Any]:
 def _required_actor_auth_version(value: object) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise UserGovernanceStaleSession()
+    return value
+
+
+def _required_target_auth_version(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise UserGovernanceConflict("Target authentication state is stale")
     return value
 
 
@@ -592,6 +603,318 @@ def create_ordinary_user(
         _verify_actor_security_state(conn, actor_raw)
         conn.commit()
         return {"id": candidate_user_id, "username": username}
+    except Exception as exc:
+        _translate_transaction_error(conn, exc)
+    finally:
+        conn.close()
+
+
+def _require_super_admin_role_write(
+    conn: sqlite3.Connection,
+    *,
+    actor: dict[str, Any],
+    auth_version_matches: bool,
+    target_id: str,
+    target_role: str | None,
+    operation: str,
+    current_password: object,
+    super_admin_request: bool = False,
+) -> dict[str, Any]:
+    actor = _authorize_actor(
+        conn,
+        actor=actor,
+        auth_version_matches=auth_version_matches,
+        target_id=target_id,
+        target_role=target_role,
+        operation=operation,
+        super_admin_request=super_admin_request,
+    )
+    if actor["role"] != ROLE_SUPER_ADMIN:
+        raise _commit_denied(
+            conn,
+            actor=actor,
+            target_id=target_id,
+            target_role=target_role,
+            operation=operation,
+            policy_code="super_admin_role_governance_required",
+            super_admin_request=super_admin_request,
+        )
+    if (
+        not isinstance(current_password, str)
+        or not current_password
+        or len(current_password) > 1024
+        or not edb.verify_password(current_password, actor["password_hash"])
+    ):
+        raise _commit_denied(
+            conn,
+            actor=actor,
+            target_id=target_id,
+            target_role=target_role,
+            operation=operation,
+            policy_code="current_password_invalid",
+            super_admin_request=super_admin_request,
+            error_type=UserGovernancePasswordInvalid,
+        )
+    return actor
+
+
+def create_admin_user(
+    *,
+    actor_user_id: str,
+    expected_actor_auth_version: object,
+    username: str,
+    password: str,
+    display_name: str,
+    current_password: object,
+    reason: object,
+) -> dict[str, Any]:
+    """Create one fixed-role administrator under current super-admin authority."""
+    candidate_user_id = uuid.uuid4().hex
+    conn = edb.get_db()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        _require_ready_schema(conn)
+        _require_audit_ready(conn)
+        actor, auth_version_matches = _authenticate_actor(
+            conn,
+            actor_user_id=actor_user_id,
+            expected_actor_auth_version=expected_actor_auth_version,
+        )
+        actor_raw = _load_raw_ready_user(conn, actor["id"])
+        actor = _require_super_admin_role_write(
+            conn,
+            actor=actor,
+            auth_version_matches=auth_version_matches,
+            target_id=candidate_user_id,
+            target_role=None,
+            operation="create_admin",
+            current_password=current_password,
+        )
+        validated_reason = _required_reason(reason)
+        if conn.execute(
+            "SELECT 1 FROM main.users WHERE username = ?",
+            (username,),
+        ).fetchone():
+            raise UserGovernanceUsernameConflict()
+        password_hash = edb._hash_password(password)
+        expected_display_name = display_name or username
+        now = int(time.time() * 1000)
+        cursor = conn.execute(
+            """
+            INSERT INTO main.users (
+                id, username, password_hash, display_name,
+                is_admin, role, auth_version, is_active, created_at,
+                role_updated_at, role_updated_by
+            ) VALUES (?, ?, ?, ?, 1, ?, 1, 1, ?, ?, ?)
+            """,
+            (
+                candidate_user_id,
+                username,
+                password_hash,
+                expected_display_name,
+                ROLE_ADMIN,
+                now,
+                now,
+                actor["id"],
+            ),
+        )
+        _require_affected_row(cursor)
+        _verify_raw_user_fields(
+            conn,
+            candidate_user_id,
+            {
+                "id": candidate_user_id,
+                "username": username,
+                "password_hash": password_hash,
+                "display_name": expected_display_name,
+                "is_admin": 1,
+                "role": ROLE_ADMIN,
+                "auth_version": 1,
+                "is_active": 1,
+                "role_updated_at": now,
+                "role_updated_by": actor["id"],
+            },
+        )
+        _verify_actor_security_state(conn, actor_raw)
+        operation_id = uuid.uuid4().hex
+        context = _audit_context(
+            policy_code="fixed_three_role_create_admin",
+            requested_operation="create_admin",
+            actor_role=actor["role"],
+            target_role=ROLE_ADMIN,
+        )
+        context.update({"previous_role": None, "new_role": ROLE_ADMIN, "account_created": True})
+        _append_audit(
+            conn,
+            action="security.role.change",
+            risk_level="L2",
+            result="success",
+            actor=actor,
+            operation_id=operation_id,
+            target_id=candidate_user_id,
+            reason=validated_reason,
+            context=context,
+        )
+        created = _load_user(conn, candidate_user_id)
+        conn.commit()
+        return {
+            "user": _safe_public_user(created),
+            "operation_id": operation_id,
+        }
+    except Exception as exc:
+        _translate_transaction_error(conn, exc)
+    finally:
+        conn.close()
+
+
+def change_user_role(
+    *,
+    actor_user_id: str,
+    expected_actor_auth_version: object,
+    target_user_id: str,
+    expected_target_auth_version: object,
+    expected_target_role: object,
+    requested_role: object,
+    current_password: object,
+    reason: object,
+) -> dict[str, Any]:
+    """Atomically change only ``user``/``admin`` roles and revoke old sessions."""
+    try:
+        next_role = normalize_role(requested_role)
+    except (TypeError, ValueError) as exc:
+        raise UserGovernanceValidationError("A supported target role is required") from exc
+    requested_super_admin = next_role == ROLE_SUPER_ADMIN
+    conn = edb.get_db()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        _require_ready_schema(conn)
+        _require_audit_ready(conn)
+        actor, auth_version_matches = _authenticate_actor(
+            conn,
+            actor_user_id=actor_user_id,
+            expected_actor_auth_version=expected_actor_auth_version,
+        )
+        actor_raw = _load_raw_ready_user(conn, actor["id"])
+        target = _find_user(conn, target_user_id)
+        actor = _require_super_admin_role_write(
+            conn,
+            actor=actor,
+            auth_version_matches=auth_version_matches,
+            target_id=target_user_id,
+            target_role=target["role"] if target else None,
+            operation="role_change",
+            current_password=current_password,
+            super_admin_request=requested_super_admin,
+        )
+        validated_reason = _required_reason(reason)
+        target = _require_target(target)
+        target_raw = _load_raw_ready_user(conn, target["id"])
+        if actor["id"] == target["id"] or target["role"] == ROLE_SUPER_ADMIN:
+            raise _commit_denied(
+                conn,
+                actor=actor,
+                target_id=target["id"],
+                target_role=target["role"],
+                operation="role_change",
+                policy_code="super_admin_account_protected",
+                super_admin_request=True,
+            )
+        if next_role not in {ROLE_USER, ROLE_ADMIN}:
+            raise _commit_denied(
+                conn,
+                actor=actor,
+                target_id=target["id"],
+                target_role=target["role"],
+                operation="role_change",
+                policy_code="fixed_role_target_invalid",
+                super_admin_request=requested_super_admin,
+            )
+        try:
+            expected_role = normalize_role(expected_target_role)
+        except (TypeError, ValueError) as exc:
+            raise UserGovernanceConflict("Target role state is stale") from exc
+        expected_version = _required_target_auth_version(expected_target_auth_version)
+        if target["role"] != expected_role or target["auth_version"] != expected_version:
+            raise _commit_denied(
+                conn,
+                actor=actor,
+                target_id=target["id"],
+                target_role=target["role"],
+                operation="role_change",
+                policy_code="stale_target_role_state",
+                error_type=UserGovernanceConflict,
+            )
+        if target["role"] == next_role:
+            raise UserGovernanceValidationError("Requested role is already active")
+        now = int(time.time() * 1000)
+        next_version = target["auth_version"] + 1
+        cursor = conn.execute(
+            """
+            UPDATE main.users
+            SET role = ?, is_admin = ?, auth_version = ?,
+                role_updated_at = ?, role_updated_by = ?
+            WHERE id = ? AND role = ? AND auth_version = ?
+            """,
+            (
+                next_role,
+                1 if next_role == ROLE_ADMIN else 0,
+                next_version,
+                now,
+                actor["id"],
+                target["id"],
+                target["role"],
+                target["auth_version"],
+            ),
+        )
+        _require_affected_row(cursor)
+        _verify_raw_user_fields(
+            conn,
+            target["id"],
+            _raw_expected_fields(
+                target_raw,
+                role=next_role,
+                is_admin=1 if next_role == ROLE_ADMIN else 0,
+                auth_version=next_version,
+                role_updated_at=now,
+                role_updated_by=actor["id"],
+            ),
+        )
+        _verify_actor_security_state(conn, actor_raw)
+        operation_id = uuid.uuid4().hex
+        context = _audit_context(
+            policy_code="fixed_three_role_change",
+            requested_operation="role_change",
+            actor_role=actor["role"],
+            target_role=target["role"],
+        )
+        context.update(
+            {
+                "previous_role": target["role"],
+                "new_role": next_role,
+                "previous_auth_version": target["auth_version"],
+                "new_auth_version": next_version,
+            }
+        )
+        _append_audit(
+            conn,
+            action="security.role.change",
+            risk_level="L2",
+            result="success",
+            actor=actor,
+            operation_id=operation_id,
+            target_id=target["id"],
+            reason=validated_reason,
+            context=context,
+        )
+        updated_target = _load_user(conn, target["id"])
+        conn.commit()
+        return {
+            "user": _safe_public_user(updated_target),
+            "operation_id": operation_id,
+            "previous_role": target["role"],
+            "role": next_role,
+            "auth_version": next_version,
+        }
     except Exception as exc:
         _translate_transaction_error(conn, exc)
     finally:

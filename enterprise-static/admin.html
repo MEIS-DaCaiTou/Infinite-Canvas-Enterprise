@@ -111,6 +111,7 @@
       font-size: 10px; font-weight: 900; letter-spacing: .04em;
     }
     .badge-admin  { background: rgba(99,102,241,.1); color: #6366f1; border: 1px solid rgba(99,102,241,.2); }
+    .badge-super-admin { background: rgba(217,119,6,.12); color: #b45309; border: 1px solid rgba(217,119,6,.25); }
     .badge-user   { background: var(--soft); color: var(--muted); border: 1px solid var(--line); }
     .badge-active { background: rgba(34,197,94,.1); color: #16a34a; border: 1px solid rgba(34,197,94,.2); }
     .badge-disabled { background: rgba(239,68,68,.08); color: #ef4444; border: 1px solid rgba(239,68,68,.2); }
@@ -241,7 +242,7 @@
     }
     html.studio-theme-dark .field-frame:focus-within,
     html.theme-dark .field-frame:focus-within { border-color: #f5f6f8; }
-    .field-frame input {
+    .field-frame input, .field-frame select {
       width: 100%; height: 34px; padding: 0 10px;
       border: 0; background: transparent; color: var(--text);
       outline: none; font-size: 13px; font-weight: 600; font-family: inherit;
@@ -340,6 +341,7 @@
           <div class="member-stat-card"><span class="member-stat-label">正常用户</span><strong class="member-stat-value">—</strong></div>
           <div class="member-stat-card"><span class="member-stat-label">已停用</span><strong class="member-stat-value">—</strong></div>
           <div class="member-stat-card"><span class="member-stat-label">管理员</span><strong class="member-stat-value">—</strong></div>
+          <div class="member-stat-card"><span class="member-stat-label">超级管理员</span><strong class="member-stat-value">—</strong></div>
           <div class="member-stat-card"><span class="member-stat-label">当前显示</span><strong class="member-stat-value">—</strong></div>
         </div>
         <div class="member-filter-grid">
@@ -358,8 +360,9 @@
             <span class="field-frame">
               <select id="memberRoleFilter" onchange="applyMemberFilters()">
                 <option value="all" selected>全部角色</option>
+                <option value="super_admin">超级管理员</option>
                 <option value="admin">管理员</option>
-                <option value="user">普通用户</option>
+                <option value="user">普通成员</option>
               </select>
             </span>
           </label>
@@ -582,15 +585,49 @@
       <div class="field-frame"><input type="password" id="newPassword" placeholder="请输入初始密码" /></div>
     </div>
     <div class="field">
-      <label class="checkbox-row">
-        <input type="checkbox" id="newIsAdmin" />
-        设为管理员
-      </label>
+      <span class="label">账号角色</span>
+      <div class="field-frame">
+        <select id="newRole" onchange="syncCreateRoleFields()">
+          <option value="user">普通成员</option>
+          <option value="admin" id="newAdminRoleOption">管理员</option>
+        </select>
+      </div>
+    </div>
+    <div id="createAdminConfirmation" style="display:none;">
+      <div class="field">
+        <span class="label">当前超级管理员密码</span>
+        <div class="field-frame"><input type="password" id="createCurrentPassword" autocomplete="current-password" /></div>
+      </div>
+      <div class="field">
+        <span class="label">创建管理员原因</span>
+        <div class="field-frame"><input type="text" id="createReason" maxlength="2048" placeholder="必填，将写入安全审计" /></div>
+      </div>
     </div>
     <div class="error-inline" id="createError"></div>
     <div class="modal-actions">
       <button class="action-btn" onclick="closeCreateModal()">取消</button>
       <button class="action-btn primary" onclick="submitCreate()">创建</button>
+    </div>
+  </div>
+</div>
+
+<!-- 固定角色变更模态框 -->
+<div class="modal-backdrop" id="roleModal">
+  <div class="modal">
+    <h3>变更成员角色</h3>
+    <p id="roleSubtitle" style="color:var(--muted);font-size:12.5px;font-weight:700;margin-bottom:16px;"></p>
+    <div class="field">
+      <span class="label">当前超级管理员密码</span>
+      <div class="field-frame"><input type="password" id="roleCurrentPassword" autocomplete="current-password" /></div>
+    </div>
+    <div class="field">
+      <span class="label">变更原因</span>
+      <div class="field-frame"><input type="text" id="roleReason" maxlength="2048" placeholder="必填，将与角色变更原子审计" /></div>
+    </div>
+    <div class="error-inline" id="roleError"></div>
+    <div class="modal-actions">
+      <button class="action-btn" onclick="closeRoleModal()">取消</button>
+      <button class="action-btn primary" onclick="submitRoleChange()">确认变更</button>
     </div>
   </div>
 </div>
@@ -654,6 +691,8 @@
 
 <script>
   let _users = [];
+  let _currentUser = null;
+  let _roleTarget = null;
   let _pwdTargetId = null;
   let _profileTargetId = null;
   let _featureFlags = [];
@@ -732,6 +771,33 @@
 
   function boolFlag(value) {
     return value === true || value === 1 || value === '1';
+  }
+
+  function roleOf(user) {
+    const role = String(user?.role || '');
+    if (['user', 'admin', 'super_admin'].includes(role)) return role;
+    return boolFlag(user?.is_admin) ? 'admin' : 'user';
+  }
+
+  function rolePresentation(user) {
+    const role = roleOf(user);
+    if (role === 'super_admin') return { label: '超级管理员', badge: 'badge-super-admin' };
+    if (role === 'admin') return { label: '管理员', badge: 'badge-admin' };
+    return { label: '普通成员', badge: 'badge-user' };
+  }
+
+  function canManageMember(user) {
+    const actorRole = roleOf(_currentUser || {});
+    const targetRole = roleOf(user);
+    if (!_currentUser || user.id === _currentUser.user_id || targetRole === 'super_admin') return false;
+    if (actorRole === 'super_admin') return ['user', 'admin'].includes(targetRole);
+    return actorRole === 'admin' && targetRole === 'user';
+  }
+
+  function canChangeMemberRole(user) {
+    return roleOf(_currentUser || {}) === 'super_admin'
+      && user.id !== _currentUser.user_id
+      && ['user', 'admin'].includes(roleOf(user));
   }
 
   function normalizePageSize(value) {
@@ -849,10 +915,8 @@
     } else if (_memberStatusFilter === 'disabled') {
       users = users.filter(u => !boolFlag(u.is_active));
     }
-    if (_memberRoleFilter === 'admin') {
-      users = users.filter(u => boolFlag(u.is_admin));
-    } else if (_memberRoleFilter === 'user') {
-      users = users.filter(u => !boolFlag(u.is_admin));
+    if (['user', 'admin', 'super_admin'].includes(_memberRoleFilter)) {
+      users = users.filter(u => roleOf(u) === _memberRoleFilter);
     }
     if (_memberSearchQuery) {
       users = users.filter(u => {
@@ -885,13 +949,15 @@
     const total = _users.length;
     const active = _users.filter(u => boolFlag(u.is_active)).length;
     const disabled = total - active;
-    const admins = _users.filter(u => boolFlag(u.is_admin)).length;
+    const admins = _users.filter(u => roleOf(u) === 'admin').length;
+    const superAdmins = _users.filter(u => roleOf(u) === 'super_admin').length;
     const current = filteredUsers.length;
     statsEl.innerHTML = [
       ['全部用户', total],
       ['正常用户', active],
       ['已停用', disabled],
       ['管理员', admins],
+      ['超级管理员', superAdmins],
       ['当前显示', current],
     ].map(([label, value]) => `
       <div class="member-stat-card">
@@ -918,6 +984,14 @@
     } catch (e) { showToast('加载失败: ' + e.message, 'error'); }
   }
 
+  async function loadCurrentUser() {
+    _currentUser = await apiFetch('/enterprise/api/me');
+    const isSuperAdmin = roleOf(_currentUser) === 'super_admin';
+    const updateTab = document.getElementById('updateCenterTab');
+    if (updateTab) updateTab.style.display = isSuperAdmin ? '' : 'none';
+    return _currentUser;
+  }
+
   function renderUsers() {
     const tbody = document.getElementById('userTable');
     const visibleUsers = getFilteredUsers();
@@ -939,23 +1013,27 @@
       const displayName = jsArg(u.display_name || '');
       const usernameHtml = escapeHtml(u.username);
       const displayNameHtml = u.display_name ? escapeHtml(u.display_name) : '—';
-      const isAdmin = boolFlag(u.is_admin);
+      const roleInfo = rolePresentation(u);
+      const role = roleOf(u);
       const isActive = boolFlag(u.is_active);
+      const canManage = canManageMember(u);
+      const canChangeRole = canChangeMemberRole(u);
+      const roleActionLabel = role === 'user' ? '提升为管理员' : '降级为普通成员';
       return `
       <tr class="${isActive ? '' : 'disabled-user-row'}">
         <td class="truncate-cell" style="font-weight:800;" title="${usernameHtml}">${usernameHtml}</td>
         <td class="truncate-cell" style="color:var(--muted);" title="${displayNameHtml === '—' ? '' : displayNameHtml}">${displayNameHtml}</td>
-        <td><span class="badge ${isAdmin ? 'badge-admin' : 'badge-user'}">${isAdmin ? '管理员' : '普通用户'}</span></td>
+        <td><span class="badge ${roleInfo.badge}">${roleInfo.label}</span></td>
         <td><span class="badge ${isActive ? 'badge-active' : 'badge-disabled'}">${isActive ? '正常' : '已禁用'}</span></td>
         <td style="color:var(--muted);font-size:12px;">${fmtDate(u.created_at)}</td>
         <td style="color:var(--muted);font-size:12px;">${fmtDate(u.last_login)}</td>
         <td class="user-actions-cell">
           <div class="row-actions">
-            <button class="row-btn" onclick="openProfileModal('${id}','${username}','${displayName}')">编辑名称</button>
-            <button class="row-btn" onclick="toggleRole('${id}','${username}',${isAdmin})">${isAdmin ? '撤销管理员' : '设为管理员'}</button>
-            <button class="row-btn" onclick="openPwdModal('${id}','${username}')">重置密码</button>
-            <button class="row-btn ${isActive ? 'danger' : ''}" onclick="setUserActive('${id}','${username}',${!isActive})">${isActive ? '禁用' : '启用'}</button>
-            <button class="row-btn" onclick="openImpactModal('${id}','${username}')">影响预览</button>
+            ${canManage ? `<button class="row-btn" onclick="openProfileModal('${id}','${username}','${displayName}')">编辑名称</button>` : ''}
+            ${canChangeRole ? `<button class="row-btn" onclick="openRoleModal('${id}','${username}','${role}',${Number(u.auth_version)})">${roleActionLabel}</button>` : ''}
+            ${canManage ? `<button class="row-btn" onclick="openPwdModal('${id}','${username}')">重置密码</button>` : ''}
+            ${canManage ? `<button class="row-btn ${isActive ? 'danger' : ''}" onclick="setUserActive('${id}','${username}',${!isActive})">${isActive ? '禁用' : '启用'}</button>` : ''}
+            ${canManage ? `<button class="row-btn" onclick="openImpactModal('${id}','${username}')">影响预览</button>` : '<span class="feature-desc">受固定角色策略保护</span>'}
           </div>
         </td>
       </tr>`;
@@ -964,25 +1042,38 @@
 
   // ── 新建用户
   function openCreateModal() {
-    ['newUsername','newDisplayName','newPassword'].forEach(id => document.getElementById(id).value = '');
-    document.getElementById('newIsAdmin').checked = false;
+    ['newUsername','newDisplayName','newPassword','createCurrentPassword','createReason'].forEach(id => document.getElementById(id).value = '');
+    const roleSelect = document.getElementById('newRole');
+    const adminOption = document.getElementById('newAdminRoleOption');
+    const canCreateAdmin = roleOf(_currentUser || {}) === 'super_admin';
+    adminOption.hidden = !canCreateAdmin;
+    adminOption.disabled = !canCreateAdmin;
+    roleSelect.value = 'user';
+    syncCreateRoleFields();
     document.getElementById('createError').textContent = '';
     document.getElementById('createModal').classList.add('show');
     setTimeout(() => document.getElementById('newUsername').focus(), 50);
+  }
+  function syncCreateRoleFields() {
+    const elevated = document.getElementById('newRole').value === 'admin';
+    document.getElementById('createAdminConfirmation').style.display = elevated ? '' : 'none';
   }
   function closeCreateModal() { document.getElementById('createModal').classList.remove('show'); }
   async function submitCreate() {
     const username = document.getElementById('newUsername').value.trim();
     const displayName = document.getElementById('newDisplayName').value.trim();
     const password = document.getElementById('newPassword').value;
-    const isAdmin = document.getElementById('newIsAdmin').checked;
+    const role = document.getElementById('newRole').value;
+    const currentPassword = document.getElementById('createCurrentPassword').value;
+    const reason = document.getElementById('createReason').value.trim();
     const errEl = document.getElementById('createError');
     if (!username || !password) { errEl.textContent = '用户名和密码不能为空'; return; }
     if (password.length < 6) { errEl.textContent = '密码至少6位'; return; }
+    if (role === 'admin' && (!currentPassword || !reason)) { errEl.textContent = '创建管理员必须确认当前密码并填写原因'; return; }
     try {
       await apiFetch('/enterprise/api/users', {
         method: 'POST',
-        body: JSON.stringify({ username, display_name: displayName, password, is_admin: isAdmin }),
+        body: JSON.stringify({ username, display_name: displayName, password, role, current_password: currentPassword, reason }),
       });
       closeCreateModal();
       showToast(`用户 "${username}" 创建成功`);
@@ -1035,19 +1126,40 @@
     } catch (e) { errEl.textContent = e.message; }
   }
 
-  // ── 切换管理员权限
-  async function toggleRole(userId, username, currentIsAdmin) {
-    const newIsAdmin = !currentIsAdmin;
-    const action = newIsAdmin ? '设为管理员' : '撤销管理员权限';
-    if (!confirm(`确认将「${username}」${action}？`)) return;
+  // ── 固定 user/admin 角色变更（仅超级管理员）
+  function openRoleModal(userId, username, currentRole, authVersion) {
+    const nextRole = currentRole === 'user' ? 'admin' : 'user';
+    _roleTarget = { userId, username, currentRole, nextRole, authVersion };
+    document.getElementById('roleSubtitle').textContent = `将「${username}」从 ${rolePresentation({ role: currentRole }).label} 变更为 ${rolePresentation({ role: nextRole }).label}`;
+    document.getElementById('roleCurrentPassword').value = '';
+    document.getElementById('roleReason').value = '';
+    document.getElementById('roleError').textContent = '';
+    document.getElementById('roleModal').classList.add('show');
+    setTimeout(() => document.getElementById('roleCurrentPassword').focus(), 50);
+  }
+  function closeRoleModal() { document.getElementById('roleModal').classList.remove('show'); _roleTarget = null; }
+  async function submitRoleChange() {
+    if (!_roleTarget) return;
+    const currentPassword = document.getElementById('roleCurrentPassword').value;
+    const reason = document.getElementById('roleReason').value.trim();
+    const errEl = document.getElementById('roleError');
+    if (!currentPassword || !reason) { errEl.textContent = '必须确认当前密码并填写变更原因'; return; }
     try {
-      await apiFetch(`/enterprise/api/users/${userId}/role`, {
+      await apiFetch(`/enterprise/api/users/${_roleTarget.userId}/role`, {
         method: 'PUT',
-        body: JSON.stringify({ is_admin: newIsAdmin }),
+        body: JSON.stringify({
+          role: _roleTarget.nextRole,
+          expected_target_role: _roleTarget.currentRole,
+          expected_target_auth_version: _roleTarget.authVersion,
+          current_password: currentPassword,
+          reason,
+        }),
       });
-      showToast(`已${action}：${username}`);
+      const username = _roleTarget.username;
+      closeRoleModal();
+      showToast(`角色已更新：${username}`);
       await loadUsers();
-    } catch (e) { showToast(e.message, 'error'); }
+    } catch (e) { errEl.textContent = e.message; }
   }
 
   // ── 启用 / 禁用用户
@@ -1318,7 +1430,7 @@
     const select = document.getElementById('featureUserSelect');
     const previous = select.value;
     select.innerHTML = '<option value="">选择用户</option>' + _users.map(u => {
-      const label = `${u.username}${u.display_name ? ' (' + u.display_name + ')' : ''}${boolFlag(u.is_admin) ? ' [管理员]' : ''}`;
+      const label = `${u.username}${u.display_name ? ' (' + u.display_name + ')' : ''} [${rolePresentation(u).label}]`;
       return `<option value="${escapeHtml(u.id)}">${escapeHtml(label)}</option>`;
     }).join('');
     if (previous && _users.some(u => u.id === previous)) select.value = previous;
@@ -1407,7 +1519,7 @@
       notice.style.display = allowed ? 'none' : 'block';
       notice.textContent = allowed
         ? ''
-        : '当前账号没有 system_update 明确授权，或系统更新全局总开关已关闭。危险操作已隐藏；后端同样会返回 403。';
+        : '系统升级仅允许超级管理员操作，且全局总开关必须开启。危险操作已隐藏；后端同样会返回 403。';
       document.querySelectorAll('.update-dangerous').forEach(el => { el.style.display = allowed ? 'flex' : 'none'; });
       const rememberedJob = sessionStorage.getItem('enterprise_update_job_id');
       if (rememberedJob && /^[0-9a-f]{32}$/.test(rememberedJob)) {
@@ -1799,7 +1911,15 @@
   }
 
   // ── 初始化
-  loadUsers();
+  async function initializeAdmin() {
+    try {
+      await loadCurrentUser();
+      await loadUsers();
+    } catch (e) {
+      showToast('初始化管理后台失败: ' + e.message, 'error');
+    }
+  }
+  initializeAdmin();
 </script>
 </body>
 </html>
