@@ -6,7 +6,7 @@
 
 - 企业版仓库：`MEIS-DaCaiTou/Infinite-Canvas-Enterprise`
 - `current_main`：动态 GitHub 事实；每次评审或新任务开始时实时查询 GitHub / `origin/main`，本文档不固定一个永久“当前”的 SHA。
-- `last_verified_code_baseline`：`42824290c6d778d72f45640dd3e5d640c7ed1a03`（tree `66993a44ca6438b65e1a576ea8dd15c271693d3e`）。这是 PR #102 的 INSTALL-UX-1 Gate A evidence-bearing Head；PR #102 merge commit `0f2a2676ac0c231f0e722893dab1ced3f13e576d` 具有相同 tree。该基线已通过独立 Gate A 代码与开发设备证据验收，但不是 Gate B 签名分发、Production Baseline 或 production validation。
+- `last_verified_code_baseline`：`860a71004a181d5c48e217964176b7736dcf7025`（tree `6bfefc8a5d2861524498828436385d2568840555`）。这是 PR #105 的 USER-GOV-MVP-1 accepted code/evidence Head；PR #105 merge commit `4d68898fe6c7c5247013aeeee86b3024349e666d` 具有相同 tree。该基线已通过独立权限边界、审计原子性、会话失效和回归证据复核，但不是动态 RBAC、Production Baseline 或 production validation。
 - `last_documentation_closeout`：PR #91 merge commit `470d48fb1750f04c124385762a5b774754235987`（tree `33dfab2296138698588cc96438fc626b86756021`；docs-only 收口，不改变 `last_verified_code_baseline`）。
 - ENV-1B0 / DOC-2 / DOC-2A：PR #80 已合并，merge commit `be5573ae416b4ce81f8cc26ae282868a7efa7672`；完成架构决策冻结、Greenfield 路线和文档事实同步。
 - ENV-1B1A：PR #81 已合并，merge commit `a53885b026a6c2440acb0fbde72d6571ff6f7723`；APP_ROOT 写入审计、CSS 传递依赖哈希、统一 HTML build ID、确定性 static staging builder、`main.py` 最小不可变 Release 补丁和 Git tracked fingerprint/Wxx 漂移门禁已进入 `main`。
@@ -66,7 +66,7 @@ SEC-1F0 已完成仓库实现和临时数据库验证，由 PR #73 承载。该�
 
 SEC-1C0 已完成仓库实现和临时数据库验证，由 PR #74 承载。该实现增加首次 bootstrap 前的 actor / target 过渡矩阵、READY 敏感治理与 mandatory audit 原子提交、在线角色关闭、旧 mutator 防绕过、TEMP users 防护和最后 active super_admin helper；不代表 production migration 已激活，不代表 super_admin 已创建，也不代表 Capability、Step-up 或 Operation Token 已实现。旧生产仍为历史 LEGACY 状态且不再计划 activation，详细边界见 [SEC-1C0 实施文档](./security/SEC-1C0-SUPER-ADMIN-TRANSITIONAL-PROTECTION-2026-07.md)。
 
-USER-GOV-MVP-1 在 READY Schema 上实现固定三角色治理：后台准确展示 `user`、`admin`、`super_admin`；`super_admin` 可创建 admin 并在 user/admin 间变更角色，admin 只能创建和治理普通 user；所有角色写入均要求当前密码、非空原因、目标状态 CAS、同事务 mandatory security audit 与 `auth_version` 会话失效。`super_admin` 本身仍不能通过普通页面创建、改级或删除。该实现不建立动态 RBAC、Capability 平台或组织权限，当前仍等待独立复核。详见 [USER-GOV-MVP-1 实施记录](./security/USER-GOV-MVP-1-FIXED-THREE-ROLE-GOVERNANCE-IMPLEMENTATION-2026-08.md)。
+USER-GOV-MVP-1 已由 PR #105 合并并通过独立复核。在 READY Schema 上，后台准确展示 `user`、`admin`、`super_admin`；`super_admin` 可创建 admin 并在 user/admin 间变更角色，admin 只能创建和治理普通 user；所有角色写入均要求当前密码、非空原因、目标状态 CAS、同事务 mandatory security audit 与 `auth_version` 会话失效。`super_admin` 本身仍不能通过普通页面创建、改级或删除。`USER_GOV_MVP_1_repository_implementation_independently_accepted=true`；该实现不建立动态 RBAC、Capability 平台或组织权限。详见 [USER-GOV-MVP-1 实施记录](./security/USER-GOV-MVP-1-FIXED-THREE-ROLE-GOVERNANCE-IMPLEMENTATION-2026-08.md)。
 
 SEC-1B2 已完成仓库实现和临时数据库验证，由 PR #75 承载。该实现增加面向现有 LEGACY 数据库和 active admin 的本机受控 activation plan、正式备份 manifest 与数据库指纹门禁、`BEGIN EXCLUSIVE` 原子迁移、不可变 bootstrap marker、生命周期检查和首次本机 bootstrap runner；代码仍保留，但根据 ADR-OPS-007 不在旧生产执行。SEC-1B2 不是面向空环境的 Fresh Install Bootstrap；后者已由 INSTALL-MVP-1 作为独立 Greenfield 能力实现，且不复用 SEC-1B2 的现有 admin / 历史 migration 前提。详细历史实现边界见 [SEC-1B2 实施文档](./security/SEC-1B2-CONTROLLED-ACTIVATION-BOOTSTRAP-2026-07.md) 与 [SEC-1B2 受控 activation runbook](./runbooks/SEC-1B2-PRODUCTION-ACTIVATION-RUNBOOK-2026-07.md)。
 
@@ -112,7 +112,7 @@ SEC-1B2 已完成仓库实现和临时数据库验证，由 PR #75 承载。该�
 | OPS Release Manifest v2 | Repository implementation 已独立验收 | Release candidate payload 可确定性构建并离线验证，portable startup 已绑定 Manifest v2；不含 activation、OPS-3B、formal Release 或 production approval。 |
 | ENV-1B3 | 已完成并合并，PR #90，merge `105f3ca` | Candidate 08 在独立 Windows Guest 完成 W01-W14 `14/0/0`，`clean_Windows_validation=true`、`first_clean_Windows_RC_accepted=true`；仍不是 formal Release、activation、Production Baseline 或生产部署。 |
 | UPDATE-MVP-1 | Repository implementation 已独立接受 | 只支持同 Schema/无 migration 的 Manifest v2 单跳；系统升级已收紧为 `super_admin` only，admin 历史 override 保留但无效；密码再确认、durable job、one-shot Runtime handoff、target health 与自动代码回滚已实现；WU1/WU2 隔离 Windows real-process smoke 已接受。DATA-1 暂停；不含 migration、restore、完整 OPS-3B 或生产执行。 |
-| USER-GOV-MVP-1 | Repository implementation present，等待独立复核 | 固定 user/admin/super_admin 三角色；仅 super_admin 可创建 admin 或执行 user/admin 角色变更，admin 只能创建和治理普通 user；角色写入具备密码确认、原因、CAS、原子审计和会话失效，不含动态 RBAC/Capability。 |
+| USER-GOV-MVP-1 | 已合并并通过独立复核，PR #105 | 固定 user/admin/super_admin 三角色；仅 super_admin 可创建 admin 或执行 user/admin 角色变更，admin 只能创建和治理普通 user；角色写入具备密码确认、原因、CAS、原子审计和会话失效，不含动态 RBAC/Capability。 |
 | RELEASE-MVP-1 | 已完成并独立验收 | 公开 GitHub Release `2026.08.2 -> 2026.08.3` 已通过真实 Provider/API/HTTPS 在线升级 E2E：durable job `SUCCEEDED`、Target health `PASS`、运行时清理闭合；GitHub Release object 仍不等于项目 Formal Release、Production Baseline 或生产部署。 |
 | INSTALL-MVP-1 | Repository implementation 已合并，公开 `2026.08.4` 已发布 | Greenfield 空环境直接建立当前 Schema、mandatory audit、exactly-one super_admin、immutable Release 和 pointer-last；不支持 migration/restore，也不等于 clean isolated Windows 最终安装验收或生产部署。 |
 | INSTALL-UX-1 Gate A | 已合并并独立验收，PR #102 | 单文件 Inno Setup GUI、固定三资产、bundled CP314、current-user named pipe 与唯一 `install_greenfield()` 安全链已进入 main；Gate B、正式签名、新版本和 signed public installer 均未授权。 |
