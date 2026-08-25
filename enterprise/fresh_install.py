@@ -30,6 +30,12 @@ from enterprise.migrations.sec_1b2_activation import (
 from enterprise.migrations.sec_1f0_security_audit import (
     inspect_security_audit_schema,
 )
+from enterprise.migrations.versioned import (
+    BASELINE_SCHEMA_VERSION,
+    STATE_READY as VERSIONED_SCHEMA_READY,
+    initialize_schema_metadata_in_transaction,
+    inspect_schema_metadata,
+)
 from enterprise.path_safety import PathSafetyError, assert_no_reparse_ancestors, lexical_path_state
 from enterprise.paths import (
     PathRoots,
@@ -385,6 +391,10 @@ def _create_greenfield_database(
         )
         ensure_security_audit_schema_in_transaction(conn)
         ensure_bootstrap_lifecycle_schema_in_transaction(conn)
+        initialize_schema_metadata_in_transaction(
+            conn,
+            schema_version=BASELINE_SCHEMA_VERSION,
+        )
         marker = (
             1,
             now,
@@ -469,12 +479,19 @@ def _create_greenfield_database(
         role = inspect_role_auth_schema(database_path)
         audit = inspect_security_audit_schema(database_path)
         lifecycle = inspect_bootstrap_lifecycle_schema(database_path)
+        versioned = inspect_schema_metadata(database_path)
         if role.get("current_state") != ROLE_AUTH_READY:
             _fail("INSTALL_ROLE_AUTH_SCHEMA_INVALID")
         if audit.get("current_state") != SECURITY_AUDIT_READY:
             _fail("INSTALL_SECURITY_AUDIT_INVALID")
         if lifecycle.get("current_state") != BOOTSTRAP_READY:
             _fail("INSTALL_BOOTSTRAP_MARKER_INVALID")
+        if (
+            versioned.get("current_state") != VERSIONED_SCHEMA_READY
+            or versioned.get("schema_version") != BASELINE_SCHEMA_VERSION
+            or versioned.get("migration_ids") != []
+        ):
+            _fail("INSTALL_DATABASE_VERSION_METADATA_INVALID")
         with database_path.open("r+b") as handle:
             os.fsync(handle.fileno())
     except FreshInstallError:

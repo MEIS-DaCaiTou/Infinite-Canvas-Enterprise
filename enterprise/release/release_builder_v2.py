@@ -441,14 +441,24 @@ sys.path.insert(0, os.environ["ICE_REPO_ROOT"])
 from enterprise.paths import derive_development_path_roots, resolve_database_path
 import enterprise.config as config
 import enterprise.db as db
+from enterprise.migrations.sec_1b1_role_auth import MIGRATION_ID as ROLE_AUTH_MIGRATION_ID
+from enterprise.migrations.sec_1b2_activation import BOOTSTRAP_MIGRATION_ID, ensure_bootstrap_lifecycle_schema_in_transaction
+from enterprise.migrations.versioned import BASELINE_SCHEMA_VERSION, DEFAULT_MIGRATIONS, initialize_schema_metadata_in_transaction, migration_registry_sha256, schema_objects, schema_snapshot_sha256
+from enterprise.security_audit import SECURITY_AUDIT_MIGRATION_ID, ensure_security_audit_schema_in_transaction
 root=Path(os.environ["ICE_DB_SNAPSHOT_ROOT"])
 roots=derive_development_path_roots(root)
 db.PATH_ROOTS=roots; db.DB_PATH=Path("enterprise.db"); db.ADMIN_USERNAME="manifest_fixture_admin"; db.ADMIN_PASSWORD="fixture-only-not-a-secret"
 db.init_db()
 target=resolve_database_path(roots, db.DB_PATH)
 con=sqlite3.connect(target)
-rows=con.execute("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").fetchall(); con.close()
-payload={"migration_ids":sorted(p.stem for p in (Path(os.environ["ICE_REPO_ROOT"])/"enterprise"/"migrations").glob("*.py") if p.name!="__init__.py"),"objects":[{"name":r[1],"sql":" ".join((r[3] or "").split()),"table":r[2],"type":r[0]} for r in rows],"schema_id":"enterprise-database-contract-v1"}
+con.execute("BEGIN IMMEDIATE")
+ensure_security_audit_schema_in_transaction(con)
+ensure_bootstrap_lifecycle_schema_in_transaction(con)
+initialize_schema_metadata_in_transaction(con, schema_version=BASELINE_SCHEMA_VERSION)
+con.commit()
+objects=schema_objects(con)
+payload={"migration_ids":sorted([ROLE_AUTH_MIGRATION_ID,BOOTSTRAP_MIGRATION_ID,SECURITY_AUDIT_MIGRATION_ID]),"migration_registry_sha256":migration_registry_sha256(DEFAULT_MIGRATIONS),"objects":objects,"schema_id":"enterprise-database-contract-v1","schema_objects_sha256":schema_snapshot_sha256(con),"schema_version":BASELINE_SCHEMA_VERSION,"versioned_migration_ids":[step.migration_id for step in DEFAULT_MIGRATIONS]}
+con.close()
 Path(os.environ["ICE_DB_SNAPSHOT_OUTPUT"]).write_text(json.dumps(payload,ensure_ascii=False,sort_keys=True,separators=(",",":"))+"\n",encoding="utf-8")
 '''
     temp_root = destination.parent / "database-fixture"

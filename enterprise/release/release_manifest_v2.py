@@ -41,6 +41,7 @@ WINDOWS_REPARSE_POINT = 0x0400
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _SHA1 = re.compile(r"^[0-9a-f]{40}$")
 _RELEASE_ID = re.compile(r"^ice-[0-9]{4}\.[0-9]{2}\.[0-9]+-[0-9a-f]{12}$")
+_MIGRATION_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
 _DEVICE_NAMES = frozenset({"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10)), *(f"lpt{i}" for i in range(1, 10))})
 ENTERPRISE_REPOSITORY = "MEIS-DaCaiTou/Infinite-Canvas-Enterprise"
 UPSTREAM_REPOSITORY = "hero8152/Infinite-Canvas"
@@ -942,6 +943,28 @@ def verify_release_manifest_v2(manifest_path: Path, archive_path: Path, inventor
     database_objects = database_payload.get("objects")
     if database_payload.get("schema_id") != "enterprise-database-contract-v1" or database_payload.get("migration_ids") != database_section["migration_ids"] or type(database_objects) is not list or any(type(item) is not dict or set(item) != {"name", "sql", "table", "type"} or any(not isinstance(item[key], str) for key in item) for item in database_objects):
         raise ReleaseManifestV2Error("RELEASE_DATABASE_CONTENT_INVALID")
+    versioned_database_keys = {
+        "schema_version",
+        "schema_objects_sha256",
+        "migration_registry_sha256",
+        "versioned_migration_ids",
+    }
+    present_versioned_keys = versioned_database_keys.intersection(database_payload)
+    if present_versioned_keys:
+        versioned_ids = database_payload.get("versioned_migration_ids")
+        if (
+            present_versioned_keys != versioned_database_keys
+            or type(database_payload.get("schema_version")) is not int
+            or database_payload["schema_version"] < 1
+            or not _SHA256.fullmatch(str(database_payload.get("schema_objects_sha256")))
+            or database_payload["schema_objects_sha256"] != sha256_bytes(canonical_json(database_objects))
+            or not _SHA256.fullmatch(str(database_payload.get("migration_registry_sha256")))
+            or type(versioned_ids) is not list
+            or len(versioned_ids) > 128
+            or len(versioned_ids) != len(set(versioned_ids))
+            or any(not isinstance(item, str) or not _MIGRATION_ID.fullmatch(item) for item in versioned_ids)
+        ):
+            raise ReleaseManifestV2Error("RELEASE_DATABASE_CONTENT_INVALID")
     static_section = manifest.section("static_build")
     actual_static_digest = _static_tree_digest_from_archive(archive_path, str(archive_section["root_prefix"]), inventory)
     if static_payload.get("result") != "pass" or static_payload.get("builder_version") != static_section["builder_version"] or static_payload.get("source_tree_digest") != static_section["source_tree_sha256"] or static_payload.get("output_tree_digest") != static_section["output_tree_sha256"] or static_payload.get("html_build_id") != static_section["html_build_id"] or actual_static_digest != static_section["output_tree_sha256"]:
