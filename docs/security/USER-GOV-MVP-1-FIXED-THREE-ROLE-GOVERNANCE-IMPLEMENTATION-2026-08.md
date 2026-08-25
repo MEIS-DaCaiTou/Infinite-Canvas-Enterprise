@@ -6,9 +6,9 @@
 
 `USER_GOV_MVP_1_repository_implementation_present=true`
 
-`USER_GOV_MVP_1_repository_implementation_independently_accepted=false`
+`USER_GOV_MVP_1_repository_implementation_independently_accepted=true`
 
-本阶段仅实现固定 `user`、`admin`、`super_admin` 三角色治理，以及 `super_admin` only 的系统升级授权。当前实现仍在 Draft PR 中等待独立复核；本文不声称已经合并、生产部署或获得生产授权。
+本阶段仅实现固定 `user`、`admin`、`super_admin` 三角色治理，以及 `super_admin` only 的系统升级授权。accepted code/evidence Head 为 `860a71004a181d5c48e217964176b7736dcf7025`（tree `6bfefc8a5d2861524498828436385d2568840555`）；PR #105 merge commit `4d68898fe6c7c5247013aeeee86b3024349e666d` 具有相同 tree。repository implementation 已合并并通过独立复核；本文不声称生产部署或获得生产授权。
 
 本阶段不引入动态角色、可配置 RBAC、Capability 平台、组织层级、DATA-1、数据库 migration/restore、OPS-3B 或第二套 Runtime/update engine。
 
@@ -62,7 +62,7 @@
 - 历史 system_update override 保留但不生效、不可新增/删除且不出现在普通 readback；
 - UPDATE-MVP-1、SEC-1B1、SEC-1C0、SEC-1F0、Manifest v2、current-release、portable lifecycle、STAB-1 与 OPS 相关回归。
 
-最终测试计数与 Head 身份将在 Draft PR 正文中按实际执行结果记录。`production_touched=false`，未访问生产或临时业务测试环境。
+最终 accepted Head 测试证据为：USER-GOV + INSTALL focused `37 passed`；SEC-1C0 + USER-GOV + INSTALL + UPDATE regression `60 passed`；真实并发精确节点连续 `10/10 passed`；完整 enterprise suite `862 passed, 10 skipped, 0 failed`；`compileall enterprise tools` 通过。该 docs-only 收口复用上述代码证据，不重新运行 Runtime 或测试。`production_touched=false`，未访问生产或临时业务测试环境。
 
 ## 7. 未实现边界
 
@@ -77,4 +77,4 @@
 - `production_approved=false`
 - `production_touched=false`
 
-停止点：提交 Draft PR 后等待独立代码、权限绕过、审计原子性、会话失效和 UI 行为复核。
+停止点：USER-GOV-MVP-1 repository implementation 已完成合并与独立验收；后续动态 RBAC、DATA-1、OPS-3B 或生产操作仍须单独授权。
