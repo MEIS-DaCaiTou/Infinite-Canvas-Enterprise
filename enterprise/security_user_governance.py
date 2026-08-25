@@ -11,7 +11,13 @@ from enterprise.migrations.sec_1b1_role_auth import (
     SCHEMA_LEGACY,
     classify_role_auth_schema,
 )
-from enterprise.roles import ROLE_ADMIN, ROLE_SUPER_ADMIN, ROLE_USER, normalize_role
+from enterprise.roles import (
+    MAX_SUPER_ADMIN_PASSWORD_LENGTH,
+    ROLE_ADMIN,
+    ROLE_SUPER_ADMIN,
+    ROLE_USER,
+    normalize_role,
+)
 from enterprise.security_audit import (
     SECURITY_AUDIT_READY,
     SecurityAuditError,
@@ -642,7 +648,7 @@ def _require_super_admin_role_write(
     if (
         not isinstance(current_password, str)
         or not current_password
-        or len(current_password) > 1024
+        or len(current_password) > MAX_SUPER_ADMIN_PASSWORD_LENGTH
         or not edb.verify_password(current_password, actor["password_hash"])
     ):
         raise _commit_denied(

@@ -52,7 +52,7 @@ from enterprise.release.release_manifest_v2 import (
     read_release_manifest_v2,
     verify_release_manifest_v2,
 )
-from enterprise.roles import ROLE_SUPER_ADMIN
+from enterprise.roles import MAX_SUPER_ADMIN_PASSWORD_LENGTH, ROLE_SUPER_ADMIN
 from enterprise.security_audit import (
     SECURITY_AUDIT_READY,
     append_security_audit_event,
@@ -213,7 +213,12 @@ def _normalized_username(value: object) -> str:
 
 
 def validate_first_password(password: object, confirmation: object) -> str:
-    if not isinstance(password, str) or not password or password.isspace():
+    if (
+        not isinstance(password, str)
+        or not password
+        or password.isspace()
+        or len(password) > MAX_SUPER_ADMIN_PASSWORD_LENGTH
+    ):
         _fail("INSTALL_PASSWORD_INVALID")
     if password != confirmation:
         _fail("INSTALL_PASSWORD_CONFIRMATION_MISMATCH")

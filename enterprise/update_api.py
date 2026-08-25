@@ -34,7 +34,7 @@ from enterprise.release.release_manifest_v2 import (
     ReleaseManifestV2Error,
     read_release_manifest_v2,
 )
-from enterprise.roles import ROLE_ADMIN, ROLE_SUPER_ADMIN
+from enterprise.roles import MAX_SUPER_ADMIN_PASSWORD_LENGTH, ROLE_ADMIN, ROLE_SUPER_ADMIN
 from enterprise.runtime.portable import request_portable_update_handoff
 
 
@@ -225,7 +225,11 @@ async def execute_update(job_id: str, request: Request, background_tasks: Backgr
     try:
         body = await request.json()
         password = body.get("password") if isinstance(body, dict) else None
-        if not isinstance(password, str) or not password or len(password) > 1024:
+        if (
+            not isinstance(password, str)
+            or not password
+            or len(password) > MAX_SUPER_ADMIN_PASSWORD_LENGTH
+        ):
             raise UpdateMvpError("SYSTEM_UPDATE_PASSWORD_REQUIRED")
         # Re-read the actor immediately before confirmation.  The password is
         # used only in this call and is never written to plan, state or audit.

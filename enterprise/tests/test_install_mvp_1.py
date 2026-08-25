@@ -208,12 +208,18 @@ def test_greenfield_install_creates_one_super_admin_and_pointer_last(monkeypatch
         ("one", "two", "INSTALL_PASSWORD_CONFIRMATION_MISMATCH"),
         ("admin123", "admin123", "INSTALL_PASSWORD_DEFAULT_FORBIDDEN"),
         ("   ", "   ", "INSTALL_PASSWORD_INVALID"),
+        ("x" * 1025, "x" * 1025, "INSTALL_PASSWORD_INVALID"),
     ],
 )
 def test_password_gate(password: str, confirmation: str, code: str) -> None:
     with pytest.raises(FreshInstallError) as caught:
         validate_first_password(password, confirmation)
     assert caught.value.code == code
+
+
+def test_super_admin_password_maximum_boundary_is_accepted() -> None:
+    password = "x" * 1024
+    assert validate_first_password(password, password) == password
 
 
 def test_confirmation_failure_creates_no_install_state(monkeypatch, tmp_path: Path) -> None:

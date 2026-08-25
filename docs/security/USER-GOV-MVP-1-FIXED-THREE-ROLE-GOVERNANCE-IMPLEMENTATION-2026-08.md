@@ -27,7 +27,7 @@
 创建 admin 或执行 user/admin 角色变更必须同时满足：
 
 - actor 是实时数据库中的 active `super_admin`，且 principal `auth_version` 仍匹配；
-- 当前账号密码验证通过；
+- 当前账号密码验证通过；Greenfield 首个 `super_admin` 与后续高风险密码确认共享同一个 `1024` 字符最大长度契约；
 - 提供非空且有界的变更原因；
 - 目标当前角色与 `auth_version` 符合请求中的期望值；
 - mutation 与 mandatory `security.role.change` audit 在同一数据库事务中提交；
@@ -56,6 +56,8 @@
 - admin 创建 admin、角色变更和升级操作拒绝；
 - 当前密码错误、空原因、stale target 与 mandatory audit 失败；
 - atomic rollback、角色/`auth_version` readback 和旧 JWT 失效；
+- 两个相同目标状态的真实并发角色变更只允许一次提交，另一请求以 stale conflict 拒绝；
+- 普通在线创建 API 对 `super_admin` 请求执行 L3 审计拒绝，不产生账号；
 - super_admin 普通页面保护；
 - 历史 system_update override 保留但不生效、不可新增/删除且不出现在普通 readback；
 - UPDATE-MVP-1、SEC-1B1、SEC-1C0、SEC-1F0、Manifest v2、current-release、portable lifecycle、STAB-1 与 OPS 相关回归。

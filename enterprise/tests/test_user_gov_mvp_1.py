@@ -7,7 +7,9 @@ import json
 import sqlite3
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier
 from types import SimpleNamespace
 
 import pytest
@@ -230,6 +232,52 @@ def test_role_change_revokes_sessions_and_rejects_stale_target(governance_db):
     assert demoted["auth_version"] == 3
 
 
+def test_concurrent_identical_role_changes_commit_exactly_once(governance_db):
+    path, super_admin, _admin, user = governance_db
+    start = Barrier(3)
+
+    def change_role() -> tuple[str, object]:
+        start.wait()
+        try:
+            changed = governance.change_user_role(
+                actor_user_id=super_admin["id"],
+                expected_actor_auth_version=1,
+                target_user_id=user["id"],
+                expected_target_auth_version=1,
+                expected_target_role=ROLE_USER,
+                requested_role=ROLE_ADMIN,
+                current_password=SUPER_PASSWORD,
+                reason="concurrent administrator promotion",
+            )
+            return "success", changed
+        except governance.UserGovernanceConflict as exc:
+            return "conflict", exc.code
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(change_role) for _ in range(2)]
+        start.wait()
+        outcomes = [future.result(timeout=10) for future in futures]
+
+    assert sorted(outcome[0] for outcome in outcomes) == ["conflict", "success"]
+    current = edb.get_user_by_id(user["id"])
+    assert current is not None
+    assert current["role"] == ROLE_ADMIN
+    assert current["auth_version"] == 2
+    successes = [
+        event
+        for event in _audit_events(path, "security.role.change")
+        if event["target_id"] == user["id"] and event["result"] == "success"
+    ]
+    assert len(successes) == 1
+    denied = [
+        event
+        for event in _audit_events(path, "security.authorization.denied")
+        if event["target_id"] == user["id"]
+        and json.loads(event["context_json"])["policy_code"] == "stale_target_role_state"
+    ]
+    assert len(denied) == 1
+
+
 def test_super_admin_accounts_are_not_governed_online(governance_db):
     _path, super_admin, _admin, _user = governance_db
     with pytest.raises(governance.UserGovernancePolicyDenied):
@@ -347,6 +395,37 @@ def test_admin_api_uses_fixed_role_contract(governance_db):
     me = asyncio.run(admin_api.get_me(FakeRequest(_principal(super_admin))))
     assert me["role"] == ROLE_SUPER_ADMIN
     assert me["is_admin"] is True
+
+
+def test_admin_api_denies_and_audits_online_super_admin_creation(governance_db):
+    path, super_admin, _admin, _user = governance_db
+    attempted_password = "must-not-persist-or-appear-in-audit"
+
+    with pytest.raises(HTTPException) as denied:
+        asyncio.run(
+            admin_api.create_user(
+                FakeRequest(
+                    _principal(super_admin),
+                    {
+                        "username": "api-forbidden-super-admin",
+                        "display_name": "Forbidden Super Admin",
+                        "password": attempted_password,
+                        "role": ROLE_SUPER_ADMIN,
+                    },
+                )
+            )
+        )
+
+    assert denied.value.status_code == 403
+    assert denied.value.detail["code"] == "TRANSITIONAL_POLICY_DENIED"
+    assert edb.get_user_by_username("api-forbidden-super-admin") is None
+    event = _audit_events(path, "security.authorization.denied")[-1]
+    context = json.loads(event["context_json"])
+    assert event["result"] == "denied"
+    assert event["risk_level"] == "L3"
+    assert context["policy_code"] == "online_role_assignment_closed"
+    assert context["requested_operation"] == "create_user_with_role"
+    assert attempted_password not in json.dumps(event)
 
 
 def test_historical_system_update_override_is_inert_hidden_and_preserved(governance_db):
