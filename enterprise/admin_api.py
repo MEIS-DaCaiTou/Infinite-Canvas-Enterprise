@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from enterprise import db as edb
 from enterprise import security_user_governance as user_governance
 from enterprise.migrations.sec_1b1_role_auth import ROLE_AUTH_READY
-from enterprise.roles import ROLE_ADMIN, ROLE_SUPER_ADMIN
+from enterprise.roles import ROLE_ADMIN, ROLE_SUPER_ADMIN, ROLE_USER
 
 router = APIRouter()
 
@@ -34,7 +34,9 @@ def _role_auth_ready() -> bool:
 def _require_admin(request: Request) -> dict:
     """从 request.state 获取当前用户，确认是管理员"""
     user = getattr(request.state, "user", None)
-    if not user or not user.get("is_admin"):
+    role = user.get("role") if isinstance(user, dict) else None
+    legacy_admin = role is None and bool(user and user.get("is_admin"))
+    if not user or (role not in {ROLE_ADMIN, ROLE_SUPER_ADMIN} and not legacy_admin):
         raise HTTPException(status_code=403, detail="需要管理员权限")
     return user
 
@@ -83,11 +85,14 @@ def _require_current_super_admin(request: Request) -> dict:
     }
 
 
-def _ensure_system_update_target_is_admin(target: dict) -> None:
-    if target.get("role") != ROLE_ADMIN or target.get("is_active") is not True:
+def _reject_system_update_user_override(feature_key: str) -> None:
+    if feature_key == "system_update":
         raise HTTPException(
-            status_code=400,
-            detail={"code": "SYSTEM_UPDATE_TARGET_INVALID", "message": "Only an active administrator may receive an update override"},
+            status_code=403,
+            detail={
+                "code": "SYSTEM_UPDATE_OVERRIDE_UNSUPPORTED",
+                "message": "System update is restricted to the current super administrator role",
+            },
         )
 
 
@@ -209,7 +214,15 @@ async def create_user(request: Request):
     password = (body.get("password") or "").strip()
     display_name = (body.get("display_name") or "").strip()
     requested_is_admin = body.get("is_admin", False)
-    is_admin = bool(requested_is_admin)
+    requested_role = body.get("role") if "role" in body else (ROLE_ADMIN if requested_is_admin is True else ROLE_USER)
+    if requested_role not in {ROLE_USER, ROLE_ADMIN, ROLE_SUPER_ADMIN}:
+        raise HTTPException(status_code=400, detail={"code": "INVALID_GOVERNANCE_REQUEST", "message": "Invalid fixed role"})
+    if "is_admin" in body and (
+        not isinstance(requested_is_admin, bool)
+        or requested_is_admin != (requested_role in {ROLE_ADMIN, ROLE_SUPER_ADMIN})
+    ):
+        raise HTTPException(status_code=400, detail={"code": "INVALID_GOVERNANCE_REQUEST", "message": "Role fields disagree"})
+    is_admin = requested_role in {ROLE_ADMIN, ROLE_SUPER_ADMIN}
 
     if not username or not password:
         raise HTTPException(status_code=400, detail="用户名和密码不能为空")
@@ -218,17 +231,40 @@ async def create_user(request: Request):
 
     try:
         if ready:
-            result = user_governance.create_ordinary_user(
-                actor_user_id=current["user_id"],
-                expected_actor_auth_version=current["auth_version"],
-                username=username,
-                password=password,
-                display_name=display_name,
-                requested_is_admin=requested_is_admin,
-                role_field_present="role" in body,
-                requested_role=body.get("role"),
-            )
-            is_admin = False
+            if requested_role == ROLE_ADMIN:
+                governance_result = user_governance.create_admin_user(
+                    actor_user_id=current["user_id"],
+                    expected_actor_auth_version=current["auth_version"],
+                    username=username,
+                    password=password,
+                    display_name=display_name,
+                    current_password=body.get("current_password"),
+                    reason=body.get("reason"),
+                )
+                result = governance_result["user"]
+            elif requested_role == ROLE_USER:
+                result = user_governance.create_ordinary_user(
+                    actor_user_id=current["user_id"],
+                    expected_actor_auth_version=current["auth_version"],
+                    username=username,
+                    password=password,
+                    display_name=display_name,
+                    requested_is_admin=False,
+                    role_field_present=False,
+                )
+                is_admin = False
+            else:
+                user_governance.create_ordinary_user(
+                    actor_user_id=current["user_id"],
+                    expected_actor_auth_version=current["auth_version"],
+                    username=username,
+                    password=password,
+                    display_name=display_name,
+                    requested_is_admin=True,
+                    role_field_present=True,
+                    requested_role=ROLE_SUPER_ADMIN,
+                )
+                raise user_governance.UserGovernanceInternalError()
         else:
             result = edb.create_user(username, password, display_name, is_admin)
     except user_governance.UserGovernanceError as exc:
@@ -245,13 +281,14 @@ async def create_user(request: Request):
         ) from exc
 
     target = edb.get_user_by_id_any_status(result["id"]) or result
-    _audit_user_action(
-        current,
-        "user_created",
-        target,
-        f"创建用户 {username}",
-        {"is_admin": is_admin},
-    )
+    if not ready or requested_role == ROLE_USER:
+        _audit_user_action(
+            current,
+            "user_created",
+            target,
+            f"创建用户 {username}",
+            {"is_admin": is_admin, "role": requested_role},
+        )
     return JSONResponse({"success": True, "user": result}, status_code=201)
 
 
@@ -298,17 +335,28 @@ async def update_user_role(user_id: str, request: Request):
         if not isinstance(body, dict):
             raise HTTPException(status_code=400, detail="Invalid role update request")
         try:
-            user_governance.deny_online_role_change(
+            requested_role = body.get("role")
+            if requested_role is None and isinstance(body.get("is_admin"), bool):
+                requested_role = ROLE_ADMIN if body["is_admin"] else ROLE_USER
+            result = user_governance.change_user_role(
                 actor_user_id=current["user_id"],
                 expected_actor_auth_version=current["auth_version"],
                 target_user_id=user_id,
-                role_field_present="role" in body,
-                requested_role=body.get("role"),
-                is_admin_field_present="is_admin" in body,
-                requested_is_admin=body.get("is_admin"),
+                requested_role=requested_role,
+                expected_target_role=body.get("expected_target_role"),
+                expected_target_auth_version=body.get("expected_target_auth_version"),
+                current_password=body.get("current_password"),
+                reason=body.get("reason"),
             )
         except user_governance.UserGovernanceError as exc:
             _raise_governance_http(exc)
+        return {
+            "success": True,
+            "user_id": user_id,
+            "role": result["role"],
+            "auth_version": result["auth_version"],
+            "operation_id": result["operation_id"],
+        }
     if user_id == current["user_id"]:
         raise HTTPException(status_code=400, detail="不能修改自己的权限")
     target = edb.get_user_by_id_any_status(user_id)
@@ -529,6 +577,7 @@ async def list_user_feature_overrides(user_id: str, request: Request):
     override_map = {
         item["feature_key"]: item
         for item in edb.get_user_feature_overrides(user_id)
+        if item.get("feature_key") != "system_update"
     }
     actor = {
         "user_id": target["id"],
@@ -540,6 +589,8 @@ async def list_user_feature_overrides(user_id: str, request: Request):
     features = []
     for feature in edb.list_feature_flags():
         key = feature["feature_key"]
+        if key == "system_update":
+            continue
         override = override_map.get(key)
         effective = edb.get_effective_feature_value(actor, key)
         features.append(
@@ -562,6 +613,7 @@ async def list_user_feature_overrides(user_id: str, request: Request):
             "username": target["username"],
             "display_name": target.get("display_name", ""),
             "is_admin": bool(target.get("is_admin")),
+            "role": target.get("role"),
             "is_active": bool(target.get("is_active")),
         },
         "features": features,
@@ -571,10 +623,9 @@ async def list_user_feature_overrides(user_id: str, request: Request):
 @router.put("/api/users/{user_id}/feature-overrides/{feature_key}")
 async def update_user_feature_override(user_id: str, feature_key: str, request: Request):
     feature_key = _canonical_feature_key(feature_key)
-    current = _require_current_super_admin(request) if feature_key == "system_update" else _require_admin(request)
+    _reject_system_update_user_override(feature_key)
+    current = _require_admin(request)
     target = _target_user_or_404(user_id)
-    if feature_key == "system_update":
-        _ensure_system_update_target_is_admin(target)
     body = await request.json()
     mode = str(body.get("mode") or "").strip().lower()
     try:
@@ -593,27 +644,15 @@ async def update_user_feature_override(user_id: str, feature_key: str, request: 
             "mode": new.get("mode") if new else "inherit",
         },
     )
-    if feature_key == "system_update":
-        _audit_permission_action(
-            current,
-            "system_update_permission_granted" if new and new.get("mode") == "allow" else "system_update_permission_revoked",
-            {
-                "feature_key": "system_update",
-                "target_user_id": target["id"],
-                "old_value": old.get("mode") if old else "inherit",
-                "new_value": new.get("mode") if new else "inherit",
-            },
-        )
     return {"success": True, "override": new, "mode": new.get("mode") if new else "inherit"}
 
 
 @router.delete("/api/users/{user_id}/feature-overrides/{feature_key}")
 async def delete_user_feature_override(user_id: str, feature_key: str, request: Request):
     feature_key = _canonical_feature_key(feature_key)
-    current = _require_current_super_admin(request) if feature_key == "system_update" else _require_admin(request)
+    _reject_system_update_user_override(feature_key)
+    current = _require_admin(request)
     target = _target_user_or_404(user_id)
-    if feature_key == "system_update":
-        _ensure_system_update_target_is_admin(target)
     try:
         old, new = edb.clear_user_feature_override(user_id, feature_key, current["user_id"])
     except ValueError as exc:
@@ -630,17 +669,6 @@ async def delete_user_feature_override(user_id: str, feature_key: str, request: 
             "mode": "inherit",
         },
     )
-    if feature_key == "system_update":
-        _audit_permission_action(
-            current,
-            "system_update_permission_revoked",
-            {
-                "feature_key": "system_update",
-                "target_user_id": target["id"],
-                "old_value": old.get("mode") if old else "inherit",
-                "new_value": "inherit",
-            },
-        )
     return {"success": True, "override": new, "mode": "inherit"}
 
 
@@ -650,23 +678,16 @@ async def purge_user_feature_overrides(user_id: str, request: Request):
     target = _target_user_or_404(user_id)
     confirmation = await _confirmed_user_action_body(request, target)
     existing = edb.get_user_feature_overrides(user_id)
-    has_system_update = any(item.get("feature_key") == "system_update" for item in existing)
-    if has_system_update:
-        current = _require_current_super_admin(request)
-    if current.get("role") == ROLE_SUPER_ADMIN:
-        old = edb.clear_all_user_feature_overrides(user_id, current["user_id"])
-    else:
-        # Preserve the high-risk override even if one appears concurrently
-        # after the snapshot above. Ordinary admins clear only the explicitly
-        # enumerated non-system settings.
-        old = []
-        for item in existing:
-            key = item.get("feature_key")
-            if key == "system_update":
-                continue
-            previous, _new = edb.clear_user_feature_override(user_id, str(key), current["user_id"])
-            if previous is not None:
-                old.append(previous)
+    # Historical system_update rows remain intact but are inert.  Purge only
+    # the ordinary feature keys explicitly observed in this transaction.
+    old = []
+    for item in existing:
+        key = item.get("feature_key")
+        if key == "system_update":
+            continue
+        previous, _new = edb.clear_user_feature_override(user_id, str(key), current["user_id"])
+        if previous is not None:
+            old.append(previous)
     old_values = [
         {"feature_key": item.get("feature_key"), "mode": item.get("mode")}
         for item in old
@@ -938,7 +959,9 @@ async def get_me(request: Request):
         "user_id": user["user_id"],
         "username": user["username"],
         "display_name": u.get("display_name", user["username"]),
-        "is_admin": user.get("is_admin", False),
+        "is_admin": bool(u.get("is_admin", False)),
+        "role": u.get("role", ROLE_USER),
+        "auth_version": u.get("auth_version"),
     }
 
 

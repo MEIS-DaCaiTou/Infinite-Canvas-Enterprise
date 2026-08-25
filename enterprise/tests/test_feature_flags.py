@@ -263,9 +263,8 @@ async def _run_checks() -> None:
         await _assert_forbidden("api/update-from-github", "POST", actor_admin, {"auto_restart": False})
         await _assert_forbidden("api/update-from-github", "POST", actor_super, {"auto_restart": False})
 
-        # system_update is the one narrow high-risk exception to the ordinary
-        # admin bypass: total switch first, then super-admin or explicit admin
-        # allow. Users and unknown roles remain denied even with a DB override.
+        # system_update is fixed to the current super-admin role. Historical
+        # per-user rows remain stored but are ignored and cannot be mutated.
         try:
             await admin_api.update_feature_flag("system_update", FakeRequest(actor_admin, {"enabled": True}))
             raise AssertionError("ordinary admin changed system_update global flag")
@@ -291,12 +290,21 @@ async def _run_checks() -> None:
         edb.set_user_feature_override(user_a["id"], "system_update", "allow", actor_super["user_id"])
         assert edb.can_use_feature({**actor_a, "role": "user"}, "system_update") is False
         assert edb.can_use_feature({**actor_a, "role": "unexpected"}, "system_update") is False
-        await admin_api.update_user_feature_override(
-            admin["id"],
-            "system_update",
-            FakeRequest(actor_super, {"mode": "allow"}),
-        )
-        assert edb.can_use_feature(actor_admin, "system_update") is True
+        edb.set_user_feature_override(admin["id"], "system_update", "allow", actor_super["user_id"])
+        admin_effective = edb.get_effective_feature_value(actor_admin, "system_update")
+        assert admin_effective["allowed"] is False
+        assert admin_effective["source"] == "role_denied"
+        assert admin_effective["mode"] == "ignored"
+        assert admin_effective["override_ignored"] is True
+        try:
+            await admin_api.update_user_feature_override(
+                admin["id"],
+                "system_update",
+                FakeRequest(actor_super, {"mode": "allow"}),
+            )
+            raise AssertionError("super admin created a deprecated system_update override")
+        except Exception as exc:
+            assert getattr(exc, "status_code", None) == 403
         await admin_api.update_feature_flag("system_update", FakeRequest(actor_super, {"enabled": False}))
         assert edb.can_use_feature(actor_super, "system_update") is False
         assert edb.can_use_feature(actor_admin, "system_update") is False
@@ -308,13 +316,17 @@ async def _run_checks() -> None:
             FakeRequest(actor_super),
         )
         readback_map = {item["feature_key"]: item for item in readback["features"]}
-        assert readback_map["system_update"]["mode"] == "allow"
-        assert readback_map["system_update"]["effective_allowed"] is True
-        await admin_api.delete_user_feature_override(
-            admin["id"],
-            "system_update",
-            FakeRequest(actor_super),
-        )
+        assert "system_update" not in readback_map
+        try:
+            await admin_api.delete_user_feature_override(
+                admin["id"],
+                "system_update",
+                FakeRequest(actor_super),
+            )
+            raise AssertionError("super admin deleted a retained historical system_update override")
+        except Exception as exc:
+            assert getattr(exc, "status_code", None) == 403
+        assert edb.get_user_feature_override(admin["id"], "system_update")["mode"] == "allow"
         assert edb.can_use_feature(actor_admin, "system_update") is False
 
         logs, _total = edb.get_logs(limit=200)
@@ -322,14 +334,12 @@ async def _run_checks() -> None:
         assert "feature_flag_changed" in actions
         assert "user_feature_override_changed" in actions
         assert "permission_policy_updated" in actions
-        assert "system_update_permission_granted" in actions
-        assert "system_update_permission_revoked" in actions
 
         logs_html = (ROOT / "enterprise-static" / "logs.html").read_text(encoding="utf-8")
         assert 'value="feature_flag_changed"' in logs_html
         assert 'value="user_feature_override_changed"' in logs_html
         assert 'value="permission_policy_updated"' in logs_html
-        assert 'value="system_update_permission_granted"' in logs_html
+        assert 'value="system_update_permission_granted"' in logs_html  # historical log compatibility
         assert 'value="system_update_rolled_back"' in logs_html
 
     print("feature flag checks passed")

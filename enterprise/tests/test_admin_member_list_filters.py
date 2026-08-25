@@ -35,8 +35,9 @@ def test_member_filter_controls_are_present():
 
     assert_contains(html, 'id="memberRoleFilter"')
     assert_option(html, "memberRoleFilter", "all", "全部角色")
+    assert_option(html, "memberRoleFilter", "super_admin", "超级管理员")
     assert_option(html, "memberRoleFilter", "admin", "管理员")
-    assert_option(html, "memberRoleFilter", "user", "普通用户")
+    assert_option(html, "memberRoleFilter", "user", "普通成员")
 
     assert_contains(html, 'id="memberSearchInput"')
     assert_contains(html, 'placeholder="搜索用户名 / 展示名"')
@@ -51,7 +52,7 @@ def test_member_filter_controls_are_present():
 def test_member_stats_and_empty_state_are_present():
     html = read_admin_html()
 
-    for label in ["全部用户", "正常用户", "已停用", "管理员", "当前显示"]:
+    for label in ["全部用户", "正常用户", "已停用", "管理员", "超级管理员", "当前显示"]:
         assert_contains(html, label)
     assert_contains(html, "没有符合当前筛选条件的成员")
     assert_contains(html, "请调整状态、角色或搜索关键词")
@@ -73,6 +74,25 @@ def test_member_filter_search_sort_logic_is_present():
     assert_contains(html, "last_login")
     assert_contains(html, "created_at")
     assert_contains(html, "disabled-user-row")
+    assert_contains(html, "function roleOf(user)")
+    assert_contains(html, "function canChangeMemberRole(user)")
+    assert_contains(html, "受固定角色策略保护")
+
+
+def test_fixed_role_governance_controls_are_present():
+    html = read_admin_html()
+
+    assert_option(html, "newRole", "user", "普通成员")
+    assert_option(html, "newRole", "admin", "管理员")
+    assert_contains(html, 'id="createCurrentPassword"')
+    assert_contains(html, 'id="createReason"')
+    assert_contains(html, 'id="roleCurrentPassword"')
+    assert_contains(html, 'id="roleReason"')
+    assert_contains(html, "expected_target_auth_version")
+    assert_contains(html, "expected_target_role")
+    assert_contains(html, "系统升级仅允许超级管理员操作")
+    assert "newIsAdmin" not in html
+    assert "toggleRole(" not in html
 
 
 def test_admin_list_pagination_controls_are_present():
@@ -190,6 +210,7 @@ if __name__ == "__main__":
     test_member_filter_controls_are_present()
     test_member_stats_and_empty_state_are_present()
     test_member_filter_search_sort_logic_is_present()
+    test_fixed_role_governance_controls_are_present()
     test_admin_list_pagination_controls_are_present()
     test_pagination_controls_are_split_around_their_tables()
     test_member_pagination_happens_after_filter_search_sort()
