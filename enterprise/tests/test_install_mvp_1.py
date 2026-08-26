@@ -19,6 +19,13 @@ from enterprise.fresh_install import (
 )
 from enterprise.migrations.sec_1b2_activation import BOOTSTRAP_READY, inspect_bootstrap_lifecycle_schema
 from enterprise.migrations.sec_1f0_security_audit import inspect_security_audit_schema
+from enterprise.migrations.versioned import (
+    BASELINE_SCHEMA_VERSION,
+    LEDGER_TABLE,
+    STATE_READY as VERSIONED_SCHEMA_READY,
+    STATE_TABLE,
+    inspect_schema_metadata,
+)
 from enterprise.paths import PortableRootInputs, derive_portable_path_roots
 from enterprise.release.current_release import read_current_release
 from enterprise.roles import ROLE_SUPER_ADMIN
@@ -192,6 +199,13 @@ def test_greenfield_install_creates_one_super_admin_and_pointer_last(monkeypatch
     assert marker["current_state"] == BOOTSTRAP_READY
     assert marker["marker_count"] == 1
     assert marker["marker"]["bootstrap_target_user_id"] == result.first_user_id
+    versioned = inspect_schema_metadata(database_path)
+    assert versioned["current_state"] == VERSIONED_SCHEMA_READY
+    assert versioned["schema_version"] == BASELINE_SCHEMA_VERSION
+    assert versioned["migration_ids"] == []
+    with sqlite3.connect(database_path) as conn:
+        assert conn.execute(f"SELECT COUNT(*) FROM {STATE_TABLE}").fetchone()[0] == 1
+        assert conn.execute(f"SELECT COUNT(*) FROM {LEDGER_TABLE}").fetchone()[0] == 0
 
     monkeypatch.setattr(db, "PATH_ROOTS", roots)
     monkeypatch.setattr(db, "DB_PATH", str(database_path))
