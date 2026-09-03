@@ -57,6 +57,7 @@ from enterprise.interceptors import (
 from enterprise.admin_api import router as admin_router
 from enterprise.update_api import router as update_router
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.concurrency import run_in_threadpool
 
 # ── 应用初始化 ────────────────────────────────────────────
 
@@ -71,12 +72,15 @@ _SETTINGS_MANAGEMENT_PAGES = {
 class AuthStateMiddleware(BaseHTTPMiddleware):
     """在所有路由处理前解析 Token，将用户信息挂载到 request.state.user"""
     async def dispatch(self, request: Request, call_next):
+        if request.url.path in {"/enterprise/health", "/enterprise/live"}:
+            request.state.user = None
+            return await call_next(request)
         token = request.cookies.get("enterprise_token")
         if not token:
             auth = request.headers.get("Authorization", "")
             if auth.startswith("Bearer "):
                 token = auth[7:]
-        request.state.user = verify_token(token) if token else None
+        request.state.user = await run_in_threadpool(verify_token, token) if token else None
         return await call_next(request)
 
 
@@ -86,11 +90,13 @@ app.include_router(update_router, prefix="/enterprise")
 
 # 共享 httpx 客户端（保持连接池）
 _http_client: Optional[httpx.AsyncClient] = None
+_health_client: Optional[httpx.AsyncClient] = None
+HEALTH_UPSTREAM_DEADLINE_SECONDS = 1.0
 
 
 @app.on_event("startup")
 async def startup() -> None:
-    global _http_client
+    global _http_client, _health_client
     require_gateway_database_ready(PATH_ROOTS, DB_PATH)
     ensure_db_schema()
     _http_client = httpx.AsyncClient(
@@ -98,6 +104,14 @@ async def startup() -> None:
         timeout=httpx.Timeout(connect=10, read=300, write=300, pool=10),
         follow_redirects=True,
         limits=httpx.Limits(max_connections=200, max_keepalive_connections=50),
+    )
+    # Health probes must not wait behind image generation/download connections
+    # or inherit a machine-wide proxy. The outer supervisor timeout is 3 s.
+    _health_client = httpx.AsyncClient(
+        base_url=UPSTREAM_URL,
+        timeout=httpx.Timeout(HEALTH_UPSTREAM_DEADLINE_SECONDS),
+        limits=httpx.Limits(max_connections=2, max_keepalive_connections=1),
+        trust_env=False,
     )
     print(f"[企业版] 网关启动，监听 0.0.0.0:{GATEWAY_PORT}")
     print(f"[企业版] 上游服务地址: {UPSTREAM_URL}")
@@ -107,6 +121,8 @@ async def startup() -> None:
 async def shutdown() -> None:
     if _http_client:
         await _http_client.aclose()
+    if _health_client:
+        await _health_client.aclose()
 
 
 # ── 工具函数 ──────────────────────────────────────────────
@@ -122,6 +138,8 @@ def _get_token_from_request(request: Request) -> Optional[str]:
 
 
 def _get_user(request: Request) -> Optional[dict]:
+    if hasattr(request.state, "user"):
+        return request.state.user
     token = _get_token_from_request(request)
     if not token:
         return None
@@ -775,12 +793,12 @@ async def do_login(request: Request):
     if not username or not password:
         return JSONResponse({"error": "用户名和密码不能为空"}, status_code=400)
 
-    user = authenticate(username, password)
+    user = await run_in_threadpool(authenticate, username, password)
     if not user:
         return JSONResponse({"error": "用户名或密码错误"}, status_code=401)
 
-    log_action(user["id"], "login")
-    token = create_token(user["id"])
+    await run_in_threadpool(log_action, user["id"], "login")
+    token = await run_in_threadpool(create_token, user["id"])
 
     next_url = request.query_params.get("next", "/")
     resp = JSONResponse({
@@ -820,6 +838,12 @@ async def admin_page(request: Request):
     return HTMLResponse(admin_html.read_text(encoding="utf-8"))
 
 
+@app.get("/enterprise/live", include_in_schema=False)
+async def liveness_check():
+    """Event-loop liveness only: no database, auth or upstream dependency."""
+    return JSONResponse({"gateway": "ok"})
+
+
 @app.get("/enterprise/health", include_in_schema=False)
 async def health_check():
     """服务健康检查（无需登录）"""
@@ -828,7 +852,10 @@ async def health_check():
     upstream_latency_ms = None
     try:
         t0 = time.monotonic()
-        resp = await _http_client.get("/api/app-info", timeout=5)
+        resp = await asyncio.wait_for(
+            _health_client.get("/api/app-info"),
+            timeout=HEALTH_UPSTREAM_DEADLINE_SECONDS,
+        )
         upstream_latency_ms = round((time.monotonic() - t0) * 1000)
         upstream_ok = resp.status_code < 500
     except Exception:
@@ -883,7 +910,7 @@ async def enterprise_static(filename: str):
 async def ws_proxy(websocket: WebSocket, path: str):
     """代理 WebSocket 连接到上游（需认证）"""
     token = websocket.cookies.get("enterprise_token")
-    user = verify_token(token) if token else None
+    user = await run_in_threadpool(verify_token, token) if token else None
     if not user:
         await websocket.close(code=1008)
         return
@@ -969,7 +996,7 @@ async def reverse_proxy(path: str, request: Request):
         if not user:
             return RedirectResponse(f"/enterprise/login?next=/{path}")
         feature_key = _settings_page_feature_key(path)
-        if feature_key and not can_use_feature(user, feature_key):
+        if feature_key and not await run_in_threadpool(can_use_feature, user, feature_key):
             return HTMLResponse(
                 _build_settings_access_denied_html(_settings_page_name(path)),
                 status_code=403,
@@ -1079,7 +1106,7 @@ async def _forward(
             pass
 
     if user and body:
-        body = rewrite_managed_modelscope_token_body(path, body)
+        body = await run_in_threadpool(rewrite_managed_modelscope_token_body, path, body)
 
     # 构建转发 headers（移除 host、cookie 等，注入用户信息）
     exclude_headers = {"host", "content-length", "transfer-encoding"}
@@ -1090,7 +1117,7 @@ async def _forward(
     # 企业用户信息注入（上游可选使用，不影响上游逻辑）
     if user:
         from urllib.parse import quote
-        upstream_user_id = upstream_conversation_user_id(path, body, user) or user["user_id"]
+        upstream_user_id = await run_in_threadpool(upstream_conversation_user_id, path, body, user) or user["user_id"]
         headers["x-enterprise-user-id"] = user["user_id"]
         # URL 编码用户名，防止中文等非 ASCII 字符导致 HTTP 头编码失败
         headers["x-enterprise-username"] = quote(user["username"], safe="")
@@ -1152,7 +1179,7 @@ async def _forward(
         )
         # 在 HTML 响应中注入用户信息栏
         if user and "text/html" in content_type:
-            bar_html = _build_user_bar(user).encode("utf-8")
+            bar_html = (await run_in_threadpool(_build_user_bar, user)).encode("utf-8")
             new_body = new_body.replace(b"</body>", bar_html + b"\n</body>", 1)
             resp_headers.pop("content-length", None)
             header_overrides.pop("content-length", None)

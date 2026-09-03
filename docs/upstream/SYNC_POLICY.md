@@ -69,6 +69,14 @@ U-2 explicitly skipped `API/.env`, `python/`, `CLI/` output, `assets/`, `output/
 
 ## Intentional Difference
 
+The September 2026 reliability branch adds a narrowly scoped `main.py` seam for
+`enterprise.canvas_task_journal`: startup recovery and the create/run/query
+paths for canvas image and Comfy tasks. Any later controlled upstream sync must
+preserve this seam and run `enterprise/tests/test_canvas_task_journal.py` as
+well as the ownership checks. See
+[`RUNTIME-RELIABILITY-2026-09-03.md`](../ops/RUNTIME-RELIABILITY-2026-09-03.md).
+This records a development change, not an upstream contribution or production approval.
+
 The upstream repository currently tracks `python/`.
 
 This enterprise repository keeps `python/` and `python.zip` as local runtime artifacts through `.gitignore`. Do not add them in an upstream sync PR unless a separate issue explicitly changes the runtime distribution policy.

@@ -46,6 +46,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from enterprise.config import PATH_ROOTS as _CONFIG_PATH_ROOTS
 from enterprise.paths import get_path_roots, prepare_application_directories
 from enterprise.app_paths import AppPathLayout
+from enterprise.canvas_task_journal import CanvasTaskJournal, create_task_receipt
 
 # Do not make `main.py` choose a profile.  The getter only accepts a process
 # root already installed by the caller (or the development compatibility
@@ -198,6 +199,11 @@ async def startup_event():
     # Configuration bootstrap is intentionally startup-scoped.  Importing the
     # application must not create mutable files in either profile.
     ensure_runtime_config_files()
+    # Persisted receipts survive process replacement. Ambiguous external work
+    # is exposed for reconciliation, never automatically submitted twice.
+    task_recovery = await asyncio.to_thread(CANVAS_TASK_JOURNAL.recover)
+    if any(task_recovery.values()):
+        logging.getLogger(__name__).warning("Canvas task recovery: %s", task_recovery)
     # 启动时整理资产库：给所有图片分组（含默认角色/场景）建好文件夹，并把根目录里的旧素材归整进去。
     try:
         await asyncio.to_thread(migrate_asset_library_into_dirs)
@@ -2417,8 +2423,19 @@ class ImageTaskQueryRequest(BaseModel):
     provider_id: str = "comfly"
     task_id: str = Field(min_length=1, max_length=240)
 
-CANVAS_TASKS: Dict[str, Dict[str, Any]] = {}
-CANVAS_TASK_LOCK = Lock()
+CANVAS_TASK_JOURNAL = CanvasTaskJournal(PATH_ROOTS.DATA_ROOT / "canvas-tasks")
+CANVAS_TASK_RUNNERS: set = set()
+
+
+def schedule_canvas_task(coroutine):
+    task = asyncio.create_task(coroutine)
+    CANVAS_TASK_RUNNERS.add(task)
+    def completed(future):
+        CANVAS_TASK_RUNNERS.discard(future)
+        if not future.cancelled() and future.exception() is not None:
+            # Do not log response bodies, prompts or credentials on write failure.
+            logging.getLogger(__name__).error("Canvas task tracking failed; inspect durable task records")
+    task.add_done_callback(completed)
 
 class CanvasVideoRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=VIDEO_PROMPT_MAX_LENGTH)
@@ -12781,122 +12798,106 @@ async def query_image_task(payload: ImageTaskQueryRequest):
     }
 
 async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
-    with CANVAS_TASK_LOCK:
-        if task_id in CANVAS_TASKS:
-            CANVAS_TASKS[task_id]["status"] = "running"
-            CANVAS_TASKS[task_id]["updated_at"] = time.time()
+    if not await asyncio.to_thread(CANVAS_TASK_JOURNAL.mark_running, task_id):
+        return
     try:
         result = await build_online_image_result(payload)
-        with CANVAS_TASK_LOCK:
-            CANVAS_TASKS[task_id].update({
-                "status": "succeeded",
-                "result": result,
-                "error": "",
-                "updated_at": time.time(),
-            })
+        changes = {"status": "succeeded", "result": result, "error": ""}
     except JimengPendingError as exc:
         # 即梦云端还在排队：标记为 jimeng_pending，前端据 submit_id 持久续查（任务未丢失）
         info = jimeng_pending_payload(exc)
-        with CANVAS_TASK_LOCK:
-            CANVAS_TASKS[task_id].update({
-                "status": "jimeng_pending",
-                "jimeng_pending": True,
-                "submit_id": exc.submit_id,
-                "kind": exc.kind,
-                "queue_info": exc.queue_info,
-                "message": info["message"],
-                "error": "",
-                "updated_at": time.time(),
-            })
+        changes = {
+            "status": "jimeng_pending",
+            "jimeng_pending": True,
+            "submit_id": exc.submit_id,
+            "kind": exc.kind,
+            "queue_info": exc.queue_info,
+            "message": info["message"],
+            "error": "",
+        }
     except Exception as exc:
         detail = getattr(exc, "detail", None) or str(exc)
         status_code = getattr(exc, "status_code", 500)
         upstream_task_id = getattr(exc, "upstream_task_id", "") or extract_task_id_from_text(detail)
-        with CANVAS_TASK_LOCK:
-            CANVAS_TASKS[task_id].update({
-                "status": "failed",
-                "error": str(detail),
-                "status_code": status_code,
-                "upstream_task_id": upstream_task_id,
-                "updated_at": time.time(),
-            })
+        changes = {
+            "status": "failed",
+            "error": str(detail),
+            "status_code": status_code,
+            "upstream_task_id": upstream_task_id,
+        }
+    await asyncio.to_thread(CANVAS_TASK_JOURNAL.finish, task_id, changes)
 
 @app.post("/api/canvas-image-tasks")
-async def create_canvas_image_task(payload: OnlineImageRequest):
+async def create_canvas_image_task(
+    payload: OnlineImageRequest, x_enterprise_user_id: Optional[str] = Header(default=None),
+):
     task_id = f"canvas_img_{uuid.uuid4().hex}"
-    with CANVAS_TASK_LOCK:
-        CANVAS_TASKS[task_id] = {
-            "id": task_id,
-            "type": "online-image",
-            "status": "queued",
-            "created_at": time.time(),
-            "updated_at": time.time(),
-            "result": None,
-            "error": "",
-            "provider_id": payload.provider_id,
-            "model": payload.model,
-        }
-    asyncio.create_task(run_canvas_image_task(task_id, payload))
+    await asyncio.to_thread(create_task_receipt, CANVAS_TASK_JOURNAL, {
+        "id": task_id,
+        "type": "online-image",
+        "status": "queued",
+        "created_at": time.time(),
+        "updated_at": time.time(),
+        "result": None,
+        "error": "",
+        "provider_id": payload.provider_id,
+        "model": payload.model,
+    }, x_enterprise_user_id)
+    schedule_canvas_task(run_canvas_image_task(task_id, payload))
     return {"task_id": task_id, "status": "queued"}
 
 @app.get("/api/canvas-image-tasks/{task_id}")
 async def get_canvas_image_task(task_id: str):
-    with CANVAS_TASK_LOCK:
-        task = dict(CANVAS_TASKS.get(task_id) or {})
+    task = await asyncio.to_thread(CANVAS_TASK_JOURNAL.get, task_id)
     if not task:
-        raise HTTPException(status_code=404, detail="画布任务不存在，可能服务已重启或任务已过期")
+        raise HTTPException(status_code=404, detail="画布任务不存在；此版本启用前的内存任务无法凭空恢复")
     return task
 
 async def run_canvas_comfy_task(task_id: str, payload: GenerateRequest):
-    with CANVAS_TASK_LOCK:
-        if task_id in CANVAS_TASKS:
-            CANVAS_TASKS[task_id]["status"] = "running"
-            CANVAS_TASKS[task_id]["updated_at"] = time.time()
+    if not await asyncio.to_thread(CANVAS_TASK_JOURNAL.mark_running, task_id):
+        return
     try:
         result = await asyncio.to_thread(generate, payload)
         if isinstance(result, dict) and result.get("error"):
             raise RuntimeError(str(result.get("error") or "ComfyUI 生成失败"))
-        with CANVAS_TASK_LOCK:
-            CANVAS_TASKS[task_id].update({
-                "status": "succeeded",
-                "result": result,
-                "error": "",
-                "updated_at": time.time(),
-            })
+        changes = {
+            "status": "succeeded",
+            "result": result,
+            "error": "",
+        }
     except Exception as exc:
         detail = getattr(exc, "detail", None) or str(exc)
         status_code = getattr(exc, "status_code", 500)
-        with CANVAS_TASK_LOCK:
-            CANVAS_TASKS[task_id].update({
-                "status": "failed",
-                "error": str(detail),
-                "status_code": status_code,
-                "updated_at": time.time(),
-            })
+        changes = {
+            "status": "failed",
+            "error": str(detail),
+            "status_code": status_code,
+        }
+    await asyncio.to_thread(CANVAS_TASK_JOURNAL.finish, task_id, changes)
 
 @app.post("/api/canvas-comfy-tasks")
-async def create_canvas_comfy_task(payload: GenerateRequest):
+async def create_canvas_comfy_task(
+    payload: GenerateRequest, x_enterprise_user_id: Optional[str] = Header(default=None),
+):
     task_id = f"canvas_comfy_{uuid.uuid4().hex}"
-    with CANVAS_TASK_LOCK:
-        CANVAS_TASKS[task_id] = {
-            "id": task_id,
-            "type": "comfy",
-            "status": "queued",
-            "created_at": time.time(),
-            "updated_at": time.time(),
-            "result": None,
-            "error": "",
-            "workflow_json": payload.workflow_json,
-        }
-    asyncio.create_task(run_canvas_comfy_task(task_id, payload))
+    await asyncio.to_thread(create_task_receipt, CANVAS_TASK_JOURNAL, {
+        "id": task_id,
+        "type": "comfy",
+        "status": "queued",
+        "created_at": time.time(),
+        "updated_at": time.time(),
+        "result": None,
+        "error": "",
+        "workflow_json": payload.workflow_json,
+    }, x_enterprise_user_id)
+    schedule_canvas_task(run_canvas_comfy_task(task_id, payload))
     return {"task_id": task_id, "status": "queued"}
 
 @app.get("/api/canvas-comfy-tasks/{task_id}")
 async def get_canvas_comfy_task(task_id: str):
-    with CANVAS_TASK_LOCK:
-        task = dict(CANVAS_TASKS.get(task_id) or {})
+    task = await asyncio.to_thread(CANVAS_TASK_JOURNAL.get, task_id)
     if not task:
-        raise HTTPException(status_code=404, detail="ComfyUI 任务不存在，可能服务已重启或任务已过期")
+        raise HTTPException(status_code=404, detail="ComfyUI 任务不存在；此版本启用前的内存任务无法凭空恢复")
     return task
 
 # --- 图像生成参数 schema（供客户端动态渲染参数表单，避免把参数写死在前端） ---

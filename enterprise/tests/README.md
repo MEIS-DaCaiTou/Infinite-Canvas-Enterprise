@@ -11,6 +11,7 @@ Before adding or changing scripts, read:
 
 ## Scripts
 
+- `test_runtime_reliability.py` and `test_canvas_task_journal.py` cover the September 2026 Gateway incident fixes: isolated/bounded health probes, real restart backoff, startup grace, event-loop offloading, permission-safe reference caching, batch ownership, and durable canvas receipts/results with explicit interrupted-state recovery. All roots/providers are temporary or fake; these tests do not approve a production rollout. See `../../docs/ops/RUNTIME-RELIABILITY-2026-09-03.md` for limits and lifecycle evidence.
 - `diagnose.ps1` checks local version, selected LAN IP, listening ports, proxy settings, and health endpoints.
 - `smoke.ps1` runs non-destructive HTTP smoke checks against a running enterprise gateway.
 - `test_start_stop.ps1` accepts a temporary runtime root, random ports and the fixed fixture-child wrapper for a non-production lifecycle check. It refuses to kill existing listeners, verifies short-lived CLI start, restart ACK/PID generation changes and owned-only stop/port release.

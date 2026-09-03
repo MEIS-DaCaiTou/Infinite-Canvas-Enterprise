@@ -659,7 +659,7 @@ def run_cli(command: str, *, runtime_root: Path, upstream_port: int, gateway_por
         )
     output = output_path.read_text(encoding="utf-8", errors="replace")
     output_path.unlink()
-    assert result.returncode == 0, f"runtime CLI {command} failed"
+    assert result.returncode == 0, f"runtime CLI {command} failed: {output[-4000:]}"
     payload = json.loads(next(line for line in reversed(output.splitlines()) if line.startswith("{")))
     assert type(payload) is dict
     return payload
@@ -800,7 +800,7 @@ def _run_cli_lifecycle_phase_worker(
         )
         return 0
     except Exception as exc:
-        _write_lifecycle_report(report_path, {"result": "fail", "phase": phase, "error_type": type(exc).__name__})
+        _write_lifecycle_report(report_path, {"result": "fail", "phase": phase, "error_type": type(exc).__name__, "error": str(exc)})
         return 2
 
 
@@ -1636,7 +1636,7 @@ def test_real_cli_lifecycle_and_acknowledgements() -> None:
         worker.wait(timeout=60)
         if worker.returncode != 0:
             failure = json.loads(report_path.read_text(encoding="utf-8")) if report_path.is_file() else {}
-            raise AssertionError(f"CLI lifecycle phase worker failed: {failure.get('phase', 'unreported')}")
+            raise AssertionError(f"CLI lifecycle phase worker failed: {failure}")
         wait_for(lambda: report_path.is_file(), seconds=60, message="CLI lifecycle stop worker produced no report")
         report = json.loads(report_path.read_text(encoding="utf-8"))
         assert report == {"result": "pass"}, "CLI lifecycle worker failed"
