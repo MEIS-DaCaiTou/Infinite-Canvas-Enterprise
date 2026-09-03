@@ -1127,6 +1127,26 @@ def record_resource_owner(user_id: str, resource_url: str, source: str = "") -> 
         conn.close()
 
 
+def record_resource_owners(user_id: str, resource_urls, source: str = "") -> int:
+    """One transaction per response, preserving every existing owner."""
+    urls = {(url or "").strip() for url in resource_urls}
+    urls.discard("")
+    if not user_id or not urls:
+        return 0
+    conn = get_db()
+    try:
+        created_at = int(time.time() * 1000)
+        before = conn.total_changes
+        conn.executemany(
+            "INSERT OR IGNORE INTO user_resource_map (user_id, resource_url, source, created_at) VALUES (?, ?, ?, ?)",
+            ((user_id, url, source, created_at) for url in urls),
+        )
+        conn.commit()
+        return conn.total_changes - before
+    finally:
+        conn.close()
+
+
 def get_resource_owner(resource_url: str) -> Optional[str]:
     conn = get_db()
     try:

@@ -17,15 +17,18 @@ import hashlib
 import socket
 import re
 import subprocess
+import copy
 from functools import lru_cache
 from pathlib import Path, PurePosixPath
 from typing import Any, Mapping, Optional, Tuple
 from urllib.parse import parse_qs, unquote, urlparse
 
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from enterprise import db as edb
 from enterprise import ws as enterprise_ws
+from enterprise.resource_index import ResourceReferenceIndex
 from enterprise.config import (
     ENTERPRISE_HIDE_UPSTREAM_AUTHOR,
     ENTERPRISE_REPO_URL,
@@ -69,6 +72,7 @@ _CANVAS_DATA_DIR = PATH_ROOTS.DATA_ROOT / "canvases"
 _CONVERSATION_DATA_DIR = PATH_ROOTS.DATA_ROOT / "conversations"
 _HISTORY_FILE = PATH_ROOTS.DATA_ROOT / "history.json"
 _ASSET_LIBRARY_FILE = PATH_ROOTS.DATA_ROOT / "asset_library.json"
+_RESOURCE_REFERENCES = ResourceReferenceIndex()
 DEFAULT_PROJECT_ID = "default"
 
 _HISTORY_GENERATION_PATHS = {
@@ -1602,33 +1606,17 @@ def handle_history_delete(user: dict, body: bytes | None) -> JSONResponse:
 
 
 def _canvas_ids_for_resource(resource_url: str) -> set[str]:
-    canvas_ids: set[str] = set()
-    if not _CANVAS_DATA_DIR.is_dir():
-        return canvas_ids
-    for path in _CANVAS_DATA_DIR.glob("*.json"):
-        data = _load_json_file(path)
-        if not isinstance(data, dict):
-            continue
-        if resource_url in _extract_local_resource_urls(data):
-            canvas_id = str(data.get("id") or path.stem)
-            if canvas_id:
-                canvas_ids.add(canvas_id)
-    return canvas_ids
+    return _RESOURCE_REFERENCES.matching_ids(
+        _CANVAS_DATA_DIR.glob("*.json"), resource_url,
+        _load_json_file, _extract_local_resource_urls,
+    )
 
 
 def _conversation_ids_for_resource(resource_url: str) -> set[str]:
-    conversation_ids: set[str] = set()
-    if not _CONVERSATION_DATA_DIR.is_dir():
-        return conversation_ids
-    for path in _CONVERSATION_DATA_DIR.glob("*/*.json"):
-        data = _load_json_file(path)
-        if not isinstance(data, dict):
-            continue
-        if resource_url in _extract_local_resource_urls(data):
-            conversation_id = str(data.get("id") or path.stem)
-            if conversation_id:
-                conversation_ids.add(conversation_id)
-    return conversation_ids
+    return _RESOURCE_REFERENCES.matching_ids(
+        _CONVERSATION_DATA_DIR.glob("*/*.json"), resource_url,
+        _load_json_file, _extract_local_resource_urls,
+    )
 
 
 def _resource_in_user_canvas_scope(user_id: str, resource_url: str) -> bool:
@@ -1654,15 +1642,14 @@ def _reconcile_canvas_resource_ownership(canvas_id: str, data: Any, source: str)
     canvas = data.get("canvas") if isinstance(data, dict) and isinstance(data.get("canvas"), dict) else data
     if not isinstance(canvas, dict):
         return
-    for resource_url in _extract_local_resource_urls(canvas):
-        if not _is_protected_resource(resource_url):
-            continue
-        if edb.get_resource_owner(resource_url):
-            continue
-        try:
-            edb.record_resource_owner(canvas_owner, resource_url, source)
-        except Exception as exc:
-            print(f"[enterprise] reconcile canvas resource owner failed: canvas={canvas_id} resource={resource_url} error={exc}")
+    try:
+        edb.record_resource_owners(
+            canvas_owner,
+            (url for url in _extract_local_resource_urls(canvas) if _is_protected_resource(url)),
+            source,
+        )
+    except Exception as exc:
+        print(f"[enterprise] reconcile canvas resource owner failed: canvas={canvas_id} error={exc}")
 
 
 def can_access_resource(user: dict, resource_url: str) -> bool:
@@ -1939,6 +1926,18 @@ def upstream_conversation_user_id(path: str, body: bytes | None, user: dict) -> 
 # ── 前置拦截：访问控制 ────────────────────────────────────
 
 async def pre_process(
+    path: str,
+    method: str,
+    user: dict,
+    query_params: Optional[Mapping[str, Any]] = None,
+    body: bytes | None = None,
+) -> Optional[JSONResponse]:
+    # These checks do synchronous SQLite and filesystem/JSON work. Keep that
+    # work off the ASGI loop without caching the authorization decision.
+    return await run_in_threadpool(_pre_process_sync, path, method, user, query_params, body)
+
+
+def _pre_process_sync(
     path: str,
     method: str,
     user: dict,
@@ -2472,11 +2471,10 @@ def filter_asset_library(user: dict, data: Any) -> bool:
 def record_resource_urls_for_user(user_id: str, source: str, data: Any) -> None:
     if not user_id:
         return
-    for resource_url in _extract_local_resource_urls(data):
-        try:
-            edb.record_resource_owner(user_id, resource_url, source)
-        except Exception as exc:
-            print(f"[企业版] 记录资源归属失败: user={user_id} resource={resource_url} error={exc}")
+    try:
+        edb.record_resource_owners(user_id, _extract_local_resource_urls(data), source)
+    except Exception as exc:
+        print(f"[企业版] 批量记录资源归属失败: user={user_id} error={exc}")
 
 
 def _record_resource_owner_safe(user_id: str, resource_url: str, source: str) -> None:
@@ -2946,6 +2944,31 @@ async def post_process(
     request_body: bytes | None = None,
     query_params: Optional[Mapping[str, Any]] = None,
 ) -> Tuple[bytes, dict]:
+    notifications = []
+    result = await run_in_threadpool(
+        _post_process_sync, path, method, status_code, response_body,
+        content_type, user, request_body, query_params, notifications,
+    )
+    # WebSocket sends belong to the original ASGI loop, not the worker thread.
+    for kind, payload in notifications:
+        if kind == "asset_library":
+            await enterprise_ws.broadcast_asset_library_updated(user, payload)
+        else:
+            await enterprise_ws.broadcast_new_image(user, payload)
+    return result
+
+
+def _post_process_sync(
+    path: str,
+    method: str,
+    status_code: int,
+    response_body: bytes,
+    content_type: str,
+    user: dict,
+    request_body: bytes | None,
+    query_params: Optional[Mapping[str, Any]],
+    notifications: list,
+) -> Tuple[bytes, dict]:
     """
     返回 (处理后的 body bytes, 需要覆盖的响应头 dict)
     """
@@ -3069,9 +3092,9 @@ async def post_process(
         record_resources_from_data(user, path, method, data, request_body)
         record_generated_history_for_user(user, path, method, data)
         if enterprise_ws.is_asset_library_write(path, method):
-            await enterprise_ws.broadcast_asset_library_updated(user, _asset_library_updated_at(data))
+            notifications.append(("asset_library", _asset_library_updated_at(data)))
         if enterprise_ws.is_generation_response(path, method, data):
-            await enterprise_ws.broadcast_new_image(user, data)
+            notifications.append(("generation", copy.deepcopy(data)))
 
     _sync_admin_canvas_owner_from_persisted_project(user, path, method)
 

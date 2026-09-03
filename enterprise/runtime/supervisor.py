@@ -483,6 +483,10 @@ class RuntimeSupervisor:
         runtime = self.roles[role]
         if self._stopping or runtime.state == "crash_loop" or runtime.process is not None:
             return
+        # Every launch path must respect the scheduled backoff, including the
+        # gateway bootstrap path in _tick (not just its deadline loop).
+        if runtime.restart_at is not None and time.monotonic() < runtime.restart_at:
+            return
         process: ManagedProcess | None = None
         try:
             process = start_process(
@@ -732,6 +736,7 @@ class RuntimeSupervisor:
         runtime = self.roles[role]
         if runtime.process is None or runtime.state in {"crash_loop", "stopped", "restarting"}:
             return
+        probe_started = time.monotonic()
         result = self._health_for(role)
         self.logs.write(
             "health.log",
@@ -741,6 +746,7 @@ class RuntimeSupervisor:
             pid=runtime.process.identity.pid,
             health_category=result.category,
             status_code=result.status_code,
+            elapsed_ms=round((time.monotonic() - probe_started) * 1000, 1),
         )
         if result.ok:
             runtime.state = "healthy"
@@ -757,9 +763,9 @@ class RuntimeSupervisor:
             runtime.health_failures = 0
             runtime.restart_at = None
             return
-        if role == "gateway" and result.category == "upstream_unavailable":
+        if role == "gateway" and result.category in {"upstream_unavailable", "readiness_timeout"}:
             runtime.state = "degraded"
-            runtime.health = "upstream_unavailable"
+            runtime.health = result.category
             runtime.health_failures = 0
             return
         runtime.health = result.category
@@ -769,7 +775,13 @@ class RuntimeSupervisor:
             and runtime.started_at_monotonic is not None
             and time.monotonic() - runtime.started_at_monotonic >= self.config.startup_timeout_seconds
         )
-        if startup_expired or runtime.health_failures >= self.config.health_failure_threshold:
+        # Startup has its own deadline. A role which has never become ready
+        # must not consume the steady-state failure budget before that deadline.
+        steady_state_failed = (
+            runtime.state != "starting"
+            and runtime.health_failures >= self.config.health_failure_threshold
+        )
+        if startup_expired or steady_state_failed:
             stop_result = self._stop_role(role, reason="health_failure")
             if stop_result.get("replacement_safe", True):
                 self._schedule_restart(role, reason="startup_timeout" if startup_expired else "health_failure", exit_code=None)
@@ -991,7 +1003,12 @@ class RuntimeSupervisor:
                 self._start_role(role)
         upstream = self.roles["upstream"]
         gateway = self.roles["gateway"]
-        if gateway.process is None and gateway.state != "crash_loop" and upstream.state == "healthy":
+        if (
+            gateway.process is None
+            and gateway.state == "stopped"
+            and gateway.restart_at is None
+            and upstream.state == "healthy"
+        ):
             self._start_role("gateway")
         if now - self._last_health_at >= self.config.health_interval_seconds:
             self._last_health_at = now
