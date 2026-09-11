@@ -180,13 +180,17 @@ def validate_recovery_snapshot(snapshot: dict[str, Any], *, source_root: Path) -
 
 def build_config(source_root: Path):
     sys.path.insert(0, os.fspath(source_root))
-    from enterprise import config as enterprise_config
     from enterprise.paths import install_path_roots_for_process
     from enterprise.runtime.portable import build_portable_preflight
-    from enterprise.runtime.supervisor import SupervisorConfig
 
     preflight = build_portable_preflight(source_root, verify_full_payload=True)
     roots = install_path_roots_for_process(preflight.roots)
+    # enterprise.config resolves mutable roots during import.  Install the
+    # verified portable roots first so this process cannot be initialized with
+    # the development/default layout and then switched afterward.
+    from enterprise import config as enterprise_config
+    from enterprise.runtime.supervisor import SupervisorConfig
+
     result = preflight.result
     secrets = tuple(
         value
