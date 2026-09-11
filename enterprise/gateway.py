@@ -88,15 +88,19 @@ app.add_middleware(AuthStateMiddleware)
 app.include_router(admin_router, prefix="/enterprise")
 app.include_router(update_router, prefix="/enterprise")
 
-# 共享 httpx 客户端（保持连接池）
+# 共享业务代理客户端（保持连接池）。健康探测不复用该连接池，避免长请求或
+# 被取消的旧连接影响下一次探测。
 _http_client: Optional[httpx.AsyncClient] = None
-_health_client: Optional[httpx.AsyncClient] = None
-HEALTH_UPSTREAM_DEADLINE_SECONDS = 1.0
+_health_probe_lock: Optional[asyncio.Lock] = None
+_health_probe_task: Optional[asyncio.Task] = None
+HEALTH_UPSTREAM_CONNECT_TIMEOUT_SECONDS = 0.5
+HEALTH_UPSTREAM_READ_TIMEOUT_SECONDS = 2.0
+HEALTH_UPSTREAM_OUTER_DEADLINE_SECONDS = 2.5
 
 
 @app.on_event("startup")
 async def startup() -> None:
-    global _http_client, _health_client
+    global _http_client, _health_probe_lock, _health_probe_task
     require_gateway_database_ready(PATH_ROOTS, DB_PATH)
     ensure_db_schema()
     _http_client = httpx.AsyncClient(
@@ -105,24 +109,24 @@ async def startup() -> None:
         follow_redirects=True,
         limits=httpx.Limits(max_connections=200, max_keepalive_connections=50),
     )
-    # Health probes must not wait behind image generation/download connections
-    # or inherit a machine-wide proxy. The outer supervisor timeout is 3 s.
-    _health_client = httpx.AsyncClient(
-        base_url=UPSTREAM_URL,
-        timeout=httpx.Timeout(HEALTH_UPSTREAM_DEADLINE_SECONDS),
-        limits=httpx.Limits(max_connections=2, max_keepalive_connections=1),
-        trust_env=False,
-    )
+    _health_probe_lock = asyncio.Lock()
+    _health_probe_task = None
     print(f"[企业版] 网关启动，监听 0.0.0.0:{GATEWAY_PORT}")
     print(f"[企业版] 上游服务地址: {UPSTREAM_URL}")
 
 
 @app.on_event("shutdown")
 async def shutdown() -> None:
+    global _health_probe_task
     if _http_client:
         await _http_client.aclose()
-    if _health_client:
-        await _health_client.aclose()
+    if _health_probe_task is not None and not _health_probe_task.done():
+        _health_probe_task.cancel()
+        try:
+            await _health_probe_task
+        except asyncio.CancelledError:
+            pass
+    _health_probe_task = None
 
 
 # ── 工具函数 ──────────────────────────────────────────────
@@ -844,30 +848,92 @@ async def liveness_check():
     return JSONResponse({"gateway": "ok"})
 
 
+async def _perform_upstream_health_probe() -> dict:
+    """Run one isolated local probe without reusing a cancelled connection."""
+    started = time.monotonic()
+    timeout = httpx.Timeout(
+        connect=HEALTH_UPSTREAM_CONNECT_TIMEOUT_SECONDS,
+        read=HEALTH_UPSTREAM_READ_TIMEOUT_SECONDS,
+        write=HEALTH_UPSTREAM_CONNECT_TIMEOUT_SECONDS,
+        pool=HEALTH_UPSTREAM_CONNECT_TIMEOUT_SECONDS,
+    )
+    limits = httpx.Limits(max_connections=1, max_keepalive_connections=0)
+    try:
+        async with httpx.AsyncClient(
+            base_url=UPSTREAM_URL,
+            timeout=timeout,
+            limits=limits,
+            trust_env=False,
+        ) as client:
+            response = await client.get("/api/app-info")
+        upstream_ok = response.status_code < 500
+        return {
+            "upstream_ok": upstream_ok,
+            "upstream_latency_ms": round((time.monotonic() - started) * 1000),
+            "failure_category": None if upstream_ok else "upstream_http_failure",
+        }
+    except httpx.ConnectTimeout:
+        failure_category = "upstream_connect_timeout"
+    except httpx.ReadTimeout:
+        failure_category = "upstream_read_timeout"
+    except httpx.PoolTimeout:
+        failure_category = "upstream_pool_timeout"
+    except httpx.TimeoutException:
+        failure_category = "upstream_timeout"
+    except httpx.RequestError:
+        failure_category = "upstream_transport_failure"
+    except Exception:
+        failure_category = "health_probe_failure"
+    return {
+        "upstream_ok": False,
+        "upstream_latency_ms": None,
+        "failure_category": failure_category,
+    }
+
+
+async def _bounded_upstream_health_probe() -> dict:
+    started = time.monotonic()
+    try:
+        result = await asyncio.wait_for(
+            _perform_upstream_health_probe(),
+            timeout=HEALTH_UPSTREAM_OUTER_DEADLINE_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        result = {
+            "upstream_ok": False,
+            "upstream_latency_ms": None,
+            "failure_category": "upstream_probe_deadline",
+        }
+    result["probe_elapsed_ms"] = round((time.monotonic() - started) * 1000)
+    return result
+
+
+async def _shared_upstream_health_probe() -> dict:
+    """Share one in-flight probe so concurrent health callers cannot pile up."""
+    global _health_probe_lock, _health_probe_task
+    if _health_probe_lock is None:
+        _health_probe_lock = asyncio.Lock()
+    async with _health_probe_lock:
+        if _health_probe_task is None or _health_probe_task.done():
+            _health_probe_task = asyncio.create_task(_bounded_upstream_health_probe())
+        task = _health_probe_task
+    return await asyncio.shield(task)
+
+
 @app.get("/enterprise/health", include_in_schema=False)
 async def health_check():
     """服务健康检查（无需登录）"""
-    import time
-    upstream_ok = False
-    upstream_latency_ms = None
-    try:
-        t0 = time.monotonic()
-        resp = await asyncio.wait_for(
-            _health_client.get("/api/app-info"),
-            timeout=HEALTH_UPSTREAM_DEADLINE_SECONDS,
-        )
-        upstream_latency_ms = round((time.monotonic() - t0) * 1000)
-        upstream_ok = resp.status_code < 500
-    except Exception:
-        pass
-
+    probe = await _shared_upstream_health_probe()
+    upstream_ok = bool(probe["upstream_ok"])
     status = "ok" if upstream_ok else "degraded"
     return JSONResponse(
         {
             "status": status,
             "gateway": "ok",
             "upstream": "ok" if upstream_ok else "unreachable",
-            "upstream_latency_ms": upstream_latency_ms,
+            "upstream_latency_ms": probe["upstream_latency_ms"],
+            "probe_elapsed_ms": probe["probe_elapsed_ms"],
+            "failure_category": probe["failure_category"],
         },
         status_code=200 if upstream_ok else 503,
     )

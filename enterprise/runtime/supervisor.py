@@ -758,13 +758,13 @@ class RuntimeSupervisor:
             # proof it is unsafe to stop or replace any process. Keep the exact
             # managed generation and recover automatically when inspection is
             # available again.
-            runtime.state = "degraded"
+            runtime.state = "starting" if runtime.state == "starting" else "degraded"
             runtime.health = "ownership_unverified"
             runtime.health_failures = 0
             runtime.restart_at = None
             return
         if role == "gateway" and result.category in {"upstream_unavailable", "readiness_timeout"}:
-            runtime.state = "degraded"
+            runtime.state = "starting" if runtime.state == "starting" else "degraded"
             runtime.health = result.category
             runtime.health_failures = 0
             return
