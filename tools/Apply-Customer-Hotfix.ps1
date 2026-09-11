@@ -18,34 +18,34 @@ $checksums = Join-Path $packageRoot 'SHA256SUMS.txt'
 
 foreach ($required in @($manifest, $archive, $inventory, $applyScript, $checksums)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
-        throw "缺少离线热修文件：$required"
+        throw "Required offline hotfix file is missing: $required"
     }
 }
 
 foreach ($line in Get-Content -LiteralPath $checksums) {
     if ([string]::IsNullOrWhiteSpace($line)) { continue }
     $parts = $line -split '\s+', 2
-    if ($parts.Count -ne 2) { throw 'SHA256SUMS.txt 格式无效' }
+    if ($parts.Count -ne 2) { throw 'SHA256SUMS.txt format is invalid' }
     $file = Join-Path $packageRoot $parts[1]
-    if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "校验目标不存在：$($parts[1])" }
+    if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Checksum target is missing: $($parts[1])" }
     $actual = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
-    if ($actual -ne $parts[0].ToLowerInvariant()) { throw "SHA-256 不匹配：$($parts[1])" }
+    if ($actual -ne $parts[0].ToLowerInvariant()) { throw "SHA-256 mismatch: $($parts[1])" }
 }
 
 $resolvedInstallRoot = (Resolve-Path -LiteralPath $InstallRoot).Path
 $pointerPath = Join-Path $resolvedInstallRoot 'state\current-release.json'
 $pointer = Get-Content -LiteralPath $pointerPath -Raw | ConvertFrom-Json
 if ($pointer.release_id -ne $expectedSourceRelease) {
-    throw "当前活动版本不是客户准确基线 $expectedSourceRelease，已停止。"
+    throw "The active Release is not the required customer baseline $expectedSourceRelease. No change was made."
 }
 
 if (-not $ConfirmNoActiveTasks) {
-    $answer = Read-Host '请先停止新任务并确认没有执行中的任务；输入 YES 继续'
-    if ($answer -cne 'YES') { throw '未确认任务排空，已停止。' }
+    $answer = Read-Host 'Stop new work and drain all active tasks. Type YES to continue'
+    if ($answer -cne 'YES') { throw 'Task drain was not confirmed. No change was made.' }
 }
 
 $python = Join-Path $resolvedInstallRoot "releases\$expectedSourceRelease\python\python.exe"
-if (-not (Test-Path -LiteralPath $python -PathType Leaf)) { throw '客户基线 bundled Python 不存在' }
+if (-not (Test-Path -LiteralPath $python -PathType Leaf)) { throw 'The bundled Python for the required customer baseline is missing.' }
 
 & $python -I -B $applyScript `
     --install-root $resolvedInstallRoot `
@@ -54,5 +54,5 @@ if (-not (Test-Path -LiteralPath $python -PathType Leaf)) { throw '客户基线 
     --inventory $inventory `
     --confirm-no-active-tasks
 $exitCode = $LASTEXITCODE
-if ($exitCode -ne 0) { throw "热修未激活或已自动回退，退出码：$exitCode" }
-Write-Host '客户 Runtime 热修已激活并通过目标版本健康检查。' -ForegroundColor Green
+if ($exitCode -ne 0) { throw "The hotfix was not activated or rolled back automatically. Exit code: $exitCode" }
+Write-Host 'The customer Runtime hotfix is active and passed target health checks.' -ForegroundColor Green
