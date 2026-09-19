@@ -60,6 +60,20 @@ def test_readiness_timeout_is_not_a_liveness_failure(tmp_path):
     assert supervisor.roles["gateway"].health_failures == 0
 
 
+@pytest.mark.parametrize("category", ["readiness_timeout", "upstream_unavailable"])
+def test_gateway_dependency_delay_preserves_startup_grace(tmp_path, category):
+    supervisor = build_supervisor(tmp_path / "runtime")
+    _configure_failed_health_probe(supervisor, state="starting", health_failures=0)
+    supervisor.roles["gateway"].started_at_monotonic = time.monotonic()
+    with patch.object(supervisor, "_health_for", return_value=health.HealthResult(False, category)), \
+         patch.object(supervisor, "_stop_role") as stop:
+        for _ in range(supervisor.config.health_failure_threshold + 2):
+            supervisor._check_role_health("gateway")
+        stop.assert_not_called()
+    assert supervisor.roles["gateway"].state == "starting"
+    assert supervisor.roles["gateway"].health_failures == 0
+
+
 def test_startup_grace_is_not_shortened_by_steady_state_threshold(tmp_path):
     supervisor = build_supervisor(tmp_path / "runtime")
     _configure_failed_health_probe(supervisor, state="starting", health_failures=0)
@@ -83,23 +97,148 @@ def test_health_probe_distinguishes_readiness_delay_from_hang(alive):
 
 def test_health_has_independent_pool_total_deadline_and_auth_bypass(monkeypatch):
     from enterprise import gateway
+
     async def run():
-        async def slow(request):
-            await asyncio.sleep(2)
-            return httpx.Response(200)
-        monkeypatch.setattr(gateway, "HEALTH_UPSTREAM_DEADLINE_SECONDS", 0.05)
+        async def degraded_probe():
+            return {
+                "upstream_ok": False,
+                "upstream_latency_ms": None,
+                "probe_elapsed_ms": 8,
+                "failure_category": "upstream_read_timeout",
+            }
+
         monkeypatch.setattr(gateway, "verify_token", MagicMock(side_effect=AssertionError("health used auth DB")))
+        monkeypatch.setattr(gateway, "_shared_upstream_health_probe", degraded_probe)
         monkeypatch.setattr(gateway, "_http_client", MagicMock())
-        async with httpx.AsyncClient(transport=httpx.MockTransport(slow), base_url="http://upstream") as probe:
-            monkeypatch.setattr(gateway, "_health_client", probe)
-            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=gateway.app), base_url="http://gateway") as client:
-                live = await client.get("/enterprise/live", headers={"Authorization": "Bearer invalid"})
-                assert live.status_code == 200
-                degraded = await asyncio.wait_for(client.get("/enterprise/health"), timeout=0.5)
-                assert degraded.status_code == 503
-                assert degraded.json()["gateway"] == "ok"
-                gateway._http_client.get.assert_not_called()
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=gateway.app), base_url="http://gateway") as client:
+            live = await client.get("/enterprise/live", headers={"Authorization": "Bearer invalid"})
+            assert live.status_code == 200
+            degraded = await asyncio.wait_for(client.get("/enterprise/health"), timeout=0.5)
+            assert degraded.status_code == 503
+            assert degraded.json()["gateway"] == "ok"
+            assert degraded.json()["failure_category"] == "upstream_read_timeout"
+            gateway._http_client.get.assert_not_called()
+
     asyncio.run(run())
+
+
+def _read_timeout() -> httpx.ReadTimeout:
+    return httpx.ReadTimeout(
+        "simulated read timeout",
+        request=httpx.Request("GET", "http://127.0.0.1:3001/api/app-info"),
+    )
+
+
+def test_health_probe_timeouts_do_not_poison_next_probe(monkeypatch):
+    from enterprise import gateway
+
+    outcomes = [_read_timeout(), _read_timeout(), httpx.Response(200)]
+    instances = []
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            instances.append(kwargs)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def get(self, _path):
+            outcome = outcomes.pop(0)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+
+    monkeypatch.setattr(gateway.httpx, "AsyncClient", FakeClient)
+    gateway._health_probe_lock = None
+    gateway._health_probe_task = None
+
+    async def run():
+        first = await gateway._shared_upstream_health_probe()
+        second = await gateway._shared_upstream_health_probe()
+        third = await gateway._shared_upstream_health_probe()
+        return first, second, third
+
+    first, second, third = asyncio.run(run())
+    assert first["failure_category"] == "upstream_read_timeout"
+    assert second["failure_category"] == "upstream_read_timeout"
+    assert third["upstream_ok"] is True
+    assert len(instances) == 3
+    assert all(item["trust_env"] is False for item in instances)
+    assert all(item["limits"].max_keepalive_connections == 0 for item in instances)
+
+
+def test_concurrent_health_callers_share_one_probe(monkeypatch):
+    from enterprise import gateway
+
+    calls = 0
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def get(self, _path):
+            nonlocal calls
+            calls += 1
+            await asyncio.sleep(0.03)
+            return httpx.Response(200)
+
+    monkeypatch.setattr(gateway.httpx, "AsyncClient", FakeClient)
+    gateway._health_probe_lock = None
+    gateway._health_probe_task = None
+
+    async def run():
+        return await asyncio.gather(*(gateway._shared_upstream_health_probe() for _ in range(10)))
+
+    results = asyncio.run(run())
+    assert calls == 1
+    assert all(item["upstream_ok"] for item in results)
+
+
+def test_outer_health_deadline_recovers_with_fresh_probe(monkeypatch):
+    from enterprise import gateway
+
+    calls = 0
+    monkeypatch.setattr(gateway, "HEALTH_UPSTREAM_OUTER_DEADLINE_SECONDS", 0.02)
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def get(self, _path):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                await asyncio.sleep(0.2)
+            return httpx.Response(200)
+
+    monkeypatch.setattr(gateway.httpx, "AsyncClient", FakeClient)
+    gateway._health_probe_lock = None
+    gateway._health_probe_task = None
+
+    async def run():
+        first = await gateway._shared_upstream_health_probe()
+        second = await gateway._shared_upstream_health_probe()
+        return first, second
+
+    first, second = asyncio.run(run())
+    assert first["failure_category"] == "upstream_probe_deadline"
+    assert second["upstream_ok"] is True
+    assert calls == 2
 
 
 def test_interceptor_work_does_not_block_asgi_loop(monkeypatch):
