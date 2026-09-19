@@ -10,7 +10,7 @@
 | `static/` | 旧版产品 UI：工作台、普通画布、智能画布、素材与设置页 | 必须保留原视觉与交互；无前端构建步骤 |
 | `enterprise/` | 企业认证、权限、Gateway、数据索引、Runtime、发布、安装、更新、安全审计 | 企业自有核心代码 |
 | `enterprise-static/` | 登录、管理后台、操作日志、个人中心 | 由 Gateway 直接提供 |
-| `enterprise/tests/` | Python 单元/集成/契约测试、PowerShell smoke/diagnose、浏览器清单 | 当前共 52 个 `test_*.py` 文件 |
+| `enterprise/tests/` | Python 单元/集成/契约测试、PowerShell smoke/diagnose、浏览器清单 | 当前共 59 个 Python 测试文件 |
 | `docs/` | ADR、实施记录、证据、路线与当前状态 | 历史记录不等于当前源码事实 |
 | `tools/` | 运维、发布、验证、打包和历史工具 | 使用前阅读对应记录，避免把历史脚本当正式入口 |
 | `installer/windows/` | Inno Setup Windows 安装器定义 | 首次安装分发入口 |

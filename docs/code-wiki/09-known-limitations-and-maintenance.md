@@ -12,7 +12,7 @@
 | 权限 | 固定三角色 + 功能开关 + owner map | 动态 RBAC、组织层级和部门租户 |
 | 更新 | 同 Schema Manifest v2 更新 | 任意数据库迁移或跨版本自动升级 |
 | Runtime | Windows portable lifecycle | Linux/Kubernetes 生产编排 |
-| 测试 | 52 个 Python 测试文件和脚本清单 | 已配置 GitHub Actions 或全部生产验收 |
+| 测试 | 59 个 Python 测试文件；收敛分支增加最小 GitHub Actions | CI 通过即可替代生产验收 |
 | `2026.09.4` | 独立发布标签 | 已合并 `main` 或永久 Production Baseline |
 
 ## 2. 主要技术债
@@ -39,7 +39,7 @@ SQLite 适合当前单机范围，但高并发写、跨进程长事务和多节�
 
 ## 3. 发布线分叉风险
 
-本次核验有三个不同基线：`origin/main`、本地可靠性分支、`2026.09.4` 标签。维护时必须：
+本次核验仍有三个不同基线：`origin/main`、主线收敛分支、`2026.09.4` 标签。收敛分支已经移植现场有效代码，但 PR 合并前分叉仍存在。维护时必须：
 
 1. 先确定修复目标是主线、客户精确版本还是发布候选。
 2. 用 commit/tree/manifest 标识，不只写“最新版”。

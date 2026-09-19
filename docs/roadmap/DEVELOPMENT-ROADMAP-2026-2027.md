@@ -1,9 +1,9 @@
 # Infinite-Canvas-Enterprise 开发路线图（2026-2027）
 
-更新时间：2026-08-24
-最后一次代码事实核对基线：`42824290c6d778d72f45640dd3e5d640c7ed1a03`（tree `66993a44ca6438b65e1a576ea8dd15c271693d3e`；PR #102 merge `0f2a2676ac0c231f0e722893dab1ced3f13e576d` 具有相同 tree）
+更新时间：2026-09-19
+最后一次主线事实核对基线：`origin/main@58dc98c09e213ee747024d2934aa181d14cf0c1d`；Runtime 收敛工作位于 `codex/mainline-runtime-convergence-20260919`，合并前不得写成 `main` 已具备。
 
-当前 repository HEAD 以 GitHub `main` 为准。ENV/Runtime/Manifest、UPDATE-MVP-1、RELEASE-MVP-1、INSTALL-MVP-1 与 INSTALL-UX-1 Gate A 已完成各自批准范围；INSTALL-UX-1 Gate A 由 PR #102 合并并独立验收。现有公开 `2026.08.4` 仍是严格三资产 Release；Gate B、新版本、正式代码签名、signed public installer、Production Baseline 或生产部署均未获本次收口授权。
+当前 repository HEAD 以 GitHub `main` 为准。ENV/Runtime/Manifest、UPDATE-MVP-1、RELEASE-MVP-1、INSTALL-MVP-1 与 INSTALL-UX-1 Gate A 已完成各自批准范围。公开 `2026.09.4` 是从精确 `2026.08.5` 基线制作的客户 Runtime 定点热修三件套；它已在一台客户设备完成升级并恢复使用，但不等于 signed public installer、通用 Production Baseline 或收敛代码已经合入 `main`。
 
 当前实施事实以 [CURRENT_PROJECT_STATUS](../CURRENT_PROJECT_STATUS.md) 为准；架构决策以 [ADR 索引](../README.md) 为准。本文负责阶段顺序，不重复定义实现状态。
 
@@ -58,7 +58,9 @@ OPS-2A / OPS-2B 已进入 main，项目负责人曾在旧生产侧人工完成 d
 
 ## 3. 当前阶段
 
-当前已确认状态为 **ENV-1B1C-B1/B2、ENV-1B2A/B2B、OPS Release Manifest v2、ENV-1B3、UPDATE-MVP-1、INSTALL-MVP-1 与 INSTALL-UX-1 Gate A 已完成各自批准范围**。`ENV_1B2_completed=true`、`ENV_1B3_completed=true`、`clean_Windows_validation=true`。DATA-1 已收窄为 DATA-MVP-1 repository foundation 并等待独立复核；INSTALL-UX-1 Gate B、Update Center migration/restore、完整 Release activation、OPS-3B、Production Baseline 和生产批准仍未完成。
+当前第一优先级是把 `origin/main`、本地可靠性开发增量和 `2026.09.4` 现场有效修复收敛为一条可审查主线；收敛 PR 通过前，不启动新的发布版本。其后才按既有门禁继续 DATA/restore、OPS-3B、安全、架构与性能工作。
+
+当前已确认状态为 **ENV-1B1C-B1/B2、ENV-1B2A/B2B、OPS Release Manifest v2、ENV-1B3、UPDATE-MVP-1、INSTALL-MVP-1 与 INSTALL-UX-1 Gate A 已完成各自批准范围**。`ENV_1B2_completed=true`、`ENV_1B3_completed=true`、`clean_Windows_validation=true`。DATA-1 已收窄为 DATA-MVP-1 repository foundation；INSTALL-UX-1 Gate B、Update Center migration/restore、完整 Release activation、OPS-3B、Production Baseline 和通用生产批准仍未完成。
 
 Greenfield Production Baseline 路线按以下顺序执行，后项不能绕过前项门禁：
 

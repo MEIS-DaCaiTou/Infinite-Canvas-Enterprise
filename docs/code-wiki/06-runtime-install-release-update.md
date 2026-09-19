@@ -31,7 +31,7 @@
 | `logging.py / RotatingTextLog` | 有界轮转文本日志与脱敏 |
 | `windows.py / ProcessJob` | Windows Job Object 约束子进程 |
 
-本地 `28ad937` 增量把健康探针放入隔离执行路径，避免健康检查本身阻塞 Supervisor 主循环；短暂健康失败可先进入 degraded，由同 PID 自愈，达到策略条件后才执行退避重启。
+主线收敛分支同时包含 `28ad937` 的阻塞隔离/任务回执，以及 `2026.09.4` 现场验证后的全新无 keep-alive 探针、并发单飞、外层截止与启动宽限保持。短暂 readiness 失败先进入 degraded 并允许同 PID 自愈，只有真正的 liveness/稳态连续失败达到策略条件后才退避重启。PR 合并前这些仍是分支能力。
 
 ## 3. Portable 启动信任链
 

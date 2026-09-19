@@ -57,7 +57,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\enterprise\tests\smoke.ps1
 
 ## 5. Python 测试
 
-当前代码树有 52 个 `enterprise/tests/test_*.py` 文件。推荐从根目录使用仓库 Python：
+当前代码树有 59 个 Python 测试文件。推荐从根目录使用仓库 Python：
 
 ```powershell
 .\python\python.exe -m pytest enterprise\tests -q -p no:asyncio
@@ -82,6 +82,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\enterprise\tests\smoke.ps1
 | `test_canvas_task_journal.py` | 本地分支任务回执恢复 |
 
 这些测试大量使用临时 SQLite、临时目录和 fixture；通过它们不等于真实客户设备、正式签名安装器或生产发布已经验收。
+
+2026-09-19 收敛分支证据：CPython 3.11 完整企业套件为 `909 passed, 10 skipped, 1 failed`，唯一失败是受限后台子会话创建 service host 时的 `WinError 5`；同机直接 lifecycle 在 CPython 3.11 与 bundled CPython 3.14.6 下均 `3 passed`，可靠性与任务回执专项在两者下均 `33 passed`。该失败必须继续由 CI/独立 Windows 环境复核，不能从完整测试计数中删除或写成全绿。
 
 ## 6. 浏览器回归
 
@@ -122,7 +124,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\enterprise\tests\smoke.ps1
 
 ## 9. CI 现状
 
-本次核验的 `origin/main` 与本地当前分支中均没有 `.github/workflows`。因此自动化测试目前是仓库内可执行的测试资产，不是已配置的 GitHub Actions 门禁。新增 CI 时应运行同一套受支持命令，并保持物理 Windows/签名/发布验收与普通 pytest 分开。
+`origin/main` 尚无 Actions；`codex/mainline-runtime-convergence-20260919` 新增 `.github/workflows/enterprise-checks.yml`，在 Windows 上运行 CPython 3.11 完整企业套件和 CPython 3.14 Runtime 专项。只有远端工作流实际通过后才能称为 CI 通过；物理 Windows、正式 bundled Runtime、签名、发布和生产验收仍与普通 pytest/Actions 分开。
 
 ## 10. 常见故障定位
 

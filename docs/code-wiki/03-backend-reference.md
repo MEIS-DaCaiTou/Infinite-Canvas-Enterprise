@@ -146,6 +146,6 @@
 
 负责把旧用户 schema 迁移到角色/审计 READY 状态，包含只读计划、正式备份、执行、生命周期记录、失败恢复和重复执行校验。
 
-## 8. 本地分支增量：`enterprise/canvas_task_journal.py`
+## 8. 主线收敛分支增量：`enterprise/canvas_task_journal.py`
 
-`CanvasTaskJournal` 使用追加日志保存画布任务受理回执，关键方法负责 append、恢复和压缩；`create_task_receipt()` 在任务被受理时记录最小可恢复信息。该文件只存在于当前本地提交 `28ad937`，不能描述为 `origin/main` 已有能力。
+`CanvasTaskJournal` 使用原子 JSON 回执保存画布任务状态，关键方法负责创建、单次领取、完成和中断恢复；`create_task_receipt()` 在任务被受理时记录最小可恢复信息。该文件已从 `28ad937` 移植到 `codex/mainline-runtime-convergence-20260919`，在 PR 合并前不能描述为 `origin/main` 已有能力。

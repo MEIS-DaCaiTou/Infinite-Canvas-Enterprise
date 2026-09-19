@@ -1,7 +1,9 @@
 # Infinite Canvas Enterprise Code Wiki
 
-> 生成日期：2026-09-11  
-> 本地仓库：`D:\CodeProject\26-5-27-无限画布`  
+> 更新日期：2026-09-19
+>
+> 核验工作区：`D:\CodeProject\Infinite-Canvas-Enterprise-MAINLINE-CONVERGENCE`
+>
 > GitHub：`MEIS-DaCaiTou/Infinite-Canvas-Enterprise`
 
 本 Wiki 面向开发、维护、代码审查与故障排查。内容以源码和 Git 元数据为依据，说明“代码当前是什么”，不替代发布审批、生产验收记录或产品路线图。
@@ -11,14 +13,15 @@
 | 观察面 | 提交 | 说明 |
 | --- | --- | --- |
 | GitHub `origin/main` | `58dc98c09e213ee747024d2934aa181d14cf0c1d` | `feat(data): add versioned SQLite migration foundation (#107)` |
-| 本地当前分支 | `codex/runtime-reliability-20260903` | 相对 `origin/main` 领先 1 个提交 |
-| 本地 `HEAD` | `28ad93735e75a86891e1461e407dc62d0f7f03c9` | 增加健康探针隔离与画布任务回执持久化 |
+| 主线收敛分支 | `codex/mainline-runtime-convergence-20260919` | 从 `origin/main` 创建，等待 PR 审查与合并 |
+| 收敛代码提交 | `3dc6b1a`、`91c3d51`、`3c1f96c` | 合并任务持久回执与 `2026.09.4` 现场验证的健康恢复，并补 CP314 隔离测试兼容 |
 | 发布标签 `2026.09.4` | `a0d1ccf7c2c3ddb5d90c5dc25aea76d5e13dc65a` | 位于独立发布历史，不等同于 `main` 或本地 `HEAD` |
+| 客户恢复工具分支 | `codex/customer-hotfix-2026.08.5-20260911@75da5c8` | 已推送、未合并主线，保存升级恢复执行器后续修复 |
 
 因此：
 
-- 通用结构说明覆盖 `origin/main` 与本地当前分支共有实现。
-- 仅本地提交存在的能力会标注“本地分支增量”。
+- 通用结构说明覆盖 `origin/main` 与主线收敛分支。
+- 收敛分支能力在 PR 合并前仍标注“分支增量”。
 - 标签存在只证明 Git 中存在发布对象，不自动表示已合入主线、已部署或已成为正式生产基线。
 - GitHub 仓库在本次核验时为公开仓库；若仓库可见性以后变化，应以 GitHub 实时状态为准。
 
@@ -44,12 +47,12 @@
 | --- | --- |
 | 画布、智能画布、素材库、对话、AI/工作流入口 | 已在旧业务内核与静态前端中实现 |
 | 登录、固定三角色、资源归属、功能开关、管理后台 | 已在企业覆盖层实现 |
-| Gateway/Upstream 生命周期与存活/健康检查 | 已实现；本地分支另含 2026-09-03 可靠性增量 |
+| Gateway/Upstream 生命周期与存活/健康检查 | `main` 已有基础；收敛分支合并任务回执、独立探针、单飞、外层截止与启动宽限修复 |
 | Windows 固定 Python、路径根、不可变 Release、安装器 | 已有实现与大量契约测试 |
 | 在线更新 | 仅支持 Manifest v2、同数据库 Schema、无迁移的安全更新 |
 | 版本化 SQLite 迁移/恢复基础 | `origin/main` 已实现基础原语，尚未完整接入 Update Center |
 | PostgreSQL、水平扩展、分布式任务队列 | 未实现 |
-| GitHub Actions | 当前代码树没有 `.github/workflows`，不可宣称已配置 |
+| GitHub Actions | 收敛分支新增最小 Windows 测试工作流；须以远端实际运行结果判断是否通过 |
 
 ## 5. 相关事实源
 

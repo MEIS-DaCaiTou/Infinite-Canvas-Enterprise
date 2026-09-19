@@ -1,6 +1,14 @@
 # Infinite Canvas Enterprise 当前项目状态
 
-更新时间：2026-08-25
+更新时间：2026-09-19
+
+### 2026-09-19 补充：Runtime 主线收敛
+
+- GitHub `origin/main` 实时核验仍为 `58dc98c09e213ee747024d2934aa181d14cf0c1d`。本轮从该提交创建 `codex/mainline-runtime-convergence-20260919`，没有把独立客户热修标签整体合并进主线。
+- `28ad937` 的健康探针隔离、阻塞工作线程化与两类画布任务持久回执已移植到收敛分支；`2026.09.4@a0d1ccf` 现场验证后新增的无 keep-alive 单次探针、并发单飞、2.5 秒外层截止和启动宽限修正也已按文件差异移植。PR 合并前，这些仍不是 `main` 能力。
+- GitHub Release `2026.09.4` 是以 `2026.08.5-ee4281022d01` 为唯一源版本的客户 Runtime 定点热修。项目负责人已确认一台客户设备完成原位升级并恢复正常使用；这是该客户设备的现场结果，不自动外推为所有环境的 Production Baseline。
+- 客户恢复执行器后续修复保存在远端分支 `codex/customer-hotfix-2026.08.5-20260911@75da5c8`；该分支未合并 `main`，也不应用于替换 DATA-MVP-1 或 USER-GOV-MVP-1。
+- 收敛分支验证：CPython 3.11 完整企业测试 `909 passed, 10 skipped, 1 failed`；唯一失败仍为受限后台子会话中的 `service_host_create / WinError 5`。同机直接 Windows lifecycle 在 CPython 3.11 和 bundled CPython 3.14.6 下均为 `3 passed`，可靠性/任务回执专项在两种解释器下均为 `33 passed`。该受限子会话场景仍须由 GitHub Actions 或独立 Windows 主机复核。
 
 ### 2026-09-03 补充：现场反馈与待发布开发修复
 
