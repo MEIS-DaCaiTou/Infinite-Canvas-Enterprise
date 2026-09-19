@@ -11,6 +11,9 @@ import pytest
 from enterprise.canvas_task_journal import CanvasTaskJournal, create_task_receipt
 
 
+ROOT = Path(__file__).resolve().parents[2]
+
+
 def record(task_id="canvas_img_fixture"):
     return {"id": task_id, "type": "online-image", "status": "queued", "result": None, "error": ""}
 
@@ -19,8 +22,9 @@ def test_task_survives_abrupt_process_exit_and_never_replays(tmp_path):
     script = """
 import os, sys
 from pathlib import Path
+sys.path.insert(0, sys.argv[1])
 from enterprise.canvas_task_journal import CanvasTaskJournal
-journal = CanvasTaskJournal(Path(sys.argv[1]))
+journal = CanvasTaskJournal(Path(sys.argv[2]))
 for name in ('queued', 'running', 'succeeded', 'jimeng_pending'):
     journal.create({'id': name, 'type': 'online-image', 'status': 'queued'})
     if name != 'queued':
@@ -29,7 +33,10 @@ for name in ('queued', 'running', 'succeeded', 'jimeng_pending'):
         journal.finish(name, {'status': name, 'result': {'images': ['/output/fixture.png']}, 'submit_id': 'external-fixture'})
 os._exit(17)
 """
-    completed = subprocess.run([sys.executable, "-c", script, str(tmp_path / "tasks")], timeout=20)
+    completed = subprocess.run(
+        [sys.executable, "-c", script, str(ROOT), str(tmp_path / "tasks")],
+        timeout=20,
+    )
     assert completed.returncode == 17
     journal = CanvasTaskJournal(tmp_path / "tasks")
     assert journal.recover() == {"interrupted": 2, "corrupt": 0}
@@ -118,9 +125,10 @@ def test_main_hooks_persist_before_dispatch_and_return_result_after_memory_loss(
     script = """
 import asyncio, sys
 from pathlib import Path
+sys.path.insert(0, sys.argv[1])
 from enterprise.paths import PortableRootInputs, derive_portable_path_roots, install_path_roots_for_process, prepare_application_directories
 from enterprise.canvas_task_journal import CanvasTaskJournal
-roots = derive_portable_path_roots(PortableRootInputs(Path(sys.argv[1]), Path(sys.argv[2])), 'fixture')
+roots = derive_portable_path_roots(PortableRootInputs(Path(sys.argv[2]), Path(sys.argv[3])), 'fixture')
 install_path_roots_for_process(roots)
 prepare_application_directories(roots)
 import main
@@ -161,8 +169,8 @@ asyncio.run(run())
 print('durable main hooks passed')
 """
     completed = subprocess.run(
-        [sys.executable, "-c", script, str(install), str(tmp_path / "local")],
-        cwd=Path(__file__).resolve().parents[2], capture_output=True, text=True,
+        [sys.executable, "-c", script, str(ROOT), str(install), str(tmp_path / "local")],
+        cwd=ROOT, capture_output=True, text=True,
         env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"), timeout=30,
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr
