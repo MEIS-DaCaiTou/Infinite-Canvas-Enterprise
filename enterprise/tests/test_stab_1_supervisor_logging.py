@@ -678,7 +678,10 @@ def _write_lifecycle_report(path: Path, payload: dict[str, object]) -> None:
 def _worker_flags() -> int:
     if os.name != "nt":
         return 0
-    return subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS | subprocess.CREATE_BREAKAWAY_FROM_JOB
+    # Hosted Windows runners can prohibit breakaway from their parent Job Object.
+    # The phase workers only need an independent process group and console; the
+    # enclosing test job remains alive until both phases have completed.
+    return subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
 
 
 def _run_cli_lifecycle_stop_worker(

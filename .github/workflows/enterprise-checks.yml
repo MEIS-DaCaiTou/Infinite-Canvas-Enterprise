@@ -19,6 +19,8 @@ jobs:
       PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
     steps:
       - uses: actions/checkout@v4
+      - name: Fetch pinned upstream provenance object
+        run: git fetch --no-tags --depth=1 https://github.com/hero8152/Infinite-Canvas.git f1dd6834a72f3e7ff8340be05a84347d931e9cb9
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"

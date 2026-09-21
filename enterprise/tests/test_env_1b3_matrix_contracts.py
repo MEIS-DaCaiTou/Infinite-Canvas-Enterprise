@@ -930,7 +930,7 @@ def test_probe_v3r2_bundle_public_modes_and_blocked_passthrough(tmp_path: Path) 
     assert blocked.returncode == 2
     blocked_result = json.loads(blocked.stdout.strip().splitlines()[-1])
     assert blocked_result["result"] == "BLOCKED"
-    assert blocked_result["code"] == "ENV1B3_LONG_PATHS_DISABLED"
+    assert blocked_result["code"] == "ENV1B3_LONG_PATHS_DISABLED", blocked.stdout + blocked.stderr
 
     deprecated = subprocess.run(
         [POWERSHELL, "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",

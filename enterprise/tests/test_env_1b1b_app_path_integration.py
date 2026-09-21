@@ -90,8 +90,9 @@ print(json.dumps({
     env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
     completed = subprocess.run(
         [sys.executable, "-c", script], cwd=Path(__file__).resolve().parents[2], env=env,
-        capture_output=True, text=True, check=True,
+        capture_output=True, text=True, check=False,
     )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
     payload = json.loads(completed.stdout.strip().splitlines()[-1])
     assert payload["base"].endswith("releases\\release-A")
     assert "\\data\\history.json" in payload["history"]
