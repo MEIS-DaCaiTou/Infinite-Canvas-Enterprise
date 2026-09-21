@@ -1,5 +1,7 @@
 # Infinite Canvas Enterprise 权限设计与 Task 3G 实施路线
 
+> 历史设计输入：本文保留早期 3G 权限模型与验收场景，不再承担当前任务排序。当前安全事实见 [`docs/CURRENT_PROJECT_STATUS.md`](docs/CURRENT_PROJECT_STATUS.md)，后续顺序见 [`docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md`](docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md)。其中“上游同步”要求已失效。
+
 更新时间：2026-07-10
 状态：企业权限治理的当前实现基线与已接受演进方向。本文明确区分现状和规划，不修改业务行为。
 
@@ -150,7 +152,7 @@
 ### 3G-7：浏览器级回归与长期维护文档
 
 - 将 A/B/admin 核心场景逐步脚本化，维护 `UPDATE_TEST_LOG.md`。
-- 每次上游同步强制复跑矩阵中“上游风险=高/严重”的项目。
+- 每次核心源代码、路由、静态 UI 或 Release payload 变更，强制复跑矩阵中的高/严重风险项目。
 - 增加未覆盖路由的发现检查，防止新增全局 API 静默上线。
 
 ## 5. 验收清单

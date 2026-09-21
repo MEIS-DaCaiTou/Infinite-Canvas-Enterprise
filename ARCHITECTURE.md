@@ -1,175 +1,135 @@
-# 无限画布企业版 · 架构说明
+# Infinite Canvas Enterprise 当前架构
 
-本文档描述当前仓库已实现的 Infinite Canvas 企业多用户运行架构和主要模块职责；它不证明相同仓库基线已经部署到生产。
+更新时间：2026-09-21
 
-> 最后一次代码事实核对基线：`main@105f3ca47f81207d2820fbd9acfa0a6d7b65770a`（PR #90 merge commit；tree `5a5fd040974ca9f74f0b2aa916edbb20c42dbd67`）。当前仓库具备 Manifest-v2-bound 不可变 Candidate 构建/materialization、fixed CP314 Runtime 信任链和复用 STAB-1 的 portable lifecycle；Candidate 08 已在独立 Windows Guest 完成 W01-W14 `14 PASS / 0 FAIL / 0 BLOCKED`。Fresh Install Bootstrap、DATA-1、Release activation、OPS-3B、formal Release、Production Baseline、restore rehearsal 和生产部署尚未完成。
+本文只描述当前运行架构与已确定的演进边界。实现状态以 [docs/CURRENT_PROJECT_STATUS.md](docs/CURRENT_PROJECT_STATUS.md) 为准，未来顺序以 [开发路线图](docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md) 为准。
 
----
+## 1. 当前形态
 
-## 1. 当前仓库总体架构
+当前是面向 Windows 单机/LAN 部署的模块化单体：
 
 ```text
-局域网/服务器用户浏览器
+Browser / LAN users
         |
-        | HTTP + enterprise_token Cookie
+        | HTTP + WebSocket
         v
-Enterprise Gateway
-enterprise/gateway.py
-监听 0.0.0.0:8000
+Enterprise Gateway (0.0.0.0:8000)
+  auth / permission / audit / admin / proxy
         |
-        | 反向代理 + 用户上下文注入 + 拦截/过滤
+        | user context, loopback only
         v
-上游 Infinite Canvas
-main.py
-监听 127.0.0.1:3001
+Canvas Application (127.0.0.1:3001)
+  canvas / workflow / provider integration / static UI
         |
-        +-- data/canvases/*.json
-        +-- data/conversations/
-        +-- static/
+        +-- SQLite enterprise database
+        +-- canvas/conversation/task JSON and metadata
+        +-- asset/output files
 
-企业层独立数据
-data/enterprise.db
-
-Windows 本地生命周期控制
-enterprise/runtime supervisor
-  +-- upstream 独立健康、重启和日志
-  +-- gateway 独立健康、重启和日志
-  +-- runtime-state / lock / command-ACK / Job Object
+Runtime Supervisor
+  immutable Release + current pointer
+  independent process ownership and health
+  bounded restart/backoff and durable logs
 ```
 
-企业网关是对外入口。上游 Infinite Canvas 只在本机内部端口运行，不直接暴露给局域网用户。
+这不是 PostgreSQL、多 Worker、共享对象存储或多节点高可用架构。`gateway` 与 `canvas application` 是同一产品内的两个进程；“Upstream”一词在代码里仍可能作为历史进程角色名出现，不表示产品继续依赖外部上游迭代。
 
-正式候选启动链以 detached Manifest v2、闭合 payload inventory 和 `current-release.json` 绑定不可变 APP_ROOT，再由 APP_ROOT 内 fixed CP314 `python.exe -I -B` 进入 portable preflight、现有 runtime lock/state/supervisor、host 和 child。PR #90 的 clean-Windows 验证证明了该链在无系统 Python、标准非管理员、中文/空格/长路径、篡改、重启、资源干扰和只读 APP_ROOT 场景下的 W01-W14 行为；它没有改变 gateway/upstream 的业务拓扑。
+## 2. 主要模块
 
-### 部署状态边界
+| 模块 | 当前职责 | 主要入口 |
+| --- | --- | --- |
+| Gateway | 登录、Cookie/JWT、请求和事件授权、HTML/响应治理、代理、管理入口 | `enterprise/gateway.py` |
+| Interceptors/Policies | 路由分类、所有权过滤、功能开关、审计触发 | `enterprise/interceptors.py`，后续迁移到领域 Policy |
+| Enterprise data | 用户、角色、归属、审计、版本化 migration/backup/restore | `enterprise/db.py`，`enterprise/migrations/` |
+| Canvas application | 画布、工作流、模型调用、静态前端和原有业务 API | `main.py`，`static/` |
+| Task journal | 两类画布任务持久回执基础 | `enterprise/canvas_task_journal.py` |
+| Runtime | launcher、supervisor、health、ownership、state/log | `enterprise/runtime/` |
+| Release/update | Manifest v2、资产校验、prepare、pointer switch、rollback foundation | `enterprise/release/`，`enterprise/update_api.py` |
+| Enterprise UI | 登录、管理后台、个人中心、更新中心 | `enterprise-static/` |
 
-- 旧生产仍运行历史版本，现定义为待退役遗留系统；本任务未停止、归档或删除旧生产。
-- Candidate 08 是首个通过独立 clean-Windows 矩阵的不可变 Release Candidate；它不是 formal Release、已激活 Release 或 Production Baseline。
-- 当前仓库继续形成 Production Baseline，不应把仓库合并、开发设备验证或独立 Guest 验证描述为生产采用。
-- 未来新生产按 [ADR-OPS-007](docs/decisions/ADR-OPS-007-GREENFIELD-PRODUCTION-BASELINE-AND-LEGACY-NON-MIGRATION-2026-07.md) 使用干净环境、全新数据库、全新账号和全新配置进行 Greenfield 部署；新生产尚未部署，旧生产数据不迁移。
-- 当前没有 Release activation、OPS-3B、Windows Service、分布式/高可用平台或生产验证。
+Code Wiki 提供更细的文件、类和函数导航：[docs/code-wiki/README.md](docs/code-wiki/README.md)。
 
----
+## 3. 安全与权限边界
 
-## 2. 端口职责
+- 对外仅暴露 Gateway；`:3001` 必须绑定 loopback。
+- UI 隐藏不是权限控制，API、WebSocket、后台任务和资源访问必须服务端授权。
+- 普通用户对未知 owner、未知路由和未知事件应默认拒绝。
+- 超级管理员能力是显式授权，不由普通管理员身份隐式继承。
+- Cookie、Origin/Host、登录跳转、静态文件路径和代理目标均需独立校验。
+- 数据库约束/RLS（后续 PostgreSQL）是纵深防御；业务授权仍负责返回稳定的产品错误和审计信息。
 
-| 端口 | 服务 | 访问范围 | 说明 |
-|------|------|----------|------|
-| `8000` | 企业网关 | 局域网/服务器对外 | 用户访问入口，负责登录、鉴权、代理 |
-| `3001` | 上游主程序 | 仅本机 `127.0.0.1` | 内部上游服务，不直接对外开放 |
+当前安全缺口跟踪在 Issue #111；不得因为已有登录和角色表就宣称权限闭环完成。
 
----
+## 4. 数据与存储
 
-## 3. 企业网关
+### 当前事实源
 
-文件：`enterprise/gateway.py`
+- 企业结构化数据：SQLite。
+- 画布、对话和部分任务：文件/JSON 与 SQLite 映射并存。
+- 图片、视频和输出：文件系统保存字节，数据库/JSON 保存路径和归属。
+- 配置、Runtime 状态、日志和 Release 分属 `CONFIG_ROOT`、`STATE_ROOT`、`LOG_ROOT`、`INSTALL_ROOT/releases`。
 
-职责：
+### 固定不变量
 
-- 提供企业登录、退出、个人中心、管理后台页面入口
-- 校验 `enterprise_token` Cookie
-- 对普通上游请求进行反向代理
-- 向上游注入企业用户上下文
-- 调用 `enterprise/interceptors.py` 做访问控制与响应过滤
-- 保护管理员专用接口和上游更新/回滚相关接口
-- 提供 `/enterprise/health` 健康检查
+- 数据从创建时就具有 owner/org/project 语义；不能依赖后补归属。
+- 大型资源字节不进入普通业务数据库事务。
+- schema 变化必须带版本、迁移、验证和恢复计划。
+- 画布引用资源 ID/版本，不长期写死绝对磁盘路径。
+- 任务和费用是可审计事实，不以进程内内存作为唯一状态。
 
----
+### 近期缺口
 
-## 4. 拦截与过滤
+DATA-MVP-1 已进入 `main`，但尚未完整接入更新中心。新增部门、账本和统一任务表之前，必须先完成数据升级能力。
 
-文件：`enterprise/interceptors.py`
+## 5. Runtime 与健康
 
-职责：
+Runtime Supervisor 分别管理 Gateway 和 Canvas application，并持久化运行状态、日志、进程 identity 和 generation。存活、就绪与业务健康的语义必须分开：
 
-- 请求前置处理：判断当前用户是否允许访问某些路径
-- 响应后置处理：过滤上游返回的画布和对话列表
-- 将普通用户限制在自己拥有的画布/对话范围内
-- 允许管理员查看和管理全量数据
+- liveness：进程/事件循环是否能响应，不访问外部 Provider。
+- readiness：实例是否可接收业务流量。
+- dependency health：数据库、Canvas application、Provider 等依赖状态。
 
-拦截层是企业数据隔离的核心。修改该文件时必须优先验证普通用户和管理员的可见范围。
+短暂依赖失败应进入 degraded，不得直接导致 Gateway 破坏性重启。真实进程退出才进入带退避的恢复。PR #108 中的收敛能力尚未合并时，仍属于分支事实。
 
----
+## 6. Release 与在线更新
 
-## 5. 企业数据库
+当前已具备不可变 Release、Manifest v2、资产哈希、prepare 和代码指针/健康回滚基础。当前缺口是数据迁移和用户体验没有形成完整闭环。
 
-文件：`enterprise/db.py`
+目标单机更新事务：
 
-数据库：`data/enterprise.db`
+```text
+authorize
+  -> check compatibility
+  -> notify users / stop accepting long tasks
+  -> drain or checkpoint tasks
+  -> download and verify immutable assets
+  -> backup database + business metadata + config
+  -> apply schema migration and verify
+  -> switch Release pointer
+  -> start and health-check
+  -> commit success
+     or restore data + pointer and report recovery state
+```
 
-主要表：
+浏览器关闭和服务重启不能丢失升级 Job。多节点滚动升级属于 PostgreSQL/HA 阶段，不复用单机指针切换作为完整方案。
 
-- `users`：企业用户账号、密码哈希、角色、状态
-- `user_canvas_map`：画布归属关系
-- `user_conversation_map`：对话归属关系
-- `usage_logs`：审计日志
+## 7. 目标演进
 
-企业数据库不替换上游数据文件，只记录企业身份、归属和审计信息。
+架构沿既定顺序增量演进：
 
----
+1. 收紧 Gateway/事件/资源安全边界。
+2. 把数据库 migration/backup/restore 接入 Update Center。
+3. 建立用户通知、维护态、跨重启进度和恢复 UX。
+4. 在可升级 schema 上增加组织、部门、Provider 凭据、费用账本和持久任务。
+5. 建立 CAS 资源层、Web/服务端分层缓存和可选择 D/E 盘的桌面壳。
+6. 将团队/高可用形态迁到 PostgreSQL、多 Worker、共享对象存储和多节点发布。
+7. 接入 OIDC/SAML、目录和复用统一授权语义的 MCP/Agent 接口。
 
-## 6. 管理 API
+模块化原则是按业务域逐步提取 Policy、Application Service、Repository、Provider Adapter 和 Storage Adapter；不做一次性重写，也不继续把新业务规则堆入 `gateway.py` 或 `interceptors.py`。
 
-文件：`enterprise/admin_api.py`
+## 8. 历史来源边界
 
-职责：
+项目保留 `hero8152/Infinite-Canvas@2026.07.6` 的来源归属和历史审计。上游已停止维护，后续不再要求同步；`main.py`、`static/`、`workflows/` 等都可以在明确任务、测试和发布迁移计划下演进。`docs/upstream/` 仅作历史证据，不是当前开发限制。
 
-- 用户列表、创建用户、禁用用户
-- 重置用户密码
-- 设置或撤销管理员角色
-- 查询和修改画布归属
-- 查询审计日志
+## 9. 尚未实现
 
-管理员 API 必须执行管理员鉴权，不应暴露给普通用户。
-
----
-
-## 7. 企业前端
-
-目录：`enterprise-static/`
-
-职责：
-
-- `login.html`：企业登录页
-- `admin.html`：企业管理后台
-- `profile.html`：个人中心
-- `logs.html`：审计日志页面
-
-企业前端页面服务于企业登录、管理和审计，不应替代上游 `static/` 中的画布主体验。
-
----
-
-## 8. Runtime、启动与测试
-
-关键文件：
-
-- `启动企业版.bat`
-- `停止企业版.bat`
-- `重启企业版.bat`
-- `查看企业版状态.bat`
-- `启动企业版前台.bat`
-- `enterprise/runtime/cli.py`
-- `enterprise/runtime/supervisor.py`
-- `enterprise/runtime/control.py`
-- `enterprise/tests/diagnose.ps1`
-- `enterprise/tests/smoke.ps1`
-- `enterprise/tests/test_start_stop.ps1`
-
-PR #78 已将生命周期迁移到本地 supervisor：upstream 与 gateway 独立监督，持久化脱敏日志和 runtime state，并通过完整进程 identity、generation-bound command/ACK、优雅 child shutdown 与 Windows Job Object 进行受控停止。PR #79 修复 detached service-host 的直接脚本导入和启动早期诊断；PR #86 在同一 lifecycle 上接入 fixed launcher、Release/preflight/launch-context identity、ownership 和 readiness；PR #90 进一步以 Candidate 08 在独立 clean Windows Guest 完成 W01-W14 `14/0/0`。这些仓库与验证事实不代表生产服务已切换，也不代表安装了 Windows Service。
-
-测试脚本统一放在 `enterprise/tests/`，不得散落到项目根目录或上游目录。
-
----
-
-## 9. 上游同步策略
-
-上游更新覆盖区域包括：
-
-- `main.py`
-- `static/`
-- `workflows/`
-- `API/`
-- `python/`
-- `VERSION`
-
-企业层应尽量不侵入这些文件。上游更新后，应保留企业层目录和文档，重新运行诊断、冒烟和手工清单。
+以下内容仍是目标而非当前事实：完整数据库在线迁移、维护通知和跨重启进度、统一持久任务/对账、部门费用治理、CAS/桌面缓存、PostgreSQL、多节点 HA、SSO、SCIM、MCP/Agent 委托授权。

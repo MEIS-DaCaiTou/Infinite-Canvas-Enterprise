@@ -1,125 +1,72 @@
-# 无限画布企业版 · Codex 工作流
+# Infinite Canvas Enterprise 开发工作流
 
-本文档定义 Codex 后续维护本项目时的标准流程。
+更新时间：2026-09-21
 
----
+## 1. 开始任务
 
-## 1. 每次任务前必须阅读
+1. 确认项目名称、仓库和本地路径，不能与 Aidan 系列项目混用。
+2. `git fetch origin --prune`，记录 `origin/main`、当前分支、工作区状态和相关 PR。
+3. 依次阅读：
+   - `docs/README.md`
+   - `docs/CURRENT_PROJECT_STATUS.md`
+   - `ARCHITECTURE.md`
+   - `docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md`
+   - `CODE_BOUNDARIES.md`
+   - 任务对应 ADR、实施记录和测试说明
+4. 若 Base/Head/PR 与任务描述不一致，停止修改并先纠正基线。
+5. 检查未提交文件；不覆盖用户已有变更。
 
-Codex 每次开始任务前，必须先阅读：
+## 2. 路线门禁
 
-1. `PROJECT_SCOPE_LOCK.md`
-2. `PROJECT_HANDOFF_FOR_NEW_AGENT.md`
-3. `docs/CURRENT_PROJECT_STATUS.md`
-4. `PROJECT_CHARTER.md`
-5. `AGENT_CONTEXT.md`
-6. `ARCHITECTURE.md`
-7. `CODE_BOUNDARIES.md`
-8. `CODEX_WORKFLOW.md`
-9. `SECURITY_BASELINE.md`
-10. `DEVELOPMENT_PLAN.md`
-11. 必要时阅读 `ENTERPRISE_DOCS.md`
-12. 与当前任务相关的 Issue 正文
+任务必须落在固定顺序中：安全 → 数据升级 → 在线升级 → 部门与任务 → 资源缓存与桌面壳 → PostgreSQL/HA → 企业集成。
 
-如果当前任务涉及浏览器行为、登录权限、企业入口治理、上游同步、画布/对话/素材访问或管理后台回归，还必须阅读：
+- 横向测试、日志、性能和模块化可以随当前阶段实施。
+- 后续阶段可做只读调研或小型 spike，但不得把未完成前置能力包装成可交付产品。
+- 涉及新增业务表时，先证明 Update Center 能迁移和恢复该 schema。
 
-13. `enterprise/tests/BROWSER_REGRESSION_CHECKLIST.md`
-14. `enterprise/tests/browser-regression.md`
+## 3. 实施规则
 
-阅读完成后，先确认当前任务边界，再开始修改文件。
+- 小步修改，优先复用领域服务和 Policy，不把业务规则继续堆入 Gateway。
+- 所有输入做运行时校验；编译期类型不能替代兼容检查。
+- 权限在服务端执行，前端隐藏只改善体验。
+- Provider 请求写入持久任务/幂等信息后再执行；未知结果进入对账。
+- 大型资源写入资源存储，数据库只写元数据和引用。
+- schema 变化必须同时提供 migration、验证、备份/恢复和旧版本测试。
+- Release/Update 变化必须固定源/目标版本、Manifest、哈希和失败恢复。
 
----
+## 4. 分支与 PR
 
-## 2. 每次任务中必须遵守
+- 默认分支前缀：`codex/`。
+- 一个 PR 只解决一个可验收主题；安全/数据/更新等高风险变化不得夹带无关重构。
+- PR 说明必须列明：Base/Head、实现范围、未实现范围、数据/权限影响、测试结果、升级和回滚影响。
+- GitHub Actions 通过不自动代表 Release 或生产批准。
+- 发布、部署、客户升级和合并是四个独立动作，需要分别授权和记录。
 
-- 只处理当前 Issue / 当前任务。
-- 不扩大需求范围。
-- 不顺手重构无关代码。
-- 不移动无关文件。
-- 不修改与任务无关的上游区域。
-- 不引入与企业多用户版无关的项目语义。
-- 不提交真实密钥、真实 Token、真实 Cookie、真实数据库或真实运行时配置。
-- 不直接推送到 `main`。
-- 如发现额外问题，只记录为后续建议，不在当前任务中直接实现。
-- 每个任务必须基于最新 `main`；开始前执行 `git checkout main` 与 `git pull --ff-only origin main`，除非任务明确要求在现有 PR 分支继续追加修复。
-- 不再引用已清理的 `D:\CodeProject\26-5-27-无限画布-u1-audit` 或 `D:\CodeProject\26-5-27-无限画布-u2-sync` worktree 作为当前运行目录。
-- 重大 PR 合并后必须同步相关文档，避免代码事实、任务状态和 Agent 交接资料长期脱节。
+## 5. 验证
 
----
+按风险选择并记录：
 
-## 3. 分支与 PR 规则
+- 单元和静态契约测试；
+- 企业完整测试；
+- CP314 Runtime 专项；
+- 数据 migration/backup/restore 故障注入；
+- Windows 生命周期与端口/进程身份验证；
+- 浏览器关键流程与权限矩阵；
+- 真实 Provider 的受控成功/超时/未知结果场景；
+- 性能和容量基线。
 
-后续任务必须通过独立分支和 PR 交付。
+项目负责人已取消独立 Windows 主机验收门禁。托管 CI 不能执行的场景应记录为限制，并通过可复现实验或必要人工验证补证；不得虚构覆盖。
 
-标准流程：
+## 6. 文档与汇报
 
-```text
-1. 从最新 main 创建任务分支
-2. 在任务分支完成当前 Issue
-3. 运行必要验证
-4. 提交 commit
-5. 推送任务分支
-6. 创建 PR 到 main
-7. 等待人工审核后合并
-```
+实现完成时只更新权威入口：
 
-分支命名建议：
+- `docs/CURRENT_PROJECT_STATUS.md`：实现/分支/发布状态；
+- 路线图：阶段进展和依赖；
+- 对应 ADR/implementation record：为什么及如何实现；
+- `enterprise/tests/README.md`：新增验证入口；
+- Code Wiki：模块和运行方式发生实质变化时更新。
 
-- `docs/...`：文档任务
-- `fix/...`：缺陷修复
-- `feat/...`：企业功能
-- `test/...`：测试与验证
-- `chore/...`：维护任务
+不再创建 Agent 交接包、第二份开发计划或按会话复制的状态文档。
 
-所有实现型 PR 默认保持 Draft，等待主对话复核和必要的项目负责人浏览器验收。只有收到明确指令后，才可转 Ready 并合并。文档 PR 也默认 Draft，除非任务明确要求直接发布。
-
----
-
-## 4. 每次任务完成后必须提供
-
-最终回复和 PR 描述必须包含：
-
-- 变更摘要
-- 修改文件列表
-- 测试结果
-- 风险说明
-- 回滚方案
-- 是否修改上游区域
-- 是否提交或停止跟踪运行时/敏感配置
-- 后续建议
-- 关联 Issue
-
----
-
-## 5. 验证规则
-
-文档任务至少执行：
-
-```powershell
-git diff --name-only
-git diff --stat
-```
-
-并确认只涉及文档文件。
-
-非破坏性验证可按需执行：
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\enterprise\tests\diagnose.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\enterprise\tests\smoke.ps1
-```
-
-不要执行会中断当前服务的测试，除非当前任务明确要求。
-
-涉及浏览器行为、企业入口治理、上游同步或权限边界的任务，必须按 `enterprise/tests/BROWSER_REGRESSION_CHECKLIST.md` 做浏览器级回归验收，并将结果摘要记录到 `enterprise/tests/UPDATE_TEST_LOG.md` 或 PR 描述中。若本轮只建立文档或无法运行浏览器，应在 PR 描述中明确说明未运行原因和后续执行入口。
-
----
-
-## 6. 上游区域说明
-
-`main.py`、`static/`、`workflows/`、`API/`、`python/`、`VERSION` 是上游更新覆盖区域。
-
-默认不应修改这些文件。如果 PR 修改了这些区域，必须显式说明原因、风险、回滚方案，以及是否需要同步给上游。
-
-U-2 / U-2-F2 已确认：上游覆盖区可以在受控上游同步或明确 bugfix 中被最小化修改，但必须可审计、可回滚，并明确跳过 `API/.env`、`python/`、`CLI/`、`assets/`、`output/`、`data/asset_library.json`、运行时数据库、env、token、cookie、key 和本地日志。
-
+最终汇报必须区分：本地修改、提交、推送、PR/CI、合并、Release、客户现场和通用生产批准。

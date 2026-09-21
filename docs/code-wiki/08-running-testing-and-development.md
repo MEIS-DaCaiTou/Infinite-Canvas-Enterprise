@@ -126,7 +126,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\enterprise\tests\smoke.ps1
 
 ## 9. CI 现状
 
-`origin/main` 尚无 Actions；`codex/mainline-runtime-convergence-20260919` 新增 `.github/workflows/enterprise-checks.yml`，在 Windows 上运行 CPython 3.11 完整企业套件和 CPython 3.14 Runtime 专项。只有远端工作流实际通过后才能称为 CI 通过；物理 Windows、正式 bundled Runtime、签名、发布和生产验收仍与普通 pytest/Actions 分开。
+`codex/mainline-runtime-convergence-20260919@84f6fe2` 新增 `.github/workflows/enterprise-checks.yml`，在 Windows 上运行 CPython 3.11 完整企业套件和 CPython 3.14 Runtime 专项；PR #108 的两项检查在 2026-09-21 核验为 SUCCESS。工作流在 PR 合并前仍不是 `main` 能力。项目负责人已明确不设置独立 Windows 主机验收门禁；正式 bundled Runtime、签名、Release、客户现场和生产批准仍与普通 pytest/Actions 分开记录。
 
 ## 10. 常见故障定位
 

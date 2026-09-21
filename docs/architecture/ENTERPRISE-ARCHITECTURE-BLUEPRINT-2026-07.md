@@ -1,5 +1,7 @@
 # Infinite-Canvas-Enterprise 企业架构蓝图（2026-07）
 
+> **历史蓝图。** 本文保留 2026 年 7 月 ENV/OPS 设计背景，不作为当前路线图或上游同步约束。当前架构见 [`ARCHITECTURE.md`](../../ARCHITECTURE.md)，当前顺序见 [开发路线图](../roadmap/DEVELOPMENT-ROADMAP-2026-2027.md)。
+
 更新时间：2026-07-17
 最后一次代码事实核对基线：`main@be5573ae416b4ce81f8cc26ae282868a7efa7672`
 当前 repository HEAD 以 GitHub `main` 为准；PR #80 已合并。ENV-1B1A 当前只在 Draft PR 分支实现 static staging builder 和写入审计，完整 APP_ROOT 只读与正式不可变 Release 尚未形成。

@@ -100,4 +100,4 @@ flowchart TD
 2. 是否会改变旧版前端视觉或交互？
 3. 是否需要同步所有 Provider、画布和素材路径测试？
 4. 是否破坏 immutable APP_ROOT 或 portable PathRoots？
-5. 是否需要更新 `CODE_BOUNDARIES.md` 和上游同步记录？
+5. 是否需要更新 `CODE_BOUNDARIES.md`、Release/迁移记录和回归清单？

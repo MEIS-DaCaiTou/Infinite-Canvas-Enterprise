@@ -2,6 +2,8 @@
 
 > **后续状态说明（2026-07-20）：** 本文的 71 份统计和分类是 PR #80 的固定审计快照。PR #80 已合并；当前 ENV-1B1A Draft PR 新增一份 ENV 实施/审计文档，并实现 static staging builder，但尚未进入 `main`。当前事实以 [文档索引](../README.md) 和 [CURRENT_PROJECT_STATUS](../CURRENT_PROJECT_STATUS.md) 为准。
 
+> **2026-09-21 清理说明：** 本文不再是现行清单。`AGENT_CONTEXT.md`、`HANDOVER.md`、`PROJECT_HANDOFF_FOR_NEW_AGENT.md`、`DEVELOPMENT_PLAN.md` 和旧上游 README 镜像已从工作树删除；审计内容仍可从 Git 历史读取。
+
 - 审计日期：2026-07-17
 - 审计基线：`main@396cccc68d63bd16393a2cb72d24e4a48fcf47cb`
 - 审计范围：基线中 62 份受 Git 管理的 Markdown、文本依赖/运行说明和 `enterprise.env.example`，加本 PR 9 份新增输出，共 71 份文档资产

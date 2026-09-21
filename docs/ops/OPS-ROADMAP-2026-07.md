@@ -1,5 +1,7 @@
 # OPS 路线图（2026-07）
 
+> **历史 OPS 规划。** 本文保留 2026 年 7–8 月实施背景，不再负责当前任务排序。当前路线见 [开发路线图](../roadmap/DEVELOPMENT-ROADMAP-2026-2027.md)。受支持 Release 的客户原位在线升级已经成为产品能力目标；未知旧生产数据仍不得未经审计直接迁移。
+
 更新时间：2026-08-24
 
 最后一次代码事实核对基线：`42824290c6d778d72f45640dd3e5d640c7ed1a03`（tree `66993a44ca6438b65e1a576ea8dd15c271693d3e`；PR #102 merge `0f2a2676ac0c231f0e722893dab1ced3f13e576d` 具有相同 tree）。Manifest v2、fixed CP314、portable lifecycle、独立 clean-Windows W01-W14、Fresh Install repository implementation 与 INSTALL-UX-1 Gate A 已完成各自批准范围。OPS-3B 尚未开始，其 repository implementation 仍后置于 DATA-1、migration compatibility 和新基线 backup/restore rehearsal；随后才使用 Fresh Install 建立的全新隔离数据执行 controlled apply / switch / health / rollback / restore rehearsal。生产路线以 [ADR-OPS-007](../decisions/ADR-OPS-007-GREENFIELD-PRODUCTION-BASELINE-AND-LEGACY-NON-MIGRATION-2026-07.md) 为准：不原地升级或迁移旧生产。INSTALL-UX-1 Gate B、新版本和正式签名是单独分发门禁，不因 Gate A 合并自动开始。

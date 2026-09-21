@@ -1,274 +1,184 @@
-# Infinite-Canvas-Enterprise 开发路线图（2026-2027）
+# Infinite Canvas Enterprise 开发路线图（2026–2027）
 
 更新时间：2026-09-21
-最后一次主线事实核对基线：`origin/main@58dc98c09e213ee747024d2934aa181d14cf0c1d`；Runtime 收敛工作位于 `codex/mainline-runtime-convergence-20260919`，合并前不得写成 `main` 已具备。
-
-当前 repository HEAD 以 GitHub `main` 为准。ENV/Runtime/Manifest、UPDATE-MVP-1、RELEASE-MVP-1、INSTALL-MVP-1 与 INSTALL-UX-1 Gate A 已完成各自批准范围。公开 `2026.09.4` 是从精确 `2026.08.5` 基线制作的客户 Runtime 定点热修三件套；它已在一台客户设备完成升级并恢复使用，但不等于 signed public installer、通用 Production Baseline 或收敛代码已经合入 `main`。
-
-当前实施事实以 [CURRENT_PROJECT_STATUS](../CURRENT_PROJECT_STATUS.md) 为准；架构决策以 [ADR 索引](../README.md) 为准。本文负责阶段顺序，不重复定义实现状态。
 
 ## 1. 路线原则
 
-当前仓库架构定位是“企业安全增强型单机模块化单体”。ADR-OPS-007 约束的是历史 TEST-240f6a2 旧生产数据不迁入未来 Greenfield 新生产；它不取消现有 `2026.08.5` 客户设备已执行的定点 Runtime 原位热修，也不禁止该客户设备后续经独立验收的同 Schema 在线更新。当前仓库基线继续开发，未来新生产采用 Greenfield 全新部署。总体路线调整为：
+唯一实施顺序为：
 
-> 先形成可维护、可恢复、可持续升级的 Production Baseline，再在干净环境全新部署；旧生产不作为迁移输入或原地升级目标。
+> **安全修复 → 数据升级能力 → 在线升级体验 → 部门与任务 → 资源缓存与桌面壳 → PostgreSQL 及高可用 → 企业集成**
 
-当前继续采用“上游主应用 + enterprise gateway + enterprise data + OPS”的模块化单体，不立即微服务化。任何未来规划都不能写成当前已经支持的能力。
+顺序不是功能优先级列表，而是交付依赖：先保证当前入口安全，再保证数据库可迁移和可恢复；之后才能让现有客户通过管理后台安全接收新增业务表和功能。
 
-详细架构评估、代码事实和技术决策见 [ARCH-2A：整体架构评估与演进方向](../architecture/ARCH-2A-ARCHITECTURE-ASSESSMENT-AND-EVOLUTION-2026-07.md)。
+横向工作（测试、日志、指标、性能、模块化、文档）随每个阶段同步实施，不另建一条绕过主链的路线。
 
-## 2. 已完成基线
+## 2. 阶段总览
 
-| 阶段 | 状态 | 说明 |
-| --- | --- | --- |
-| 3G owner 隔离主线 | 已完成第一阶段 | 项目、画布、对话、资源、历史、任务、素材和已知敏感 WebSocket 事件的 owner 隔离基础。 |
-| 3G-7B | 已完成 | delete-impact、soft delete、feature override 清理和成员管理增强。 |
-| U-1 / U-2 / U-2-F2 | 已完成 | 上游只读审计、受控同步到 `2026.07.6` 和 history type 一致性修复。 |
-| DOC-1 | 已完成，PR #63 | 项目文档体系与 Agent 交接资料同步。 |
-| OPS-0 / OPS-0A | 已完成，PR #64 | 生产环境只读盘点和事实文档化。 |
-| OPS-1 | 已完成，PR #65 | 生产备份、离线发布、演练、回滚、migration 与数据治理方案设计。 |
-| ARCH-1 | 已完成，PR #66 | 企业架构、开发路线、Docker / 1Panel 和 OPS 蓝图。 |
-| OPS-2A | 已完成，PR #67 | inventory、check-data、backup、validate-release、prepare-upgrade 和 OPS job JSONL。 |
-| OPS-2B | 已完成，PR #69 | Windows bundled Python + runner.py 直调的 dry-run 和 backup execute wrapper。 |
-| ARCH-2A | 已完成，PR #70 | 当前架构评估、目标原则和 P0 / P1 / P2 / P3 演进方向同步。 |
-| SEC-1A | 已完成 ADR 决策，PR #71 | 超级管理员、Capability、L0–L3、Step-up 和高风险治理基线；不代表任何超级管理员或安全能力已经实现。 |
-| SEC-1B1 | 仓库实现与临时数据库验证完成，PR #72 | role / auth_version、新旧 schema 兼容、显式 migration 基础和 JWT 当前状态加载；生产 migration 未激活。 |
-| SEC-1F0 | 仓库实现与临时数据库验证完成，PR #73 | 最小强制安全审计 Schema、append-only writer、显式 migration 和 fail closed；生产 Schema 未激活，在线操作未接线。 |
-| SEC-1C0 | 仓库实现与临时数据库验证完成，PR #74 | 首次 bootstrap 前的角色层级保护、READY 原子审计、在线角色关闭和最后 active super_admin helper；生产 migration 未激活。 |
-| SEC-1B2 | 仓库实现与临时数据库验证完成，PR #75 | 本机受控 activation plan、正式备份与指纹门禁、不可变 bootstrap marker、生命周期检查和原子首次 bootstrap；生产 activation 未执行。 |
-| OPS-3A | 已合并，PR #77 | 在线更新检查、下载、验证、staging 和 prepare plan；不包含 apply / rollback。 |
-| STAB-1 / OPS-L1 | 已合并，PR #78 | Windows supervisor、角色独立恢复、lifecycle CLI、持久日志、runtime state 和 Job Object。 |
-| Runtime service-host hotfix | 已合并，PR #79 | detached host / child 脚本路径隔离和启动失败证据；不代表生产已切换。 |
-| ENV-1B0 / DOC-2 / DOC-2A | 已合并，PR #80 | 冻结架构决策、Greenfield 生产路线和文档事实；merge commit `be5573a`。 |
-| ENV-1B1A | 已合并，PR #81 | APP_ROOT 写入审计、static 构建期哈希和漂移门禁；merge commit `a53885b`，不等于完整 APP_ROOT 只读。 |
-| ENV-1B2P | 已合并，PR #82 | Runtime 分层来源证据验证；core true、dependency/archive false，production approval 固定 false。 |
-| ENV-1B1B | 已合并，PR #83 | PathRoots、严格 pointer 和核心路径迁移；不实施 activation、B1C 或完整 immutable release。 |
-| ENV-1B1C-B1 | 已合并并独立验收，PR #84 | Runtime mode、manifest startup view、Python identity、preflight、launch context、writable probe、release/ownership gate 和 path safety 的纯契约与测试基础；不接入正式 lifecycle。 |
-| ENV-1B1C-B2 | 已合并，PR #86 | 固定 direct-script launcher、Release Python/preflight/launch-context 信任链、复用 STAB-1 lifecycle 的 host/supervisor/child identity、ownership、readiness 和 Windows wrappers。 |
-| ENV-1B2A | 已合并，PR #87 | 固定 CPython 3.10.11 x64，完成官方 source、hash lock、闭合 wheelhouse、双 clean build、pip check、SBOM、deterministic archive 和真实 B2 fixture；作为历史证据和 rollback baseline 保留。 |
-| ENV-1B2B | Repository implementation 已独立验收 | 唯一 active Runtime 迁移到 ordinary-GIL CPython 3.14.6 / cp314，`ENV_1B2_completed=true`；后续 ENV-1B3 已完成 clean-Windows 验证，formal Release 和 production approval 尚未完成。 |
-| OPS Release Manifest v2 | Repository implementation 已独立验收 | Release candidate payload 可构建、离线验证，portable startup 已绑定 Manifest v2；activation、OPS-3B 与 formal Release 尚未完成。 |
-| ENV-1B3 | 已完成并合并，PR #90 | Candidate 08 在独立 Windows Guest 完成 W01-W14 `14/0/0`，`clean_Windows_validation=true`、`ENV_1B3_completed=true`；不等于 formal Release、Production Baseline 或生产部署。 |
-| UPDATE-MVP-1 | Repository implementation 已独立接受 | 同 Schema/无 migration 的最小页面更新、代码回滚和诊断能力及隔离 Windows WU1/WU2 已通过独立复核；DATA-MVP-1 foundation 不会自动放宽该门禁。本项不是完整 OPS-3B/OPS-3C、数据库升级或生产执行。 |
-| DATA-MVP-1 | Repository foundation 已实现，等待独立复核 | SQLite Schema version/ledger、确定性单事务 migration、一致性备份与 start/health failure restore 接口；未接入 Update Center、OPS-3B 或生产。 |
-| INSTALL-MVP-1 | Repository implementation 已合并，公开 `2026.08.4` 已发布 | Greenfield 空环境直接建立当前 Schema、mandatory audit、exactly-one super_admin、immutable APP_ROOT 和 pointer-last；不支持 migration/restore，也不是生产部署。 |
-| INSTALL-UX-1 Gate A | 已合并并独立验收，PR #102 | Inno Setup 单文件 GUI、固定三资产、bundled CP314、current-user named pipe 与唯一 `install_greenfield()` 安全链已进入 main；Gate B、新版本与正式签名均待单独批准。 |
+| 阶段 | 主要交付 | 进入条件 | 退出条件 |
+| --- | --- | --- | --- |
+| 1. 安全修复 | 主线收敛、默认拒绝、路径/浏览器安全、权限一致性 | 当前主线与 PR 身份明确 | P0 安全用例通过，未发现可绕过入口 |
+| 2. 数据升级能力 | schema planning、backup、migration、verify、restore | 安全阻断项关闭 | 真实旧版本数据可升级；注入失败后可恢复 |
+| 3. 在线升级体验 | 通知、维护态、任务排空、跨重启进度、回滚 UX | 数据升级闭环可调用 | 超级管理员可在后台完成可观察、可恢复升级 |
+| 4. 部门与任务 | 组织/部门、独立密钥、费用账本、持久任务、对账 | 新表可通过更新中心安全交付 | 部门成本可核算；任务可查询、恢复和对账 |
+| 5. 资源缓存与桌面壳 | CAS、分层缓存、D/E 盘、配额、后台/断点下载、本地集成 | 资源身份与权限语义稳定 | 重复资源显著减少传输；桌面缓存可控可恢复 |
+| 6. PostgreSQL 及高可用 | PostgreSQL、多 Worker、共享存储、滚动升级、灾备 | 任务/资源模型稳定并有容量基线 | 多实例一致性、故障转移和恢复演练通过 |
+| 7. 企业集成 | OIDC/SAML、身份关联、目录、MCP/Agent 委托 | 权限和审计语义稳定 | 企业单点登录和受控智能体调用可审计、可撤销 |
 
-OPS-2A / OPS-2B 已进入 main，项目负责人曾在旧生产侧人工完成 dry-run 和一次单独确认的正式备份。这些是历史运维事实，不代表 restore、upgrade、apply-upgrade 或 rollback 已实现，也不再作为旧到新迁移输入。旧生产 `check-data` warning 和其中的 unowned、orphan map、missing file 不再阻塞新生产基线；旧数据仍未被自动修复或删除。
+## 3. 阶段 1：安全修复
 
-## 3. 当前阶段
+### 内容
 
-当前第一优先级是把 `origin/main`、本地可靠性开发增量和 `2026.09.4` 现场有效修复收敛为一条可审查主线；收敛 PR 通过前，不启动新的发布版本。其后才按既有门禁继续 DATA/restore、OPS-3B、安全、架构与性能工作。
+- 合并或修订 [PR #108](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/108)，完成 Runtime 修复主线收敛。
+- 完成 [#111](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/111)：未知 HTTP 路由和 WebSocket 事件默认拒绝。
+- 修复静态文件路径规范化/目录穿越边界、登录跳转边界、Origin/Host/localhost 请求边界。
+- 为 UI、API、WebSocket、后台任务和更新入口建立一致的授权测试。
+- 渐进拆分 Gateway/interceptors 业务策略，避免安全规则继续堆入单文件（[#116](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/116)）。
 
-当前已确认状态为 **ENV-1B1C-B1/B2、ENV-1B2A/B2B、OPS Release Manifest v2、ENV-1B3、UPDATE-MVP-1、INSTALL-MVP-1 与 INSTALL-UX-1 Gate A 已完成各自批准范围**。`ENV_1B2_completed=true`、`ENV_1B3_completed=true`、`clean_Windows_validation=true`。DATA-1 已收窄为 DATA-MVP-1 repository foundation；INSTALL-UX-1 Gate B、Update Center migration/restore、完整 Release activation、OPS-3B、Production Baseline 和通用生产批准仍未完成。
+### 目标
 
-Greenfield Production Baseline 路线按以下顺序执行，后项不能绕过前项门禁：
+现有产品入口先达到可继续演进的安全基线；Runtime 短暂故障不触发破坏性重启，安全未知项不再 fail-open。
 
-0. ENV-1B0：架构决策冻结和文档事实同步；已合并。
-1. ENV-1B1A：完整 APP_ROOT 写入审计与 static 构建期哈希；已由 PR #81 合并完成，但不等于完整 APP_ROOT 只读。
-2. ENV-1B2P：Python 核心、依赖层、archive provenance 分层证据；已合并，core `true`、dependency `false`、archive `false`、`production_approved=false`。
-3. ENV-1B1B：路径根、版本目录和 `current-release.json`；已合并，不含 activation。
-4. ENV-1B1C-B1：Runtime mode、manifest startup view、Python identity、preflight、launch context 和 writable probe 的纯契约/安全原语；已由 PR #84 合并并独立验收，不接入 lifecycle。
-5. ENV-1B1C-B1 docs closeout：由独立 docs-only closeout commit 持久化 Final Acceptance evidence；不接入 Runtime lifecycle。
-6. ENV-1B1C-B2：已由 PR #86 合并；固定 portable launcher、Release Python 信任链、现有 STAB-1 lifecycle 与 readiness 已进入 `main`。
-7. ENV-1B2A：固定 Python 3.10 layout 的官方来源、依赖锁、离线双重建、`pip check`、SBOM、deterministic archive 和 B2 fixed-Python fixture；已由 PR #87 合并并保留为 rollback baseline。
-8. ENV-1B2B：资格门禁选择 CPython 3.14.6；cp314 active policy、离线双构建、三层 provenance 与真实 formal-entry fixture 已完成并通过 repository implementation 独立验收，`ENV_1B2_completed=true`。
-9. OPS Release Manifest v2：repository implementation 已独立验收，Release candidate payload 可构建并离线验证，portable startup 已绑定 v2；不含 activation 或 OPS-3B。
-10. ENV-1B3：已由 PR #90 合并；Candidate 08 在独立 Windows Guest 完成无系统 Python、标准非管理员、中文/空格/长路径、低磁盘、重启、损坏 DLL/manifest、杀毒软件和只读 APP_ROOT 等 W01-W14 `14/0/0`。
-11. 首个不可变 clean-Windows Release Candidate 已接受；Release Candidate 仍不等于 formal Release 或 Production Baseline。
-12. UPDATE-MVP-1：同 Schema/无 migration 的最小页面更新、代码 Release 自动回滚与 bounded diagnostics；repository implementation 及隔离 Windows WU1/WU2 已独立接受，不代替完整 OPS-3B/OPS-3C。
-13. DATA-MVP-1：PR #107 已合并 Schema version、migration ledger/registry、确定性单事务 migration、一致性备份和失败 restore foundation，等待独立复核（Issue #109）；不迁移或修复历史 TEST-240f6a2 数据，不直接接入 Update Center。
-14. INSTALL-MVP-1 Fresh Install Bootstrap repository implementation 已由 PR #98 合并，公开 `2026.08.4` 已发布；它仍不等于生产部署或 database migration/restore。
-15. INSTALL-UX-1 Gate A 已由 PR #102 合并并独立验收；项目负责人另行批准版本、正式签名与 Gate B 后，才能在受控 Windows 环境验证 signed Setup 全新安装与初始化（不要求独立主机），且不得修改既有 `2026.08.4`。
-16. 收口 ARCH-3、P0 安全、PERF-1 / OBS-1、浏览器回归和真实 Provider 成功链路。
-17. 使用全新基线数据完成正式 backup 和 restore rehearsal。
-18. OPS-3B repository implementation：实现计划驱动的 apply / switch / health / rollback / restore；不用于旧生产。
-19. 在干净 Windows 环境使用 Fresh Install Bootstrap 建立的全新隔离数据，完成 Release Candidate 之间的升级、rollback / restore 演练；这是开发或隔离验证，不是生产执行。
-20. 由项目负责人确认已经具备经过验证的持续升级和失败恢复能力，并批准 Production Baseline。
-21. 在生产设备使用全新数据库、账号、配置和凭据执行 Greenfield 部署，并完成新生产业务验收。
-22. 后续正式 Release 进入新生产版本迭代；OPS-3B 的首次真实生产执行只能发生在 Greenfield 新生产部署以后，并由项目负责人在生产设备本地执行。
-23. 新生产验收通过后，由项目负责人另行决定旧生产停止、归档或删除。
-24. 完整 OPS-3C / Update Center 能力可在 Production Baseline 后单独实施；UPDATE-MVP-1 不等于 OPS-3C 完成。
-25. Linux 单服务器适配。
-26. PostgreSQL、对象存储、queue、Redis 和多实例按真实需求引入。
+### 验收
 
-第 0 至 12 项已完成各自批准范围，第 14 项 Fresh Install repository implementation 已完成；第 13 项 DATA-MVP-1 repository foundation 已由 PR #107 合并但等待独立复核，第 15 项 INSTALL-UX-1 Gate B 尚未开始。此后仍需 Update Center/OPS 集成、P0/ARCH-3/PERF-1/OBS-1/browser/provider 收口、backup/restore rehearsal、OPS-3B repository implementation、完整 apply/switch/health/rollback/restore rehearsal、Production Baseline 批准和 Greenfield 生产部署。Linux、PostgreSQL、Redis、对象存储、durable queue、多实例、Windows Service、项目 Formal Release 和 Production Baseline 当前仍不是已完成能力。
+- P0 攻击面具有自动回归测试。
+- 普通用户不能通过路径、未知路由、事件或浏览器跨源请求绕过权限。
+- PR、main、Release 和现场部署状态被分别记录。
 
-后续执行入口：DATA 独立复核 #109 → Update Center 数据接线 #114 → OPS-3B 隔离演练 #115；任务恢复与真实供应商对账 #110；P0 请求边界 #111；Runtime 可观测性/性能基线 #112；浏览器/Provider 验收 #113；架构拆分 #116。签名安装器 Gate B #117 须项目负责人先批准版本和签名方案。后续不设独立 Windows 主机验收门禁；保留适用的本机/CI 功能验证和显式测试跳过披露。各 Issue 均不自动授权客户生产部署。
+## 4. 阶段 2：数据升级能力
 
-## 4. 历史拆解参考
+### 内容
 
-本节保留 ENV-1B0 之前的 ARCH / SEC / DATA / OPS 拆解语境，不再决定当前执行顺序；当前顺序只以上一节为准。
+- 完成 [#109](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/109) 对 DATA-MVP-1 的独立复核。
+- 完成 [#114](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/114)，把 migration/restore 接入 Update Center。
+- 每个 Release 声明 source schema 范围、target schema、迁移计划、降级限制和所需磁盘空间。
+- 升级前一致性备份 `DB_PATH`、业务数据根、任务/账本元数据和配置快照；素材字节采用引用/快照策略而非盲目复制全部数据。
+- 覆盖提交前失败、迁移中失败、迁移后健康失败、代码已切换未确认和恢复失败五类故障注入。
+- 设计 JSON/画布 `schema_version` 的升级策略：优先显式迁移；读取时兼容仅用于受控过渡，不长期双写。
 
-### 4.1 ARCH-2A：已完成的架构评估与方向同步
+### 目标
 
-- 统一当前系统定位。
-- 分开当前实现、部分实现、已确认方向和长期目标。
-- 固化目标模块边界和架构决策。
-- 建立后续任务拆解与审查规则。
-- 状态：文档同步已完成，由 PR #70 承载；不代表任何整改已实施。
+任何后续业务 schema 变化都能通过正式更新作业送达现有客户，并在失败时恢复到一致状态。
 
-### 4.2 ARCH-2B / SEC-1：P0 安全整改任务拆分
+### 验收
 
-SEC-1A 只完成 ADR。后续按独立 Issue / Draft PR 实施：
+- 从真实已发布源版本执行升级，不用空数据库或新建环境冒充迁移。
+- 数据升级成功后版本、schema、业务数据和权限完整。
+- 失败恢复后代码指针、数据库和配置处于同一版本语义。
 
-| 任务 | 范围 | 状态 |
-| --- | --- | --- |
-| SEC-1A | user / admin / super_admin、Capability、L0–L3、Step-up、bootstrap 和高风险治理 ADR | ADR 决策完成；未实现代码 |
-| SEC-1B1 | `role`、`auth_version`、migration、JWT 当前状态加载和旧 Token 撤销的实现与临时数据库验证 | 仓库实现完成，PR #72；不在旧生产执行 migration |
-| SEC-1F0 | 最小强制安全审计 schema、append-only 写入、bootstrap / role change / break-glass catalog、敏感字段禁记、fail closed 和临时数据库测试 | 仓库实现完成，PR #73；不在旧生产 activation，在线操作未接线 |
-| SEC-1C0 | 首次 bootstrap 前的 super_admin 过渡保护：admin 不得影响 super_admin、禁止自行提权、正常在线事务不得将 active super_admin 降为零；不实现完整 Capability | 仓库实现完成，PR #74；不在旧生产 activation |
-| SEC-1B2 | 面向现有 active admin 的受控 migration activation 与本机首次 super_admin bootstrap；实施 plan、备份门禁、生命周期和原子 runner | 仓库实现完成，PR #75；代码保留但不在旧生产执行，也不是 Fresh Install Bootstrap |
-| SEC-1C | Capability 后端门禁、最后超级管理员保护、防自我提权、admin 不得影响 super_admin | 未实现 |
-| SEC-1D | Step-up Authentication、单次 Operation Token、replay protection、CSRF / Origin | 未实现 |
-| SEC-1E | 管理后台角色治理、高风险警告、二次认证 UI 和浏览器回归 | 未实现 |
-| SEC-1F | 完整安全审计查询、脱敏摘要导出、保留和归档策略 | 未实现 |
-| SEC-1U | `system_update` bypass、更新总开关、升级 approve / execute、白名单 OPS 和禁止任意 shell | 未实现 |
+## 5. 阶段 3：在线升级体验
 
-其它 P0 安全事项继续独立拆分：HTTP 未分类 route 默认拒绝、WebSocket 未知 event 默认拒绝、Secure Cookie、登录限流、`next` URL 校验、企业静态路径 containment、生产错误脱敏和依赖锁定。SEC-1A 的详细决策见 [ADR SEC-1A](../decisions/ADR-SEC-1A-SUPER-ADMIN-CAPABILITY-GOVERNANCE-2026-07.md)。
+### 内容
 
-### 4.3 DATA-MVP-1：版本化 migration 与 restore foundation
+- 超级管理员在管理后台检查、下载、校验、准备和确认升级。
+- 升级前向在线用户推送通知与倒计时，进入维护模式后禁止新建长任务并排空/暂停已有任务。
+- 提供类似常规软件升级的进度窗口：下载、校验、备份、迁移、切换、启动、健康检查、完成/恢复。
+- 升级 Job 持久化，浏览器断开或服务重启后可按 Job ID 恢复进度。
+- Release 资产必须不可变、具备 SHA-256/签名、Manifest v2 和兼容范围；区分 stable/canary/blocked。
+- 完成 [#115](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/115) 的 apply/switch/health/rollback/restore 演练。
 
-- repository 接口、schema version 和 migration history 已形成最小 foundation，等待独立复核。
-- 确定性顺序 migration、单事务 rollback、SQLite backup 和 SHA-256 绑定已形成。
-- target start/health 失败后的 expected-current restore 接口已形成，但尚未接入 Update Center。
-- SQLite `busy_timeout`、索引和约束复核。
-- 新生产数据完整性报告与受控 reconciliation 机制。
-- 后续正式 backup/restore rehearsal 和完整 Update/OPS 集成。
+### 目标
 
-DATA-1 服务于全新数据库和未来新版本 migration，不导入旧生产数据，不创建旧 owner map 修复任务，也不直接修改任何生产数据库。
+客户设备不需要手工复制脚本或 SSH，即可从管理后台完成受控升级；失败时给出可执行恢复状态，而不是只显示 HTTP 错误。
 
-### 4.4 Production Baseline 恢复演练
+### 验收
 
-- 使用 Fresh Install Bootstrap 创建的全新基线数据核对 executed backup manifest。
-- 在隔离副本中做 restore rehearsal。
-- 验证 SQLite、JSON、assets / output、env 和启动链路。
-- 记录人工 rollback 决策点与恢复时间。
+- 非超级管理员不能升级。
+- 用户收到维护提示，升级期间写操作和长任务行为明确。
+- 跨进程重启仍可观察进度，成功回到目标 Release，失败自动恢复或明确进入 `recovery_required`。
+- 不设置独立 Windows 主机验收门禁；Windows GitHub Actions、隔离生命周期演练和人工浏览器回归组成证据链。
 
-旧生产已有 backup 只保留历史证据，不作为新基线恢复输入。新基线 backup 不等于 restore 已完成；restore rehearsal 通过后，还必须完成 OPS-3B 仓库实现及隔离环境 apply / switch / health / rollback / restore 演练，才能批准 Production Baseline。UPDATE-MVP-1 只提供同 Schema/无 migration 的最小页面更新；完整网页 OPS-3C 仍后续独立实施，不是首次生产部署前置条件。
+## 6. 阶段 4：部门与任务
 
-### 4.5 OBS-1 / OPS-L1：日志与可观测性基础
+### 组织与费用治理
 
-- access / app / error / security / operation log。
-- request_id / job_id。
-- 本地结构化 JSONL 与轮转 / 保留策略。
-- 磁盘、SQLite、任务、WebSocket 和 upstream 健康检查。
-- 默认脱敏和敏感字段审计。
+- 建立 organization、department、project、membership 和内部 `user_id`/外部 identity 关联。
+- 同一供应商允许按部门使用不同凭据；密钥加密存储、只写不回显、可轮换、可停用并记录审计。
+- 任务受理时固化部门、项目、供应商、模型、计价版本和预算归属。
+- 建立不可变费用账本，区分预估、已受理、已结算、退款/冲正和未知结果。
+- 提供部门用量、费用、失败率、延迟、预算和配额视图。
 
-当前只有 usage audit、OPS job JSONL 和进程输出，不能写成完整日志体系已实现。
+### 持久任务平台
 
-## 5. 中期路线
+- 完成 [#110](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/110)：统一 durable task、attempt、provider task id、idempotency key、lease 和 reconciliation。
+- 初期单机数据库领取使用事务与 `FOR UPDATE SKIP LOCKED` 等价语义（SQLite 形态按单写入者约束实现）；定义 lease 超时、重领和幂等。
+- 状态至少区分 `QUEUED/RUNNING/SUCCEEDED/FAILED/CANCELLED/UNKNOWN/RECONCILING`。
+- Provider 已受理但本地未获最终响应时进入未知/对账，不重复扣费式重试。
+- 管理后台任务列表支持按部门、项目、用户、供应商、状态和时间筛选。
+- 结合 [#113](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/113) 接入一个真实供应商闭环，反推实际任务和对账字段。
 
-### 5.1 ARCH-3：策略模块化
+### 验收
 
-- 建立显式 route registry 和 WebSocket event registry。
-- 按数据域渐进拆分 policy。
-- 引入 service / repository 边界。
-- 每次只迁移一个数据域并保持 API 行为兼容。
-- 不一次性重写 `interceptors.py`。
+- 进程重启、网络中断、Provider 超时后任务可恢复或对账。
+- 部门间凭据、费用和任务数据不能越权访问。
+- 费用账本可追溯到具体任务、计价版本和调用部门。
 
-### 5.2 PERF-1：真流式代理和性能基线
+## 7. 阶段 5：资源缓存与桌面壳
 
-- 真正流式上传 / 下载 / SSE。
-- 大文件限制、timeout、背压和中断传播。
-- 去除在线全目录扫描。
-- 同步 SQLite / 文件 I/O 与 async handler 隔离。
-- 建立可重复负载测试，不承诺未经测试的容量数字。
+### Web/服务端资源层
 
-### 5.3 OPS-D1：Docker / 1Panel 单机生产化
+- 资源按 SHA-256 内容寻址（CAS），数据库只保存元数据、归属、引用、版本和存储位置。
+- 原图、缩略图、预览图分层；使用 immutable URL、ETag、Cache-Control、Range、懒加载和虚拟化。
+- 浏览器缓存为 L1，部署主机本地缓存为 L2，对象存储/共享源为 L3；热点资源避免每次重新读取和传输。
+- 软删除、引用计数、保留期、垃圾回收和悬挂引用必须有一致策略。
 
-- Linux entrypoint 和单容器双进程管理。
-- Dockerfile、Compose、volume、healthcheck 和日志。
-- 1Panel HTTPS、WebSocket proxy、上传大小和长任务 timeout。
-- 计划任务备份与恢复演练。
+### 项目桌面壳
 
-当前不是 Docker-ready。只有该阶段实现并完成验收后，才能更新支持声明。
+- 桌面壳是 `Infinite-Canvas-Enterprise` 的正式配套应用，不属于 Aidan 项目。
+- 用户可选择 D/E 等数据盘，设置缓存上限、清理策略和最低剩余空间。
+- 支持后台下载、断点续传、校验、暂停/恢复、失败重试和本地资源索引恢复。
+- 支持系统文件夹、本地设计工具、拖放/打开方式等集成。
+- Electron/Tauri 用同一组小实验比较磁盘、网络、更新签名和系统集成，不开发两套完整客户端。
 
-### 5.4 PostgreSQL 迁移准备
+### 验收
 
-- 先完成 DATA-1 repository 和 migration 基础。
-- 设计 PostgreSQL target schema ADR。
-- 建立 SQLite 导出 / PostgreSQL 导入的临时环境演练。
-- 定义校验、维护窗口和回滚。
+- 相同资源只存储/传输必要副本，缓存命中率、带宽和磁盘 IO 有量化基线。
+- 清理缓存不破坏业务事实；离线或缓存丢失后可从服务端恢复。
+- 磁盘不足、文件损坏、下载中断和应用升级均有明确恢复行为。
 
-这一阶段是准备，不是 PostgreSQL 正式迁移。
+## 8. 阶段 6：PostgreSQL 及高可用
 
-## 6. 长期路线
+### 内容
 
-1. PostgreSQL 正式迁移。
-2. Redis / durable queue / Pub/Sub。
-3. MinIO / S3 / NAS storage adapter。
-4. 多实例 session、realtime 和任务执行。
-5. 多服务器健康检查与集中日志。
-6. workspace / organization / member roles / ACL / grants。
-7. 团队资源、项目协作、共享 / 撤销和合规审计。
-8. 高可用、灾备和故障演练。
+- 先建立 SQLite → PostgreSQL 的可重复迁移、校验和回退计划；保留单机版产品边界。
+- PostgreSQL 成为团队/高并发部署的业务事实源；引入连接池、索引、事务、RLS/约束一致性测试。
+- 将 Worker 扩为多进程/多节点，任务领取、幂等和公平性在数据库层可验证。
+- 资源字节进入共享对象存储或共享文件服务；本地磁盘只作为缓存。
+- Redis 仅在明确需要时用于通知、短期协调或缓存，不成为业务事实源。
+- 建立滚动升级、节点排空、数据库备份/PITR、对象存储备份和跨故障域恢复演练。
 
-这些是 P3 长期目标，不是当前能力。
+### 目标与验收
 
-## 7. OPS 路线
+- API/Worker 可水平扩展，任一应用节点退出不会丢失已受理任务。
+- 权限、费用和任务在并发下保持一致。
+- 多节点升级不复用单机指针切换假设，具备独立发布/回滚流程。
+- 明确 RPO/RTO、容量基线和首次灾备演练结果。
 
-建议顺序：
+## 9. 阶段 7：企业集成
 
-1. Manifest v2 Release builder/verifier、fixed CP314 和首个 clean-Windows immutable Candidate 已完成批准范围；不包含 activation。
-2. DATA-1 当前暂停；Fresh Install Bootstrap repository implementation 已完成。另行批准 INSTALL-UX-1 Gate B 后，在 clean Windows 上完成 signed Setup 全新安装/初始化验收。
-3. 收口 P0/ARCH-3/PERF-1/OBS-1、browser/provider 门禁。
-4. 使用新基线数据完成 backup / restore rehearsal。
-5. 完成 OPS-3B 仓库实现。
-6. 使用 Fresh Install Bootstrap 建立的全新隔离数据，在干净 Windows 环境完成 apply / switch / health / rollback / restore rehearsal。
-7. 项目负责人批准 Production Baseline。
-8. 在生产设备 Greenfield 部署 Production Baseline。
-9. 后续正式 Release 进入新生产版本迭代，首次真实 OPS-3B 执行只能由项目负责人在生产设备本地执行。
-10. OPS-3C / Update Center 在 Production Baseline 后单独评估和实施，不是首次生产部署前置条件。
+### 内容
 
-`prepare-upgrade` 只生成 plan。OPS-3B 不用于旧生产原地升级；其仓库实现和隔离演练是 Production Baseline 前置门禁，但不构成生产执行。OPS-3 / OPS-4 不得被描述为当前已实现；网页端未来也只能调用白名单、计划驱动、可审计的 OPS API，不能执行任意 shell。
+- OIDC/SAML SSO，内部 `user_id` 与多个外部身份关联；禁止仅凭相同邮箱自动合并。
+- 定义管理员关联、验证后的自助认领、解绑和离职回收流程。
+- 按需求接入 SCIM/企业目录、组织同步和条件访问。
+- 对外提供版本化 API、MCP/Agent 接口；UI、API、Worker、MCP 复用同一业务命令与授权。
+- Agent 委托限制项目、操作、有效期、预算和设备，令牌不透传给第三方 Provider。
+- 定义离线设备的授权撤销传播时限和强制重新认证条件。
 
-## 8. 自动化测试路线
+### 验收
 
-3G-8 浏览器级自动化回归保留，并应逐步纳入每个安全 / policy 阶段：
+- 企业用户一次登录可访问获授权项目，多身份关联和注销可审计。
+- Agent/MCP 操作与人工操作使用相同权限、费用和任务记录。
+- 撤销、预算耗尽、设备丢失和密钥轮换后权限在承诺时限内失效。
 
-- 登录 / 登出与旧 Token 撤销。
-- user A、user B、admin、super_admin（角色落地后）。
-- 列表过滤和直接 ID。
-- 资源 URL。
-- 刷新、退出重登和角色变化。
-- 历史、画布、对话、素材、任务。
-- 设置与高风险功能。
-- WebSocket 已知事件和未知事件。
-- Update Center 仅在实际实现后纳入。
+## 10. 横向工程要求
 
-每个权限 PR 都必须提供对应 API 回归；前端隐藏不能替代后端鉴权。
+- **可观测性**：结构化日志、request/job/task correlation id、关键指标和可脱敏诊断包随阶段完善（[#112](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/112)）。
+- **契约**：OpenAPI/事件 schema 版本化，CI 检测破坏性变更和生成客户端漂移。
+- **测试**：单元、集成、权限矩阵、故障注入、浏览器和升级测试与实现同 PR 交付。
+- **模块化**：按业务域提取 Policy/Application Service/Repository/Adapter，避免大爆炸重写。
+- **发布**：每个 Release 固定源提交、依赖锁、SBOM、Manifest、哈希/签名、升级范围和回滚说明。
+- **文档**：只更新 [文档索引](../README.md) 指向的事实源，不新增重复交接包或第二路线图。
 
-## 9. 阶段门禁
+## 11. 禁止提前宣称
 
-| 进入阶段 | 前置门禁 |
-| --- | --- |
-| ARCH-3 | P0 默认拒绝策略和关键会话安全已建立，现有 A/B/admin 回归可运行。 |
-| DATA-1 migration 实现 | schema / backup / rollback 设计通过，临时数据库测试可重复。 |
-| INSTALL-UX-1 Gate B | Gate A 已独立验收并合并；项目负责人已分别批准新版本、正式代码签名和 Gate B；签名环境与 RFC 3161 可用，并有受控 Windows 安装验证环境；不要求独立主机。 |
-| OPS-3B repository implementation | 不可变 Release、Manifest v2、DATA-1、Fresh Install Bootstrap、正式 backup、restore rehearsal、migration compatibility 和 Runtime lifecycle 验证已经完成；不使用旧生产数据。 |
-| Production Baseline 批准 | 使用 Fresh Install Bootstrap 建立的全新隔离数据完成 release validation、data-check 以及 OPS-3B apply / switch / health / rollback / restore 演练；旧生产 warning 不作为输入。 |
-| OPS-3B 首次真实生产执行 | Greenfield 新生产已经部署，且项目负责人在生产设备本地对后续正式 Release 另行执行；不得用于旧生产。 |
-| OPS-3C / 完整 Update Center | Production Baseline 后单独设计、实现和验证；UPDATE-MVP-1 不满足完整 OPS-3C，且 OPS-3C 不是首次生产部署前置条件。 |
-| Docker / 1Panel | volume、日志、healthcheck、backup / restore 和 WebSocket 验收方案已明确。 |
-| PostgreSQL 正式迁移 | repository、schema version、导入校验、维护窗口和回滚演练完成。 |
-| 多实例 / 多服务器 | session、queue、realtime、shared storage 和集中可观测性完成。 |
-| 团队协作 ACL | organization / member / grant / revoke / audit 模型和迁移策略独立评审。 |
-
-## 10. 持续禁止事项
-
-- 生产 `git pull`、`checkout main`、`reset --hard` 或开发目录覆盖。
-- 未备份、未恢复演练、未回滚设计的生产升级。
-- 自动修复生产 owner map 或自动删除生产文件。
-- 在普通功能 PR 中顺手完成大规模架构重构。
-- 把 Docker、PostgreSQL、Redis、MinIO、apply-upgrade、restore、rollback 写成已实现。
-- 用连接池大小、WAL 或单进程 WebSocket 推导并发容量或多实例能力。
-
-## 11. 任务交付规则
-
-- 每个 P0 / P1 / P2 / P3 项目使用独立 Issue、独立分支和独立 Draft PR。
-- 安全策略变更至少覆盖 user A、user B、admin。
-- 权限变更覆盖列表、直接 ID、资源 URL、刷新 / 重登和 WebSocket。
-- migration 必须有 dry-run、备份、回滚和临时数据库测试。
-- 生产动作由项目负责人人工执行；Codex 不直接连接生产主机。
-- 每个实现 PR 同步对应状态文档，保持当前事实与规划边界一致。
+以下能力只有通过对应阶段验收后才能写入“已实现”：完整数据库在线迁移、无感升级、部门费用结算、任务 exactly-once、桌面持久缓存、PostgreSQL、多节点高可用、SSO、MCP/Agent 集成、正式签名安装器和 Production Baseline。

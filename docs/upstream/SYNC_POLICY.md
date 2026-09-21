@@ -1,82 +1,30 @@
-# Upstream Sync Policy
+# 历史来源与同步政策
 
-This repository follows [hero8152/Infinite-Canvas](https://github.com/hero8152/Infinite-Canvas) while maintaining an enterprise multi-user layer.
+更新时间：2026-09-21
 
-## ENV-1 Change Freeze
+## 当前决定
 
-Normal upstream feature synchronization is frozen while ENV-1 establishes immutable releases, path roots, runtime provenance, and fail-closed entrypoints. A critical upstream security fix may be evaluated separately and introduced through a narrowly scoped, reviewed sync. The exception does not permit unrelated feature drift or bypass ENV validation gates.
+`hero8152/Infinite-Canvas` 已停止维护，`Infinite-Canvas-Enterprise` 后续独立演进，不再要求持续同步、merge、rebase 或保持外部上游文件不变。
 
-## Homepage Boundary
+- 冻结来源版本：`2026.07.6`
+- 历史来源提交：`f1dd6834a72f3e7ff8340be05a84347d931e9cb9`
+- 来源归属和许可证继续保留。
+- `main.py`、`static/`、`workflows/` 等现在都是本产品可维护代码，但属于高影响区域，须按 [CODE_BOUNDARIES.md](../../CODE_BOUNDARIES.md) 验证。
 
-The root `README.md` is the Enterprise project entry point.
+## 目录用途
 
-It must always describe:
+- `UPSTREAM-SYNC-AUDIT-2026-07.md`：U-1 同步前只读审计的历史记录。
+- `U-2-CONTROLLED-SYNC-2026-07.md`：最后一次受控同步及兼容处理的历史记录。
 
-- the Enterprise project direction
-- the enterprise gateway architecture
-- startup and health-check paths
-- Codex / Agent reading order
-- enterprise vs upstream code boundaries
-- upstream synchronization rules
-- security and testing entry points
+这些记录用于追溯来源和历史决策，不是当前路线图、分支策略或验收门禁。旧上游 README 镜像已经删除；需要时从 Git 历史或来源仓库读取。
 
-The upstream README must not directly overwrite the root `README.md`.
+## 未来引入外部代码
 
-The in-app project homepage entry must also remain an Enterprise entry point:
+若未来从来源仓库、Fork 或其它第三方引入代码，应作为新的依赖升级任务处理，并明确：
 
-- default target: `https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise`
-- ordinary users must not see upstream one-click update prompts or upstream author/social links
-- upstream project links may be retained only as administrator-facing reference material or repository documentation
+1. 精确来源、commit/tag 与许可证；
+2. 逐文件差异和本项目本地修改冲突；
+3. 数据、权限、Runtime 和 UI 风险；
+4. 自动测试、视觉回归和升级/回滚方案。
 
-After every upstream sync, verify that the Enterprise gateway injection still governs `static/index.html` project entry, version/update UI, and upstream author visibility. If upstream changes the homepage DOM IDs or update scripts, fix the Enterprise injection in the same sync PR before merge.
-
-## Preserving Upstream README
-
-If the upstream README is useful during an upstream sync, preserve it at:
-
-```text
-docs/upstream/README.upstream.md
-```
-
-That file must keep a notice at the top saying it is the upstream README and is not the Enterprise project entry point.
-
-## Sync PR Requirements
-
-Every upstream sync PR must state:
-
-- upstream source repository and commit
-- upstream `VERSION`
-- enterprise branch version before sync
-- files synced
-- files intentionally not synced
-- enterprise files checked for accidental overwrite
-- automated test results
-- manual verification results when applicable
-- risks
-- rollback plan
-- whether the Enterprise homepage/update governance was rechecked
-
-## Current Upstream Baseline
-
-- Upstream repository: `hero8152/Infinite-Canvas`
-- Current enterprise upstream baseline: `2026.07.6`
-- Last verified enterprise code baseline: `396cccc68d63bd16393a2cb72d24e4a48fcf47cb`; resolve the current repository HEAD from GitHub `main`.
-- Last controlled upstream target commit: `f1dd6834a72f3e7ff8340be05a84347d931e9cb9`
-
-U-1 documented that the enterprise repository had no usable merge-base for a normal upstream merge. U-2 therefore used a controlled, patch-style sync to the fixed upstream target `f1dd6834a72f3e7ff8340be05a84347d931e9cb9`, not a direct merge, rebase, or broad cherry-pick.
-
-U-2 explicitly skipped `API/.env`, `python/`, `CLI/` output, `assets/`, `output/`, `data/asset_library.json`, runtime databases, env files, tokens, cookies, keys, and local logs. U-2-F2 then fixed the history type inconsistency exposed after sync: zimage cloud history is saved as `zimage`, Enhance ModelScope history is saved as `enhance`, and Klein remains `klein`.
-
-## Intentional Difference
-
-The September 2026 reliability branch adds a narrowly scoped `main.py` seam for
-`enterprise.canvas_task_journal`: startup recovery and the create/run/query
-paths for canvas image and Comfy tasks. Any later controlled upstream sync must
-preserve this seam and run `enterprise/tests/test_canvas_task_journal.py` as
-well as the ownership checks. See
-[`RUNTIME-RELIABILITY-2026-09-03.md`](../ops/RUNTIME-RELIABILITY-2026-09-03.md).
-This records a development change, not an upstream contribution or production approval.
-
-The upstream repository currently tracks `python/`.
-
-This enterprise repository keeps `python/` and `python.zip` as local runtime artifacts through `.gitignore`. Do not add them in an upstream sync PR unless a separate issue explicitly changes the runtime distribution policy.
+该动作不恢复“持续跟随上游”的产品约束。

@@ -1,5 +1,7 @@
 # U-1 上游同步只读审计报告
 
+> 历史记录：本文描述 2026 年 7 月 U-1 时点，不再是当前开发计划或文件修改限制。当前决定见 [SYNC_POLICY.md](./SYNC_POLICY.md)。
+
 > 说明：本文是 PR #60 的 U-1 只读审计报告，记录的是 U-2 受控同步前的审计基线。当前项目已由 PR #61 同步到上游 `2026.07.6`，并由 PR #62 完成 history type 修复；当前稳定基线请以 `PROJECT_SCOPE_LOCK.md` 和 `docs/CURRENT_PROJECT_STATUS.md` 为准。
 
 ## 1. 审计结论摘要

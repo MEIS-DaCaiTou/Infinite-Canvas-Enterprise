@@ -1,6 +1,6 @@
 # Infinite Canvas Enterprise Code Wiki
 
-> 更新日期：2026-09-19
+> 更新日期：2026-09-21
 >
 > 核验工作区：`D:\CodeProject\Infinite-Canvas-Enterprise-MAINLINE-CONVERGENCE`
 >
@@ -13,8 +13,8 @@
 | 观察面 | 提交 | 说明 |
 | --- | --- | --- |
 | GitHub `origin/main` | `58dc98c09e213ee747024d2934aa181d14cf0c1d` | `feat(data): add versioned SQLite migration foundation (#107)` |
-| 主线收敛分支 | `codex/mainline-runtime-convergence-20260919` | 从 `origin/main` 创建，等待 PR 审查与合并 |
-| 收敛代码提交 | `3dc6b1a`、`91c3d51`、`3c1f96c` | 合并任务持久回执与 `2026.09.4` 现场验证的健康恢复，并补 CP314 隔离测试兼容 |
+| 主线收敛分支 | `codex/mainline-runtime-convergence-20260919@84f6fe2` | [PR #108](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/108)，等待审查与合并 |
+| PR #108 CI | 两项 Windows checks 均 SUCCESS（2026-09-21 核验） | CPython 3.11 企业套件与 CPython 3.14 Runtime 专项；不等于 Release/生产批准 |
 | 发布标签 `2026.09.4` | `a0d1ccf7c2c3ddb5d90c5dc25aea76d5e13dc65a` | 位于独立发布历史，不等同于 `main` 或本地 `HEAD` |
 | 客户恢复工具分支 | `codex/customer-hotfix-2026.08.5-20260911@75da5c8` | 已推送、未合并主线，保存升级恢复执行器后续修复 |
 
@@ -23,7 +23,7 @@
 - 通用结构说明覆盖 `origin/main` 与主线收敛分支。
 - 收敛分支能力在 PR 合并前仍标注“分支增量”。
 - 标签存在只证明 Git 中存在发布对象，不自动表示已合入主线、已部署或已成为正式生产基线。
-- GitHub 仓库在本次核验时为公开仓库；若仓库可见性以后变化，应以 GitHub 实时状态为准。
+- GitHub 仓库可见性应以实时状态为准，不在本 Wiki 固化。
 
 ## 2. 阅读顺序
 
@@ -52,7 +52,7 @@
 | 在线更新 | 仅支持 Manifest v2、同数据库 Schema、无迁移的安全更新 |
 | 版本化 SQLite 迁移/恢复基础 | `origin/main` 已实现基础原语，尚未完整接入 Update Center |
 | PostgreSQL、水平扩展、分布式任务队列 | 未实现 |
-| GitHub Actions | 收敛分支新增最小 Windows 测试工作流；须以远端实际运行结果判断是否通过 |
+| GitHub Actions | PR #108 已新增 Windows 工作流，2026-09-21 两项检查通过；合并后 `main` 状态仍需实时核验 |
 
 ## 5. 相关事实源
 

@@ -1,6 +1,6 @@
 # 企业版浏览器级回归验收清单
 
-本文档用于每次企业功能变更、上游同步、入口治理或权限相关 PR 之后做真实浏览器回归验收。它只定义验收流程，不修改业务逻辑，也不覆盖第三方图片模型高规格失败问题。
+本文档用于每次企业功能、核心源代码、Release、入口治理或权限相关 PR 之后做真实浏览器回归验收。它只定义验收流程，不修改业务逻辑，也不覆盖第三方图片模型高规格失败问题。
 
 ## 一、适用范围
 
@@ -154,20 +154,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\enterprise\tests\test_star
 - [ ] `/output/` 相关资源访问不应暴露其他用户受保护内容。
 - [ ] 本任务只定义验收点；如发现隔离缺陷，应记录新 Issue，不在浏览器回归体系任务中顺手修复。
 
-## 十、上游同步后专项验收
+## 十、核心源代码或 Release 变更后专项验收
 
-每次同步上游后，除前面所有项外，还必须检查：
+修改 `main.py`、`static/`、`workflows/`、Gateway 或 Release payload 后，除前面所有项外，还必须检查：
 
 - [ ] 根目录 `README.md` 仍是企业版项目入口说明，没有被上游 README 覆盖。
-- [ ] 上游 README 如有同步，位于 `docs/upstream/README.upstream.md` 并标注仅供参考。
-- [ ] `docs/upstream/SYNC_POLICY.md` 仍记录 README 边界和同步规则。
-- [ ] `enterprise/gateway.py` 的企业入口治理仍能治理上游首页 DOM。
+- [ ] `docs/upstream/SYNC_POLICY.md` 仍明确外部来源已经冻结，仅作历史证据。
+- [ ] `enterprise/gateway.py` 的企业入口治理仍能治理画布首页 DOM。
 - [ ] 项目主页仍指向企业仓库。
 - [ ] 普通用户更新入口仍隐藏。
 - [ ] 普通用户绕过前端调用更新接口仍返回 403。
-- [ ] 普通用户权限隔离没有被上游新增 API 绕过。
-- [ ] 新增上游页面或接口如涉及资源列表、输出、下载、更新、资产访问，应记录是否需要纳入企业拦截或响应过滤。
-- [ ] `enterprise/`、`enterprise-static/`、`enterprise/tests/` 和企业文档没有被上游同步误覆盖。
+- [ ] 普通用户权限隔离没有被新增 API 绕过。
+- [ ] 新增页面或接口如涉及资源列表、输出、下载、更新、资产访问，已经纳入服务端授权。
+- [ ] `enterprise/`、`enterprise-static/`、`enterprise/tests/`、业务数据和企业文档没有被 Release 更新误覆盖。
 
 ## 十一、结果记录格式
 
@@ -224,7 +223,7 @@ Merge recommendation:
 - 普通用户可进入管理后台。
 - 普通用户可触发更新或回滚接口。
 - 项目主页回到上游仓库。
-- 上游同步覆盖了企业 README 或企业层文件。
+- Release/source 变更覆盖了企业 README、企业层文件或客户可写数据。
 - 普通用户明显看到其他用户画布、对话或受保护资源。
 - 画布基础打开、保存、返回列表不可用。
 - Console 出现阻断性错误导致关键页面不可用。
