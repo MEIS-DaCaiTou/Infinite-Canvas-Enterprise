@@ -1,204 +1,103 @@
 # Infinite Canvas Enterprise
 
-Last code-fact verification baseline: `main@396cccc68d63bd16393a2cb72d24e4a48fcf47cb` (PR #79 merged). The current repository HEAD is always the GitHub `main` branch; documentation-only PR #80 does not change runtime code facts. See [`docs/README.md`](docs/README.md) for the authoritative documentation index and [`docs/CURRENT_PROJECT_STATUS.md`](docs/CURRENT_PROJECT_STATUS.md) for implemented/not-implemented facts.
+`Infinite-Canvas-Enterprise` 是持续维护的企业无限画布产品主线，仓库为
+[`MEIS-DaCaiTou/Infinite-Canvas-Enterprise`](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise)。
+它与 `Aidan-OS`、`Aidan-Canvas`、`Aidan-App-SDK` 是相互独立的项目，需求、分支、发布和验收结果不得互相套用。
 
-Infinite Canvas Enterprise is the enterprise multi-user edition built on top of the upstream open-source project [hero8152/Infinite-Canvas](https://github.com/hero8152/Infinite-Canvas).
+项目最初基于 `hero8152/Infinite-Canvas`，当前以上游 `2026.07.6` 代码作为冻结的历史来源基线；后续产品演进由本仓库独立负责，不再以持续同步上游为约束。
 
-This repository is not a new standalone canvas product. Its only long-term direction is to make Infinite Canvas safe and maintainable for teams, LAN deployments, and server environments with enterprise authentication, authorization, ownership, and audit controls.
+## 当前状态
 
-Future production follows a Greenfield route: the project will first form an approved Production Baseline, then deploy with a clean environment, new database, new accounts, new configuration, and re-entered credentials. The legacy production system remains a retirement candidate and is not a migration or in-place upgrade source; it has not been stopped or deleted. See [ADR-OPS-007](docs/decisions/ADR-OPS-007-GREENFIELD-PRODUCTION-BASELINE-AND-LEGACY-NON-MIGRATION-2026-07.md) and the [development roadmap](docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md).
+- 动态主线以 `origin/main` 为准，开始任务前必须重新获取并核验。
+- Runtime 主线收敛正在 [PR #108](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/108) 审查；在合并前不得称为 `main`、正式 Release 或客户部署能力。
+- 已有 Manifest v2、不可变 Release、Runtime Supervisor、最小在线更新和 SQLite migration/restore foundation；数据库迁移尚未完整接入更新中心。
+- 客户 `2026.08.5` 到 `2026.09.4` 的现场定点热修只证明已确认设备恢复，不自动代表通用 Production Baseline。
 
-## Core Capabilities
+完整边界见 [当前项目状态](docs/CURRENT_PROJECT_STATUS.md)。
 
-- Enterprise login authentication with JWT Cookie sessions.
-- User management for administrators.
-- Permission isolation for normal users.
-- Canvas ownership through enterprise mapping.
-- Conversation ownership through enterprise mapping.
-- Audit logs for key enterprise operations.
-- Enterprise gateway in front of the upstream app.
-- LAN and server deployment flow.
-- Controlled upstream synchronization and compatibility validation.
-
-## Runtime Architecture
+## 当前运行架构
 
 ```text
-LAN / server users
+LAN / browser users
         |
-        | HTTP + enterprise_token Cookie
         v
-Enterprise Gateway
-enterprise/gateway.py
-0.0.0.0:8000
+Enterprise Gateway :8000
+authentication / authorization / audit / proxy / admin
         |
-        | reverse proxy + auth + user context + filtering
         v
-Upstream Infinite Canvas
-main.py
-127.0.0.1:3001
+Canvas application :3001 (loopback only)
+        |
+        +-- SQLite and business files
+        +-- assets / task records / configuration
+
+Runtime Supervisor
+        +-- independent liveness/readiness and recovery
+        +-- immutable Release pointer and update jobs
 ```
 
-The enterprise gateway is the external entry point. The upstream app should stay bound to `127.0.0.1:3001` and should not be exposed directly to LAN users.
+当前形态是 Windows 单机模块化单体，不应被描述为 PostgreSQL、多节点、高可用或完整分布式任务平台。详见 [ARCHITECTURE.md](ARCHITECTURE.md)。
 
-## Quick Start
+## 固定实施顺序
 
-Windows startup:
+后续开发必须遵循：
+
+1. 安全修复
+2. 数据升级能力
+3. 在线升级体验
+4. 部门与任务
+5. 资源缓存与桌面壳
+6. PostgreSQL 及高可用
+7. 企业集成
+
+先建立可恢复的数据升级能力，再增加业务表和业务数据，防止功能完成后无法安全交付给存量客户。阶段目标、依赖和验收条件见 [开发路线图](docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md)。
+
+## 快速启动
+
+Windows：
 
 ```powershell
 .\启动企业版.bat
 ```
 
-Stop services:
+停止：
 
 ```powershell
 .\停止企业版.bat
 ```
 
-Common paths:
+常用入口：
 
-- App entry: `http://127.0.0.1:8000/`
-- Admin console: `/enterprise/admin`
-- Health check: `/enterprise/health`
-- Login page: `/enterprise/login`
+- 应用：`http://127.0.0.1:8000/`
+- 管理后台：`http://127.0.0.1:8000/enterprise/admin`
+- 存活探针：`/enterprise/live`
+- 健康状态：`/enterprise/health`
 
-The local Windows runtime supervisor starts and independently supervises both services:
+生产部署前必须创建本地 `enterprise.env`，替换 `JWT_SECRET` 和管理员凭据；不得提交密钥、令牌、Cookie、真实数据库、素材、输出或运行日志。
 
-- Enterprise gateway: `0.0.0.0:8000`
-- Internal upstream: `127.0.0.1:3001`
+## 开发入口
 
-## Required Reading For Codex / Agents
+开始任务时按顺序阅读：
 
-Before any development or maintenance task, read these documents first:
+1. [文档索引](docs/README.md)
+2. [当前项目状态](docs/CURRENT_PROJECT_STATUS.md)
+3. [当前架构](ARCHITECTURE.md)
+4. [开发路线图](docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md)
+5. [代码边界](CODE_BOUNDARIES.md)
+6. 对应 ADR、实施记录和测试说明
 
-1. `docs/README.md`
-2. `docs/CURRENT_PROJECT_STATUS.md`
-3. `ARCHITECTURE.md`
-4. `PROJECT_SCOPE_LOCK.md`
-5. `CODE_BOUNDARIES.md`
-6. The ADRs and task-specific documents linked by `docs/README.md`
-7. The current GitHub Issue text
+代码导航见 [Code Wiki](docs/code-wiki/README.md)，开发流程见 [CODEX_WORKFLOW.md](CODEX_WORKFLOW.md)，企业层快速指南见 [ENTERPRISE_DOCS.md](ENTERPRISE_DOCS.md)。
 
-This is mandatory because the enterprise layer and upstream layer have different ownership and update rules.
+## 测试
 
-## Development Boundaries
-
-Enterprise features should be implemented first in:
-
-- `enterprise/`
-- `enterprise-static/`
-- `enterprise/tests/`
-- enterprise documentation
-
-The following are upstream-covered areas and should not be used as normal enterprise feature entry points:
-
-- `main.py`
-- `static/`
-- `workflows/`
-- `VERSION`
-- `tools/`
-- `packages/`
-- root upstream helper scripts and upstream reference docs
-
-Changes to upstream-covered files are allowed only for controlled upstream syncs or clearly documented minimal upstream bug fixes.
-
-## Upstream Synchronization
-
-Last verified enterprise code baseline: `396cccc68d63bd16393a2cb72d24e4a48fcf47cb`
-
-Current upstream baseline: `2026.07.6`
-
-Current upstream target commit: `hero8152/Infinite-Canvas@f1dd6834a72f3e7ff8340be05a84347d931e9cb9`
-
-Upstream source: [hero8152/Infinite-Canvas](https://github.com/hero8152/Infinite-Canvas)
-
-Rules:
-
-- Upstream sync must be delivered through an independent branch and PR.
-- Upstream sync must run compatibility checks before merge.
-- Upstream sync PRs must clearly list synced files, intentionally skipped files, test results, risks, and rollback plan.
-- The root `README.md` must remain the Enterprise project entry point.
-- The upstream README must not directly overwrite this file again.
-- If the upstream README needs to be preserved, sync it to `docs/upstream/README.upstream.md`.
-
-More detail: `docs/upstream/SYNC_POLICY.md`.
-
-## Enterprise Entry And Updates
-
-The in-app project homepage entry must point to the Enterprise repository:
-
-- [MEIS-DaCaiTou/Infinite-Canvas-Enterprise](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise)
-
-The upstream project remains credited and referenced in repository documentation, but it should not be the default in-app project homepage for enterprise users.
-
-Update governance:
-
-- Normal users must not see or trigger one-click update, update-to-version prompts, rollback, or update connectivity checks.
-- Update-related upstream APIs are protected by the enterprise gateway and require administrator permission.
-- Administrators may use the update entry only as an Enterprise controlled maintenance capability.
-- The gateway keeps upstream auto-restart disabled for update requests so the Enterprise `3001/8000` process model remains controlled by the runtime supervisor.
-
-## Upstream README
-
-The upstream README is kept only as reference material:
-
-- `docs/upstream/README.upstream.md`
-
-That document is not the homepage for this enterprise repository.
-
-## Security Notes
-
-Before production deployment:
-
-- Create local `enterprise.env` from `enterprise.env.example`.
-- Change `JWT_SECRET`.
-- Change `ADMIN_PASSWORD`.
-- Review repository visibility and collaborator permissions.
-
-Never commit:
-
-- real API keys
-- real tokens
-- real cookies
-- `enterprise.env`
-- `API/.env`
-- `python/`
-- real databases
-- runtime data under `data/`
-- `history.json`
-- `assets/`
-- `output/`
-- local media preview caches
-
-See `SECURITY_BASELINE.md` for the full baseline.
-
-## Testing
-
-Non-destructive diagnostics:
+测试入口以 [enterprise/tests/README.md](enterprise/tests/README.md) 和 GitHub Actions 为准。常用非破坏性检查：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\enterprise\tests\diagnose.ps1
-```
-
-Smoke test:
-
-```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\enterprise\tests\smoke.ps1
 ```
 
-Manual checklist after upstream updates:
+生命周期、故障注入和更新测试可能停止当前服务或写入隔离测试目录，执行前应读取对应测试说明。项目负责人已明确：后续不设置独立 Windows 主机验收门禁；托管 CI 的平台限制仍需如实记录，不得伪装成已覆盖。
 
-- `enterprise/tests/SMOKE_CHECKLIST.md`
+## 来源与许可证
 
-Startup/stop lifecycle tests may interrupt the running service. Run them only when that interruption is acceptable.
-
-## Current Maintenance Status
-
-- Enterprise gateway: `0.0.0.0:8000`
-- Internal upstream: `127.0.0.1:3001`
-- Current upstream baseline: `2026.07.6`
-- Last verified code baseline: `396cccc68d63bd16393a2cb72d24e4a48fcf47cb`; resolve current HEAD from GitHub `main`.
-- OPS-3A, STAB-1 / OPS-L1 and the detached service-host startup fix are merged; this does not mean production has switched runtimes or that OPS-3B is implemented.
-- The new Greenfield production environment has not been deployed, and Fresh Install Bootstrap is not implemented.
-- Legacy production data, accounts, configuration, credentials, and runtime state will not be migrated to the new production baseline.
-- Enterprise tests live in `enterprise/tests/`
-- Runtime data and secrets must stay out of Git
+历史来源项目为 [hero8152/Infinite-Canvas](https://github.com/hero8152/Infinite-Canvas)。来源归属、许可证和历史同步记录予以保留，但不再构成当前产品路线或文件修改限制。

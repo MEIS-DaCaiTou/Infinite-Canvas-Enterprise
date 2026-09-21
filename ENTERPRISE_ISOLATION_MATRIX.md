@@ -1,11 +1,13 @@
 # Infinite Canvas Enterprise 隔离数据域与 API 矩阵
 
+> 历史设计输入：本文保留早期数据域盘点和权限测试场景，不再是当前实现完成证明或路线图。实际覆盖以代码/测试和 [`docs/CURRENT_PROJECT_STATUS.md`](docs/CURRENT_PROJECT_STATUS.md) 为准；“上游同步”相关门禁已失效。
+
 更新时间：2026-07-08
 状态：企业隔离能力矩阵与后续回归基线。本文记录当前已实现状态，不实现业务代码。
 
 ## 2026-07-08 阶段结论
 
-3G 第一阶段企业安全隔离底座已基本完成，并已完成 U-2 上游 `2026.07.6` 受控同步与 U-2-F2 history type 一致性修复。当前矩阵不再只作为待实现清单，也作为后续端到端回归、上游同步复核和协作权限设计的基线。
+3G 第一阶段企业安全隔离底座已基本完成，并曾完成 U-2 `2026.07.6` 历史同步与 U-2-F2 history type 一致性修复。当前矩阵仅作为历史场景清单和端到端回归输入。
 
 已完成的关键域包括上传资源、素材库业务对象、WebSocket 广播、异步任务历史、zimage / enhance / klein 云端 history type 一致性、管理员权限开关、soft delete / feature override 清理、成员治理 UI 和审计。普通用户之间的默认策略仍是 owner 隔离；管理员可代管但关键操作必须审计；未知 owner / unowned 数据对普通用户默认拒绝。
 
@@ -19,7 +21,7 @@ Angle / Enhance ModelScope 上传解耦已由 PR #53 完成；上游 `2026.07.6`
 
 企业版的安全边界是“默认拒绝普通用户访问未知归属数据”。管理员可以代管、分配和审计，但不应把全局上游数据直接暴露给普通用户。
 
-本矩阵是后续 3G 分阶段实现、上游同步复核和浏览器回归的唯一设计输入。矩阵中的“目标”并不表示当前已经实现；当前已覆盖的画布、对话和受保护本地资源以 `enterprise/interceptors.py` 与 `enterprise/tests/test_ownership_isolation.py` 为准。
+本矩阵不是当前唯一设计输入，也不负责后续任务排序。矩阵中的“目标”不表示已经实现；当前覆盖以 `enterprise/interceptors.py`、相关 Policy 与 `enterprise/tests/test_ownership_isolation.py` 为准。
 
 ### 术语
 
@@ -134,13 +136,13 @@ Angle / Enhance ModelScope 上传解耦已由 PR #53 完成；上游 `2026.07.6`
 | 能力 | 当前状态 | 后续动作 |
 | --- | --- | --- |
 | 画布、对话单对象 404 风格授权 | 已覆盖 | 3G-8 中继续做浏览器级回归固化。 |
-| 新建画布/对话 owner | 已覆盖 | 继续随上游同步复核新增路径。 |
+| 新建画布/对话 owner | 已覆盖 | 新增路径或核心源代码变更后继续复核。 |
 | 本地资源 URL 归一化和 scope 回填 | 已覆盖上传、output、library、input 等关键路径 | 3G-8 固化 `/api/view`、`/assets/input/*`、`/assets/uploads/*`、`/assets/library/*`、`output` 直链回归。 |
 | 项目/文件夹隔离 | 3G-2 已覆盖当前上游扁平项目节点；项目 API 尚无独立 parent/folder 字段 | 后续上游增加真实层级 API 时，复用 `user_project_map` 的 parent/visibility 预留字段并补矩阵。 |
 | 历史、在线生成、批量历史 | 已覆盖 owner 过滤、删除鉴权、zimage/enhance/klein 云端 history type 一致性 | 3G-8 固化 user_a 可见自身历史、user_b 不可见、admin 可见；外部 provider 成功链路后续补验。 |
 | 素材库/上传文件夹/共享目录 | 上传资源隔离与素材库业务 owner 已完成；shared folders 普通用户最小收紧 | 后续协作权限设计前不开放共享 ACL。 |
 | WebSocket 事件扇出 | 已完成 connection/user 绑定与 owner/task owner 过滤 | 3G-8 固化 stats、new_image、asset_library_updated、cloud_status 回归。 |
-| API/工作流/平台入口开关 | 已完成 feature flag / user override / 后端守卫 / 前端入口治理 | 继续在 3G-8 和上游同步后复核新增 provider / CLI 设置路径。 |
+| API/工作流/平台入口开关 | 已完成 feature flag / user override / 后端守卫 / 前端入口治理 | 继续在回归中复核新增 Provider / CLI 设置路径。 |
 | 管理员用户治理 | 已完成 delete-impact dry-run、soft delete 安全保护、feature override 清理、成员筛选分页 | 后续不混入 owner transfer / cleanup；如启动 3G-7B 后续能力需单独 PR。 |
 
 ## 6. 上游兼容实施位置
@@ -150,11 +152,11 @@ Angle / Enhance ModelScope 上传解耦已由 PR #53 完成；上游 `2026.07.6`
 3. `enterprise/gateway.py`：保持认证、用户 header 注入、WebSocket 代理与最小 HTML 注入。WebSocket 隔离应在此处或独立企业模块实现，不能在上游 `main.py` 广播层直接打补丁。
 4. `enterprise/admin_api.py` 与 `enterprise-static/`：提供归属迁移、开关管理和审计查看。不要在管理台直接读取上游数据文件绕过权限模型。
 5. `enterprise/tests/`：所有临时数据使用临时目录/SQLite；为每个新增上游路径建立 A/B/admin 测试。
-6. `static/`：默认不修改。入口隐藏优先由网关 HTML 注入；只有上游 DOM 完全无法被注入稳定治理时，才做最小兼容补丁，并在上游同步 PR 中逐项复核。
+6. `static/`：可以在产品任务内修改；入口隐藏与服务端授权必须保持一致，并对旧视觉和高频交互做回归。
 
-## 7. 上游同步防回归门禁
+## 7. 核心源代码变更防回归门禁
 
-每次上游同步后必须：
+每次修改核心路由、静态 UI、Provider 或 Release payload 后必须：
 
 1. 从上游路由表重新搜索 `/api/projects`、`/api/*tasks`、`/api/history`、`/api/*assets`、`/api/providers`、`/api/workflows` 与 `@app.websocket`。
 2. 将新增的读、写、下载、异步 task、列表和 WebSocket API 加入本矩阵，再决定是否可合并。

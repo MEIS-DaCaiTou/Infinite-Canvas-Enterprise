@@ -1,0 +1,62 @@
+name: Enterprise checks
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  enterprise-python-311:
+    name: Enterprise suite (Windows, Python 3.11)
+    runs-on: windows-latest
+    timeout-minutes: 25
+    env:
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch pinned upstream provenance object
+        run: git fetch --no-tags --depth=1 https://github.com/hero8152/Infinite-Canvas.git f1dd6834a72f3e7ff8340be05a84347d931e9cb9
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install test dependencies
+        run: >-
+          python -m pip install
+          -r requirements.txt
+          -r enterprise/requirements.txt
+          pytest
+      - name: Run enterprise suite
+        run: python -m pytest -q enterprise/tests
+
+  runtime-python-314:
+    name: Runtime reliability (Windows, Python 3.14)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+      - name: Install test dependencies
+        run: >-
+          python -m pip install
+          -r requirements.txt
+          -r enterprise/requirements.txt
+          pytest
+      - name: Run Runtime convergence tests
+        run: >-
+          python -m pytest -q
+          enterprise/tests/test_runtime_reliability.py
+          enterprise/tests/test_canvas_task_journal.py
+          enterprise/tests/test_stab_1_supervisor_logging.py::test_detached_service_host_lifecycle
+          enterprise/tests/test_stab_1_supervisor_logging.py::test_role_isolation_and_stop
+          enterprise/tests/test_stab_1_supervisor_logging.py::test_instance_bound_command_acknowledgements

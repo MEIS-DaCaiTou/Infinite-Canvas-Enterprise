@@ -5,6 +5,8 @@
 - 事实基线：`main@396cccc68d63bd16393a2cb72d24e4a48fcf47cb`
 - 实施状态：已决策，尚未开始结构性重构
 
+> 2026-09-21 修订：模块化单体与渐进领域拆分决定继续有效；外部上游已停止维护，保留同步能力不再是架构目标。历史 `Upstream` 名称仅代表当前内部 Canvas application 进程角色。
+
 ## 背景
 
 当前系统由对外的 Enterprise Gateway、仅本机访问的 Upstream Infinite Canvas、企业 SQLite、上游 JSON / 本地文件以及 Windows runtime supervisor 组成。Gateway 集中处理登录、鉴权、HTTP / WebSocket 代理和企业兼容，`enterprise/interceptors.py` 则承担大量路径识别、授权、过滤、owner 记录与审计触发。

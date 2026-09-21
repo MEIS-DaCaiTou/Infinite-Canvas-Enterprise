@@ -2,7 +2,7 @@
 
 更新时间：2026-07-06
 
-本文是企业版第一阶段隔离底座的端到端验收基线。后续功能 PR、上游同步 PR、权限策略 PR 都应按本文补充自动化或人工 A/B/admin 验收记录。
+本文是企业版第一阶段隔离底座的端到端验收基线。后续功能、核心源代码、Release 和权限策略 PR 都应按本文补充自动化或人工 A/B/admin 验收记录。
 
 ## 基线结论
 
@@ -53,9 +53,9 @@
 | 生成能力开关 | 在线生图、ZImage、Angle、Enhance、video、RunningHub | `/api/online-image`、`/api/generate`、`/api/angle/generate`、`/api/ms/generate`、`/api/canvas-video`、`/api/runninghub/submit` | 管理员 bypass | allow 时核心生成链路正常；deny 时提交类 API 403 | B 的开关不受 A 设置影响 | 上传/预览/input owner 校验不能被 generation deny 误伤。 |
 | 禁用用户 | 登录页、所有受保护页面 | `/enterprise/api/users/{id}/active`、JWT 校验 | 管理员可禁用/启用用户 | 被禁用后不能继续访问受保护页面和 API | 其他用户不受影响 | `user_disabled` / `user_enabled` 写审计。 |
 
-## 上游同步回归要求
+## 核心源代码与 Release 变更回归要求
 
-每次上游同步 PR 必须至少复核：
+每次核心路由、静态 UI、Provider 或 Release payload 变更必须至少复核：
 
 - `main.py` 新增 API 是否需要企业拦截。
 - `static/` 新增入口是否需要企业隐藏、注入或无权限页。
@@ -72,5 +72,5 @@
 - 数据库功能 schema 改造。
 - `enterprise/interceptors.py` 大重构。
 - Postgres、队列、运维系统。
-- 上游同步实现。
+- 外部来源同步实现（历史非目标）。
 - Angle / Enhance ModelScope 上传解耦实现。

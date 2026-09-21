@@ -1,6 +1,6 @@
 # ADR-OPS-007：全新生产基线部署与旧生产非迁移
 
-- 状态：Accepted
+- 状态：Partially Superseded（2026-09-21）
 - 决策日期：2026-07-17
 - 决策人：Infinite-Canvas-Enterprise 项目负责人
 - 事实基线：`main@396cccc68d63bd16393a2cb72d24e4a48fcf47cb`
@@ -8,6 +8,8 @@
 - 当前关联 PR：Draft PR #80
 - 实施状态：仅完成生产路线决策；未停止或删除旧生产，未部署新生产，未实施 Fresh Install Bootstrap
 - 约束效力：自本 ADR 接受之日起，作为后续项目规划、任务拆解、Codex 实施、PR 审查和生产准入判断的强制前提
+
+> 2026-09-21 修订：本 ADR 对“来源不明、schema 不受支持的历史旧生产不得盲目迁移”仍有效；“所有客户只能 Greenfield、不得原位升级”已经被后续 Manifest v2、DATA-MVP-1 与 Update Center 路线替代。已安装受支持 Release 的客户应通过备份、迁移、校验、切换和恢复闭环原位升级。当前顺序见 [开发路线图](../roadmap/DEVELOPMENT-ROADMAP-2026-2027.md)。
 
 ## 1. 背景
 

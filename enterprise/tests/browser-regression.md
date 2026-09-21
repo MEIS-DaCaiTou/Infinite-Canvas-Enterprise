@@ -70,20 +70,19 @@ Run only with disposable test users and explicit acceptance that local runtime d
 - Open and save the canvas.
 - Open Smart Canvas and verify there are no blocking console errors.
 
-### Tier 3: Upstream Sync Regression
+### Tier 3: Core Source And Release Regression
 
-Run after every upstream sync PR.
+Run after canvas-core, static UI, Gateway or Release/update changes.
 
 - Verify root `README.md` remains the enterprise entrypoint.
-- Verify upstream README is kept only under `docs/upstream/README.upstream.md` when synchronized.
-- Verify enterprise entry governance still applies to the updated upstream `static/index.html`.
+- Verify enterprise entry governance still applies to `static/index.html`.
 - Verify ordinary users still cannot see or call update capabilities.
-- Verify newly added upstream resource, output, update, or asset APIs are reviewed against enterprise permission boundaries.
-- Record all findings in `enterprise/tests/UPDATE_TEST_LOG.md`.
+- Verify newly added resource, output, update, or asset APIs are reviewed against enterprise permission boundaries.
+- Record findings in the PR or corresponding implementation record.
 
 ## Stable Targets To Inspect
 
-The following selectors or paths are useful for browser checks. They come from the current enterprise and upstream shell and must be rechecked after upstream syncs:
+The following selectors or paths are useful for browser checks. They come from the current product shell and must be rechecked after core-source changes:
 
 - `/enterprise/login`
 - `/enterprise/admin`

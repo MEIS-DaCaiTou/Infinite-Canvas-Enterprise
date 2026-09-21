@@ -60,6 +60,14 @@ def gateway_health(host: str, port: int) -> HealthResult:
     result, body = _http_check(host, port, "/enterprise/health")
     if result.ok:
         return result
+    if result.category == "read_timeout":
+        live, live_body = _http_check(host, port, "/enterprise/live", timeout_seconds=1.0)
+        try:
+            payload = json.loads(live_body)
+        except (ValueError, UnicodeDecodeError):
+            payload = None
+        if live.ok and type(payload) is dict and payload.get("gateway") == "ok":
+            return HealthResult(False, "readiness_timeout", result.status_code)
     if result.status_code == 503:
         try:
             payload = json.loads(body.decode("utf-8"))

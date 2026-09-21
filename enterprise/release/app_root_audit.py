@@ -3,7 +3,7 @@
 The scanner is deliberately a conservative maintenance control, not a proof
 that static analysis can discover every possible write. It combines Python AST
 inspection, focused script inspection, stable call fingerprints, frozen
-operation counts, and W01-W47 flow anchors.
+operation counts, and W01-W49 flow anchors.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Iterable, Sequence
 
 
-_FLOW_IDS = frozenset(f"W{number:02d}" for number in range(1, 48))
+_FLOW_IDS = frozenset(f"W{number:02d}" for number in range(1, 50))
 _SCANNED_SUFFIXES = frozenset({".bat", ".cmd", ".js", ".ps1", ".py"})
 _EXCLUDED_PREFIXES = ("enterprise/tests/", "enterprise-static/", "static/")
 _PATH_METHODS = frozenset(
@@ -563,6 +563,16 @@ _SCRIPT_FLOW_BY_FILE = {
 
 
 def _flow_for_operation(file: str, symbol: str) -> str:
+    if file == "enterprise/canvas_task_journal.py" and symbol == "CanvasTaskJournal._write":
+        # Atomic task receipts/results live under DATA_ROOT/canvas-tasks;
+        # neither an immutable Release nor a provider configuration is written.
+        return "W48"
+    if file == "enterprise/migrations/versioned.py" and symbol in {
+        "_write_new_file", "create_database_backup", "restore_database_backup",
+    }:
+        # DATA-MVP-1 already exists on the base branch. Account for its explicit
+        # database/backup arguments without changing or executing migrations.
+        return "W49"
     if file == "main.py":
         return _MAIN_FLOW_BY_SYMBOL[symbol]
     if file == "enterprise/release/windows_runtime_build.py":
@@ -609,7 +619,7 @@ def _flow_for_operation(file: str, symbol: str) -> str:
 # every mapped site as (file, symbol, operation, normalized-call fingerprint,
 # Wxx flow). Line numbers are deliberately excluded, while duplicate identical
 # calls remain duplicate records. Any added/removed/changed call drifts it.
-EXPECTED_SITE_MANIFEST_DIGEST = "6e5abfc4d9589b3e4fb411514fa90216d0564618bb996fa22939539a3f1e95b4"
+EXPECTED_SITE_MANIFEST_DIGEST = "7fbf5ad34b1468fa581c2a4dbfdd84e3ff42739632f97ab41712bb7ee7b3bb17"
 
 FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W01", "main.py", "startup_event"),
@@ -659,6 +669,8 @@ FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W45", "tools/validation/windows/env_1b3/Invoke-ENV1B3Validation.ps1"),
     FlowAnchor("W46", "enterprise/ops/update/mvp.py", "UpdateMvpService.prepare_from_artifacts"),
     FlowAnchor("W47", "enterprise/fresh_install.py", "install_greenfield"),
+    FlowAnchor("W48", "enterprise/canvas_task_journal.py", "CanvasTaskJournal._write"),
+    FlowAnchor("W49", "enterprise/migrations/versioned.py", "create_database_backup"),
 )
 
 

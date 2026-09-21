@@ -4,13 +4,16 @@ This folder is the only place for project diagnostic and smoke-test scripts.
 
 Before adding or changing scripts, read:
 
-- `../../PROJECT_HANDOFF_FOR_NEW_AGENT.md`
-- `../../AGENT_CONTEXT.md`
+- `../../docs/README.md`
+- `../../docs/CURRENT_PROJECT_STATUS.md`
+- `../../ARCHITECTURE.md`
+- `../../CODE_BOUNDARIES.md`
 - `../../ENTERPRISE_DOCS.md`
 - `SMOKE_CHECKLIST.md`
 
 ## Scripts
 
+- `test_runtime_reliability.py` and `test_canvas_task_journal.py` cover the September 2026 Gateway incident fixes: isolated/bounded health probes, real restart backoff, startup grace, event-loop offloading, permission-safe reference caching, batch ownership, and durable canvas receipts/results with explicit interrupted-state recovery. All roots/providers are temporary or fake; these tests do not approve a production rollout. See `../../docs/ops/RUNTIME-RELIABILITY-2026-09-03.md` for limits and lifecycle evidence.
 - `diagnose.ps1` checks local version, selected LAN IP, listening ports, proxy settings, and health endpoints.
 - `smoke.ps1` runs non-destructive HTTP smoke checks against a running enterprise gateway.
 - `test_start_stop.ps1` accepts a temporary runtime root, random ports and the fixed fixture-child wrapper for a non-production lifecycle check. It refuses to kill existing listeners, verifies short-lived CLI start, restart ACK/PID generation changes and owned-only stop/port release.
@@ -37,16 +40,14 @@ Before adding or changing scripts, read:
 - `ready_user_fixture.py` is test-only SQL setup for normal users in explicit temporary ROLE_AUTH_READY databases; it is not a production creation path.
 - `test_ownership_isolation.py` runs non-destructive ownership isolation checks with a temporary SQLite database and temporary project/canvas/conversation files, including A/B/admin project owner, project-list, canvas-move, and direct-ID denial cases.
 - `test_smart_canvas_logs.js` verifies Smart Canvas legacy log normalization, merge behavior, and async task completion logging hooks without calling a model provider.
-- `SMOKE_CHECKLIST.md` is the manual checklist to run after every upstream update.
-- `BROWSER_REGRESSION_CHECKLIST.md` is the browser-level enterprise regression checklist for login, roles, admin console, entry governance, canvas, conversations, assets, and upstream-sync review.
+- `SMOKE_CHECKLIST.md` is the manual checklist for Release/source changes and ordinary regression.
+- `BROWSER_REGRESSION_CHECKLIST.md` is the browser-level enterprise regression checklist for login, roles, admin console, entry governance, canvas, conversations, assets, and Release/source review.
 - `browser-regression.md` describes the minimal automation plan for future browser-level regression scripts.
-- `UPDATE_TEST_LOG.md` records the actual result after each upstream update test pass.
-- `../../ENTERPRISE_ISOLATION_MATRIX.md` is the data-domain and API permission source of truth for Task 3G follow-up isolation tests.
-- `../../ENTERPRISE_PERMISSION_DESIGN.md` defines page permissions, administrator switches, phased delivery, and the A/B/admin acceptance contract.
-- `../../PROJECT_HANDOFF_FOR_NEW_AGENT.md` is a superseded historical handoff that preserves the PR #18-#24 and Task 3G context. Current navigation and implementation facts come from `../../docs/README.md` and `../../docs/CURRENT_PROJECT_STATUS.md`.
+- `UPDATE_TEST_LOG.md` is a historical result log; new PR evidence belongs in the PR and the corresponding implementation record.
+- `../../ENTERPRISE_ISOLATION_MATRIX.md` and `../../ENTERPRISE_PERMISSION_DESIGN.md` retain historical test scenarios, but current coverage comes from code, tests, and `../../docs/CURRENT_PROJECT_STATUS.md`.
 
 Run scripts from the project root unless a script says otherwise.
 
-Do not place ad-hoc diagnostic or smoke-test scripts in the project root, `static/`, or other upstream-owned folders. Keep them here so upstream updates and Git reviews stay clean.
+Do not place ad-hoc diagnostic or smoke-test scripts in the project root or product source folders. Keep them here so Release builds and Git reviews stay clean.
 
 For every Task 3G implementation PR, add or extend a focused test here before changing access behavior. Use temporary SQLite databases and temporary data files only. The minimum regression roles are normal user A, normal user B, and administrator; cover list filtering, direct-ID denial, resource URLs, refresh/re-login persistence, and WebSocket delivery where applicable.

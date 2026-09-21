@@ -1,121 +1,63 @@
-# 无限画布企业版 · 代码边界
+# Infinite Canvas Enterprise 代码与数据边界
 
-本文档定义本仓库的修改边界。Codex 和开发者每次任务开始前都必须阅读，并据此判断哪些文件可以修改。
+更新时间：2026-09-21
 
-当前 Release / 路径边界由 [ADR-ENV-003](docs/decisions/ADR-ENV-003-IMMUTABLE-RELEASE-STATIC-CACHE-2026-07.md)、[ADR-ENV-004](docs/decisions/ADR-ENV-004-PATH-ROOTS-AND-RELEASE-DIRECTORY-2026-07.md) 和 [ADR-ENV-005](docs/decisions/ADR-ENV-005-RUNTIME-ENTRYPOINT-SELF-CHECK-MODES-2026-07.md) 决定。ENV-1B1C-B1 已合并并独立验收；B2 repository implementation 修改既有 Runtime lifecycle 和正式 Windows wrappers，并复用 STAB-1 的唯一 controller/supervisor/state/lock/instance identity。`main.py`、gateway、Manifest v2、activation 与生产操作仍不属于 B2，完整只读 `APP_ROOT` 仍未形成。
+项目已独立演进，不再把 `main.py`、`static/` 或 `workflows/` 视为永远禁止修改的“上游覆盖区”。所有产品代码都可在明确需求、测试和迁移计划下修改；风险边界取决于职责、数据兼容性和发布影响。
 
----
+## 1. 常规修改区域
 
-## 1. 优先允许修改
+| 区域 | 主要职责 |
+| --- | --- |
+| `enterprise/` | Gateway、认证授权、管理、数据、Runtime、Release/Update、领域服务 |
+| `enterprise-static/` | 企业登录、管理、个人中心和更新体验 |
+| `enterprise/tests/` | 单元、集成、故障注入、浏览器和生命周期验证 |
+| `docs/`、根目录权威文档 | 当前状态、架构、路线、ADR、实施与验收记录 |
+| `.github/workflows/` | CI 检查与构建门禁 |
 
-企业功能、维护能力和测试能力应优先放在以下位置：
+修改这些区域仍需遵守业务兼容、权限和数据迁移要求，不能因为它们是“企业目录”就降低审查强度。
 
-- `enterprise/`
-- `enterprise-static/`
-- `enterprise/tests/`
-- `enterprise.env.example`
-- `data/*.example.json`
-- `启动企业版.bat`
-- `停止企业版.bat`
-- 项目文档，例如：
-  - `PROJECT_CHARTER.md`
-  - `AGENT_CONTEXT.md`
-  - `ARCHITECTURE.md`
-  - `CODE_BOUNDARIES.md`
-  - `CODEX_WORKFLOW.md`
-  - `DEVELOPMENT_PLAN.md`
-  - `ENTERPRISE_DOCS.md`
-  - `SECURITY_BASELINE.md`
-  - `README.md`
-  - `docs/upstream/*.md`
-  - `docs/decisions/*.md`
+## 2. 高影响区域
 
----
+| 区域 | 主要风险 | 最低要求 |
+| --- | --- | --- |
+| `main.py` | 核心 API、业务生命周期、任务/资源数据 | 接口/任务/启动回归，说明数据兼容 |
+| `static/` | 旧版视觉和交互、缓存、浏览器兼容 | 同尺寸视觉对照、关键交互与权限回归 |
+| `workflows/`、Provider 适配 | 外部调用、费用、幂等、隐私 | 真实或受控沙箱闭环、超时/未知结果测试 |
+| `enterprise/db.py`、`enterprise/migrations/` | schema、事务、恢复 | migration + backup/restore + failure injection |
+| `enterprise/runtime/` | 进程所有权、重启、停机 | 生命周期、阻塞、断网、重启和状态恢复 |
+| `enterprise/release/`、`enterprise/update_api.py` | 安装和在线升级 | Manifest/哈希、源版本、恢复和权限测试 |
+| `release/`、启动/停止脚本 | 客户安装和运维 | 可复现打包、原位升级、回滚说明 |
 
-## 2. 谨慎修改
+这些文件可以修改，但必须小步、可审查、可回滚；不得继续用“等待上游修复”作为阻断本项目演进的理由。
 
-以下文件可在明确需要时修改，但必须说明原因：
+## 3. 不得提交的内容
 
-- `.gitignore`
-- README / 说明文档
-- 企业层依赖文件
-- 示例配置文件
-- 企业测试脚本
-- 企业启动/停止脚本
+- `enterprise.env` 或任何真实环境配置。
+- API key、Token、Cookie、Authorization、私钥、真实密码。
+- `API/.env`、客户日志原件、客户数据库和客户素材。
+- `data/`、`assets/`、`output/`、本地缓存、Runtime state/log、临时诊断包。
+- 本机 Python/Node 运行时、构建缓存和未批准的大型二进制。
 
-修改这些文件时，必须确认没有影响上游同步能力、敏感文件保护或现有测试脚本。
+测试夹具必须脱敏、最小化并可从仓库重建。
 
-真实运行配置不属于示例配置。`enterprise.env`、`data/api_providers.json`、数据库、Token、Cookie、API Key 等只能保留在本地运行环境，不应提交到 Git。
+## 4. 领域放置原则
 
-当前明确禁止提交的运行时和敏感范围包括：`assets/`、`output/`、`history.json`、`data/`、`data/enterprise.db`、`enterprise.env`、`API/.env`、`python/`、Token、Cookie、API Key、本地日志、缓存、用户上传图片和临时验收文件。
+- HTTP/WebSocket 入口只做协议适配和调用编排，不承载越来越多业务判断。
+- 授权放入可复用 Policy；UI、API、Worker、Update、MCP 使用同一语义。
+- 业务命令放入 Application Service；数据库/文件/Provider 放入 Adapter 或 Repository。
+- 资源字节与元数据分离；路径通过 Storage Adapter 解析。
+- 任务受理、执行、对账和费用记录属于持久业务域，不使用进程内字典作为事实源。
+- 新增表前先定义 schema version、升级、备份、恢复和旧版本兼容。
 
-根目录 `README.md` 是企业版项目首页入口，应保持 Infinite Canvas Enterprise 的项目定位、启动方式、代码边界和上游同步说明。上游 README 不应直接覆盖根目录 `README.md`；如需保留上游 README，应同步到 `docs/upstream/README.upstream.md` 并标注仅供参考。
+## 5. 历史来源
 
-上游首页 Shell 中的项目主页、版本提示、更新按钮和作者社交入口由企业网关注入层治理。默认实现位置是 `enterprise/gateway.py` 和 `enterprise/interceptors.py`；除非注入无法稳定覆盖，否则不应为企业入口治理直接重构 `static/index.html`。如确需最小修改 `static/index.html`，PR 必须说明这是企业版对上游首页 Shell 的兼容补丁。
+`docs/upstream/` 记录截至 2026.07.6 的历史来源和同步审计。它不再规定文件修改权限，也不要求后续 PR 执行上游 merge/rebase/sync。若未来引入第三方代码更新，应作为新的依赖升级任务，明确许可证、差异、测试和回滚。
 
-画布、对话和受保护资源的多用户隔离必须优先集中在 `enterprise/interceptors.py`、`enterprise/db.py`、`enterprise/admin_api.py`、`enterprise-static/admin.html` 和 `enterprise/tests/` 中演进。普通用户对未归属或未知归属数据默认拒绝；管理员可查看并分配归属。不要为了隔离功能直接改 `main.py` 或 `static/`。
+## 6. 变更前检查
 
-Task 3G 的项目、文件夹、历史、素材、WebSocket 与功能入口隔离设计以 `ENTERPRISE_ISOLATION_MATRIX.md`、`ENTERPRISE_PERMISSION_DESIGN.md` 为准。后续实现必须先更新矩阵，再在企业层添加可测试的授权逻辑；不得用前端隐藏替代后端授权，也不得因上游新建全局 JSON/API 就默认向普通用户开放。
-
----
-
-## 3. 默认不应修改
-
-以下区域属于上游更新覆盖区域，默认不应作为企业功能开发入口：
-
-- `main.py`
-- `static/`
-- `workflows/`
-- `API/`
-- `python/`
-- `VERSION`
-
-禁止为了普通企业功能直接修改这些区域。企业能力应通过企业网关、拦截器、企业数据库、企业前端和企业测试体系实现。
-
----
-
-## 4. 上游区域例外规则
-
-如确需修改上游覆盖区域，必须满足以下条件之一：
-
-1. 正在执行上游版本同步。
-2. 正在做经过确认的最小上游 bugfix 热修。
-3. 正在将已被上游合并的修复同步回本仓库。
-4. 正在实施已接受 ADR 明确要求、且无法在企业覆盖层完成的最小兼容补丁。
-
-并且必须在 PR 中说明：
-
-- 修改原因
-- 是否属于上游同步或最小 bugfix
-- 风险范围
-- 如何回滚
-- 是否需要向上游提交 issue 或 PR
-
-U-2 已完成到上游 `2026.07.6` 的受控同步，U-2-F2 已完成文生图 / Enhance 云端 history type 一致性最小 bugfix。此类修改说明：上游覆盖区并非永远不可改，但只能在明确任务内、以最小补丁方式改，并在 PR 中证明未引入 `API/.env`、`python/`、`CLI/`、`assets/`、`output/`、`data/asset_library.json`、数据库、env、token、cookie、key 或本地日志。
-
-ENV-1B1A 对 `main.py` 的例外只用于满足 ADR-ENV-003：删除 startup 和 HTML response 阶段的 static cache 参数生成，使缓存哈希只能由显式 Release staging builder 产生。上游同步必须保留这一最小补丁并复跑 ENV-1B1A startup/static 源树不变测试；回滚会恢复已确认的 static/APP_ROOT blocker。建议向上游反馈 build-time content hash 与 runtime source immutability，但本仓库不以外部 issue/PR 作为当前实现前提。
-
-ENV-1B1B 对 `main.py` 的例外仅用于 ADR-ENV-004 明确要求的最小路径常量、import 写入移除和 shipped/user workflow overlay 兼容补丁。必须保留上游 workflow 模板的只读位置、用户数据的外部根和现有业务 API；PR 必须提供 overlay、copy-on-edit、shipped-only delete 拒绝及 APP_ROOT 不再 import 写入的测试。回滚该补丁会恢复已审计的 APP_ROOT 写入 blocker。
-
-ENV-1B1C-B1 不授权修改 `main.py`、Batch/PowerShell launcher 或既有 runtime lifecycle 文件。它只建立后续正式入口会调用的纯契约和安全原语：mode parsing、Runtime Manifest startup view、Python identity snapshot、preflight result、launch context 和 writable probe。后续 B/C 阶段如需接线正式入口，必须由新的明确任务和 Draft PR 承载。
-
-ENV-1B1C-B2 的独立任务授权仅覆盖 `enterprise/runtime/`、current-release bounded reader、正式企业版 `.bat` wrappers、对应测试和文档。B2 必须复用 STAB-1，不得建立平行 lifecycle；不得修改 `main.py`、`enterprise/gateway.py`，也不得实现 Manifest v2、activation、OPS-3B 或生产部署。
-
----
-
-## 5. 本任务级约束
-
-每次任务必须只处理当前目标：
-
-- 不扩大需求范围
-- 不顺手重构无关代码
-- 不移动无关文件
-- 不删除现有测试脚本
-- 不改动运行时数据
-- 不提交真实密钥、真实 Token、真实 Cookie、真实数据库或真实运行时配置
-- 不引入与企业多用户版无关的新方向
-
-Task 3G-1 是设计任务，只允许修改文档。项目、历史、素材、WebSocket 和权限开关的实现必须拆分为独立 Issue/分支/PR，不可在设计 PR 中顺手落地。
-
-如果发现额外问题，应记录在 PR 说明或后续 Issue 建议中，不在当前任务中直接实现。
-
+1. 任务属于哪个固定路线阶段？前置阶段是否完成？
+2. 当前 Base/Head/PR 是否与任务一致？
+3. 是否改变 schema、资源标识、任务状态或权限语义？
+4. 现有客户如何升级，失败如何恢复？
+5. 需要哪些自动测试、故障注入和人工验证？
+6. 是否错误地把分支、Release 或单设备结果写成主线/生产事实？

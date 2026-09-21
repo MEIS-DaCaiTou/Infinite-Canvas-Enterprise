@@ -930,7 +930,32 @@ def test_probe_v3r2_bundle_public_modes_and_blocked_passthrough(tmp_path: Path) 
     assert blocked.returncode == 2
     blocked_result = json.loads(blocked.stdout.strip().splitlines()[-1])
     assert blocked_result["result"] == "BLOCKED"
-    assert blocked_result["code"] == "ENV1B3_LONG_PATHS_DISABLED"
+    # The public W05 mode uses the host's real registry value. On a long-path
+    # capable runner this synthetic, non-release candidate advances to the
+    # materialization stage, where it must fail rather than claim W05 passed.
+    import winreg
+
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\FileSystem") as key:
+            long_paths_enabled = winreg.QueryValueEx(key, "LongPathsEnabled")[0] == 1
+    except OSError:
+        long_paths_enabled = False
+    expected_code = "ENV1B3_MATRIX_CASE_EXECUTION_FAILED" if long_paths_enabled else "ENV1B3_LONG_PATHS_DISABLED"
+    assert blocked_result["code"] == expected_code, blocked.stdout + blocked.stderr
+
+    # Exercise the disabled-path contract deterministically without editing
+    # HKLM or relying on the CI host's long-path configuration.
+    forced_blocked = subprocess.run(
+        [POWERSHELL, "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+         "-File", str(extracted / "validation-kit" / "Invoke-MatrixContractCase.ps1"),
+         "-Mode", "W05", "-HandoffRoot", str(handoff), "-TestRoot", str(tmp_path / "test"),
+         "-EvidenceRoot", str(tmp_path / "forced-disabled"),
+         "-ContractPath", str(extracted / "validation-kit" / "matrix-contracts.json"),
+         "-LongPathsEnabledOverride", "0"],
+        text=True, encoding="utf-8", capture_output=True, timeout=120, check=False,
+    )
+    assert forced_blocked.returncode == 2, forced_blocked.stdout + forced_blocked.stderr
+    assert json.loads(forced_blocked.stdout.strip().splitlines()[-1])["code"] == "ENV1B3_LONG_PATHS_DISABLED"
 
     deprecated = subprocess.run(
         [POWERSHELL, "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",

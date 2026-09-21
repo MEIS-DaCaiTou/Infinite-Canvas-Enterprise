@@ -57,6 +57,7 @@ from enterprise.interceptors import (
 from enterprise.admin_api import router as admin_router
 from enterprise.update_api import router as update_router
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.concurrency import run_in_threadpool
 
 # ── 应用初始化 ────────────────────────────────────────────
 
@@ -71,12 +72,15 @@ _SETTINGS_MANAGEMENT_PAGES = {
 class AuthStateMiddleware(BaseHTTPMiddleware):
     """在所有路由处理前解析 Token，将用户信息挂载到 request.state.user"""
     async def dispatch(self, request: Request, call_next):
+        if request.url.path in {"/enterprise/health", "/enterprise/live"}:
+            request.state.user = None
+            return await call_next(request)
         token = request.cookies.get("enterprise_token")
         if not token:
             auth = request.headers.get("Authorization", "")
             if auth.startswith("Bearer "):
                 token = auth[7:]
-        request.state.user = verify_token(token) if token else None
+        request.state.user = await run_in_threadpool(verify_token, token) if token else None
         return await call_next(request)
 
 
@@ -84,13 +88,19 @@ app.add_middleware(AuthStateMiddleware)
 app.include_router(admin_router, prefix="/enterprise")
 app.include_router(update_router, prefix="/enterprise")
 
-# 共享 httpx 客户端（保持连接池）
+# 共享业务代理客户端（保持连接池）。健康探测不复用该连接池，避免长请求或
+# 被取消的旧连接影响下一次探测。
 _http_client: Optional[httpx.AsyncClient] = None
+_health_probe_lock: Optional[asyncio.Lock] = None
+_health_probe_task: Optional[asyncio.Task] = None
+HEALTH_UPSTREAM_CONNECT_TIMEOUT_SECONDS = 0.5
+HEALTH_UPSTREAM_READ_TIMEOUT_SECONDS = 2.0
+HEALTH_UPSTREAM_OUTER_DEADLINE_SECONDS = 2.5
 
 
 @app.on_event("startup")
 async def startup() -> None:
-    global _http_client
+    global _http_client, _health_probe_lock, _health_probe_task
     require_gateway_database_ready(PATH_ROOTS, DB_PATH)
     ensure_db_schema()
     _http_client = httpx.AsyncClient(
@@ -99,14 +109,24 @@ async def startup() -> None:
         follow_redirects=True,
         limits=httpx.Limits(max_connections=200, max_keepalive_connections=50),
     )
+    _health_probe_lock = asyncio.Lock()
+    _health_probe_task = None
     print(f"[企业版] 网关启动，监听 0.0.0.0:{GATEWAY_PORT}")
     print(f"[企业版] 上游服务地址: {UPSTREAM_URL}")
 
 
 @app.on_event("shutdown")
 async def shutdown() -> None:
+    global _health_probe_task
     if _http_client:
         await _http_client.aclose()
+    if _health_probe_task is not None and not _health_probe_task.done():
+        _health_probe_task.cancel()
+        try:
+            await _health_probe_task
+        except asyncio.CancelledError:
+            pass
+    _health_probe_task = None
 
 
 # ── 工具函数 ──────────────────────────────────────────────
@@ -122,6 +142,8 @@ def _get_token_from_request(request: Request) -> Optional[str]:
 
 
 def _get_user(request: Request) -> Optional[dict]:
+    if hasattr(request.state, "user"):
+        return request.state.user
     token = _get_token_from_request(request)
     if not token:
         return None
@@ -775,12 +797,12 @@ async def do_login(request: Request):
     if not username or not password:
         return JSONResponse({"error": "用户名和密码不能为空"}, status_code=400)
 
-    user = authenticate(username, password)
+    user = await run_in_threadpool(authenticate, username, password)
     if not user:
         return JSONResponse({"error": "用户名或密码错误"}, status_code=401)
 
-    log_action(user["id"], "login")
-    token = create_token(user["id"])
+    await run_in_threadpool(log_action, user["id"], "login")
+    token = await run_in_threadpool(create_token, user["id"])
 
     next_url = request.query_params.get("next", "/")
     resp = JSONResponse({
@@ -820,27 +842,98 @@ async def admin_page(request: Request):
     return HTMLResponse(admin_html.read_text(encoding="utf-8"))
 
 
+@app.get("/enterprise/live", include_in_schema=False)
+async def liveness_check():
+    """Event-loop liveness only: no database, auth or upstream dependency."""
+    return JSONResponse({"gateway": "ok"})
+
+
+async def _perform_upstream_health_probe() -> dict:
+    """Run one isolated local probe without reusing a cancelled connection."""
+    started = time.monotonic()
+    timeout = httpx.Timeout(
+        connect=HEALTH_UPSTREAM_CONNECT_TIMEOUT_SECONDS,
+        read=HEALTH_UPSTREAM_READ_TIMEOUT_SECONDS,
+        write=HEALTH_UPSTREAM_CONNECT_TIMEOUT_SECONDS,
+        pool=HEALTH_UPSTREAM_CONNECT_TIMEOUT_SECONDS,
+    )
+    limits = httpx.Limits(max_connections=1, max_keepalive_connections=0)
+    try:
+        async with httpx.AsyncClient(
+            base_url=UPSTREAM_URL,
+            timeout=timeout,
+            limits=limits,
+            trust_env=False,
+        ) as client:
+            response = await client.get("/api/app-info")
+        upstream_ok = response.status_code < 500
+        return {
+            "upstream_ok": upstream_ok,
+            "upstream_latency_ms": round((time.monotonic() - started) * 1000),
+            "failure_category": None if upstream_ok else "upstream_http_failure",
+        }
+    except httpx.ConnectTimeout:
+        failure_category = "upstream_connect_timeout"
+    except httpx.ReadTimeout:
+        failure_category = "upstream_read_timeout"
+    except httpx.PoolTimeout:
+        failure_category = "upstream_pool_timeout"
+    except httpx.TimeoutException:
+        failure_category = "upstream_timeout"
+    except httpx.RequestError:
+        failure_category = "upstream_transport_failure"
+    except Exception:
+        failure_category = "health_probe_failure"
+    return {
+        "upstream_ok": False,
+        "upstream_latency_ms": None,
+        "failure_category": failure_category,
+    }
+
+
+async def _bounded_upstream_health_probe() -> dict:
+    started = time.monotonic()
+    try:
+        result = await asyncio.wait_for(
+            _perform_upstream_health_probe(),
+            timeout=HEALTH_UPSTREAM_OUTER_DEADLINE_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        result = {
+            "upstream_ok": False,
+            "upstream_latency_ms": None,
+            "failure_category": "upstream_probe_deadline",
+        }
+    result["probe_elapsed_ms"] = round((time.monotonic() - started) * 1000)
+    return result
+
+
+async def _shared_upstream_health_probe() -> dict:
+    """Share one in-flight probe so concurrent health callers cannot pile up."""
+    global _health_probe_lock, _health_probe_task
+    if _health_probe_lock is None:
+        _health_probe_lock = asyncio.Lock()
+    async with _health_probe_lock:
+        if _health_probe_task is None or _health_probe_task.done():
+            _health_probe_task = asyncio.create_task(_bounded_upstream_health_probe())
+        task = _health_probe_task
+    return await asyncio.shield(task)
+
+
 @app.get("/enterprise/health", include_in_schema=False)
 async def health_check():
     """服务健康检查（无需登录）"""
-    import time
-    upstream_ok = False
-    upstream_latency_ms = None
-    try:
-        t0 = time.monotonic()
-        resp = await _http_client.get("/api/app-info", timeout=5)
-        upstream_latency_ms = round((time.monotonic() - t0) * 1000)
-        upstream_ok = resp.status_code < 500
-    except Exception:
-        pass
-
+    probe = await _shared_upstream_health_probe()
+    upstream_ok = bool(probe["upstream_ok"])
     status = "ok" if upstream_ok else "degraded"
     return JSONResponse(
         {
             "status": status,
             "gateway": "ok",
             "upstream": "ok" if upstream_ok else "unreachable",
-            "upstream_latency_ms": upstream_latency_ms,
+            "upstream_latency_ms": probe["upstream_latency_ms"],
+            "probe_elapsed_ms": probe["probe_elapsed_ms"],
+            "failure_category": probe["failure_category"],
         },
         status_code=200 if upstream_ok else 503,
     )
@@ -883,7 +976,7 @@ async def enterprise_static(filename: str):
 async def ws_proxy(websocket: WebSocket, path: str):
     """代理 WebSocket 连接到上游（需认证）"""
     token = websocket.cookies.get("enterprise_token")
-    user = verify_token(token) if token else None
+    user = await run_in_threadpool(verify_token, token) if token else None
     if not user:
         await websocket.close(code=1008)
         return
@@ -969,7 +1062,7 @@ async def reverse_proxy(path: str, request: Request):
         if not user:
             return RedirectResponse(f"/enterprise/login?next=/{path}")
         feature_key = _settings_page_feature_key(path)
-        if feature_key and not can_use_feature(user, feature_key):
+        if feature_key and not await run_in_threadpool(can_use_feature, user, feature_key):
             return HTMLResponse(
                 _build_settings_access_denied_html(_settings_page_name(path)),
                 status_code=403,
@@ -1079,7 +1172,7 @@ async def _forward(
             pass
 
     if user and body:
-        body = rewrite_managed_modelscope_token_body(path, body)
+        body = await run_in_threadpool(rewrite_managed_modelscope_token_body, path, body)
 
     # 构建转发 headers（移除 host、cookie 等，注入用户信息）
     exclude_headers = {"host", "content-length", "transfer-encoding"}
@@ -1090,7 +1183,7 @@ async def _forward(
     # 企业用户信息注入（上游可选使用，不影响上游逻辑）
     if user:
         from urllib.parse import quote
-        upstream_user_id = upstream_conversation_user_id(path, body, user) or user["user_id"]
+        upstream_user_id = await run_in_threadpool(upstream_conversation_user_id, path, body, user) or user["user_id"]
         headers["x-enterprise-user-id"] = user["user_id"]
         # URL 编码用户名，防止中文等非 ASCII 字符导致 HTTP 头编码失败
         headers["x-enterprise-username"] = quote(user["username"], safe="")
@@ -1152,7 +1245,7 @@ async def _forward(
         )
         # 在 HTML 响应中注入用户信息栏
         if user and "text/html" in content_type:
-            bar_html = _build_user_bar(user).encode("utf-8")
+            bar_html = (await run_in_threadpool(_build_user_bar, user)).encode("utf-8")
             new_body = new_body.replace(b"</body>", bar_html + b"\n</body>", 1)
             resp_headers.pop("content-length", None)
             header_overrides.pop("content-length", None)
