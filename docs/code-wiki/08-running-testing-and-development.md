@@ -83,7 +83,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\enterprise\tests\smoke.ps1
 
 这些测试大量使用临时 SQLite、临时目录和 fixture；通过它们不等于真实客户设备、正式签名安装器或生产发布已经验收。
 
-2026-09-19 收敛分支证据：CPython 3.11 完整企业套件为 `909 passed, 10 skipped, 1 failed`，唯一失败是受限后台子会话创建 service host 时的 `WinError 5`；同机直接 lifecycle 在 CPython 3.11 与 bundled CPython 3.14.6 下均 `3 passed`，可靠性与任务回执专项在两者下均 `33 passed`。该失败必须继续由 CI/独立 Windows 环境复核，不能从完整测试计数中删除或写成全绿。
+2026-09-19 收敛分支初次证据：CPython 3.11 完整企业套件为 `909 passed, 10 skipped, 1 failed`，唯一失败是受限后台子会话创建 service host 时的 `WinError 5`；同机直接 lifecycle 在 CPython 3.11 与 bundled CPython 3.14.6 下均 `3 passed`，可靠性与任务回执专项在两者下均 `33 passed`。这是历史测试结果，不能从计数中删除或写成全绿；后续处理和复跑见下段。
+
+2026-09-21 本机复跑 CPython 3.11 完整企业套件为 `910 passed, 10 skipped`；后续中文路径编码和长路径主机差异夹具另以 `2 passed` 验证。GitHub-hosted Windows Runner 的 Job Object 禁止正式 Runtime 所需的 `CREATE_BREAKAWAY_FROM_JOB`，所以只在该托管环境显式跳过跨会话 Service Host 生命周期测试；仓库 Runtime 保留该标志。本机直接生命周期测试在 CP311 与 bundled CP314 下各 `3 passed`。项目负责人不要求独立 Windows 主机验收门禁；CI 通过也不能把显式跳过写成在托管 Runner 上已执行。
 
 ## 6. 浏览器回归
 
@@ -107,7 +109,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\enterprise\tests\smoke.ps1
 2. 生成固定 Windows Runtime、依赖证据和 SBOM。
 3. 生成 archive inventory、`release-payload-inventory.json` 和 `ops-release-manifest-v2.json`。
 4. materialize 后验证 APP_ROOT 闭包与启动核心哈希。
-5. 在隔离 Windows 主机执行 start/status/health/stop、首次安装、更新成功与失败回滚。
+5. 在受控 Windows 环境执行 start/status/health/stop、首次安装、更新成功与失败回滚；不要求单独准备一台验收主机。
 6. 只有满足单独审批标准后才可标记正式 Release/生产基线。
 
 具体构建脚本随阶段记录变化，应从 `enterprise/release/`、`runtime/windows/` 和对应实施文档选择，而不是复制历史聊天命令。

@@ -1,6 +1,6 @@
 # Infinite-Canvas-Enterprise 开发路线图（2026-2027）
 
-更新时间：2026-09-19
+更新时间：2026-09-21
 最后一次主线事实核对基线：`origin/main@58dc98c09e213ee747024d2934aa181d14cf0c1d`；Runtime 收敛工作位于 `codex/mainline-runtime-convergence-20260919`，合并前不得写成 `main` 已具备。
 
 当前 repository HEAD 以 GitHub `main` 为准。ENV/Runtime/Manifest、UPDATE-MVP-1、RELEASE-MVP-1、INSTALL-MVP-1 与 INSTALL-UX-1 Gate A 已完成各自批准范围。公开 `2026.09.4` 是从精确 `2026.08.5` 基线制作的客户 Runtime 定点热修三件套；它已在一台客户设备完成升级并恢复使用，但不等于 signed public installer、通用 Production Baseline 或收敛代码已经合入 `main`。
@@ -9,7 +9,7 @@
 
 ## 1. 路线原则
 
-当前仓库架构定位是“企业安全增强型单机模块化单体”。旧生产仍运行历史版本并已定义为待退役遗留系统；当前仓库基线继续开发，未来新生产采用 Greenfield 全新部署。该决策以 [ADR-OPS-007](../decisions/ADR-OPS-007-GREENFIELD-PRODUCTION-BASELINE-AND-LEGACY-NON-MIGRATION-2026-07.md) 为准。总体路线调整为：
+当前仓库架构定位是“企业安全增强型单机模块化单体”。ADR-OPS-007 约束的是历史 TEST-240f6a2 旧生产数据不迁入未来 Greenfield 新生产；它不取消现有 `2026.08.5` 客户设备已执行的定点 Runtime 原位热修，也不禁止该客户设备后续经独立验收的同 Schema 在线更新。当前仓库基线继续开发，未来新生产采用 Greenfield 全新部署。总体路线调整为：
 
 > 先形成可维护、可恢复、可持续升级的 Production Baseline，再在干净环境全新部署；旧生产不作为迁移输入或原地升级目标。
 
@@ -77,9 +77,9 @@ Greenfield Production Baseline 路线按以下顺序执行，后项不能绕过�
 10. ENV-1B3：已由 PR #90 合并；Candidate 08 在独立 Windows Guest 完成无系统 Python、标准非管理员、中文/空格/长路径、低磁盘、重启、损坏 DLL/manifest、杀毒软件和只读 APP_ROOT 等 W01-W14 `14/0/0`。
 11. 首个不可变 clean-Windows Release Candidate 已接受；Release Candidate 仍不等于 formal Release 或 Production Baseline。
 12. UPDATE-MVP-1：同 Schema/无 migration 的最小页面更新、代码 Release 自动回滚与 bounded diagnostics；repository implementation 及隔离 Windows WU1/WU2 已独立接受，不代替完整 OPS-3B/OPS-3C。
-13. DATA-MVP-1：已获授权收窄恢复；当前 Draft change 实现 Schema version、migration ledger/registry、确定性单事务 migration、一致性备份和失败 restore foundation，等待独立复核；不迁移或修复旧生产数据，不直接接入 Update Center。
+13. DATA-MVP-1：PR #107 已合并 Schema version、migration ledger/registry、确定性单事务 migration、一致性备份和失败 restore foundation，等待独立复核（Issue #109）；不迁移或修复历史 TEST-240f6a2 数据，不直接接入 Update Center。
 14. INSTALL-MVP-1 Fresh Install Bootstrap repository implementation 已由 PR #98 合并，公开 `2026.08.4` 已发布；它仍不等于生产部署或 database migration/restore。
-15. INSTALL-UX-1 Gate A 已由 PR #102 合并并独立验收；项目负责人另行批准版本、正式签名与 Gate B 后，才能在干净 Windows 环境验证 signed Setup 全新安装与初始化，且不得修改既有 `2026.08.4`。
+15. INSTALL-UX-1 Gate A 已由 PR #102 合并并独立验收；项目负责人另行批准版本、正式签名与 Gate B 后，才能在受控 Windows 环境验证 signed Setup 全新安装与初始化（不要求独立主机），且不得修改既有 `2026.08.4`。
 16. 收口 ARCH-3、P0 安全、PERF-1 / OBS-1、浏览器回归和真实 Provider 成功链路。
 17. 使用全新基线数据完成正式 backup 和 restore rehearsal。
 18. OPS-3B repository implementation：实现计划驱动的 apply / switch / health / rollback / restore；不用于旧生产。
@@ -92,7 +92,9 @@ Greenfield Production Baseline 路线按以下顺序执行，后项不能绕过�
 25. Linux 单服务器适配。
 26. PostgreSQL、对象存储、queue、Redis 和多实例按真实需求引入。
 
-第 0 至 12 项已完成各自批准范围，第 14 项 Fresh Install repository implementation 已完成；第 13 项 DATA-MVP-1 repository foundation 已实现并等待独立复核，第 15 项 INSTALL-UX-1 Gate B 尚未开始。此后仍需 Update Center/OPS 集成、P0/ARCH-3/PERF-1/OBS-1/browser/provider 收口、backup/restore rehearsal、OPS-3B repository implementation、完整 apply/switch/health/rollback/restore rehearsal、Production Baseline 批准和 Greenfield 生产部署。Linux、PostgreSQL、Redis、对象存储、durable queue、多实例、Windows Service、项目 Formal Release 和 Production Baseline 当前仍不是已完成能力。
+第 0 至 12 项已完成各自批准范围，第 14 项 Fresh Install repository implementation 已完成；第 13 项 DATA-MVP-1 repository foundation 已由 PR #107 合并但等待独立复核，第 15 项 INSTALL-UX-1 Gate B 尚未开始。此后仍需 Update Center/OPS 集成、P0/ARCH-3/PERF-1/OBS-1/browser/provider 收口、backup/restore rehearsal、OPS-3B repository implementation、完整 apply/switch/health/rollback/restore rehearsal、Production Baseline 批准和 Greenfield 生产部署。Linux、PostgreSQL、Redis、对象存储、durable queue、多实例、Windows Service、项目 Formal Release 和 Production Baseline 当前仍不是已完成能力。
+
+后续执行入口：DATA 独立复核 #109 → Update Center 数据接线 #114 → OPS-3B 隔离演练 #115；任务恢复与真实供应商对账 #110；P0 请求边界 #111；Runtime 可观测性/性能基线 #112；浏览器/Provider 验收 #113；架构拆分 #116。签名安装器 Gate B #117 须项目负责人先批准版本和签名方案。后续不设独立 Windows 主机验收门禁；保留适用的本机/CI 功能验证和显式测试跳过披露。各 Issue 均不自动授权客户生产部署。
 
 ## 4. 历史拆解参考
 
@@ -243,7 +245,7 @@ DATA-1 服务于全新数据库和未来新版本 migration，不导入旧生产
 | --- | --- |
 | ARCH-3 | P0 默认拒绝策略和关键会话安全已建立，现有 A/B/admin 回归可运行。 |
 | DATA-1 migration 实现 | schema / backup / rollback 设计通过，临时数据库测试可重复。 |
-| INSTALL-UX-1 Gate B | Gate A 已独立验收并合并；项目负责人已分别批准新版本、正式代码签名和 Gate B；签名环境、RFC 3161 与 clean Windows 主机可用。 |
+| INSTALL-UX-1 Gate B | Gate A 已独立验收并合并；项目负责人已分别批准新版本、正式代码签名和 Gate B；签名环境与 RFC 3161 可用，并有受控 Windows 安装验证环境；不要求独立主机。 |
 | OPS-3B repository implementation | 不可变 Release、Manifest v2、DATA-1、Fresh Install Bootstrap、正式 backup、restore rehearsal、migration compatibility 和 Runtime lifecycle 验证已经完成；不使用旧生产数据。 |
 | Production Baseline 批准 | 使用 Fresh Install Bootstrap 建立的全新隔离数据完成 release validation、data-check 以及 OPS-3B apply / switch / health / rollback / restore 演练；旧生产 warning 不作为输入。 |
 | OPS-3B 首次真实生产执行 | Greenfield 新生产已经部署，且项目负责人在生产设备本地对后续正式 Release 另行执行；不得用于旧生产。 |
