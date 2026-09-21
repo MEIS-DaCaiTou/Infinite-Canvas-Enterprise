@@ -87,10 +87,10 @@ print(json.dumps({
   'runtime_log_dir': str(roots.LOG_ROOT / 'runtime'), 'runtime_root': str(roots.RUNTIME_ROOT),
 }))
 """ % (str(install), str(tmp_path / "local"))
-    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", PYTHONIOENCODING="utf-8")
     completed = subprocess.run(
         [sys.executable, "-c", script], cwd=Path(__file__).resolve().parents[2], env=env,
-        capture_output=True, text=True, check=False,
+        capture_output=True, text=True, encoding="utf-8", check=False,
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr
     payload = json.loads(completed.stdout.strip().splitlines()[-1])

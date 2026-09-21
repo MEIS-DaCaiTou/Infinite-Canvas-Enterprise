@@ -1609,6 +1609,14 @@ def test_stop_during_startup_backoff_and_crash_loop() -> None:
 
 def test_real_cli_lifecycle_and_acknowledgements() -> None:
     """Exercise actual lifecycle CLI calls across two short-lived sessions."""
+    if os.name == "nt" and os.environ.get("GITHUB_ACTIONS") == "true":
+        # GitHub-hosted Windows runners deny CREATE_BREAKAWAY_FROM_JOB, which
+        # the production service host requires to outlive its launcher. Keep
+        # this as an explicit CI skip; run it on an unrestricted Windows host
+        # before accepting the lifecycle gate.
+        import pytest
+
+        pytest.skip("GitHub-hosted Job Object denies required service-host breakaway")
     with tempfile.TemporaryDirectory(prefix="ice-stab1-cli-") as raw:
         runtime_root = Path(raw) / "runtime"
         upstream_port = free_port()
