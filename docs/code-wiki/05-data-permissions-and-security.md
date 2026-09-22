@@ -101,7 +101,16 @@ flowchart LR
 
 只实现其中一层是不完整的。例如任务查询被隔离但 WebSocket 广播未隔离，仍会泄漏任务状态和生成结果。
 
-## 8. 安全审计
+## 8. 浏览器与代理边界
+
+- 上游 HTTP 仅接受显式登记的方法/路径；路由清单与 `main.py` 装饰器由测试双向比对，未知 API 不得因静态文件后缀或 catch-all 自动转发。
+- Cookie 认证的 `POST/PUT/PATCH/DELETE` 必须携带与请求 `scheme + Host` 精确一致的 `Origin`；Bearer CLI 不依赖浏览器 Cookie，不套用该 Cookie-CSRF 判定。
+- 登录接口允许无 Origin 的非浏览器客户端，但只要提供 Origin 就必须同源；失败尝试按用户名摘要和来源地址执行有界内存限流。
+- HTTPS 请求设置 `Secure` 会话 Cookie；HTTP 局域网开发仍可工作。TLS 终止和受信代理配置属于部署边界，不能通过任意客户端 `X-Forwarded-*` 推断。
+- 登录 `next` 只允许站内单斜杠路径；登出使用 POST；企业静态文件必须解析后仍位于固定根目录。
+- WebSocket 只接受同源 `/ws/stats`，客户端只发送 `ping`，服务端未知/缺失事件类型默认拒绝。
+
+## 9. 安全审计
 
 高风险用户治理使用调用者拥有的数据库事务，同时写入业务变化和 `security_audit_events`。审计内容要求：
 
@@ -113,7 +122,7 @@ flowchart LR
 
 普通 `usage_logs` 不应替代强安全审计，两者证据等级不同。
 
-## 9. SQLite 迁移基础
+## 10. SQLite 迁移基础
 
 DATA-MVP-1 引入：
 
@@ -124,7 +133,7 @@ DATA-MVP-1 引入：
 
 当前在线更新仍只接受同 Schema/无 migration 的 Manifest；“迁移基础已存在”不等于“管理后台已能安全执行任意数据库升级”。
 
-## 10. 数据安全边界
+## 11. 数据安全边界
 
 - SQLite 文件与业务素材必须由操作系统 ACL 和安装目录权限保护。
 - Upstream 应只监听 loopback；否则请求可绕过 Gateway。

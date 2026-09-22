@@ -52,7 +52,7 @@
 | --- | --- | --- |
 | `login_page()` | `GET /enterprise/login` | 登录页 |
 | `do_login()` | `POST /enterprise/login` | 校验账号并设置会话 Cookie |
-| `logout()` | `GET /enterprise/logout` | 清除会话 |
+| `logout()` | `POST /enterprise/logout` | 在同源写请求边界内清除会话，避免 GET 触发状态变更 |
 | `admin_page()` | `GET /enterprise/admin` | 管理员/超级管理员后台 |
 | `profile_page()` | `GET /enterprise/profile` | 当前用户资料页 |
 | `logs_page()` | `GET /enterprise/logs` | 操作日志页 |
@@ -61,10 +61,19 @@
 
 | 函数 | 说明 |
 | --- | --- |
-| `reverse_proxy()` | 捕获普通 HTTP 路径，执行认证、功能检查和转发 |
+| `reverse_proxy()` | 捕获普通 HTTP 路径，只转发 `route_policy` 已登记的方法/路径，再执行认证、功能检查和转发 |
 | `_forward()` | 构造 Upstream 请求并处理响应/流式响应 |
 | `ws_proxy()` | 建立双向 WebSocket，并调用企业事件过滤 |
 | `_build_enterprise_shell_guard()` | 向旧页面注入企业导航与前端访问约束 |
+
+### 路由与浏览器边界：`enterprise/route_policy.py`
+
+- `is_allowed_upstream_route()`：按方法和路径精确匹配 `main.py` 的已审查路由；测试通过 AST 清单防止新增路由静默漂移。
+- `is_allowed_public_static_path()`：只允许固定公共静态命名空间，不以 `.js`、`.css` 等后缀推断为公共资源。
+- `is_allowed_protected_resource_path()`：资源目录只允许已认证的 `GET/HEAD` 读取，并继续进入归属拦截。
+- `is_allowed_websocket_path()`：当前只允许 `/ws/stats`。
+
+Gateway 还对 Cookie 状态变更请求执行精确同源校验；Bearer CLI 请求保持独立兼容边界。登录失败在有限时间窗内按用户名摘要和客户端地址限流，外部跳转、静态目录逃逸和未知路由均 fail closed。
 
 ## 3. 认证与角色
 
@@ -118,6 +127,7 @@
 | `EnterpriseWsConnection` | 记录连接、用户、客户端与活动状态 |
 | `register_connection()` / `forget_connection()` | 连接生命周期 |
 | `should_forward_ws_event()` | 按任务/资源/历史归属决定事件可见性 |
+| `should_forward_client_message()` | 客户端只允许固定 `ping` 消息，其它消息关闭连接 |
 | `send_to_user()` | 向同一用户的活动连接发送 |
 | `broadcast_asset_library_updated()` | 素材变化通知 |
 | `broadcast_new_image()` | 新图像通知，但仍经过可见性语义 |

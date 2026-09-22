@@ -9,12 +9,15 @@
     python -m uvicorn enterprise.gateway:app --host 0.0.0.0 --port 8000
 """
 import asyncio
+import hashlib
 import json
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Optional
+from urllib.parse import unquote, urlsplit
 
 import httpx
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
@@ -47,12 +50,17 @@ from enterprise.db import ensure_db_schema, log_action, can_use_feature
 from enterprise.fresh_install import require_gateway_database_ready
 from enterprise import ws as enterprise_ws
 from enterprise.interceptors import (
-    is_static_asset,
     is_stream_path,
     post_process,
     pre_process,
     rewrite_managed_modelscope_token_body,
     upstream_conversation_user_id,
+)
+from enterprise.route_policy import (
+    is_allowed_protected_resource_path,
+    is_allowed_public_static_path,
+    is_allowed_upstream_route,
+    is_allowed_websocket_path,
 )
 from enterprise.admin_api import router as admin_router
 from enterprise.update_api import router as update_router
@@ -68,6 +76,174 @@ _SETTINGS_MANAGEMENT_PAGES = {
     "static/comfyui-settings.html": "工作流设置",
 }
 
+_UNSAFE_HTTP_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+_LOGIN_RATE_WINDOW_SECONDS = 300
+_LOGIN_USERNAME_FAILURE_LIMIT = 8
+_LOGIN_ADDRESS_FAILURE_LIMIT = 30
+_LOGIN_RATE_MAX_KEYS = 4096
+_LOGIN_RATE_EVENTS: dict[str, list[float]] = {}
+_LOGIN_RATE_LOCK = threading.Lock()
+_login_clock = time.monotonic
+
+
+def _canonical_origin(scheme: str, authority: str) -> str:
+    normalized_scheme = str(scheme or "").strip().lower()
+    if normalized_scheme == "ws":
+        normalized_scheme = "http"
+    elif normalized_scheme == "wss":
+        normalized_scheme = "https"
+    if normalized_scheme not in {"http", "https"}:
+        return ""
+    authority = str(authority or "").strip()
+    if not authority or any(char in authority for char in "\r\n\t"):
+        return ""
+    try:
+        parsed = urlsplit(f"{normalized_scheme}://{authority}")
+        if parsed.username or parsed.password or not parsed.hostname:
+            return ""
+        port = parsed.port
+    except (TypeError, ValueError):
+        return ""
+    hostname = parsed.hostname.lower()
+    host_display = f"[{hostname}]" if ":" in hostname else hostname
+    default_port = 443 if normalized_scheme == "https" else 80
+    suffix = f":{port}" if port is not None and port != default_port else ""
+    return f"{normalized_scheme}://{host_display}{suffix}"
+
+
+def _normalized_origin_header(value: str) -> str:
+    try:
+        parsed = urlsplit(str(value or "").strip())
+        if parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
+            return ""
+        return _canonical_origin(parsed.scheme, parsed.netloc)
+    except (TypeError, ValueError):
+        return ""
+
+
+def _same_origin(headers, scheme: str, *, allow_missing: bool) -> bool:
+    origin = str(headers.get("origin") or "").strip()
+    if not origin:
+        return allow_missing
+    supplied = _normalized_origin_header(origin)
+    expected = _canonical_origin(scheme, headers.get("host") or "")
+    return bool(supplied and expected and supplied == expected)
+
+
+def _request_origin_allowed(request: Request, *, allow_missing: bool) -> bool:
+    headers = getattr(request, "headers", {}) or {}
+    url = getattr(request, "url", None)
+    scheme = getattr(url, "scheme", "http")
+    return _same_origin(headers, scheme, allow_missing=allow_missing)
+
+
+def _websocket_origin_allowed(websocket: WebSocket) -> bool:
+    url = getattr(websocket, "url", None)
+    scheme = getattr(url, "scheme", "ws")
+    return _same_origin(websocket.headers, scheme, allow_missing=False)
+
+
+def _secure_cookie_for_request(request: Request) -> bool:
+    url = getattr(request, "url", None)
+    return str(getattr(url, "scheme", "")).lower() == "https"
+
+
+def _safe_next_url(value: str | None) -> str:
+    candidate = str(value or "/").strip()
+    for _ in range(3):
+        decoded = unquote(candidate)
+        if decoded == candidate:
+            break
+        candidate = decoded
+    else:
+        return "/"
+    if (
+        not candidate.startswith("/")
+        or candidate.startswith("//")
+        or "\\" in candidate
+        or any(ord(char) < 32 or ord(char) == 127 for char in candidate)
+    ):
+        return "/"
+    parsed = urlsplit(candidate)
+    if parsed.scheme or parsed.netloc:
+        return "/"
+    return candidate
+
+
+def _login_client_address(request: Request) -> str:
+    client = getattr(request, "client", None)
+    return str(getattr(client, "host", None) or "unknown")[:128]
+
+
+def _login_rate_keys(request: Request, username: str) -> tuple[tuple[str, int], tuple[str, int]]:
+    username_digest = hashlib.sha256(username.casefold().encode("utf-8")).hexdigest()
+    return (
+        (f"username:{username_digest}", _LOGIN_USERNAME_FAILURE_LIMIT),
+        (f"address:{_login_client_address(request)}", _LOGIN_ADDRESS_FAILURE_LIMIT),
+    )
+
+
+def _prune_login_rate_events(now: float) -> None:
+    cutoff = now - _LOGIN_RATE_WINDOW_SECONDS
+    for key, timestamps in list(_LOGIN_RATE_EVENTS.items()):
+        retained = [stamp for stamp in timestamps if stamp > cutoff]
+        if retained:
+            _LOGIN_RATE_EVENTS[key] = retained
+        else:
+            _LOGIN_RATE_EVENTS.pop(key, None)
+
+
+def _login_retry_after(request: Request, username: str) -> int:
+    now = _login_clock()
+    with _LOGIN_RATE_LOCK:
+        _prune_login_rate_events(now)
+        return _login_retry_after_locked(request, username, now)
+
+
+def _login_retry_after_locked(request: Request, username: str, now: float) -> int:
+    retry_after = 0
+    for key, limit in _login_rate_keys(request, username):
+        timestamps = _LOGIN_RATE_EVENTS.get(key, [])
+        if len(timestamps) >= limit:
+            retry_after = max(
+                retry_after,
+                int(_LOGIN_RATE_WINDOW_SECONDS - (now - timestamps[0])) + 1,
+            )
+    return max(0, retry_after)
+
+
+def _reserve_login_attempt(request: Request, username: str) -> tuple[int, float | None]:
+    """Atomically reject or reserve one password-verification attempt."""
+    now = _login_clock()
+    with _LOGIN_RATE_LOCK:
+        _prune_login_rate_events(now)
+        retry_after = _login_retry_after_locked(request, username, now)
+        if retry_after:
+            return retry_after, None
+        for key, _limit in _login_rate_keys(request, username):
+            _LOGIN_RATE_EVENTS.setdefault(key, []).append(now)
+        if len(_LOGIN_RATE_EVENTS) > _LOGIN_RATE_MAX_KEYS:
+            oldest = sorted(
+                _LOGIN_RATE_EVENTS,
+                key=lambda key: _LOGIN_RATE_EVENTS[key][-1] if _LOGIN_RATE_EVENTS[key] else 0,
+            )
+            for key in oldest[: len(_LOGIN_RATE_EVENTS) - _LOGIN_RATE_MAX_KEYS]:
+                _LOGIN_RATE_EVENTS.pop(key, None)
+        return 0, now
+
+
+def _release_successful_login_attempt(request: Request, username: str, reserved_at: float) -> None:
+    """Remove only this successful reservation; completed failures remain counted."""
+    with _LOGIN_RATE_LOCK:
+        for key, _limit in _login_rate_keys(request, username):
+            timestamps = _LOGIN_RATE_EVENTS.get(key, [])
+            try:
+                timestamps.remove(reserved_at)
+            except ValueError:
+                continue
+            if not timestamps:
+                _LOGIN_RATE_EVENTS.pop(key, None)
+
 
 class AuthStateMiddleware(BaseHTTPMiddleware):
     """在所有路由处理前解析 Token，将用户信息挂载到 request.state.user"""
@@ -76,6 +252,16 @@ class AuthStateMiddleware(BaseHTTPMiddleware):
             request.state.user = None
             return await call_next(request)
         token = request.cookies.get("enterprise_token")
+        if (
+            token
+            and request.method.upper() in _UNSAFE_HTTP_METHODS
+            and not _request_origin_allowed(request, allow_missing=False)
+        ):
+            return JSONResponse(
+                {"error": "请求来源不受信任", "code": 403},
+                status_code=403,
+                headers={"Cache-Control": "no-store"},
+            )
         if not token:
             auth = request.headers.get("Authorization", "")
             if auth.startswith("Bearer "):
@@ -790,21 +976,41 @@ async def login_page(request: Request):
 @app.post("/enterprise/login", include_in_schema=False)
 async def do_login(request: Request):
     """处理登录表单"""
-    body = await request.json()
+    if not _request_origin_allowed(request, allow_missing=True):
+        return JSONResponse(
+            {"error": "请求来源不受信任"},
+            status_code=403,
+            headers={"Cache-Control": "no-store"},
+        )
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "请求格式无效"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "请求格式无效"}, status_code=400)
     username = (body.get("username") or "").strip()
     password = (body.get("password") or "").strip()
 
     if not username or not password:
         return JSONResponse({"error": "用户名和密码不能为空"}, status_code=400)
 
+    retry_after, reserved_at = _reserve_login_attempt(request, username)
+    if retry_after:
+        return JSONResponse(
+            {"error": "登录尝试过于频繁，请稍后重试"},
+            status_code=429,
+            headers={"Retry-After": str(retry_after), "Cache-Control": "no-store"},
+        )
+
     user = await run_in_threadpool(authenticate, username, password)
     if not user:
         return JSONResponse({"error": "用户名或密码错误"}, status_code=401)
 
+    _release_successful_login_attempt(request, username, reserved_at)
     await run_in_threadpool(log_action, user["id"], "login")
     token = await run_in_threadpool(create_token, user["id"])
 
-    next_url = request.query_params.get("next", "/")
+    next_url = _safe_next_url(request.query_params.get("next", "/"))
     resp = JSONResponse({
         "success": True,
         "is_admin": bool(user["is_admin"]),
@@ -815,6 +1021,7 @@ async def do_login(request: Request):
         "enterprise_token",
         token,
         httponly=True,
+        secure=_secure_cookie_for_request(request),
         samesite="lax",
         max_age=60 * 60 * 24 * 7,  # 7天
         path="/",
@@ -822,11 +1029,17 @@ async def do_login(request: Request):
     return resp
 
 
-@app.get("/enterprise/logout", include_in_schema=False)
-async def logout():
+@app.post("/enterprise/logout", include_in_schema=False)
+async def logout(request: Request):
     """注销"""
-    resp = RedirectResponse("/enterprise/login")
-    resp.delete_cookie("enterprise_token", path="/")
+    resp = RedirectResponse("/enterprise/login", status_code=303)
+    resp.delete_cookie(
+        "enterprise_token",
+        path="/",
+        secure=_secure_cookie_for_request(request),
+        httponly=True,
+        samesite="lax",
+    )
     return resp
 
 
@@ -964,7 +1177,18 @@ async def logs_page(request: Request):
 @app.get("/enterprise-static/{filename:path}", include_in_schema=False)
 async def enterprise_static(filename: str):
     """服务企业层静态文件（登录页/管理后台的 JS/CSS）"""
-    file_path = ENTERPRISE_STATIC_DIR / filename
+    decoded = str(filename or "")
+    for _ in range(3):
+        next_value = unquote(decoded)
+        if next_value == decoded:
+            break
+        decoded = next_value
+    try:
+        root = ENTERPRISE_STATIC_DIR.resolve(strict=True)
+        file_path = (root / decoded).resolve(strict=True)
+        file_path.relative_to(root)
+    except (OSError, RuntimeError, ValueError):
+        return Response(status_code=404)
     if not file_path.exists() or not file_path.is_file():
         return Response(status_code=404)
     return FileResponse(str(file_path))
@@ -975,6 +1199,9 @@ async def enterprise_static(filename: str):
 @app.websocket("/ws/{path:path}")
 async def ws_proxy(websocket: WebSocket, path: str):
     """代理 WebSocket 连接到上游（需认证）"""
+    if not is_allowed_websocket_path(path) or not _websocket_origin_allowed(websocket):
+        await websocket.close(code=1008)
+        return
     token = websocket.cookies.get("enterprise_token")
     user = await run_in_threadpool(verify_token, token) if token else None
     if not user:
@@ -1005,13 +1232,30 @@ async def ws_proxy(websocket: WebSocket, path: str):
                 try:
                     async for msg in websocket.iter_text():
                         connection.last_seen_at = int(time.time() * 1000)
-                        await upstream.send(msg)
+                        should_forward, text = enterprise_ws.should_forward_client_message(msg)
+                        if not should_forward:
+                            await websocket.close(code=1008)
+                            return
+                        await upstream.send(text)
                 except WebSocketDisconnect:
                     pass
                 except Exception:
                     pass
 
-            await asyncio.gather(recv_from_upstream(), recv_from_client())
+            upstream_task = asyncio.create_task(recv_from_upstream())
+            client_task = asyncio.create_task(recv_from_client())
+            tasks = {upstream_task, client_task}
+            try:
+                _done, pending = await asyncio.wait(
+                    tasks,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+            finally:
+                pending = {task for task in tasks if not task.done()}
+                for task in pending:
+                    task.cancel()
+                if pending:
+                    await asyncio.gather(*pending, return_exceptions=True)
     except ImportError:
         # websockets 未安装，降级处理：直接关闭（不影响主功能）
         await websocket.close(code=1011)
@@ -1029,22 +1273,6 @@ async def ws_proxy(websocket: WebSocket, path: str):
 
 
 # ── HTTP 反向代理（核心路由） ─────────────────────────────
-
-# 不需要鉴权的路径前缀
-_PUBLIC_PATH_PREFIXES = (
-    "enterprise/login",
-    "enterprise-static/",
-    "enterprise/logout",
-)
-
-# 不需要过滤的静态资源路径前缀
-_UPSTREAM_STATIC_PREFIXES = (
-    "static/",
-    "vendor/",
-    "assets/images/",
-    "favicon",
-)
-
 
 @app.api_route(
     "/{path:path}",
@@ -1076,12 +1304,17 @@ async def reverse_proxy(path: str, request: Request):
         return response
 
     # ── 3. 纯静态资源：不做鉴权直接透传 ──────────────────
-    if not is_stream_path(path) and (
-        any(path.startswith(p) for p in _UPSTREAM_STATIC_PREFIXES) or is_static_asset(path)
-    ):
+    if not is_stream_path(path) and is_allowed_public_static_path(path):
         return await _forward(path, request, user=None, skip_intercept=True)
 
-    # ── 4. 所有其他请求：需要登录 ─────────────────────────
+    # ── 4. 未登记的上游方法/路径一律拒绝 ──────────────────
+    if not (
+        is_allowed_upstream_route(request.method, path)
+        or is_allowed_protected_resource_path(request.method, path)
+    ):
+        return JSONResponse({"error": "请求路径不存在", "code": 404}, status_code=404)
+
+    # ── 5. 所有其他请求：需要登录 ─────────────────────────
     user = getattr(request.state, "user", None)
     if not user:
         if _is_html_accept(request) or path in ("", "index.html"):
@@ -1090,7 +1323,7 @@ async def reverse_proxy(path: str, request: Request):
 
     body = await request.body()
 
-    # ── 5. 前置拦截（访问控制） ───────────────────────────
+    # ── 6. 前置拦截（访问控制） ───────────────────────────
     err = await pre_process(
         path,
         request.method,
@@ -1101,11 +1334,11 @@ async def reverse_proxy(path: str, request: Request):
     if err:
         return err
 
-    # ── 6. 流式路径：直接透传，不缓冲 ────────────────────
+    # ── 7. 流式路径：直接透传，不缓冲 ────────────────────
     if is_stream_path(path):
         return await _forward(path, request, user=user, skip_intercept=True, body=body)
 
-    # ── 7. 普通请求：代理 + 后置过滤 ─────────────────────
+    # ── 8. 普通请求：代理 + 后置过滤 ─────────────────────
     return await _forward(path, request, user=user, skip_intercept=False, body=body)
 
 
@@ -1135,10 +1368,12 @@ def _build_user_bar(user: dict) -> str:
         f'<span style="font-weight:600;max-width:120px;overflow:hidden;'
         f'text-overflow:ellipsis;white-space:nowrap;" title="{display}">{display}</span>'
         f'{admin_btn}'
-        '<a href="/enterprise/logout" '
+        '<form action="/enterprise/logout" method="post" style="margin:0;display:inline-flex;">'
+        '<button type="submit" '
         'style="padding:4px 10px;border-radius:20px;border:none;'
         'background:var(--text,#0f172a);color:var(--bg,#f7f8fa);text-decoration:none;'
-        'font-size:12px;font-weight:600;white-space:nowrap;cursor:pointer;">退出</a>'
+        'font:inherit;font-size:12px;font-weight:600;white-space:nowrap;cursor:pointer;">退出</button>'
+        '</form>'
         '</div>'
         f'{enterprise_shell_guard}'
     )

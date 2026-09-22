@@ -166,8 +166,6 @@
     const form = document.getElementById('loginForm');
     const submitBtn = document.getElementById('submitBtn');
     const errorMsg = document.getElementById('errorMsg');
-    const params = new URLSearchParams(location.search);
-    const nextUrl = params.get('next') || '/';
 
     function togglePwd() {
       const input = document.getElementById('password');
@@ -194,7 +192,7 @@
         });
         const data = await res.json();
         if (res.ok && data.success) {
-          location.href = nextUrl;
+          location.href = data.next || '/';
         } else {
           errorMsg.textContent = data.error || '登录失败，请检查账号密码';
           errorMsg.style.display = 'block';
