@@ -1,14 +1,14 @@
 # Infinite Canvas Enterprise 当前项目状态
 
-更新时间：2026-09-21
+更新时间：2026-09-22
 
 ## 1. 状态摘要
 
 | 层级 | 当前事实 |
 | --- | --- |
-| GitHub 主线 | `origin/main@8ba6befdf2e6737823634b53327dc6e98f7bbdae`，已合并 DATA-MVP-1 foundation（PR #107）与 Runtime 主线收敛（PR #108） |
-| 当前实施分支 | `codex/sec-p0-browser-boundaries`，[PR #119](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/119) 处理 [#111](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/111)；未合并前不属于 `main` |
-| 最近主线审查 | [PR #108](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/108) 已于 2026-09-21 合并，merge commit 为 `8ba6befdf2e6737823634b53327dc6e98f7bbdae`；合并前两项 Windows GitHub Actions 均 SUCCESS |
+| GitHub 主线 | `origin/main@8cdb3c7b7399dbb144dbd828fc2ad876c79ae64a`，已合并 DATA-MVP-1 foundation（PR #107）、Runtime 主线收敛（PR #108）与 SEC-P0 浏览器边界（PR #119） |
+| 当前实施分支 | `codex/data-mvp1-independent-review`，处理 [#109](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/109)；未合并前不属于 `main` |
+| 最近主线审查 | [PR #119](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/119) 已于 2026-09-22 合并，merge commit 为 `8cdb3c7b7399dbb144dbd828fc2ad876c79ae64a`；安全差异扫描完整覆盖、0 个报告项，两项 Windows GitHub Actions 均 SUCCESS |
 | 客户定点 Release | `2026.09.4@a0d1ccf`，仅适用于从 `2026.08.5-ee4281022d01` 原位升级的 Runtime 热修 |
 | 生产结论 | 已确认一台客户设备升级后恢复正常；不是通用 Production Baseline，不代表 PR #108 已部署 |
 
@@ -34,13 +34,13 @@
 
 这些能力已进入代码主线，但尚未因此自动成为正式 Release、客户部署或通用 Production Baseline。
 
-### 仅在当前安全分支实施、尚未进入主线
+### PR #119 合并后主线具备
 
 - 上游 HTTP 方法/路径显式登记，未知路由默认 404，静态资源不再按文件后缀放行。
 - Cookie 写请求同源校验，WebSocket 限定同源、固定路径、固定客户端消息及已知服务端事件。
 - 登录限流、安全的 `next` 跳转、HTTPS `Secure` Cookie、POST 登出和企业静态目录 containment。
 
-以上属于 #111 的在审实现；只有经测试、PR 审查并合并后才能写成 `main` 已实现。
+以上属于 #111 的已合并实现；测试和审查通过不等于正式 Release 或生产部署批准。
 
 ### 已发布但不属于通用主线结论
 
@@ -48,8 +48,8 @@
 
 ## 3. 关键缺口
 
-1. **安全**：未知 HTTP 路由/WebSocket 事件默认拒绝、静态路径穿越和浏览器请求边界仍须收口。
-2. **数据升级**：DATA-MVP-1 仍需独立复核，并接入更新中心的 prepare/apply/restore 流程。
+1. **安全后续**：SEC-P0 已进入主线；可信反向代理/TLS 配置、分布式限流与策略模块化仍属于后续加固，不阻断 #109。
+2. **数据升级**：DATA-MVP-1 独立复核正在分支中完成，尚未接入更新中心的 prepare/apply/restore 流程。
 3. **在线升级体验**：缺少面向全体用户的维护通知、排空、跨重启进度、数据库迁移状态和失败恢复 UX。
 4. **部门与任务**：组织/部门/项目模型、部门级 Provider 凭据、费用账本、统一持久任务和对账尚未形成。
 5. **资源与桌面**：尚无完整 CAS 资源层、分层缓存和正式桌面壳；浏览器不能替代 D/E 盘选择、后台下载与断点续传。
@@ -60,8 +60,8 @@
 
 | Issue | 任务 | 所属阶段 | 前置/说明 |
 | --- | --- | --- | --- |
-| [#111](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/111) | SEC-P0 请求与事件默认拒绝、浏览器安全边界 | 1 安全修复 | 发布阻断项 |
-| [#109](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/109) | DATA-MVP-1 独立复核 | 2 数据升级 | 先确认 foundation |
+| [#111](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/111) | SEC-P0 请求与事件默认拒绝、浏览器安全边界 | 1 安全修复 | PR #119 已合并 |
+| [#109](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/109) | DATA-MVP-1 独立复核 | 2 数据升级 | 当前实施；先确认 foundation |
 | [#114](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/114) | 将 migration/restore 接入更新中心 | 2 数据升级 | 依赖 #109 |
 | [#115](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/115) | OPS-3B apply/switch/health/rollback 演练 | 3 在线升级 | 依赖 #114；不设独立 Windows 主机门禁 |
 | [#110](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/110) | 持久任务恢复、未知结果对账与幂等 | 4 部门与任务 | 部门账本与 Provider 接入的基础 |
@@ -84,7 +84,7 @@
   -> 企业集成
 ```
 
-当前处于“第一阶段安全修复”阶段。PR #108 已完成 Runtime 主线收敛，但不等于安全阶段、数据阶段或在线升级体验阶段全部结束。
+当前处于“第二阶段数据升级能力”。SEC-P0 已进入主线；DATA-MVP-1 独立复核和 Update Center 数据迁移集成尚未进入主线。
 
 ## 6. 不变量
 
@@ -98,7 +98,6 @@
 
 ## 7. 下一步
 
-1. 完成 #111 的聚焦/全量测试、独立安全审查和 PR 审查；不得直接发布未合并分支。
-2. #111 合并后独立复核 #109 DATA-MVP-1 foundation。
-3. 在 #109 结论基础上完成 #114，将 migration/restore 接入更新中心。
-4. 只有 #109、#114 完成后，才进入管理后台在线升级体验；部门与任务业务表继续保持阻断。
+1. 完成 #109 DATA-MVP-1 foundation 的独立复核、回归和审查记录。
+2. 在 #109 结论基础上完成 #114，将 migration/restore 接入更新中心。
+3. 只有 #109、#114 完成后，才进入管理后台在线升级体验；部门与任务业务表继续保持阻断。

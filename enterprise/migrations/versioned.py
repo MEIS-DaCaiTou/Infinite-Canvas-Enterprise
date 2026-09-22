@@ -914,13 +914,21 @@ def restore_database_backup(
     manifest_path: Path,
     *,
     expected_current_database_sha256: str,
+    expected_backup_manifest_sha256: str,
 ) -> RestoreResult:
     expected_current = _validate_sha256(expected_current_database_sha256, "DATA_EXPECTED_DATABASE_INVALID")
+    expected_manifest = _validate_sha256(
+        expected_backup_manifest_sha256,
+        "DATA_EXPECTED_BACKUP_MANIFEST_INVALID",
+    )
     database_path = _regular_file(Path(database_path), "DATA_DATABASE_INVALID")
     _runtime_sidecars_absent(database_path)
     current_sha, _ = _sha256_file(database_path)
     if current_sha != expected_current:
         _fail("DATA_RESTORE_EXPECTED_CURRENT_MISMATCH")
+    actual_manifest, _ = _sha256_file(Path(manifest_path), maximum=MAX_MANIFEST_BYTES)
+    if actual_manifest != expected_manifest:
+        _fail("DATA_BACKUP_MANIFEST_IDENTITY_MISMATCH")
     backup = verify_database_backup(manifest_path)
     temporary = database_path.parent / f".{database_path.name}.restore-{uuid.uuid4().hex}.new"
     _new_path(temporary, "DATA_RESTORE_TEMP_INVALID")
@@ -1009,5 +1017,6 @@ def finalize_release_database_validation(
         Path(database_path),
         migration_result.backup.manifest_path,
         expected_current_database_sha256=migration_result.post_migration_database_sha256,
+        expected_backup_manifest_sha256=migration_result.backup.manifest_sha256,
     )
     return ReleaseValidationFinalization(validation_result, True, restore)

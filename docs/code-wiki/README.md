@@ -1,6 +1,6 @@
 # Infinite Canvas Enterprise Code Wiki
 
-> 更新日期：2026-09-21
+> 更新日期：2026-09-22
 >
 > 核验工作区：`D:\CodeProject\Infinite-Canvas-Enterprise-MAINLINE-CONVERGENCE`
 >
@@ -12,16 +12,16 @@
 
 | 观察面 | 提交 | 说明 |
 | --- | --- | --- |
-| GitHub `origin/main` | `58dc98c09e213ee747024d2934aa181d14cf0c1d` | `feat(data): add versioned SQLite migration foundation (#107)` |
-| 主线收敛分支 | `codex/mainline-runtime-convergence-20260919@84f6fe2` | [PR #108](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/108)，等待审查与合并 |
-| PR #108 CI | 两项 Windows checks 均 SUCCESS（2026-09-21 核验） | CPython 3.11 企业套件与 CPython 3.14 Runtime 专项；不等于 Release/生产批准 |
+| GitHub `origin/main` | `8cdb3c7b7399dbb144dbd828fc2ad876c79ae64a` | 已包含 DATA-MVP-1 foundation（PR #107）、Runtime 主线收敛（PR #108）与 SEC-P0 浏览器边界（PR #119） |
+| 当前实施分支 | `codex/data-mvp1-independent-review` | Issue #109 独立复核；未合并前不属于 `main` |
+| 主线 CI | PR #108 与 PR #119 的要求检查均 SUCCESS | CPython 3.11 企业套件与 CPython 3.14 Runtime 专项；不等于 Release/生产批准 |
 | 发布标签 `2026.09.4` | `a0d1ccf7c2c3ddb5d90c5dc25aea76d5e13dc65a` | 位于独立发布历史，不等同于 `main` 或本地 `HEAD` |
 | 客户恢复工具分支 | `codex/customer-hotfix-2026.08.5-20260911@75da5c8` | 已推送、未合并主线，保存升级恢复执行器后续修复 |
 
 因此：
 
-- 通用结构说明覆盖 `origin/main` 与主线收敛分支。
-- 收敛分支能力在 PR 合并前仍标注“分支增量”。
+- 通用结构说明以 `origin/main` 为基线；Issue #109 的复核修订明确标注为当前实施分支增量。
+- 分支能力在 PR 合并前不计入 `main`。
 - 标签存在只证明 Git 中存在发布对象，不自动表示已合入主线、已部署或已成为正式生产基线。
 - GitHub 仓库可见性应以实时状态为准，不在本 Wiki 固化。
 
@@ -47,12 +47,12 @@
 | --- | --- |
 | 画布、智能画布、素材库、对话、AI/工作流入口 | 已在旧业务内核与静态前端中实现 |
 | 登录、固定三角色、资源归属、功能开关、管理后台 | 已在企业覆盖层实现 |
-| Gateway/Upstream 生命周期与存活/健康检查 | `main` 已有基础；收敛分支合并任务回执、独立探针、单飞、外层截止与启动宽限修复 |
+| Gateway/Upstream 生命周期与存活/健康检查 | `main` 已合并任务回执、独立探针、单飞、外层截止与启动宽限修复 |
 | Windows 固定 Python、路径根、不可变 Release、安装器 | 已有实现与大量契约测试 |
 | 在线更新 | 仅支持 Manifest v2、同数据库 Schema、无迁移的安全更新 |
 | 版本化 SQLite 迁移/恢复基础 | `origin/main` 已实现基础原语，尚未完整接入 Update Center |
 | PostgreSQL、水平扩展、分布式任务队列 | 未实现 |
-| GitHub Actions | PR #108 已新增 Windows 工作流，2026-09-21 两项检查通过；合并后 `main` 状态仍需实时核验 |
+| GitHub Actions | `main` 已包含 Windows 工作流；PR #108 与 PR #119 的要求检查均已通过，当前状态仍需实时核验 |
 
 ## 5. 相关事实源
 

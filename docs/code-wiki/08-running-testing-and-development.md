@@ -129,7 +129,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\enterprise\tests\smoke.ps1
 
 ## 9. CI 现状
 
-PR #108 已把 `.github/workflows/enterprise-checks.yml` 合并到 `main@8ba6bef`，在 Windows 上运行 CPython 3.11 完整企业套件和 CPython 3.14 Runtime 专项；该 PR 的两项检查在 2026-09-21 核验为 SUCCESS。项目负责人已明确不设置独立 Windows 主机验收门禁；正式 bundled Runtime、签名、Release、客户现场和生产批准仍与普通 pytest/Actions 分开记录。
+PR #108 已把 `.github/workflows/enterprise-checks.yml` 合并到主线；PR #119 随后把 SEC-P0 合并到 `main@8cdb3c7b7399dbb144dbd828fc2ad876c79ae64a`。工作流在 Windows 上运行 CPython 3.11 完整企业套件和 CPython 3.14 Runtime 专项；两项 PR 的要求检查均核验为 SUCCESS。项目负责人已明确不设置独立 Windows 主机验收门禁；正式 bundled Runtime、签名、Release、客户现场和生产批准仍与普通 pytest/Actions 分开记录。
 
 ## 10. 常见故障定位
 

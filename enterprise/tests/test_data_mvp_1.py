@@ -4,6 +4,8 @@ import hashlib
 import json
 import shutil
 import sqlite3
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -242,6 +244,93 @@ def test_migration_interruption_rolls_back_schema_data_and_ledger(tmp_path: Path
         ).fetchone()[0] == 0
 
 
+def test_concurrent_migration_attempts_allow_one_commit_and_reject_the_stale_plan(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import enterprise.migrations.versioned as versioned
+
+    database = _create_v1_database(tmp_path / "enterprise.db")
+    step = _migration_1_to_2()
+    target_schema = _target_schema_sha256(database, tmp_path, step)
+    original_backup = versioned.create_database_backup
+    backups_ready = threading.Barrier(2)
+
+    def synchronized_backup(*args, **kwargs):
+        backup = original_backup(*args, **kwargs)
+        backups_ready.wait(timeout=10)
+        return backup
+
+    monkeypatch.setattr(versioned, "create_database_backup", synchronized_backup)
+
+    def migrate(operation_id: str):
+        try:
+            return apply_versioned_migrations(
+                database,
+                tmp_path / "backups",
+                operation_id=operation_id,
+                target_version=2,
+                expected_target_schema_sha256=target_schema,
+                registry=(step,),
+            )
+        except DataMigrationError as exc:
+            return exc
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = list(executor.map(migrate, ("concurrent-a", "concurrent-b")))
+
+    successes = [item for item in outcomes if not isinstance(item, DataMigrationError)]
+    failures = [item for item in outcomes if isinstance(item, DataMigrationError)]
+    assert len(successes) == 1
+    assert [item.code for item in failures] == ["DATA_MIGRATION_SOURCE_CHANGED"]
+    inspection = inspect_schema_metadata(database)
+    assert inspection["schema_version"] == 2
+    assert inspection["migration_ids"] == [step.migration_id]
+    with sqlite3.connect(database) as conn:
+        assert conn.execute("SELECT id, value, label FROM records ORDER BY id").fetchall() == [
+            (1, "existing-user", "preserved"),
+            (2, "existing-business-data", "preserved"),
+        ]
+
+
+def test_repeated_operation_is_fail_closed_before_and_after_restore(tmp_path: Path) -> None:
+    database, step, target_schema, migration = _migrate(tmp_path)
+    migrated_sha = _file_sha256(database)
+
+    with pytest.raises(DataMigrationError) as already_applied:
+        apply_versioned_migrations(
+            database,
+            tmp_path / "backups",
+            operation_id=migration.operation_id,
+            target_version=2,
+            expected_target_schema_sha256=target_schema,
+            registry=(step,),
+        )
+    assert already_applied.value.code == "DATA_MIGRATION_NOT_REQUIRED"
+    assert _file_sha256(database) == migrated_sha
+
+    restored = finalize_release_database_validation(
+        database,
+        migration,
+        validation_result="health_failed",
+    )
+    assert restored.database_restored is True
+    restored_sha = _file_sha256(database)
+
+    with pytest.raises(DataMigrationError) as operation_reuse:
+        apply_versioned_migrations(
+            database,
+            tmp_path / "backups",
+            operation_id=migration.operation_id,
+            target_version=2,
+            expected_target_schema_sha256=target_schema,
+            registry=(step,),
+        )
+    assert operation_reuse.value.code == "DATA_BACKUP_ALREADY_EXISTS"
+    assert _file_sha256(database) == restored_sha
+    assert inspect_schema_metadata(database)["schema_version"] == 1
+
+
 def test_migration_callback_cannot_commit_caller_transaction(tmp_path: Path) -> None:
     database = _create_v1_database(tmp_path / "enterprise.db")
 
@@ -313,6 +402,7 @@ def test_restore_rejects_tampered_backup_and_changed_current_database(tmp_path: 
             database,
             migration.backup.manifest_path,
             expected_current_database_sha256=migration.post_migration_database_sha256,
+            expected_backup_manifest_sha256=migration.backup.manifest_sha256,
         )
     assert current_mismatch.value.code == "DATA_RESTORE_EXPECTED_CURRENT_MISMATCH"
     assert _file_sha256(database) == changed_sha
@@ -327,6 +417,64 @@ def test_restore_rejects_tampered_backup_and_changed_current_database(tmp_path: 
         finalize_release_database_validation(database_two, migration_two, validation_result="start_failed")
     assert tampered.value.code == "DATA_BACKUP_IDENTITY_MISMATCH"
     assert inspect_schema_metadata(database_two)["schema_version"] == 2
+
+
+def test_restore_rejects_self_consistent_manifest_and_backup_pair_replacement(tmp_path: Path) -> None:
+    original_root = tmp_path / "original"
+    database = _create_v1_database(original_root / "data" / "enterprise.db")
+    strict_step = _migration_1_to_2()
+
+    def validate_shape(conn: sqlite3.Connection) -> bool:
+        columns = [str(row[1]) for row in conn.execute("PRAGMA table_info(records)")]
+        labels = conn.execute("SELECT label FROM records ORDER BY id").fetchall()
+        return columns == ["id", "value", "label"] and labels == [("preserved",), ("preserved",)]
+
+    step = MigrationStep(
+        strict_step.migration_id,
+        strict_step.from_version,
+        strict_step.to_version,
+        strict_step.checksum_sha256,
+        strict_step.apply_in_transaction,
+        validate_shape,
+    )
+    target_schema = _target_schema_sha256(database, original_root, step)
+    migration = apply_versioned_migrations(
+        database,
+        original_root / "backups",
+        operation_id="update-job-001",
+        target_version=2,
+        expected_target_schema_sha256=target_schema,
+        registry=(step,),
+    )
+    migrated_sha = _file_sha256(database)
+
+    foreign_root = tmp_path / "foreign"
+    foreign_database = _create_v1_database(foreign_root / "data" / "enterprise.db")
+    with sqlite3.connect(foreign_database) as conn:
+        conn.execute("UPDATE records SET value='foreign-backup-data' WHERE id=1")
+        conn.commit()
+    foreign_target_schema = _target_schema_sha256(foreign_database, foreign_root, step)
+    foreign_migration = apply_versioned_migrations(
+        foreign_database,
+        foreign_root / "backups",
+        operation_id=migration.operation_id,
+        target_version=2,
+        expected_target_schema_sha256=foreign_target_schema,
+        registry=(step,),
+    )
+
+    shutil.copyfile(foreign_migration.backup.backup_path, migration.backup.backup_path)
+    shutil.copyfile(foreign_migration.backup.manifest_path, migration.backup.manifest_path)
+
+    with pytest.raises(DataMigrationError) as replaced_pair:
+        finalize_release_database_validation(
+            database,
+            migration,
+            validation_result="start_failed",
+        )
+    assert replaced_pair.value.code == "DATA_BACKUP_MANIFEST_IDENTITY_MISMATCH"
+    assert _file_sha256(database) == migrated_sha
+    assert inspect_schema_metadata(database)["schema_version"] == 2
 
 
 def test_restore_replace_failure_preserves_migrated_target(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
