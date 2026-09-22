@@ -132,7 +132,9 @@ DATA-MVP-1 引入：
 - 中断/失败回滚和启动/健康失败恢复原语。
 - 并发迁移一胜一拒绝、重复 operation ID 不覆盖历史备份。
 
-当前在线更新仍只接受同 Schema/无 migration 的 Manifest；“迁移基础已存在”不等于“管理后台已能安全执行任意数据库升级”。
+UPDATE-DATA-1 已把这些原语接入 Update Center 的显式版本化迁移路径：prepare 绑定 source/target 证据与当前数据库身份，execute 在 pointer 切换前迁移，目标启动/健康失败时先恢复数据库，再恢复 pointer 与 source Runtime。执行中断或恢复无法证明时进入 `RECOVERY_REQUIRED`。
+
+该实现并不表示可以执行任意数据库脚本。Migration 必须预先存在于受审 registry，Manifest 必须声明 `versioned-forward-migration` + `database-backup-restore`，且执行阶段会重算计划并精确比对。首个真实 schema-changing Release 和客户数据演练仍属于后续 Release/验收工作。
 
 ## 11. 数据安全边界
 
