@@ -3,7 +3,7 @@
 日期：2026-09-21
 
 范围：Issue #111
-状态：分支实施，等待 PR 审查与合并；不是正式 Release 或生产批准
+状态：[PR #119](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/119) 等待审查与合并；不是正式 Release 或生产批准
 
 ## 1. 修复不变量
 

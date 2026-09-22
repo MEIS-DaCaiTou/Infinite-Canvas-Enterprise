@@ -7,7 +7,7 @@
 | 层级 | 当前事实 |
 | --- | --- |
 | GitHub 主线 | `origin/main@8ba6befdf2e6737823634b53327dc6e98f7bbdae`，已合并 DATA-MVP-1 foundation（PR #107）与 Runtime 主线收敛（PR #108） |
-| 当前实施分支 | `codex/sec-p0-browser-boundaries`，处理 [#111](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/111)；未合并前不属于 `main` |
+| 当前实施分支 | `codex/sec-p0-browser-boundaries`，[PR #119](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/119) 处理 [#111](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/111)；未合并前不属于 `main` |
 | 最近主线审查 | [PR #108](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/108) 已于 2026-09-21 合并，merge commit 为 `8ba6befdf2e6737823634b53327dc6e98f7bbdae`；合并前两项 Windows GitHub Actions 均 SUCCESS |
 | 客户定点 Release | `2026.09.4@a0d1ccf`，仅适用于从 `2026.08.5-ee4281022d01` 原位升级的 Runtime 热修 |
 | 生产结论 | 已确认一台客户设备升级后恢复正常；不是通用 Production Baseline，不代表 PR #108 已部署 |
