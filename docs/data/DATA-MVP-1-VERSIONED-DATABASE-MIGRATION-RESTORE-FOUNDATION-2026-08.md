@@ -1,15 +1,16 @@
 # DATA-MVP-1：版本化数据库迁移与恢复基础
 
-更新时间：2026-08-25
+更新时间：2026-09-22
 
 ## 1. 当前结论
 
 DATA-MVP-1 在仓库中建立了面向未来 SQLite Schema 演进的最小基础：显式 Schema 版本、确定性 migration registry、调用方事务内顺序迁移、一致性备份、迁移后校验，以及目标版本启动或健康失败后的数据库恢复接口。
 
-本记录随实现 Draft PR 提交，仍等待独立复核：
+实现已在 PR #107 合并；独立复核见
+[DATA-MVP-1 独立复核记录](./DATA-MVP-1-INDEPENDENT-REVIEW-2026-09.md)：
 
 - `DATA_MVP_1_repository_implementation_present=true`
-- `DATA_MVP_1_repository_implementation_independently_accepted=false`
+- `DATA_MVP_1_repository_implementation_independently_accepted=true`
 - `versioned_SQLite_migration_foundation=true`
 - `database_backup_restore_foundation=true`
 - `Update_Center_database_migration_integrated=false`
@@ -47,7 +48,7 @@ inspect exact metadata and ledger
 - 现有数据库只能通过显式 bootstrap API 加入版本 ledger，并且加入前的完整 Schema fingerprint 必须与调用方给出的 SHA-256 精确相同。
 - 备份使用 SQLite backup API，不复制活动 WAL；源数据库在备份前后必须保持相同文件 SHA-256 和大小。备份 manifest 绑定源/备份 SHA-256、Schema version、Schema fingerprint、ledger fingerprint、integrity check 和 foreign-key 结果。
 - 所有 migration 在同一个 `BEGIN EXCLUSIVE` 事务中执行。任一步异常或验证失败都会 rollback Schema、业务数据、ledger 和 state。
-- restore 只接受经过 manifest 验证的备份，并要求当前数据库仍等于该 migration result 记录的 post-migration SHA-256。并发变化时拒绝覆盖。
+- restore 只接受经过 manifest 验证的备份，要求 manifest SHA-256 仍等于迁移时记录值，并要求当前数据库仍等于该 migration result 记录的 post-migration SHA-256。manifest/backup 成对替换或并发变化时均拒绝覆盖。
 - `os.replace()` 前失败保留当前数据库；replace 后目录同步失败返回 `database_may_have_changed=true` 和 `reread_required=true`。
 
 ## 4. 公开接口
@@ -61,7 +62,7 @@ inspect exact metadata and ledger
 | `validate_registry()` / `plan_migrations()` | 验证 registry 并形成连续、确定的迁移计划 |
 | `create_database_backup()` / `verify_database_backup()` | 创建、绑定并离线复核一致性备份 |
 | `apply_versioned_migrations()` | 备份后在单个独占事务中执行和校验迁移 |
-| `restore_database_backup()` | expected-current 门禁下原子恢复数据库 |
+| `restore_database_backup()` | expected-current 与 expected-manifest 双重门禁下原子恢复数据库 |
 | `finalize_release_database_validation()` | 为未来 Release start/health 集成提供 keep-or-restore 决策接口 |
 
 Release Manifest v2 的 database snapshot 新增严格成组的 `schema_version`、`schema_objects_sha256`、`migration_registry_sha256` 和 `versioned_migration_ids`。历史没有这组字段的 v2 fixture 仍可验证；只出现部分新字段或内部 SHA 不一致会被拒绝。
@@ -79,7 +80,7 @@ Release Manifest v2 的 database snapshot 新增严格成组的 `schema_version`
 - backup tamper、并发数据库变化、replace 失败和 post-replace sync uncertain state；
 - Greenfield installer、Manifest v2、历史 SEC migration 的兼容回归。
 
-当前 Draft 候选的开发侧结果：DATA-MVP-1 focused `13 passed`；DATA/INSTALL/Manifest/UPDATE/RELEASE/current-release/USER-GOV relevant regression `211 passed / 4 skipped`；历史 SEC-1B1、SEC-1F0、SEC-1B2 direct scripts 均通过；OPS runner 与 OPS-3A direct scripts 通过；完整 `enterprise/tests` 为 `877 passed / 10 skipped / 0 failed`（固定 CPython 3.11.9，未切换解释器）。仓库外 evidence bundle 只记录这些真实结果，不包含数据库、凭据、Token、Cookie、生产路径或用户数据。
+原 PR #107 的开发侧结果保留为历史记录：DATA-MVP-1 focused `13 passed`；DATA/INSTALL/Manifest/UPDATE/RELEASE/current-release/USER-GOV relevant regression `211 passed / 4 skipped`；完整 `enterprise/tests` 为 `877 passed / 10 skipped / 0 failed`。2026-09-22 独立复核新增并发、重复执行及 manifest/backup 成对替换用例后，focused 为 `16 passed`，完整 `enterprise/tests` 为 `950 passed / 10 skipped / 0 failed`；GitHub Actions 仍以对应实现 PR 为准。测试仅使用临时数据库，不包含数据库、凭据、Token、Cookie、生产路径或用户数据。
 
 ## 6. 明确未实现
 

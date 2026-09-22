@@ -128,8 +128,9 @@ DATA-MVP-1 引入：
 
 - 当前 schema 状态和迁移账本。
 - 注册表驱动、版本顺序确定的事务迁移。
-- 迁移前一致性 SQLite 备份与 SHA 绑定。
+- 迁移前一致性 SQLite 备份，以及恢复时的 expected-current 数据库 SHA 与 expected-manifest SHA 双重绑定。
 - 中断/失败回滚和启动/健康失败恢复原语。
+- 并发迁移一胜一拒绝、重复 operation ID 不覆盖历史备份。
 
 当前在线更新仍只接受同 Schema/无 migration 的 Manifest；“迁移基础已存在”不等于“管理后台已能安全执行任意数据库升级”。
 

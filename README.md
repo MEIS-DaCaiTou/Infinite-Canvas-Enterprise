@@ -9,8 +9,8 @@
 ## 当前状态
 
 - 动态主线以 `origin/main` 为准，开始任务前必须重新获取并核验。
-- Runtime 主线收敛已由 [PR #108](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/108) 合并到 `main@8ba6befdf2e6737823634b53327dc6e98f7bbdae`；这只代表代码主线收敛，不等于正式 Release 或客户部署批准。
-- 第一阶段安全修复 [#111](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/111) 正在独立分支实施；合并前不得写成 `main` 已具备。
+- Runtime 主线收敛已由 [PR #108](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/108) 合并；SEC-P0 浏览器边界已由 [PR #119](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/119) 合并到 `main@8cdb3c7b7399dbb144dbd828fc2ad876c79ae64a`。这些只代表代码主线状态，不等于正式 Release 或客户部署批准。
+- 当前进入第二阶段数据升级能力：先完成 [#109](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/109) 独立复核，再执行 [#114](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/114) 的更新中心 migration/backup/restore 集成。
 - 已有 Manifest v2、不可变 Release、Runtime Supervisor、最小在线更新和 SQLite migration/restore foundation；数据库迁移尚未完整接入更新中心。
 - 客户 `2026.08.5` 到 `2026.09.4` 的现场定点热修只证明已确认设备恢复，不自动代表通用 Production Baseline。
 

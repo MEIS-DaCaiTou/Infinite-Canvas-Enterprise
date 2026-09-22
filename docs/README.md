@@ -1,6 +1,6 @@
 # Infinite Canvas Enterprise 文档索引
 
-更新时间：2026-09-21
+更新时间：2026-09-22
 
 本文是仓库文档的唯一导航入口。文档必须区分：动态 `origin/main`、未合并分支、GitHub Release、单台客户设备现场结果和通用生产批准；这些状态不能合并表述。
 
@@ -54,6 +54,7 @@
 
 - `docs/security/`：已经实施或审查的安全工作。
 - `docs/data/`：数据库 migration、backup、restore 基础。
+  - [DATA-MVP-1 独立复核记录](./data/DATA-MVP-1-INDEPENDENT-REVIEW-2026-09.md)
 - `docs/ops/`：Release、Runtime、更新、安装和现场收敛记录。
 - `docs/env/`：可复现 Runtime、路径根、入口和环境验证。
 - `docs/env/evidence/`：只读验收证据，不作为当前任务入口。
