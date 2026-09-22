@@ -50,15 +50,19 @@ def _finalize_terminal_failure(roots: object, job_id: str, result_code: str) -> 
     store = UpdateJobStore(roots)
     plan = store.read_plan(job_id)
     actor = str(plan.get("actor_user_id") or "")
+    current_state = str(store.read_status(job_id).get("state") or "")
+    uncertain_database_or_pointer = current_state in {"MIGRATING", "RESTARTING", "VERIFYING"}
+    terminal_state = "RECOVERY_REQUIRED" if uncertain_database_or_pointer else "FAILED"
     store.write_status(
         job_id,
-        "FAILED",
+        terminal_state,
         actor_user_id=actor,
         result_code=result_code,
         source_release_id=plan.get("source_release_id"),
         target_release_id=plan.get("target_release_id"),
+        **({"recovery_required": True, "interrupted_state": current_state} if uncertain_database_or_pointer else {}),
     )
-    store.append_event(job_id, "FAILED", result_code)
+    store.append_event(job_id, terminal_state, result_code)
     audit_written = True
     try:
         _emit_terminal_audit(plan, result_code)
@@ -88,6 +92,7 @@ def main() -> int:
             APP_ROOT.name,
         )
         install_path_roots_for_process(roots)
+        from enterprise.config import DB_PATH
         from enterprise.ops.update.mvp import UpdateJobStore, execute_update_job
 
         job_id = UpdateJobStore.validate_job_id(arguments.job_id)
@@ -98,7 +103,7 @@ def main() -> int:
         if supervisor_lock.exists():
             _finalize_terminal_failure(roots, job_id, "SYSTEM_UPDATE_SOURCE_STOP_TIMEOUT")
             return 2
-        result = execute_update_job(roots, job_id)
+        result = execute_update_job(roots, job_id, database_path=Path(DB_PATH))
         try:
             from enterprise import db as edb
 
@@ -108,6 +113,7 @@ def main() -> int:
                 "SUCCEEDED": "system_update_succeeded",
                 "ROLLED_BACK": "system_update_rolled_back",
                 "FAILED": "system_update_failed",
+                "RECOVERY_REQUIRED": "system_update_recovery_required",
             }.get(str(status.get("state")), "system_update_failed")
             detail = {
                 "job_id": job_id,

@@ -14,6 +14,7 @@ from starlette.concurrency import run_in_threadpool
 from enterprise import db as edb
 from enterprise.config import (
     ADMIN_PASSWORD,
+    DB_PATH,
     ENTERPRISE_UPDATE_ENABLED,
     JWT_SECRET,
     PATH_ROOTS,
@@ -45,7 +46,7 @@ def _error(exc: Exception) -> None:
     code = str(getattr(exc, "code", getattr(exc, "detail_code", "SYSTEM_UPDATE_FAILED")))
     status = int(getattr(exc, "status_code", 400))
     message = (
-        "此版本包含数据库结构升级，当前在线升级版本暂不支持，请使用后续升级引擎。"
+        "无法验证此版本的数据库迁移与恢复契约，已拒绝准备升级。"
         if code == "SYSTEM_UPDATE_DATABASE_CONTRACT_UNSUPPORTED"
         else "The update operation could not be completed"
     )
@@ -186,7 +187,7 @@ def _prepare_update_sync(actor_user_id: str, provider_release_id: str) -> dict[s
             expected_sha256=str(archive["sha256"]),
             headers=provider.release_v2_asset_request_headers(metadata.archive_url),
         )
-        prepared = UpdateMvpService(PATH_ROOTS).prepare_from_artifacts(
+        prepared = UpdateMvpService(PATH_ROOTS, database_path=Path(DB_PATH)).prepare_from_artifacts(
             actor_user_id=actor_user_id, manifest_path=manifest_path, archive_path=archive_path, inventory_path=inventory_path
         )
         return {"state": "READY", **prepared.public(), "release_notes": metadata.release_notes}
