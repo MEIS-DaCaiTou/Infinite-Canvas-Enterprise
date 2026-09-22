@@ -8,7 +8,7 @@ import zipfile
 from pathlib import Path
 from typing import Iterable
 
-from enterprise.ops.update.mvp import _database_contract_compatible
+from enterprise.ops.update.mvp import _database_contract_mode
 from enterprise.ops.update.versions import compare_versions, parse_version
 from enterprise.release.release_manifest_v2 import (
     INVENTORY_MAX_BYTES,
@@ -98,7 +98,16 @@ def validate_asset_set(manifest_path: Path, inventory_path: Path, archive_path: 
 
 
 def validate_database_contract(source_manifest: ReleaseManifestV2, target_manifest: ReleaseManifestV2) -> None:
-    if not _database_contract_compatible(source_manifest, target_manifest):
+    mode = _database_contract_mode(source_manifest, target_manifest)
+    if mode is None:
+        _fail("RELEASE_MVP_DATABASE_CONTRACT_UNSUPPORTED")
+    source_contract = source_manifest.section("database_contract")
+    target_contract = target_manifest.section("database_contract")
+    if (
+        mode == "same-schema-no-migration"
+        and source_contract.get("schema_snapshot_sha256")
+        != target_contract.get("schema_snapshot_sha256")
+    ):
         _fail("RELEASE_MVP_DATABASE_CONTRACT_UNSUPPORTED")
 
 
