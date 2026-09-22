@@ -58,11 +58,13 @@
     .logo img { width: 32px; height: 32px; border-radius: 9px; }
     .logo-text { font-size: 15px; font-weight: 900; letter-spacing: -.015em; }
     .nav-links { display: flex; gap: 8px; }
+    .nav-links form { margin: 0; }
     .nav-link {
       font-size: 12px; font-weight: 700; color: var(--muted);
       text-decoration: none; padding: 5px 10px;
       border-radius: 8px; border: 1px solid transparent;
       transition: border-color .15s, color .15s;
+      background: transparent; font-family: inherit; cursor: pointer;
     }
     .nav-link:hover { border-color: var(--line); color: var(--text); }
     /* 用户信息 */
@@ -169,7 +171,7 @@
       </div>
       <div class="nav-links">
         <a href="/" class="nav-link">← 返回画布</a>
-        <a href="/enterprise/logout" class="nav-link">退出登录</a>
+        <form action="/enterprise/logout" method="post"><button type="submit" class="nav-link">退出登录</button></form>
       </div>
     </div>
 

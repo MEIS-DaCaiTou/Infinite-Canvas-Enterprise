@@ -6,9 +6,9 @@
 
 | 层级 | 当前事实 |
 | --- | --- |
-| GitHub 主线 | `origin/main@58dc98c09e213ee747024d2934aa181d14cf0c1d`，已包含 DATA-MVP-1 migration/restore foundation（PR #107） |
-| 待合并分支 | `codex/mainline-runtime-convergence-20260919@84f6fe2802f383eb8a21a1ef272ca6ef44bf5121` |
-| 审查入口 | [PR #108](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/108)，2026-09-21 核验为 OPEN、MERGEABLE，两项 Windows GitHub Actions 均 SUCCESS |
+| GitHub 主线 | `origin/main@8ba6befdf2e6737823634b53327dc6e98f7bbdae`，已合并 DATA-MVP-1 foundation（PR #107）与 Runtime 主线收敛（PR #108） |
+| 当前实施分支 | `codex/sec-p0-browser-boundaries`，[PR #119](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/119) 处理 [#111](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/111)；未合并前不属于 `main` |
+| 最近主线审查 | [PR #108](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/108) 已于 2026-09-21 合并，merge commit 为 `8ba6befdf2e6737823634b53327dc6e98f7bbdae`；合并前两项 Windows GitHub Actions 均 SUCCESS |
 | 客户定点 Release | `2026.09.4@a0d1ccf`，仅适用于从 `2026.08.5-ee4281022d01` 原位升级的 Runtime 热修 |
 | 生产结论 | 已确认一台客户设备升级后恢复正常；不是通用 Production Baseline，不代表 PR #108 已部署 |
 
@@ -25,14 +25,22 @@
 - SQLite schema version、确定性 migration、一致性备份与 restore foundation。
 - GitHub Actions 的 Windows 企业测试与 CP314 Runtime 可靠性检查。
 
-### 仅在 PR #108 中具备
+### PR #108 合并后主线具备
 
 - 独立存活探针与 readiness 边界。
 - 短暂健康失败降级而非破坏性重启。
 - 重启退避、启动宽限、单次探针和阻塞工作线程隔离。
 - 两类画布任务的持久回执基础。
 
-这些能力在 PR #108 合并前不得写成 `main` 已实现，也不得据此发布新版本。
+这些能力已进入代码主线，但尚未因此自动成为正式 Release、客户部署或通用 Production Baseline。
+
+### 仅在当前安全分支实施、尚未进入主线
+
+- 上游 HTTP 方法/路径显式登记，未知路由默认 404，静态资源不再按文件后缀放行。
+- Cookie 写请求同源校验，WebSocket 限定同源、固定路径、固定客户端消息及已知服务端事件。
+- 登录限流、安全的 `next` 跳转、HTTPS `Secure` Cookie、POST 登出和企业静态目录 containment。
+
+以上属于 #111 的在审实现；只有经测试、PR 审查并合并后才能写成 `main` 已实现。
 
 ### 已发布但不属于通用主线结论
 
@@ -76,7 +84,7 @@
   -> 企业集成
 ```
 
-当前处于“主线收敛 + 安全修复”阶段。PR #108 合并只完成 Runtime 主线收敛，不等于安全阶段、数据阶段或在线升级体验阶段全部结束。
+当前处于“第一阶段安全修复”阶段。PR #108 已完成 Runtime 主线收敛，但不等于安全阶段、数据阶段或在线升级体验阶段全部结束。
 
 ## 6. 不变量
 
@@ -90,8 +98,7 @@
 
 ## 7. 下一步
 
-1. 完成本轮文档收敛并保持 PR #108 代码事实不变。
-2. 评审并合并 PR #108，或按审查结论修订；不得直接发布未合并分支。
-3. 立即处理 #111 安全阻断项。
-4. 依次完成 #109、#114，形成现有客户可安全迁移的数据升级闭环。
-5. 在此基础上实现管理后台在线升级体验，再开始部门与任务业务表。
+1. 完成 #111 的聚焦/全量测试、独立安全审查和 PR 审查；不得直接发布未合并分支。
+2. #111 合并后独立复核 #109 DATA-MVP-1 foundation。
+3. 在 #109 结论基础上完成 #114，将 migration/restore 接入更新中心。
+4. 只有 #109、#114 完成后，才进入管理后台在线升级体验；部门与任务业务表继续保持阻断。

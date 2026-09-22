@@ -328,7 +328,7 @@ def _client_id_unique_to_user(client_id: str, user_id: str) -> bool:
 def should_forward_ws_event(connection: EnterpriseWsConnection, message: Mapping[str, Any]) -> bool:
     event_type = str(message.get("type") or "").strip()
     if not event_type:
-        return bool(connection.is_admin)
+        return False
 
     if event_type in {"pong", "stats"}:
         return True
@@ -372,17 +372,26 @@ def should_forward_ws_event(connection: EnterpriseWsConnection, message: Mapping
     if event_type in _SENSITIVE_EVENT_TYPES:
         return bool(connection.is_admin)
 
-    if connection.is_admin:
-        return True
-
-    return True
+    # An administrator may see more data for a *known* event, but an
+    # administrator is not a protocol bypass.  Unknown upstream events remain
+    # blocked until their ownership semantics are reviewed and registered.
+    return False
 
 
 def should_forward_raw_message(connection: EnterpriseWsConnection, raw: Any) -> tuple[bool, str]:
     message, text = parse_ws_message(raw)
     if message is None:
-        return bool(connection.is_admin), text
+        return False, text
     return should_forward_ws_event(connection, message), text
+
+
+def should_forward_client_message(raw: Any) -> tuple[bool, str]:
+    """Accept only the one client command implemented by ``/ws/stats``."""
+    if isinstance(raw, bytes):
+        text = raw.decode("utf-8", errors="replace")
+    else:
+        text = str(raw)
+    return text == "ping", text
 
 
 def _event_fingerprint(message: Mapping[str, Any]) -> str:

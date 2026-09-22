@@ -57,7 +57,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\enterprise\tests\smoke.ps1
 
 ## 5. Python 测试
 
-当前代码树有 59 个 Python 测试文件。推荐从根目录使用仓库 Python：
+当前代码树有 53 个 `test_*.py` Python 测试文件。推荐从根目录使用仓库 Python：
 
 ```powershell
 .\python\python.exe -m pytest enterprise\tests -q -p no:asyncio
@@ -71,6 +71,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\enterprise\tests\smoke.ps1
 | --- | --- |
 | `test_ownership_isolation.py` 等 | A/B/admin 画布、项目、对话、资源与直接 ID 隔离 |
 | `test_websocket_isolation.py` | WebSocket 用户事件隔离 |
+| `test_sec_p0_browser_boundaries.py` | HTTP/静态路由清单、Origin/CSRF、登录限流、站内跳转、Cookie、WebSocket fail-closed 与路径 containment |
 | `test_feature_flags.py` | 全局开关与用户覆盖 |
 | `test_sec_*`、`test_user_gov_mvp_1.py` | 角色、审计、bootstrap、用户治理 |
 | `test_runtime_reliability.py`、`test_stab_*` | Supervisor、日志、健康和重启语义 |
@@ -86,6 +87,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\enterprise\tests\smoke.ps1
 2026-09-19 收敛分支初次证据：CPython 3.11 完整企业套件为 `909 passed, 10 skipped, 1 failed`，唯一失败是受限后台子会话创建 service host 时的 `WinError 5`；同机直接 lifecycle 在 CPython 3.11 与 bundled CPython 3.14.6 下均 `3 passed`，可靠性与任务回执专项在两者下均 `33 passed`。这是历史测试结果，不能从计数中删除或写成全绿；后续处理和复跑见下段。
 
 2026-09-21 本机复跑 CPython 3.11 完整企业套件为 `910 passed, 10 skipped`；后续中文路径编码和长路径主机差异夹具另以 `2 passed` 验证。GitHub-hosted Windows Runner 的 Job Object 禁止正式 Runtime 所需的 `CREATE_BREAKAWAY_FROM_JOB`，所以只在该托管环境显式跳过跨会话 Service Host 生命周期测试；仓库 Runtime 保留该标志。本机直接生命周期测试在 CP311 与 bundled CP314 下各 `3 passed`。项目负责人不要求独立 Windows 主机验收门禁；CI 通过也不能把显式跳过写成在托管 Runner 上已执行。
+
+2026-09-22 SEC-P0 最终快照在 CPython 3.11 上复跑完整企业套件为 `947 passed, 10 skipped, 8 warnings`，耗时 `460.77s`。警告为既有 FastAPI `on_event` 弃用提示和测试夹具 JWT 短密钥提示；本轮无测试失败。该本机结果仍需由实施 PR 的 GitHub Actions 复核。
 
 ## 6. 浏览器回归
 
@@ -126,7 +129,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\enterprise\tests\smoke.ps1
 
 ## 9. CI 现状
 
-`codex/mainline-runtime-convergence-20260919@84f6fe2` 新增 `.github/workflows/enterprise-checks.yml`，在 Windows 上运行 CPython 3.11 完整企业套件和 CPython 3.14 Runtime 专项；PR #108 的两项检查在 2026-09-21 核验为 SUCCESS。工作流在 PR 合并前仍不是 `main` 能力。项目负责人已明确不设置独立 Windows 主机验收门禁；正式 bundled Runtime、签名、Release、客户现场和生产批准仍与普通 pytest/Actions 分开记录。
+PR #108 已把 `.github/workflows/enterprise-checks.yml` 合并到 `main@8ba6bef`，在 Windows 上运行 CPython 3.11 完整企业套件和 CPython 3.14 Runtime 专项；该 PR 的两项检查在 2026-09-21 核验为 SUCCESS。项目负责人已明确不设置独立 Windows 主机验收门禁；正式 bundled Runtime、签名、Release、客户现场和生产批准仍与普通 pytest/Actions 分开记录。
 
 ## 10. 常见故障定位
 
