@@ -865,10 +865,41 @@ def execute_update_job(
             except Exception:
                 pointer_switched = False
         if database_mode == "versioned-forward-migration" and migration_result is None:
+            # No MigrationResult does not prove that the transaction never
+            # committed: post-commit hashing/inspection can still raise. Do
+            # not boot the old release until both persisted identities prove
+            # that its database contract is still intact.
+            source_state_intact = False
+            if not database_may_have_changed:
+                try:
+                    current_pointer = read_current_release_result_from_state_root(roots.STATE_ROOT)
+                    schema = inspect_schema_metadata(database_path)
+                    source_state_intact = (
+                        current_pointer.release.release_id == source_id
+                        and current_pointer.raw_sha256 == plan.get("source_pointer_sha256")
+                        and schema.get("current_state") == STATE_READY
+                        and schema.get("schema_version") == database_update.get("source_schema_version")
+                        and schema.get("schema_sha256") == database_update.get("source_schema_sha256")
+                    )
+                except Exception:
+                    source_state_intact = False
+            if not source_state_intact:
+                store.write_status(
+                    job_id,
+                    "RECOVERY_REQUIRED",
+                    actor_user_id=actor,
+                    result_code=failure_code,
+                    source_release_id=source_id,
+                    target_release_id=target_id,
+                    recovery_required=True,
+                    database_update_mode=database_mode,
+                )
+                store.append_event(job_id, "RECOVERY_REQUIRED", failure_code)
+                return 2
             source_start, _ = launcher(source_root, "start")
             source_health, _ = launcher(source_root, "health") if source_start == 0 else (2, {})
-            if database_may_have_changed or source_start != 0 or source_health != 0:
-                recovery_code = failure_code if database_may_have_changed else "SYSTEM_UPDATE_SOURCE_RECOVERY_FAILED"
+            if source_start != 0 or source_health != 0:
+                recovery_code = "SYSTEM_UPDATE_SOURCE_RECOVERY_FAILED"
                 store.write_status(
                     job_id,
                     "RECOVERY_REQUIRED",

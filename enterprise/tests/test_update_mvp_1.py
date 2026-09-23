@@ -709,6 +709,38 @@ def test_migration_validation_failure_keeps_source_database_and_restarts_source(
     assert store.read_status(job_id)["result_code"] == "DATA_MIGRATION_VALIDATION_FAILED"
 
 
+def test_post_commit_migration_error_never_restarts_source_on_target_schema(tmp_path: Path, monkeypatch):
+    from enterprise.migrations.versioned import apply_versioned_migrations
+
+    roots = _roots(tmp_path)
+    database = _create_update_database(roots.DATA_ROOT / "enterprise.db")
+    step = _update_migration_step()
+    database_update = _migration_update_plan(database, tmp_path, step)
+    roots, store, job_id, pointer, calls, launcher = _execution_fixture(
+        tmp_path,
+        monkeypatch,
+        database_update=database_update,
+        migration_target=True,
+    )
+
+    def fail_after_commit(*args, **kwargs):
+        apply_versioned_migrations(*args, **kwargs)
+        raise DataMigrationError("DATA_MIGRATION_POST_COMMIT_VALIDATION_FAILED")
+
+    monkeypatch.setattr("enterprise.ops.update.mvp.apply_versioned_migrations", fail_after_commit)
+    assert execute_update_job(
+        roots,
+        job_id,
+        launcher=launcher,
+        database_path=database,
+        migration_registry=(step,),
+    ) == 2
+    assert inspect_schema_metadata(database)["schema_version"] == 2
+    assert pointer.release.release_id == "release-A"
+    assert calls == []
+    assert store.read_status(job_id)["state"] == "RECOVERY_REQUIRED"
+
+
 @pytest.mark.parametrize("failure_kind", ["start", "health"])
 def test_target_failure_restores_database_before_restarting_source(tmp_path: Path, monkeypatch, failure_kind: str):
     roots = _roots(tmp_path)
