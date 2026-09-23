@@ -451,4 +451,6 @@ def test_writer_rejects_untrusted_pathroots_and_has_no_runtime_activation_call_s
     ]
     assert all("atomic_write_current_release(" not in source.read_text(encoding="utf-8") for source in production_sources)
     mvp_source = repository / "enterprise" / "ops" / "update" / "mvp.py"
-    assert mvp_source.read_text(encoding="utf-8").count("atomic_write_current_release(") == 2
+    # Activation, ordinary rollback, and migration-aware rollback are the only
+    # update-orchestrator call sites allowed to publish the release pointer.
+    assert mvp_source.read_text(encoding="utf-8").count("atomic_write_current_release(") == 3

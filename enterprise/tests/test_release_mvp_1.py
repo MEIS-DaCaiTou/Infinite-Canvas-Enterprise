@@ -100,6 +100,18 @@ def test_database_gate_accepts_same_schema_no_migration() -> None:
     validate_database_contract(_Manifest("2026.07.6"), _Manifest("2026.08.1"))
 
 
+def test_database_gate_accepts_explicit_versioned_forward_migration() -> None:
+    target = _Manifest(
+        "2026.08.1",
+        database=_database_contract(
+            schema_snapshot_sha256="b" * 64,
+            migration_compatibility="versioned-forward-migration",
+            rollback_classification="database-backup-restore",
+        ),
+    )
+    validate_database_contract(_Manifest("2026.07.6"), target)
+
+
 @pytest.mark.parametrize(
     "leak",
     [

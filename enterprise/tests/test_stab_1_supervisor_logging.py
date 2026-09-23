@@ -1573,10 +1573,17 @@ def test_stop_during_startup_backoff_and_crash_loop() -> None:
         wait_for(lambda: supervisor.roles["upstream"].process is not None, message="upstream did not begin startup")
         # A real controller only submits an instance-bound command after the
         # supervisor has atomically published its current state generation.
-        wait_for(
-            lambda: supervisor.state["state"] == "starting" and supervisor.state["state_generation"] >= 1,
-            message="startup state was not published",
-        )
+        def startup_state_published() -> bool:
+            state = supervisor.store.read_state()
+            return bool(
+                state
+                and state.get("supervisor_instance_id") == supervisor.instance_id
+                and state.get("state") == "starting"
+                and isinstance(state.get("state_generation"), int)
+                and state["state_generation"] >= 1
+            )
+
+        wait_for(startup_state_published, message="startup state was not published")
         stop_supervisor(supervisor, thread)
         assert supervisor.state["state"] == "stopped"
         assert not tcp_check("127.0.0.1", supervisor.config.upstream_port).ok

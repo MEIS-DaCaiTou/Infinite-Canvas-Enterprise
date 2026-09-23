@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 import asyncio
+import shutil
+import sqlite3
 import threading
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,7 +20,16 @@ from enterprise.ops.update.mvp import (
     UpdateJobStore,
     UpdateMvpError,
     _database_contract_compatible,
+    _database_update_plan,
     execute_update_job,
+)
+from enterprise.migrations.versioned import (
+    DataMigrationError,
+    MigrationStep,
+    initialize_schema_metadata_in_transaction,
+    inspect_schema_metadata,
+    migration_registry_sha256,
+    schema_snapshot_sha256,
 )
 from enterprise.ops.update.providers import DEFAULT_GITHUB_REPOSITORY, GitHubReleasesProvider
 from enterprise.paths import PortableRootInputs, derive_portable_path_roots, prepare_install_state_directories
@@ -165,13 +177,28 @@ def test_github_v2_provider_requires_the_closed_three_asset_set():
     assert candidates[0].archive_url.endswith("/3")
 
 
-def test_database_contract_rejects_schema_snapshot_or_migration_change():
+def test_database_contract_allows_signed_evidence_change_but_not_legacy_migration_change():
     source = release_manifest(release_id="ice-2026.07.6-bbbbbbbbbbbb")
-    for key, value in (("schema_snapshot_sha256", "f" * 64), ("migration_ids", ["new-migration"])):
-        payload = _eligible_manifest().data
-        payload["database_contract"][key] = value
-        target = parse_release_manifest_v2_bytes(canonical_json(payload))
-        assert _database_contract_compatible(source, target) is False
+    payload = _eligible_manifest().data
+    payload["database_contract"]["schema_snapshot_sha256"] = "f" * 64
+    target = parse_release_manifest_v2_bytes(canonical_json(payload))
+    assert _database_contract_compatible(source, target) is True
+
+    payload["database_contract"]["migration_ids"] = ["new-migration"]
+    target = parse_release_manifest_v2_bytes(canonical_json(payload))
+    assert _database_contract_compatible(source, target) is False
+
+
+def test_manifest_accepts_only_explicit_versioned_forward_migration_pair():
+    source = release_manifest(release_id="ice-2026.07.6-bbbbbbbbbbbb")
+    payload = _eligible_manifest().data
+    payload["database_contract"].update({
+        "schema_snapshot_sha256": "f" * 64,
+        "migration_compatibility": "versioned-forward-migration",
+        "rollback_classification": "database-backup-restore",
+    })
+    target = parse_release_manifest_v2_bytes(canonical_json(payload))
+    assert _database_contract_compatible(source, target) is True
 
 
 def test_current_release_compare_before_switch_is_fail_closed(tmp_path: Path):
@@ -311,6 +338,27 @@ def test_terminal_failure_evidence_is_bounded_nonsecret_and_not_false_rollback(t
     assert "rolled_back" not in lowered
 
 
+@pytest.mark.parametrize("interrupted_state", ["MIGRATING", "RESTARTING", "VERIFYING"])
+def test_worker_interruption_after_database_or_pointer_work_requires_recovery(
+    tmp_path: Path, monkeypatch, interrupted_state: str
+):
+    roots, store, job_id, root = _reserved_worker_job(tmp_path)
+    store.write_status(
+        job_id,
+        interrupted_state,
+        actor_user_id="actor-1",
+        result_code="SYSTEM_UPDATE_IN_PROGRESS",
+    )
+    monkeypatch.setattr("enterprise.ops.update.handoff._emit_terminal_audit", lambda *_args: None)
+    assert _finalize_terminal_failure(roots, job_id, "SYSTEM_UPDATE_WORKER_FAILED") is True
+    status = store.read_status(job_id)
+    assert status["state"] == "RECOVERY_REQUIRED"
+    assert status["recovery_required"] is True
+    assert status["interrupted_state"] == interrupted_state
+    events = [json.loads(line) for line in (root / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert events[-1]["state"] == "RECOVERY_REQUIRED"
+
+
 def test_terminal_failure_audit_is_fixed_bounded_and_nonsecret(monkeypatch):
     calls = []
     monkeypatch.setattr("enterprise.db.log_action", lambda *args: calls.append(args))
@@ -336,23 +384,45 @@ def test_terminal_failure_audit_is_fixed_bounded_and_nonsecret(monkeypatch):
 class _Manifest:
     release_id: str
     raw_sha256: str
+    migration_target: bool = False
+    registry_stage: bool = False
 
     def section(self, name: str):
         if name == "release_payload":
             return {"inventory_path": "release-payload-inventory.json"}
         if name == "database_contract":
+            target = self.release_id == "release-B"
             return {
                 "schema_id": "enterprise-database-contract-v1",
-                "schema_snapshot_sha256": "9" * 64,
+                "schema_snapshot_path": "release-evidence/database-schema.json",
+                "schema_snapshot_sha256": (
+                    "8" if target and (self.migration_target or self.registry_stage) else "9"
+                ) * 64,
                 "migration_ids": ["base"],
-                "migration_compatibility": "same-schema-no-migration" if self.release_id == "release-B" else "unclassified",
-                "rollback_classification": "code-release-pointer" if self.release_id == "release-B" else "unclassified",
-                "ops3b_activation_eligible": self.release_id == "release-B",
+                "migration_compatibility": (
+                    "versioned-forward-migration"
+                    if target and self.migration_target
+                    else "same-schema-no-migration" if target else "unclassified"
+                ),
+                "rollback_classification": (
+                    "database-backup-restore"
+                    if target and self.migration_target
+                    else "code-release-pointer" if target else "unclassified"
+                ),
+                "ops3b_activation_eligible": target,
             }
         raise AssertionError(name)
 
 
-def _execution_fixture(tmp_path: Path, monkeypatch, *, target_start_exit: int = 0):
+def _execution_fixture(
+    tmp_path: Path,
+    monkeypatch,
+    *,
+    target_start_exit: int = 0,
+    target_health_exit: int = 0,
+    database_update: dict[str, object] | None = None,
+    migration_target: bool = False,
+):
     roots = _roots(tmp_path)
     source_root = roots.RELEASE_ROOT / "release-A"
     target_root = roots.RELEASE_ROOT / "release-B"
@@ -366,16 +436,23 @@ def _execution_fixture(tmp_path: Path, monkeypatch, *, target_start_exit: int = 
         release=SimpleNamespace(release_id="release-A"),
         raw_sha256="a" * 64,
     )
-    store.write_plan(job_id, {
+    plan = {
         "job_id": job_id, "actor_user_id": "actor-1", "source_release_id": "release-A",
         "source_pointer_sha256": "a" * 64, "source_manifest_sha256": "1" * 64,
         "target_release_id": "release-B", "target_manifest_sha256": "2" * 64,
         "target_inventory_sha256": "3" * 64, "target_payload_tree_sha256": "4" * 64,
-    })
+    }
+    if database_update is not None:
+        plan["database_update"] = {**database_update, "operation_id": job_id}
+    store.write_plan(job_id, plan)
     store.write_status(job_id, "UPDATING", actor_user_id="actor-1", result_code="SYSTEM_UPDATE_STARTED")
 
     def read_manifest(path: Path):
-        return _Manifest("release-A", "1" * 64) if "release-A" in str(path) else _Manifest("release-B", "2" * 64)
+        return (
+            _Manifest("release-A", "1" * 64, migration_target)
+            if "release-A" in str(path)
+            else _Manifest("release-B", "2" * 64, migration_target)
+        )
 
     def read_pointer(_path: Path):
         return pointer
@@ -390,6 +467,10 @@ def _execution_fixture(tmp_path: Path, monkeypatch, *, target_start_exit: int = 
         "enterprise.ops.update.mvp.verify_materialized_release",
         lambda *a, **k: SimpleNamespace(payload_tree_sha256="4" * 64),
     )
+    monkeypatch.setattr(
+        "enterprise.ops.update.mvp._database_update_plan",
+        lambda **_kwargs: plan.get("database_update") or {"mode": "same-schema-no-migration"},
+    )
     monkeypatch.setattr("enterprise.ops.update.mvp.read_current_release_result_from_state_root", read_pointer)
     monkeypatch.setattr("enterprise.ops.update.mvp.atomic_write_current_release", write_pointer)
     calls = []
@@ -398,6 +479,8 @@ def _execution_fixture(tmp_path: Path, monkeypatch, *, target_start_exit: int = 
         calls.append((root.name, command))
         if root.name == "release-B" and command == "start" and target_start_exit:
             return target_start_exit, {"code": "TARGET_START_BLOCKED"}
+        if root.name == "release-B" and command == "health" and target_health_exit:
+            return target_health_exit, {"code": "TARGET_HEALTH_BLOCKED"}
         return 0, {"status": "ok"}
 
     return roots, store, job_id, pointer, calls, launcher
@@ -422,6 +505,315 @@ def test_target_start_failure_rolls_pointer_back_and_restores_source(tmp_path: P
     ]
     status = store.read_status(job_id)
     assert status["state"] == "ROLLED_BACK" and status["result_code"] == "TARGET_START_BLOCKED"
+
+
+def _create_update_database(path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with closing(sqlite3.connect(path)) as conn:
+        conn.execute("CREATE TABLE records (id INTEGER PRIMARY KEY, value TEXT NOT NULL)")
+        conn.execute("INSERT INTO records (id, value) VALUES (1, 'preserved')")
+        conn.commit()
+        conn.execute("BEGIN IMMEDIATE")
+        initialize_schema_metadata_in_transaction(conn)
+        conn.commit()
+    return path
+
+
+def _update_migration_step(*, validation_result: bool = True) -> MigrationStep:
+    def apply(conn: sqlite3.Connection) -> None:
+        conn.execute("ALTER TABLE records ADD COLUMN label TEXT NOT NULL DEFAULT 'migrated'")
+
+    def validate(conn: sqlite3.Connection) -> bool:
+        columns = [str(row[1]) for row in conn.execute("PRAGMA table_info(records)")]
+        return validation_result and columns == ["id", "value", "label"]
+
+    return MigrationStep("update-data-1", 1, 2, "7" * 64, apply, validate)
+
+
+def _target_schema_sha256(database: Path, tmp_path: Path, step: MigrationStep) -> str:
+    probe = tmp_path / "target-schema-probe.db"
+    shutil.copyfile(database, probe)
+    with closing(sqlite3.connect(probe)) as conn:
+        step.apply_in_transaction(conn)
+        result = schema_snapshot_sha256(conn)
+        conn.rollback()
+        return result
+
+
+def _migration_update_plan(database: Path, tmp_path: Path, step: MigrationStep) -> dict[str, object]:
+    source = inspect_schema_metadata(database)
+    return {
+        "mode": "versioned-forward-migration",
+        "source_schema_version": 1,
+        "target_schema_version": 2,
+        "source_schema_sha256": source["schema_sha256"],
+        "target_schema_sha256": _target_schema_sha256(database, tmp_path, step),
+        "migration_registry_sha256": migration_registry_sha256((step,)),
+        "migration_ids": [step.migration_id],
+    }
+
+
+def test_database_update_plan_binds_release_evidence_registry_and_current_database(tmp_path: Path):
+    roots = _roots(tmp_path)
+    database = _create_update_database(roots.DATA_ROOT / "enterprise.db")
+    step = _update_migration_step()
+    target_schema = _target_schema_sha256(database, tmp_path, step)
+    registry_sha = migration_registry_sha256((step,))
+    source_schema = inspect_schema_metadata(database)["schema_sha256"]
+    for root, version, schema in (
+        (roots.RELEASE_ROOT / "release-A", 1, source_schema),
+        (roots.RELEASE_ROOT / "release-B", 2, target_schema),
+    ):
+        evidence = root / "release-evidence" / "database-schema.json"
+        evidence.parent.mkdir(parents=True)
+        evidence.write_text(json.dumps({
+            "schema_version": version,
+            "schema_objects_sha256": schema,
+            "migration_registry_sha256": registry_sha,
+            "versioned_migration_ids": [step.migration_id],
+        }), encoding="utf-8")
+    plan = _database_update_plan(
+        source_root=roots.RELEASE_ROOT / "release-A",
+        target_root=roots.RELEASE_ROOT / "release-B",
+        source_manifest=_Manifest("release-A", "1" * 64, True),
+        target_manifest=_Manifest("release-B", "2" * 64, True),
+        database_path=database,
+        registry=(step,),
+        operation_id="a" * 32,
+    )
+    assert plan == {
+        "mode": "versioned-forward-migration",
+        "operation_id": "a" * 32,
+        "source_schema_version": 1,
+        "target_schema_version": 2,
+        "source_schema_sha256": source_schema,
+        "target_schema_sha256": target_schema,
+        "migration_registry_sha256": registry_sha,
+        "migration_ids": [step.migration_id],
+    }
+
+
+def test_same_schema_update_can_only_stage_an_append_only_future_registry(tmp_path: Path):
+    roots = _roots(tmp_path)
+    database = _create_update_database(roots.DATA_ROOT / "enterprise.db")
+    source_schema = inspect_schema_metadata(database)["schema_sha256"]
+    step = _update_migration_step()
+    source_registry_sha = migration_registry_sha256(())
+    target_registry_sha = migration_registry_sha256((step,))
+    for root, registry_sha, ids in (
+        (roots.RELEASE_ROOT / "release-A", source_registry_sha, []),
+        (roots.RELEASE_ROOT / "release-B", target_registry_sha, [step.migration_id]),
+    ):
+        evidence = root / "release-evidence" / "database-schema.json"
+        evidence.parent.mkdir(parents=True)
+        evidence.write_text(json.dumps({
+            "schema_version": 1,
+            "schema_objects_sha256": source_schema,
+            "migration_registry_sha256": registry_sha,
+            "versioned_migration_ids": ids,
+        }), encoding="utf-8")
+    plan = _database_update_plan(
+        source_root=roots.RELEASE_ROOT / "release-A",
+        target_root=roots.RELEASE_ROOT / "release-B",
+        source_manifest=_Manifest("release-A", "1" * 64, registry_stage=True),
+        target_manifest=_Manifest("release-B", "2" * 64, registry_stage=True),
+        database_path=database,
+        registry=(),
+        operation_id="a" * 32,
+    )
+    assert plan == {
+        "mode": "same-schema-no-migration",
+        "registry_staged": True,
+        "target_migration_registry_sha256": target_registry_sha,
+        "target_versioned_migration_ids": [step.migration_id],
+    }
+
+
+def test_versioned_update_migrates_before_switch_and_persists_bounded_result(tmp_path: Path, monkeypatch):
+    roots = _roots(tmp_path)
+    database = _create_update_database(roots.DATA_ROOT / "enterprise.db")
+    step = _update_migration_step()
+    database_update = _migration_update_plan(database, tmp_path, step)
+    roots, store, job_id, pointer, calls, launcher = _execution_fixture(
+        tmp_path,
+        monkeypatch,
+        database_update=database_update,
+        migration_target=True,
+    )
+    assert execute_update_job(
+        roots,
+        job_id,
+        launcher=launcher,
+        database_path=database,
+        migration_registry=(step,),
+    ) == 0
+    assert pointer.release.release_id == "release-B"
+    assert calls == [("release-B", "start"), ("release-B", "health")]
+    assert inspect_schema_metadata(database)["schema_version"] == 2
+    result = store.read_database_result(job_id)
+    assert result["migration_ids"] == [step.migration_id]
+    assert result["backup_manifest_relative_path"].startswith("system-update/")
+    assert str(tmp_path) not in json.dumps(result)
+    assert store.read_status(job_id)["state"] == "SUCCEEDED"
+
+
+def test_execution_rereads_database_evidence_and_rejects_plan_drift(tmp_path: Path, monkeypatch):
+    roots = _roots(tmp_path)
+    database = _create_update_database(roots.DATA_ROOT / "enterprise.db")
+    step = _update_migration_step()
+    database_update = _migration_update_plan(database, tmp_path, step)
+    roots, store, job_id, pointer, calls, launcher = _execution_fixture(
+        tmp_path,
+        monkeypatch,
+        database_update=database_update,
+        migration_target=True,
+    )
+    monkeypatch.setattr(
+        "enterprise.ops.update.mvp._database_update_plan",
+        lambda **_kwargs: {**store.read_plan(job_id)["database_update"], "target_schema_sha256": "f" * 64},
+    )
+    assert execute_update_job(
+        roots,
+        job_id,
+        launcher=launcher,
+        database_path=database,
+        migration_registry=(step,),
+    ) == 2
+    assert pointer.release.release_id == "release-A"
+    assert inspect_schema_metadata(database)["schema_version"] == 1
+    assert calls == [("release-A", "start"), ("release-A", "health")]
+    assert store.read_status(job_id)["result_code"] == "SYSTEM_UPDATE_DATABASE_MIGRATION_PLAN_INVALID"
+
+
+def test_migration_validation_failure_keeps_source_database_and_restarts_source(tmp_path: Path, monkeypatch):
+    roots = _roots(tmp_path)
+    database = _create_update_database(roots.DATA_ROOT / "enterprise.db")
+    step = _update_migration_step(validation_result=False)
+    database_update = _migration_update_plan(database, tmp_path, step)
+    roots, store, job_id, pointer, calls, launcher = _execution_fixture(
+        tmp_path,
+        monkeypatch,
+        database_update=database_update,
+        migration_target=True,
+    )
+    assert execute_update_job(
+        roots,
+        job_id,
+        launcher=launcher,
+        database_path=database,
+        migration_registry=(step,),
+    ) == 2
+    assert pointer.release.release_id == "release-A"
+    assert inspect_schema_metadata(database)["schema_version"] == 1
+    assert calls == [("release-A", "start"), ("release-A", "health")]
+    assert store.read_status(job_id)["result_code"] == "DATA_MIGRATION_VALIDATION_FAILED"
+
+
+def test_post_commit_migration_error_never_restarts_source_on_target_schema(tmp_path: Path, monkeypatch):
+    from enterprise.migrations.versioned import apply_versioned_migrations
+
+    roots = _roots(tmp_path)
+    database = _create_update_database(roots.DATA_ROOT / "enterprise.db")
+    step = _update_migration_step()
+    database_update = _migration_update_plan(database, tmp_path, step)
+    roots, store, job_id, pointer, calls, launcher = _execution_fixture(
+        tmp_path,
+        monkeypatch,
+        database_update=database_update,
+        migration_target=True,
+    )
+
+    def fail_after_commit(*args, **kwargs):
+        apply_versioned_migrations(*args, **kwargs)
+        raise DataMigrationError("DATA_MIGRATION_POST_COMMIT_VALIDATION_FAILED")
+
+    monkeypatch.setattr("enterprise.ops.update.mvp.apply_versioned_migrations", fail_after_commit)
+    assert execute_update_job(
+        roots,
+        job_id,
+        launcher=launcher,
+        database_path=database,
+        migration_registry=(step,),
+    ) == 2
+    assert inspect_schema_metadata(database)["schema_version"] == 2
+    assert pointer.release.release_id == "release-A"
+    assert calls == []
+    assert store.read_status(job_id)["state"] == "RECOVERY_REQUIRED"
+
+
+@pytest.mark.parametrize("failure_kind", ["start", "health"])
+def test_target_failure_restores_database_before_restarting_source(tmp_path: Path, monkeypatch, failure_kind: str):
+    roots = _roots(tmp_path)
+    database = _create_update_database(roots.DATA_ROOT / "enterprise.db")
+    step = _update_migration_step()
+    database_update = _migration_update_plan(database, tmp_path, step)
+    roots, store, job_id, pointer, calls, launcher = _execution_fixture(
+        tmp_path,
+        monkeypatch,
+        target_start_exit=2 if failure_kind == "start" else 0,
+        target_health_exit=2 if failure_kind == "health" else 0,
+        database_update=database_update,
+        migration_target=True,
+    )
+    assert execute_update_job(
+        roots,
+        job_id,
+        launcher=launcher,
+        database_path=database,
+        migration_registry=(step,),
+    ) == 2
+    observed_status = store.read_status(job_id)
+    assert pointer.release.release_id == "release-A", (observed_status, calls)
+    assert inspect_schema_metadata(database)["schema_version"] == 1
+    status = observed_status
+    assert status["state"] == "ROLLED_BACK"
+    assert status["database_restored"] is True
+    assert calls[-2:] == [("release-A", "start"), ("release-A", "health")]
+
+
+def test_restore_failure_is_durable_recovery_required_and_not_retried(tmp_path: Path, monkeypatch):
+    roots = _roots(tmp_path)
+    database = _create_update_database(roots.DATA_ROOT / "enterprise.db")
+    step = _update_migration_step()
+    database_update = _migration_update_plan(database, tmp_path, step)
+    roots, store, job_id, pointer, calls, launcher = _execution_fixture(
+        tmp_path,
+        monkeypatch,
+        target_start_exit=2,
+        database_update=database_update,
+        migration_target=True,
+    )
+    original = __import__(
+        "enterprise.migrations.versioned",
+        fromlist=["finalize_release_database_validation"],
+    ).finalize_release_database_validation
+
+    def fail_restore(path, result, *, validation_result):
+        if validation_result != "healthy":
+            raise DataMigrationError("DATA_RESTORE_FAILED", database_may_have_changed=True, reread_required=True)
+        return original(path, result, validation_result=validation_result)
+
+    monkeypatch.setattr("enterprise.ops.update.mvp.finalize_release_database_validation", fail_restore)
+    assert execute_update_job(
+        roots,
+        job_id,
+        launcher=launcher,
+        database_path=database,
+        migration_registry=(step,),
+    ) == 2
+    status = store.read_status(job_id)
+    assert status["state"] == "RECOVERY_REQUIRED"
+    assert status["recovery_required"] is True
+    assert status["result_code"] == "DATA_RESTORE_FAILED"
+    assert pointer.release.release_id == "release-B"
+    with pytest.raises(UpdateMvpError, match="SYSTEM_UPDATE_JOB_NOT_EXECUTABLE"):
+        execute_update_job(
+            roots,
+            job_id,
+            launcher=launcher,
+            database_path=database,
+            migration_registry=(step,),
+        )
 
 
 def test_pre_switch_verification_failure_is_failed_without_false_rollback(tmp_path: Path, monkeypatch):

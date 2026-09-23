@@ -55,6 +55,7 @@
 - `docs/security/`：已经实施或审查的安全工作。
 - `docs/data/`：数据库 migration、backup、restore 基础。
   - [DATA-MVP-1 独立复核记录](./data/DATA-MVP-1-INDEPENDENT-REVIEW-2026-09.md)
+  - [UPDATE-DATA-1 更新中心迁移/恢复集成](./data/UPDATE-DATA-1-UPDATE-CENTER-MIGRATION-INTEGRATION-2026-09.md)
 - `docs/ops/`：Release、Runtime、更新、安装和现场收敛记录。
 - `docs/env/`：可复现 Runtime、路径根、入口和环境验证。
 - `docs/env/evidence/`：只读验收证据，不作为当前任务入口。

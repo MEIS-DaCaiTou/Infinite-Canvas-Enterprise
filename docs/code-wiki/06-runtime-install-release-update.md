@@ -114,6 +114,7 @@ sequenceDiagram
     participant GH as GitHub Releases
     participant ST as Staging/Job Store
     participant RT as Runtime
+    participant DB as SQLite / backup
     participant PTR as current pointer
 
     UI->>API: check
@@ -125,9 +126,11 @@ sequenceDiagram
     API->>ST: reserve, state=UPDATING
     API->>RT: job-id-only handoff
     RT->>RT: controlled stop
+    RT->>DB: re-read plan, backup, migrate, verify schema
     RT->>PTR: compare and switch
     RT->>RT: start target and health check
     alt target fails
+        RT->>DB: restore expected-current backup
         RT->>PTR: restore source pointer
         RT->>RT: restart source release
     end
@@ -139,14 +142,15 @@ sequenceDiagram
 - `SafeHttpClient`：限定 HTTPS、Host 和重定向；跨 Host 去除敏感请求头。
 - `atomic_download()`：限制大小，边下载边哈希，完成后原子发布。
 - `UpdateJobStore`：持久化 plan/status/events，限制单个活动执行保留。
-- `UpdateMvpService`：准备并验证同 Schema 更新。
-- `execute_update_job()`：pointer 切换、启动/健康和回滚。
+- `UpdateMvpService`：准备并验证同 Schema或显式版本化迁移更新，持久化数据库计划。
+- `execute_update_job()`：重读迁移证据、备份/迁移、pointer 切换、启动/健康、数据库恢复和代码回滚。
 - `request_portable_update_handoff()`：只把 job ID 交给 Supervisor 控制通道。
 
 ## 8. 更新限制
 
-- 当前在线更新只支持相同数据库契约、无需迁移的单跳升级。
-- DATA-MVP-1 的迁移/恢复原语尚未完整接入 Update Center。
-- 更新回滚主要恢复代码 Release/current pointer；不能把它描述成任意数据迁移回滚。
+- Update Center 支持相同 Schema 单跳升级，以及经过 registry、Manifest v2 和当前数据库身份共同约束的版本化前向迁移。
+- 版本化迁移在 pointer 切换前创建一致性备份；目标启动或健康失败时按 expected-current 约束恢复数据库、pointer 和 source Runtime。
+- `RECOVERY_REQUIRED` 表示无法证明三者已经恢复一致，不能自动重试或伪装成普通失败。
+- 尚无首个真实 schema-changing 正式 Release、客户数据迁移批准或通用 Production Baseline。
 - 更新中心只消费完整 Manifest v2 Release，不消费 GitHub 源码 ZIP。
 - 诊断输出有界并脱敏，但仍应按内部运维材料处理。

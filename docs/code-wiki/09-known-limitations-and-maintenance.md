@@ -10,7 +10,7 @@
 | 架构 | 单机模块化单体、双进程 | 微服务或可水平扩展集群 |
 | 前端 | 原生大型脚本 | React/TypeScript 组件化应用 |
 | 权限 | 固定三角色 + 功能开关 + owner map | 动态 RBAC、组织层级和部门租户 |
-| 更新 | 同 Schema Manifest v2 更新 | 任意数据库迁移或跨版本自动升级 |
+| 更新 | 同 Schema更新 + 受约束的版本化 migration/backup/restore 引擎 | 任意脚本迁移、无感跨版本升级或生产批准 |
 | Runtime | Windows portable lifecycle | Linux/Kubernetes 生产编排 |
 | 测试 | 59 个 Python 测试文件；收敛分支增加最小 GitHub Actions | CI 通过即可替代生产验收 |
 | `2026.09.4` | 独立发布标签 | 已合并 `main` 或永久 Production Baseline |
@@ -39,7 +39,7 @@ SQLite 适合当前单机范围，但高并发写、跨进程长事务和多节�
 
 ## 3. 发布线分叉风险
 
-本次核验仍有三个不同基线：`origin/main`、主线收敛分支、`2026.09.4` 标签。收敛分支已经移植现场有效代码，但 PR 合并前分叉仍存在。维护时必须：
+Runtime 主线收敛和 DATA-MVP-1 独立复核已经进入 `origin/main`；`2026.09.4` 客户热修标签仍是独立发布历史，不等于当前主线。维护时必须：
 
 9 月 3 日的两条旧版热修分支仅作本地历史证据，不是第四条可直接合并的主线；处置记录见 [历史分支记录](../ops/HISTORICAL-RUNTIME-HOTFIX-BRANCHES-2026-09.md)。
 
@@ -50,7 +50,7 @@ SQLite 适合当前单机范围，但高并发写、跨进程长事务和多节�
 
 ## 4. 在线更新缺口
 
-- 数据库 migration/restore 尚未接入 Update Center。
+- UPDATE-DATA-1 已接入受约束的 migration/restore 引擎，但首个真实 schema-changing Release 与 #115 演练尚未完成。
 - Release 必须具备完整三件套，源码 ZIP 不能替代。
 - 网络代理与 GitHub 可达性可能使在线更新失败，需要保留离线升级兜底。
 - 管理后台能打开不表示具备 `system_update` 权限。

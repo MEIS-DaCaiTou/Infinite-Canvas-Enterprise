@@ -515,11 +515,20 @@ def _validate_manifest(payload: object, raw: bytes) -> ReleaseManifestV2:
         and database["rollback_classification"] == "code-release-pointer"
         and database["ops3b_activation_eligible"] is True
     )
+    versioned_update_database_contract = (
+        database["migration_compatibility"] == "versioned-forward-migration"
+        and database["rollback_classification"] == "database-backup-restore"
+        and database["ops3b_activation_eligible"] is True
+    )
     if (
         database["schema_id"] != "enterprise-database-contract-v1"
         or type(database["migration_ids"]) is not list
         or any(not isinstance(item, str) or not item for item in database["migration_ids"])
-        or not (inactive_database_contract or online_update_database_contract)
+        or not (
+            inactive_database_contract
+            or online_update_database_contract
+            or versioned_update_database_contract
+        )
     ):
         raise ReleaseManifestV2Error("RELEASE_DATABASE_CONTRACT_INVALID")
     compatibility = sections["compatibility"]
