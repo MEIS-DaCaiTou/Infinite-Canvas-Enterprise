@@ -136,7 +136,7 @@ print('paid submit stop-loss passed')
     completed = subprocess.run(
         [sys.executable, "-c", script, str(ROOT), str(install), str(tmp_path / "local")],
         cwd=ROOT, capture_output=True, text=True,
-        env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"), timeout=40,
+        env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1", PYTHONIOENCODING="cp1252"), timeout=40,
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert "paid submit stop-loss passed" in completed.stdout
