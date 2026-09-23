@@ -85,6 +85,8 @@ Manifest v2 现在接受两类可执行数据库契约：
 
 完整企业套件和 CP314 Runtime 专项以 PR #121 的最终 GitHub Actions 为准，不在检查完成前预写为通过。
 
+合并后核验（2026-09-23）：[PR #121](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/121) 已合并至 `main@1b4056cc451dfee2fc63efd7e85d1ccab82340b7`，最终提交为 `bd3968847bc9445068181b0c1fde905686b2fb46`；[GitHub Actions run 35807942505](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/35807942505) 中 Windows Python 3.11 企业测试与 CP314 Runtime 检查均通过。最终补入的故障注入验证了迁移事务已提交、但结果尚未返回时不得在目标 Schema 上启动旧版；`enterprise/tests/test_update_mvp_1.py` 的定向检查为 `36 passed`。这仍不代表已完成客户升级或正式发布。
+
 ## 7. 后续边界
 
 本任务完成迁移执行引擎接线，但不等于在线升级产品体验已经完成。下一阶段仍需：
@@ -93,4 +95,3 @@ Manifest v2 现在接受两类可执行数据库契约：
 2. 面向用户的维护通知、任务排空、跨重启进度和恢复 UX；
 3. 首个真实 schema-changing Release 的 migration step、fixture 与兼容范围审查；
 4. 离线升级兜底和正式 Release 签名/不可变资产治理。
-
