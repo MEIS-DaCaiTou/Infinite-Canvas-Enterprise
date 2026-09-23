@@ -17,6 +17,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from enterprise.ops.update.diagnostics import diagnostics_zip, recent_diagnostics
 from enterprise.ops.update.handoff import _emit_terminal_audit, _finalize_terminal_failure
 from enterprise.ops.update.mvp import (
+    PreparedUpdate,
     UpdateJobStore,
     UpdateMvpError,
     _database_contract_compatible,
@@ -116,6 +117,17 @@ def test_prepare_sync_workflow_does_not_block_gateway_event_loop(monkeypatch):
     assert worker_thread_ids and worker_thread_ids[0] != event_loop_thread_id
     assert prepared.status_code == 200
     assert prepared.json() == {"state": "READY", "job_id": "a" * 32}
+
+
+@pytest.mark.parametrize("mode", ["same-schema-no-migration", "versioned-forward-migration"])
+def test_prepared_update_exposes_database_mode_without_plan_details(mode: str):
+    prepared = PreparedUpdate(
+        "a" * 32, "release-A", "release-B", "b" * 64, "c" * 64,
+        mode,
+    )
+    public = prepared.public()
+    assert public["database_update_mode"] == mode
+    assert "migration_ids" not in public
 
 
 def _eligible_manifest():
@@ -245,6 +257,39 @@ def test_one_active_update_reservation_blocks_a_second_job(tmp_path: Path):
         store.reserve_execution(first)
     handle = store.acquire_execution_lock(first)
     store.release_execution_lock(handle, first)
+
+
+def test_recovery_required_blocks_prepare_and_new_execution(tmp_path: Path, monkeypatch):
+    from enterprise import update_api
+
+    roots = _roots(tmp_path)
+    store = UpdateJobStore(roots)
+    old_job, _ = store.create("actor-1")
+    store.write_status(
+        old_job, "RECOVERY_REQUIRED", actor_user_id="actor-1",
+        result_code="SYSTEM_UPDATE_DATABASE_RESTORE_INCOMPLETE",
+    )
+    new_job, _ = store.create("actor-2")
+    monkeypatch.setattr(update_api, "PATH_ROOTS", roots)
+    monkeypatch.setattr(update_api, "_provider", lambda: pytest.fail("provider must not be called"))
+    with pytest.raises(UpdateMvpError, match="SYSTEM_UPDATE_RECOVERY_REQUIRED") as prepare_error:
+        update_api._prepare_update_sync("actor-2", "fixture-release")
+    assert prepare_error.value.status_code == 409
+    with pytest.raises(UpdateMvpError, match="SYSTEM_UPDATE_RECOVERY_REQUIRED") as execute_error:
+        store.reserve_execution(new_job)
+    assert execute_error.value.status_code == 409
+    assert not store.lock_path.exists()
+
+
+def test_unverifiable_prior_job_state_blocks_new_execution(tmp_path: Path):
+    store = UpdateJobStore(_roots(tmp_path))
+    old_job, old_root = store.create("actor-1")
+    (old_root / "status.json").write_text("{broken", encoding="utf-8")
+    new_job, _ = store.create("actor-2")
+    with pytest.raises(UpdateMvpError, match="SYSTEM_UPDATE_RECOVERY_STATE_UNVERIFIED") as error:
+        store.reserve_execution(new_job)
+    assert error.value.status_code == 409
+    assert not store.lock_path.exists()
 
 
 def _reserved_worker_job(tmp_path: Path):

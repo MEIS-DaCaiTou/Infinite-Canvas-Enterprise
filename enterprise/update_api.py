@@ -45,11 +45,11 @@ router = APIRouter()
 def _error(exc: Exception) -> None:
     code = str(getattr(exc, "code", getattr(exc, "detail_code", "SYSTEM_UPDATE_FAILED")))
     status = int(getattr(exc, "status_code", 400))
-    message = (
-        "无法验证此版本的数据库迁移与恢复契约，已拒绝准备升级。"
-        if code == "SYSTEM_UPDATE_DATABASE_CONTRACT_UNSUPPORTED"
-        else "The update operation could not be completed"
-    )
+    message = {
+        "SYSTEM_UPDATE_DATABASE_CONTRACT_UNSUPPORTED": "无法验证此版本的数据库迁移与恢复契约，已拒绝准备升级。",
+        "SYSTEM_UPDATE_RECOVERY_REQUIRED": "上一升级作业仍需人工恢复，已拒绝再次升级。",
+        "SYSTEM_UPDATE_RECOVERY_STATE_UNVERIFIED": "无法核验既有升级作业的恢复状态，已拒绝再次升级。",
+    }.get(code, "The update operation could not be completed")
     raise HTTPException(status_code=status, detail={"code": code, "message": message}) from exc
 
 
@@ -152,6 +152,7 @@ async def prepare_update(request: Request):
 
 def _prepare_update_sync(actor_user_id: str, provider_release_id: str) -> dict[str, object]:
     """Complete one prepare workflow outside the Gateway asyncio event loop."""
+    UpdateJobStore(PATH_ROOTS).assert_no_unresolved_recovery()
     provider = _provider()
     metadata = _metadata_by_id(provider, provider_release_id)
     incoming = PATH_ROOTS.STAGING_ROOT / "update-mvp" / "incoming" / uuid.uuid4().hex

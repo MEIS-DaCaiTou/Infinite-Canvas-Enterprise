@@ -298,6 +298,25 @@ class UpdateJobStore:
         except OSError as exc:
             raise UpdateMvpError("SYSTEM_UPDATE_EVENT_WRITE_FAILED", status_code=500) from exc
 
+    def assert_no_unresolved_recovery(self) -> None:
+        """A terminal recovery warning outlives the active-job lock."""
+        self.initialize()
+        try:
+            for root in self.jobs_root.iterdir():
+                if not JOB_ID_RE.fullmatch(root.name):
+                    continue
+                assert_no_reparse_ancestors(root)
+                if not root.is_dir():
+                    raise UpdateMvpError("SYSTEM_UPDATE_RECOVERY_STATE_UNVERIFIED", status_code=409)
+                try:
+                    status = self.read_status(root.name)
+                except UpdateMvpError as exc:
+                    raise UpdateMvpError("SYSTEM_UPDATE_RECOVERY_STATE_UNVERIFIED", status_code=409) from exc
+                if status["state"] == "RECOVERY_REQUIRED":
+                    raise UpdateMvpError("SYSTEM_UPDATE_RECOVERY_REQUIRED", status_code=409)
+        except (OSError, PathSafetyError) as exc:
+            raise UpdateMvpError("SYSTEM_UPDATE_RECOVERY_STATE_UNVERIFIED", status_code=409) from exc
+
     def reserve_execution(self, job_id: str) -> None:
         """Create the sole API-side reservation; an existing lock always wins.
 
@@ -307,6 +326,7 @@ class UpdateJobStore:
         a handoff.
         """
         self.initialize()
+        self.assert_no_unresolved_recovery()
         try:
             handle = self.lock_path.open("x+b")
         except FileExistsError as exc:
@@ -527,6 +547,7 @@ class PreparedUpdate:
     target_release_id: str
     target_manifest_sha256: str
     target_payload_tree_sha256: str
+    database_update_mode: str
 
     def public(self) -> dict[str, str]:
         return {
@@ -535,6 +556,7 @@ class PreparedUpdate:
             "target_release_id": self.target_release_id,
             "target_manifest_sha256": self.target_manifest_sha256,
             "target_payload_tree_sha256": self.target_payload_tree_sha256,
+            "database_update_mode": self.database_update_mode,
         }
 
 
@@ -630,9 +652,10 @@ class UpdateMvpService:
                 source_release_id=source_manifest.release_id,
                 target_release_id=target_manifest.release_id,
                 plan_sha256=plan_sha,
+                database_update_mode=database_update["mode"],
             )
             self.store.append_event(job_id, "READY", "SYSTEM_UPDATE_READY", source_release_id=source_manifest.release_id, target_release_id=target_manifest.release_id)
-            return PreparedUpdate(job_id, source_manifest.release_id, target_manifest.release_id, target_manifest.raw_sha256, verification.payload_tree_sha256)
+            return PreparedUpdate(job_id, source_manifest.release_id, target_manifest.release_id, target_manifest.raw_sha256, verification.payload_tree_sha256, database_update["mode"])
         except Exception as exc:
             if partial is not None:
                 _remove_owned_tree(partial, partial_identity)
