@@ -17,6 +17,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from enterprise.ops.update.diagnostics import diagnostics_zip, recent_diagnostics
 from enterprise.ops.update.handoff import _emit_terminal_audit, _finalize_terminal_failure
 from enterprise.ops.update.mvp import (
+    PreparedUpdate,
     UpdateJobStore,
     UpdateMvpError,
     _database_contract_compatible,
@@ -116,6 +117,17 @@ def test_prepare_sync_workflow_does_not_block_gateway_event_loop(monkeypatch):
     assert worker_thread_ids and worker_thread_ids[0] != event_loop_thread_id
     assert prepared.status_code == 200
     assert prepared.json() == {"state": "READY", "job_id": "a" * 32}
+
+
+@pytest.mark.parametrize("mode", ["same-schema-no-migration", "versioned-forward-migration"])
+def test_prepared_update_exposes_database_mode_without_plan_details(mode: str):
+    prepared = PreparedUpdate(
+        "a" * 32, "release-A", "release-B", "b" * 64, "c" * 64,
+        mode,
+    )
+    public = prepared.public()
+    assert public["database_update_mode"] == mode
+    assert "migration_ids" not in public
 
 
 def _eligible_manifest():

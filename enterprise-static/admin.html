@@ -60,13 +60,13 @@
     .page-head .sub { margin-top: 8px; color: var(--muted); font-size: 12.5px; line-height: 1.55; font-weight: 600; }
 
     /* ── 顶部操作栏 ── */
-    .page-actions { display: flex; gap: 8px; align-items: center; }
+    .page-actions { display: flex; gap: 8px; align-items: center; flex-wrap:wrap; }
     .page-actions form { margin: 0; }
     .action-btn {
       height: 36px; padding: 0 14px; border-radius: 10px;
       font-size: 12.5px; font-weight: 800; display: inline-flex; align-items: center; gap: 6px;
       border: 1px solid var(--line); background: var(--panel); color: var(--text);
-      transition: all .15s ease;
+      transition: all .15s ease; white-space:nowrap;
     }
     .action-btn:hover { border-color: var(--text); }
     .action-btn.primary { background: var(--text); color: var(--bg); border-color: var(--text); }
@@ -267,8 +267,9 @@
     #toast.error   { background: var(--panel); border: 1px solid rgba(239,68,68,.3);  color: #ef4444; box-shadow: 0 8px 24px rgba(15,23,42,.1); }
 
     /* ── Tab 导航 ── */
-    .tabs { display: flex; gap: 4px; margin-bottom: 24px; border-bottom: 1px solid var(--line); padding-bottom: 0; }
+    .tabs { display: flex; gap: 4px; margin-bottom: 24px; border-bottom: 1px solid var(--line); padding-bottom: 0; overflow-x:auto; }
     .tab-btn {
+      flex:0 0 auto; white-space:nowrap;
       padding: 10px 18px; border-radius: 10px 10px 0 0; font-size: 12.5px; font-weight: 800;
       border: 1px solid transparent; border-bottom: none; cursor: pointer;
       color: var(--muted); background: transparent; transition: all .15s;
@@ -292,7 +293,10 @@
     .update-card h3 { margin:0 0 8px; font-size:15px; }
     .update-card p { color:var(--muted); font-size:12px; line-height:1.6; }
     .update-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:14px; }
+    .update-card .action-btn:disabled { opacity:.45; cursor:not-allowed; }
+    .update-card .action-btn:disabled:hover { opacity:.45; border-color:var(--line); }
     .update-kv { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:11px; line-height:1.7; white-space:pre-wrap; overflow-wrap:anywhere; }
+    .update-recovery-notice { margin-top:12px; padding:11px 13px; border:1px solid rgba(239,68,68,.35); border-radius:10px; background:rgba(239,68,68,.07); color:#dc2626; font-size:12px; font-weight:800; line-height:1.6; }
     @media(max-width:820px){ .update-grid{grid-template-columns:1fr;} }
   </style>
 </head>
@@ -528,8 +532,9 @@
         </section>
         <section class="update-card">
           <h3>升级作业</h3>
-          <p>执行后页面连接会暂时断开。可使用 Job ID 重连查询；目标启动或健康检查失败会自动回滚到源 Release。</p>
+          <p>执行后页面连接会暂时断开。可使用 Job ID 重连查询；失败时会尝试回滚和恢复，无法确认恢复成功则停止并要求人工处理。</p>
           <div id="updateJobSummary" class="update-kv">暂无准备完成的作业</div>
+          <div id="updateRecoveryNotice" class="update-recovery-notice" role="alert" style="display:none;">需要人工恢复：请勿再次执行升级。请导出诊断 ZIP，联系运维人员核对当前版本和数据库备份。</div>
           <div class="update-actions update-dangerous">
             <button class="action-btn primary" id="executeUpdateBtn" onclick="openUpdateConfirm()" disabled>确认切换并重启</button>
             <button class="action-btn" onclick="refreshUpdateJob()">刷新状态</button>
@@ -706,6 +711,8 @@
   let _updateAccess = null;
   let _latestUpdate = null;
   let _preparedUpdate = null;
+  let _updatePollTimer = null;
+  const UPDATE_ACTIVE_STATES = new Set(['PREPARING', 'UPDATING', 'MIGRATING', 'RESTARTING', 'VERIFYING', 'ROLLING_BACK']);
   const _paginationState = {
     member: { page: 1, pageSize: 25 },
     projects: { page: 1, pageSize: 25 },
@@ -1523,7 +1530,7 @@
         : '系统升级仅允许超级管理员操作，且全局总开关必须开启。危险操作已隐藏；后端同样会返回 403。';
       document.querySelectorAll('.update-dangerous').forEach(el => { el.style.display = allowed ? 'flex' : 'none'; });
       const rememberedJob = sessionStorage.getItem('enterprise_update_job_id');
-      if (rememberedJob && /^[0-9a-f]{32}$/.test(rememberedJob)) {
+      if (allowed && rememberedJob && /^[0-9a-f]{32}$/.test(rememberedJob)) {
         _preparedUpdate = { job_id: rememberedJob };
         await refreshUpdateJob();
       }
@@ -1546,7 +1553,7 @@
         _latestUpdate ? `发布时间：${_latestUpdate.published_at}` : '',
         _latestUpdate && _latestUpdate.release_notes ? `更新说明：${_latestUpdate.release_notes}` : '',
       ].filter(Boolean).join('\n');
-      document.getElementById('prepareUpdateBtn').disabled = !_latestUpdate;
+      document.getElementById('prepareUpdateBtn').disabled = !_latestUpdate || _preparedUpdate?.state === 'RECOVERY_REQUIRED';
     } catch (e) {
       target.textContent = '检查失败';
       showToast('检查更新失败: ' + e.message, 'error');
@@ -1554,7 +1561,7 @@
   }
 
   async function prepareSystemUpdate() {
-    if (!_latestUpdate) return;
+    if (!_latestUpdate || _preparedUpdate?.state === 'RECOVERY_REQUIRED') return;
     const button = document.getElementById('prepareUpdateBtn');
     button.disabled = true;
     try {
@@ -1568,7 +1575,7 @@
         `状态：${_preparedUpdate.state}`,
         `源 Release：${_preparedUpdate.source_release_id}`,
         `目标 Release：${_preparedUpdate.target_release_id}`,
-        '兼容性：同 Schema / 无迁移（可在线切换）',
+        `数据库：${_preparedUpdate.database_update_mode === 'versioned-forward-migration' ? '受控迁移，升级前备份' : _preparedUpdate.database_update_mode === 'same-schema-no-migration' ? '结构不变，无迁移' : '契约已校验，详情见作业状态'}`,
         `Manifest SHA-256：${_preparedUpdate.target_manifest_sha256}`,
       ].join('\n');
       document.getElementById('executeUpdateBtn').disabled = false;
@@ -1581,8 +1588,13 @@
 
   function openUpdateConfirm() {
     if (!_preparedUpdate) return;
+    const databaseSummary = _preparedUpdate.database_update_mode === 'versioned-forward-migration'
+      ? '数据库将先备份再执行受控迁移'
+      : _preparedUpdate.database_update_mode === 'same-schema-no-migration'
+        ? '数据库结构不变，无迁移'
+        : '数据库契约以已校验的作业计划为准';
     document.getElementById('updateConfirmSummary').textContent =
-      `将从 ${_preparedUpdate.source_release_id} 切换到 ${_preparedUpdate.target_release_id}。服务会重启；失败时自动回滚。`;
+      `将从 ${_preparedUpdate.source_release_id} 切换到 ${_preparedUpdate.target_release_id}。${databaseSummary}。服务会重启；失败时将尝试恢复，恢复结果无法确认时需人工处理。`;
     document.getElementById('updateConfirmPassword').value = '';
     document.getElementById('updateConfirmError').textContent = '';
     document.getElementById('updateConfirmModal').classList.add('show');
@@ -1600,20 +1612,28 @@
       const data = await apiFetch(`/enterprise/api/update-mvp/jobs/${encodeURIComponent(_preparedUpdate.job_id)}/execute`, {
         method: 'POST', body: JSON.stringify({ password }),
       });
+      _preparedUpdate = { ..._preparedUpdate, ...data };
       sessionStorage.setItem('enterprise_update_job_id', data.job_id);
       document.getElementById('updateConfirmPassword').value = '';
       closeUpdateConfirm();
       document.getElementById('updateJobSummary').textContent = `Job ID：${data.job_id}\n状态：${data.state}\n页面连接可能暂时中断，请稍后刷新状态。`;
       showToast('升级交接已启动');
-      setTimeout(refreshUpdateJob, 5000);
+      scheduleUpdateJobRefresh();
     } catch (e) {
       document.getElementById('updateConfirmPassword').value = '';
       document.getElementById('updateConfirmError').textContent = e.message;
     }
   }
 
+  function scheduleUpdateJobRefresh() {
+    clearTimeout(_updatePollTimer);
+    _updatePollTimer = setTimeout(refreshUpdateJob, 5000);
+  }
+
   async function refreshUpdateJob() {
     if (!_preparedUpdate) return;
+    clearTimeout(_updatePollTimer);
+    _updatePollTimer = null;
     try {
       const data = await apiFetch(`/enterprise/api/update-mvp/jobs/${encodeURIComponent(_preparedUpdate.job_id)}`);
       _preparedUpdate = { ..._preparedUpdate, ...data };
@@ -1623,10 +1643,15 @@
         `更新时间：${data.updated_at}`,
       ].join('\n');
       document.getElementById('executeUpdateBtn').disabled = data.state !== 'READY';
-      if (!['SUCCEEDED','ROLLED_BACK','FAILED'].includes(data.state)) setTimeout(refreshUpdateJob, 5000);
+      document.getElementById('updateRecoveryNotice').style.display = data.state === 'RECOVERY_REQUIRED' ? 'block' : 'none';
+      if (data.state === 'RECOVERY_REQUIRED') document.getElementById('prepareUpdateBtn').disabled = true;
+      if (UPDATE_ACTIVE_STATES.has(data.state)) scheduleUpdateJobRefresh();
     } catch (e) {
-      document.getElementById('updateJobSummary').textContent += '\n连接暂不可用；可稍后重新打开页面并使用同一 Job ID 查询。';
-      setTimeout(refreshUpdateJob, 5000);
+      const summary = document.getElementById('updateJobSummary');
+      if (!summary.textContent.includes('连接暂不可用')) {
+        summary.textContent += '\n连接暂不可用；可稍后重新打开页面并使用同一 Job ID 查询。';
+      }
+      if (!_preparedUpdate.state || UPDATE_ACTIVE_STATES.has(_preparedUpdate.state)) scheduleUpdateJobRefresh();
     }
   }
 

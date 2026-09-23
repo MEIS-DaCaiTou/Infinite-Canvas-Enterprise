@@ -527,6 +527,7 @@ class PreparedUpdate:
     target_release_id: str
     target_manifest_sha256: str
     target_payload_tree_sha256: str
+    database_update_mode: str
 
     def public(self) -> dict[str, str]:
         return {
@@ -535,6 +536,7 @@ class PreparedUpdate:
             "target_release_id": self.target_release_id,
             "target_manifest_sha256": self.target_manifest_sha256,
             "target_payload_tree_sha256": self.target_payload_tree_sha256,
+            "database_update_mode": self.database_update_mode,
         }
 
 
@@ -630,9 +632,10 @@ class UpdateMvpService:
                 source_release_id=source_manifest.release_id,
                 target_release_id=target_manifest.release_id,
                 plan_sha256=plan_sha,
+                database_update_mode=database_update["mode"],
             )
             self.store.append_event(job_id, "READY", "SYSTEM_UPDATE_READY", source_release_id=source_manifest.release_id, target_release_id=target_manifest.release_id)
-            return PreparedUpdate(job_id, source_manifest.release_id, target_manifest.release_id, target_manifest.raw_sha256, verification.payload_tree_sha256)
+            return PreparedUpdate(job_id, source_manifest.release_id, target_manifest.release_id, target_manifest.raw_sha256, verification.payload_tree_sha256, database_update["mode"])
         except Exception as exc:
             if partial is not None:
                 _remove_owned_tree(partial, partial_identity)
