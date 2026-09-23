@@ -380,6 +380,11 @@ def _run_scenario(script: Path, build_root: Path, scenario_root: Path, local_bas
         raise RuntimeError("UPDATE_MVP_R1_TERMINAL_EVENT_MISSING")
     if store.lock_path.exists():
         raise RuntimeError("UPDATE_MVP_R1_ACTIVE_LOCK_REMAINED")
+    source_manifest = read_release_manifest_v2(source_root / "release-manifest.json")
+    verify_materialized_release(
+        source_root,
+        inventory_path=source_root / str(source_manifest.section("release_payload")["inventory_path"]),
+    )
     if scenario == "rollback":
         target_root = roots.RELEASE_ROOT / target_manifest.release_id
         verify_materialized_release(
@@ -412,6 +417,9 @@ def _run_scenario(script: Path, build_root: Path, scenario_root: Path, local_bas
         "source_restart_result": "not_applicable" if scenario == "success" else "pass",
         "source_health_result": "not_applicable" if scenario == "success" else "pass",
         "final_job_state": terminal["state"],
+        "final_result_code": terminal.get("result_code"),
+        "event_count": len(events),
+        "source_release_retained": True,
         "active_update_lock_absent": True,
         "runtime_supervisor_lock_absent_after_cleanup": True,
         "remaining_owned_processes": 0,
@@ -421,14 +429,25 @@ def _run_scenario(script: Path, build_root: Path, scenario_root: Path, local_bas
     }
 
 
-def _safe_generated_remove(path: Path, local_base: Path) -> None:
+def _safe_generated_remove(path: Path, local_base: Path, nonce: str) -> None:
     if path.parent != local_base or path.name not in {"InfiniteCanvasEnterprise", "Infinite-Canvas-Enterprise"}:
         raise RuntimeError("UPDATE_MVP_R1_LOCAL_ROOT_IDENTITY_INVALID")
     if path.exists():
+        from enterprise.path_safety import assert_no_reparse_ancestors
+
+        marker = path / ".ops3b-drill-owned"
+        if path.resolve().parent != local_base.resolve() or not marker.is_file() or marker.read_text(encoding="ascii") != nonce:
+            raise RuntimeError("UPDATE_MVP_R1_LOCAL_ROOT_NOT_OWNED")
+        assert_no_reparse_ancestors(path)
         runtime_lock = path / "runtime" / "runtime-supervisor.lock"
         if runtime_lock.exists():
             raise RuntimeError("UPDATE_MVP_R1_LOCAL_RUNTIME_STILL_ACTIVE")
         shutil.rmtree(path)
+
+
+def _assert_unused_local_roots(local_base: Path, names: tuple[str, ...]) -> None:
+    if any((local_base / name).exists() for name in names):
+        raise RuntimeError("UPDATE_MVP_R1_LOCAL_ROOTS_IN_USE")
 
 
 def _stop_current_install(install_root: Path) -> None:
@@ -461,30 +480,24 @@ def _run_all(script: Path, build_root: Path, evidence_root: Path) -> int:
         raise RuntimeError("UPDATE_MVP_R1_WINDOWS_REQUIRED")
     if evidence_root.exists():
         raise RuntimeError("UPDATE_MVP_R1_EVIDENCE_EXISTS")
-    evidence_root.mkdir(parents=True, exist_ok=False)
     from enterprise.runtime.portable import windows_local_app_data_known_folder
 
     local_base = windows_local_app_data_known_folder()
     names = ("InfiniteCanvasEnterprise", "Infinite-Canvas-Enterprise")
+    _assert_unused_local_roots(local_base, names)
+    evidence_root.mkdir(parents=True, exist_ok=False)
     nonce = uuid.uuid4().hex
-    workspace_parent = Path(evidence_root.anchor) / "_ICE_UPDATE_R1"
+    workspace_parent = evidence_root / "fixture-workspaces"
     workspace_root = workspace_parent / nonce
     if workspace_root.exists():
         raise RuntimeError("UPDATE_MVP_R1_WORKSPACE_COLLISION")
     workspace_root.mkdir(parents=True, exist_ok=False)
-    backups: list[tuple[Path, Path]] = []
     results: list[dict[str, object]] = []
     try:
         for name in names:
             current = local_base / name
-            backup = local_base / f".{name}.update-mvp-r1-backup-{nonce}"
-            if backup.exists():
-                raise RuntimeError("UPDATE_MVP_R1_LOCAL_BACKUP_COLLISION")
-            if current.exists():
-                if (current / "runtime" / "runtime-supervisor.lock").exists():
-                    raise RuntimeError("UPDATE_MVP_R1_PREEXISTING_RUNTIME_ACTIVE")
-                os.replace(current, backup)
-                backups.append((current, backup))
+            current.mkdir(exist_ok=False)
+            (current / ".ops3b-drill-owned").write_text(nonce, encoding="ascii")
         for scenario in ("success", "rollback"):
             scenario_root = workspace_root / scenario
             scenario_root.mkdir()
@@ -496,7 +509,7 @@ def _run_all(script: Path, build_root: Path, evidence_root: Path) -> int:
             (evidence_root / f"WU-{scenario.upper()}.json").write_bytes(_json_bytes(result))
             results.append(result)
             for name in names:
-                _safe_generated_remove(local_base / name, local_base)
+                _safe_generated_remove(local_base / name, local_base, nonce)
         summary = {
             "schema_version": "update-mvp-1-r1-windows-evidence-v1",
             "environment": "repository-external isolated Windows fixture",
@@ -520,14 +533,15 @@ def _run_all(script: Path, build_root: Path, evidence_root: Path) -> int:
                 if scenario_install.is_dir():
                     _stop_current_install(scenario_install)
         for name in names:
-            _safe_generated_remove(local_base / name, local_base)
-        for current, backup in reversed(backups):
-            if current.exists() or not backup.exists():
-                raise RuntimeError("UPDATE_MVP_R1_LOCAL_BACKUP_RESTORE_BLOCKED")
-            os.replace(backup, current)
+            _safe_generated_remove(local_base / name, local_base, nonce)
         if workspace_root.is_dir():
-            if workspace_root.parent != workspace_parent or workspace_parent.parent != Path(evidence_root.anchor):
+            if workspace_root.parent != workspace_parent or workspace_parent.parent != evidence_root or workspace_root.name != nonce:
                 raise RuntimeError("UPDATE_MVP_R1_WORKSPACE_IDENTITY_INVALID")
+            from enterprise.path_safety import assert_no_reparse_ancestors
+
+            if not workspace_root.resolve().is_relative_to(evidence_root.resolve()):
+                raise RuntimeError("UPDATE_MVP_R1_WORKSPACE_IDENTITY_INVALID")
+            assert_no_reparse_ancestors(workspace_root)
             shutil.rmtree(workspace_root)
 
 

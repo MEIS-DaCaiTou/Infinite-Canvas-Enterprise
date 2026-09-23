@@ -6,8 +6,8 @@
 
 | 层级 | 当前事实 |
 | --- | --- |
-| GitHub 主线 | `origin/main@1b4056cc451dfee2fc63efd7e85d1ccab82340b7`；已合并 DATA-MVP-1 foundation（PR #107）、Runtime 收敛（PR #108）、SEC-P0（PR #119）、DATA-MVP-1 独立复核（PR #120）与更新中心数据迁移集成（PR #121） |
-| 当前任务 | [#109](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/109) 与 [#114](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/114) 已关闭；下一项是 [#115](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/115) 的隔离升级/恢复演练，尚未完成 |
+| GitHub 主线 | `origin/main@7ff2dde204fc556ffef5300f94b61e72f7a38f5a`；已合并 DATA-MVP-1 foundation（PR #107）、Runtime 收敛（PR #108）、SEC-P0（PR #119）、DATA-MVP-1 独立复核（PR #120）、更新中心数据迁移集成（PR #121）及状态文档收口（PR #122） |
+| 当前任务 | [#109](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/109) 与 [#114](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/114) 已关闭；[#115](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/115) 的定向迁移/恢复测试与演练脚本安全收敛已开始，真实进程全场景演练尚未完成 |
 | 最近主线审查 | [PR #121](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/121) 于 2026-09-23 合并，merge commit 为 `1b4056cc451dfee2fc63efd7e85d1ccab82340b7`；Windows Python 3.11 企业测试与 CP314 Runtime 检查均 SUCCESS。该 PR 的差异安全审阅无报告项；发现并修复一项迁移已提交但结果未返回时错误启动旧版的可靠性边界 |
 | 客户定点 Release | `2026.09.4@a0d1ccf`，仅适用于从 `2026.08.5-ee4281022d01` 原位升级的 Runtime 热修 |
 | 生产结论 | 已确认一台客户设备升级后恢复正常；不是通用 Production Baseline，不代表 PR #108 已部署 |
@@ -106,6 +106,6 @@
 
 ## 7. 下一步
 
-1. 执行 #115：隔离环境演练 apply / switch / health / rollback / restore，核对作业状态、进程/端口归属和恢复证据。
+1. 继续 #115：定向测试与本机目录保护见 [隔离演练记录](./ops/OPS-3B-ISOLATED-DRILL-2026-09.md)；仍需在全新隔离用户环境演练 apply / switch / health / rollback / restore，核对作业状态、进程/端口归属和恢复证据。
 2. 补齐用户维护通知、任务排空、跨重启进度与管理员可操作的失败恢复 UX；审查首个真实 schema-changing Release 的迁移兼容性。
 3. 在线升级链路验收前，部门与任务业务表的大规模开发继续保持阻断；客户部署与生产批准另行决策。
