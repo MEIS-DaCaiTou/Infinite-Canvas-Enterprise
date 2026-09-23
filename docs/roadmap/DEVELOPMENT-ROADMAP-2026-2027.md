@@ -12,7 +12,7 @@
 
 横向工作（测试、日志、指标、性能、模块化、文档）随每个阶段同步实施，不另建一条绕过主链的路线。
 
-当前进度：阶段 1 的 SEC-P0 已通过 PR #119 合并；阶段 2 的 #109 独立复核与 #114 更新中心迁移/恢复接线分别通过 PR #120、#121 进入主线。下一项为阶段 3 的 #115 隔离升级与恢复演练；这不等于客户数据库迁移、正式 Release 或 Production Baseline 获批。
+当前进度：阶段 1 的 SEC-P0 已通过 PR #119 合并；阶段 2 的 #109 独立复核与 #114 更新中心迁移/恢复接线分别通过 PR #120、#121 进入主线。阶段 3 的 #115 改以临时数据的升级与恢复定向验证收口，不等待干净 Windows 设备；这不等于客户数据库迁移、正式 Release 或 Production Baseline 获批。
 
 ## 2. 阶段总览
 
@@ -76,7 +76,7 @@
 - 提供类似常规软件升级的进度窗口：下载、校验、备份、迁移、切换、启动、健康检查、完成/恢复。
 - 升级 Job 持久化，浏览器断开或服务重启后可按 Job ID 恢复进度。
 - Release 资产必须不可变、具备 SHA-256/签名、Manifest v2 和兼容范围；区分 stable/canary/blocked。
-- 完成 [#115](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/115) 的 apply/switch/health/rollback/restore 演练。
+- 完成 [#115](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/115) 的 apply/switch/health/rollback/restore 定向验证与证据审查；真实跨进程演练可选，不阻断本阶段开发。
 
 ### 目标
 
@@ -87,7 +87,7 @@
 - 非超级管理员不能升级。
 - 用户收到维护提示，升级期间写操作和长任务行为明确。
 - 跨进程重启仍可观察进度，成功回到目标 Release，失败自动恢复或明确进入 `recovery_required`。
-- 不设置独立 Windows 主机验收门禁；Windows GitHub Actions、隔离生命周期演练和人工浏览器回归组成证据链。
+- 不设置独立 Windows 主机、干净用户环境或真实跨进程演练门禁；现有 Windows GitHub Actions、临时数据定向测试和必要的浏览器回归组成开发证据链。客户版本发布另行审查兼容与恢复。
 
 ## 6. 阶段 4：部门与任务
 
