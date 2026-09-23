@@ -7,7 +7,7 @@
 | 层级 | 当前事实 |
 | --- | --- |
 | GitHub 主线 | `origin/main@05b3ed3f968223fdbe71574c85d4b97320b99ea5`；已合并 DATA-MVP-1 foundation（PR #107）、Runtime 收敛（PR #108）、SEC-P0（PR #119）、DATA-MVP-1 独立复核（PR #120）、更新中心数据迁移集成（PR #121）及 OPS-3B 定向验证（PR #124） |
-| 当前任务 | [#109](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/109)、[#114](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/114) 与 [#115](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/115) 已关闭；当前转入在线升级体验，先修管理后台恢复状态与数据库迁移提示，再做维护通知、任务排空和跨重启进度 |
+| 当前任务 | [#109](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/109)、[#114](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/114) 与 [#115](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/115) 已关闭；当前转入在线升级体验，先修管理后台恢复状态、后端重复升级阻断与数据库迁移提示，再做人工恢复解除、维护通知、任务排空和跨重启进度 |
 | 最近主线审查 | [PR #124](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/124) 于 2026-09-23 合并，merge commit 为 `05b3ed3f968223fdbe71574c85d4b97320b99ea5`；Windows Python 3.11 企业测试与 CP314 Runtime 检查均 SUCCESS。该 PR 使用临时数据定向测试收口，不代表真实进程演练、客户 Release 或生产批准 |
 | 客户定点 Release | `2026.09.4@a0d1ccf`，仅适用于从 `2026.08.5-ee4281022d01` 原位升级的 Runtime 热修 |
 | 生产结论 | 已确认一台客户设备升级后恢复正常；不是通用 Production Baseline，不代表 PR #108 已部署 |
@@ -58,7 +58,7 @@
 
 1. **安全后续**：SEC-P0 已进入主线；可信反向代理/TLS 配置、分布式限流与策略模块化仍属于后续加固，不阻断在线升级体验开发。
 2. **数据升级验收**：#109、#114 已合并；#115 以临时数据的成功/失败/恢复定向测试收口，不设置干净设备或真实跨进程演练门禁。首个真实 schema-changing Release 仍需单独核对源版本兼容与恢复方案，不能把测试 fixture 当作客户升级批准。
-3. **在线升级体验**：#115 的升级与恢复定向验证已合并；面向全体用户的维护通知、任务排空、跨重启进度和完整失败恢复 UX 仍待实现。
+3. **在线升级体验**：#115 的升级与恢复定向验证已合并；面向全体用户的维护通知、任务排空、跨重启进度和完整失败恢复 UX 仍待实现。`RECOVERY_REQUIRED` 后必须有经核验的人工恢复与解除阻断流程，不能靠删除状态文件再次升级。
 4. **部门与任务**：组织/部门/项目模型、部门级 Provider 凭据、费用账本、统一持久任务和对账尚未形成。
 5. **资源与桌面**：尚无完整 CAS 资源层、分层缓存和正式桌面壳；浏览器不能替代 D/E 盘选择、后台下载与断点续传。
 6. **规模化**：当前仍是 SQLite + 单机文件 + 单写入者，不是 PostgreSQL、多 Worker、共享对象存储或高可用。
@@ -106,6 +106,6 @@
 
 ## 7. 下一步
 
-1. 完成管理后台 `RECOVERY_REQUIRED` 状态提示、停止无效轮询与迁移方式展示；定向测试与本机目录保护见 [#115 验证记录](./ops/OPS-3B-ISOLATED-DRILL-2026-09.md)。
-2. 补齐用户维护通知、任务排空、跨重启进度与管理员可操作的失败恢复 UX；审查首个真实 schema-changing Release 的迁移兼容性。
+1. 完成管理后台 `RECOVERY_REQUIRED` 状态提示、后端重复升级阻断、停止无效轮询与迁移方式展示；定向测试与本机目录保护见 [#115 验证记录](./ops/OPS-3B-ISOLATED-DRILL-2026-09.md)。
+2. 设计并验证人工恢复后的身份/数据库核验与审计化解除阻断；随后补齐用户维护通知、任务排空、跨重启进度与失败恢复 UX。首个真实 schema-changing Release 仍需单独审查源版本兼容性。
 3. 在线升级链路验收前，部门与任务业务表的大规模开发继续保持阻断；客户部署与生产批准另行决策。

@@ -298,6 +298,25 @@ class UpdateJobStore:
         except OSError as exc:
             raise UpdateMvpError("SYSTEM_UPDATE_EVENT_WRITE_FAILED", status_code=500) from exc
 
+    def assert_no_unresolved_recovery(self) -> None:
+        """A terminal recovery warning outlives the active-job lock."""
+        self.initialize()
+        try:
+            for root in self.jobs_root.iterdir():
+                if not JOB_ID_RE.fullmatch(root.name):
+                    continue
+                assert_no_reparse_ancestors(root)
+                if not root.is_dir():
+                    raise UpdateMvpError("SYSTEM_UPDATE_RECOVERY_STATE_UNVERIFIED", status_code=409)
+                try:
+                    status = self.read_status(root.name)
+                except UpdateMvpError as exc:
+                    raise UpdateMvpError("SYSTEM_UPDATE_RECOVERY_STATE_UNVERIFIED", status_code=409) from exc
+                if status["state"] == "RECOVERY_REQUIRED":
+                    raise UpdateMvpError("SYSTEM_UPDATE_RECOVERY_REQUIRED", status_code=409)
+        except (OSError, PathSafetyError) as exc:
+            raise UpdateMvpError("SYSTEM_UPDATE_RECOVERY_STATE_UNVERIFIED", status_code=409) from exc
+
     def reserve_execution(self, job_id: str) -> None:
         """Create the sole API-side reservation; an existing lock always wins.
 
@@ -307,6 +326,7 @@ class UpdateJobStore:
         a handoff.
         """
         self.initialize()
+        self.assert_no_unresolved_recovery()
         try:
             handle = self.lock_path.open("x+b")
         except FileExistsError as exc:

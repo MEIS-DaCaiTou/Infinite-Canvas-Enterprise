@@ -259,6 +259,39 @@ def test_one_active_update_reservation_blocks_a_second_job(tmp_path: Path):
     store.release_execution_lock(handle, first)
 
 
+def test_recovery_required_blocks_prepare_and_new_execution(tmp_path: Path, monkeypatch):
+    from enterprise import update_api
+
+    roots = _roots(tmp_path)
+    store = UpdateJobStore(roots)
+    old_job, _ = store.create("actor-1")
+    store.write_status(
+        old_job, "RECOVERY_REQUIRED", actor_user_id="actor-1",
+        result_code="SYSTEM_UPDATE_DATABASE_RESTORE_INCOMPLETE",
+    )
+    new_job, _ = store.create("actor-2")
+    monkeypatch.setattr(update_api, "PATH_ROOTS", roots)
+    monkeypatch.setattr(update_api, "_provider", lambda: pytest.fail("provider must not be called"))
+    with pytest.raises(UpdateMvpError, match="SYSTEM_UPDATE_RECOVERY_REQUIRED") as prepare_error:
+        update_api._prepare_update_sync("actor-2", "fixture-release")
+    assert prepare_error.value.status_code == 409
+    with pytest.raises(UpdateMvpError, match="SYSTEM_UPDATE_RECOVERY_REQUIRED") as execute_error:
+        store.reserve_execution(new_job)
+    assert execute_error.value.status_code == 409
+    assert not store.lock_path.exists()
+
+
+def test_unverifiable_prior_job_state_blocks_new_execution(tmp_path: Path):
+    store = UpdateJobStore(_roots(tmp_path))
+    old_job, old_root = store.create("actor-1")
+    (old_root / "status.json").write_text("{broken", encoding="utf-8")
+    new_job, _ = store.create("actor-2")
+    with pytest.raises(UpdateMvpError, match="SYSTEM_UPDATE_RECOVERY_STATE_UNVERIFIED") as error:
+        store.reserve_execution(new_job)
+    assert error.value.status_code == 409
+    assert not store.lock_path.exists()
+
+
 def _reserved_worker_job(tmp_path: Path):
     roots = _roots(tmp_path)
     store = UpdateJobStore(roots)
