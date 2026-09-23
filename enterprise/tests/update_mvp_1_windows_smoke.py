@@ -432,13 +432,14 @@ def _run_scenario(script: Path, build_root: Path, scenario_root: Path, local_bas
 def _safe_generated_remove(path: Path, local_base: Path, nonce: str) -> None:
     if path.parent != local_base or path.name not in {"InfiniteCanvasEnterprise", "Infinite-Canvas-Enterprise"}:
         raise RuntimeError("UPDATE_MVP_R1_LOCAL_ROOT_IDENTITY_INVALID")
-    if path.exists():
-        from enterprise.path_safety import assert_no_reparse_ancestors
+    from enterprise.path_safety import assert_no_reparse_ancestors
 
+    assert_no_reparse_ancestors(path, allow_missing=True)
+    if path.exists():
         marker = path / ".ops3b-drill-owned"
+        assert_no_reparse_ancestors(marker, allow_missing=True)
         if path.resolve().parent != local_base.resolve() or not marker.is_file() or marker.read_text(encoding="ascii") != nonce:
             raise RuntimeError("UPDATE_MVP_R1_LOCAL_ROOT_NOT_OWNED")
-        assert_no_reparse_ancestors(path)
         runtime_lock = path / "runtime" / "runtime-supervisor.lock"
         if runtime_lock.exists():
             raise RuntimeError("UPDATE_MVP_R1_LOCAL_RUNTIME_STILL_ACTIVE")
@@ -446,8 +447,16 @@ def _safe_generated_remove(path: Path, local_base: Path, nonce: str) -> None:
 
 
 def _assert_unused_local_roots(local_base: Path, names: tuple[str, ...]) -> None:
-    if any((local_base / name).exists() for name in names):
+    if any((local_base / name).exists() or (local_base / name).is_symlink() for name in names):
         raise RuntimeError("UPDATE_MVP_R1_LOCAL_ROOTS_IN_USE")
+
+
+def _create_owned_local_roots(local_base: Path, names: tuple[str, ...], nonce: str) -> None:
+    _assert_unused_local_roots(local_base, names)
+    for name in names:
+        current = local_base / name
+        current.mkdir(exist_ok=False)
+        (current / ".ops3b-drill-owned").write_text(nonce, encoding="ascii")
 
 
 def _stop_current_install(install_root: Path) -> None:
@@ -494,11 +503,8 @@ def _run_all(script: Path, build_root: Path, evidence_root: Path) -> int:
     workspace_root.mkdir(parents=True, exist_ok=False)
     results: list[dict[str, object]] = []
     try:
-        for name in names:
-            current = local_base / name
-            current.mkdir(exist_ok=False)
-            (current / ".ops3b-drill-owned").write_text(nonce, encoding="ascii")
         for scenario in ("success", "rollback"):
+            _create_owned_local_roots(local_base, names, nonce)
             scenario_root = workspace_root / scenario
             scenario_root.mkdir()
             try:

@@ -6,6 +6,7 @@ import pytest
 
 from enterprise.tests.update_mvp_1_windows_smoke import (
     _assert_unused_local_roots,
+    _create_owned_local_roots,
     _safe_generated_remove,
 )
 
@@ -44,3 +45,13 @@ def test_owned_fixture_root_can_be_cleaned(tmp_path: Path):
     (owned / "runtime").mkdir()
     _safe_generated_remove(owned, tmp_path, "current-drill")
     assert not owned.exists()
+
+
+def test_each_scenario_recreates_owned_roots_after_cleanup(tmp_path: Path):
+    for _ in ("success", "rollback"):
+        _create_owned_local_roots(tmp_path, NAMES, "current-drill")
+        for name in NAMES:
+            owned = tmp_path / name
+            assert (owned / ".ops3b-drill-owned").read_text(encoding="ascii") == "current-drill"
+            _safe_generated_remove(owned, tmp_path, "current-drill")
+        assert all(not (tmp_path / name).exists() for name in NAMES)
