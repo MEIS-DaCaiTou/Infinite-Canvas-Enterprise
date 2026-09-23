@@ -150,6 +150,7 @@ sequenceDiagram
 
 - Update Center 支持相同 Schema 单跳升级，以及经过 registry、Manifest v2 和当前数据库身份共同约束的版本化前向迁移。
 - 版本化迁移在 pointer 切换前创建一致性备份；目标启动或健康失败时按 expected-current 约束恢复数据库、pointer 和 source Runtime。
+- 如果迁移已提交但结果尚未返回就发生异常，不能凭 `MigrationResult` 缺失推断数据库未改变；执行器必须复核持久化的 source pointer 与 schema 身份，无法证明一致时进入 `RECOVERY_REQUIRED`，不得启动旧版。
 - `RECOVERY_REQUIRED` 表示无法证明三者已经恢复一致，不能自动重试或伪装成普通失败。
 - 尚无首个真实 schema-changing 正式 Release、客户数据迁移批准或通用 Production Baseline。
 - 更新中心只消费完整 Manifest v2 Release，不消费 GitHub 源码 ZIP。
