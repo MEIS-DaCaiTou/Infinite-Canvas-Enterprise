@@ -129,6 +129,7 @@ ACTION_RISK_LEVELS = {
     "security.user.soft_delete": frozenset({"L2", "L3"}),
     "security.session.revoke_all": frozenset({"L2", "L3"}),
     "security.authorization.denied": frozenset({"L2", "L3"}),
+    "security.system_update.recovery_clearance": frozenset({"L3"}),
 }
 
 MAX_CONTEXT_DEPTH = 4

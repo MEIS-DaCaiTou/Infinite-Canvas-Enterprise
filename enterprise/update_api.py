@@ -28,6 +28,8 @@ from enterprise.ops.update.mvp import (
     UpdateMvpService,
 )
 from enterprise.ops.update.providers import GitHubReleasesProvider
+from enterprise.ops.update.recovery import assess_recovery, clear_recovery
+from enterprise.migrations.versioned import SHA256_RE
 from enterprise.release.current_release import read_current_release_result_from_state_root
 from enterprise.release.release_manifest_v2 import (
     INVENTORY_MAX_BYTES,
@@ -49,6 +51,10 @@ def _error(exc: Exception) -> None:
         "SYSTEM_UPDATE_DATABASE_CONTRACT_UNSUPPORTED": "无法验证此版本的数据库迁移与恢复契约，已拒绝准备升级。",
         "SYSTEM_UPDATE_RECOVERY_REQUIRED": "上一升级作业仍需人工恢复，已拒绝再次升级。",
         "SYSTEM_UPDATE_RECOVERY_STATE_UNVERIFIED": "无法核验既有升级作业的恢复状态，已拒绝再次升级。",
+        "SYSTEM_UPDATE_RECOVERY_DATABASE_UNVERIFIED": "当前数据库未通过完整性与版本结构核验，解除阻断已拒绝。",
+        "SYSTEM_UPDATE_RECOVERY_RELEASE_UNVERIFIED": "当前 Release 身份未通过核验，解除阻断已拒绝。",
+        "SYSTEM_UPDATE_RECOVERY_HEALTH_UNVERIFIED": "当前服务未通过正式健康检查，解除阻断已拒绝。",
+        "SYSTEM_UPDATE_RECOVERY_ASSESSMENT_CHANGED": "恢复核验结果已变化，请重新核验后再确认。",
     }.get(code, "The update operation could not be completed")
     raise HTTPException(status_code=status, detail={"code": code, "message": message}) from exc
 
@@ -273,6 +279,62 @@ async def update_job(job_id: str, request: Request):
     _require_update_operator(request)
     try:
         return UpdateJobStore(PATH_ROOTS).read_status(job_id)
+    except Exception as exc:
+        _error(exc)
+
+
+@router.get("/api/update-mvp/recovery/pending")
+async def pending_update_recovery(request: Request):
+    _require_update_operator(request)
+    try:
+        jobs = await run_in_threadpool(UpdateJobStore(PATH_ROOTS).pending_recovery_jobs)
+        return {"job_ids": jobs}
+    except Exception as exc:
+        _error(exc)
+
+
+@router.get("/api/update-mvp/jobs/{job_id}/recovery-assessment")
+async def update_recovery_assessment(job_id: str, request: Request):
+    _require_update_operator(request)
+    try:
+        return await run_in_threadpool(assess_recovery, PATH_ROOTS, job_id, database_path=Path(DB_PATH))
+    except Exception as exc:
+        _error(exc)
+
+
+@router.post("/api/update-mvp/jobs/{job_id}/recovery-clearance")
+async def update_recovery_clearance(job_id: str, request: Request):
+    actor = _require_update_operator(request)
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise UpdateMvpError("SYSTEM_UPDATE_RECOVERY_CONFIRMATION_INVALID")
+        password = body.get("password")
+        expected_release_id = body.get("expected_release_id")
+        expected_assessment_sha256 = body.get("expected_assessment_sha256")
+        manual_evidence_note = body.get("manual_evidence_note")
+        if (
+            not isinstance(password, str) or not password
+            or len(password) > MAX_SUPER_ADMIN_PASSWORD_LENGTH
+            or not isinstance(expected_release_id, str) or len(expected_release_id) > 96
+            or not isinstance(expected_assessment_sha256, str)
+            or not SHA256_RE.fullmatch(expected_assessment_sha256)
+            or not isinstance(manual_evidence_note, str)
+            or not 12 <= len(manual_evidence_note.strip()) <= 500
+        ):
+            raise UpdateMvpError("SYSTEM_UPDATE_RECOVERY_CONFIRMATION_INVALID")
+        current = edb.get_user_by_id(actor["id"])
+        if not current or current.get("auth_version") != actor.get("auth_version") or not edb.verify_password(password, str(current.get("password_hash") or "")):
+            raise UpdateMvpError("SYSTEM_UPDATE_PASSWORD_INVALID", status_code=403)
+        if not ENTERPRISE_UPDATE_ENABLED or not edb.can_use_feature(current, "system_update"):
+            raise UpdateMvpError("SYSTEM_UPDATE_PERMISSION_DENIED", status_code=403)
+        return await run_in_threadpool(
+            clear_recovery, PATH_ROOTS, job_id,
+            database_path=Path(DB_PATH), actor_user_id=actor["id"],
+            expected_release_id=expected_release_id,
+            expected_assessment_sha256=expected_assessment_sha256,
+            manual_evidence_note=manual_evidence_note,
+        )
     except Exception as exc:
         _error(exc)
 
