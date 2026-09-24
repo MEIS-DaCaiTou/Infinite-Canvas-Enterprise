@@ -1,18 +1,18 @@
 {
-  "version": "2026.07.06",
-  "updated_at": "2026-07-06T18:13:36+08:00",
+  "version": "2026.09.5",
+  "updated_at": "2026-09-24T09:43:00+08:00",
   "items": [
     {
-      "type": "feature",
-      "text": "修复GPT/Gemini的CLI协议"
+      "type": "fix",
+      "text": "管理后台在线更新改为一次确认，并显示真实作业阶段"
     },
     {
-      "type": "feature",
-      "text": "修复推荐API的生成bug"
+      "type": "fix",
+      "text": "升级恢复状态需核验并记录审计后才能解除阻断"
     },
     {
-      "type": "feature",
-      "text": "进一步优化画布流畅性"
+      "type": "fix",
+      "text": "保持现有数据库、配置与素材目录不变，目标启动失败时回退代码版本"
     }
   ]
 }

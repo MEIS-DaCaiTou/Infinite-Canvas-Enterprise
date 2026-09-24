@@ -583,6 +583,7 @@ def _flow_for_operation(file: str, symbol: str) -> str:
         return "W44"
     if file in {
         "enterprise/ops/update/mvp.py",
+        "enterprise/ops/update/recovery.py",
         "enterprise/update_api.py",
     }:
         # UPDATE-MVP-1 uses external staging/state/release roots and publishes

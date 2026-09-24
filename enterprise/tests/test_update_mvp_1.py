@@ -518,6 +518,31 @@ def test_update_api_denies_unprivileged_roles_before_provider_or_filesystem(monk
     assert user_denial.value.status_code == 403
 
 
+@pytest.mark.parametrize("candidate_version,available", [
+    ("2026.09.4", False),
+    ("2026.09.5", True),
+])
+def test_update_check_only_offers_a_newer_version(monkeypatch, candidate_version, available):
+    from enterprise import update_api
+
+    current = {"id": "actor-1", "role": "super_admin", "is_active": True, "auth_version": 1}
+    release = SimpleNamespace(
+        provider_release_id="candidate-1", tag_name=candidate_version,
+        version=candidate_version, published_at="2026-09-24T00:00:00Z",
+        release_notes="test",
+    )
+    monkeypatch.setattr(update_api, "ENTERPRISE_UPDATE_ENABLED", True)
+    monkeypatch.setattr(update_api.edb, "get_user_by_id", lambda _uid: current)
+    monkeypatch.setattr(update_api.edb, "can_use_feature", lambda *_args: True)
+    monkeypatch.setattr(update_api, "_provider", lambda: SimpleNamespace(list_release_v2_candidates=lambda: [release]))
+    monkeypatch.setattr(update_api, "read_current_release_result_from_state_root", lambda _root: SimpleNamespace(release=SimpleNamespace(release_id="ice-2026.09.4")))
+    monkeypatch.setattr(update_api, "read_release_manifest_v2", lambda _path: SimpleNamespace(section=lambda _key: {"release_version": "2026.09.4"}))
+
+    result = asyncio.run(update_api.check_update(_Request({"user_id": "actor-1", "auth_version": 1})))
+    assert result["update_available"] is available
+    assert result["latest"]["version"] == candidate_version
+
+
 def test_execute_reconfirms_current_password_without_persisting_it(tmp_path: Path, monkeypatch):
     from enterprise import update_api
 
@@ -532,7 +557,7 @@ def test_execute_reconfirms_current_password_without_persisting_it(tmp_path: Pat
     })
     store.write_status(job_id, "READY", actor_user_id="actor-1", result_code="SYSTEM_UPDATE_READY")
     current_user = {
-        "id": "actor-1", "user_id": "actor-1", "username": "admin-a", "role": "admin",
+        "id": "actor-1", "user_id": "actor-1", "username": "admin-a", "role": "super_admin",
         "is_admin": True, "is_active": True, "auth_version": 7, "password_hash": "stored-hash",
     }
     monkeypatch.setattr(update_api, "PATH_ROOTS", roots)
@@ -547,7 +572,7 @@ def test_execute_reconfirms_current_password_without_persisting_it(tmp_path: Pat
         "read_current_release_result_from_state_root",
         lambda _root: SimpleNamespace(raw_sha256="a" * 64, release=SimpleNamespace(release_id="release-A")),
     )
-    principal = {"user_id": "actor-1", "role": "admin", "is_admin": True, "auth_version": 7}
+    principal = {"user_id": "actor-1", "role": "super_admin", "is_admin": True, "auth_version": 7}
     tasks = BackgroundTasks()
     result = asyncio.run(update_api.execute_update(job_id, _Request(principal, {"password": "correct-password"}), tasks))
     assert result["state"] == "UPDATING" and len(tasks.tasks) == 1

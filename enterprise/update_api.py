@@ -14,6 +14,7 @@ from starlette.concurrency import run_in_threadpool
 from enterprise import db as edb
 from enterprise.config import (
     ADMIN_PASSWORD,
+    DB_PATH,
     ENTERPRISE_UPDATE_ENABLED,
     JWT_SECRET,
     PATH_ROOTS,
@@ -22,11 +23,14 @@ from enterprise.ops.update.diagnostics import diagnostics_zip, recent_diagnostic
 from enterprise.ops.update.download import atomic_download
 from enterprise.ops.update.mvp import (
     MAX_ARCHIVE_BYTES,
+    SHA256_RE,
     UpdateJobStore,
     UpdateMvpError,
     UpdateMvpService,
 )
 from enterprise.ops.update.providers import GitHubReleasesProvider
+from enterprise.ops.update.recovery import assess_recovery, clear_recovery
+from enterprise.ops.update.versions import compare_versions
 from enterprise.release.current_release import read_current_release_result_from_state_root
 from enterprise.release.release_manifest_v2 import (
     INVENTORY_MAX_BYTES,
@@ -44,11 +48,15 @@ router = APIRouter()
 def _error(exc: Exception) -> None:
     code = str(getattr(exc, "code", getattr(exc, "detail_code", "SYSTEM_UPDATE_FAILED")))
     status = int(getattr(exc, "status_code", 400))
-    message = (
-        "此版本包含数据库结构升级，当前在线升级版本暂不支持，请使用后续升级引擎。"
-        if code == "SYSTEM_UPDATE_DATABASE_CONTRACT_UNSUPPORTED"
-        else "The update operation could not be completed"
-    )
+    message = {
+        "SYSTEM_UPDATE_DATABASE_CONTRACT_UNSUPPORTED": "此版本包含数据库结构升级，当前在线升级版本暂不支持。",
+        "SYSTEM_UPDATE_RECOVERY_REQUIRED": "上一升级作业仍需人工恢复，已拒绝再次升级。",
+        "SYSTEM_UPDATE_RECOVERY_STATE_UNVERIFIED": "无法核验既有升级作业的恢复状态，已拒绝再次升级。",
+        "SYSTEM_UPDATE_RECOVERY_DATABASE_UNVERIFIED": "当前数据库未通过完整性与版本结构核验，解除阻断已拒绝。",
+        "SYSTEM_UPDATE_RECOVERY_RELEASE_UNVERIFIED": "当前 Release 身份未通过核验，解除阻断已拒绝。",
+        "SYSTEM_UPDATE_RECOVERY_HEALTH_UNVERIFIED": "当前服务未通过正式健康检查，解除阻断已拒绝。",
+        "SYSTEM_UPDATE_RECOVERY_ASSESSMENT_CHANGED": "恢复核验结果已变化，请重新核验后再确认。",
+    }.get(code, "The update operation could not be completed")
     raise HTTPException(status_code=status, detail={"code": code, "message": message}) from exc
 
 
@@ -75,6 +83,8 @@ def _require_admin_view(request: Request) -> dict:
 
 def _require_update_operator(request: Request) -> dict:
     current = _require_admin_view(request)
+    if current.get("role") != ROLE_SUPER_ADMIN:
+        raise HTTPException(status_code=403, detail={"code": "SYSTEM_UPDATE_SUPER_ADMIN_REQUIRED", "message": "System update requires the current super administrator role"})
     if not ENTERPRISE_UPDATE_ENABLED:
         raise HTTPException(status_code=403, detail={"code": "SYSTEM_UPDATE_EMERGENCY_SWITCH_DISABLED", "message": "System update is disabled"})
     if not edb.can_use_feature(current, "system_update"):
@@ -113,9 +123,11 @@ async def check_update(request: Request):
         source_manifest = read_release_manifest_v2(PATH_ROOTS.APP_ROOT / "release-manifest.json")
         releases = _provider().list_release_v2_candidates()
         latest = releases[0] if releases else None
+        current_version = source_manifest.section("identity")["release_version"]
         return {
             "current_release_id": current.release.release_id,
-            "current_version": source_manifest.section("identity")["release_version"],
+            "current_version": current_version,
+            "update_available": bool(latest and compare_versions(current_version, latest.version) == "newer"),
             "latest": None if latest is None else {
                 "provider_release_id": latest.provider_release_id,
                 "tag_name": latest.tag_name,
@@ -143,6 +155,7 @@ async def prepare_update(request: Request):
 
 def _prepare_update_sync(actor_user_id: str, provider_release_id: str) -> dict[str, object]:
     """Complete one prepare workflow outside the Gateway asyncio event loop."""
+    UpdateJobStore(PATH_ROOTS).assert_no_unresolved_recovery()
     provider = _provider()
     metadata = _metadata_by_id(provider, provider_release_id)
     incoming = PATH_ROOTS.STAGING_ROOT / "update-mvp" / "incoming" / uuid.uuid4().hex
@@ -259,6 +272,59 @@ async def update_job(job_id: str, request: Request):
     _require_update_operator(request)
     try:
         return UpdateJobStore(PATH_ROOTS).read_status(job_id)
+    except Exception as exc:
+        _error(exc)
+
+
+@router.get("/api/update-mvp/recovery/pending")
+async def pending_update_recovery(request: Request):
+    _require_update_operator(request)
+    try:
+        jobs = await run_in_threadpool(UpdateJobStore(PATH_ROOTS).pending_recovery_jobs)
+        return {"job_ids": jobs}
+    except Exception as exc:
+        _error(exc)
+
+
+@router.get("/api/update-mvp/jobs/{job_id}/recovery-assessment")
+async def update_recovery_assessment(job_id: str, request: Request):
+    _require_update_operator(request)
+    try:
+        return await run_in_threadpool(assess_recovery, PATH_ROOTS, job_id, database_path=Path(DB_PATH))
+    except Exception as exc:
+        _error(exc)
+
+
+@router.post("/api/update-mvp/jobs/{job_id}/recovery-clearance")
+async def update_recovery_clearance(job_id: str, request: Request):
+    actor = _require_update_operator(request)
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise UpdateMvpError("SYSTEM_UPDATE_RECOVERY_CONFIRMATION_INVALID")
+        password = body.get("password")
+        expected_release_id = body.get("expected_release_id")
+        expected_assessment_sha256 = body.get("expected_assessment_sha256")
+        manual_evidence_note = body.get("manual_evidence_note")
+        if (
+            not isinstance(password, str) or not password or len(password) > 1024
+            or not isinstance(expected_release_id, str) or len(expected_release_id) > 96
+            or not isinstance(expected_assessment_sha256, str) or not SHA256_RE.fullmatch(expected_assessment_sha256)
+            or not isinstance(manual_evidence_note, str) or not 12 <= len(manual_evidence_note.strip()) <= 500
+        ):
+            raise UpdateMvpError("SYSTEM_UPDATE_RECOVERY_CONFIRMATION_INVALID")
+        current = edb.get_user_by_id(actor["id"])
+        if not current or current.get("auth_version") != actor.get("auth_version") or not edb.verify_password(password, str(current.get("password_hash") or "")):
+            raise UpdateMvpError("SYSTEM_UPDATE_PASSWORD_INVALID", status_code=403)
+        if not ENTERPRISE_UPDATE_ENABLED or not edb.can_use_feature(current, "system_update"):
+            raise UpdateMvpError("SYSTEM_UPDATE_PERMISSION_DENIED", status_code=403)
+        return await run_in_threadpool(
+            clear_recovery, PATH_ROOTS, job_id,
+            database_path=Path(DB_PATH), actor_user_id=actor["id"],
+            expected_release_id=expected_release_id,
+            expected_assessment_sha256=expected_assessment_sha256,
+            manual_evidence_note=manual_evidence_note,
+        )
     except Exception as exc:
         _error(exc)
 

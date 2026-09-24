@@ -48,7 +48,10 @@ JOB_SCHEMA = "enterprise-update-mvp-job-v1"
 PLAN_SCHEMA = "enterprise-update-mvp-plan-v1"
 EVENT_SCHEMA = "enterprise-update-mvp-event-v1"
 LOCK_SCHEMA = "enterprise-update-mvp-lock-v1"
+RECOVERY_CLEARANCE_SCHEMA = "enterprise-update-recovery-clearance-v1"
 JOB_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+CLEARANCE_FILE_RE = re.compile(r"^recovery-clearance-[0-9a-f]{32}\.json$")
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 STATES = frozenset(
     {
         "PREPARING",
@@ -60,12 +63,15 @@ STATES = frozenset(
         "ROLLING_BACK",
         "ROLLED_BACK",
         "FAILED",
+        "RECOVERY_REQUIRED",
+        "RECOVERY_CLEARED",
     }
 )
-TERMINAL_STATES = frozenset({"SUCCEEDED", "ROLLED_BACK", "FAILED"})
+TERMINAL_STATES = frozenset({"SUCCEEDED", "ROLLED_BACK", "FAILED", "RECOVERY_REQUIRED", "RECOVERY_CLEARED"})
 MAX_STATUS_BYTES = 64 * 1024
 MAX_PLAN_BYTES = 128 * 1024
 MAX_EVENT_BYTES = 64 * 1024
+MAX_RECOVERY_CLEARANCE_BYTES = 64 * 1024
 MAX_ARCHIVE_BYTES = 2 * 1024 * 1024 * 1024
 
 
@@ -252,6 +258,56 @@ class UpdateJobStore:
         except OSError as exc:
             raise UpdateMvpError("SYSTEM_UPDATE_EVENT_WRITE_FAILED", status_code=500) from exc
 
+    def pending_recovery_jobs(self) -> list[str]:
+        """An uncertain prior update blocks every subsequent update attempt."""
+        self.initialize()
+        pending: list[str] = []
+        try:
+            for root in self.jobs_root.iterdir():
+                if not JOB_ID_RE.fullmatch(root.name):
+                    continue
+                assert_no_reparse_ancestors(root)
+                if not root.is_dir():
+                    raise UpdateMvpError("SYSTEM_UPDATE_RECOVERY_STATE_UNVERIFIED", status_code=409)
+                try:
+                    status = self.read_status(root.name)
+                except UpdateMvpError as exc:
+                    raise UpdateMvpError("SYSTEM_UPDATE_RECOVERY_STATE_UNVERIFIED", status_code=409) from exc
+                if status["state"] == "RECOVERY_REQUIRED":
+                    pending.append(root.name)
+                elif status["state"] == "RECOVERY_CLEARED":
+                    name = status.get("recovery_clearance_file")
+                    digest = status.get("recovery_clearance_sha256")
+                    if not isinstance(name, str) or not CLEARANCE_FILE_RE.fullmatch(name) or not isinstance(digest, str) or not SHA256_RE.fullmatch(digest):
+                        raise UpdateMvpError("SYSTEM_UPDATE_RECOVERY_STATE_UNVERIFIED", status_code=409)
+                    path = root / name
+                    assert_no_reparse_ancestors(path)
+                    record = _bounded_json(
+                        path, MAX_RECOVERY_CLEARANCE_BYTES,
+                        missing="SYSTEM_UPDATE_RECOVERY_STATE_UNVERIFIED",
+                        invalid="SYSTEM_UPDATE_RECOVERY_STATE_UNVERIFIED",
+                    )
+                    assessment = record.get("assessment")
+                    if (
+                        hashlib.sha256(_canonical(record)).hexdigest() != digest
+                        or record.get("schema_version") != RECOVERY_CLEARANCE_SCHEMA
+                        or record.get("job_id") != root.name
+                        or record.get("actor_user_id") != status.get("actor_user_id")
+                        or not isinstance(assessment, dict)
+                        or assessment.get("current_release_id") != status.get("current_release_id")
+                        or assessment.get("assessment_sha256") != hashlib.sha256(
+                            _canonical({key: value for key, value in assessment.items() if key != "assessment_sha256"})
+                        ).hexdigest()
+                    ):
+                        raise UpdateMvpError("SYSTEM_UPDATE_RECOVERY_STATE_UNVERIFIED", status_code=409)
+        except (OSError, PathSafetyError) as exc:
+            raise UpdateMvpError("SYSTEM_UPDATE_RECOVERY_STATE_UNVERIFIED", status_code=409) from exc
+        return sorted(pending)
+
+    def assert_no_unresolved_recovery(self) -> None:
+        if self.pending_recovery_jobs():
+            raise UpdateMvpError("SYSTEM_UPDATE_RECOVERY_REQUIRED", status_code=409)
+
     def reserve_execution(self, job_id: str) -> None:
         """Create the sole API-side reservation; an existing lock always wins.
 
@@ -261,6 +317,7 @@ class UpdateJobStore:
         a handoff.
         """
         self.initialize()
+        self.assert_no_unresolved_recovery()
         try:
             handle = self.lock_path.open("x+b")
         except FileExistsError as exc:
@@ -369,6 +426,7 @@ class UpdateMvpService:
         self.store = UpdateJobStore(roots)
 
     def prepare_from_artifacts(self, *, actor_user_id: str, manifest_path: Path, archive_path: Path, inventory_path: Path) -> PreparedUpdate:
+        self.store.assert_no_unresolved_recovery()
         job_id, job_root = self.store.create(actor_user_id)
         partial: Path | None = None
         partial_identity: tuple[int, int] | None = None
@@ -580,8 +638,8 @@ def execute_update_job(roots: PathRoots, job_id: str, *, launcher: Callable[[Pat
             return 2
         except Exception as rollback_exc:
             rollback_code = str(getattr(rollback_exc, "code", "SYSTEM_UPDATE_ROLLBACK_FAILED"))
-            store.write_status(job_id, "FAILED", actor_user_id=actor, result_code=rollback_code, source_release_id=source_id, target_release_id=target_id)
-            store.append_event(job_id, "FAILED", rollback_code)
+            store.write_status(job_id, "RECOVERY_REQUIRED", actor_user_id=actor, result_code=rollback_code, source_release_id=source_id, target_release_id=target_id, recovery_required=True)
+            store.append_event(job_id, "RECOVERY_REQUIRED", rollback_code)
             return 2
     finally:
         store.release_execution_lock(lock, job_id)
