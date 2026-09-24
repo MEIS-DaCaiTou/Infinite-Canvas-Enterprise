@@ -28,6 +28,7 @@ from enterprise.ops.update.mvp import (
     UpdateMvpService,
 )
 from enterprise.ops.update.providers import GitHubReleasesProvider
+from enterprise.ops.update.versions import compare_versions
 from enterprise.ops.update.recovery import assess_recovery, clear_recovery
 from enterprise.migrations.versioned import SHA256_RE
 from enterprise.release.current_release import read_current_release_result_from_state_root
@@ -128,9 +129,11 @@ async def check_update(request: Request):
         source_manifest = read_release_manifest_v2(PATH_ROOTS.APP_ROOT / "release-manifest.json")
         releases = _provider().list_release_v2_candidates()
         latest = releases[0] if releases else None
+        current_version = source_manifest.section("identity")["release_version"]
         return {
             "current_release_id": current.release.release_id,
-            "current_version": source_manifest.section("identity")["release_version"],
+            "current_version": current_version,
+            "update_available": bool(latest and compare_versions(current_version, latest.version) == "newer"),
             "latest": None if latest is None else {
                 "provider_release_id": latest.provider_release_id,
                 "tag_name": latest.tag_name,
