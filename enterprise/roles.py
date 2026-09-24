@@ -6,6 +6,7 @@ ROLE_SUPER_ADMIN = "super_admin"
 
 VALID_ROLES = frozenset({ROLE_USER, ROLE_ADMIN, ROLE_SUPER_ADMIN})
 LEGACY_AUTH_VERSION = 0
+MAX_SUPER_ADMIN_PASSWORD_LENGTH = 1024
 
 
 def normalize_role(value: object) -> str:
