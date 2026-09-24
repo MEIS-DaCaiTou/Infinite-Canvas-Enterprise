@@ -64,7 +64,9 @@ PLAN_SCHEMA = "enterprise-update-mvp-plan-v1"
 EVENT_SCHEMA = "enterprise-update-mvp-event-v1"
 LOCK_SCHEMA = "enterprise-update-mvp-lock-v1"
 DATABASE_RESULT_SCHEMA = "enterprise-update-database-result-v1"
+RECOVERY_CLEARANCE_SCHEMA = "enterprise-update-recovery-clearance-v1"
 JOB_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+CLEARANCE_FILE_RE = re.compile(r"^recovery-clearance-[0-9a-f]{32}\.json$")
 STATES = frozenset(
     {
         "PREPARING",
@@ -78,13 +80,15 @@ STATES = frozenset(
         "ROLLED_BACK",
         "FAILED",
         "RECOVERY_REQUIRED",
+        "RECOVERY_CLEARED",
     }
 )
-TERMINAL_STATES = frozenset({"SUCCEEDED", "ROLLED_BACK", "FAILED", "RECOVERY_REQUIRED"})
+TERMINAL_STATES = frozenset({"SUCCEEDED", "ROLLED_BACK", "FAILED", "RECOVERY_REQUIRED", "RECOVERY_CLEARED"})
 MAX_STATUS_BYTES = 64 * 1024
 MAX_PLAN_BYTES = 128 * 1024
 MAX_EVENT_BYTES = 64 * 1024
 MAX_DATABASE_RESULT_BYTES = 64 * 1024
+MAX_RECOVERY_CLEARANCE_BYTES = 64 * 1024
 MAX_ARCHIVE_BYTES = 2 * 1024 * 1024 * 1024
 
 
@@ -298,9 +302,10 @@ class UpdateJobStore:
         except OSError as exc:
             raise UpdateMvpError("SYSTEM_UPDATE_EVENT_WRITE_FAILED", status_code=500) from exc
 
-    def assert_no_unresolved_recovery(self) -> None:
-        """A terminal recovery warning outlives the active-job lock."""
+    def pending_recovery_jobs(self) -> list[str]:
+        """Return unresolved jobs, rejecting unverifiable historical job state."""
         self.initialize()
+        pending: list[str] = []
         try:
             for root in self.jobs_root.iterdir():
                 if not JOB_ID_RE.fullmatch(root.name):
@@ -313,9 +318,42 @@ class UpdateJobStore:
                 except UpdateMvpError as exc:
                     raise UpdateMvpError("SYSTEM_UPDATE_RECOVERY_STATE_UNVERIFIED", status_code=409) from exc
                 if status["state"] == "RECOVERY_REQUIRED":
-                    raise UpdateMvpError("SYSTEM_UPDATE_RECOVERY_REQUIRED", status_code=409)
+                    pending.append(root.name)
+                elif status["state"] == "RECOVERY_CLEARED":
+                    name = status.get("recovery_clearance_file")
+                    digest = status.get("recovery_clearance_sha256")
+                    if not isinstance(name, str) or not CLEARANCE_FILE_RE.fullmatch(name) or not isinstance(digest, str) or not SHA256_RE.fullmatch(digest):
+                        raise UpdateMvpError("SYSTEM_UPDATE_RECOVERY_STATE_UNVERIFIED", status_code=409)
+                    clearance_path = root / name
+                    assert_no_reparse_ancestors(clearance_path)
+                    try:
+                        clearance = _bounded_json(
+                            clearance_path, MAX_RECOVERY_CLEARANCE_BYTES,
+                            missing="SYSTEM_UPDATE_RECOVERY_STATE_UNVERIFIED",
+                            invalid="SYSTEM_UPDATE_RECOVERY_STATE_UNVERIFIED",
+                        )
+                    except UpdateMvpError as exc:
+                        raise UpdateMvpError("SYSTEM_UPDATE_RECOVERY_STATE_UNVERIFIED", status_code=409) from exc
+                    if (
+                        hashlib.sha256(_canonical(clearance)).hexdigest() != digest
+                        or clearance.get("schema_version") != RECOVERY_CLEARANCE_SCHEMA
+                        or clearance.get("job_id") != root.name
+                        or clearance.get("actor_user_id") != status.get("actor_user_id")
+                        or not isinstance(clearance.get("assessment"), dict)
+                        or clearance["assessment"].get("current_release_id") != status.get("current_release_id")
+                        or clearance["assessment"].get("assessment_sha256") != hashlib.sha256(
+                            _canonical({key: value for key, value in clearance["assessment"].items() if key != "assessment_sha256"})
+                        ).hexdigest()
+                    ):
+                        raise UpdateMvpError("SYSTEM_UPDATE_RECOVERY_STATE_UNVERIFIED", status_code=409)
         except (OSError, PathSafetyError) as exc:
             raise UpdateMvpError("SYSTEM_UPDATE_RECOVERY_STATE_UNVERIFIED", status_code=409) from exc
+        return sorted(pending)
+
+    def assert_no_unresolved_recovery(self) -> None:
+        """A terminal recovery warning outlives the active-job lock."""
+        if self.pending_recovery_jobs():
+            raise UpdateMvpError("SYSTEM_UPDATE_RECOVERY_REQUIRED", status_code=409)
 
     def reserve_execution(self, job_id: str) -> None:
         """Create the sole API-side reservation; an existing lock always wins.

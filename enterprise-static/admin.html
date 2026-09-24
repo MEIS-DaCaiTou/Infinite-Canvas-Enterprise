@@ -248,6 +248,11 @@
       border: 0; background: transparent; color: var(--text);
       outline: none; font-size: 13px; font-weight: 600; font-family: inherit;
     }
+    .field-frame textarea {
+      width: 100%; padding: 8px 10px; resize: vertical;
+      border: 0; background: transparent; color: var(--text);
+      outline: none; font-size: 13px; font-weight: 600; font-family: inherit;
+    }
     .field-frame input::placeholder { color: var(--faint); }
     .checkbox-row { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); font-weight: 700; cursor: pointer; }
     .checkbox-row input[type=checkbox] { width: 15px; height: 15px; cursor: pointer; accent-color: var(--text); }
@@ -534,7 +539,11 @@
           <h3>升级作业</h3>
           <p>执行后页面连接会暂时断开。可使用 Job ID 重连查询；失败时会尝试回滚和恢复，无法确认恢复成功则停止并要求人工处理。</p>
           <div id="updateJobSummary" class="update-kv">暂无准备完成的作业</div>
-          <div id="updateRecoveryNotice" class="update-recovery-notice" role="alert" style="display:none;">需要人工恢复：请勿再次执行升级。请导出诊断 ZIP，联系运维人员核对当前版本和数据库备份。</div>
+          <div id="updateRecoveryNotice" class="update-recovery-notice" role="alert" style="display:none;">需要人工恢复：请勿再次执行升级。先核对诊断和实际数据，确认当前版本已经恢复正常后，再由超级管理员发起只读核验。</div>
+          <div class="update-actions update-dangerous" id="updateRecoveryActions" style="display:none;">
+            <select id="updateRecoverySelect" class="select-user" style="max-width:240px;height:36px;" aria-label="选择待恢复升级作业" onchange="selectPendingRecoveryJob()"></select>
+            <button class="action-btn" id="assessRecoveryBtn" onclick="openRecoveryAssessment()">核验并查看证据</button>
+          </div>
           <div class="update-actions update-dangerous">
             <button class="action-btn primary" id="executeUpdateBtn" onclick="openUpdateConfirm()" disabled>确认切换并重启</button>
             <button class="action-btn" onclick="refreshUpdateJob()">刷新状态</button>
@@ -554,6 +563,32 @@
       </div>
     </div><!-- /tab-updates -->
 
+  </div>
+</div>
+
+<!-- 恢复核验确认：只解除升级阻断，不修复数据库或切换版本 -->
+<div class="modal-backdrop" id="updateRecoveryModal">
+  <div class="modal">
+    <h3>人工核验后解除升级阻断</h3>
+    <p style="color:var(--muted);font-size:12.5px;font-weight:700;line-height:1.7;">此操作不会修复数据库或切换 Release。请先独立确认故障已经恢复；核验不通过时系统会继续阻断升级。</p>
+    <div id="updateRecoveryEvidence" class="update-kv" style="margin:12px 0;"></div>
+    <div class="field">
+      <span class="label">输入核验报告中的当前 Release ID</span>
+      <div class="field-frame"><input id="updateRecoveryReleaseId" autocomplete="off" /></div>
+    </div>
+    <div class="field">
+      <span class="label">人工核验记录（12–500 字，不要填写密钥）</span>
+      <div class="field-frame"><textarea id="updateRecoveryEvidenceNote" rows="3" maxlength="500" placeholder="说明已核对的业务数据、备份及未完成任务，并填写工单或记录编号"></textarea></div>
+    </div>
+    <div class="field">
+      <span class="label">当前账号密码（仅本次验证，不会保存）</span>
+      <div class="field-frame"><input type="password" id="updateRecoveryPassword" autocomplete="current-password" /></div>
+    </div>
+    <div class="error-inline" id="updateRecoveryError"></div>
+    <div class="modal-actions">
+      <button class="action-btn" onclick="closeRecoveryModal()">取消</button>
+      <button class="action-btn primary" id="clearRecoveryBtn" onclick="confirmClearRecovery()">确认解除阻断</button>
+    </div>
   </div>
 </div>
 
@@ -711,6 +746,7 @@
   let _updateAccess = null;
   let _latestUpdate = null;
   let _preparedUpdate = null;
+  let _recoveryAssessment = null;
   let _updatePollTimer = null;
   const UPDATE_ACTIVE_STATES = new Set(['PREPARING', 'UPDATING', 'MIGRATING', 'RESTARTING', 'VERIFYING', 'ROLLING_BACK']);
   const _paginationState = {
@@ -1529,8 +1565,14 @@
         ? ''
         : '系统升级仅允许超级管理员操作，且全局总开关必须开启。危险操作已隐藏；后端同样会返回 403。';
       document.querySelectorAll('.update-dangerous').forEach(el => { el.style.display = allowed ? 'flex' : 'none'; });
+      document.getElementById('updateRecoveryActions').style.display = 'none';
       const rememberedJob = sessionStorage.getItem('enterprise_update_job_id');
-      if (allowed && rememberedJob && /^[0-9a-f]{32}$/.test(rememberedJob)) {
+      const pending = allowed ? await loadPendingRecoveryJobs() : [];
+      if (pending.length) {
+        _preparedUpdate = { job_id: pending[0] };
+        sessionStorage.setItem('enterprise_update_job_id', pending[0]);
+        await refreshUpdateJob();
+      } else if (allowed && rememberedJob && /^[0-9a-f]{32}$/.test(rememberedJob)) {
         _preparedUpdate = { job_id: rememberedJob };
         await refreshUpdateJob();
       }
@@ -1630,6 +1672,93 @@
     _updatePollTimer = setTimeout(refreshUpdateJob, 5000);
   }
 
+  async function loadPendingRecoveryJobs() {
+    const result = await apiFetch('/enterprise/api/update-mvp/recovery/pending');
+    const jobs = Array.isArray(result.job_ids) ? result.job_ids.filter(id => /^[0-9a-f]{32}$/.test(id)) : [];
+    const select = document.getElementById('updateRecoverySelect');
+    select.replaceChildren();
+    for (const id of jobs) {
+      const option = document.createElement('option');
+      option.value = id;
+      option.textContent = `待恢复：${id}`;
+      select.appendChild(option);
+    }
+    document.getElementById('updateRecoveryActions').style.display = jobs.length ? 'flex' : 'none';
+    return jobs;
+  }
+
+  async function selectPendingRecoveryJob() {
+    const jobId = document.getElementById('updateRecoverySelect').value;
+    if (!/^[0-9a-f]{32}$/.test(jobId)) return;
+    _preparedUpdate = { job_id: jobId };
+    sessionStorage.setItem('enterprise_update_job_id', jobId);
+    await refreshUpdateJob();
+  }
+
+  async function openRecoveryAssessment() {
+    if (_preparedUpdate?.state !== 'RECOVERY_REQUIRED') return;
+    const button = document.getElementById('assessRecoveryBtn');
+    button.disabled = true;
+    try {
+      _recoveryAssessment = await apiFetch(`/enterprise/api/update-mvp/jobs/${encodeURIComponent(_preparedUpdate.job_id)}/recovery-assessment`);
+      document.getElementById('updateRecoveryEvidence').textContent = [
+        `作业 ID：${_recoveryAssessment.job_id}`,
+        `当前 Release：${_recoveryAssessment.current_release_id}`,
+        `数据库核验：${_recoveryAssessment.database?.mode || '未通过'}`,
+        `运行健康：${_recoveryAssessment.health}`,
+        `证据指纹：${_recoveryAssessment.assessment_sha256}`,
+      ].join('\n');
+      document.getElementById('updateRecoveryReleaseId').value = '';
+      document.getElementById('updateRecoveryEvidenceNote').value = '';
+      document.getElementById('updateRecoveryPassword').value = '';
+      document.getElementById('updateRecoveryError').textContent = '';
+      document.getElementById('updateRecoveryModal').classList.add('show');
+    } catch (e) {
+      _recoveryAssessment = null;
+      showToast('恢复核验失败，升级仍被阻断: ' + e.message, 'error');
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  function closeRecoveryModal() {
+    document.getElementById('updateRecoveryPassword').value = '';
+    document.getElementById('updateRecoveryModal').classList.remove('show');
+    _recoveryAssessment = null;
+  }
+
+  async function confirmClearRecovery() {
+    if (!_recoveryAssessment || _preparedUpdate?.job_id !== _recoveryAssessment.job_id) return;
+    const expectedReleaseId = document.getElementById('updateRecoveryReleaseId').value.trim();
+    const manualEvidenceNote = document.getElementById('updateRecoveryEvidenceNote').value.trim();
+    const password = document.getElementById('updateRecoveryPassword').value;
+    if (expectedReleaseId !== _recoveryAssessment.current_release_id || !password || manualEvidenceNote.length < 12) {
+      document.getElementById('updateRecoveryError').textContent = '请准确输入当前 Release ID、核验记录和账号密码。';
+      return;
+    }
+    const button = document.getElementById('clearRecoveryBtn');
+    button.disabled = true;
+    try {
+      await apiFetch(`/enterprise/api/update-mvp/jobs/${encodeURIComponent(_recoveryAssessment.job_id)}/recovery-clearance`, {
+        method: 'POST', body: JSON.stringify({
+          password, expected_release_id: expectedReleaseId,
+          expected_assessment_sha256: _recoveryAssessment.assessment_sha256,
+          manual_evidence_note: manualEvidenceNote,
+        }),
+      });
+      closeRecoveryModal();
+      await loadPendingRecoveryJobs();
+      await refreshUpdateJob();
+      await checkSystemUpdate();
+      showToast('恢复核验已记录，升级阻断已解除');
+    } catch (e) {
+      document.getElementById('updateRecoveryPassword').value = '';
+      document.getElementById('updateRecoveryError').textContent = e.message;
+    } finally {
+      button.disabled = false;
+    }
+  }
+
   async function refreshUpdateJob() {
     if (!_preparedUpdate) return;
     clearTimeout(_updatePollTimer);
@@ -1644,7 +1773,7 @@
       ].join('\n');
       document.getElementById('executeUpdateBtn').disabled = data.state !== 'READY';
       document.getElementById('updateRecoveryNotice').style.display = data.state === 'RECOVERY_REQUIRED' ? 'block' : 'none';
-      if (data.state === 'RECOVERY_REQUIRED') document.getElementById('prepareUpdateBtn').disabled = true;
+      document.getElementById('prepareUpdateBtn').disabled = data.state === 'RECOVERY_REQUIRED' || !_latestUpdate;
       if (UPDATE_ACTIVE_STATES.has(data.state)) scheduleUpdateJobRefresh();
     } catch (e) {
       const summary = document.getElementById('updateJobSummary');
