@@ -12,6 +12,12 @@ from fastapi import FastAPI, Request
 
 from enterprise.ops.update.mvp import UpdateJobStore, UpdateMvpError
 from enterprise.ops.update.recovery import _database_identity, assess_recovery, clear_recovery, write_recovery_security_audit
+from enterprise.migrations.versioned import (
+    initialize_schema_metadata_in_transaction,
+    migration_registry_sha256,
+    schema_objects,
+    schema_snapshot_sha256,
+)
 from enterprise.paths import PortableRootInputs, derive_portable_path_roots, prepare_install_state_directories
 from enterprise.release.current_release import CurrentRelease, atomic_write_current_release
 from enterprise.security_audit import ensure_security_audit_schema_in_transaction
@@ -50,7 +56,7 @@ def _recovery_job(tmp_path: Path, monkeypatch):
     manifest = SimpleNamespace(release_id="release-A", raw_sha256="a" * 64, section=lambda _name: {"inventory_path": "release-payload-inventory.json"})
     monkeypatch.setattr(recovery, "read_release_manifest_v2", lambda _path: manifest)
     monkeypatch.setattr(recovery, "verify_materialized_release", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(recovery, "_database_identity", lambda *_args: {"mode": "legacy-exact-schema", "schema_sha256": "c" * 64})
+    monkeypatch.setattr(recovery, "_database_identity", lambda *_args: {"mode": "versioned", "schema_version": 1, "schema_sha256": "c" * 64})
     return roots, store, job_id, job_root
 
 
@@ -136,14 +142,48 @@ def test_legacy_database_identity_requires_exact_schema_and_integrity(tmp_path: 
     database = tmp_path / "enterprise.db"
     with sqlite3.connect(database) as conn:
         conn.execute("CREATE TABLE sample (id INTEGER PRIMARY KEY, value TEXT)")
-        rows = conn.execute("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").fetchall()
-        objects = [{"name": row[1], "sql": " ".join((row[3] or "").split()), "table": row[2], "type": row[0]} for row in rows]
+        objects = schema_objects(conn)
     evidence_path.write_text(json.dumps({"schema_id": "enterprise-database-contract-v1", "migration_ids": ["sqlite_existing"], "objects": objects}), encoding="utf-8")
     manifest = SimpleNamespace(section=lambda name: {
         "database_contract": {"schema_id": "enterprise-database-contract-v1", "migration_ids": ["sqlite_existing"], "schema_snapshot_path": "release-evidence/database-schema.json"},
     }[name])
     result = _database_identity(database, app_root, manifest)
     assert result["mode"] == "legacy-exact-schema"
+    with sqlite3.connect(database) as conn:
+        conn.execute("CREATE TABLE unexpected (id INTEGER)")
+    with pytest.raises(UpdateMvpError, match="SYSTEM_UPDATE_RECOVERY_DATABASE_UNVERIFIED"):
+        _database_identity(database, app_root, manifest)
+
+
+def test_versioned_database_recovery_identity_uses_schema_fingerprint(tmp_path: Path):
+    app_root = tmp_path / "app"
+    evidence_path = app_root / "release-evidence" / "database-schema.json"
+    evidence_path.parent.mkdir(parents=True)
+    database = tmp_path / "enterprise.db"
+    with sqlite3.connect(database) as conn:
+        conn.execute("CREATE TABLE sample (id INTEGER PRIMARY KEY, value TEXT)")
+        conn.execute("INSERT INTO sample (value) VALUES ('customer-data')")
+        conn.commit()
+        conn.execute("BEGIN IMMEDIATE")
+        initialize_schema_metadata_in_transaction(conn)
+        conn.commit()
+        schema_hash = schema_snapshot_sha256(conn)
+    evidence_path.write_text(json.dumps({
+        "schema_version": 1,
+        "schema_objects_sha256": schema_hash,
+        "migration_registry_sha256": migration_registry_sha256(()),
+        "versioned_migration_ids": [],
+    }), encoding="utf-8")
+    manifest = SimpleNamespace(section=lambda name: {
+        "database_contract": {
+            "schema_id": "enterprise-database-contract-v1",
+            "schema_snapshot_path": "release-evidence/database-schema.json",
+        },
+    }[name])
+    result = _database_identity(database, app_root, manifest)
+    assert result["mode"] == "versioned"
+    assert result["schema_version"] == 1
+    assert result["schema_sha256"] == schema_hash
     with sqlite3.connect(database) as conn:
         conn.execute("CREATE TABLE unexpected (id INTEGER)")
     with pytest.raises(UpdateMvpError, match="SYSTEM_UPDATE_RECOVERY_DATABASE_UNVERIFIED"):

@@ -448,7 +448,10 @@ db.init_db()
 target=resolve_database_path(roots, db.DB_PATH)
 con=sqlite3.connect(target)
 rows=con.execute("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").fetchall(); con.close()
-payload={"migration_ids":sorted(p.stem for p in (Path(os.environ["ICE_REPO_ROOT"])/"enterprise"/"migrations").glob("*.py") if p.name!="__init__.py"),"objects":[{"name":r[1],"sql":" ".join((r[3] or "").split()),"table":r[2],"type":r[0]} for r in rows],"schema_id":"enterprise-database-contract-v1"}
+# The versioned migration engine is shipped in the 09.5 bridge, but it is not
+# a legacy schema migration.  Keep this evidence byte-identical to 09.5 so its
+# installed updater can accept the bridge without writing the customer DB.
+payload={"migration_ids":sorted(p.stem for p in (Path(os.environ["ICE_REPO_ROOT"])/"enterprise"/"migrations").glob("*.py") if p.name not in {"__init__.py","versioned.py"}),"objects":[{"name":r[1],"sql":" ".join((r[3] or "").split()),"table":r[2],"type":r[0]} for r in rows],"schema_id":"enterprise-database-contract-v1"}
 Path(os.environ["ICE_DB_SNAPSHOT_OUTPUT"]).write_text(json.dumps(payload,ensure_ascii=False,sort_keys=True,separators=(",",":"))+"\n",encoding="utf-8")
 '''
     temp_root = destination.parent / "database-fixture"

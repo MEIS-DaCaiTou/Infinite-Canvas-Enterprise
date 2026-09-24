@@ -355,6 +355,7 @@ def test_inventory_windows_collision_traversal_and_ads_fail_closed(paths: list[s
     ("release-evidence/third-party-licenses.json", lambda value: value.__setitem__("unresolved_count", 1), "RELEASE_LICENSE_CONTENT_INVALID"),
     ("release-evidence/config-contract.json", lambda value: value.__setitem__("secret_values_embedded", True), "RELEASE_CONFIG_CONTENT_INVALID"),
     ("release-evidence/database-schema.json", lambda value: value["migration_ids"].append("foreign"), "RELEASE_DATABASE_CONTENT_INVALID"),
+    ("release-evidence/database-schema.json", lambda value: value.__setitem__("schema_version", 1), "RELEASE_DATABASE_CONTENT_INVALID"),
     ("release-evidence/static-build-report.json", lambda value: value.__setitem__("result", "fail"), "RELEASE_STATIC_CONTENT_INVALID"),
 ])
 def test_semantic_artifact_tamper_fails_even_when_archive_inventory_and_hashes_are_rebound(tmp_path: Path, relative: str, mutation, code: str) -> None:
@@ -362,6 +363,30 @@ def test_semantic_artifact_tamper_fails_even_when_archive_inventory_and_hashes_a
     _mutate_json(tmp_path / "payload" / Path(relative), mutation)
     _rebind_fixture(manifest_path, archive, inventory_path, manifest)
     with pytest.raises(ReleaseManifestV2Error, match=code):
+        verify_release_manifest_v2(manifest_path, archive, inventory_path)
+
+
+def test_versioned_database_snapshot_group_is_strict_and_backward_compatible(tmp_path: Path) -> None:
+    manifest_path, archive, inventory_path, manifest = _fixture(tmp_path)
+    database_path = tmp_path / "payload/release-evidence/database-schema.json"
+
+    def add_versioned_contract(value: dict[str, object]) -> None:
+        value.update(
+            {
+                "schema_version": 1,
+                "schema_objects_sha256": sha256_bytes(canonical_json(value["objects"])),
+                "migration_registry_sha256": "7" * 64,
+                "versioned_migration_ids": [],
+            }
+        )
+
+    _mutate_json(database_path, add_versioned_contract)
+    _rebind_fixture(manifest_path, archive, inventory_path, manifest)
+    assert verify_release_manifest_v2(manifest_path, archive, inventory_path).result == "pass"
+
+    _mutate_json(database_path, lambda value: value.__setitem__("schema_objects_sha256", "8" * 64))
+    _rebind_fixture(manifest_path, archive, inventory_path, manifest)
+    with pytest.raises(ReleaseManifestV2Error, match="RELEASE_DATABASE_CONTENT_INVALID"):
         verify_release_manifest_v2(manifest_path, archive, inventory_path)
 
 

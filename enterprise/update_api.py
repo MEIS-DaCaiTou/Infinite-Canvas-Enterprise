@@ -38,7 +38,7 @@ from enterprise.release.release_manifest_v2 import (
     ReleaseManifestV2Error,
     read_release_manifest_v2,
 )
-from enterprise.roles import ROLE_ADMIN, ROLE_SUPER_ADMIN
+from enterprise.roles import MAX_SUPER_ADMIN_PASSWORD_LENGTH, ROLE_ADMIN, ROLE_SUPER_ADMIN
 from enterprise.runtime.portable import request_portable_update_handoff
 
 
@@ -49,7 +49,7 @@ def _error(exc: Exception) -> None:
     code = str(getattr(exc, "code", getattr(exc, "detail_code", "SYSTEM_UPDATE_FAILED")))
     status = int(getattr(exc, "status_code", 400))
     message = {
-        "SYSTEM_UPDATE_DATABASE_CONTRACT_UNSUPPORTED": "此版本包含数据库结构升级，当前在线升级版本暂不支持。",
+        "SYSTEM_UPDATE_DATABASE_CONTRACT_UNSUPPORTED": "无法验证此版本的数据库迁移与恢复契约，已拒绝准备升级。",
         "SYSTEM_UPDATE_RECOVERY_REQUIRED": "上一升级作业仍需人工恢复，已拒绝再次升级。",
         "SYSTEM_UPDATE_RECOVERY_STATE_UNVERIFIED": "无法核验既有升级作业的恢复状态，已拒绝再次升级。",
         "SYSTEM_UPDATE_RECOVERY_DATABASE_UNVERIFIED": "当前数据库未通过完整性与版本结构核验，解除阻断已拒绝。",
@@ -191,7 +191,7 @@ def _prepare_update_sync(actor_user_id: str, provider_release_id: str) -> dict[s
             expected_sha256=str(archive["sha256"]),
             headers=provider.release_v2_asset_request_headers(metadata.archive_url),
         )
-        prepared = UpdateMvpService(PATH_ROOTS).prepare_from_artifacts(
+        prepared = UpdateMvpService(PATH_ROOTS, database_path=Path(DB_PATH)).prepare_from_artifacts(
             actor_user_id=actor_user_id, manifest_path=manifest_path, archive_path=archive_path, inventory_path=inventory_path
         )
         return {"state": "READY", **prepared.public(), "release_notes": metadata.release_notes}
@@ -230,7 +230,7 @@ async def execute_update(job_id: str, request: Request, background_tasks: Backgr
     try:
         body = await request.json()
         password = body.get("password") if isinstance(body, dict) else None
-        if not isinstance(password, str) or not password or len(password) > 1024:
+        if not isinstance(password, str) or not password or len(password) > MAX_SUPER_ADMIN_PASSWORD_LENGTH:
             raise UpdateMvpError("SYSTEM_UPDATE_PASSWORD_REQUIRED")
         # Re-read the actor immediately before confirmation.  The password is
         # used only in this call and is never written to plan, state or audit.
@@ -307,7 +307,7 @@ async def update_recovery_clearance(job_id: str, request: Request):
         expected_assessment_sha256 = body.get("expected_assessment_sha256")
         manual_evidence_note = body.get("manual_evidence_note")
         if (
-            not isinstance(password, str) or not password or len(password) > 1024
+            not isinstance(password, str) or not password or len(password) > MAX_SUPER_ADMIN_PASSWORD_LENGTH
             or not isinstance(expected_release_id, str) or len(expected_release_id) > 96
             or not isinstance(expected_assessment_sha256, str) or not SHA256_RE.fullmatch(expected_assessment_sha256)
             or not isinstance(manual_evidence_note, str) or not 12 <= len(manual_evidence_note.strip()) <= 500
