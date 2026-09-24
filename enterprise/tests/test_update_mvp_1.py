@@ -30,6 +30,7 @@ from enterprise.migrations.versioned import (
     initialize_schema_metadata_in_transaction,
     inspect_schema_metadata,
     migration_registry_sha256,
+    preview_legacy_schema_enrollment,
     schema_objects,
     schema_snapshot_sha256,
 )
@@ -474,7 +475,7 @@ def _execution_fixture(
     roots = _roots(tmp_path)
     source_root = roots.RELEASE_ROOT / "release-A"
     target_root = roots.RELEASE_ROOT / "release-B"
-    source_root.mkdir(); target_root.mkdir()
+    source_root.mkdir(exist_ok=True); target_root.mkdir(exist_ok=True)
     for root in (source_root, target_root):
         (root / "release-manifest.json").write_text("fixture", encoding="utf-8")
         (root / "release-payload-inventory.json").write_text("fixture", encoding="utf-8")
@@ -675,6 +676,187 @@ def test_same_schema_update_can_only_stage_an_append_only_future_registry(tmp_pa
         "target_migration_registry_sha256": target_registry_sha,
         "target_versioned_migration_ids": [step.migration_id],
     }
+
+
+def _legacy_migration_case(tmp_path: Path) -> tuple[Path, MigrationStep, dict[str, object], list[dict[str, str]]]:
+    roots = _roots(tmp_path)
+    database = roots.DATA_ROOT / "enterprise.db"
+    database.parent.mkdir(parents=True, exist_ok=True)
+    with closing(sqlite3.connect(database)) as conn:
+        conn.execute("CREATE TABLE records (id INTEGER PRIMARY KEY, value TEXT NOT NULL)")
+        conn.execute("INSERT INTO records (id, value) VALUES (1, 'preserved')")
+        conn.commit()
+        source_objects = schema_objects(conn)
+        source_sha = schema_snapshot_sha256(conn)
+    step = _update_migration_step()
+    enrolled_sha = preview_legacy_schema_enrollment(database, expected_legacy_schema_sha256=source_sha)
+    probe = tmp_path / "target-legacy-probe.db"
+    shutil.copyfile(database, probe)
+    with closing(sqlite3.connect(probe)) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        initialize_schema_metadata_in_transaction(conn)
+        step.apply_in_transaction(conn)
+        target_objects = schema_objects(conn)
+        target_sha = schema_snapshot_sha256(conn)
+        conn.rollback()
+    source_evidence = {
+        "schema_id": "enterprise-database-contract-v1", "migration_ids": ["base"],
+        "objects": source_objects,
+    }
+    target_evidence = {
+        "schema_id": "enterprise-database-contract-v1", "migration_ids": ["base"],
+        "objects": target_objects,
+        "schema_version": 2,
+        "schema_objects_sha256": target_sha,
+        "migration_registry_sha256": migration_registry_sha256((step,)),
+        "versioned_migration_ids": [step.migration_id],
+        "legacy_source_schema_sha256": source_sha,
+        "legacy_enrolled_schema_sha256": enrolled_sha,
+    }
+    for release_id, evidence in (("release-A", source_evidence), ("release-B", target_evidence)):
+        path = roots.RELEASE_ROOT / release_id / "release-evidence" / "database-schema.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(evidence), encoding="utf-8")
+    plan = _database_update_plan(
+        source_root=roots.RELEASE_ROOT / "release-A",
+        target_root=roots.RELEASE_ROOT / "release-B",
+        source_manifest=_Manifest("release-A", "1" * 64, migration_target=True),
+        target_manifest=_Manifest("release-B", "2" * 64, migration_target=True),
+        database_path=database, registry=(step,), operation_id="a" * 32,
+    )
+    return database, step, plan, source_objects
+
+
+def test_legacy_migration_plan_requires_exact_source_and_enrolled_schema(tmp_path: Path):
+    database, step, plan, source_objects = _legacy_migration_case(tmp_path)
+    assert plan["source_schema_format"] == "legacy-exact"
+    assert plan["source_schema_version"] == 0
+    assert plan["migration_ids"] == [step.migration_id]
+    assert inspect_schema_metadata(database)["current_state"] == "DATA_SCHEMA_METADATA_MISSING"
+    target = tmp_path / "install" / "releases" / "release-B" / "release-evidence" / "database-schema.json"
+    evidence = json.loads(target.read_text(encoding="utf-8"))
+    evidence["legacy_enrolled_schema_sha256"] = "f" * 64
+    target.write_text(json.dumps(evidence), encoding="utf-8")
+    with pytest.raises(UpdateMvpError, match="SYSTEM_UPDATE_DATABASE_SOURCE_IDENTITY_MISMATCH"):
+        _database_update_plan(
+            source_root=target.parents[2] / "release-A", target_root=target.parents[1],
+            source_manifest=_Manifest("release-A", "1" * 64, migration_target=True),
+            target_manifest=_Manifest("release-B", "2" * 64, migration_target=True),
+            database_path=database, registry=(step,), operation_id="a" * 32,
+        )
+    with closing(sqlite3.connect(database)) as conn:
+        assert schema_objects(conn) == source_objects
+
+
+def test_legacy_update_backs_up_before_migration_and_keeps_rows(tmp_path: Path, monkeypatch):
+    database, step, plan, _ = _legacy_migration_case(tmp_path)
+    roots, store, job_id, pointer, calls, launcher = _execution_fixture(
+        tmp_path, monkeypatch, database_update=plan, migration_target=True,
+    )
+    assert execute_update_job(roots, job_id, launcher=launcher, database_path=database, migration_registry=(step,)) == 0
+    assert pointer.release.release_id == "release-B"
+    assert inspect_schema_metadata(database)["schema_version"] == 2
+    with closing(sqlite3.connect(database)) as conn:
+        assert conn.execute("SELECT id, value, label FROM records").fetchall() == [(1, "preserved", "migrated")]
+    result = store.read_database_result(job_id)
+    assert result["source_schema_version"] == 0
+    from enterprise.migrations.versioned import verify_database_backup
+    backup = verify_database_backup(roots.BACKUP_ROOT / result["backup_manifest_relative_path"])
+    assert backup.source_schema_version == 0
+    assert store.read_status(job_id)["state"] == "SUCCEEDED"
+    assert calls == [("release-B", "start"), ("release-B", "health")]
+
+
+@pytest.mark.parametrize("failure_kind", ["start", "health"])
+def test_legacy_target_failure_restores_database_and_pointer(tmp_path: Path, monkeypatch, failure_kind: str):
+    database, step, plan, _ = _legacy_migration_case(tmp_path)
+    roots, store, job_id, pointer, calls, launcher = _execution_fixture(
+        tmp_path, monkeypatch,
+        target_start_exit=2 if failure_kind == "start" else 0,
+        target_health_exit=2 if failure_kind == "health" else 0,
+        database_update=plan, migration_target=True,
+    )
+    assert execute_update_job(roots, job_id, launcher=launcher, database_path=database, migration_registry=(step,)) == 2
+    assert pointer.release.release_id == "release-A"
+    assert inspect_schema_metadata(database)["current_state"] == "DATA_SCHEMA_METADATA_MISSING"
+    with closing(sqlite3.connect(database)) as conn:
+        assert conn.execute("SELECT id, value FROM records").fetchall() == [(1, "preserved")]
+        assert [row[1] for row in conn.execute("PRAGMA table_info(records)")] == ["id", "value"]
+    assert store.read_status(job_id)["state"] == "ROLLED_BACK"
+    assert calls[-2:] == [("release-A", "start"), ("release-A", "health")]
+
+
+def test_legacy_migration_validation_failure_keeps_old_database(tmp_path: Path, monkeypatch):
+    database, step, plan, _ = _legacy_migration_case(tmp_path)
+    rejecting_step = _update_migration_step(validation_result=False)
+    assert rejecting_step.checksum_sha256 == step.checksum_sha256
+    roots, store, job_id, pointer, calls, launcher = _execution_fixture(
+        tmp_path, monkeypatch, database_update=plan, migration_target=True,
+    )
+    assert execute_update_job(
+        roots, job_id, launcher=launcher, database_path=database,
+        migration_registry=(rejecting_step,),
+    ) == 2
+    assert pointer.release.release_id == "release-A"
+    assert inspect_schema_metadata(database)["current_state"] == "DATA_SCHEMA_METADATA_MISSING"
+    with closing(sqlite3.connect(database)) as conn:
+        assert conn.execute("SELECT value FROM records WHERE id=1").fetchone() == ("preserved",)
+    assert calls == [("release-A", "start"), ("release-A", "health")]
+    assert store.read_status(job_id)["result_code"] == "DATA_MIGRATION_VALIDATION_FAILED"
+
+
+def test_legacy_backup_failure_never_switches_pointer(tmp_path: Path, monkeypatch):
+    database, step, plan, _ = _legacy_migration_case(tmp_path)
+    roots, store, job_id, pointer, calls, launcher = _execution_fixture(
+        tmp_path, monkeypatch, database_update=plan, migration_target=True,
+    )
+
+    def fail_backup(*_args, **_kwargs):
+        raise DataMigrationError("DATA_BACKUP_FAILED")
+
+    monkeypatch.setattr("enterprise.migrations.versioned.create_database_backup", fail_backup)
+    assert execute_update_job(roots, job_id, launcher=launcher, database_path=database, migration_registry=(step,)) == 2
+    assert pointer.release.release_id == "release-A"
+    assert inspect_schema_metadata(database)["current_state"] == "DATA_SCHEMA_METADATA_MISSING"
+    assert calls == [("release-A", "start"), ("release-A", "health")]
+    assert store.read_status(job_id)["result_code"] == "DATA_BACKUP_FAILED"
+
+
+def test_legacy_restore_failure_requires_manual_recovery(tmp_path: Path, monkeypatch):
+    database, step, plan, _ = _legacy_migration_case(tmp_path)
+    roots, store, job_id, pointer, calls, launcher = _execution_fixture(
+        tmp_path, monkeypatch, target_start_exit=2, database_update=plan, migration_target=True,
+    )
+
+    def fail_restore(_database, _result, *, validation_result):
+        raise DataMigrationError("DATA_RESTORE_FAILED", database_may_have_changed=True)
+
+    monkeypatch.setattr("enterprise.ops.update.mvp.finalize_release_database_validation", fail_restore)
+    assert execute_update_job(roots, job_id, launcher=launcher, database_path=database, migration_registry=(step,)) == 2
+    assert inspect_schema_metadata(database)["schema_version"] == 2
+    assert pointer.release.release_id == "release-B"
+    assert not any(item[0] == "release-A" for item in calls)
+    assert store.read_status(job_id)["state"] == "RECOVERY_REQUIRED"
+
+
+def test_legacy_post_commit_uncertainty_never_starts_old_release(tmp_path: Path, monkeypatch):
+    from enterprise.migrations.versioned import apply_legacy_versioned_migrations
+
+    database, step, plan, _ = _legacy_migration_case(tmp_path)
+    roots, store, job_id, pointer, calls, launcher = _execution_fixture(
+        tmp_path, monkeypatch, database_update=plan, migration_target=True,
+    )
+
+    def fail_after_commit(*args, **kwargs):
+        apply_legacy_versioned_migrations(*args, **kwargs)
+        raise DataMigrationError("DATA_MIGRATION_POST_COMMIT_VALIDATION_FAILED", database_may_have_changed=True)
+
+    monkeypatch.setattr("enterprise.ops.update.mvp.apply_legacy_versioned_migrations", fail_after_commit)
+    assert execute_update_job(roots, job_id, launcher=launcher, database_path=database, migration_registry=(step,)) == 2
+    assert inspect_schema_metadata(database)["schema_version"] == 2
+    assert pointer.release.release_id == "release-A"
+    assert calls == []
+    assert store.read_status(job_id)["state"] == "RECOVERY_REQUIRED"
 
 
 def test_customer_095_legacy_bridge_keeps_database_unchanged(tmp_path: Path):

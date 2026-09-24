@@ -26,6 +26,7 @@ from enterprise.path_safety import PathSafetyError, assert_no_reparse_ancestors,
 
 METADATA_SCHEMA_VERSION = "data-mvp-1-schema-metadata-v1"
 BACKUP_SCHEMA_VERSION = "data-mvp-1-database-backup-v1"
+LEGACY_BACKUP_SCHEMA_VERSION = "data-mvp-1-legacy-database-backup-v1"
 BASELINE_SCHEMA_VERSION = 1
 STATE_TABLE = "enterprise_schema_state"
 LEDGER_TABLE = "enterprise_schema_migrations"
@@ -573,6 +574,21 @@ def _runtime_sidecars_absent(database_path: Path) -> None:
             _fail("DATA_DATABASE_RUNTIME_FILES_PRESENT")
 
 
+def _checkpoint_quiescent_database(database_path: Path) -> None:
+    """Checkpoint WAL after the supervisor stops all owners; never unlink sidecars."""
+    database_path = _regular_file(Path(database_path), "DATA_DATABASE_INVALID")
+    try:
+        with open_existing_sqlite(database_path, mode="rw", error_type=sqlite3.OperationalError) as conn:
+            result = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+            if result is None or int(result[0]) != 0:
+                _fail("DATA_DATABASE_WAL_NOT_QUIESCENT")
+    except DataMigrationError:
+        raise
+    except sqlite3.Error as exc:
+        _fail("DATA_DATABASE_WAL_CHECKPOINT_FAILED", exc)
+    _runtime_sidecars_absent(database_path)
+
+
 def _write_new_file(path: Path, data: bytes, code: str) -> None:
     _new_path(path, code)
     try:
@@ -609,10 +625,15 @@ def create_database_backup(
     backup_root: Path,
     *,
     operation_id: str,
+    expected_legacy_schema_sha256: str | None = None,
 ) -> DatabaseBackup:
     operation_id = _validate_operation_id(operation_id)
+    legacy_schema_sha = (
+        _validate_sha256(expected_legacy_schema_sha256, "DATA_EXPECTED_SCHEMA_INVALID")
+        if expected_legacy_schema_sha256 is not None else None
+    )
     database_path = _regular_file(Path(database_path), "DATA_DATABASE_INVALID")
-    _runtime_sidecars_absent(database_path)
+    _checkpoint_quiescent_database(database_path)
     backup_root = Path(backup_root)
     try:
         assert_no_reparse_ancestors(backup_root, allow_missing=True)
@@ -631,8 +652,20 @@ def create_database_backup(
         source_sha_before, source_size = _sha256_file(database_path)
         with open_existing_sqlite(database_path, mode="ro", error_type=sqlite3.OperationalError) as source:
             source_inspection = inspect_schema_metadata_connection(source)
-            if source_inspection.get("current_state") != STATE_READY:
-                _fail("DATA_SCHEMA_METADATA_NOT_READY")
+            if legacy_schema_sha is None:
+                if source_inspection.get("current_state") != STATE_READY:
+                    _fail("DATA_SCHEMA_METADATA_NOT_READY")
+                source_version = int(source_inspection["schema_version"])
+                source_schema_sha = str(source_inspection["schema_sha256"])
+                source_ledger_sha = str(source_inspection["ledger_sha256"])
+            else:
+                if source_inspection.get("current_state") != STATE_MISSING:
+                    _fail("DATA_LEGACY_SCHEMA_METADATA_NOT_MISSING")
+                source_version = 0
+                source_schema_sha = schema_snapshot_sha256(source)
+                source_ledger_sha = ledger_sha256([])
+                if source_schema_sha != legacy_schema_sha:
+                    _fail("DATA_EXPECTED_SCHEMA_MISMATCH")
             source_integrity, source_fk = _integrity(source)
             if source_integrity != "ok" or source_fk != 0:
                 _fail("DATA_SOURCE_DATABASE_INTEGRITY_FAILED")
@@ -647,22 +680,28 @@ def create_database_backup(
             _fail("DATA_BACKUP_SOURCE_CHANGED")
         with open_existing_sqlite(backup_path, mode="ro", error_type=sqlite3.OperationalError) as backup_conn:
             backup_inspection = inspect_schema_metadata_connection(backup_conn)
+            backup_schema_sha = schema_snapshot_sha256(backup_conn)
             backup_integrity, backup_fk = _integrity(backup_conn)
-        if (
-            backup_inspection.get("current_state") != STATE_READY
-            or backup_inspection.get("schema_version") != source_inspection.get("schema_version")
-            or backup_inspection.get("schema_sha256") != source_inspection.get("schema_sha256")
-            or backup_inspection.get("ledger_sha256") != source_inspection.get("ledger_sha256")
-            or backup_integrity != "ok"
-            or backup_fk != 0
-        ):
+        if legacy_schema_sha is not None:
+            matching_schema = (
+                backup_inspection.get("current_state") == STATE_MISSING
+                and backup_schema_sha == source_schema_sha
+            )
+        else:
+            matching_schema = (
+                backup_inspection.get("current_state") == STATE_READY
+                and backup_inspection.get("schema_version") == source_version
+                and backup_inspection.get("schema_sha256") == source_schema_sha
+                and backup_inspection.get("ledger_sha256") == source_ledger_sha
+            )
+        if not matching_schema or backup_integrity != "ok" or backup_fk != 0:
             _fail("DATA_BACKUP_VERIFICATION_FAILED")
         with backup_path.open("r+b") as handle:
             handle.flush()
             os.fsync(handle.fileno())
         backup_sha, backup_size = _sha256_file(backup_path)
         payload = {
-            "schema_version": BACKUP_SCHEMA_VERSION,
+            "schema_version": LEGACY_BACKUP_SCHEMA_VERSION if legacy_schema_sha is not None else BACKUP_SCHEMA_VERSION,
             "operation_id": operation_id,
             "created_at": int(time.time() * 1000),
             "database_filename": database_path.name,
@@ -671,9 +710,9 @@ def create_database_backup(
             "source_database_sha256": source_sha_before,
             "backup_size_bytes": backup_size,
             "backup_sha256": backup_sha,
-            "source_schema_version": int(source_inspection["schema_version"]),
-            "source_schema_sha256": str(source_inspection["schema_sha256"]),
-            "source_ledger_sha256": str(source_inspection["ledger_sha256"]),
+            "source_schema_version": source_version,
+            "source_schema_sha256": source_schema_sha,
+            "source_ledger_sha256": source_ledger_sha,
             "integrity_check": backup_integrity,
             "foreign_key_violation_count": backup_fk,
         }
@@ -686,9 +725,9 @@ def create_database_backup(
             manifest_sha256=manifest_sha,
             backup_sha256=backup_sha,
             source_database_sha256=source_sha_before,
-            source_schema_version=int(source_inspection["schema_version"]),
-            source_schema_sha256=str(source_inspection["schema_sha256"]),
-            source_ledger_sha256=str(source_inspection["ledger_sha256"]),
+            source_schema_version=source_version,
+            source_schema_sha256=source_schema_sha,
+            source_ledger_sha256=source_ledger_sha,
         )
     except DataMigrationError:
         for candidate in (manifest_path, backup_path):
@@ -756,7 +795,8 @@ def verify_database_backup(manifest_path: Path) -> DatabaseBackup:
         "source_schema_version", "source_schema_sha256", "source_ledger_sha256", "integrity_check",
         "foreign_key_violation_count",
     }
-    if set(payload) != expected_keys or payload.get("schema_version") != BACKUP_SCHEMA_VERSION:
+    backup_format = payload.get("schema_version")
+    if set(payload) != expected_keys or backup_format not in {BACKUP_SCHEMA_VERSION, LEGACY_BACKUP_SCHEMA_VERSION}:
         _fail("DATA_BACKUP_MANIFEST_INVALID")
     operation_id = _validate_operation_id(str(payload.get("operation_id") or ""))
     if manifest_path.parent.name != operation_id or payload.get("backup_filename") != BACKUP_FILENAME:
@@ -770,6 +810,11 @@ def verify_database_backup(manifest_path: Path) -> DatabaseBackup:
     backup_sha = _validate_sha256(payload.get("backup_sha256"), "DATA_BACKUP_MANIFEST_INVALID")
     schema_sha = _validate_sha256(payload.get("source_schema_sha256"), "DATA_BACKUP_MANIFEST_INVALID")
     ledger_hash = _validate_sha256(payload.get("source_ledger_sha256"), "DATA_BACKUP_MANIFEST_INVALID")
+    if backup_format == LEGACY_BACKUP_SCHEMA_VERSION:
+        if payload["source_schema_version"] != 0 or ledger_hash != ledger_sha256([]):
+            _fail("DATA_BACKUP_MANIFEST_INVALID")
+    elif payload["source_schema_version"] < BASELINE_SCHEMA_VERSION:
+        _fail("DATA_BACKUP_MANIFEST_INVALID")
     if payload.get("integrity_check") != "ok" or payload.get("foreign_key_violation_count") != 0:
         _fail("DATA_BACKUP_MANIFEST_INVALID")
     backup_path = _regular_file(manifest_path.parent / BACKUP_FILENAME, "DATA_BACKUP_FILE_INVALID")
@@ -779,17 +824,20 @@ def verify_database_backup(manifest_path: Path) -> DatabaseBackup:
     try:
         with open_existing_sqlite(backup_path, mode="ro", error_type=sqlite3.OperationalError) as conn:
             inspection = inspect_schema_metadata_connection(conn)
+            actual_schema_sha = schema_snapshot_sha256(conn)
             integrity, foreign_keys = _integrity(conn)
     except (sqlite3.Error, DataMigrationError) as exc:
         _fail("DATA_BACKUP_VERIFICATION_FAILED", exc)
-    if (
-        inspection.get("current_state") != STATE_READY
-        or inspection.get("schema_version") != payload["source_schema_version"]
-        or inspection.get("schema_sha256") != schema_sha
-        or inspection.get("ledger_sha256") != ledger_hash
-        or integrity != "ok"
-        or foreign_keys != 0
-    ):
+    if backup_format == LEGACY_BACKUP_SCHEMA_VERSION:
+        matching_schema = inspection.get("current_state") == STATE_MISSING and actual_schema_sha == schema_sha
+    else:
+        matching_schema = (
+            inspection.get("current_state") == STATE_READY
+            and inspection.get("schema_version") == payload["source_schema_version"]
+            and inspection.get("schema_sha256") == schema_sha
+            and inspection.get("ledger_sha256") == ledger_hash
+        )
+    if not matching_schema or integrity != "ok" or foreign_keys != 0:
         _fail("DATA_BACKUP_VERIFICATION_FAILED")
     manifest_sha, _ = _sha256_file(manifest_path, maximum=MAX_MANIFEST_BYTES)
     return DatabaseBackup(
@@ -802,6 +850,74 @@ def verify_database_backup(manifest_path: Path) -> DatabaseBackup:
         source_schema_sha256=schema_sha,
         source_ledger_sha256=ledger_hash,
     )
+
+
+def preview_legacy_schema_enrollment(
+    database_path: Path,
+    *,
+    expected_legacy_schema_sha256: str,
+) -> str:
+    """Calculate the metadata-only baseline on an in-memory copy; never write the source."""
+    expected = _validate_sha256(expected_legacy_schema_sha256, "DATA_EXPECTED_SCHEMA_INVALID")
+    database_path = _regular_file(Path(database_path), "DATA_DATABASE_INVALID")
+    try:
+        with open_existing_sqlite(database_path, mode="ro", error_type=sqlite3.OperationalError) as source:
+            if inspect_schema_metadata_connection(source).get("current_state") != STATE_MISSING:
+                _fail("DATA_LEGACY_SCHEMA_METADATA_NOT_MISSING")
+            if schema_snapshot_sha256(source) != expected:
+                _fail("DATA_EXPECTED_SCHEMA_MISMATCH")
+            integrity, foreign_keys = _integrity(source)
+            if integrity != "ok" or foreign_keys != 0:
+                _fail("DATA_SOURCE_DATABASE_INTEGRITY_FAILED")
+            preview = sqlite3.connect(":memory:")
+            try:
+                source.backup(preview)
+                preview.execute("BEGIN IMMEDIATE")
+                result = initialize_schema_metadata_in_transaction(preview)
+                baseline_hash = str(result["schema_sha256"])
+                preview.rollback()
+                return baseline_hash
+            finally:
+                preview.close()
+    except DataMigrationError:
+        raise
+    except sqlite3.Error as exc:
+        _fail("DATA_LEGACY_SCHEMA_PREVIEW_FAILED", exc)
+
+
+def _apply_steps_in_transaction(conn: sqlite3.Connection, steps: Sequence[MigrationStep]) -> None:
+    for step in steps:
+        conn.set_authorizer(_migration_statement_authorizer)
+        try:
+            step.apply_in_transaction(conn)
+            if not conn.in_transaction:
+                _fail("DATA_MIGRATION_TRANSACTION_BROKEN")
+            if step.validate_in_transaction(conn) is not True:
+                _fail("DATA_MIGRATION_VALIDATION_FAILED")
+        finally:
+            conn.set_authorizer(None)
+        if not conn.in_transaction:
+            _fail("DATA_MIGRATION_TRANSACTION_BROKEN")
+        conn.execute(
+            f"""
+            INSERT INTO main.{LEDGER_TABLE} (
+                migration_id, from_version, to_version, checksum_sha256, applied_at
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (step.migration_id, step.from_version, step.to_version, step.checksum_sha256, int(time.time() * 1000)),
+        )
+        records = _ledger_records(conn)
+        new_schema_sha = schema_snapshot_sha256(conn)
+        updated = conn.execute(
+            f"""
+            UPDATE main.{STATE_TABLE}
+            SET schema_version = ?, schema_sha256 = ?, ledger_sha256 = ?, updated_at = ?
+            WHERE singleton_id = 1 AND schema_version = ?
+            """,
+            (step.to_version, new_schema_sha, ledger_sha256(records), int(time.time() * 1000), step.from_version),
+        )
+        if updated.rowcount != 1:
+            _fail("DATA_SCHEMA_METADATA_WRITE_FAILED")
 
 
 def apply_versioned_migrations(
@@ -838,38 +954,7 @@ def apply_versioned_migrations(
                     or inspection.get("schema_sha256") != plan.source_schema_sha256
                 ):
                     _fail("DATA_MIGRATION_SOURCE_CHANGED")
-                for step in plan.steps:
-                    conn.set_authorizer(_migration_statement_authorizer)
-                    try:
-                        step.apply_in_transaction(conn)
-                        if not conn.in_transaction:
-                            _fail("DATA_MIGRATION_TRANSACTION_BROKEN")
-                        if step.validate_in_transaction(conn) is not True:
-                            _fail("DATA_MIGRATION_VALIDATION_FAILED")
-                    finally:
-                        conn.set_authorizer(None)
-                    if not conn.in_transaction:
-                        _fail("DATA_MIGRATION_TRANSACTION_BROKEN")
-                    conn.execute(
-                        f"""
-                        INSERT INTO main.{LEDGER_TABLE} (
-                            migration_id, from_version, to_version, checksum_sha256, applied_at
-                        ) VALUES (?, ?, ?, ?, ?)
-                        """,
-                        (step.migration_id, step.from_version, step.to_version, step.checksum_sha256, int(time.time() * 1000)),
-                    )
-                    records = _ledger_records(conn)
-                    new_schema_sha = schema_snapshot_sha256(conn)
-                    updated = conn.execute(
-                        f"""
-                        UPDATE main.{STATE_TABLE}
-                        SET schema_version = ?, schema_sha256 = ?, ledger_sha256 = ?, updated_at = ?
-                        WHERE singleton_id = 1 AND schema_version = ?
-                        """,
-                        (step.to_version, new_schema_sha, ledger_sha256(records), int(time.time() * 1000), step.from_version),
-                    )
-                    if updated.rowcount != 1:
-                        _fail("DATA_SCHEMA_METADATA_WRITE_FAILED")
+                _apply_steps_in_transaction(conn, plan.steps)
                 final_inspection = inspect_schema_metadata_connection(conn)
                 integrity, foreign_keys = _integrity(conn)
                 if (
@@ -889,20 +974,109 @@ def apply_versioned_migrations(
         raise
     except Exception as exc:
         _fail("DATA_MIGRATION_FAILED", exc)
-    post_sha, _ = _sha256_file(database_path)
     post_inspection = inspect_schema_metadata(database_path)
     if (
         post_inspection.get("current_state") != STATE_READY
         or post_inspection.get("schema_version") != target_version
         or post_inspection.get("schema_sha256") != expected_target
     ):
-        _fail("DATA_MIGRATION_POST_COMMIT_VALIDATION_FAILED")
+        _fail("DATA_MIGRATION_POST_COMMIT_VALIDATION_FAILED", database_may_have_changed=True)
+    _checkpoint_quiescent_database(database_path)
+    post_sha, _ = _sha256_file(database_path)
     return MigrationResult(
         operation_id=operation_id,
         source_version=source_version,
         target_version=target_version,
         migration_ids=tuple(step.migration_id for step in plan.steps),
         source_schema_sha256=plan.source_schema_sha256,
+        target_schema_sha256=expected_target,
+        post_migration_database_sha256=post_sha,
+        backup=backup,
+    )
+
+
+def apply_legacy_versioned_migrations(
+    database_path: Path,
+    backup_root: Path,
+    *,
+    operation_id: str,
+    expected_legacy_schema_sha256: str,
+    expected_enrolled_schema_sha256: str,
+    target_version: int,
+    expected_target_schema_sha256: str,
+    registry: Sequence[MigrationStep],
+) -> MigrationResult:
+    """Back up an exact legacy DB, enroll metadata and migrate in one transaction."""
+    operation_id = _validate_operation_id(operation_id)
+    expected_legacy = _validate_sha256(expected_legacy_schema_sha256, "DATA_EXPECTED_SCHEMA_INVALID")
+    expected_enrolled = _validate_sha256(expected_enrolled_schema_sha256, "DATA_EXPECTED_SCHEMA_INVALID")
+    expected_target = _validate_sha256(expected_target_schema_sha256, "DATA_EXPECTED_SCHEMA_INVALID")
+    if type(target_version) is not int or target_version <= BASELINE_SCHEMA_VERSION:
+        _fail("DATA_TARGET_SCHEMA_VERSION_INVALID")
+    steps = validate_registry(registry)
+    selected = tuple(step for step in steps if step.from_version < target_version)
+    if not selected or selected[-1].to_version != target_version:
+        _fail("DATA_MIGRATION_PATH_UNAVAILABLE")
+    database_path = _regular_file(Path(database_path), "DATA_DATABASE_INVALID")
+    if preview_legacy_schema_enrollment(
+        database_path, expected_legacy_schema_sha256=expected_legacy,
+    ) != expected_enrolled:
+        _fail("DATA_ENROLLED_SCHEMA_MISMATCH")
+    backup = create_database_backup(
+        database_path, backup_root, operation_id=operation_id,
+        expected_legacy_schema_sha256=expected_legacy,
+    )
+    current_sha, _ = _sha256_file(database_path)
+    if current_sha != backup.source_database_sha256:
+        _fail("DATA_MIGRATION_SOURCE_CHANGED")
+    try:
+        with open_existing_sqlite(database_path, mode="rw", error_type=sqlite3.OperationalError) as conn:
+            conn.execute("PRAGMA foreign_keys=ON")
+            conn.execute("BEGIN EXCLUSIVE")
+            try:
+                if (
+                    inspect_schema_metadata_connection(conn).get("current_state") != STATE_MISSING
+                    or schema_snapshot_sha256(conn) != expected_legacy
+                ):
+                    _fail("DATA_MIGRATION_SOURCE_CHANGED")
+                enrolled = initialize_schema_metadata_in_transaction(conn)
+                if enrolled.get("schema_sha256") != expected_enrolled:
+                    _fail("DATA_ENROLLED_SCHEMA_MISMATCH")
+                _apply_steps_in_transaction(conn, selected)
+                final_inspection = inspect_schema_metadata_connection(conn)
+                integrity, foreign_keys = _integrity(conn)
+                if (
+                    final_inspection.get("current_state") != STATE_READY
+                    or final_inspection.get("schema_version") != target_version
+                    or final_inspection.get("schema_sha256") != expected_target
+                    or integrity != "ok"
+                    or foreign_keys != 0
+                ):
+                    _fail("DATA_MIGRATION_FINAL_VALIDATION_FAILED")
+                conn.commit()
+            except Exception:
+                if conn.in_transaction:
+                    conn.rollback()
+                raise
+    except DataMigrationError:
+        raise
+    except Exception as exc:
+        _fail("DATA_MIGRATION_FAILED", exc)
+    post_inspection = inspect_schema_metadata(database_path)
+    if (
+        post_inspection.get("current_state") != STATE_READY
+        or post_inspection.get("schema_version") != target_version
+        or post_inspection.get("schema_sha256") != expected_target
+    ):
+        _fail("DATA_MIGRATION_POST_COMMIT_VALIDATION_FAILED", database_may_have_changed=True)
+    _checkpoint_quiescent_database(database_path)
+    post_sha, _ = _sha256_file(database_path)
+    return MigrationResult(
+        operation_id=operation_id,
+        source_version=0,
+        target_version=target_version,
+        migration_ids=tuple(step.migration_id for step in selected),
+        source_schema_sha256=expected_legacy,
         target_schema_sha256=expected_target,
         post_migration_database_sha256=post_sha,
         backup=backup,
@@ -922,7 +1096,7 @@ def restore_database_backup(
         "DATA_EXPECTED_BACKUP_MANIFEST_INVALID",
     )
     database_path = _regular_file(Path(database_path), "DATA_DATABASE_INVALID")
-    _runtime_sidecars_absent(database_path)
+    _checkpoint_quiescent_database(database_path)
     current_sha, _ = _sha256_file(database_path)
     if current_sha != expected_current:
         _fail("DATA_RESTORE_EXPECTED_CURRENT_MISMATCH")
@@ -930,6 +1104,8 @@ def restore_database_backup(
     if actual_manifest != expected_manifest:
         _fail("DATA_BACKUP_MANIFEST_IDENTITY_MISMATCH")
     backup = verify_database_backup(manifest_path)
+    if _read_bounded_json(Path(manifest_path)).get("database_filename") != database_path.name:
+        _fail("DATA_BACKUP_TARGET_MISMATCH")
     temporary = database_path.parent / f".{database_path.name}.restore-{uuid.uuid4().hex}.new"
     _new_path(temporary, "DATA_RESTORE_TEMP_INVALID")
     replaced = False
@@ -1001,6 +1177,8 @@ def finalize_release_database_validation(
     """
     if validation_result not in {"healthy", "start_failed", "health_failed"}:
         _fail("DATA_RELEASE_VALIDATION_RESULT_INVALID")
+    if validation_result != "healthy":
+        _checkpoint_quiescent_database(Path(database_path))
     current_sha, _ = _sha256_file(Path(database_path))
     if current_sha != migration_result.post_migration_database_sha256:
         _fail("DATA_RESTORE_EXPECTED_CURRENT_MISMATCH")
@@ -1011,7 +1189,7 @@ def finalize_release_database_validation(
             or inspection.get("schema_version") != migration_result.target_version
             or inspection.get("schema_sha256") != migration_result.target_schema_sha256
         ):
-            _fail("DATA_MIGRATION_POST_COMMIT_VALIDATION_FAILED")
+            _fail("DATA_MIGRATION_POST_COMMIT_VALIDATION_FAILED", database_may_have_changed=True)
         return ReleaseValidationFinalization("healthy", False, None)
     restore = restore_database_backup(
         Path(database_path),

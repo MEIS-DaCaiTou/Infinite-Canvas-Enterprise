@@ -390,6 +390,29 @@ def test_versioned_database_snapshot_group_is_strict_and_backward_compatible(tmp
         verify_release_manifest_v2(manifest_path, archive, inventory_path)
 
 
+def test_legacy_source_binding_requires_complete_versioned_evidence(tmp_path: Path) -> None:
+    manifest_path, archive, inventory_path, manifest = _fixture(tmp_path)
+    database_path = tmp_path / "payload/release-evidence/database-schema.json"
+
+    def add_bound_evidence(value: dict[str, object]) -> None:
+        value.update({
+            "schema_version": 2,
+            "schema_objects_sha256": sha256_bytes(canonical_json(value["objects"])),
+            "migration_registry_sha256": "7" * 64,
+            "versioned_migration_ids": ["customer-095-drill-1"],
+            "legacy_source_schema_sha256": "8" * 64,
+            "legacy_enrolled_schema_sha256": "9" * 64,
+        })
+
+    _mutate_json(database_path, add_bound_evidence)
+    _rebind_fixture(manifest_path, archive, inventory_path, manifest)
+    assert verify_release_manifest_v2(manifest_path, archive, inventory_path).result == "pass"
+    _mutate_json(database_path, lambda value: value.pop("legacy_enrolled_schema_sha256"))
+    _rebind_fixture(manifest_path, archive, inventory_path, manifest)
+    with pytest.raises(ReleaseManifestV2Error, match="RELEASE_DATABASE_CONTENT_INVALID"):
+        verify_release_manifest_v2(manifest_path, archive, inventory_path)
+
+
 def test_version_and_expected_git_identity_mismatch_fail_closed(tmp_path: Path) -> None:
     manifest_path, archive, inventory_path, manifest = _fixture(tmp_path)
     (tmp_path / "payload" / "VERSION").write_text("2099.01.1\n", encoding="utf-8")

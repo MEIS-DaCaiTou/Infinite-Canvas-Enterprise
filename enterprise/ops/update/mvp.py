@@ -30,12 +30,15 @@ from enterprise.migrations.versioned import (
     DataMigrationError,
     MigrationResult,
     MigrationStep,
+    apply_legacy_versioned_migrations,
     apply_versioned_migrations,
     finalize_release_database_validation,
     inspect_schema_metadata,
     schema_objects,
     migration_registry_sha256,
     plan_migrations,
+    preview_legacy_schema_enrollment,
+    schema_snapshot_sha256,
     validate_registry,
 )
 from enterprise.migrations.sqlite_existing import open_existing_sqlite
@@ -537,16 +540,6 @@ def _database_update_plan(
     source_evidence = _database_evidence(source_root, source_manifest)
     target_evidence = _database_evidence(target_root, target_manifest)
     if "schema_version" not in source_evidence:
-        # The installed 09.5 Release has no schema ledger.  Its bridge may
-        # install migration code, but this hop must leave the database alone.
-        if (
-            mode != "same-schema-no-migration"
-            or "schema_version" in target_evidence
-            or source_evidence != target_evidence
-            or source_manifest.section("database_contract").get("schema_snapshot_sha256")
-            != target_manifest.section("database_contract").get("schema_snapshot_sha256")
-        ):
-            raise UpdateMvpError("SYSTEM_UPDATE_DATABASE_CONTRACT_UNSUPPORTED")
         try:
             with open_existing_sqlite(database_path, mode="ro", error_type=sqlite3.OperationalError) as conn:
                 if (
@@ -555,11 +548,59 @@ def _database_update_plan(
                     or conn.execute("PRAGMA foreign_key_check").fetchone() is not None
                 ):
                     raise UpdateMvpError("SYSTEM_UPDATE_DATABASE_SOURCE_IDENTITY_MISMATCH")
+                legacy_schema_sha = schema_snapshot_sha256(conn)
         except sqlite3.Error as exc:
             raise UpdateMvpError("SYSTEM_UPDATE_DATABASE_SOURCE_IDENTITY_MISMATCH") from exc
         if inspect_schema_metadata(database_path).get("current_state") != STATE_MISSING:
             raise UpdateMvpError("SYSTEM_UPDATE_DATABASE_SOURCE_IDENTITY_MISMATCH")
-        return {"mode": mode, "source_schema_format": "legacy-exact"}
+        if mode == "same-schema-no-migration":
+            if (
+                "schema_version" in target_evidence
+                or source_evidence != target_evidence
+                or source_manifest.section("database_contract").get("schema_snapshot_sha256")
+                != target_manifest.section("database_contract").get("schema_snapshot_sha256")
+            ):
+                raise UpdateMvpError("SYSTEM_UPDATE_DATABASE_CONTRACT_UNSUPPORTED")
+            return {"mode": mode, "source_schema_format": "legacy-exact"}
+        if (
+            target_evidence.get("legacy_source_schema_sha256") != legacy_schema_sha
+            or not SHA256_RE.fullmatch(str(target_evidence.get("legacy_enrolled_schema_sha256")))
+        ):
+            raise UpdateMvpError("SYSTEM_UPDATE_DATABASE_CONTRACT_UNSUPPORTED")
+        registry_sha = migration_registry_sha256(steps)
+        registry_ids = [step.migration_id for step in steps]
+        target_version = target_evidence.get("schema_version")
+        if (
+            target_evidence.get("migration_registry_sha256") != registry_sha
+            or target_evidence.get("versioned_migration_ids") != registry_ids
+            or type(target_version) is not int
+            or target_version <= 1
+            or target_evidence.get("schema_objects_sha256") == legacy_schema_sha
+        ):
+            raise UpdateMvpError("SYSTEM_UPDATE_DATABASE_MIGRATION_PLAN_INVALID")
+        migration_steps = [step for step in steps if step.from_version < target_version]
+        if not migration_steps or migration_steps[-1].to_version != target_version:
+            raise UpdateMvpError("SYSTEM_UPDATE_DATABASE_MIGRATION_PLAN_INVALID")
+        try:
+            enrolled_sha = preview_legacy_schema_enrollment(
+                database_path, expected_legacy_schema_sha256=legacy_schema_sha,
+            )
+        except DataMigrationError as exc:
+            raise UpdateMvpError(exc.code) from exc
+        if enrolled_sha != target_evidence["legacy_enrolled_schema_sha256"]:
+            raise UpdateMvpError("SYSTEM_UPDATE_DATABASE_SOURCE_IDENTITY_MISMATCH")
+        return {
+            "mode": mode,
+            "source_schema_format": "legacy-exact",
+            "operation_id": operation_id,
+            "source_schema_version": 0,
+            "target_schema_version": target_version,
+            "source_schema_sha256": legacy_schema_sha,
+            "enrolled_schema_sha256": enrolled_sha,
+            "target_schema_sha256": target_evidence["schema_objects_sha256"],
+            "migration_registry_sha256": registry_sha,
+            "migration_ids": [step.migration_id for step in migration_steps],
+        }
     inspection = inspect_schema_metadata(database_path)
     registry_sha = migration_registry_sha256(steps)
     registry_ids = [step.migration_id for step in steps]
@@ -876,15 +917,21 @@ def execute_update_job(
             raise UpdateMvpError("SYSTEM_UPDATE_EXPECTED_CURRENT_MISMATCH", status_code=409)
         if database_mode == "versioned-forward-migration":
             expected_registry_sha = migration_registry_sha256(registry)
-            if (
-                database_update.get("operation_id") != job_id
-                or database_update.get("migration_registry_sha256") != expected_registry_sha
-                or database_update.get("migration_ids")
-                != [step.migration_id for step in plan_migrations(
+            if database_update.get("source_schema_format") == "legacy-exact":
+                expected_migration_ids = [
+                    step.migration_id for step in registry
+                    if step.from_version < int(database_update.get("target_schema_version"))
+                ]
+            else:
+                expected_migration_ids = [step.migration_id for step in plan_migrations(
                     database_path,
                     target_version=int(database_update.get("target_schema_version")),
                     registry=registry,
                 ).steps]
+            if (
+                database_update.get("operation_id") != job_id
+                or database_update.get("migration_registry_sha256") != expected_registry_sha
+                or database_update.get("migration_ids") != expected_migration_ids
             ):
                 raise UpdateMvpError("SYSTEM_UPDATE_DATABASE_MIGRATION_PLAN_INVALID")
             store.write_status(
@@ -897,14 +944,26 @@ def execute_update_job(
                 database_update_mode=database_mode,
             )
             store.append_event(job_id, "MIGRATING", "SYSTEM_UPDATE_DATABASE_MIGRATING")
-            migration_result = apply_versioned_migrations(
-                database_path,
-                roots.BACKUP_ROOT / "system-update",
-                operation_id=job_id,
-                target_version=int(database_update["target_schema_version"]),
-                expected_target_schema_sha256=str(database_update["target_schema_sha256"]),
-                registry=registry,
-            )
+            if database_update.get("source_schema_format") == "legacy-exact":
+                migration_result = apply_legacy_versioned_migrations(
+                    database_path,
+                    roots.BACKUP_ROOT / "system-update",
+                    operation_id=job_id,
+                    expected_legacy_schema_sha256=str(database_update["source_schema_sha256"]),
+                    expected_enrolled_schema_sha256=str(database_update["enrolled_schema_sha256"]),
+                    target_version=int(database_update["target_schema_version"]),
+                    expected_target_schema_sha256=str(database_update["target_schema_sha256"]),
+                    registry=registry,
+                )
+            else:
+                migration_result = apply_versioned_migrations(
+                    database_path,
+                    roots.BACKUP_ROOT / "system-update",
+                    operation_id=job_id,
+                    target_version=int(database_update["target_schema_version"]),
+                    expected_target_schema_sha256=str(database_update["target_schema_sha256"]),
+                    registry=registry,
+                )
             if (
                 migration_result.source_version != database_update.get("source_schema_version")
                 or migration_result.target_version != database_update.get("target_schema_version")
@@ -980,13 +1039,25 @@ def execute_update_job(
                 try:
                     current_pointer = read_current_release_result_from_state_root(roots.STATE_ROOT)
                     schema = inspect_schema_metadata(database_path)
-                    source_state_intact = (
+                    pointer_intact = (
                         current_pointer.release.release_id == source_id
                         and current_pointer.raw_sha256 == plan.get("source_pointer_sha256")
-                        and schema.get("current_state") == STATE_READY
-                        and schema.get("schema_version") == database_update.get("source_schema_version")
-                        and schema.get("schema_sha256") == database_update.get("source_schema_sha256")
                     )
+                    if database_update.get("source_schema_format") == "legacy-exact":
+                        with open_existing_sqlite(database_path, mode="ro", error_type=sqlite3.OperationalError) as conn:
+                            actual_source_sha = schema_snapshot_sha256(conn)
+                        source_state_intact = (
+                            pointer_intact
+                            and schema.get("current_state") == STATE_MISSING
+                            and actual_source_sha == database_update.get("source_schema_sha256")
+                        )
+                    else:
+                        source_state_intact = (
+                            pointer_intact
+                            and schema.get("current_state") == STATE_READY
+                            and schema.get("schema_version") == database_update.get("source_schema_version")
+                            and schema.get("schema_sha256") == database_update.get("source_schema_sha256")
+                        )
                 except Exception:
                     source_state_intact = False
             if not source_state_intact:
