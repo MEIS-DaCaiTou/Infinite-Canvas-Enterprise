@@ -593,11 +593,13 @@ def _flow_for_operation(file: str, symbol: str) -> str:
         return "W44"
     if file in {
         "enterprise/ops/update/mvp.py",
+        "enterprise/ops/update/recovery.py",
         "enterprise/update_api.py",
     }:
-        # UPDATE-MVP-1 uses external staging/state/release roots and publishes
-        # only a newly materialized immutable Release plus pointer state. It
-        # never writes the running APP_ROOT in place.
+        # UPDATE-MVP-1 writes bounded job/clearance evidence only beneath
+        # STAGING_ROOT, with active locks in STATE_ROOT and newly materialized
+        # immutable Releases in RELEASE_ROOT. It never writes the running
+        # APP_ROOT in place.
         return "W46"
     if file == "enterprise/fresh_install.py":
         # INSTALL-MVP-1 writes only to a caller-selected new install root. It
@@ -619,7 +621,7 @@ def _flow_for_operation(file: str, symbol: str) -> str:
 # every mapped site as (file, symbol, operation, normalized-call fingerprint,
 # Wxx flow). Line numbers are deliberately excluded, while duplicate identical
 # calls remain duplicate records. Any added/removed/changed call drifts it.
-EXPECTED_SITE_MANIFEST_DIGEST = "3d6e14852dfe94e55ca3296549ecff4789996c4c5095d415da3249705064e976"
+EXPECTED_SITE_MANIFEST_DIGEST = "327c77dfe051aa46e6e37b89e1f9a37341dfd8af500a022a946d705b501d7852"
 
 FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W01", "main.py", "startup_event"),
