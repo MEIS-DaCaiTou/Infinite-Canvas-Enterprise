@@ -534,6 +534,10 @@
         <section class="update-card">
           <h3>在线更新</h3>
           <p>超级管理员确认一次后，系统依次下载、校验、保护数据、切换版本并检查重启结果。准备失败不会停止当前服务。</p>
+          <label for="updateReleaseSelect" style="display:block;margin:12px 0 6px;font-size:12px;font-weight:700;">选择目标版本</label>
+          <select id="updateReleaseSelect" class="select-user" style="width:100%;max-width:100%;margin-bottom:10px;" aria-label="选择目标版本" onchange="selectUpdateRelease()" disabled>
+            <option value="">请先检查更新</option>
+          </select>
           <div id="updateReleaseSummary" class="update-kv">尚未检查</div>
           <div class="update-actions update-dangerous">
             <button class="action-btn primary" id="startUpdateBtn" onclick="openUpdateConfirm()" disabled>更新到新版本</button>
@@ -761,8 +765,9 @@
   let _memberSearchQuery = '';
   let _memberSortMode = 'last_login';
   let _updateAccess = null;
-  let _latestUpdate = null;
-  let _updateAvailable = false;
+  let _availableUpdates = [];
+  let _currentUpdateReleaseId = '';
+  let _currentUpdateVersion = '';
   let _updatePreparing = false;
   let _preparedUpdate = null;
   let _recoveryAssessment = null;
@@ -1604,12 +1609,35 @@
 
   function updateStartButton() {
     const button = document.getElementById('startUpdateBtn');
+    const selector = document.getElementById('updateReleaseSelect');
     const state = _preparedUpdate?.state;
     const ready = state === 'READY';
     button.textContent = ready ? '继续已准备的升级' : '更新到新版本';
+    selector.disabled = !boolFlag(_updateAccess?.can_operate) || _updatePreparing
+      || ready || state === 'RECOVERY_REQUIRED' || UPDATE_ACTIVE_STATES.has(state) || !_availableUpdates.length;
     button.disabled = !boolFlag(_updateAccess?.can_operate) || _updatePreparing
       || state === 'RECOVERY_REQUIRED' || UPDATE_ACTIVE_STATES.has(state)
-      || (!ready && !_updateAvailable);
+      || (!ready && !selectedUpdateRelease());
+  }
+
+  function selectedUpdateRelease() {
+    const id = document.getElementById('updateReleaseSelect').value;
+    return _availableUpdates.find(item => item.provider_release_id === id) || null;
+  }
+
+  function selectUpdateRelease() {
+    const target = document.getElementById('updateReleaseSummary');
+    const selected = selectedUpdateRelease();
+    target.textContent = [
+      `当前 Release：${_currentUpdateReleaseId}`,
+      `当前版本：${_currentUpdateVersion}`,
+      selected ? `目标版本：${selected.version}（${selected.stage === 'development' ? '开发版' : '正式版'}，${selected.tag_name}）` : '当前没有更高版本可更新',
+      selected ? `发布时间：${selected.published_at}` : '',
+      selected?.stage === 'development' ? '开发版可能不稳定；升级前请确认该版本适用于当前设备。' : '',
+      selected?.release_notes ? `更新说明：${selected.release_notes}` : '',
+      selected ? '最终能否升级以发布包校验和数据库兼容检查结果为准。' : '',
+    ].filter(Boolean).join('\n');
+    updateStartButton();
   }
 
   async function checkSystemUpdate() {
@@ -1617,18 +1645,33 @@
     target.textContent = '正在检查…';
     try {
       const data = await apiFetch('/enterprise/api/update-mvp/check');
-      _latestUpdate = data.latest;
-      _updateAvailable = !!data.update_available;
-      target.textContent = [
-        `当前 Release：${data.current_release_id}`,
-        `当前版本：${data.current_version}`,
-        _updateAvailable ? `可更新至：${_latestUpdate.version} (${_latestUpdate.tag_name})` : '当前没有更高版本可更新',
-        _latestUpdate ? `发布时间：${_latestUpdate.published_at}` : '',
-        _latestUpdate && _latestUpdate.release_notes ? `更新说明：${_latestUpdate.release_notes}` : '',
-      ].filter(Boolean).join('\n');
-      updateStartButton();
+      _currentUpdateReleaseId = data.current_release_id;
+      _currentUpdateVersion = data.current_version;
+      _availableUpdates = Array.isArray(data.releases) ? data.releases
+        : (data.update_available && data.latest ? [{ ...data.latest, stage: 'stable' }] : []);
+      const selector = document.getElementById('updateReleaseSelect');
+      const previousId = selector.value;
+      selector.replaceChildren();
+      if (!_availableUpdates.length) {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = '当前没有可升级的版本';
+        selector.appendChild(option);
+      } else {
+        for (const release of _availableUpdates) {
+          const option = document.createElement('option');
+          option.value = release.provider_release_id;
+          option.textContent = `${release.version} · ${release.stage === 'development' ? '开发版' : '正式版'}`;
+          selector.appendChild(option);
+        }
+        const preferred = _availableUpdates.find(item => item.provider_release_id === previousId)
+          || _availableUpdates.find(item => item.stage === 'stable') || _availableUpdates[0];
+        selector.value = preferred.provider_release_id;
+      }
+      selectUpdateRelease();
     } catch (e) {
-      _updateAvailable = false;
+      _availableUpdates = [];
+      document.getElementById('updateReleaseSelect').replaceChildren();
       target.textContent = '检查失败';
       updateStartButton();
       showToast('检查更新失败: ' + e.message, 'error');
@@ -1638,10 +1681,11 @@
   function openUpdateConfirm() {
     if (document.getElementById('startUpdateBtn').disabled) return;
     const ready = _preparedUpdate?.state === 'READY';
+    const selected = selectedUpdateRelease();
     document.getElementById('updateConfirmSummary').textContent =
       ready
         ? `继续将 ${_preparedUpdate.source_release_id} 更新到 ${_preparedUpdate.target_release_id}。已完成发布包与数据库兼容校验。`
-        : `准备更新到 ${_latestUpdate.version}。确认后系统会下载并校验完整发布包；只有校验和数据库兼容检查通过才会停服务。`;
+        : `准备更新到 ${selected.version}（${selected.stage === 'development' ? '开发版：可能不稳定' : '正式版'}）。确认后系统会下载并校验完整发布包；只有校验和数据库兼容检查通过才会停服务。`;
     document.getElementById('updateConfirmPassword').value = '';
     document.getElementById('updateConfirmError').textContent = '';
     document.getElementById('confirmUpdateBtn').disabled = false;
@@ -1703,6 +1747,7 @@
       return;
     }
     document.getElementById('confirmUpdateBtn').disabled = true;
+    const selected = selectedUpdateRelease();
     document.getElementById('updateConfirmPassword').value = '';
     closeUpdateConfirm();
     _updatePreparing = true;
@@ -1714,7 +1759,7 @@
         showUpdateProgress('正在下载并校验发布包', '当前版本仍在运行。准备完成前请保持此页面打开；校验不通过时不会切换服务。');
         _preparedUpdate = await apiFetch('/enterprise/api/update-mvp/prepare', {
           method: 'POST',
-          body: JSON.stringify({ provider_release_id: _latestUpdate.provider_release_id }),
+          body: JSON.stringify({ provider_release_id: selected.provider_release_id }),
         });
         sessionStorage.setItem('enterprise_update_job_id', _preparedUpdate.job_id);
       }

@@ -189,6 +189,36 @@ def test_github_v2_provider_requires_the_closed_three_asset_set():
     assert candidates[0].archive_url.endswith("/3")
 
 
+def test_github_v2_provider_exposes_complete_development_release_only_when_requested():
+    def asset(name: str, asset_id: int):
+        return {
+            "id": asset_id, "name": name, "state": "uploaded", "size": asset_id,
+            "url": f"https://api.github.com/repos/{DEFAULT_GITHUB_REPOSITORY}/releases/assets/{asset_id}",
+        }
+
+    development = {
+        "id": 91, "tag_name": "v2026.09.6", "draft": False, "prerelease": True,
+        "published_at": "2026-09-27T00:00:00Z", "body": "development",
+        "assets": [
+            asset("ops-release-manifest-v2.json", 11),
+            asset("release-payload-inventory.json", 12),
+            asset("Infinite-Canvas-Enterprise-ice-2026.09.6-aabbccddeeff-win-x64.zip", 13),
+        ],
+    }
+    draft = {**development, "id": 92, "draft": True}
+
+    class Client:
+        def read_json(self, *_args, **_kwargs):
+            return [draft, development]
+
+    provider = GitHubReleasesProvider(http_client=Client())
+    assert provider.list_release_v2_candidates() == []
+    candidates = provider.list_release_v2_candidates(include_prerelease=True)
+    assert len(candidates) == 1
+    assert candidates[0].provider_release_id == "91"
+    assert candidates[0].prerelease is True
+
+
 def test_database_contract_allows_signed_evidence_change_but_not_legacy_migration_change():
     source = release_manifest(release_id="ice-2026.07.6-bbbbbbbbbbbb")
     payload = _eligible_manifest().data
@@ -969,18 +999,57 @@ def test_update_check_only_offers_a_newer_version(monkeypatch, candidate_version
     release = SimpleNamespace(
         provider_release_id="candidate-1", tag_name=candidate_version,
         version=candidate_version, published_at="2026-09-24T00:00:00Z",
-        release_notes="test",
+        release_notes="test", prerelease=False,
     )
     monkeypatch.setattr(update_api, "ENTERPRISE_UPDATE_ENABLED", True)
     monkeypatch.setattr(update_api.edb, "get_user_by_id", lambda _uid: current)
     monkeypatch.setattr(update_api.edb, "can_use_feature", lambda *_args: True)
-    monkeypatch.setattr(update_api, "_provider", lambda: SimpleNamespace(list_release_v2_candidates=lambda: [release]))
+    monkeypatch.setattr(update_api, "_provider", lambda: SimpleNamespace(list_release_v2_candidates=lambda **_kwargs: [release]))
     monkeypatch.setattr(update_api, "read_current_release_result_from_state_root", lambda _root: SimpleNamespace(release=SimpleNamespace(release_id="ice-2026.09.4")))
     monkeypatch.setattr(update_api, "read_release_manifest_v2", lambda _path: SimpleNamespace(section=lambda _key: {"release_version": "2026.09.4"}))
 
     result = asyncio.run(update_api.check_update(_Request({"user_id": "actor-1", "auth_version": 1})))
     assert result["update_available"] is available
     assert result["latest"]["version"] == candidate_version
+    assert len(result["releases"]) == int(available)
+
+
+def test_update_check_offers_newer_stable_and_development_releases(monkeypatch):
+    from enterprise import update_api
+
+    current = {"id": "actor-1", "role": "super_admin", "is_active": True, "auth_version": 1}
+    development = SimpleNamespace(
+        provider_release_id="dev-1", tag_name="v2026.09.7", version="2026.09.7",
+        published_at="2026-09-27T00:00:00Z", release_notes="preview", prerelease=True,
+    )
+    stable = SimpleNamespace(
+        provider_release_id="stable-1", tag_name="v2026.09.6", version="2026.09.6",
+        published_at="2026-09-26T00:00:00Z", release_notes="stable", prerelease=False,
+    )
+    old = SimpleNamespace(
+        provider_release_id="old-1", tag_name="v2026.09.4", version="2026.09.4",
+        published_at="2026-09-24T00:00:00Z", release_notes="old", prerelease=False,
+    )
+    monkeypatch.setattr(update_api, "ENTERPRISE_UPDATE_ENABLED", True)
+    monkeypatch.setattr(update_api.edb, "get_user_by_id", lambda _uid: current)
+    monkeypatch.setattr(update_api.edb, "can_use_feature", lambda *_args: True)
+    monkeypatch.setattr(update_api, "_provider", lambda: SimpleNamespace(list_release_v2_candidates=lambda **_kwargs: [development, stable, old]))
+    monkeypatch.setattr(update_api, "read_current_release_result_from_state_root", lambda _root: SimpleNamespace(release=SimpleNamespace(release_id="ice-2026.09.5")))
+    monkeypatch.setattr(update_api, "read_release_manifest_v2", lambda _path: SimpleNamespace(section=lambda _key: {"release_version": "2026.09.5"}))
+
+    result = asyncio.run(update_api.check_update(_Request({"user_id": "actor-1", "auth_version": 1})))
+    assert result["update_available"] is True
+    assert result["latest"]["provider_release_id"] == "stable-1"
+    assert [(item["provider_release_id"], item["stage"]) for item in result["releases"]] == [
+        ("dev-1", "development"), ("stable-1", "stable"),
+    ]
+    assert update_api._metadata_by_id(update_api._provider(), "dev-1") is development
+
+    monkeypatch.setattr(update_api, "_provider", lambda: SimpleNamespace(list_release_v2_candidates=lambda **_kwargs: [development]))
+    dev_only = asyncio.run(update_api.check_update(_Request({"user_id": "actor-1", "auth_version": 1})))
+    assert dev_only["latest"] is None
+    assert dev_only["update_available"] is False
+    assert dev_only["releases"][0]["stage"] == "development"
 
 
 def test_execute_reconfirms_current_password_without_persisting_it(tmp_path: Path, monkeypatch):

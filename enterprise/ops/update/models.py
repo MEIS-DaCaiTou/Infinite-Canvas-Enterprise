@@ -75,3 +75,4 @@ class ReleaseMetadataV2:
     inventory_size_bytes: int
     archive_url: str
     archive_size_bytes: int
+    prerelease: bool = False
