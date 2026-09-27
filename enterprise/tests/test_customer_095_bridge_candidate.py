@@ -1,10 +1,9 @@
 """Opt-in exact-09.5 updater drill against a built same-schema candidate.
 
-This intentionally does not launch a server.  The formal portable launcher uses
-the Windows known-folder API, so a normal test process cannot redirect its
-process tree to a disposable LocalAppData root without touching the user's
-existing installation.  We exercise the actual 09.5 updater and the target's
-full portable startup preflight; a real-process launch remains a separate gate.
+The formal portable Supervisor uses the Windows known-folder API, so this test
+does not run that shared control plane or touch the user's existing runtime.
+It exercises the actual 09.5 updater, the target's full portable preflight,
+and a separate target-Python HTTP process bound only to a random loopback port.
 """
 
 from __future__ import annotations
@@ -12,8 +11,13 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import socket
 import sqlite3
 import subprocess
+import tempfile
+import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 import pytest
@@ -24,6 +28,50 @@ from enterprise.release.release_manifest_v2 import read_release_manifest_v2, ver
 
 
 SOURCE_ID = "ice-2026.09.5-7609bb1b7cfa"
+
+
+def _assert_target_serves_http(target: Path, install: Path, local: Path) -> None:
+    """Start the installed target app in its own process, without shared runtime state."""
+
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+    script = r'''
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from enterprise.paths import PortableRootInputs, derive_portable_path_roots, install_path_roots_for_process
+target, install, local = map(Path, sys.argv[1:4])
+roots = derive_portable_path_roots(PortableRootInputs(install, local), target.name)
+install_path_roots_for_process(roots)
+import main
+import uvicorn
+uvicorn.run(main.app, host="127.0.0.1", port=int(sys.argv[4]), lifespan="on", log_level="error")
+'''
+    command = [str(target / "python" / "python.exe"), "-I", "-B", "-c", script,
+               str(target), str(install), str(local), str(port)]
+    with tempfile.TemporaryFile(mode="w+t", encoding="utf-8") as output:
+        process = subprocess.Popen(command, cwd=target, stdout=output, stderr=subprocess.STDOUT)
+        try:
+            deadline = time.monotonic() + 60
+            while time.monotonic() < deadline and process.poll() is None:
+                try:
+                    with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=1) as response:
+                        assert response.status == 200
+                        assert response.read(64)
+                        return
+                except (urllib.error.URLError, TimeoutError):
+                    time.sleep(0.25)
+            output.seek(0)
+            pytest.fail(f"installed target did not serve HTTP: {output.read()[-3000:]}")
+        finally:
+            if process.poll() is None:
+                process.terminate()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=10)
 
 
 @pytest.mark.parametrize("fail_target_start", [False, True])
@@ -159,3 +207,8 @@ print(json.dumps({"release_id": result.release_manifest.release_id, "result": re
     preflight = json.loads(startup.stdout.strip().splitlines()[-1])
     assert preflight["release_id"] == target_manifest.release_id
     assert preflight["result"] == "pass"
+    _assert_target_serves_http(target, install, local)
+    with sqlite3.connect(database) as conn:
+        assert conn.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+        assert conn.execute("SELECT canvas_id FROM user_canvas_map WHERE user_id = 'bridge-user'").fetchone() == ("bridge-canvas",)
+    assert asset.read_bytes() == b"unchanged-customer-asset-fixture"
