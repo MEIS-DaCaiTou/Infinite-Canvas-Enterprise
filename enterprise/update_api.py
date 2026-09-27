@@ -97,7 +97,7 @@ def _provider() -> GitHubReleasesProvider:
 
 
 def _metadata_by_id(provider: GitHubReleasesProvider, release_id: str):
-    matches = [item for item in provider.list_release_v2_candidates() if item.provider_release_id == release_id]
+    matches = [item for item in provider.list_release_v2_candidates(include_prerelease=True) if item.provider_release_id == release_id]
     if len(matches) != 1:
         raise UpdateMvpError("SYSTEM_UPDATE_RELEASE_NOT_FOUND", status_code=404)
     return matches[0]
@@ -121,13 +121,24 @@ async def check_update(request: Request):
     try:
         current = read_current_release_result_from_state_root(PATH_ROOTS.STATE_ROOT)
         source_manifest = read_release_manifest_v2(PATH_ROOTS.APP_ROOT / "release-manifest.json")
-        releases = _provider().list_release_v2_candidates()
-        latest = releases[0] if releases else None
+        releases = _provider().list_release_v2_candidates(include_prerelease=True)
+        latest = next((item for item in releases if not item.prerelease), None)
         current_version = source_manifest.section("identity")["release_version"]
+        available = [item for item in releases if compare_versions(current_version, item.version) == "newer"]
         return {
             "current_release_id": current.release.release_id,
             "current_version": current_version,
+            # Preserve the legacy latest/update_available pair as stable-only.
+            # New clients use releases to discover opt-in development builds.
             "update_available": bool(latest and compare_versions(current_version, latest.version) == "newer"),
+            "releases": [{
+                "provider_release_id": item.provider_release_id,
+                "tag_name": item.tag_name,
+                "version": item.version,
+                "published_at": item.published_at,
+                "release_notes": item.release_notes,
+                "stage": "development" if item.prerelease else "stable",
+            } for item in available],
             "latest": None if latest is None else {
                 "provider_release_id": latest.provider_release_id,
                 "tag_name": latest.tag_name,
