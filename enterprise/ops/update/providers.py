@@ -281,8 +281,8 @@ class GitHubReleasesProvider:
         self.diagnostics = tuple(diagnostics)
         return releases
 
-    def list_release_v2_candidates(self) -> list[ReleaseMetadataV2]:
-        """Return complete, non-draft Manifest v2 release candidates only."""
+    def list_release_v2_candidates(self, *, include_prerelease: bool = False) -> list[ReleaseMetadataV2]:
+        """Return complete, non-draft Manifest v2 releases; opt in to development releases."""
         url = f"https://api.github.com/repos/{self.repository}/releases?per_page=50"
         headers = {"Accept": GITHUB_METADATA_ACCEPT, "User-Agent": GITHUB_USER_AGENT}
         token = os.environ.get("GITHUB_TOKEN")
@@ -298,7 +298,8 @@ class GitHubReleasesProvider:
             if (
                 type(release) is not dict
                 or release.get("draft") is not False
-                or release.get("prerelease") is not False
+                or type(release.get("prerelease")) is not bool
+                or (release["prerelease"] and not include_prerelease)
             ):
                 continue
             try:
@@ -334,6 +335,7 @@ class GitHubReleasesProvider:
                         inventory_size_bytes=int(inventory["size_bytes"]),
                         archive_url=str(archive["api_url"]),
                         archive_size_bytes=int(archive["size_bytes"]),
+                        prerelease=release["prerelease"],
                     )
                 )
             except (ReleaseProviderError, ValueError):
