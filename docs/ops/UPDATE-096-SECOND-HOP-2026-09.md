@@ -16,7 +16,7 @@
 
 定向测试包括原有 DATA/更新/Manifest 用例，以及使用正式 09.6 物化包创建三份安装副本的可选演练。模拟用户画布归属、配置和素材在成功、目标健康失败、迁移校验失败三条路径中得到检查；成功后数据库版本为 2，目标健康失败恢复为无版本记录的旧库和 09.6 指针。演练的**目标 Manifest、目标安装包和启动回调是测试桩**，不代表下一正式 Release 已构建、真实 Supervisor 重启已通过或客户数据已迁移。
 
-可选演练入口：在已经独立核验并物化正式 09.6 三资产、且使用短的测试临时目录后，设置 `ICE_096_RELEASE_ROOT` 指向该物化目录，执行 `py -3.11 -m pytest enterprise/tests/test_customer_096_upgrade_drill.py -q --basetemp <隔离短路径>`。该测试从不修改源物化目录或客户安装。
+可选演练入口：在已经独立核验并物化正式 09.6 三资产、且使用短的测试临时目录后，设置 `ICE_096_RELEASE_ROOT` 指向该物化目录；若本机 pytest 插件与 pytest 版本冲突，先设置 `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`；再执行 `py -3.11 -m pytest enterprise/tests/test_customer_096_upgrade_drill.py -q --basetemp <隔离短路径>`。该测试从不修改源物化目录或客户安装。
 
 ## 下一版交付路径
 
