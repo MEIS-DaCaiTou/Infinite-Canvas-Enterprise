@@ -1,8 +1,8 @@
-"""Opt-in exact-09.5 updater drill against a built same-schema candidate.
+"""Opt-in exact-source updater drills against built same-schema candidates.
 
 The formal portable Supervisor uses the Windows known-folder API, so this test
 does not run that shared control plane or touch the user's existing runtime.
-It exercises the actual 09.5 updater, the target's full portable preflight,
+It exercises the actual installed updater, the target's full portable preflight,
 and a separate target-Python HTTP process bound only to a random loopback port.
 """
 
@@ -27,7 +27,10 @@ from enterprise.release.current_release import CurrentRelease, SCHEMA_VERSION, a
 from enterprise.release.release_manifest_v2 import read_release_manifest_v2, verify_materialized_release
 
 
-SOURCE_ID = "ice-2026.09.5-7609bb1b7cfa"
+BRIDGE_CASES = (
+    ("ice-2026.09.5-7609bb1b7cfa", "2026.09.6", "ICE_095_RELEASE_ROOT", "ICE_096_CANDIDATE_ROOT"),
+    ("ice-2026.09.6-8f65c5cd328f", "2026.09.7", "ICE_096_RELEASE_ROOT", "ICE_097_CANDIDATE_ROOT"),
+)
 
 
 def _assert_target_serves_http(target: Path, install: Path, local: Path) -> None:
@@ -75,32 +78,39 @@ uvicorn.run(main.app, host="127.0.0.1", port=int(sys.argv[4]), lifespan="on", lo
 
 
 @pytest.mark.parametrize("fail_target_start", [False, True])
-def test_exact_095_updater_accepts_candidate_and_preserves_install(tmp_path: Path, fail_target_start: bool):
-    source_text = os.environ.get("ICE_095_RELEASE_ROOT")
-    candidate_text = os.environ.get("ICE_096_CANDIDATE_ROOT")
+@pytest.mark.parametrize(
+    "source_id,target_version,source_env,candidate_env", BRIDGE_CASES,
+    ids=["095-to-096", "096-to-097"],
+)
+def test_exact_source_updater_accepts_candidate_and_preserves_install(
+    tmp_path: Path, fail_target_start: bool, source_id: str, target_version: str,
+    source_env: str, candidate_env: str,
+):
+    source_text = os.environ.get(source_env)
+    candidate_text = os.environ.get(candidate_env)
     if not source_text or not candidate_text:
-        pytest.skip("Set exact official 09.5 materialization and 09.6 candidate roots")
+        pytest.skip(f"Set {source_env} and {candidate_env} to exact source/candidate roots")
     source = Path(source_text).resolve()
     candidate = Path(candidate_text).resolve()
     source_manifest = read_release_manifest_v2(source / "release-manifest.json")
-    assert source_manifest.release_id == SOURCE_ID
+    assert source_manifest.release_id == source_id
     verify_materialized_release(source, inventory_path=source / "release-payload-inventory.json")
     target_manifest = read_release_manifest_v2(candidate / "ops-release-manifest-v2.json")
-    assert target_manifest.section("identity")["release_version"] == "2026.09.6"
+    assert target_manifest.section("identity")["release_version"] == target_version
     assert target_manifest.section("database_contract") == source_manifest.section("database_contract")
     archives = list(candidate.glob("Infinite-Canvas-Enterprise-*-win-x64.zip"))
     assert len(archives) == 1
 
     install = tmp_path / "install"
     local = tmp_path / "local"
-    roots = derive_portable_path_roots(PortableRootInputs(install, local), SOURCE_ID)
+    roots = derive_portable_path_roots(PortableRootInputs(install, local), source_id)
     prepare_install_state_directories(roots)
-    source_install = roots.RELEASE_ROOT / SOURCE_ID
+    source_install = roots.RELEASE_ROOT / source_id
     shutil.copytree(source, source_install)
     atomic_write_current_release(
         roots,
         CurrentRelease(
-            SCHEMA_VERSION, SOURCE_ID, f"releases/{SOURCE_ID}", source_manifest.raw_sha256,
+            SCHEMA_VERSION, source_id, f"releases/{source_id}", source_manifest.raw_sha256,
             "2026-09-24T00:00:00Z", None,
         ),
         expected_manifest_sha256=source_manifest.raw_sha256,
@@ -125,7 +135,7 @@ db.init_db()
 '''
     subprocess.run(
         [str(source_install / "python" / "python.exe"), "-I", "-B", "-c", bootstrap,
-         str(source_install), str(install), str(local), SOURCE_ID],
+         str(source_install), str(install), str(local), source_id],
         check=True, capture_output=True, text=True, timeout=120,
     )
     with sqlite3.connect(database) as conn:
@@ -141,7 +151,7 @@ db.init_db()
     original_database = database.read_bytes()
     asset.write_bytes(b"unchanged-customer-asset-fixture")
 
-    # Run from the copied official release with its bundled Python.  No code
+    # Run from the copied official source with its bundled Python.  No code
     # from the current checkout is imported by this updater subprocess.
     source_worker = r'''
 import json, sys
@@ -180,7 +190,7 @@ print(json.dumps({"exit_code": code, "job_id": prepared.job_id, "prepared_target
     result = json.loads(completed.stdout.strip().splitlines()[-1])
     assert result["prepared_target"] == target_manifest.release_id
     assert result["state"] == ("ROLLED_BACK" if fail_target_start else "SUCCEEDED")
-    assert result["current"] == (SOURCE_ID if fail_target_start else target_manifest.release_id)
+    assert result["current"] == (source_id if fail_target_start else target_manifest.release_id)
     assert config.read_text(encoding="utf-8").startswith("ENTERPRISE_ENV=development")
     assert database.read_bytes() == original_database
     with sqlite3.connect(database) as conn:
