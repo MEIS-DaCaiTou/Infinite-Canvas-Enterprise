@@ -21,7 +21,23 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 from enterprise.migrations.sqlite_existing import open_existing_sqlite
+from enterprise.migrations.sec_1b2_activation import (
+    BOOTSTRAP_CREATE_TABLE_SQL,
+    BOOTSTRAP_INDEX_DEFINITIONS,
+    BOOTSTRAP_READY,
+    BOOTSTRAP_TRIGGER_DEFINITIONS,
+    ensure_bootstrap_lifecycle_schema_in_transaction,
+    inspect_bootstrap_lifecycle_connection,
+)
 from enterprise.path_safety import PathSafetyError, assert_no_reparse_ancestors, lexical_path_state
+from enterprise.security_audit import (
+    SECURITY_AUDIT_CREATE_TABLE_SQL,
+    SECURITY_AUDIT_INDEX_DEFINITIONS,
+    SECURITY_AUDIT_READY,
+    SECURITY_AUDIT_TRIGGER_DEFINITIONS,
+    ensure_security_audit_schema_in_transaction,
+    inspect_security_audit_connection,
+)
 
 
 METADATA_SCHEMA_VERSION = "data-mvp-1-schema-metadata-v1"
@@ -158,7 +174,40 @@ class ReleaseValidationFinalization:
     restore: RestoreResult | None
 
 
-DEFAULT_MIGRATIONS: tuple[MigrationStep, ...] = ()
+def _apply_096_security_schema_in_transaction(conn: sqlite3.Connection) -> None:
+    """Bring an enrolled 09.6 legacy DB to the existing mainline security schema."""
+    ensure_security_audit_schema_in_transaction(conn)
+    ensure_bootstrap_lifecycle_schema_in_transaction(conn)
+
+
+def _validate_096_security_schema_in_transaction(conn: sqlite3.Connection) -> bool:
+    return (
+        inspect_security_audit_connection(conn)["current_state"] == SECURITY_AUDIT_READY
+        and inspect_bootstrap_lifecycle_connection(conn)["current_state"] == BOOTSTRAP_READY
+    )
+
+
+_096_SECURITY_SCHEMA_DDL = {
+    "audit_table": SECURITY_AUDIT_CREATE_TABLE_SQL,
+    "audit_indexes": SECURITY_AUDIT_INDEX_DEFINITIONS,
+    "audit_triggers": SECURITY_AUDIT_TRIGGER_DEFINITIONS,
+    "bootstrap_table": BOOTSTRAP_CREATE_TABLE_SQL,
+    "bootstrap_indexes": BOOTSTRAP_INDEX_DEFINITIONS,
+    "bootstrap_triggers": BOOTSTRAP_TRIGGER_DEFINITIONS,
+}
+
+DEFAULT_MIGRATIONS: tuple[MigrationStep, ...] = (
+    MigrationStep(
+        "ice_096_security_schema_v2",
+        1,
+        2,
+        hashlib.sha256(
+            json.dumps(_096_SECURITY_SCHEMA_DDL, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest(),
+        _apply_096_security_schema_in_transaction,
+        _validate_096_security_schema_in_transaction,
+    ),
+)
 
 
 def _fail(

@@ -13,6 +13,7 @@ import pytest
 
 from enterprise.migrations.versioned import (
     BASELINE_SCHEMA_VERSION,
+    DEFAULT_MIGRATIONS,
     LEDGER_TABLE,
     STATE_PARTIAL,
     STATE_READY,
@@ -31,6 +32,7 @@ from enterprise.migrations.versioned import (
     plan_migrations,
     preview_legacy_schema_enrollment,
     restore_database_backup,
+    schema_objects,
     schema_snapshot_sha256,
     verify_database_backup,
 )
@@ -647,3 +649,65 @@ def test_bridge_release_database_snapshot_matches_customer_095(tmp_path: Path) -
     object_names = {item["name"] for item in payload["objects"]}
     assert STATE_TABLE not in object_names
     assert LEDGER_TABLE not in object_names
+
+
+def test_096_bridge_registry_migrates_real_legacy_schema_and_restores(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from enterprise import db
+    from enterprise.paths import derive_development_path_roots, resolve_database_path
+
+    roots = derive_development_path_roots(tmp_path / "install")
+    monkeypatch.setattr(db, "PATH_ROOTS", roots)
+    monkeypatch.setattr(db, "DB_PATH", Path("enterprise.db"))
+    monkeypatch.setattr(db, "ADMIN_USERNAME", "bridge-fixture-admin")
+    monkeypatch.setattr(db, "ADMIN_PASSWORD", "fixture-only-not-a-secret")
+    db.init_db()
+    database = resolve_database_path(roots, db.DB_PATH)
+    with closing(sqlite3.connect(database)) as conn:
+        conn.execute(
+            "INSERT INTO users (id, username, password_hash, display_name, is_admin, role, created_at) "
+            "VALUES (?, ?, ?, ?, 1, 'admin', ?)",
+            ("bridge-user", "bridge-fixture-admin", "fixture-hash", "Fixture", 1),
+        )
+        conn.execute(
+            "INSERT INTO user_canvas_map (user_id, canvas_id, created_at) VALUES (?, ?, ?)",
+            ("bridge-user", "preserved-canvas", 1),
+        )
+        conn.commit()
+        source_objects = schema_objects(conn)
+        source_sha = schema_snapshot_sha256(conn)
+    assert len(source_objects) == 18
+    assert [step.migration_id for step in DEFAULT_MIGRATIONS] == ["ice_096_security_schema_v2"]
+    enrolled_sha = preview_legacy_schema_enrollment(
+        database, expected_legacy_schema_sha256=source_sha,
+    )
+    probe = tmp_path / "target-probe.db"
+    shutil.copyfile(database, probe)
+    with closing(sqlite3.connect(probe)) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        initialize_schema_metadata_in_transaction(conn)
+        DEFAULT_MIGRATIONS[0].apply_in_transaction(conn)
+        assert DEFAULT_MIGRATIONS[0].validate_in_transaction(conn) is True
+        target_objects = schema_objects(conn)
+        target_sha = schema_snapshot_sha256(conn)
+        conn.rollback()
+    assert len(target_objects) == 30
+    # Exact v1 object shape of the merged mainline new-install snapshot at c960c60.
+    assert target_sha == "cd8790a1ef22a97b96c76105b26f14c309ed02396249ab97d36034bb88d25284"
+    migrated = apply_legacy_versioned_migrations(
+        database, tmp_path / "backups", operation_id="096-bridge-real-step",
+        expected_legacy_schema_sha256=source_sha,
+        expected_enrolled_schema_sha256=enrolled_sha,
+        target_version=2, expected_target_schema_sha256=target_sha,
+        registry=DEFAULT_MIGRATIONS,
+    )
+    assert inspect_schema_metadata(database)["schema_version"] == 2
+    with closing(sqlite3.connect(database)) as conn:
+        assert schema_objects(conn) == target_objects
+        assert conn.execute("SELECT canvas_id FROM user_canvas_map").fetchall() == [("preserved-canvas",)]
+    restored = finalize_release_database_validation(database, migrated, validation_result="health_failed")
+    assert restored.database_restored is True
+    with closing(sqlite3.connect(database)) as conn:
+        assert schema_objects(conn) == source_objects
+        assert conn.execute("SELECT canvas_id FROM user_canvas_map").fetchall() == [("preserved-canvas",)]
