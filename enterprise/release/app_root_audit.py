@@ -569,9 +569,11 @@ def _flow_for_operation(file: str, symbol: str) -> str:
         return "W48"
     if file == "enterprise/migrations/versioned.py" and symbol in {
         "_write_new_file", "create_database_backup", "restore_database_backup",
+        "preview_legacy_schema_enrollment",
     }:
-        # DATA-MVP-1 already exists on the base branch. Account for its explicit
-        # database/backup arguments without changing or executing migrations.
+        # The legacy enrollment preview backs up into an in-memory SQLite
+        # connection; it never writes an installed database or APP_ROOT.
+        # Keep its explicit connection under the reviewed DATA-MVP-1 flow.
         return "W49"
     if file == "main.py":
         return _MAIN_FLOW_BY_SYMBOL[symbol]
@@ -621,7 +623,7 @@ def _flow_for_operation(file: str, symbol: str) -> str:
 # every mapped site as (file, symbol, operation, normalized-call fingerprint,
 # Wxx flow). Line numbers are deliberately excluded, while duplicate identical
 # calls remain duplicate records. Any added/removed/changed call drifts it.
-EXPECTED_SITE_MANIFEST_DIGEST = "327c77dfe051aa46e6e37b89e1f9a37341dfd8af500a022a946d705b501d7852"
+EXPECTED_SITE_MANIFEST_DIGEST = "d246ec356dbd5542dc957ce2f0f753d1ad4701ccbd2146c1d2a478a016cb977c"
 
 FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W01", "main.py", "startup_event"),

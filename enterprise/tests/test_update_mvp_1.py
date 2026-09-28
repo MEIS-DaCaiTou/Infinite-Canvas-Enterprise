@@ -27,9 +27,12 @@ from enterprise.ops.update.mvp import (
 from enterprise.migrations.versioned import (
     DataMigrationError,
     MigrationStep,
+    STATE_MISSING,
     initialize_schema_metadata_in_transaction,
     inspect_schema_metadata,
     migration_registry_sha256,
+    preview_legacy_schema_enrollment,
+    schema_objects,
     schema_snapshot_sha256,
 )
 from enterprise.ops.update.providers import DEFAULT_GITHUB_REPOSITORY, GitHubReleasesProvider
@@ -666,6 +669,68 @@ def test_database_update_plan_binds_release_evidence_registry_and_current_databa
         "migration_registry_sha256": registry_sha,
         "migration_ids": [step.migration_id],
     }
+
+
+def test_legacy_database_plan_requires_exact_enrollment_evidence(tmp_path: Path):
+    roots = _roots(tmp_path)
+    database = roots.DATA_ROOT / "enterprise.db"
+    database.parent.mkdir(parents=True, exist_ok=True)
+    with closing(sqlite3.connect(database)) as conn:
+        conn.execute("CREATE TABLE records (id INTEGER PRIMARY KEY, value TEXT NOT NULL)")
+        conn.execute("INSERT INTO records (id, value) VALUES (1, 'preserved')")
+        conn.commit()
+        legacy_objects = schema_objects(conn)
+        legacy_sha = schema_snapshot_sha256(conn)
+    enrolled_sha = preview_legacy_schema_enrollment(
+        database, expected_legacy_schema_sha256=legacy_sha,
+    )
+    step = _update_migration_step()
+    probe = tmp_path / "legacy-target-probe.db"
+    shutil.copyfile(database, probe)
+    with closing(sqlite3.connect(probe)) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        initialize_schema_metadata_in_transaction(conn)
+        step.apply_in_transaction(conn)
+        target_sha = schema_snapshot_sha256(conn)
+        conn.rollback()
+    source_path = roots.RELEASE_ROOT / "release-A" / "release-evidence" / "database-schema.json"
+    target_path = roots.RELEASE_ROOT / "release-B" / "release-evidence" / "database-schema.json"
+    source_path.parent.mkdir(parents=True)
+    target_path.parent.mkdir(parents=True)
+    source_path.write_text(json.dumps({
+        "schema_id": "enterprise-database-contract-v1",
+        "migration_ids": ["base"],
+        "objects": legacy_objects,
+    }), encoding="utf-8")
+    target_evidence = {
+        "schema_version": 2,
+        "schema_objects_sha256": target_sha,
+        "migration_registry_sha256": migration_registry_sha256((step,)),
+        "versioned_migration_ids": [step.migration_id],
+        "legacy_source_schema_sha256": legacy_sha,
+        "legacy_enrolled_schema_sha256": enrolled_sha,
+    }
+    target_path.write_text(json.dumps(target_evidence), encoding="utf-8")
+    kwargs = {
+        "source_root": source_path.parent.parent,
+        "target_root": target_path.parent.parent,
+        "source_manifest": _Manifest("release-A", "1" * 64, True),
+        "target_manifest": _Manifest("release-B", "2" * 64, True),
+        "database_path": database,
+        "registry": (step,),
+        "operation_id": "a" * 32,
+    }
+    plan = _database_update_plan(**kwargs)
+    assert plan["source_schema_format"] == "legacy-exact"
+    assert plan["source_schema_sha256"] == legacy_sha
+    assert plan["enrolled_schema_sha256"] == enrolled_sha
+    assert plan["target_schema_sha256"] == target_sha
+    assert inspect_schema_metadata(database)["current_state"] == STATE_MISSING
+
+    target_evidence["legacy_enrolled_schema_sha256"] = "0" * 64
+    target_path.write_text(json.dumps(target_evidence), encoding="utf-8")
+    with pytest.raises(UpdateMvpError, match="SYSTEM_UPDATE_DATABASE_SOURCE_IDENTITY_MISMATCH"):
+        _database_update_plan(**kwargs)
 
 
 def test_same_schema_update_can_only_stage_an_append_only_future_registry(tmp_path: Path):

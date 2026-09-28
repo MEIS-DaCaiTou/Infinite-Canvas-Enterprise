@@ -6,6 +6,7 @@ import shutil
 import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,7 @@ from enterprise.migrations.versioned import (
     STATE_TABLE,
     DataMigrationError,
     MigrationStep,
+    apply_legacy_versioned_migrations,
     apply_versioned_migrations,
     bootstrap_existing_schema_metadata,
     create_database_backup,
@@ -27,6 +29,7 @@ from enterprise.migrations.versioned import (
     inspect_schema_metadata_connection,
     migration_registry_sha256,
     plan_migrations,
+    preview_legacy_schema_enrollment,
     restore_database_backup,
     schema_snapshot_sha256,
     verify_database_backup,
@@ -63,6 +66,36 @@ def _create_v1_database(path: Path) -> Path:
     finally:
         conn.close()
     return path
+
+
+def _create_legacy_database(path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with closing(sqlite3.connect(path)) as conn:
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute("CREATE TABLE records (id INTEGER PRIMARY KEY, value TEXT NOT NULL)")
+        conn.executemany(
+            "INSERT INTO records (id, value) VALUES (?, ?)",
+            [(1, "existing-user"), (2, "existing-business-data")],
+        )
+        conn.commit()
+    return path
+
+
+def _legacy_target_hash(database: Path, tmp_path: Path, step: MigrationStep) -> tuple[str, str, str]:
+    with closing(sqlite3.connect(database)) as conn:
+        source_sha = schema_snapshot_sha256(conn)
+    enrolled_sha = preview_legacy_schema_enrollment(
+        database, expected_legacy_schema_sha256=source_sha,
+    )
+    probe = tmp_path / "legacy-target-probe.db"
+    shutil.copyfile(database, probe)
+    with closing(sqlite3.connect(probe)) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        initialize_schema_metadata_in_transaction(conn)
+        step.apply_in_transaction(conn)
+        target_sha = schema_snapshot_sha256(conn)
+        conn.rollback()
+    return source_sha, enrolled_sha, target_sha
 
 
 def _migration_1_to_2() -> MigrationStep:
@@ -530,3 +563,58 @@ def test_release_database_snapshot_binds_versioned_schema_contract(tmp_path: Pat
     ]
     object_names = {item["name"] for item in payload["objects"]}
     assert {STATE_TABLE, LEDGER_TABLE, "security_audit_events", "security_governance_bootstrap"} <= object_names
+
+
+def test_legacy_enrollment_migration_and_failed_target_restore(tmp_path: Path) -> None:
+    database = _create_legacy_database(tmp_path / "data" / "enterprise.db")
+    source_bytes = database.read_bytes()
+    step = _migration_1_to_2()
+    source_sha, enrolled_sha, target_sha = _legacy_target_hash(database, tmp_path, step)
+    assert database.read_bytes() == source_bytes  # Preview must not enroll the installed source.
+
+    migration = apply_legacy_versioned_migrations(
+        database, tmp_path / "backups", operation_id="legacy-update-001",
+        expected_legacy_schema_sha256=source_sha,
+        expected_enrolled_schema_sha256=enrolled_sha,
+        target_version=2, expected_target_schema_sha256=target_sha, registry=(step,),
+    )
+    assert migration.source_version == 0
+    assert migration.backup.source_schema_version == 0
+    assert verify_database_backup(migration.backup.manifest_path) == migration.backup
+    assert inspect_schema_metadata(database)["schema_version"] == 2
+    with closing(sqlite3.connect(database)) as conn:
+        assert conn.execute("SELECT value, label FROM records ORDER BY id").fetchall() == [
+            ("existing-user", "preserved"), ("existing-business-data", "preserved"),
+        ]
+
+    restored = finalize_release_database_validation(database, migration, validation_result="health_failed")
+    assert restored.database_restored is True
+    assert restored.restore is not None and restored.restore.restored_schema_version == 0
+    assert inspect_schema_metadata(database)["current_state"] == "DATA_SCHEMA_METADATA_MISSING"
+    with closing(sqlite3.connect(database)) as conn:
+        assert conn.execute("SELECT value FROM records ORDER BY id").fetchall() == [
+            ("existing-user",), ("existing-business-data",),
+        ]
+        assert conn.execute("PRAGMA table_info(records)").fetchall()[-1][1] == "value"
+
+
+def test_legacy_migration_validation_failure_keeps_old_schema(tmp_path: Path) -> None:
+    database = _create_legacy_database(tmp_path / "data" / "enterprise.db")
+    step = _migration_1_to_2()
+    source_sha, enrolled_sha, target_sha = _legacy_target_hash(database, tmp_path, step)
+    rejecting_step = MigrationStep(
+        step.migration_id, step.from_version, step.to_version, step.checksum_sha256,
+        step.apply_in_transaction, lambda _conn: False,
+    )
+    with pytest.raises(DataMigrationError) as failed:
+        apply_legacy_versioned_migrations(
+            database, tmp_path / "backups", operation_id="legacy-update-002",
+            expected_legacy_schema_sha256=source_sha,
+            expected_enrolled_schema_sha256=enrolled_sha,
+            target_version=2, expected_target_schema_sha256=target_sha,
+            registry=(rejecting_step,),
+        )
+    assert failed.value.code == "DATA_MIGRATION_VALIDATION_FAILED"
+    assert inspect_schema_metadata(database)["current_state"] == "DATA_SCHEMA_METADATA_MISSING"
+    with closing(sqlite3.connect(database)) as conn:
+        assert [row[1] for row in conn.execute("PRAGMA table_info(records)")] == ["id", "value"]
