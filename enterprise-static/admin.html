@@ -1480,12 +1480,26 @@
       || ready || state === 'RECOVERY_REQUIRED' || UPDATE_ACTIVE_STATES.has(state) || !_availableUpdates.length;
     button.disabled = !boolFlag(_updateAccess?.can_operate) || _updatePreparing
       || state === 'RECOVERY_REQUIRED' || UPDATE_ACTIVE_STATES.has(state)
-      || (!ready && !selectedUpdateRelease());
+      || (!ready && selectedUpdateRelease()?.route_status !== 'direct');
   }
 
   function selectedUpdateRelease() {
     const id = document.getElementById('updateReleaseSelect').value;
     return _availableUpdates.find(item => item.provider_release_id === id) || null;
+  }
+
+  function updateRouteExplanation(release) {
+    if (!release) return '';
+    const status = release.route_status;
+    if (status === 'direct') return '升级路径已声明且当前安装身份匹配；下载后仍会完整校验发布包和数据库。';
+    if (status === 'requires_intermediate') {
+      const steps = Array.isArray(release.upgrade_path) ? release.upgrade_path.map(step => step.version).join(' → ') : '';
+      return `需要先经过中间版本${steps ? `：${steps}` : ''}。当前版本尚不支持一键多跳，已禁止直接跳过。`;
+    }
+    if (status === 'route_missing') return '该发布包没有可核验的升级路径声明，不能从此设备直接选择。';
+    if (status === 'route_invalid') return '发布包升级路径声明无效，已禁止升级。';
+    if (status === 'source_unverified') return '当前安装版本或数据库结构尚未通过升级路径核验，已禁止升级。';
+    return '没有从当前安装版本到此目标的已声明安全路径，已禁止升级。';
   }
 
   function selectUpdateRelease() {
@@ -1497,8 +1511,9 @@
       selected ? `目标版本：${selected.version}（${selected.stage === 'development' ? '开发版' : '正式版'}，${selected.tag_name}）` : '当前没有更高版本可更新',
       selected ? `发布时间：${selected.published_at}` : '',
       selected?.stage === 'development' ? '开发版可能不稳定；升级前请确认该版本适用于当前设备。' : '',
+      selected ? updateRouteExplanation(selected) : '',
       selected?.release_notes ? `更新说明：${selected.release_notes}` : '',
-      selected ? '最终能否升级以发布包校验和数据库兼容检查结果为准。' : '',
+      selected?.route_status === 'direct' ? '最终能否升级仍以发布包校验和数据库兼容检查结果为准。' : '',
     ].filter(Boolean).join('\n');
     updateStartButton();
   }
@@ -1524,11 +1539,14 @@
         for (const release of _availableUpdates) {
           const option = document.createElement('option');
           option.value = release.provider_release_id;
-          option.textContent = `${release.version} · ${release.stage === 'development' ? '开发版' : '正式版'}`;
+          const routeLabel = release.route_status === 'direct' ? '可直接升级'
+            : release.route_status === 'requires_intermediate' ? '需中间版本' : '当前不可升级';
+          option.textContent = `${release.version} · ${release.stage === 'development' ? '开发版' : '正式版'} · ${routeLabel}`;
           selector.appendChild(option);
         }
         const preferred = _availableUpdates.find(item => item.provider_release_id === previousId)
-          || _availableUpdates.find(item => item.stage === 'stable') || _availableUpdates[0];
+          || _availableUpdates.find(item => item.stage === 'stable' && item.route_status === 'direct')
+          || _availableUpdates.find(item => item.route_status === 'direct') || _availableUpdates[0];
         selector.value = preferred.provider_release_id;
       }
       selectUpdateRelease();
