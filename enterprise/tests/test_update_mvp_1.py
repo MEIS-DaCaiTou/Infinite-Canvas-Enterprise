@@ -160,7 +160,7 @@ def test_manifest_v2_accepts_only_the_narrow_online_update_database_classificati
             parse_release_manifest_v2_bytes(canonical_json(payload))
 
 
-def test_github_v2_provider_requires_the_closed_three_asset_set():
+def test_github_v2_provider_requires_the_three_core_assets():
     def asset(name: str, asset_id: int):
         return {
             "id": asset_id, "name": name, "state": "uploaded", "size": asset_id,
@@ -190,6 +190,39 @@ def test_github_v2_provider_requires_the_closed_three_asset_set():
     assert candidates[0].manifest_url.endswith("/1")
     assert candidates[0].inventory_url.endswith("/2")
     assert candidates[0].archive_url.endswith("/3")
+    assert candidates[0].upgrade_routes_url is None
+
+
+def test_github_v2_provider_accepts_one_digest_bound_route_asset():
+    def asset(name: str, asset_id: int):
+        return {
+            "id": asset_id, "name": name, "state": "uploaded", "size": asset_id,
+            "url": f"https://api.github.com/repos/{DEFAULT_GITHUB_REPOSITORY}/releases/assets/{asset_id}",
+        }
+
+    route = {**asset("upgrade-routes-v1.json", 42), "digest": "sha256:" + "a" * 64}
+    release = {
+        "id": 93, "tag_name": "2026.09.7", "draft": False, "prerelease": True,
+        "published_at": "2026-09-28T00:00:00Z", "body": "development",
+        "assets": [
+            asset("ops-release-manifest-v2.json", 11),
+            asset("release-payload-inventory.json", 12),
+            asset("Infinite-Canvas-Enterprise-ice-2026.09.7-aabbccddeeff-win-x64.zip", 13),
+            route,
+        ],
+    }
+
+    class Client:
+        def read_json(self, *_args, **_kwargs):
+            return [release]
+
+    candidates = GitHubReleasesProvider(http_client=Client()).list_release_v2_candidates(include_prerelease=True)
+    assert len(candidates) == 1
+    assert candidates[0].upgrade_routes_url.endswith("/42")
+    assert candidates[0].upgrade_routes_sha256 == "a" * 64
+    assert candidates[0].upgrade_routes_size_bytes == 42
+    release["assets"].append(route)
+    assert GitHubReleasesProvider(http_client=Client()).list_release_v2_candidates(include_prerelease=True) == []
 
 
 def test_github_v2_provider_exposes_complete_development_release_only_when_requested():
@@ -1070,12 +1103,15 @@ def test_update_check_only_offers_a_newer_version(monkeypatch, candidate_version
     monkeypatch.setattr(update_api.edb, "get_user_by_id", lambda _uid: current)
     monkeypatch.setattr(update_api.edb, "can_use_feature", lambda *_args: True)
     monkeypatch.setattr(update_api, "_provider", lambda: SimpleNamespace(list_release_v2_candidates=lambda **_kwargs: [release]))
+    monkeypatch.setattr(update_api, "_route_previews", lambda _provider, releases, _manifest, _source_release_id: {
+        item.provider_release_id: {"route_status": "direct", "upgrade_path": []} for item in releases
+    })
     monkeypatch.setattr(update_api, "read_current_release_result_from_state_root", lambda _root: SimpleNamespace(release=SimpleNamespace(release_id="ice-2026.09.4")))
     monkeypatch.setattr(update_api, "read_release_manifest_v2", lambda _path: SimpleNamespace(section=lambda _key: {"release_version": "2026.09.4"}))
 
     result = asyncio.run(update_api.check_update(_Request({"user_id": "actor-1", "auth_version": 1})))
     assert result["update_available"] is available
-    assert result["latest"]["version"] == candidate_version
+    assert (result["latest"] or {}).get("version") == (candidate_version if available else None)
     assert len(result["releases"]) == int(available)
 
 
@@ -1099,6 +1135,9 @@ def test_update_check_offers_newer_stable_and_development_releases(monkeypatch):
     monkeypatch.setattr(update_api.edb, "get_user_by_id", lambda _uid: current)
     monkeypatch.setattr(update_api.edb, "can_use_feature", lambda *_args: True)
     monkeypatch.setattr(update_api, "_provider", lambda: SimpleNamespace(list_release_v2_candidates=lambda **_kwargs: [development, stable, old]))
+    monkeypatch.setattr(update_api, "_route_previews", lambda _provider, releases, _manifest, _source_release_id: {
+        item.provider_release_id: {"route_status": "direct", "upgrade_path": []} for item in releases
+    })
     monkeypatch.setattr(update_api, "read_current_release_result_from_state_root", lambda _root: SimpleNamespace(release=SimpleNamespace(release_id="ice-2026.09.5")))
     monkeypatch.setattr(update_api, "read_release_manifest_v2", lambda _path: SimpleNamespace(section=lambda _key: {"release_version": "2026.09.5"}))
 

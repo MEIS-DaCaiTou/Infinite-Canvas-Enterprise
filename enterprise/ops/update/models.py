@@ -76,3 +76,6 @@ class ReleaseMetadataV2:
     archive_url: str
     archive_size_bytes: int
     prerelease: bool = False
+    upgrade_routes_url: str | None = None
+    upgrade_routes_size_bytes: int | None = None
+    upgrade_routes_sha256: str | None = None
