@@ -28,6 +28,8 @@ from enterprise.ops.update.mvp import (
     UpdateMvpService,
 )
 from enterprise.ops.update.providers import GitHubReleasesProvider
+from enterprise.ops.update.route_catalog import inspect_installed_route_state, read_release_routes, verify_target_route_schema
+from enterprise.ops.update.upgrade_routes import UpgradeRouteError, plan_upgrade_path
 from enterprise.ops.update.versions import compare_versions
 from enterprise.ops.update.recovery import assess_recovery, clear_recovery
 from enterprise.migrations.versioned import SHA256_RE
@@ -56,6 +58,10 @@ def _error(exc: Exception) -> None:
         "SYSTEM_UPDATE_RECOVERY_RELEASE_UNVERIFIED": "当前 Release 身份未通过核验，解除阻断已拒绝。",
         "SYSTEM_UPDATE_RECOVERY_HEALTH_UNVERIFIED": "当前服务未通过正式健康检查，解除阻断已拒绝。",
         "SYSTEM_UPDATE_RECOVERY_ASSESSMENT_CHANGED": "恢复核验结果已变化，请重新核验后再确认。",
+        "SYSTEM_UPDATE_ROUTE_UNDECLARED": "该版本未声明可验证的升级路径，不能直接升级。",
+        "SYSTEM_UPDATE_ROUTE_INVALID": "升级路径资产或发布包身份不匹配，已拒绝升级。",
+        "SYSTEM_UPDATE_ROUTE_NOT_DIRECT": "该版本需要经过中间版本；当前升级作业不支持直接跳过。",
+        "SYSTEM_UPDATE_ROUTE_SOURCE_UNVERIFIED": "当前安装版本或数据库结构未通过升级路径核验。",
     }.get(code, "The update operation could not be completed")
     raise HTTPException(status_code=status, detail={"code": code, "message": message}) from exc
 
@@ -109,6 +115,69 @@ def _metadata_by_id(provider: GitHubReleasesProvider, release_id: str):
     return matches[0]
 
 
+def _route_previews(provider, releases, source_manifest, source_pointer) -> dict[str, dict[str, object]]:
+    """Advisory UI paths; prepare and every execution hop must revalidate."""
+    previews: dict[str, dict[str, object]] = {}
+    if (
+        source_manifest.release_id != source_pointer.release.release_id
+        or source_manifest.raw_sha256 != source_pointer.release.manifest_sha256
+    ):
+        return {release.provider_release_id: {
+            "route_status": "source_unverified", "upgrade_path": [],
+        } for release in releases}
+    try:
+        installed = inspect_installed_route_state(
+            app_root=PATH_ROOTS.APP_ROOT,
+            database_path=Path(DB_PATH),
+            manifest=source_manifest,
+        )
+    except Exception:
+        return {release.provider_release_id: {
+            "route_status": "source_unverified", "upgrade_path": [],
+        } for release in releases}
+    documents = []
+    declarations = {}
+    for release in releases:
+        key = release.provider_release_id
+        if getattr(release, "upgrade_routes_url", None) is None:
+            previews[key] = {"route_status": "route_missing", "upgrade_path": []}
+            continue
+        try:
+            declaration = read_release_routes(provider, release)
+        except Exception:
+            previews[key] = {"route_status": "route_invalid", "upgrade_path": []}
+            continue
+        if declaration is not None:
+            documents.append(declaration)
+            declarations[key] = declaration
+    for release in releases:
+        key = release.provider_release_id
+        if key in previews:
+            continue
+        declaration = declarations.get(key)
+        if declaration is None:
+            previews[key] = {"route_status": "route_invalid", "upgrade_path": []}
+            continue
+        try:
+            path = plan_upgrade_path(
+                installed, declaration.target.release_id, documents,
+                allow_development=release.prerelease,
+            )
+        except UpgradeRouteError:
+            path = None
+        previews[key] = {
+            "route_status": (
+                "direct" if path and len(path) == 1 else
+                "requires_intermediate" if path else "path_unavailable"
+            ),
+            "upgrade_path": [] if path is None else [
+                {"release_id": step.release_id, "version": step.version, "stage": step.channel}
+                for step in path
+            ],
+        }
+    return previews
+
+
 @router.get("/api/update-mvp/access")
 async def update_access(request: Request):
     current = _require_admin_view(request)
@@ -125,18 +194,32 @@ async def update_access(request: Request):
 async def check_update(request: Request):
     _require_update_operator(request)
     try:
+        return await run_in_threadpool(_check_update_sync)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        _error(exc)
+
+
+def _check_update_sync() -> dict[str, object]:
+    try:
         current = read_current_release_result_from_state_root(PATH_ROOTS.STATE_ROOT)
         source_manifest = read_release_manifest_v2(PATH_ROOTS.APP_ROOT / "release-manifest.json")
-        releases = _provider().list_release_v2_candidates(include_prerelease=True)
-        latest = next((item for item in releases if not item.prerelease), None)
+        provider = _provider()
+        releases = provider.list_release_v2_candidates(include_prerelease=True)
         current_version = source_manifest.section("identity")["release_version"]
         available = [item for item in releases if compare_versions(current_version, item.version) == "newer"]
+        previews = _route_previews(provider, available, source_manifest, current)
+        latest = next((
+            item for item in available
+            if not item.prerelease and previews[item.provider_release_id]["route_status"] == "direct"
+        ), None)
         return {
             "current_release_id": current.release.release_id,
             "current_version": current_version,
-            # Preserve the legacy latest/update_available pair as stable-only.
-            # New clients use releases to discover opt-in development builds.
-            "update_available": bool(latest and compare_versions(current_version, latest.version) == "newer"),
+            # A higher version alone is not an offer to upgrade. Keep the
+            # legacy flag stable-only and fail closed without a direct route.
+            "update_available": latest is not None,
             "releases": [{
                 "provider_release_id": item.provider_release_id,
                 "tag_name": item.tag_name,
@@ -144,6 +227,7 @@ async def check_update(request: Request):
                 "published_at": item.published_at,
                 "release_notes": item.release_notes,
                 "stage": "development" if item.prerelease else "stable",
+                **previews[item.provider_release_id],
             } for item in available],
             "latest": None if latest is None else {
                 "provider_release_id": latest.provider_release_id,
@@ -175,6 +259,33 @@ def _prepare_update_sync(actor_user_id: str, provider_release_id: str) -> dict[s
     UpdateJobStore(PATH_ROOTS).assert_no_unresolved_recovery()
     provider = _provider()
     metadata = _metadata_by_id(provider, provider_release_id)
+    if getattr(metadata, "upgrade_routes_url", None) is None:
+        raise UpdateMvpError("SYSTEM_UPDATE_ROUTE_UNDECLARED")
+    source_pointer = read_current_release_result_from_state_root(PATH_ROOTS.STATE_ROOT)
+    source_manifest = read_release_manifest_v2(PATH_ROOTS.APP_ROOT / "release-manifest.json")
+    if (
+        source_pointer.release.release_id != source_manifest.release_id
+        or source_pointer.release.manifest_sha256 != source_manifest.raw_sha256
+    ):
+        raise UpdateMvpError("SYSTEM_UPDATE_ROUTE_SOURCE_UNVERIFIED")
+    try:
+        installed = inspect_installed_route_state(
+            app_root=PATH_ROOTS.APP_ROOT, database_path=Path(DB_PATH), manifest=source_manifest,
+        )
+    except Exception as exc:
+        raise UpdateMvpError("SYSTEM_UPDATE_ROUTE_SOURCE_UNVERIFIED") from exc
+    try:
+        declaration = read_release_routes(provider, metadata)
+    except Exception as exc:
+        raise UpdateMvpError("SYSTEM_UPDATE_ROUTE_INVALID") from exc
+    if declaration is None:
+        raise UpdateMvpError("SYSTEM_UPDATE_ROUTE_UNDECLARED")
+    path = plan_upgrade_path(
+        installed, declaration.target.release_id, [declaration],
+        allow_development=metadata.prerelease,
+    )
+    if path is None or len(path) != 1:
+        raise UpdateMvpError("SYSTEM_UPDATE_ROUTE_NOT_DIRECT")
     incoming = PATH_ROOTS.STAGING_ROOT / "update-mvp" / "incoming" / uuid.uuid4().hex
     incoming.mkdir(parents=True, exist_ok=False)
     try:
@@ -184,6 +295,8 @@ def _prepare_update_sync(actor_user_id: str, provider_release_id: str) -> dict[s
         headers = provider.release_v2_asset_request_headers(metadata.manifest_url)
         atomic_download(provider.http_client, url=metadata.manifest_url, destination=manifest_path, maximum_bytes=MANIFEST_MAX_BYTES, expected_size_bytes=metadata.manifest_size_bytes, headers=headers)
         manifest = read_release_manifest_v2(manifest_path)
+        if manifest.raw_sha256 != declaration.target.manifest_sha256:
+            raise UpdateMvpError("SYSTEM_UPDATE_ROUTE_MANIFEST_CHANGED")
         if manifest.section("identity")["release_version"] != metadata.version:
             raise UpdateMvpError("SYSTEM_UPDATE_PROVIDER_MANIFEST_IDENTITY_MISMATCH")
         archive = manifest.section("archive")
@@ -208,6 +321,10 @@ def _prepare_update_sync(actor_user_id: str, provider_release_id: str) -> dict[s
             expected_sha256=str(archive["sha256"]),
             headers=provider.release_v2_asset_request_headers(metadata.archive_url),
         )
+        try:
+            verify_target_route_schema(archive_path=archive_path, manifest=manifest, routes=declaration)
+        except UpgradeRouteError as exc:
+            raise UpdateMvpError("SYSTEM_UPDATE_ROUTE_INVALID") from exc
         prepared = UpdateMvpService(PATH_ROOTS, database_path=Path(DB_PATH)).prepare_from_artifacts(
             actor_user_id=actor_user_id, manifest_path=manifest_path, archive_path=archive_path, inventory_path=inventory_path
         )

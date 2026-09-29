@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 from enterprise.ops.update.errors import ReleaseProviderError
 from enterprise.ops.update.http_client import SafeHttpClient, UrlPolicy
 from enterprise.ops.update.models import ReleaseMetadata, ReleaseMetadataV2
+from enterprise.ops.update.upgrade_routes import MAX_ROUTE_BYTES, ROUTE_ASSET_NAME
 from enterprise.ops.update.versions import parse_version
 
 
@@ -317,6 +318,26 @@ class GitHubReleasesProvider:
                 if len(archives) != 1:
                     raise ReleaseProviderError("GitHub release archive is ambiguous or incomplete")
                 archive = self._release_asset(archives, exact_name=str(archives[0]["name"]))
+                route_assets = [
+                    item for item in assets
+                    if type(item) is dict and item.get("name") == ROUTE_ASSET_NAME
+                ]
+                if len(route_assets) > 1:
+                    raise ReleaseProviderError("GitHub release upgrade route assets are ambiguous")
+                route = self._release_asset(assets, exact_name=ROUTE_ASSET_NAME) if route_assets else None
+                route_digest = None
+                if route is not None:
+                    digest = route_assets[0].get("digest")
+                    if (
+                        not isinstance(digest, str)
+                        or not digest.startswith("sha256:")
+                        or len(digest) != 71
+                        or any(char not in "0123456789abcdef" for char in digest[7:])
+                        or type(route["size_bytes"]) is not int
+                        or route["size_bytes"] > MAX_ROUTE_BYTES
+                    ):
+                        raise ReleaseProviderError("GitHub release upgrade route digest is invalid")
+                    route_digest = digest[7:]
                 version = _tag_to_version(release.get("tag_name"))
                 parse_version(version)
                 sizes = (manifest.get("size_bytes"), inventory.get("size_bytes"), archive.get("size_bytes"))
@@ -336,6 +357,9 @@ class GitHubReleasesProvider:
                         archive_url=str(archive["api_url"]),
                         archive_size_bytes=int(archive["size_bytes"]),
                         prerelease=release["prerelease"],
+                        upgrade_routes_url=None if route is None else str(route["api_url"]),
+                        upgrade_routes_size_bytes=None if route is None else int(route["size_bytes"]),
+                        upgrade_routes_sha256=route_digest,
                     )
                 )
             except (ReleaseProviderError, ValueError):
