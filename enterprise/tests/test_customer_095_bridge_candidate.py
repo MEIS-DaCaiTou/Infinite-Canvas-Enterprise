@@ -30,6 +30,7 @@ from enterprise.release.release_manifest_v2 import read_release_manifest_v2, ver
 BRIDGE_CASES = (
     ("ice-2026.09.5-7609bb1b7cfa", "2026.09.6", "ICE_095_RELEASE_ROOT", "ICE_096_CANDIDATE_ROOT"),
     ("ice-2026.09.6-8f65c5cd328f", "2026.09.7", "ICE_096_RELEASE_ROOT", "ICE_097_CANDIDATE_ROOT"),
+    ("ice-2026.09.6-8f65c5cd328f", "2026.09.8", "ICE_096_RELEASE_ROOT", "ICE_098_CANDIDATE_ROOT"),
 )
 
 
@@ -80,7 +81,7 @@ uvicorn.run(main.app, host="127.0.0.1", port=int(sys.argv[4]), lifespan="on", lo
 @pytest.mark.parametrize("fail_target_start", [False, True])
 @pytest.mark.parametrize(
     "source_id,target_version,source_env,candidate_env", BRIDGE_CASES,
-    ids=["095-to-096", "096-to-097"],
+    ids=["095-to-096", "096-to-097", "096-to-098"],
 )
 def test_exact_source_updater_accepts_candidate_and_preserves_install(
     tmp_path: Path, fail_target_start: bool, source_id: str, target_version: str,
