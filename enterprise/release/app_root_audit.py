@@ -3,7 +3,7 @@
 The scanner is deliberately a conservative maintenance control, not a proof
 that static analysis can discover every possible write. It combines Python AST
 inspection, focused script inspection, stable call fingerprints, frozen
-operation counts, and W01-W47 flow anchors.
+operation counts, and W01-W49 flow anchors.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Iterable, Sequence
 
 
-_FLOW_IDS = frozenset(f"W{number:02d}" for number in range(1, 48))
+_FLOW_IDS = frozenset(f"W{number:02d}" for number in range(1, 50))
 _SCANNED_SUFFIXES = frozenset({".bat", ".cmd", ".js", ".ps1", ".py"})
 _EXCLUDED_PREFIXES = ("enterprise/tests/", "enterprise-static/", "static/")
 _PATH_METHODS = frozenset(
@@ -563,6 +563,16 @@ _SCRIPT_FLOW_BY_FILE = {
 
 
 def _flow_for_operation(file: str, symbol: str) -> str:
+    if file == "enterprise/ops/update/legacy_security_variant.py" and symbol == "canonical_security_variant_objects":
+        # W48 constructs expected DDL in an in-memory SQLite database only.
+        return "W48"
+    if file == "enterprise/migrations/versioned.py" and symbol in {
+        "_write_new_file", "create_database_backup", "restore_database_backup",
+        "preview_legacy_schema_enrollment",
+    }:
+        # W49 owns backup and restore outside immutable APP_ROOT. The preview
+        # connects only to an in-memory SQLite copy.
+        return "W49"
     if file == "main.py":
         return _MAIN_FLOW_BY_SYMBOL[symbol]
     if file == "enterprise/release/windows_runtime_build.py":
@@ -573,6 +583,7 @@ def _flow_for_operation(file: str, symbol: str) -> str:
     if file in {
         "enterprise/release/release_builder_v2.py",
         "enterprise/release/release_manifest_v2.py",
+        "tools/build_upgrade_routes.py",
         "tools/build_install_ux_1.py",
     }:
         # OPS Release Manifest v2 writes only into a caller-owned new build or
@@ -585,6 +596,7 @@ def _flow_for_operation(file: str, symbol: str) -> str:
         "enterprise/ops/update/mvp.py",
         "enterprise/ops/update/recovery.py",
         "enterprise/update_api.py",
+        "tools/apply_096_security_bridge.py",
     }:
         # UPDATE-MVP-1 uses external staging/state/release roots and publishes
         # only a newly materialized immutable Release plus pointer state. It
@@ -610,7 +622,7 @@ def _flow_for_operation(file: str, symbol: str) -> str:
 # every mapped site as (file, symbol, operation, normalized-call fingerprint,
 # Wxx flow). Line numbers are deliberately excluded, while duplicate identical
 # calls remain duplicate records. Any added/removed/changed call drifts it.
-EXPECTED_SITE_MANIFEST_DIGEST = "4ab5c2d4e7e040ab87cec1384f263763ea68fa47e4b7d994bc53cc2a07e6c0fd"
+EXPECTED_SITE_MANIFEST_DIGEST = "fc9ee3cf7f846502d6b0d8dd3c2c47a430acae6d6eb405c049adeec79f79c572"
 
 FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W01", "main.py", "startup_event"),
@@ -660,6 +672,8 @@ FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W45", "tools/validation/windows/env_1b3/Invoke-ENV1B3Validation.ps1"),
     FlowAnchor("W46", "enterprise/ops/update/mvp.py", "UpdateMvpService.prepare_from_artifacts"),
     FlowAnchor("W47", "enterprise/fresh_install.py", "install_greenfield"),
+    FlowAnchor("W48", "enterprise/ops/update/legacy_security_variant.py", "canonical_security_variant_objects"),
+    FlowAnchor("W49", "enterprise/migrations/versioned.py", "create_database_backup"),
 )
 
 

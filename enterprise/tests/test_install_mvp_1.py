@@ -19,6 +19,7 @@ from enterprise.fresh_install import (
 )
 from enterprise.migrations.sec_1b2_activation import BOOTSTRAP_READY, inspect_bootstrap_lifecycle_schema
 from enterprise.migrations.sec_1f0_security_audit import inspect_security_audit_schema
+from enterprise.migrations.versioned import inspect_schema_metadata, schema_objects
 from enterprise.paths import PortableRootInputs, derive_portable_path_roots
 from enterprise.release.current_release import read_current_release
 from enterprise.roles import ROLE_SUPER_ADMIN
@@ -89,6 +90,41 @@ def _install(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, install_name: s
         PortableRootInputs(install_root, tmp_path / "local", MANIFEST_SHA), RELEASE_ID
     )
     return result, roots
+
+
+def test_versioned_release_greenfield_install_has_current_schema_and_security_marker(monkeypatch, tmp_path: Path):
+    import enterprise.fresh_install as fresh
+
+    class VersionedManifest(_Manifest):
+        def section(self, name: str) -> dict[str, object]:
+            payload = super().section(name)
+            if name == "database_contract":
+                payload["migration_compatibility"] = "versioned-forward-migration"
+                payload["rollback_classification"] = "database-backup-restore"
+            return payload
+
+    assets = _assets()
+    monkeypatch.setattr(
+        fresh, "verify_release_assets",
+        lambda _path: VerifiedReleaseAssets(
+            assets.manifest_path, assets.inventory_path, assets.archive_path,
+            VersionedManifest(), assets.verification,
+        ),
+    )
+    monkeypatch.setattr(fresh, "materialize_release_fixture", _fake_materialize)
+    install_root = tmp_path / "install"
+    result = install_greenfield(
+        release_dir=tmp_path / "assets", install_root=install_root,
+        username="first-admin", password=FIXTURE_PASSWORD,
+        password_confirmation=FIXTURE_PASSWORD, local_app_data_base=tmp_path / "local",
+    )
+    assert result.pointer_published is True
+    database = install_root / "data" / "enterprise.db"
+    assert inspect_schema_metadata(database)["schema_version"] == 2
+    with sqlite3.connect(database) as conn:
+        assert len(schema_objects(conn)) == 30
+        assert conn.execute("SELECT COUNT(*) FROM security_governance_bootstrap").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM security_audit_events").fetchone()[0] == 1
 
 
 def test_schema_only_initializer_creates_zero_users_and_explicit_legacy_helper(monkeypatch, tmp_path: Path) -> None:

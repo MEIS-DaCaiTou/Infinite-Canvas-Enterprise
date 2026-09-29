@@ -42,6 +42,10 @@ from enterprise.migrations.versioned import (
     validate_registry,
 )
 from enterprise.migrations.sqlite_existing import open_existing_sqlite
+from enterprise.ops.update.legacy_security_variant import (
+    LegacySecurityVariantError,
+    inspect_096_security_variant,
+)
 from enterprise.paths import PathRoots, validate_release_component
 from enterprise.path_safety import PathSafetyError, assert_no_reparse_ancestors, assert_path_within_root
 from enterprise.release.current_release import (
@@ -531,6 +535,7 @@ def _database_update_plan(
     database_path: Path,
     registry: tuple[MigrationStep, ...],
     operation_id: str,
+    allow_096_security_variant: bool = False,
 ) -> dict[str, Any]:
     mode = _database_contract_mode(source_manifest, target_manifest)
     if mode not in {"same-schema-no-migration", "versioned-forward-migration"}:
@@ -540,13 +545,26 @@ def _database_update_plan(
     source_evidence = _database_evidence(source_root, source_manifest)
     target_evidence = _database_evidence(target_root, target_manifest)
     if "schema_version" not in source_evidence:
+        security_variant: dict[str, object] | None = None
         try:
             with open_existing_sqlite(database_path, mode="ro", error_type=sqlite3.OperationalError) as conn:
-                if (
-                    schema_objects(conn) != source_evidence["objects"]
-                    or conn.execute("PRAGMA integrity_check").fetchall() != [("ok",)]
-                    or conn.execute("PRAGMA foreign_key_check").fetchone() is not None
-                ):
+                if schema_objects(conn) == source_evidence["objects"]:
+                    if (
+                        conn.execute("PRAGMA integrity_check").fetchall() != [("ok",)]
+                        or conn.execute("PRAGMA foreign_key_check").fetchone() is not None
+                    ):
+                        raise UpdateMvpError("SYSTEM_UPDATE_DATABASE_SOURCE_IDENTITY_MISMATCH")
+                elif allow_096_security_variant and mode == "versioned-forward-migration":
+                    try:
+                        security_variant = inspect_096_security_variant(
+                            conn,
+                            baseline_objects=source_evidence["objects"],
+                            source_release_id=source_manifest.release_id,
+                            source_manifest_sha256=source_manifest.raw_sha256,
+                        )
+                    except LegacySecurityVariantError as exc:
+                        raise UpdateMvpError("SYSTEM_UPDATE_DATABASE_SOURCE_IDENTITY_MISMATCH") from exc
+                else:
                     raise UpdateMvpError("SYSTEM_UPDATE_DATABASE_SOURCE_IDENTITY_MISMATCH")
                 legacy_schema_sha = schema_snapshot_sha256(conn)
         except sqlite3.Error as exc:
@@ -562,9 +580,11 @@ def _database_update_plan(
             ):
                 raise UpdateMvpError("SYSTEM_UPDATE_DATABASE_CONTRACT_UNSUPPORTED")
             return {"mode": mode, "source_schema_format": "legacy-exact"}
+        source_key = "legacy_security_variant_schema_sha256" if security_variant else "legacy_source_schema_sha256"
+        enrolled_key = "legacy_security_variant_enrolled_schema_sha256" if security_variant else "legacy_enrolled_schema_sha256"
         if (
-            target_evidence.get("legacy_source_schema_sha256") != legacy_schema_sha
-            or not SHA256_RE.fullmatch(str(target_evidence.get("legacy_enrolled_schema_sha256")))
+            target_evidence.get(source_key) != legacy_schema_sha
+            or not SHA256_RE.fullmatch(str(target_evidence.get(enrolled_key)))
         ):
             raise UpdateMvpError("SYSTEM_UPDATE_DATABASE_CONTRACT_UNSUPPORTED")
         registry_sha = migration_registry_sha256(steps)
@@ -587,9 +607,9 @@ def _database_update_plan(
             )
         except DataMigrationError as exc:
             raise UpdateMvpError(exc.code) from exc
-        if enrolled_sha != target_evidence["legacy_enrolled_schema_sha256"]:
+        if enrolled_sha != target_evidence[enrolled_key]:
             raise UpdateMvpError("SYSTEM_UPDATE_DATABASE_SOURCE_IDENTITY_MISMATCH")
-        return {
+        plan = {
             "mode": mode,
             "source_schema_format": "legacy-exact",
             "operation_id": operation_id,
@@ -601,6 +621,9 @@ def _database_update_plan(
             "migration_registry_sha256": registry_sha,
             "migration_ids": [step.migration_id for step in migration_steps],
         }
+        if security_variant:
+            plan["source_variant"] = security_variant["variant"]
+        return plan
     inspection = inspect_schema_metadata(database_path)
     registry_sha = migration_registry_sha256(steps)
     registry_ids = [step.migration_id for step in steps]
@@ -690,11 +713,13 @@ class UpdateMvpService:
         *,
         database_path: Path | None = None,
         migration_registry: tuple[MigrationStep, ...] = DEFAULT_MIGRATIONS,
+        allow_096_security_variant: bool = False,
     ) -> None:
         self.roots = roots
         self.store = UpdateJobStore(roots)
         self.database_path = Path(database_path) if database_path is not None else roots.DATA_ROOT / "enterprise.db"
         self.migration_registry = validate_registry(migration_registry)
+        self.allow_096_security_variant = allow_096_security_variant
 
     def prepare_from_artifacts(self, *, actor_user_id: str, manifest_path: Path, archive_path: Path, inventory_path: Path) -> PreparedUpdate:
         self.store.assert_no_unresolved_recovery()
@@ -753,6 +778,7 @@ class UpdateMvpService:
                 database_path=self.database_path,
                 registry=self.migration_registry,
                 operation_id=job_id,
+                allow_096_security_variant=self.allow_096_security_variant,
             )
             plan = {
                 "job_id": job_id,
@@ -857,6 +883,7 @@ def execute_update_job(
     launcher: Callable[[Path, str], tuple[int, dict[str, Any]]] = _run_launcher,
     database_path: Path | None = None,
     migration_registry: tuple[MigrationStep, ...] = DEFAULT_MIGRATIONS,
+    allow_096_security_variant: bool = False,
 ) -> int:
     """Execute one READY job after the source supervisor has handed off."""
     store = UpdateJobStore(roots)
@@ -909,6 +936,7 @@ def execute_update_job(
             database_path=database_path,
             registry=registry,
             operation_id=job_id,
+            allow_096_security_variant=allow_096_security_variant,
         )
         if database_update != expected_database_update:
             raise UpdateMvpError("SYSTEM_UPDATE_DATABASE_MIGRATION_PLAN_INVALID")
