@@ -1,0 +1,43 @@
+name: Stable bridge checks
+
+on:
+  push:
+    branches:
+      - codex/098-stable-bridge-20260929
+  pull_request:
+    paths:
+      - VERSION
+      - enterprise/**
+      - enterprise-static/admin.html
+      - tools/build_upgrade_routes.py
+      - .github/workflows/stable-bridge-checks.yml
+
+permissions:
+  contents: read
+
+jobs:
+  update-route-windows:
+    name: Update routes and bridge (Windows, Python 3.11)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install test dependencies
+        run: >-
+          python -m pip install
+          -r requirements.txt
+          -r enterprise/requirements.txt
+          pytest
+      - name: Run affected update tests
+        run: >-
+          python -m pytest -q
+          enterprise/tests/test_upgrade_routes.py
+          enterprise/tests/test_upgrade_route_catalog.py
+          enterprise/tests/test_update_mvp_1.py
+          enterprise/tests/test_customer_095_bridge_candidate.py
