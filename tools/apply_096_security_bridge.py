@@ -104,7 +104,7 @@ def main() -> int:
                 "--inventory", os.fspath(inventory_path),
             ],
             cwd=os.fspath(source_root), env=environment, stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=3600, check=False,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
         )
         lines = completed.stdout.decode("utf-8", errors="replace").splitlines()
         result = json.loads(lines[-1]) if lines else None

@@ -12,6 +12,7 @@ import os
 import shutil
 import sqlite3
 import subprocess
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -102,7 +103,7 @@ with sqlite3.connect(db.PATH_ROOTS.DATA_ROOT / 'enterprise.db') as conn:
         check=True, capture_output=True, text=True, timeout=120,
     )
     database = roots.DATA_ROOT / "enterprise.db"
-    with sqlite3.connect(database) as conn:
+    with closing(sqlite3.connect(database)) as conn:
         assert len(schema_objects(conn)) == (28 if security_variant else 18)
 
     stage = tmp_path / "verified-target"
@@ -151,7 +152,7 @@ print(json.dumps({'exit_code': code, 'job_id': prepared.job_id,
     assert result["current"] == (source_id if fail_target_start else target_manifest.release_id)
     assert asset.read_bytes() == b"preserved-media-fixture"
     assert (roots.CONFIG_ROOT / "enterprise.env").read_text(encoding="utf-8").startswith("ENTERPRISE_ENV=development")
-    with sqlite3.connect(database) as conn:
+    with closing(sqlite3.connect(database)) as conn:
         assert conn.execute("PRAGMA integrity_check").fetchone() == ("ok",)
         assert conn.execute("SELECT canvas_id FROM user_canvas_map WHERE user_id='u'").fetchone() == ("canvas-1",)
         if security_variant:
