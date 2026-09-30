@@ -585,6 +585,7 @@ def _flow_for_operation(file: str, symbol: str) -> str:
         "enterprise/release/release_manifest_v2.py",
         "tools/build_upgrade_routes.py",
         "tools/build_install_ux_1.py",
+        "tools/build_096_bridge_updater.py",
     }:
         # OPS Release Manifest v2 writes only into a caller-owned new build or
         # fixture-materialization root. INSTALL-UX-1 likewise copies verified
@@ -622,7 +623,7 @@ def _flow_for_operation(file: str, symbol: str) -> str:
 # every mapped site as (file, symbol, operation, normalized-call fingerprint,
 # Wxx flow). Line numbers are deliberately excluded, while duplicate identical
 # calls remain duplicate records. Any added/removed/changed call drifts it.
-EXPECTED_SITE_MANIFEST_DIGEST = "fc9ee3cf7f846502d6b0d8dd3c2c47a430acae6d6eb405c049adeec79f79c572"
+EXPECTED_SITE_MANIFEST_DIGEST = "8f2f16fca071c4a83241bfd2e1eabce0190972db6e3391878212bca2487dbaee"
 
 FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W01", "main.py", "startup_event"),

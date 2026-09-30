@@ -10,6 +10,10 @@ on:
       - enterprise/**
       - enterprise-static/admin.html
       - tools/build_upgrade_routes.py
+      - tools/build_096_bridge_updater.py
+      - tools/apply_096_security_bridge.py
+      - installer/windows/096-bridge-updater-build-policy.json
+      - installer/windows/InfiniteCanvasEnterprise096Bridge.iss
       - .github/workflows/stable-bridge-checks.yml
 
 permissions:
@@ -43,5 +47,6 @@ jobs:
           enterprise/tests/test_data_mvp_1.py
           enterprise/tests/test_install_mvp_1.py
           enterprise/tests/test_096_security_variant.py
+          enterprise/tests/test_096_bridge_updater.py
           enterprise/tests/test_versioned_release_snapshot.py
           enterprise/tests/test_customer_095_bridge_candidate.py
