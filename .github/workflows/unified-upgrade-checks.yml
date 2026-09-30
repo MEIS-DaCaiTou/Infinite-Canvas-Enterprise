@@ -1,0 +1,99 @@
+name: Unified upgrade checks
+
+on:
+  pull_request:
+    paths:
+      - installer/windows/native/**
+      - installer/windows/native-build-policy.json
+      - installer/windows/historical-install-catalog.json
+      - tools/build_unified_upgrader.py
+      - tools/inventory_upgrade_sources.py
+      - tools/unified_upgrade.py
+      - enterprise/ops/update/historical_install.py
+      - enterprise/tests/test_unified_upgrade*.py
+      - .github/workflows/unified-upgrade-checks.yml
+
+permissions:
+  contents: read
+
+jobs:
+  native-upgrade-windows:
+    name: Historical upgrades and fixed EXE (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install affected test dependencies
+        run: python -m pip install -r requirements.txt -r enterprise/requirements.txt pytest
+      - name: Check affected contracts and tracked write audit
+        run: >-
+          python -m pytest -q
+          enterprise/tests/test_unified_upgrade.py
+          enterprise/tests/test_096_security_variant.py
+          enterprise/tests/test_update_mvp_1.py
+          enterprise/tests/test_env_1b1a_static_build.py::test_app_root_write_audit_anchors_and_structural_coverage
+      - name: Fetch and verify historical public assets
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ArtifactRoot = Join-Path $env:RUNNER_TEMP 'ice-unified-build'
+          if (Test-Path -LiteralPath $ArtifactRoot) { throw 'Artifact root must be new' }
+          New-Item -ItemType Directory -Path $ArtifactRoot | Out-Null
+          $Assets = Join-Path $ArtifactRoot 'source-assets'
+          $Catalog = Get-Content -Raw installer/windows/historical-install-catalog.json | ConvertFrom-Json
+          foreach ($Source in $Catalog.sources) {
+            $Folder = Join-Path $Assets $Source.version
+            New-Item -ItemType Directory -Path $Folder | Out-Null
+            gh release download $Source.version --repo MEIS-DaCaiTou/Infinite-Canvas-Enterprise --pattern $Source.archive_filename --pattern ops-release-manifest-v2.json --pattern release-payload-inventory.json --dir $Folder
+            if ($LASTEXITCODE -ne 0) { throw 'Historical asset download failed' }
+          }
+          $CatalogResult = Join-Path $ArtifactRoot 'verified-catalog.json'
+          python tools/inventory_upgrade_sources.py --asset-root $Assets --output $CatalogResult --expected-catalog installer/windows/historical-install-catalog.json
+          if ($LASTEXITCODE -ne 0) { throw 'Historical asset verification failed' }
+          ('ICE_HISTORICAL_ASSETS=' + $Assets) | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          ('ICE_UNIFIED_ARTIFACT_ROOT=' + $ArtifactRoot) | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Build two identical native executables from pinned compiler
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $Policy = Get-Content -Raw installer/windows/native-build-policy.json | ConvertFrom-Json
+          $Tools = Join-Path $env:ICE_UNIFIED_ARTIFACT_ROOT 'toolchain'
+          New-Item -ItemType Directory -Path $Tools | Out-Null
+          $Package = Join-Path $Tools $Policy.compiler_package
+          Invoke-WebRequest -Uri $Policy.compiler_package_url -OutFile $Package
+          if ((Get-FileHash -LiteralPath $Package).Hash.ToLowerInvariant() -ne $Policy.compiler_package_sha256) { throw 'Compiler package mismatch' }
+          $Compiler = Join-Path $Tools 'compiler'
+          python -m zipfile -e $Package $Compiler
+          if ($LASTEXITCODE -ne 0) { throw 'Compiler extraction failed' }
+          $Build = Join-Path $env:ICE_UNIFIED_ARTIFACT_ROOT 'native'
+          python tools/build_unified_upgrader.py --target-assets (Join-Path $env:ICE_HISTORICAL_ASSETS '2026.09.9') --compiler-package $Package --compiler-root $Compiler --output-root $Build
+          if ($LASTEXITCODE -ne 0) { throw 'Deterministic native build failed' }
+          ('ICE_NATIVE_BUILD_ROOT=' + $Build) | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Verify installed upgrades, rollback and compiled fixed entry
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Fresh, short run-owned root; never a user's installation directory.
+          $TestBase = 'C:\Temp\IU-' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT
+          if (Test-Path -LiteralPath $TestBase) { throw 'Test base must be new' }
+          New-Item -ItemType Directory -Path 'C:\Temp' -Force | Out-Null
+          $ReportPath = Join-Path $env:ICE_UNIFIED_ARTIFACT_ROOT 'installed-matrix.xml'
+          python -m pytest -q enterprise/tests/test_unified_upgrade_installed.py --basetemp $TestBase --junitxml $ReportPath
+          if ($LASTEXITCODE -ne 0) { throw 'Installed-copy verification failed' }
+      - name: Retain non-sensitive verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unified-upgrade-evidence
+          path: |
+            ${{ runner.temp }}/ice-unified-build/native/unsigned-native-build-record.json
+            ${{ runner.temp }}/ice-unified-build/installed-matrix.xml
+            ${{ runner.temp }}/ice-unified-build/verified-catalog.json
+          if-no-files-found: warn

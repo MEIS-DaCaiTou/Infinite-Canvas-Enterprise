@@ -1,5 +1,7 @@
 # Infinite Canvas Enterprise · 项目定位与后续开发范围锁定
 
+> **当前批准范围（2026-10-01）：** 项目负责人已明确批准现有客户的原位升级与恢复，当前任务为历史版本/数据库状态盘点 → 通用升级器与固定 EXE → 准确安装副本升级/回退 → 中文统一工具包。不得将下文旧 Greenfield 决策当成阻止本次客户升级的现行约束。仅操作本项目工作分支和测试副本，不自动操作客户安装，不删除其他项目数据；未核验来源仍阻断。详见 [本轮范围](docs/ops/UNIFIED-UPGRADE-AND-FIXED-ENTRY-2026-10.md)。
+
 > **当前维护说明（2026-07-27）：** 本文保留 3G / U-2 阶段范围历史。当前实施事实以 [`docs/CURRENT_PROJECT_STATUS.md`](docs/CURRENT_PROJECT_STATUS.md) 为准。ENV-1B1C-B1 已合并并独立验收；B2 architecture gate 已通过并形成 lifecycle repository implementation。B2 不授权 `main.py`/gateway、Runtime 重建、Manifest v2、activation、OPS-3B、formal Release 或生产操作。
 
 更新时间：2026-07-17
