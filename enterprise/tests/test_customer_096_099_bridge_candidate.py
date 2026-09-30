@@ -119,26 +119,43 @@ sys.path.insert(0, sys.argv[1])
 from enterprise.paths import PortableRootInputs, derive_portable_path_roots
 from enterprise.ops.update.mvp import UpdateJobStore, UpdateMvpService, execute_update_job
 from enterprise.release.current_release import read_current_release_result_from_state_root
+from enterprise.release.release_manifest_v2 import read_release_manifest_v2
 code_root, install, local, manifest, archive, inventory = map(Path, sys.argv[1:7])
 variant = sys.argv[7] == '1'; fail = sys.argv[8] == '1'
 source_id = sys.argv[9]
 roots = derive_portable_path_roots(PortableRootInputs(install, local), source_id)
-options = {'allow_096_security_variant': True} if variant else {}
-prepared = UpdateMvpService(roots, **options).prepare_from_artifacts(
-    actor_user_id='fixture-admin', manifest_path=manifest, archive_path=archive, inventory_path=inventory)
-store = UpdateJobStore(roots)
-store.reserve_execution(prepared.job_id)
-store.write_status(prepared.job_id, 'UPDATING', actor_user_id='fixture-admin',
-    result_code='SYSTEM_UPDATE_STARTED', source_release_id=prepared.source_release_id,
-    target_release_id=prepared.target_release_id)
 def launcher(root, command):
-    if fail and root.name == prepared.target_release_id and command == 'start':
+    if fail and root.name != source_id and command == 'start':
         return 2, {'code': 'DRILL_TARGET_START_FAILED'}
-    return 0, {'status': 'fixture-only-no-process'}
-code = execute_update_job(roots, prepared.job_id, launcher=launcher, **options)
+    return 0, {'result': 'stopped' if command == 'stop' else 'fixture-only-no-process'}
+store = UpdateJobStore(roots)
+if variant:
+    from types import SimpleNamespace
+    from enterprise.ops.update import bridge_worker_096 as bridge
+    source_root = roots.RELEASE_ROOT / source_id
+    source_manifest = read_release_manifest_v2(source_root / 'release-manifest.json')
+    bridge.build_portable_preflight = lambda *a, **kw: SimpleNamespace(
+        roots=roots, release_manifest=source_manifest)
+    bridge.install_path_roots_for_process = lambda value: value
+    bridge._run_launcher = launcher
+    bridge.execute_update_job = lambda path_roots, job_id, **kw: execute_update_job(
+        path_roots, job_id, launcher=launcher, **kw)
+    code = bridge.run(install_root=install, staged_target_root=code_root,
+        manifest=manifest, archive=archive, inventory=inventory)
+    prepared_job_id = next(path.name for path in store.jobs_root.iterdir() if path.is_dir())
+else:
+    prepared = UpdateMvpService(roots).prepare_from_artifacts(
+        actor_user_id='fixture-admin', manifest_path=manifest,
+        archive_path=archive, inventory_path=inventory)
+    prepared_job_id = prepared.job_id
+    store.reserve_execution(prepared.job_id)
+    store.write_status(prepared.job_id, 'UPDATING', actor_user_id='fixture-admin',
+        result_code='SYSTEM_UPDATE_STARTED', source_release_id=prepared.source_release_id,
+        target_release_id=prepared.target_release_id)
+    code = execute_update_job(roots, prepared.job_id, launcher=launcher)
 pointer = read_current_release_result_from_state_root(roots.STATE_ROOT)
-print(json.dumps({'exit_code': code, 'job_id': prepared.job_id,
-    'state': store.read_status(prepared.job_id)['state'], 'current': pointer.release.release_id}))
+print(json.dumps({'exit_code': code, 'job_id': prepared_job_id,
+    'state': store.read_status(prepared_job_id)['state'], 'current': pointer.release.release_id}))
 '''
     completed = subprocess.run(
         [str(source_install / "python" / "python.exe"), "-I", "-B", "-c", update_script,
