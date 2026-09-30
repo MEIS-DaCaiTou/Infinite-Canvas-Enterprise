@@ -1,0 +1,14 @@
+{
+  "bootstrap_asset": "tools/apply_096_security_bridge.py",
+  "diagnostics_relative": "staging/operator-diagnostics",
+  "installer_architecture": "x64",
+  "installer_filename": "Infinite-Canvas-Enterprise-096-to-099-Updater-x64.exe",
+  "installer_source": "installer/windows/InfiniteCanvasEnterprise096Bridge.iss",
+  "privileges": "current-user-lowest",
+  "schema_version": "security-bridge-updater-build-policy-v1",
+  "source_manifest_sha256": "e183631d52bbd0955477dfc6f6540aea99a0e173bb11821544a1db926a2cb85d",
+  "source_python_sha256": "03168c01b7b7491423350e82c26fee71f35b43694d1319d3c668bda6903a0c38",
+  "source_release_id": "ice-2026.09.6-8f65c5cd328f",
+  "target_version": "2026.09.9",
+  "uninstaller_created": false
+}
