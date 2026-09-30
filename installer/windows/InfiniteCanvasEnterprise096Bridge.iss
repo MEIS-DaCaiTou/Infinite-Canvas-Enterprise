@@ -62,10 +62,6 @@ Source: "{#BridgeBootstrapPath}"; Flags: dontcopy noencryption notimestamp
 Source: "{#MetadataPath}"; Flags: dontcopy noencryption notimestamp
 
 [Code]
-const
-  DRIVE_FIXED = 3;
-  INVALID_FILE_ATTRIBUTES = $FFFFFFFF;
-
 var
   InstallRootPage: TInputDirWizardPage;
   ConfirmationPage: TInputOptionWizardPage;
@@ -73,102 +69,12 @@ var
   SelectedInstallRoot: String;
   DiagnosticsPath: String;
   LastStableCode: String;
-
-function GetDriveTypeW(lpRootPathName: String): Cardinal;
-  external 'GetDriveTypeW@kernel32.dll stdcall';
-function GetFileAttributesW(lpFileName: String): Cardinal;
-  external 'GetFileAttributesW@kernel32.dll stdcall';
-function GetLastErrorNative: Cardinal;
-  external 'GetLastError@kernel32.dll stdcall';
+  DetectedInstallCombo: TNewComboBox;
+  DiscoveryLabel: TNewStaticText;
 
 function Quote(const Value: String): String;
 begin
   Result := '"' + Value + '"';
-end;
-
-function HasUnsafeAncestor(const Path: String): Boolean;
-var
-  Attributes, ErrorCode: Cardinal;
-  Current, Parent: String;
-begin
-  Result := True;
-  Current := RemoveBackslashUnlessRoot(ExpandFileName(Path));
-  while Current <> '' do begin
-    Attributes := GetFileAttributesW(Current);
-    if Attributes = INVALID_FILE_ATTRIBUTES then begin
-      ErrorCode := GetLastErrorNative;
-      if (ErrorCode <> 2) and (ErrorCode <> 3) then exit;
-    end else if (Attributes and FILE_ATTRIBUTE_REPARSE_POINT) <> 0 then exit;
-    Parent := RemoveBackslashUnlessRoot(ExtractFileDir(Current));
-    if (Parent = '') or (Parent = Current) then break;
-    Current := Parent;
-  end;
-  Result := False;
-end;
-
-function IsCandidateRoot(const Root: String): Boolean;
-var
-  SourceRoot: String;
-begin
-  SourceRoot := AddBackslash(Root) + 'releases\{#SourceReleaseId}';
-  Result := DirExists(Root) and
-    FileExists(SourceRoot + '\python\python.exe') and
-    FileExists(SourceRoot + '\release-manifest.json') and
-    FileExists(AddBackslash(Root) + 'data\enterprise.db');
-end;
-
-function DetectInstallRoot: String;
-var
-  Candidate, Parent: String;
-begin
-  Candidate := ExpandConstant('{param:INSTALLROOT|}');
-  if (Candidate <> '') and IsCandidateRoot(Candidate) then begin
-    Result := Candidate;
-    exit;
-  end;
-  Candidate := ExtractFileDir(ExpandConstant('{srcexe}'));
-  if IsCandidateRoot(Candidate) then begin
-    Result := Candidate;
-    exit;
-  end;
-  Parent := ExtractFileDir(Candidate);
-  if IsCandidateRoot(Parent) then begin
-    Result := Parent;
-    exit;
-  end;
-  Candidate := ExpandConstant('{localappdata}\Infinite-Canvas-Enterprise\install');
-  Result := Candidate;
-end;
-
-function ValidateInstallRoot(const Root: String; var Code: String): Boolean;
-var
-  DriveRoot: String;
-begin
-  Result := False;
-  Code := 'SECURITY_BRIDGE_INSTALL_ROOT_INVALID';
-  if (Length(Root) < 3) or (Copy(Root, 2, 2) <> ':\') or
-     (Pos('"', Root) <> 0) or (Pos(#13, Root) <> 0) or (Pos(#10, Root) <> 0) then exit;
-  DriveRoot := ExtractFileDrive(Root) + '\';
-  if GetDriveTypeW(DriveRoot) <> DRIVE_FIXED then begin
-    Code := 'SECURITY_BRIDGE_INSTALL_ROOT_NOT_LOCAL';
-    exit;
-  end;
-  if HasUnsafeAncestor(Root) or
-     HasUnsafeAncestor(AddBackslash(Root) + 'releases\{#SourceReleaseId}\python\python.exe') or
-     HasUnsafeAncestor(AddBackslash(Root) + 'releases\{#SourceReleaseId}\release-manifest.json') or
-     HasUnsafeAncestor(AddBackslash(Root) + 'data\enterprise.db') or
-     HasUnsafeAncestor(AddBackslash(Root) + '{#DiagnosticsRelative}') then begin
-    Code := 'SECURITY_BRIDGE_INSTALL_ROOT_UNSAFE';
-    exit;
-  end;
-  { The embedded 09.6 Python cannot reliably expand paths at the legacy }
-  { Windows MAX_PATH boundary.  Keep headroom for the longest target file. }
-  if Length(AddBackslash(Root)) + StrToInt('{#MaximumMaterializedSuffixLength}') > 240 then begin
-    Code := 'SECURITY_BRIDGE_INSTALL_ROOT_TOO_LONG';
-    exit;
-  end;
-  if not IsCandidateRoot(Root) then exit;
-  Result := True;
 end;
 
 procedure RequireEmbeddedFile(const Path, ExpectedHash: String; ExpectedSize: Int64);
@@ -200,6 +106,14 @@ begin
     Result := Copy(Text, StartAt, EndAt - StartAt);
 end;
 
+#include "096-install-discovery.issinc"
+
+procedure SelectDetectedInstall(Sender: TObject);
+begin
+  if DetectedInstallCombo.ItemIndex >= 0 then
+    InstallRootPage.Values[0] := DetectedInstallCombo.Items[DetectedInstallCombo.ItemIndex];
+end;
+
 procedure SetStage(const Caption: String; Position: Integer);
 begin
   UpgradeProgress.SetText(Caption, '升级期间服务会暂停，请勿关闭本窗口。');
@@ -216,7 +130,31 @@ begin
     '请选择包含 data 和 releases 目录的无限画布企业版安装根目录。',
     '工具会严格校验版本和数据库指纹，不会修改其他项目或目录。', False, '');
   InstallRootPage.Add('安装目录：');
+  DiscoverExistingInstallLocations;
   InstallRootPage.Values[0] := DetectInstallRoot;
+  DiscoveryLabel := TNewStaticText.Create(WizardForm);
+  DiscoveryLabel.Parent := InstallRootPage.Surface;
+  DiscoveryLabel.SetBounds(0, InstallRootPage.Edits[0].Top + ScaleY(42),
+    InstallRootPage.SurfaceWidth, ScaleY(44));
+  DiscoveryLabel.AutoSize := False;
+  DiscoveryLabel.WordWrap := True;
+  if DiscoveryIncomplete then
+    DiscoveryLabel.Caption := '位置线索超过检查上限。请从已检测列表选择，或浏览现有安装目录。'
+  else if DiscoveredInstallRoots.Count > 1 then
+    DiscoveryLabel.Caption := '检测到多个安装，请明确选择需要升级的那一个。不会自动操作其他安装。'
+  else if DiscoveredInstallRoots.Count = 1 then
+    DiscoveryLabel.Caption := '已找到版本符合的安装。数据库状态将在升级前复核，请核对目录。'
+  else
+    DiscoveryLabel.Caption := '未自动找到可识别的 09.6 安装，请浏览现有目录。本工具不会创建新安装。';
+  DetectedInstallCombo := TNewComboBox.Create(WizardForm);
+  DetectedInstallCombo.Parent := InstallRootPage.Surface;
+  DetectedInstallCombo.SetBounds(0, DiscoveryLabel.Top + DiscoveryLabel.Height + ScaleY(8),
+    InstallRootPage.SurfaceWidth, ScaleY(24));
+  DetectedInstallCombo.Style := csDropDownList;
+  DetectedInstallCombo.Items.Assign(DiscoveredInstallRoots);
+  DetectedInstallCombo.ItemIndex := -1;
+  DetectedInstallCombo.Visible := DiscoveredInstallRoots.Count > 1;
+  DetectedInstallCombo.OnChange := @SelectDetectedInstall;
   ConfirmationPage := CreateInputOptionPage(InstallRootPage.ID, '升级前确认',
     '请先确认业务任务已处理完成',
     '升级会暂停服务。未完成的图片、视频或其他 AI 任务不应在此时提交。', False, False);
@@ -256,6 +194,14 @@ var
 begin
   Result := '';
   LastStableCode := 'SECURITY_BRIDGE_GUI_FAILED';
+  if Trim(InstallRootPage.Values[0]) = '' then begin
+    if DiscoveredInstallRoots.Count > 1 then
+      InstallRootCode := 'SECURITY_BRIDGE_INSTALL_SELECTION_REQUIRED'
+    else
+      InstallRootCode := 'SECURITY_BRIDGE_INSTALL_NOT_FOUND';
+    Result := '请选择已存在的安装目录；不会创建新安装。' + #13#10 + '错误代码：' + InstallRootCode;
+    exit;
+  end;
   SelectedInstallRoot := ExpandFileName(InstallRootPage.Values[0]);
   if not ValidateInstallRoot(SelectedInstallRoot, InstallRootCode) then begin
     Result := '安装目录校验未通过。' + #13#10 + '错误代码：' + InstallRootCode;
@@ -346,6 +292,8 @@ begin
 
     SetStage('启动 2026.09.9 并检查健康状态', 4);
     SetStage('升级完成', 5);
+    if not RegisterSuccessfulInstallLocation(SelectedInstallRoot) then
+      Log('SECURITY_BRIDGE_LOCATION_REGISTRATION_FAILED');
     if FileExists(DiagnosticsPath) then
       SuppressibleMsgBox('已成功升级到 2026.09.9。' + #13#10 +
         '诊断文件：' + DiagnosticsPath, mbInformation, MB_OK, IDOK)

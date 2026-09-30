@@ -14,6 +14,7 @@ on:
       - tools/apply_096_security_bridge.py
       - installer/windows/096-bridge-updater-build-policy.json
       - installer/windows/InfiniteCanvasEnterprise096Bridge.iss
+      - installer/windows/096-install-discovery.issinc
       - .github/workflows/stable-bridge-checks.yml
 
 permissions:
@@ -50,3 +51,40 @@ jobs:
           enterprise/tests/test_096_bridge_updater.py
           enterprise/tests/test_versioned_release_snapshot.py
           enterprise/tests/test_customer_095_bridge_candidate.py
+      - name: Prepare pinned Inno compiler for native discovery tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $Policy = Get-Content -Raw installer/windows/inno-setup-toolchain-policy.json | ConvertFrom-Json
+          $ToolRoot = Join-Path $env:RUNNER_TEMP 'ice-discovery-inno'
+          New-Item -ItemType Directory -Path $ToolRoot -ErrorAction Stop | Out-Null
+          $Package = Join-Path $ToolRoot $Policy.official_installer_filename
+          Invoke-WebRequest -Uri $Policy.official_installer_url -OutFile $Package
+          if ((Get-FileHash -Algorithm SHA256 -LiteralPath $Package).Hash.ToLowerInvariant() -ne $Policy.official_installer_sha256) {
+            throw 'Pinned compiler download hash mismatch'
+          }
+          $CompilerRoot = Join-Path $ToolRoot 'compiler'
+          $Install = Start-Process -FilePath $Package -WindowStyle Hidden -Wait -PassThru -ArgumentList @(
+            '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CURRENTUSER', '/SP-',
+            ('/DIR="' + $CompilerRoot + '"'), '/NOICONS'
+          )
+          if ($Install.ExitCode -ne 0) { throw 'Pinned compiler setup failed' }
+          $Verify = @'
+          import json, sys
+          from pathlib import Path
+          from tools.build_install_ux_1 import _verify_toolchain
+          policy = json.loads(Path('installer/windows/inno-setup-toolchain-policy.json').read_text(encoding='utf-8'))
+          _verify_toolchain(policy, Path(sys.argv[1]) / 'ISCC.exe', Path(sys.argv[2]))
+          '@
+          $Verify | python - $CompilerRoot $Package
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned compiler closure verification failed' }
+          ('ICE_INNO_ISCC=' + (Join-Path $CompilerRoot 'ISCC.exe')) | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Run native read-only installation discovery tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Short, run-owned fixtures respect the old Runtime's MAX_PATH budget.
+          $Base = 'C:\Temp\ICE-Discovery-' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT
+          if (Test-Path -LiteralPath $Base) { throw 'Test fixture directory already exists' }
+          New-Item -ItemType Directory -Path 'C:\Temp' -Force | Out-Null
+          python -m pytest -q enterprise/tests/test_096_install_discovery.py --basetemp=$Base

@@ -1,0 +1,257 @@
+{ Read-only location hints. Discovery never authorizes a database migration. }
+const
+  DRIVE_FIXED = 3;
+  INVALID_FILE_ATTRIBUTES = $FFFFFFFF;
+  InstallLocationRegistry = 'Software\Infinite-Canvas-Enterprise\Installations';
+  MaximumDiscoveredRoots = 32;
+  MaximumProcessHints = 64;
+
+var
+  DiscoveredInstallRoots: TStringList;
+  InspectedInstallRoots: TStringList;
+  DiscoveryIncomplete: Boolean;
+
+function GetDriveTypeW(lpRootPathName: String): Cardinal;
+  external 'GetDriveTypeW@kernel32.dll stdcall';
+function GetFileAttributesW(lpFileName: String): Cardinal;
+  external 'GetFileAttributesW@kernel32.dll stdcall';
+function GetLastErrorNative: Cardinal;
+  external 'GetLastError@kernel32.dll stdcall';
+
+function HasUnsafeAncestor(const Path: String): Boolean;
+var
+  Attributes, ErrorCode: Cardinal;
+  Current, Parent: String;
+begin
+  Result := True;
+  Current := RemoveBackslashUnlessRoot(ExpandFileName(Path));
+  while Current <> '' do begin
+    Attributes := GetFileAttributesW(Current);
+    if Attributes = INVALID_FILE_ATTRIBUTES then begin
+      ErrorCode := GetLastErrorNative;
+      if (ErrorCode <> 2) and (ErrorCode <> 3) then exit;
+    end else if (Attributes and FILE_ATTRIBUTE_REPARSE_POINT) <> 0 then exit;
+    Parent := RemoveBackslashUnlessRoot(ExtractFileDir(Current));
+    if (Parent = '') or (Parent = Current) then break;
+    Current := Parent;
+  end;
+  Result := False;
+end;
+
+function IsCandidateRoot(const Root: String): Boolean;
+var
+  SourceRoot: String;
+begin
+  SourceRoot := AddBackslash(Root) + 'releases\{#SourceReleaseId}';
+  Result := DirExists(Root) and
+    FileExists(SourceRoot + '\python\python.exe') and
+    FileExists(SourceRoot + '\release-manifest.json') and
+    FileExists(AddBackslash(Root) + 'data\enterprise.db');
+end;
+
+function ValidateInstallRoot(const Root: String; var Code: String): Boolean;
+var
+  DriveRoot: String;
+begin
+  Result := False;
+  Code := 'SECURITY_BRIDGE_INSTALL_ROOT_INVALID';
+  if (Length(Root) <= 3) or (Copy(Root, 2, 2) <> ':\') or
+     (Pos('"', Root) <> 0) or (Pos(#13, Root) <> 0) or (Pos(#10, Root) <> 0) then exit;
+  DriveRoot := ExtractFileDrive(Root) + '\';
+  if GetDriveTypeW(DriveRoot) <> DRIVE_FIXED then begin
+    Code := 'SECURITY_BRIDGE_INSTALL_ROOT_NOT_LOCAL';
+    exit;
+  end;
+  if HasUnsafeAncestor(Root) or
+     HasUnsafeAncestor(AddBackslash(Root) + 'releases\{#SourceReleaseId}\python\python.exe') or
+     HasUnsafeAncestor(AddBackslash(Root) + 'releases\{#SourceReleaseId}\release-manifest.json') or
+     HasUnsafeAncestor(AddBackslash(Root) + 'data\enterprise.db') or
+     HasUnsafeAncestor(AddBackslash(Root) + '{#DiagnosticsRelative}') then begin
+    Code := 'SECURITY_BRIDGE_INSTALL_ROOT_UNSAFE';
+    exit;
+  end;
+  { Keep headroom for the old bundled Python's legacy MAX_PATH limit. }
+  if Length(AddBackslash(Root)) + StrToInt('{#MaximumMaterializedSuffixLength}') > 240 then begin
+    Code := 'SECURITY_BRIDGE_INSTALL_ROOT_TOO_LONG';
+    exit;
+  end;
+  if not IsCandidateRoot(Root) then exit;
+  Result := True;
+end;
+
+function NormalizeInstallLocation(const Value: String): String;
+begin
+  Result := Trim(Value);
+  StringChangeEx(Result, '/', '\', True);
+  if (Length(Result) <= 3) or (Copy(Result, 2, 2) <> ':\') or
+     (Pos('"', Result) <> 0) or (Pos(#13, Result) <> 0) or (Pos(#10, Result) <> 0) then begin
+    Result := '';
+    exit;
+  end;
+  Result := RemoveBackslashUnlessRoot(ExpandFileName(Result));
+end;
+
+function IsPinnedSourceLocation(const Root: String): Boolean;
+var
+  Code, SourceRoot, PointerPath, PointerText: String;
+  PointerBytes: AnsiString;
+  PointerSize: Int64;
+begin
+  Result := False;
+  try
+    if not ValidateInstallRoot(Root, Code) then exit;
+    PointerPath := AddBackslash(Root) + 'state\current-release.json';
+    if HasUnsafeAncestor(PointerPath) or not FileSize64(PointerPath, PointerSize) then exit;
+    if (PointerSize <= 0) or (PointerSize > 16384) then exit;
+    if not LoadStringFromFile(PointerPath, PointerBytes) then exit;
+    PointerText := Utf8Decode(PointerBytes);
+    { The authoritative reader in the bridge revalidates the complete JSON. }
+    if ExtractJsonString(PointerText, 'release_id') <> '{#SourceReleaseId}' then exit;
+    if ExtractJsonString(PointerText, 'manifest_sha256') <> '{#SourceManifestSha256}' then exit;
+    SourceRoot := AddBackslash(Root) + 'releases\{#SourceReleaseId}';
+    if CompareText(GetSHA256OfFile(SourceRoot + '\release-manifest.json'), '{#SourceManifestSha256}') <> 0 then exit;
+    if CompareText(GetSHA256OfFile(SourceRoot + '\python\python.exe'), '{#SourcePythonSha256}') <> 0 then exit;
+    Result := True;
+  except
+    { A stale or inaccessible hint must not prevent manual directory selection. }
+    Result := False;
+  end;
+end;
+
+procedure AddInstallLocationHint(const Value: String);
+var
+  Root: String;
+begin
+  Root := NormalizeInstallLocation(Value);
+  if (Root = '') or (InspectedInstallRoots.IndexOf(Root) >= 0) then exit;
+  InspectedInstallRoots.Add(Root);
+  if not IsPinnedSourceLocation(Root) then exit;
+  if DiscoveredInstallRoots.Count >= MaximumDiscoveredRoots then begin
+    DiscoveryIncomplete := True;
+    exit;
+  end;
+  DiscoveredInstallRoots.Add(Root);
+end;
+
+procedure AddNearbyInstallLocationHints(const Path: String);
+var
+  Candidate, Parent: String;
+  I: Integer;
+begin
+  Candidate := ExtractFileDir(Path);
+  { Bounded ancestors only; no directory enumeration or drive scan. }
+  for I := 1 to 4 do begin
+    AddInstallLocationHint(Candidate);
+    Parent := ExtractFileDir(Candidate);
+    if (Parent = '') or (Parent = Candidate) then exit;
+    Candidate := Parent;
+  end;
+end;
+
+procedure ReadRegisteredInstallLocations(RootKey: Integer; const BaseKey: String);
+var
+  Names: TArrayOfString;
+  I, Limit: Integer;
+  Candidate: String;
+begin
+  if not RegGetSubkeyNames(RootKey, BaseKey, Names) then exit;
+  Limit := GetArrayLength(Names);
+  if Limit > MaximumDiscoveredRoots then begin
+    Limit := MaximumDiscoveredRoots;
+    DiscoveryIncomplete := True;
+  end;
+  for I := 0 to Limit - 1 do begin
+    if RegQueryStringValue(RootKey, BaseKey + '\' + Names[I],
+      'InstallRoot', Candidate) then AddInstallLocationHint(Candidate);
+  end;
+end;
+
+procedure ReadKnownShortcutLocation(const Path: String);
+var
+  Shell, Shortcut: Variant;
+begin
+  try
+    if not FileExists(Path) or HasUnsafeAncestor(Path) then exit;
+    Shell := CreateOleObject('WScript.Shell');
+    Shortcut := Shell.CreateShortcut(Path);
+    { Reading an existing shortcut never executes its target or saves it. }
+    AddNearbyInstallLocationHints(Shortcut.TargetPath);
+  except
+    Log('SECURITY_BRIDGE_SHORTCUT_HINT_UNAVAILABLE');
+  end;
+end;
+
+procedure ReadRunningInstallLocations;
+var
+  Locator, Services, Processes, Process: Variant;
+  I, Limit: Integer;
+  ExecutablePath: String;
+begin
+  try
+    Locator := CreateOleObject('WbemScripting.SWbemLocator');
+    Services := Locator.ConnectServer('.', 'root\CIMV2');
+    Processes := Services.ExecQuery(
+      'SELECT ExecutablePath FROM Win32_Process WHERE Name = ''python.exe''', 'WQL');
+    Limit := Processes.Count;
+    if Limit > MaximumProcessHints then begin
+      Limit := MaximumProcessHints;
+      DiscoveryIncomplete := True;
+    end;
+    for I := 0 to Limit - 1 do begin
+      try
+        Process := Processes.ItemIndex(I);
+        ExecutablePath := Process.ExecutablePath;
+        { Never read or log process command lines, credentials or environments. }
+        if CompareText(ExtractFileName(ExecutablePath), 'python.exe') = 0 then
+          AddNearbyInstallLocationHints(ExecutablePath);
+      except
+        { Protected or exited processes are simply unusable hints. }
+      end;
+    end;
+  except
+    Log('SECURITY_BRIDGE_PROCESS_HINT_UNAVAILABLE');
+  end;
+end;
+
+procedure DiscoverExistingInstallLocations;
+begin
+  DiscoveredInstallRoots := TStringList.Create;
+  DiscoveredInstallRoots.CaseSensitive := False;
+  InspectedInstallRoots := TStringList.Create;
+  InspectedInstallRoots.CaseSensitive := False;
+  DiscoveryIncomplete := False;
+  AddNearbyInstallLocationHints(ExpandConstant('{srcexe}'));
+  AddInstallLocationHint(ExpandConstant('{localappdata}\Infinite-Canvas-Enterprise\install'));
+  ReadRegisteredInstallLocations(HKCU, InstallLocationRegistry);
+  ReadRegisteredInstallLocations(HKLM64, InstallLocationRegistry);
+  ReadRegisteredInstallLocations(HKLM32, InstallLocationRegistry);
+  ReadKnownShortcutLocation(ExpandConstant('{userdesktop}\无限画布企业版.lnk'));
+  ReadKnownShortcutLocation(ExpandConstant('{userprograms}\无限画布企业版.lnk'));
+  ReadRunningInstallLocations;
+  Log('SECURITY_BRIDGE_DISCOVERED_COUNT=' + IntToStr(DiscoveredInstallRoots.Count));
+end;
+
+function DetectInstallRoot: String;
+begin
+  { An explicit choice must never silently fall back to a different install. }
+  Result := ExpandConstant('{param:INSTALLROOT|}');
+  if Result <> '' then exit;
+  Result := '';
+  if (DiscoveredInstallRoots.Count = 1) and not DiscoveryIncomplete then
+    Result := DiscoveredInstallRoots[0];
+end;
+
+function RegisterSuccessfulInstallLocation(const Root: String): Boolean;
+var
+  Key: String;
+begin
+  Result := False;
+  try
+    { A locator, not a new installation identity or an uninstall registration. }
+    Key := InstallLocationRegistry + '\' +
+      Lowercase(GetSHA256OfUnicodeString(Lowercase(Root)));
+    Result := RegWriteStringValue(HKCU, Key, 'InstallRoot', Root);
+  except
+    Result := False;
+  end;
+end;
