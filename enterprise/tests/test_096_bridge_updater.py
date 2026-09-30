@@ -137,6 +137,9 @@ def test_one_click_updater_is_gui_only_and_uses_the_reviewed_bridge() -> None:
     source = (root / "installer" / "windows" / "InfiniteCanvasEnterprise096Bridge.iss").read_text(
         encoding="utf-8"
     )
+    source += (root / "installer" / "windows" / "096-install-discovery.issinc").read_text(
+        encoding="utf-8"
+    )
     lowered = source.casefold()
     assert "privilegesrequired=lowest" in lowered
     assert "uninstallable=no" in lowered
@@ -166,6 +169,15 @@ def test_one_click_updater_is_gui_only_and_uses_the_reviewed_bridge() -> None:
     assert "TerminalState = 'RECOVERY_REQUIRED'" in source
     assert "data\\enterprise.db" in source
     assert "2026.09.9" in source
+    assert "SECURITY_BRIDGE_INSTALL_NOT_FOUND" in source
+    assert "SECURITY_BRIDGE_INSTALL_SELECTION_REQUIRED" in source
+    assert "DiscoveredInstallRoots.Count = 1" in source
+    assert "and not DiscoveryIncomplete" in source
+    assert "Result := Candidate" not in source
+    assert "CommandLine" not in source
+    assert source.index("RegisterSuccessfulInstallLocation(SelectedInstallRoot)") > source.index(
+        "SetStage('升级完成', 5)"
+    )
 
 
 def test_bridge_updater_policy_binds_one_exact_source_and_target() -> None:
