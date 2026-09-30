@@ -30,6 +30,7 @@ from enterprise.migrations.sec_1b2_activation import (
 from enterprise.migrations.sec_1f0_security_audit import (
     inspect_security_audit_schema,
 )
+from enterprise.migrations.versioned import initialize_current_schema_in_transaction
 from enterprise.path_safety import PathSafetyError, assert_no_reparse_ancestors, lexical_path_state
 from enterprise.paths import (
     PathRoots,
@@ -319,8 +320,13 @@ def _validate_release_database_contract(manifest: ReleaseManifestV2) -> None:
     migrations = set(contract.get("migration_ids") or [])
     if (
         contract.get("schema_id") != "enterprise-database-contract-v1"
-        or contract.get("migration_compatibility") != "same-schema-no-migration"
-        or contract.get("rollback_classification") != "code-release-pointer"
+        or (
+            contract.get("migration_compatibility"),
+            contract.get("rollback_classification"),
+        ) not in {
+            ("same-schema-no-migration", "code-release-pointer"),
+            ("versioned-forward-migration", "database-backup-restore"),
+        }
         or contract.get("ops3b_activation_eligible") is not True
         or not required_migrations.issubset(migrations)
     ):
@@ -420,6 +426,8 @@ def _create_greenfield_database(
             },
             connection=conn,
         )
+        if manifest.section("database_contract")["migration_compatibility"] == "versioned-forward-migration":
+            initialize_current_schema_in_transaction(conn)
         conn.commit()
         integrity = str(conn.execute("PRAGMA integrity_check").fetchone()[0])
         tables = {

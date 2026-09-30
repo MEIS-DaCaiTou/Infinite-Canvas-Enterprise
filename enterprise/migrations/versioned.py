@@ -969,6 +969,26 @@ def _apply_steps_in_transaction(conn: sqlite3.Connection, steps: Sequence[Migrat
             _fail("DATA_SCHEMA_METADATA_WRITE_FAILED")
 
 
+def initialize_current_schema_in_transaction(conn: sqlite3.Connection) -> dict[str, object]:
+    """Enroll a greenfield database into the shipped versioned schema.
+
+    The caller owns the transaction and must already have created the normal
+    application and security-governance schema.  User/bootstrap/audit writes
+    and metadata enrollment therefore commit or roll back together.
+    """
+    if not isinstance(conn, sqlite3.Connection) or not conn.in_transaction:
+        _fail("DATA_SCHEMA_TRANSACTION_REQUIRED")
+    steps = validate_registry(DEFAULT_MIGRATIONS)
+    if not steps:
+        _fail("DATA_MIGRATION_PATH_UNAVAILABLE")
+    initialize_schema_metadata_in_transaction(conn)
+    _apply_steps_in_transaction(conn, steps)
+    inspection = inspect_schema_metadata_connection(conn)
+    if inspection.get("current_state") != STATE_READY or inspection.get("schema_version") != steps[-1].to_version:
+        _fail("DATA_SCHEMA_METADATA_WRITE_FAILED")
+    return inspection
+
+
 def apply_versioned_migrations(
     database_path: Path,
     backup_root: Path,
