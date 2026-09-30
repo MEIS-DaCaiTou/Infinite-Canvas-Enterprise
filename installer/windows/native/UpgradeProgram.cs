@@ -71,6 +71,7 @@ namespace InfiniteCanvas.Native {
             var expected = Core.List(index, "files").Select(Core.Map).ToDictionary(x => Core.Text(x, "path"), StringComparer.Ordinal);
             string parent = Path.Combine(Path.GetTempPath(), @"ICE\U"); Core.SafePath(parent, true); Directory.CreateDirectory(parent); Core.SafePath(parent, false);
             string root = Path.Combine(parent, Guid.NewGuid().ToString("N").Substring(0, 12)); Directory.CreateDirectory(root);
+            try {
             using (var archive = new ZipArchive(new MemoryStream(bytes), ZipArchiveMode.Read)) {
                 if (archive.Entries.Count != expected.Count) throw Core.Block("NATIVE_BUNDLE_INVALID");
                 foreach (var entry in archive.Entries) {
@@ -84,6 +85,7 @@ namespace InfiniteCanvas.Native {
                 }
             }
             return root;
+            } catch { CleanBundle(root); throw; }
         }
         private static void CleanBundle(string root) {
             // Delete only unchanged files from this invocation's pinned
@@ -265,6 +267,7 @@ namespace InfiniteCanvas.Native {
             FormClosing += (s, e) => { if (busy) { e.Cancel = true; state.Text = "操作正在进行。请等待升级与恢复结果，不要关闭窗口。"; } };
             Shown += async (s, e) => {
                 var result = await Task.Run(() => UpgradeProgram.Discover());
+                if (IsDisposed || Disposing) return;
                 locations.Items.AddRange(result.Roots.Cast<object>().ToArray());
                 if (result.Roots.Count == 1 && result.Complete && String.IsNullOrWhiteSpace(locations.Text)) locations.SelectedIndex = 0;
                 else if (!result.Complete) state.Text = "自动定位未完整完成，请手动确认已有安装目录，不会替你创建新安装。";

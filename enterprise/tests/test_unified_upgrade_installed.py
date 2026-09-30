@@ -137,6 +137,8 @@ def _drill(record, security, failure, assets, materialized_sources, tmp_path_fac
     roots = installation(tmp_path_factory.getbasetemp(), materialized_sources[record['release_id']], security=security)
     database = roots.DATA_ROOT / 'enterprise.db'
     db_before = hashlib.sha256(database.read_bytes()).hexdigest()
+    with closing(sqlite3.connect(database.as_uri() + '?mode=ro', uri=True)) as conn:
+        dump_before = list(conn.iterdump())
     pointer_before = (roots.STATE_ROOT / 'current-release.json').read_bytes()
     completed = subprocess.run([str(roots.PYTHON_RUNTIME / 'python.exe'), '-I', '-B', '-c', SCRIPT,
         str(ROOT), str(roots.INSTALL_ROOT), str(roots.CACHE_ROOT.parents[1]), str(CATALOG_PATH),
@@ -171,7 +173,21 @@ def _drill(record, security, failure, assets, materialized_sources, tmp_path_fac
             assert after[field] == before[field]
         if failure == 'migration':
             assert (roots.STATE_ROOT / 'current-release.json').read_bytes() == pointer_before
-        assert hashlib.sha256(database.read_bytes()).hexdigest() == db_before
+        backup_root = roots.BACKUP_ROOT / 'system-update' / result['job_id']
+        backup_record = json.loads((backup_root / 'database-backup-manifest.json').read_bytes())
+        backup = backup_root / 'enterprise.db.backup'
+        assert backup_record['source_database_sha256'] == db_before
+        assert hashlib.sha256(backup.read_bytes()).hexdigest() == backup_record['backup_sha256']
+        # SQLite's backup API updates destination header counters/schema cookie
+        # and its writer-library version. Restore must be byte-identical to the
+        # verified backup, AND keep every original schema definition and row.
+        with closing(sqlite3.connect(database.as_uri() + '?mode=ro', uri=True)) as conn:
+            assert list(conn.iterdump()) == dump_before
+        if failure == 'target_start':
+            assert hashlib.sha256(database.read_bytes()).hexdigest() == backup_record['backup_sha256']
+        else:
+            # The uncommitted migration transaction rolls back in-place.
+            assert hashlib.sha256(database.read_bytes()).hexdigest() == db_before
     elif record['version'] == '2026.09.5':
         assert inspect_schema_metadata(database)['schema_version'] == 2
         _assert_target_serves_http(roots.RELEASE_ROOT / TARGET_ID, roots.INSTALL_ROOT, roots.CACHE_ROOT.parents[1])

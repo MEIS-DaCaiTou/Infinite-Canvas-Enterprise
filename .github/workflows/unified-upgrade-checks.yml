@@ -84,7 +84,8 @@ jobs:
           $TestBase = 'C:\Temp\IU-' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT
           if (Test-Path -LiteralPath $TestBase) { throw 'Test base must be new' }
           New-Item -ItemType Directory -Path 'C:\Temp' -Force | Out-Null
-          python -m pytest -q enterprise/tests/test_unified_upgrade_installed.py --basetemp=$TestBase --junitxml=(Join-Path $env:ICE_UNIFIED_ARTIFACT_ROOT 'installed-matrix.xml')
+          $ReportPath = Join-Path $env:ICE_UNIFIED_ARTIFACT_ROOT 'installed-matrix.xml'
+          python -m pytest -q enterprise/tests/test_unified_upgrade_installed.py --basetemp $TestBase --junitxml $ReportPath
           if ($LASTEXITCODE -ne 0) { throw 'Installed-copy verification failed' }
       - name: Retain non-sensitive verification evidence
         if: always()
