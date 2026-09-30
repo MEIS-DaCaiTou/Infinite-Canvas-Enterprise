@@ -44,6 +44,7 @@ from enterprise.migrations.versioned import (
 from enterprise.migrations.sqlite_existing import open_existing_sqlite
 from enterprise.ops.update.legacy_security_variant import (
     LegacySecurityVariantError,
+    inspect_approved_security_variant,
     inspect_096_security_variant,
 )
 from enterprise.paths import PathRoots, validate_release_component
@@ -313,9 +314,14 @@ class UpdateJobStore:
         except OSError as exc:
             raise UpdateMvpError("SYSTEM_UPDATE_EVENT_WRITE_FAILED", status_code=500) from exc
 
-    def pending_recovery_jobs(self) -> list[str]:
+    def pending_recovery_jobs(self, *, read_only: bool = False) -> list[str]:
         """Return unresolved jobs, rejecting unverifiable historical job state."""
-        self.initialize()
+        if read_only:
+            assert_no_reparse_ancestors(self.jobs_root, allow_missing=True)
+            if not self.jobs_root.exists():
+                return []
+        else:
+            self.initialize()
         pending: list[str] = []
         try:
             for root in self.jobs_root.iterdir():
@@ -361,9 +367,9 @@ class UpdateJobStore:
             raise UpdateMvpError("SYSTEM_UPDATE_RECOVERY_STATE_UNVERIFIED", status_code=409) from exc
         return sorted(pending)
 
-    def assert_no_unresolved_recovery(self) -> None:
+    def assert_no_unresolved_recovery(self, *, read_only: bool = False) -> None:
         """A terminal recovery warning outlives the active-job lock."""
-        if self.pending_recovery_jobs():
+        if self.pending_recovery_jobs(read_only=read_only):
             raise UpdateMvpError("SYSTEM_UPDATE_RECOVERY_REQUIRED", status_code=409)
 
     def reserve_execution(self, job_id: str) -> None:
@@ -536,6 +542,7 @@ def _database_update_plan(
     registry: tuple[MigrationStep, ...],
     operation_id: str,
     allow_096_security_variant: bool = False,
+    approved_legacy_security_source: tuple[str, str] | None = None,
 ) -> dict[str, Any]:
     mode = _database_contract_mode(source_manifest, target_manifest)
     if mode not in {"same-schema-no-migration", "versioned-forward-migration"}:
@@ -554,14 +561,19 @@ def _database_update_plan(
                         or conn.execute("PRAGMA foreign_key_check").fetchone() is not None
                     ):
                         raise UpdateMvpError("SYSTEM_UPDATE_DATABASE_SOURCE_IDENTITY_MISMATCH")
-                elif allow_096_security_variant and mode == "versioned-forward-migration":
+                elif (allow_096_security_variant or approved_legacy_security_source is not None) and mode == "versioned-forward-migration":
                     try:
-                        security_variant = inspect_096_security_variant(
-                            conn,
-                            baseline_objects=source_evidence["objects"],
-                            source_release_id=source_manifest.release_id,
-                            source_manifest_sha256=source_manifest.raw_sha256,
-                        )
+                        variant_kwargs = {
+                            "baseline_objects": source_evidence["objects"],
+                            "source_release_id": source_manifest.release_id,
+                            "source_manifest_sha256": source_manifest.raw_sha256,
+                        }
+                        if approved_legacy_security_source is not None:
+                            security_variant = inspect_approved_security_variant(
+                                conn, approved_source=approved_legacy_security_source, **variant_kwargs,
+                            )
+                        else:
+                            security_variant = inspect_096_security_variant(conn, **variant_kwargs)
                     except LegacySecurityVariantError as exc:
                         raise UpdateMvpError("SYSTEM_UPDATE_DATABASE_SOURCE_IDENTITY_MISMATCH") from exc
                 else:
@@ -714,12 +726,14 @@ class UpdateMvpService:
         database_path: Path | None = None,
         migration_registry: tuple[MigrationStep, ...] = DEFAULT_MIGRATIONS,
         allow_096_security_variant: bool = False,
+        approved_legacy_security_source: tuple[str, str] | None = None,
     ) -> None:
         self.roots = roots
         self.store = UpdateJobStore(roots)
         self.database_path = Path(database_path) if database_path is not None else roots.DATA_ROOT / "enterprise.db"
         self.migration_registry = validate_registry(migration_registry)
         self.allow_096_security_variant = allow_096_security_variant
+        self.approved_legacy_security_source = approved_legacy_security_source
 
     def prepare_from_artifacts(self, *, actor_user_id: str, manifest_path: Path, archive_path: Path, inventory_path: Path) -> PreparedUpdate:
         self.store.assert_no_unresolved_recovery()
@@ -779,6 +793,7 @@ class UpdateMvpService:
                 registry=self.migration_registry,
                 operation_id=job_id,
                 allow_096_security_variant=self.allow_096_security_variant,
+                approved_legacy_security_source=self.approved_legacy_security_source,
             )
             plan = {
                 "job_id": job_id,
@@ -884,6 +899,7 @@ def execute_update_job(
     database_path: Path | None = None,
     migration_registry: tuple[MigrationStep, ...] = DEFAULT_MIGRATIONS,
     allow_096_security_variant: bool = False,
+    approved_legacy_security_source: tuple[str, str] | None = None,
 ) -> int:
     """Execute one READY job after the source supervisor has handed off."""
     store = UpdateJobStore(roots)
@@ -937,6 +953,7 @@ def execute_update_job(
             registry=registry,
             operation_id=job_id,
             allow_096_security_variant=allow_096_security_variant,
+            approved_legacy_security_source=approved_legacy_security_source,
         )
         if database_update != expected_database_update:
             raise UpdateMvpError("SYSTEM_UPDATE_DATABASE_MIGRATION_PLAN_INVALID")

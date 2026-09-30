@@ -1,5 +1,7 @@
 # Infinite Canvas Enterprise 文档索引与事实源
 
+> 当前维护入口（2026-10-01）：[通用升级器与固定 EXE](./ops/UNIFIED-UPGRADE-AND-FIXED-ENTRY-2026-10.md)。当前明确批准既有客户原位升级、备份与失败恢复；发布维护分支、GitHub 主线、已发布应用和客户验收是不同事实。下文 2026-08-24 和 ADR-OPS-007 的 Greenfield 约束属于历史路线；与本轮批准范围冲突时，不作为现行禁止客户升级的依据。
+
 更新时间：2026-08-24
 最后一次独立验证代码基线：`42824290c6d778d72f45640dd3e5d640c7ed1a03`（tree `66993a44ca6438b65e1a576ea8dd15c271693d3e`）
 
@@ -21,6 +23,7 @@
 | 主题 | 权威文档 | 维护规则 |
 | --- | --- | --- |
 | 当前实现和未实现边界 | [CURRENT_PROJECT_STATUS.md](./CURRENT_PROJECT_STATUS.md) | 每个实现 PR 合并后同步 |
+| 客户通用升级与固定入口 | [UNIFIED-UPGRADE-AND-FIXED-ENTRY](./ops/UNIFIED-UPGRADE-AND-FIXED-ENTRY-2026-10.md) | 准确来源、数据库变体、工具/应用版本与验收边界；历史专用工具说明仅作追溯 |
 | 当前运行架构摘要 | [../ARCHITECTURE.md](../ARCHITECTURE.md) | 只写当前拓扑和职责 |
 | 中长期路线 | [roadmap/DEVELOPMENT-ROADMAP-2026-2027.md](./roadmap/DEVELOPMENT-ROADMAP-2026-2027.md) | 明确已完成、已决策未实施和规划 |
 | OPS 路线 | [ops/OPS-ROADMAP-2026-07.md](./ops/OPS-ROADMAP-2026-07.md) | 不把 prepare 写成 apply |

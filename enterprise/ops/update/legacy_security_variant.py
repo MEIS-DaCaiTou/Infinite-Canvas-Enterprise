@@ -1,10 +1,12 @@
-"""Read-only recognition of the 09.6 security-activated legacy database.
+"""Read-only recognition of the exact security-activated legacy extension.
 
 The immutable 09.6 release evidence describes the 18-object upgrade baseline.
 Its first-install and security-activation flows can legitimately add the ten
 SEC-1F0/SEC-1B2 objects without creating versioned migration metadata.  This
 module recognizes *only* that exact extension; it never removes or rewrites an
-audit object to make an upgrade appear compatible.
+audit object to make an upgrade appear compatible. The online default remains
+bound to 09.6. An offline native tool may additionally supply a reviewed exact
+source approval after independently verifying its immutable release catalog.
 """
 
 from __future__ import annotations
@@ -79,7 +81,28 @@ def inspect_096_security_variant(
     The caller must open the real database read-only.  Marker content and audit
     event rows are intentionally not returned.
     """
-    if source_release_id != SOURCE_RELEASE_ID or source_manifest_sha256 != SOURCE_MANIFEST_SHA256:
+    return inspect_approved_security_variant(
+        conn, baseline_objects=baseline_objects,
+        source_release_id=source_release_id, source_manifest_sha256=source_manifest_sha256,
+        approved_source=(SOURCE_RELEASE_ID, SOURCE_MANIFEST_SHA256),
+    )
+
+
+def inspect_approved_security_variant(
+    conn: sqlite3.Connection,
+    *,
+    baseline_objects: Sequence[dict[str, str]],
+    source_release_id: str,
+    source_manifest_sha256: str,
+    approved_source: tuple[str, str],
+) -> dict[str, object]:
+    """Recognize the shared security shape for an independently pinned source.
+
+    Only the verified offline native tool supplies this approval.  Online
+    callers still default to no exceptional source; the old 09.6 API retains
+    its original exact identity.  Object counts alone never authorize a hop.
+    """
+    if (source_release_id, source_manifest_sha256) != approved_source:
         raise LegacySecurityVariantError("SOURCE_RELEASE_UNSUPPORTED")
     if inspect_schema_metadata_connection(conn).get("current_state") != STATE_MISSING:
         raise LegacySecurityVariantError("SOURCE_SCHEMA_METADATA_UNEXPECTED")
@@ -101,7 +124,11 @@ def inspect_096_security_variant(
     ):
         raise LegacySecurityVariantError("SOURCE_SECURITY_BOOTSTRAP_INVALID")
     return {
-        "variant": "ice-2026.09.6-security-activated-v1",
+        "variant": (
+            "ice-2026.09.6-security-activated-v1"
+            if approved_source == (SOURCE_RELEASE_ID, SOURCE_MANIFEST_SHA256)
+            else "legacy-security-activated-v1"
+        ),
         "schema_objects_sha256": schema_snapshot_sha256(conn),
         "object_count": 28,
         "audit_event_count": audit["event_count"],
