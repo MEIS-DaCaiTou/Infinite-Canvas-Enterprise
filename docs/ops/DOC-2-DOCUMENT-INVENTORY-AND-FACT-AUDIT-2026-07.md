@@ -1,5 +1,7 @@
 # DOC-2：文档清单与事实审计（2026-07）
 
+> 2026-10-03：历史文档审计，原 71 项与 PR #80 数据不更新、不外推。最新全量登记/问题整改见替代审查；文中删除旧入口的结论限当时主线，不覆盖后来维护分支。[替代/现行入口](DOC-3-DOCUMENT-SYSTEM-AUDIT-2026-10.md)。
+
 > **后续状态说明（2026-07-20）：** 本文的 71 份统计和分类是 PR #80 的固定审计快照。PR #80 已合并；当前 ENV-1B1A Draft PR 新增一份 ENV 实施/审计文档，并实现 static staging builder，但尚未进入 `main`。当前事实以 [文档索引](../README.md) 和 [CURRENT_PROJECT_STATUS](../CURRENT_PROJECT_STATUS.md) 为准。
 
 > **2026-09-21 清理说明：** 本文不再是现行清单。`AGENT_CONTEXT.md`、`HANDOVER.md`、`PROJECT_HANDOFF_FOR_NEW_AGENT.md`、`DEVELOPMENT_PLAN.md` 和旧上游 README 镜像已从工作树删除；审计内容仍可从 Git 历史读取。

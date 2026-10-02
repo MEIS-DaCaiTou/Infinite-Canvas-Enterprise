@@ -2,6 +2,8 @@
 
 [返回索引](./README.md)
 
+更新时间：2026-10-03。主线与维护线边界见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，生命周期设计见 [统一交付 ADR](../decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md)。
+
 ## 1. PathRoots
 
 `enterprise.paths.PathRoots` 将应用代码与可写状态分离。主要根包括 APP、CONFIG、DATA、LOG、STATE、STAGING、BACKUP、运行时 Python、上传、输出、素材、画布、对话和工作流等。
@@ -31,9 +33,11 @@
 | `logging.py / RotatingTextLog` | 有界轮转文本日志与脱敏 |
 | `windows.py / ProcessJob` | Windows Job Object 约束子进程 |
 
-主线收敛分支同时包含 `28ad937` 的阻塞隔离/任务回执，以及 `2026.09.4` 现场验证后的全新无 keep-alive 探针、并发单飞、外层截止与启动宽限保持。短暂 readiness 失败先进入 degraded 并允许同 PID 自愈，只有真正的 liveness/稳态连续失败达到策略条件后才退避重启。PR 合并前这些仍是分支能力。
+主线收敛分支同时包含 `28ad937` 的阻塞隔离/任务回执，以及 `2026.09.4` 现场验证后的全新无 keep-alive 探针、并发单飞、外层截止与启动宽限保持。短暂 readiness 失败先进入 degraded 并允许同 PID 自愈，只有真正的 liveness/稳态连续失败达到策略条件后才退避重启。主要修复已通过 PR #108 合并，不等于每个旧发布包都包含。
 
 ## 3. Portable 启动信任链
+
+下图为源码/旧安装 BAT 兼容链路；维护线固定 EXE 调用同一 Python launcher，不另写 Runtime，尚未作为 main 完整安装维护产品交付。
 
 ```mermaid
 flowchart TD
@@ -55,7 +59,7 @@ flowchart TD
 - 端口若被无关监听者占用则 fail closed，不直接杀未知进程。
 - `launch_context` 将一次预检的身份绑定到实际 service-host 进程。
 
-## 4. 正式批处理入口
+## 4. 源码/旧安装兼容批处理入口
 
 | 文件 | 命令 |
 | --- | --- |
@@ -92,6 +96,8 @@ flowchart TD
 `windows_runtime_build.py` 和 `runtime/windows/` 策略固定 CPython 3.14 x64、哈希 requirements、wheelhouse 闭包、pip-check、SBOM、来源与可复现构建证据。源码工作区内另有开发用 Python 3.10.11，不应与正式 portable Runtime 混为同一个信任对象。
 
 ## 6. 首次安装
+
+以下为主线 fresh-install 实现，不是完整更新/修复/卸载产品。Inno 仍为 `Uninstallable=no`，快捷方式仍指版本 BAT，是后续明确整改项。
 
 `fresh_install.py` 的主要阶段：
 
@@ -152,6 +158,8 @@ sequenceDiagram
 - 版本化迁移在 pointer 切换前创建一致性备份；目标启动或健康失败时按 expected-current 约束恢复数据库、pointer 和 source Runtime。
 - 如果迁移已提交但结果尚未返回就发生异常，不能凭 `MigrationResult` 缺失推断数据库未改变；执行器必须复核持久化的 source pointer 与 schema 身份，无法证明一致时进入 `RECOVERY_REQUIRED`，不得启动旧版。
 - `RECOVERY_REQUIRED` 表示无法证明三者已经恢复一致，不能自动重试或伪装成普通失败。
-- 尚无首个真实 schema-changing 正式 Release、客户数据迁移批准或通用 Production Baseline。
+- 维护线已发布 09.9 改表目标，并有测试设备受控桥接成功反馈，不外推 main 已统一交付或全部客户批准。
+- 当前候选目录最多最近 50 Release、规划最多 8 跳，没有一次确认自动多跳。09.6 治理激活状态不能由旧更新器直接识别，不删审计对象绕过。
+- 完整通知/任务和业务写入隔离、更新器自更新及图形恢复仍待落地；业务写入已开放后不盲目回旧备份。
 - 更新中心只消费完整 Manifest v2 Release，不消费 GitHub 源码 ZIP。
 - 诊断输出有界并脱敏，但仍应按内部运维材料处理。

@@ -1,5 +1,7 @@
 # 数据、权限与安全
 
+> 代码参考：结构/函数索引保留各章节的源码快照，不自动覆盖维护线工具；实时模块状态、迁移/发布与现场验收见 CURRENT，任务顺序只认路线图。[现行事实与适用范围](../CURRENT_PROJECT_STATUS.md)。
+
 [返回索引](./README.md)
 
 ## 1. 存储分层
@@ -134,7 +136,7 @@ DATA-MVP-1 引入：
 
 UPDATE-DATA-1 已把这些原语接入 Update Center 的显式版本化迁移路径：prepare 绑定 source/target 证据与当前数据库身份，execute 在 pointer 切换前迁移，目标启动/健康失败时先恢复数据库，再恢复 pointer 与 source Runtime。执行中断或恢复无法证明时进入 `RECOVERY_REQUIRED`。
 
-该实现并不表示可以执行任意数据库脚本。Migration 必须预先存在于受审 registry，Manifest 必须声明 `versioned-forward-migration` + `database-backup-restore`，且执行阶段会重算计划并精确比对。首个真实 schema-changing Release 和客户数据演练仍属于后续 Release/验收工作。
+该实现并不表示可以执行任意数据库脚本。Migration 必须预先存在于受审 registry，Manifest 必须声明 `versioned-forward-migration` + `database-backup-restore`，且执行阶段会重算计划并精确比对。维护线已发布 09.9 改表目标，测试设备也提供了受控桥接成功反馈；它们不覆盖全部主线/客户状态。准确范围回到 CURRENT，不能再笼统写首个改表包未发布。
 
 ## 11. 数据安全边界
 

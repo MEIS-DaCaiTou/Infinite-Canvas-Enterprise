@@ -1,5 +1,7 @@
 # ComfyUI-API-Modelscope macOS 一键启动
 
+> 2026-10-03：冻结来源教程，不是 Infinite-Canvas-Enterprise 的正式 macOS 安装支持。正文直接 main.py/旧端口/自动安装依赖只属于旧来源；不用于企业部署，也不要求绕过系统安全保护。[替代/现行入口](README.md)。
+
 ## 快速开始
 
 ### 方法一：双击运行（推荐）
