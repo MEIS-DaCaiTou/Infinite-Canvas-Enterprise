@@ -1,5 +1,7 @@
 # ADR-OPS-007：全新生产基线部署与旧生产非迁移
 
+> 2026-10-03：历史决策、部分被替代。旧“只允许全新生产/不迁移”范围不再适用于受支持旧安装；未知来源仍不得盲目迁移。正文强制前提、旧 PR 状态属于原决策时点，不是当前门禁。[替代/现行入口](ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md)。
+
 - 状态：Partially Superseded（2026-09-21）
 - 决策日期：2026-07-17
 - 决策人：Infinite-Canvas-Enterprise 项目负责人

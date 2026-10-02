@@ -1,104 +1,52 @@
 # Infinite Canvas Enterprise
 
-`Infinite-Canvas-Enterprise` 是持续维护的企业无限画布产品主线，仓库为
-[`MEIS-DaCaiTou/Infinite-Canvas-Enterprise`](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise)。
-它与 `Aidan-OS`、`Aidan-Canvas`、`Aidan-App-SDK` 是相互独立的项目，需求、分支、发布和验收结果不得互相套用。
+`Infinite-Canvas-Enterprise` 是独立维护的企业无限画布产品，仓库为 [MEIS-DaCaiTou/Infinite-Canvas-Enterprise](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise)。与 Aidan-OS、Aidan-Canvas、Aidan-App-SDK 不同，需求、分支和验收不能互相套用。
 
-项目最初基于 `hero8152/Infinite-Canvas`，当前以上游 `2026.07.6` 代码作为冻结的历史来源基线；后续产品演进由本仓库独立负责，不再以持续同步上游为约束。
+项目基于 `hero8152/Infinite-Canvas@2026.07.6` 的冻结历史来源独立演进；保留归属/许可证，不再要求持续同步。
 
-## 当前状态
+## 文档入口
 
-- 动态主线以 `origin/main` 为准，开始任务前必须重新获取并核验。
-- Runtime 主线收敛已由 [PR #108](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/108) 合并；SEC-P0 浏览器边界已由 [PR #119](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/119) 合并到 `main@8cdb3c7b7399dbb144dbd828fc2ad876c79ae64a`。这些只代表代码主线状态，不等于正式 Release 或客户部署批准。
-- 当前进入第二阶段数据升级能力：先完成 [#109](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/109) 独立复核，再执行 [#114](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/114) 的更新中心 migration/backup/restore 集成。
-- 已有 Manifest v2、不可变 Release、Runtime Supervisor、最小在线更新和 SQLite migration/restore foundation；数据库迁移尚未完整接入更新中心。
-- 客户 `2026.08.5` 到 `2026.09.4` 的现场定点热修只证明已确认设备恢复，不自动代表通用 Production Baseline。
+更新时间：2026-10-03。本页不复制整份状态和任务队列。
 
-完整边界见 [当前项目状态](docs/CURRENT_PROJECT_STATUS.md)。
+| 需要了解 | 入口 |
+| --- | --- |
+| 主线、PR、正式应用、工具与客户验证到哪里了 | [当前状态](docs/CURRENT_PROJECT_STATUS.md) |
+| 后续开发顺序与验收 | [唯一路线图](docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md) |
+| 当前模块和数据架构 | [ARCHITECTURE](ARCHITECTURE.md) / [Code Wiki](docs/code-wiki/README.md) |
+| 已认可的完整安装更新方案 | [ADR-DELIVERY-001](docs/decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md) |
+| 完整文档导航与维护规则 | [文档索引](docs/README.md) / [登记表](docs/document-register.json) |
+| 开发、代码边界和安全 | [工作流](CODEX_WORKFLOW.md) / [代码边界](CODE_BOUNDARIES.md) / [安全基线](SECURITY_BASELINE.md) |
 
-## 当前运行架构
+当前主线已接入 Runtime、安全和数据升级/恢复基础；优先收敛统一安装与更新。09.9 是客户维护线正式应用，通用工具仍为验收预发布、PR #136 Draft，不是 main 已具备的完整新装/修复/卸载产品。
 
-```text
-LAN / browser users
-        |
-        v
-Enterprise Gateway :8000
-authentication / authorization / audit / proxy / admin
-        |
-        v
-Canvas application :3001 (loopback only)
-        |
-        +-- SQLite and business files
-        +-- assets / task records / configuration
+长期保留 SQLite 单机业务版；团队服务端目标 PostgreSQL；员工桌面端只存本地缓存/设置。复用业务代码，不是三套独立产品；方案 Accepted 不等于已经实现。
 
-Runtime Supervisor
-        +-- independent liveness/readiness and recovery
-        +-- immutable Release pointer and update jobs
-```
+## 运行入口：先区分源码与安装产品
 
-当前形态是 Windows 单机模块化单体，不应被描述为 PostgreSQL、多节点、高可用或完整分布式任务平台。详见 [ARCHITECTURE.md](ARCHITECTURE.md)。
-
-## 固定实施顺序
-
-后续开发必须遵循：
-
-1. 安全修复
-2. 数据升级能力
-3. 在线升级体验
-4. 部门与任务
-5. 资源缓存与桌面壳
-6. PostgreSQL 及高可用
-7. 企业集成
-
-先建立可恢复的数据升级能力，再增加业务表和业务数据，防止功能完成后无法安全交付给存量客户。阶段目标、依赖和验收条件见 [开发路线图](docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md)。
-
-## 快速启动
-
-Windows：
+下面是 Windows **源码开发/旧安装兼容脚本**，不是长期要求客户执行的安装方式：
 
 ```powershell
 .\启动企业版.bat
-```
-
-停止：
-
-```powershell
 .\停止企业版.bat
 ```
 
-常用入口：
+应用入口为 `http://127.0.0.1:8000/`，管理后台为 `/enterprise/admin`，存活/健康为 `/enterprise/live` 和 `/enterprise/health`。内部 Canvas 服务 `:3001` 仅绑定 loopback，不直接暴露给 LAN。
 
-- 应用：`http://127.0.0.1:8000/`
-- 管理后台：`http://127.0.0.1:8000/enterprise/admin`
-- 存活探针：`/enterprise/live`
-- 健康状态：`/enterprise/health`
+源码首次部署按安全基线配置唯一 JWT 密钥和强凭据；受控新装器管理首次配置；旧安装更新沿用配置/数据库，不复制示例重置管理员。
 
-生产部署前必须创建本地 `enterprise.env`，替换 `JWT_SECRET` 和管理员凭据；不得提交密钥、令牌、Cookie、真实数据库、素材、输出或运行日志。
+通用工具接管后的安装可用根目录 `InfiniteCanvas.exe`；未接管旧安装仍可能只有 BAT。固定入口的当前交付与现场验证范围见项目状态，不能把下载或只读检查当作接管完成。
 
-## 开发入口
+## 验证
 
-开始任务时按顺序阅读：
-
-1. [文档索引](docs/README.md)
-2. [当前项目状态](docs/CURRENT_PROJECT_STATUS.md)
-3. [当前架构](ARCHITECTURE.md)
-4. [开发路线图](docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md)
-5. [代码边界](CODE_BOUNDARIES.md)
-6. 对应 ADR、实施记录和测试说明
-
-代码导航见 [Code Wiki](docs/code-wiki/README.md)，开发流程见 [CODEX_WORKFLOW.md](CODEX_WORKFLOW.md)，企业层快速指南见 [ENTERPRISE_DOCS.md](ENTERPRISE_DOCS.md)。
-
-## 测试
-
-测试入口以 [enterprise/tests/README.md](enterprise/tests/README.md) 和 GitHub Actions 为准。常用非破坏性检查：
+以 [测试说明](enterprise/tests/README.md) 与既有 GitHub Actions 为准。默认受影响范围，不无理由手动重跑全套门禁；不要求独立干净 Windows 设备。文档检查无需业务依赖：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\enterprise\tests\diagnose.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\enterprise\tests\smoke.ps1
+py -3.11 -B tools/check_docs.py
+py -3.11 -B -m unittest discover -s enterprise/tests -p test_documentation_contract.py
 ```
 
-生命周期、故障注入和更新测试可能停止当前服务或写入隔离测试目录，执行前应读取对应测试说明。项目负责人已明确：后续不设置独立 Windows 主机验收门禁；托管 CI 的平台限制仍需如实记录，不得伪装成已覆盖。
+生命周期和升级测试可能停止服务或修改隔离数据，先读对应测试边界。不得提交真实密钥、数据库、素材、输出、运行日志或 Runtime 构建产物。
 
 ## 来源与许可证
 
-历史来源项目为 [hero8152/Infinite-Canvas](https://github.com/hero8152/Infinite-Canvas)。来源归属、许可证和历史同步记录予以保留，但不再构成当前产品路线或文件修改限制。
+历史来源：[hero8152/Infinite-Canvas](https://github.com/hero8152/Infinite-Canvas)。许可证、vendor 声明和原始验收证据保留；它们不是可随意清理的“过时规划”。

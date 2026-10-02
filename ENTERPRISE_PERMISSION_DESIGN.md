@@ -1,5 +1,7 @@
 # Infinite Canvas Enterprise 权限设计与 Task 3G 实施路线
 
+> 2026-10-03：早期权限设计/场景参考，正文“当前实现基线”和 Task 3G 顺序只属于原日期；最新治理状态、403 及后续角色回归以安全基线和 CURRENT 为准。[替代/现行入口](SECURITY_BASELINE.md)。
+
 > 历史设计输入：本文保留早期 3G 权限模型与验收场景，不再承担当前任务排序。当前安全事实见 [`docs/CURRENT_PROJECT_STATUS.md`](docs/CURRENT_PROJECT_STATUS.md)，后续顺序见 [`docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md`](docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md)。其中“上游同步”要求已失效。
 
 更新时间：2026-07-10

@@ -1,0 +1,581 @@
+{
+  "schema_version": "enterprise-documents-v1",
+  "reviewed_at": "2026-10-03",
+  "audit_base_commit": "7905ecf39efabeb3101d7b63c709d8dcd230c9a0",
+  "scope": "All Git-managed or non-ignored new Markdown/text files; roles are not runtime or release approval. Frozen hashes normalize CRLF to LF only.",
+  "documents": [
+    {
+      "path": "新手运行与使用教程.md",
+      "kind": "historical",
+      "superseded_by": [
+        "README.md"
+      ]
+    },
+    {
+      "path": "运行说明.txt",
+      "kind": "historical",
+      "superseded_by": [
+        "README.md"
+      ]
+    },
+    {
+      "path": "ARCHITECTURE.md",
+      "kind": "authority",
+      "authority": "architecture",
+      "reviewed_at": "2026-10-03"
+    },
+    {
+      "path": "CODE_BOUNDARIES.md",
+      "kind": "authority",
+      "authority": "code-boundaries",
+      "reviewed_at": "2026-10-03"
+    },
+    {
+      "path": "CODEX_WORKFLOW.md",
+      "kind": "authority",
+      "authority": "workflow",
+      "reviewed_at": "2026-10-03"
+    },
+    {
+      "path": "docs/architecture/ARCH-2A-ARCHITECTURE-ASSESSMENT-AND-EVOLUTION-2026-07.md",
+      "kind": "historical",
+      "superseded_by": [
+        "ARCHITECTURE.md"
+      ]
+    },
+    {
+      "path": "docs/architecture/ENTERPRISE-ARCHITECTURE-BLUEPRINT-2026-07.md",
+      "kind": "historical",
+      "superseded_by": [
+        "docs/decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md"
+      ]
+    },
+    {
+      "path": "docs/bugs/U2-HISTORY-REFRESH-LOSS-INVESTIGATION.md",
+      "kind": "reference"
+    },
+    {
+      "path": "docs/code-wiki/01-system-architecture.md",
+      "kind": "reference"
+    },
+    {
+      "path": "docs/code-wiki/02-repository-map.md",
+      "kind": "reference"
+    },
+    {
+      "path": "docs/code-wiki/03-backend-reference.md",
+      "kind": "reference"
+    },
+    {
+      "path": "docs/code-wiki/04-frontend-api-and-websocket.md",
+      "kind": "reference"
+    },
+    {
+      "path": "docs/code-wiki/05-data-permissions-and-security.md",
+      "kind": "reference"
+    },
+    {
+      "path": "docs/code-wiki/06-runtime-install-release-update.md",
+      "kind": "reference"
+    },
+    {
+      "path": "docs/code-wiki/07-dependencies-and-integrations.md",
+      "kind": "reference"
+    },
+    {
+      "path": "docs/code-wiki/08-running-testing-and-development.md",
+      "kind": "reference"
+    },
+    {
+      "path": "docs/code-wiki/09-known-limitations-and-maintenance.md",
+      "kind": "reference"
+    },
+    {
+      "path": "docs/code-wiki/README.md",
+      "kind": "entry"
+    },
+    {
+      "path": "docs/CURRENT_PROJECT_STATUS.md",
+      "kind": "authority",
+      "authority": "status",
+      "reviewed_at": "2026-10-03"
+    },
+    {
+      "path": "docs/data/DATA-MVP-1-INDEPENDENT-REVIEW-2026-09.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/data/DATA-MVP-1-VERSIONED-DATABASE-MIGRATION-RESTORE-FOUNDATION-2026-08.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/data/UPDATE-DATA-1-UPDATE-CENTER-MIGRATION-INTEGRATION-2026-09.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/decisions/ADR-0001-enterprise-gateway-over-upstream.md",
+      "kind": "decision"
+    },
+    {
+      "path": "docs/decisions/ADR-3g-7b-user-delete-data-cleanup.md",
+      "kind": "decision"
+    },
+    {
+      "path": "docs/decisions/ADR-current-architecture-and-next-stage.md",
+      "kind": "historical"
+    },
+    {
+      "path": "docs/decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md",
+      "kind": "authority",
+      "authority": "delivery",
+      "reviewed_at": "2026-10-03"
+    },
+    {
+      "path": "docs/decisions/ADR-ENV-001-MODULAR-MONOLITH-MIDTERM-ARCHITECTURE-2026-07.md",
+      "kind": "decision"
+    },
+    {
+      "path": "docs/decisions/ADR-ENV-002-WINDOWS-PYTHON-RUNTIME-PROVENANCE-2026-07.md",
+      "kind": "decision"
+    },
+    {
+      "path": "docs/decisions/ADR-ENV-003-IMMUTABLE-RELEASE-STATIC-CACHE-2026-07.md",
+      "kind": "decision"
+    },
+    {
+      "path": "docs/decisions/ADR-ENV-004-PATH-ROOTS-AND-RELEASE-DIRECTORY-2026-07.md",
+      "kind": "decision"
+    },
+    {
+      "path": "docs/decisions/ADR-ENV-005-RUNTIME-ENTRYPOINT-SELF-CHECK-MODES-2026-07.md",
+      "kind": "decision"
+    },
+    {
+      "path": "docs/decisions/ADR-OPS-006-RELEASE-MANIFEST-V2-DATABASE-ROLLBACK-2026-07.md",
+      "kind": "decision"
+    },
+    {
+      "path": "docs/decisions/ADR-OPS-007-GREENFIELD-PRODUCTION-BASELINE-AND-LEGACY-NON-MIGRATION-2026-07.md",
+      "kind": "decision",
+      "superseded_by": [
+        "docs/decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md"
+      ]
+    },
+    {
+      "path": "docs/decisions/ADR-SEC-1A-SUPER-ADMIN-CAPABILITY-GOVERNANCE-2026-07.md",
+      "kind": "decision"
+    },
+    {
+      "path": "docs/deployment/DOCKER-1PANEL-DEPLOYMENT-BLUEPRINT-2026-07.md",
+      "kind": "historical",
+      "superseded_by": [
+        "docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md"
+      ]
+    },
+    {
+      "path": "docs/enterprise-ownership-model.md",
+      "kind": "reference"
+    },
+    {
+      "path": "docs/enterprise-resource-path-matrix.md",
+      "kind": "reference"
+    },
+    {
+      "path": "docs/env/ENV-1B1A-APP-ROOT-WRITE-AUDIT-AND-STATIC-BUILD-2026-07.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/env/ENV-1B1B-PATH-ROOTS-AND-CURRENT-RELEASE-IMPLEMENTATION-2026-07.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/env/ENV-1B1C-B2-PORTABLE-RUNTIME-LIFECYCLE-IMPLEMENTATION-2026-07.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/env/ENV-1B1C-RUNTIME-ENTRYPOINT-SELF-CHECK-IMPLEMENTATION-2026-07.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/env/ENV-1B2A-REPRODUCIBLE-WINDOWS-RUNTIME-IMPLEMENTATION-2026-07.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/env/ENV-1B2B-PYTHON-314-RUNTIME-IMPLEMENTATION-2026-07.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/env/ENV-1B2P-WINDOWS-RUNTIME-PROVENANCE-EVIDENCE-2026-07.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/env/ENV-1B3-CLEAN-WINDOWS-VALIDATION-AND-RELEASE-CANDIDATE-2026-07.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/env/evidence/ENV-1B1C-B1-FINAL-ACCEPTANCE-CLOSEOUT-2026-07-27.md",
+      "kind": "evidence",
+      "frozen_sha256": "6c99667d7a6d04fd756195075c00d867b13fc07980ce16bf2545aafe07f8c004"
+    },
+    {
+      "path": "docs/env/evidence/ENV-1B1C-B1-IMPLEMENTATION-REPORT.md",
+      "kind": "evidence",
+      "frozen_sha256": "4774c9354a0923555397579c6d5d623c5190c86fe98a9a76eaa9165dc7a0d0b4"
+    },
+    {
+      "path": "docs/env/evidence/ENV-1B1C-B1-R3-CORRECTION-REPORT.md",
+      "kind": "evidence",
+      "frozen_sha256": "0e61a798757fdb599d08b3a3ddfe092fffe14f51cc1fde6cbe223b924f225397"
+    },
+    {
+      "path": "docs/env/evidence/ENV-1B1C-B1-R4-CORRECTION-REPORT.md",
+      "kind": "evidence",
+      "frozen_sha256": "dca0762808697a048ee782d6bbb33e9edc103b89c1d7324a71c23c5c82ad8592"
+    },
+    {
+      "path": "docs/env/evidence/ENV-1B1C-B1-R5-CORRECTION-REPORT.md",
+      "kind": "evidence",
+      "frozen_sha256": "c65a42e7c0feb877ecb917c4e03fc6de92b9100b407c83c78af51642ea22793a"
+    },
+    {
+      "path": "docs/env/evidence/ENV-1B1C-B1-R6-CORRECTION-REPORT.md",
+      "kind": "evidence",
+      "frozen_sha256": "4bc8942ac7b52b550195a923762b9141fa44d35184165621da232c6956e63c3a"
+    },
+    {
+      "path": "docs/env/evidence/ENV-1B1C-B1-R7-CORRECTION-REPORT.md",
+      "kind": "evidence",
+      "frozen_sha256": "4b5d4c342e6eae081970035e457207ddd4d157ca4041101f838d098df79d2c94"
+    },
+    {
+      "path": "docs/env/evidence/ENV-1B3-CANDIDATE-07-STRICT-RUNTIME-REPAIR-REPORT.md",
+      "kind": "evidence",
+      "frozen_sha256": "f63928a7d16735d92b9f8b2c014633afdaafde1b2f94ae8104d668e9dc5f6420"
+    },
+    {
+      "path": "docs/env/evidence/ENV-1B3-CANDIDATE-08-FINAL-TWO-ISSUE-CORRECTION-REPORT.md",
+      "kind": "evidence",
+      "frozen_sha256": "0b62b06a83eacc86ebfb4eaf64e3ee420e4713e6a5a3c1712156a98400a97781"
+    },
+    {
+      "path": "docs/env/evidence/ENV-1B3-FAILED-MATRIX-CLOSURE-PROBE-V3-REPORT.md",
+      "kind": "evidence",
+      "frozen_sha256": "12c54e4ce015055a7d041b1eed3faebde3fea99381044daa273de2f31d4b4860"
+    },
+    {
+      "path": "docs/env/evidence/ENV-1B3-FAILED-MATRIX-PROBE-V3R1-CORRECTION-REPORT.md",
+      "kind": "evidence",
+      "frozen_sha256": "782b94c5b183ef35eaf5213280a640e6d47d5089f5c49a1fa16609fa11ef2226"
+    },
+    {
+      "path": "docs/env/evidence/ENV-1B3-FAILED-MATRIX-PROBE-V3R2-CORRECTION-REPORT.md",
+      "kind": "evidence",
+      "frozen_sha256": "29cb4c7d333b6d4fda2357b8231608938788c9f46bbc1619828dcd494688b1c4"
+    },
+    {
+      "path": "docs/env/evidence/ENV-1B3-FINAL-ACCEPTANCE-CLOSEOUT-2026-08-05.md",
+      "kind": "evidence",
+      "frozen_sha256": "11f5f339b4406ad15d9ef8f531d7973b6f4be20dd497db892bb783f67b44edf6"
+    },
+    {
+      "path": "docs/env/evidence/ENV-1B3-FINAL-CONVERGENCE-CANDIDATE-06-REPORT.md",
+      "kind": "evidence",
+      "frozen_sha256": "ab03fe9afe4bdf5520c0ac223a8003a38900a2d54a546b3fdc9db9515c5970ff"
+    },
+    {
+      "path": "docs/env/evidence/ENV-1B3-MATERIALIZATION-STABILIZATION-PROBE-REPORT.md",
+      "kind": "evidence",
+      "frozen_sha256": "86aa40efa2b9aee840bb38dc8e413ad78bdb2b5a7559732207067283e3eb368d"
+    },
+    {
+      "path": "docs/env/evidence/ENV-1B3-MATRIX-CONTRACT-CLOSURE-PROBE-V2-REPORT.md",
+      "kind": "evidence",
+      "frozen_sha256": "b544d66cf937ff1aa304f66e94a253798f55cc3fb59ac162a5d2a5edbe998695"
+    },
+    {
+      "path": "docs/manual-acceptance-checklist.md",
+      "kind": "reference"
+    },
+    {
+      "path": "docs/manual-acceptance-enterprise-e2e.md",
+      "kind": "reference"
+    },
+    {
+      "path": "docs/ops/DOC-2-DOCUMENT-INVENTORY-AND-FACT-AUDIT-2026-07.md",
+      "kind": "record",
+      "superseded_by": [
+        "docs/ops/DOC-3-DOCUMENT-SYSTEM-AUDIT-2026-10.md"
+      ]
+    },
+    {
+      "path": "docs/ops/DOC-3-DOCUMENT-SYSTEM-AUDIT-2026-10.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/ops/HISTORICAL-RUNTIME-HOTFIX-BRANCHES-2026-09.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/ops/INSTALL-UX-1-SIGNED-ONE-CLICK-WINDOWS-INSTALLER-IMPLEMENTATION-2026-08.md",
+      "kind": "record",
+      "superseded_by": [
+        "docs/decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md"
+      ]
+    },
+    {
+      "path": "docs/ops/OPS-0-PRODUCTION-INVENTORY-2026-07.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/ops/OPS-1-PRODUCTION-UPGRADE-GOVERNANCE-DESIGN-2026-07.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/ops/OPS-2A-PRODUCTION-OPS-TOOLKIT-2026-07.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/ops/OPS-2B-WINDOWS-OPS-WRAPPER-2026-07.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/ops/OPS-3A-ONLINE-UPDATE-CORE-IMPLEMENTATION-2026-07.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/ops/OPS-3A-ONLINE-UPDATE-CORE-TASK-2026-07.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/ops/OPS-3B-ISOLATED-DRILL-2026-09.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/ops/OPS-RELEASE-MANIFEST-V2-IMPLEMENTATION-2026-07.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/ops/OPS-ROADMAP-2026-07.md",
+      "kind": "historical",
+      "superseded_by": [
+        "docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md"
+      ]
+    },
+    {
+      "path": "docs/ops/PRODUCTION-UI-DELTA-RECONCILIATION-2026-07.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/ops/RELEASE-MVP-1-FIRST-REAL-UPGRADEABLE-RELEASE-2026-08.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/ops/RUNTIME-RELIABILITY-2026-09-03.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/ops/STAB-1-SUPERVISOR-LOGGING-IMPLEMENTATION-2026-07.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/ops/STAB-1-SUPERVISOR-LOGGING-TASK-2026-07.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/ops/TEMPORARY-TEST-DEPLOYMENT-FEEDBACK-2026-07.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/ops/UPDATE-096-SECOND-HOP-2026-09.md",
+      "kind": "record",
+      "superseded_by": [
+        "docs/CURRENT_PROJECT_STATUS.md"
+      ]
+    },
+    {
+      "path": "docs/ops/UPDATE-MVP-1-MINIMAL-SAFE-ONLINE-UPDATE-IMPLEMENTATION-2026-08.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/ops/UPDATE-RECOVERY-CLEARANCE-2026-09.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/ops/UPDATE-ROUTE-GRAPH-2026-09.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/ops/UPDATE-UX-ONE-CONFIRM-2026-09.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/README.md",
+      "kind": "authority",
+      "authority": "navigation",
+      "reviewed_at": "2026-10-03"
+    },
+    {
+      "path": "docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md",
+      "kind": "authority",
+      "authority": "roadmap",
+      "reviewed_at": "2026-10-03"
+    },
+    {
+      "path": "docs/runbooks/SEC-1B2-PRODUCTION-ACTIVATION-RUNBOOK-2026-07.md",
+      "kind": "reference",
+      "superseded_by": [
+        "docs/decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md"
+      ]
+    },
+    {
+      "path": "docs/security/SEC-1B1-ROLE-AUTH-VERSION-IMPLEMENTATION-2026-07.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/security/SEC-1B2-CONTROLLED-ACTIVATION-BOOTSTRAP-2026-07.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/security/SEC-1C0-SUPER-ADMIN-TRANSITIONAL-PROTECTION-2026-07.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/security/SEC-1F0-MANDATORY-SECURITY-AUDIT-IMPLEMENTATION-2026-07.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/security/SEC-P0-BROWSER-BOUNDARIES-2026-09.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/security/USER-GOV-MVP-1-FIXED-THREE-ROLE-GOVERNANCE-IMPLEMENTATION-2026-08.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/upstream/SYNC_POLICY.md",
+      "kind": "historical"
+    },
+    {
+      "path": "docs/upstream/U-2-CONTROLLED-SYNC-2026-07.md",
+      "kind": "historical"
+    },
+    {
+      "path": "docs/upstream/UPSTREAM-SYNC-AUDIT-2026-07.md",
+      "kind": "historical"
+    },
+    {
+      "path": "ENTERPRISE_DOCS.md",
+      "kind": "reference"
+    },
+    {
+      "path": "ENTERPRISE_ISOLATION_MATRIX.md",
+      "kind": "historical",
+      "superseded_by": [
+        "docs/CURRENT_PROJECT_STATUS.md"
+      ]
+    },
+    {
+      "path": "ENTERPRISE_PERMISSION_DESIGN.md",
+      "kind": "historical",
+      "superseded_by": [
+        "SECURITY_BASELINE.md"
+      ]
+    },
+    {
+      "path": "enterprise/requirements.txt",
+      "kind": "reference"
+    },
+    {
+      "path": "enterprise/tests/BROWSER_REGRESSION_CHECKLIST.md",
+      "kind": "reference"
+    },
+    {
+      "path": "enterprise/tests/browser-regression.md",
+      "kind": "reference"
+    },
+    {
+      "path": "enterprise/tests/README.md",
+      "kind": "authority",
+      "authority": "testing",
+      "reviewed_at": "2026-10-03"
+    },
+    {
+      "path": "enterprise/tests/SMOKE_CHECKLIST.md",
+      "kind": "reference"
+    },
+    {
+      "path": "enterprise/tests/UPDATE_TEST_LOG.md",
+      "kind": "reference"
+    },
+    {
+      "path": "MAC-使用说明.md",
+      "kind": "historical",
+      "superseded_by": [
+        "README.md"
+      ]
+    },
+    {
+      "path": "PROJECT_CHARTER.md",
+      "kind": "authority",
+      "authority": "charter",
+      "reviewed_at": "2026-10-03"
+    },
+    {
+      "path": "PROJECT_SCOPE_LOCK.md",
+      "kind": "authority",
+      "authority": "scope",
+      "reviewed_at": "2026-10-03"
+    },
+    {
+      "path": "README.md",
+      "kind": "entry"
+    },
+    {
+      "path": "release/windows/license-evidence/lucide-ISC-and-feather-MIT.txt",
+      "kind": "resource",
+      "frozen_sha256": "6f3d6b00500f72a9574a17508ae0772de8c4491bcfc47e0f5907eca47072525d"
+    },
+    {
+      "path": "release/windows/license-evidence/tailwindcss-and-three-MIT.txt",
+      "kind": "resource",
+      "frozen_sha256": "0122e21fd7dcf07b2c4f88652cfa09081156de78fef46c906f73643ab74ccb11"
+    },
+    {
+      "path": "release/windows/license-evidence/vendored-fonts-OFL-1.1.txt",
+      "kind": "resource",
+      "frozen_sha256": "c4241ece5c9b9621fa5f22dda635c0c8ebf9793e3c3e60b88797538cbf2ae23d"
+    },
+    {
+      "path": "requirements.txt",
+      "kind": "reference"
+    },
+    {
+      "path": "SECURITY_BASELINE.md",
+      "kind": "authority",
+      "authority": "security",
+      "reviewed_at": "2026-10-03"
+    },
+    {
+      "path": "static/system-prompts/infinite-canvas-prompt-templates.md",
+      "kind": "resource",
+      "frozen_sha256": "12e4ad04d880b09c4e58a666103286553277b34362463bf0201a5d3d3e9723a2"
+    },
+    {
+      "path": "static/vendor/MANIFEST.md",
+      "kind": "resource",
+      "frozen_sha256": "6a2cd7def49aa3446128d6b8449ab5c8c869c71963bbcfead3008b5830b7aace"
+    },
+    {
+      "path": "tools/chrome-local-asset-importer/README.md",
+      "kind": "reference"
+    },
+    {
+      "path": "tools/photoshop-asset-connector/README.md",
+      "kind": "reference"
+    },
+    {
+      "path": "tools/validation/windows/env_1b3/README.md",
+      "kind": "reference"
+    }
+  ]
+}

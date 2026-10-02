@@ -1,5 +1,7 @@
 # ARCH-2A：整体架构评估与演进方向（2026-07）
 
+> 2026-10-03：历史架构评估，正文所有“当前”、旧 SHA 和后续队列均属于 2026 年 7 月基线；不代表本次 main 状态，也不重新施加旧生产操作流程。[替代/现行入口](../../ARCHITECTURE.md)。
+
 > **历史评估基线。** 本文保留 `main@a095ce2e...` 时的代码还原与风险判断。当前实施事实见 [CURRENT_PROJECT_STATUS](../CURRENT_PROJECT_STATUS.md)，已冻结的中期架构和 ENV 决策见 [ADR 索引](../README.md)。本文中的 launcher、日志和 OPS 现状不得作为 `main@396cccc...` 的当前事实。
 
 更新时间：2026-07-10
