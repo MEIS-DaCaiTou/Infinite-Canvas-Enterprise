@@ -25,7 +25,7 @@ _PATH_METHODS = frozenset(
     {"mkdir", "rename", "replace", "rmdir", "touch", "unlink", "write_bytes", "write_text"}
 )
 _OS_WRITES = frozenset(
-    {"makedirs", "mkdir", "remove", "removedirs", "rename", "replace", "rmdir", "unlink"}
+    {"link", "makedirs", "mkdir", "remove", "removedirs", "rename", "replace", "rmdir", "unlink"}
 )
 _SHUTIL_WRITES = frozenset({"copy", "copy2", "copyfile", "copytree", "move", "rmtree"})
 _TEMP_WRITES = frozenset({"NamedTemporaryFile", "TemporaryDirectory", "mkdtemp", "mkstemp"})
@@ -612,6 +612,15 @@ def _flow_for_operation(file: str, symbol: str) -> str:
         # Greenfield database, and publishes the pointer last; APP_ROOT is
         # never treated as mutable application state.
         return "W47"
+    if file == "enterprise/install_entry.py" and symbol in {
+        "_write_new", "_atomic_publish", "_restore", "EntryPublication.complete", "publish_fixed_entry",
+    }:
+        # DELIVERY-1 publishes only INSTALL_ROOT/InfiniteCanvas.exe and
+        # STATE_ROOT installation identity, lock and owned entry backups.
+        # Create-only link or compare-before-replace + exact ownership tokens
+        # constrain rollback. Existing business data and APP_ROOT are not
+        # writable repair targets; unknown files and recovery locks block.
+        return "W47"
     if file.startswith("tools/validation/windows/env_1b3/"):
         # ENV-1B3 writes only to explicit test-host roots, isolated tamper
         # copies, or development-owned candidate/evidence roots. It never
@@ -626,7 +635,7 @@ def _flow_for_operation(file: str, symbol: str) -> str:
 # every mapped site as (file, symbol, operation, normalized-call fingerprint,
 # Wxx flow). Line numbers are deliberately excluded, while duplicate identical
 # calls remain duplicate records. Any added/removed/changed call drifts it.
-EXPECTED_SITE_MANIFEST_DIGEST = "e1ef70ad41fbf0460642ed9bcf10fec78113684bb1c8b3c8356bc6a2624ea7e8"
+EXPECTED_SITE_MANIFEST_DIGEST = "d71e4dfcef67e04bb6498bb767f12dcfa281da751068fa22ef3f7e16c66e2c93"
 
 FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W01", "main.py", "startup_event"),

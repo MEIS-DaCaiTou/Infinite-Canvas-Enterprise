@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import argparse
 import json
 import os
 import threading
@@ -27,6 +28,25 @@ from enterprise.install_setup_bridge import (
 )
 from enterprise.ops.update.providers import DEFAULT_GITHUB_REPOSITORY, GitHubReleasesProvider
 from tools.build_install_ux_1 import InstallerBuildError, _inspect_archive, _safe_archive_name
+
+
+def test_setup_build_rejects_dirty_source_before_creating_output(monkeypatch, tmp_path):
+    from tools import build_install_ux_1 as builder
+
+    repo, assets, native, compiler = (tmp_path / name for name in ("repo", "assets", "native", "compiler"))
+    for path in (repo, assets, native, compiler):
+        path.mkdir()
+    iscc, official = compiler / "ISCC.exe", tmp_path / "official.exe"
+    iscc.write_bytes(b"toolchain fixture")
+    official.write_bytes(b"toolchain fixture")
+    output = tmp_path / "new-output"
+    def reject(_repo):
+        raise InstallerBuildError("INSTALL_UX_BUILD_WORKTREE_DIRTY")
+    monkeypatch.setattr(builder, "_require_clean_repo", reject)
+    with pytest.raises(InstallerBuildError, match="INSTALL_UX_BUILD_WORKTREE_DIRTY"):
+        builder.build(argparse.Namespace(repo=repo, release_dir=assets, native_entry_dir=native,
+                                        output_root=output, iscc=iscc, official_installer=official))
+    assert not output.exists()
 
 
 def _request(**changes: object) -> dict[str, object]:
@@ -351,8 +371,16 @@ def test_installer_source_is_single_user_gui_and_keeps_credentials_off_process_s
     assert 'DestDir: "install-ux-bundle"' not in files_section
     assert 'DestDir: "install-ux-metadata"' not in files_section
     assert "desktopicon" in source
-    assert "查看企业版状态.bat" in source
-    assert "企业版健康检查.bat" in source
+    assert "InfiniteCanvas.exe" in source
+    assert "启动企业版.bat" not in source
+    assert "查看企业版状态.bat" not in source
+    assert "native-entry-build-record.json" in source
+    assert "enterprise-install-maintenance-request-v2" in source
+    assert "ExistingEntryRepair" in source
+    assert "InstallationId" in source
+    request_body = source[source.index("function RequestJson:") : source.index("function WaitForPipeServer")]
+    assert "and not ExistingEntryRepair and not MultipleInstalls" in request_body
+    assert "RegGetSubkeyNames(HKCU" in source
 
 
 def test_bridge_bootstraps_before_product_install_import_and_has_no_credential_cli() -> None:
@@ -387,6 +415,11 @@ def test_toolchain_and_build_policies_are_pinned_and_nonsecret() -> None:
     assert all(len(value) == 64 for value in tool["compiler_closure"].values())
     assert build["core_asset_count"] == 3
     assert build["security_authority"] == "enterprise.fresh_install.install_greenfield"
+    assert build["credential_channel"]["request_schema"] == "enterprise-install-maintenance-request-v2"
+    assert build["maintenance_operations"] == ["install", "repair-entry"]
+    assert build["native_entry"]["same_commit_and_tree_as_release"] is True
+    assert build["native_entry"]["repair_mutates_business_data"] is False
+    assert build["full_lifecycle_complete"] is False
     assert build["uninstaller_created"] is False
     combined = json.dumps({"tool": tool, "build": build}).casefold()
     assert "private_key" not in combined

@@ -20,6 +20,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from enterprise import db
+from enterprise.install_entry import (
+    EntryPublication, publish_fixed_entry, validate_entry_target_paths, verify_entry_bundle,
+)
 from enterprise.migrations.sec_1b1_role_auth import ROLE_AUTH_READY, inspect_role_auth_schema
 from enterprise.migrations.sec_1b2_activation import (
     BOOTSTRAP_READY,
@@ -122,6 +125,8 @@ class FreshInstallResult:
     bootstrap_audit_event: bool
     sqlite_integrity_check: str
     pointer_published: bool
+    installation_id: str | None = None
+    launcher_installed: bool = False
 
     def public_dict(self) -> dict[str, object]:
         return self.__dict__.copy()
@@ -582,11 +587,16 @@ def install_greenfield(
     password: str,
     password_confirmation: str,
     local_app_data_base: Path,
+    native_entry_dir: Path | None = None,
 ) -> FreshInstallResult:
     """Install one verified Release into a genuinely empty target."""
     normalized_username = _normalized_username(username)
     accepted_password = validate_first_password(password, password_confirmation)
     assets = verify_release_assets(Path(release_dir))
+    native_entry = None
+    if native_entry_dir is not None:
+        source = assets.manifest.section("enterprise_source")
+        native_entry = verify_entry_bundle(native_entry_dir, commit=str(source["commit"]), tree=str(source["tree"]))
     _require_greenfield_install_root(Path(install_root))
 
     inputs = PortableRootInputs(
@@ -596,6 +606,8 @@ def install_greenfield(
     )
     roots = derive_portable_path_roots(inputs, assets.manifest.release_id)
     validate_path_roots_for_use(roots)
+    if native_entry is not None:
+        validate_entry_target_paths(roots.INSTALL_ROOT, assets.manifest.release_id, assets.inventory_path)
 
     release_identity: tuple[int, int] | None = None
     config_temp_identity: tuple[int, int] | None = None
@@ -611,6 +623,7 @@ def install_greenfield(
     pointer_path = roots.STATE_ROOT / "current-release.json"
     operation_id = f"install-{uuid.uuid4().hex}"
     committed = False
+    entry_publication: EntryPublication | None = None
     created_directories: dict[Path, tuple[int, int]] = {}
     try:
         _ensure_operation_directory(roots.INSTALL_ROOT, created_directories, parents=True)
@@ -653,6 +666,9 @@ def install_greenfield(
         config_identity = _publish_new_file(config_temp, config_final, "INSTALL_CONFIG_PUBLISH_FAILED")
         database_identity = _publish_new_file(database_temp, database_final, "INSTALL_DATABASE_PUBLISH_FAILED")
 
+        if native_entry is not None:
+            entry_publication = publish_fixed_entry(roots, native_entry)
+
         pointer = CurrentRelease(
             schema_version=CURRENT_RELEASE_SCHEMA,
             release_id=assets.manifest.release_id,
@@ -667,6 +683,8 @@ def install_greenfield(
             expected_manifest_sha256=assets.manifest.raw_sha256,
         )
         committed = True
+        if entry_publication is not None:
+            entry_publication.complete()
         _remove_owned_file(lock_path, lock_identity)
         lock_identity = None
         return FreshInstallResult(
@@ -682,6 +700,8 @@ def install_greenfield(
             bootstrap_audit_event=bool(database["bootstrap_event_id"]),
             sqlite_integrity_check=str(database["integrity"]),
             pointer_published=True,
+            installation_id=entry_publication.installation_id if entry_publication else None,
+            launcher_installed=entry_publication is not None,
         )
     except FreshInstallError:
         raise
@@ -693,6 +713,8 @@ def install_greenfield(
         _remove_owned_file(database_temp, database_temp_identity)
         _remove_owned_file(lock_path, lock_identity)
         if not committed and not pointer_path.exists():
+            if entry_publication is not None:
+                entry_publication.rollback()
             _remove_owned_file(config_final, config_identity)
             _remove_owned_file(database_final, database_identity)
             _remove_owned_directory(roots.APP_ROOT, release_identity)

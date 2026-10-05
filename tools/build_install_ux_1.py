@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Build one deterministic Gate-A INSTALL-UX-1 Setup rehearsal."""
+"""Build a deterministic Setup candidate with its same-source fixed entry.
+
+Compilation is not customer installation or Production Baseline approval.
+"""
 
 from __future__ import annotations
 
@@ -209,14 +212,20 @@ def _compile(
 
 
 def build(args: argparse.Namespace) -> dict[str, object]:
-    repo = args.repo.resolve()
-    release_dir = args.release_dir.resolve()
-    output_root = args.output_root.resolve()
-    iscc = args.iscc.resolve()
-    official_installer = args.official_installer.resolve()
+    repo = Path(os.path.abspath(args.repo))
+    sys.path.insert(0, os.fspath(repo))
+    from enterprise.path_safety import assert_no_reparse_ancestors
+    from enterprise.install_entry import verify_entry_bundle
+    from tools.build_native_entry import verify_output
+    release_dir = Path(os.path.abspath(args.release_dir))
+    native_dir = Path(os.path.abspath(args.native_entry_dir))
+    iscc = Path(os.path.abspath(args.iscc))
+    official_installer = Path(os.path.abspath(args.official_installer))
+    for path in (repo, release_dir, native_dir, iscc, official_installer):
+        assert_no_reparse_ancestors(path)
+    output_root = verify_output(args.output_root, (repo, release_dir, native_dir, iscc.parent, official_installer))
     if output_root.exists():
         raise InstallerBuildError("INSTALL_UX_BUILD_OUTPUT_EXISTS")
-    output_root.mkdir(parents=True)
     commit, tree = _require_clean_repo(repo)
 
     sys.path.insert(0, os.fspath(repo))
@@ -244,6 +253,13 @@ def build(args: argparse.Namespace) -> dict[str, object]:
         expected_enterprise_commit=commit,
         expected_enterprise_tree=tree,
     )
+    entry = verify_entry_bundle(native_dir, commit=commit, tree=tree)
+    entry_record = _load_json(native_dir / "native-entry-build-record.json")
+    source_hashes = {name: _sha256(repo / "installer/windows/native" / name)[0]
+                     for name in ("NativeCore.cs", "LauncherProgram.cs", "app.manifest")}
+    if (entry_record["source_files_sha256"] != source_hashes
+            or entry_record["policy_sha256"] != _sha256(repo / "installer/windows/native-entry-build-policy.json")[0]):
+        raise InstallerBuildError("INSTALL_UX_BUILD_NATIVE_SOURCE_MISMATCH")
     root_prefix, archive_files, archive_uncompressed = _inspect_archive(assets.archive_path, policy)
     version = (repo / "VERSION").read_text(encoding="utf-8").strip()
     if version != str(assets.manifest.section("identity")["release_version"]):
@@ -263,6 +279,8 @@ def build(args: argparse.Namespace) -> dict[str, object]:
         "archive_uncompressed_bytes": archive_uncompressed,
         "core_asset_count": 3,
         "core_assets": asset_records,
+        "native_entry": {"filename": "InfiniteCanvas.exe", "sha256": entry.sha256,
+                         "size_bytes": len(entry.data), "build_record_sha256": entry.record_sha256},
         "payload_tree_sha256": verification.payload_tree_sha256,
         "runtime_tree_sha256": assets.manifest.section("runtime")["runtime_tree_sha256"],
         "static_tree_sha256": assets.manifest.section("release_payload")["static_tree_sha256"],
@@ -292,6 +310,11 @@ def build(args: argparse.Namespace) -> dict[str, object]:
         "MetadataPath": os.fspath(metadata_path),
         "MetadataSha256": metadata_hash,
         "MetadataSize": str(metadata_size),
+        "NativeEntryDir": os.fspath(native_dir),
+        "NativeEntrySha256": entry.sha256,
+        "NativeEntrySize": str(len(entry.data)),
+        "NativeRecordSha256": entry.record_sha256,
+        "NativeRecordSize": str((native_dir / "native-entry-build-record.json").stat().st_size),
         "OutputBaseFilename": output_name,
     }
     built: list[Path] = []
@@ -334,6 +357,7 @@ def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument("--repo", type=Path, required=True)
     result.add_argument("--release-dir", type=Path, required=True)
+    result.add_argument("--native-entry-dir", type=Path, required=True)
     result.add_argument("--output-root", type=Path, required=True)
     result.add_argument("--iscc", type=Path, required=True)
     result.add_argument("--official-installer", type=Path, required=True)

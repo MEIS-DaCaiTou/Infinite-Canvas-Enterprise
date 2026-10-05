@@ -37,9 +37,9 @@
 
 ## 3. Portable 启动信任链
 
-下图为源码/旧安装 BAT 兼容链路。维护线的固定入口已选择性引入 DELIVERY-1 候选，不绑定应用目标，不另写 Runtime；仍未合并 main 或作为完整安装维护产品交付。
+下图为源码/旧安装 BAT 兼容链路。固定原生入口已通过 PR #138 选择性回归 main，不绑定应用目标，不另写 Runtime；安装接线及入口专用修复仍是后续候选，不是完整安装维护产品交付。
 
-候选的 `installer/windows/native/` 用 C# 处理固定入口、Windows UI 和受限进程调用：读取 `state/current-release.json`，校验 Manifest 与完整 inventory，再调用该 Release 内 `python/python.exe -I -B enterprise/runtime/launcher.py portable <command>`。`tools/build_native_entry.py` 使用外置固定编译器双构建，仅生成全新 artifact 根，不写客户安装、不迁移数据库。构建、安装器接线和真实 Runtime 验收必须区分，见 [实施记录](../ops/DELIVERY-1-FIXED-NATIVE-ENTRY-2026-10.md)。
+`installer/windows/native/` 用 C# 处理固定入口、Windows UI 和受限进程调用：读取 `state/current-release.json`，校验 Manifest 与完整 inventory，再调用该 Release 内 `python/python.exe -I -B enterprise/runtime/launcher.py portable <command>`。`tools/build_native_entry.py` 使用外置固定编译器双构建，仅生成全新 artifact 根，不写客户安装、不迁移数据库。构建、安装器接线和真实 Runtime 验收必须区分，见 [实施记录](../ops/DELIVERY-1-FIXED-NATIVE-ENTRY-2026-10.md)。
 
 ```mermaid
 flowchart TD
@@ -99,7 +99,7 @@ flowchart TD
 
 ## 6. 首次安装
 
-以下为主线 fresh-install 实现，不是完整更新/修复/卸载产品。Inno 仍为 `Uninstallable=no`，快捷方式仍指版本 BAT，是后续明确整改项。
+以下为 fresh-install 实现，不是完整更新/修复/卸载产品。安装接线候选将快捷方式指向 `<INSTALL_ROOT>/InfiniteCanvas.exe`，新装要求与 Release 同 commit/tree 的独立原生构建。`Uninstallable=no` 暂留，标准卸载是后续明确待办；旧主线接线/客户包不因本候选自动变化。
 
 `fresh_install.py` 的主要阶段：
 
@@ -108,10 +108,21 @@ flowchart TD
 3. 创建 config/data/log/state/releases 等目录。
 4. materialize 不可变 Release。
 5. 创建 Greenfield SQLite 数据库和首个超级管理员。
-6. 写入 `enterprise.env` 与 current pointer。
+6. 发布配置、数据库和可选固定入口/实例记录；current pointer 最后发布。
 7. 失败时只清理本次拥有的对象，不删除外部未知文件。
 
 `install_setup_bridge.py` 通过当前用户 SID 约束的 named pipe 接收安装器输入，避免在命令行或环境变量中暴露密码。
+
+### 安装接线候选的入口修复
+
+`enterprise.install_entry` 只负责固定入口和实例元数据，不是第二套数据库/升级引擎：
+
+- `state/installation.json` 保存独立 UUID、角色/范围、位置、相对数据/配置路径、更新协议、通道和原生构建身份；不复制当前应用版本，版本只认 current pointer。
+- HKCU 本产品子键是定位提示，不是可信安装证据；最多读取 32 条，不扫描所有磁盘。一个已登记位置优先使用原处，多个要求选择；未登记历史位置需显式选择并校验。
+- `repair-entry` 完整核验当前 Release 和未完成恢复作业，只发布根 EXE 与 STATE_ROOT 元数据/入口备份，不打开数据库、不改变当前指针、不创建管理员。
+- 共用 `system-update-active.lock`，原文件和写入文件都以内容＋文件身份约束；中途失败只恢复本次拥有的两个入口文件。未知文件、移位实例记录、重解析或已有锁阻断。
+- 不能证明入口恢复时保留锁及备份，不能删锁试错；崩溃后图形恢复及完整程序/运行环境修复尚未实现。
+- 新装对未支持的过深目的路径做写入前阻断，不更改 Windows 长路径策略；这不是宣称已兼容任意长路径。
 
 ## 7. 在线更新
 
