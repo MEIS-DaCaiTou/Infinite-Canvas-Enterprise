@@ -1,6 +1,6 @@
 # Infinite Canvas Enterprise 当前项目状态
 
-更新时间：2026-10-03
+更新时间：2026-10-05
 核验对象：本仓库 GitHub 主线、相关 PR/CI、公开 Release 与项目负责人已提供的现场反馈。
 
 ## 1. 基线与交付必须分开
@@ -13,9 +13,10 @@
 | 维护线差异 | PR #132–#135 在维护线合并，含正式过渡、受控安全数据库桥接、原生工具和定位；未整体合并到上述 main | 这些 PR 的 MERGED 状态不等于合并 main |
 | 通用工具 | [2026.09.9-unified-upgrader.1](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/2026.09.9-unified-upgrader.1) 是工具验收预发布；[PR #136](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/136) OPEN/Draft，基于维护分支，Head `f86754867c2ecf10ca1b32b66dc926371fe9f0b2`，两项 CI 已通过 | 不是正式新装器、完整员工桌面客户端，也未进入 main |
 | 付费提交止损 | [PR #123](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/123) OPEN，Head `05a349c9ce75e394f5ef6321816831600d97182f`，两项 CI 已通过 | 不能写成主线已全面防止重复付费 |
-| 设计与文档 | 项目负责人已认可 [统一交付 ADR](./decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md)；本轮文档整改从上述 main 建立独立分支 | ADR Accepted 不代表安装/更新实现已完成 |
+| 设计与文档 | [PR #137](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/137)，Head `f229dc65a5e2982c70ddd813327cdea6270caf20`，三项 CI 通过；10-05 完成静态风险审查，建议合并，仍 OPEN | 审查通过、ADR Accepted 不代表合并或安装/更新实现完成 |
+| 固定入口回归候选 | `codex/delivery-fixed-entry-20261005` 从 #137 准确 Head 建立；引入不绑定目标应用版本的 C# 固定入口、可复现构建与编译后契约测试，见 [DELIVERY-1](./ops/DELIVERY-1-FIXED-NATIVE-ENTRY-2026-10.md) | 不是 main 已合并、安装器接管完成、新应用 Release 或客户启停验收 |
 
-以上 SHA、PR 与 Release 状态是 2026-10-03 快照。开始任务应重新核验，记录准确 Base/Head，不能以显示版本号替代软件和数据库身份。当前客户维护线与主线的收敛，是发布下一套统一交付前的工作，不是通过修改 `VERSION` 就能解决。
+主线及 #137 的 SHA/状态于 2026-10-05 重新核验，main 未变更；其余基线仍按各自证据时点理解。开始任务应重新核验准确 Base/Head，不能以显示版本号替代软件和数据库身份。客户维护线与主线收敛是统一交付前的工作，不是通过修改 `VERSION` 就能解决。
 
 ## 2. 已合并主线的实现
 
@@ -55,7 +56,7 @@ PR #136 的历史目录已登记 10 个准确 Release：08.1、08.2、08.3、08.
 
 当前处于 **阶段 3：统一安装与在线升级体验收敛**。阶段 1 安全及阶段 2 数据基础已有合并成果，不表示其所有长期加固和所有客户迁移都已验收。
 
-1. **交付分叉与安装维护**：维护线成果尚未回归 main；主线新装器仍只面向新目录、`Uninstallable=no`、快捷方式指向版本内 BAT。通用 EXE 是受控接管工具，不是新装/修复/卸载全生命周期产品。不得继续为每个版本复制工具。
+1. **交付分叉与安装维护**：维护线成果尚未合并 main；固定入口已选择性引入本轮候选并通过编译后契约验证，未整体覆盖主线。主线新装器仍只面向新目录、`Uninstallable=no`、快捷方式指向版本内 BAT；候选未改变安装器。通用 EXE 是受控接管工具，不是新装/修复/卸载全生命周期产品。不得继续为每个版本复制工具。
 2. **长期更新**：当前路由目录最多最近 50 个 Release、规划最多 8 跳；一次授权跨重启多跳、更新器自身接管、维护通知、业务写入隔离及图形恢复仍不完整。正式版不以开发版作为必经站。
 3. **权限使用问题**：旧安全治理未激活时的 `TRANSITIONAL_POLICY_DENIED` 403 有真实反馈；不能放宽授权来“修好按钮”。需在准确新装/接管状态复现管理员授予/撤销及操作授权并完成前后端回归，尚无所有客户修复通过的证据。
 4. **可靠任务与费用**：#123 未合并；当前回执基础不等于统一持久任务、费用账本、预算或对账。“未提交暂停、已受理继续查、未知待对账”是已确认实施规则，不是旧内存任务已可恢复的声明。
@@ -70,6 +71,7 @@ PR #136 的历史目录已登记 10 个准确 Release：08.1、08.2、08.3、08.
 | --- | --- |
 | #109、#111、#114、#115 | 已关闭，保留合并和测试证据，不重新包装为待开始任务 |
 | PR #136 | 维护线 Draft，CI 已通过；审查、图形/固定入口定向验收、主线差异收敛是下一阶段输入 |
+| PR #137 / DELIVERY-1 | 文档 PR 已审查未合并；固定入口候选依赖其准确 Head。逐项回归维护成果，保留主线安全与任务回执，不整分支覆盖 |
 | PR #123 / #110 | 止损 PR 待审查合并；持久任务仍待实施，不扩大付费测试 |
 | #112 / #113 / #116 | 可观测性、浏览器/Provider 闭环、策略模块化仍 OPEN，随相应阶段推进 |
 | #117 | GitHub 旧标题仍为签名/干净 Windows Gate B；与已批准政策不一致，需后续协调其范围，本轮未修改 Issue |
@@ -82,3 +84,4 @@ PR #136 的历史目录已登记 10 个准确 Release：08.1、08.2、08.3、08.
 - [PR #136 历史升级/固定 EXE CI](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/36767107026) 与 [桥接 CI](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/36767106957) 均通过；[#123 CI](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/35833836185) 通过，但两个 PR 都未合并 main。
 - 现场部分来自项目负责人此前提供的日志、只读 JSON、截图和使用反馈，本轮未重做现场测试。CI 回调、安装副本、独立 HTTP 启动、真实 Supervisor 与客户操作分别报告。
 - 本轮文档整改及其检查不是业务功能验收；整改记录见 [DOC-3](./ops/DOC-3-DOCUMENT-SYSTEM-AUDIT-2026-10.md)。不得据此新发应用版本或扩大生产批准。
+- 2026-10-05 复核 #137 的 [Documentation CI](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/37045196365) 与 [Enterprise/Runtime CI](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/37045196234)，均对应上述准确 Head。只读风险审查未代替人工合并；固定入口候选的构建/验证范围见 DELIVERY-1，不代表客户服务真实启停。

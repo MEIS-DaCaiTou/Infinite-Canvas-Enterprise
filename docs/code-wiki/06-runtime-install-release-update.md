@@ -2,7 +2,7 @@
 
 [返回索引](./README.md)
 
-更新时间：2026-10-03。主线与维护线边界见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，生命周期设计见 [统一交付 ADR](../decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md)。
+更新时间：2026-10-05。主线、维护线和固定入口候选边界见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，生命周期设计见 [统一交付 ADR](../decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md)。
 
 ## 1. PathRoots
 
@@ -37,7 +37,9 @@
 
 ## 3. Portable 启动信任链
 
-下图为源码/旧安装 BAT 兼容链路；维护线固定 EXE 调用同一 Python launcher，不另写 Runtime，尚未作为 main 完整安装维护产品交付。
+下图为源码/旧安装 BAT 兼容链路。维护线的固定入口已选择性引入 DELIVERY-1 候选，不绑定应用目标，不另写 Runtime；仍未合并 main 或作为完整安装维护产品交付。
+
+候选的 `installer/windows/native/` 用 C# 处理固定入口、Windows UI 和受限进程调用：读取 `state/current-release.json`，校验 Manifest 与完整 inventory，再调用该 Release 内 `python/python.exe -I -B enterprise/runtime/launcher.py portable <command>`。`tools/build_native_entry.py` 使用外置固定编译器双构建，仅生成全新 artifact 根，不写客户安装、不迁移数据库。构建、安装器接线和真实 Runtime 验收必须区分，见 [实施记录](../ops/DELIVERY-1-FIXED-NATIVE-ENTRY-2026-10.md)。
 
 ```mermaid
 flowchart TD

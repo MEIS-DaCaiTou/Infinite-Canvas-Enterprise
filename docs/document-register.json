@@ -1,6 +1,6 @@
 {
   "schema_version": "enterprise-documents-v1",
-  "reviewed_at": "2026-10-03",
+  "reviewed_at": "2026-10-05",
   "audit_base_commit": "7905ecf39efabeb3101d7b63c709d8dcd230c9a0",
   "scope": "All Git-managed or non-ignored new Markdown/text files; roles are not runtime or release approval. Frozen hashes normalize CRLF to LF only.",
   "documents": [
@@ -98,7 +98,7 @@
       "path": "docs/CURRENT_PROJECT_STATUS.md",
       "kind": "authority",
       "authority": "status",
-      "reviewed_at": "2026-10-03"
+      "reviewed_at": "2026-10-05"
     },
     {
       "path": "docs/data/DATA-MVP-1-INDEPENDENT-REVIEW-2026-09.md",
@@ -312,6 +312,10 @@
       "kind": "record"
     },
     {
+      "path": "docs/ops/DELIVERY-1-FIXED-NATIVE-ENTRY-2026-10.md",
+      "kind": "record"
+    },
+    {
       "path": "docs/ops/HISTORICAL-RUNTIME-HOTFIX-BRANCHES-2026-09.md",
       "kind": "record"
     },
@@ -418,7 +422,7 @@
       "path": "docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md",
       "kind": "authority",
       "authority": "roadmap",
-      "reviewed_at": "2026-10-03"
+      "reviewed_at": "2026-10-05"
     },
     {
       "path": "docs/runbooks/SEC-1B2-PRODUCTION-ACTIVATION-RUNBOOK-2026-07.md",
@@ -497,7 +501,7 @@
       "path": "enterprise/tests/README.md",
       "kind": "authority",
       "authority": "testing",
-      "reviewed_at": "2026-10-03"
+      "reviewed_at": "2026-10-05"
     },
     {
       "path": "enterprise/tests/SMOKE_CHECKLIST.md",
