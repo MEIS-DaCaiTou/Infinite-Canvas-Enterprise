@@ -11,7 +11,7 @@ Before adding or changing scripts, read:
 - `../../ENTERPRISE_DOCS.md`
 - `SMOKE_CHECKLIST.md`
 
-Reviewed: 2026-10-03
+Reviewed: 2026-10-05
 
 ## Verification policy
 
@@ -28,6 +28,7 @@ They check registration, authority roles/dates, local Markdown file/heading link
 
 ## Scripts
 
+- `test_native_entry_build.py` checks the target-independent entry policy, pinned compiler package/extracted closure, external new artifact roots, dirty-source refusal and reparse rejection. `test_native_entry_windows.py` runs the actual EXE with a test-only C# `ContractWorker`: pointer switching/rollback, Unicode/space paths, isolated direct-script handoff, changed/extra/missing payload rejection, nonblocking CLI errors and result-file non-overwrite. This does not execute Python, a real Supervisor, migration, browser or GUI clicks. Set `ICE_NATIVE_ENTRY`, `ICE_NATIVE_COMPILER_PACKAGE` and `ICE_NATIVE_COMPILER_ROOT` on Windows to run compiled cases; missing binaries skip explicitly. Scoped Windows CI compiles twice and runs both files. No customer data, listeners or paid providers are used. See `../../docs/ops/DELIVERY-1-FIXED-NATIVE-ENTRY-2026-10.md` for boundaries.
 - `test_runtime_reliability.py` and `test_canvas_task_journal.py` cover the September 2026 Gateway incident fixes: isolated/bounded health probes, real restart backoff, startup grace, event-loop offloading, permission-safe reference caching, batch ownership, and durable canvas receipts/results with explicit interrupted-state recovery. All roots/providers are temporary or fake; these tests do not approve a production rollout. See `../../docs/ops/RUNTIME-RELIABILITY-2026-09-03.md` for limits and lifecycle evidence.
 - `diagnose.ps1` checks local version, selected LAN IP, listening ports, proxy settings, and health endpoints.
 - `smoke.ps1` runs non-destructive HTTP smoke checks against a running enterprise gateway.

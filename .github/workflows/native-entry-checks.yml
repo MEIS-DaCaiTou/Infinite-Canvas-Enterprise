@@ -1,0 +1,75 @@
+name: Native fixed entry checks
+
+on:
+  pull_request:
+    paths:
+      - '.gitattributes'
+      - 'installer/windows/native/**'
+      - 'installer/windows/native-entry-build-policy.json'
+      - 'tools/build_native_entry.py'
+      - 'enterprise/tests/test_native_entry_*.py'
+      - 'enterprise/tests/fixtures/native/**'
+      - 'enterprise/path_safety.py'
+      - '.github/workflows/native-entry-checks.yml'
+  push:
+    branches: [main]
+    paths:
+      - '.gitattributes'
+      - 'installer/windows/native/**'
+      - 'installer/windows/native-entry-build-policy.json'
+      - 'tools/build_native_entry.py'
+      - 'enterprise/tests/test_native_entry_*.py'
+      - 'enterprise/tests/fixtures/native/**'
+      - 'enterprise/path_safety.py'
+      - '.github/workflows/native-entry-checks.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  native-entry:
+    name: Fixed EXE (Windows, pinned compiler)
+    runs-on: windows-latest
+    timeout-minutes: 10
+    env:
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Prepare verified compiler outside the checkout
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $policy = Get-Content -Raw -LiteralPath 'installer/windows/native-entry-build-policy.json' | ConvertFrom-Json
+          $artifactRoot = Join-Path $env:RUNNER_TEMP 'ICE-native-entry'
+          New-Item -ItemType Directory -Path $artifactRoot | Out-Null
+          $package = Join-Path $artifactRoot $policy.compiler_package
+          Invoke-WebRequest -Uri $policy.compiler_package_url -OutFile $package
+          if ((Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash.ToLowerInvariant() -ne $policy.compiler_package_sha256) {
+            throw 'Pinned compiler package hash mismatch'
+          }
+          $compilerRoot = Join-Path $artifactRoot 'compiler'
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          [System.IO.Compression.ZipFile]::ExtractToDirectory($package, $compilerRoot)
+          $output = Join-Path $artifactRoot 'entry'
+          python -B tools/build_native_entry.py --compiler-package $package --compiler-root $compilerRoot --output-root $output
+          if ($LASTEXITCODE -ne 0) { throw 'Native entry build failed' }
+          "ICE_NATIVE_ENTRY=$(Join-Path $output 'InfiniteCanvas.exe')" | Add-Content -LiteralPath $env:GITHUB_ENV
+          "ICE_NATIVE_COMPILER_ROOT=$compilerRoot" | Add-Content -LiteralPath $env:GITHUB_ENV
+          "ICE_NATIVE_COMPILER_PACKAGE=$package" | Add-Content -LiteralPath $env:GITHUB_ENV
+          "ICE_NATIVE_ARTIFACT_ROOT=$output" | Add-Content -LiteralPath $env:GITHUB_ENV
+      - name: Run scoped compiler and compiled EXE contracts
+        run: |
+          python -m pip install pytest
+          python -B -m pytest -q enterprise/tests/test_native_entry_build.py enterprise/tests/test_native_entry_windows.py
+      - name: Retain unsigned verification artifact (not a customer installer)
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-entry-verification-only
+          path: |
+            ${{ env.ICE_NATIVE_ARTIFACT_ROOT }}/InfiniteCanvas.exe
+            ${{ env.ICE_NATIVE_ARTIFACT_ROOT }}/native-entry-build-record.json
+          retention-days: 7
