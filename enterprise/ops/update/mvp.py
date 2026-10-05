@@ -309,9 +309,21 @@ class UpdateJobStore:
         except OSError as exc:
             raise UpdateMvpError("SYSTEM_UPDATE_EVENT_WRITE_FAILED", status_code=500) from exc
 
-    def pending_recovery_jobs(self) -> list[str]:
+    def pending_recovery_jobs(self, *, initialize: bool = True) -> list[str]:
         """Return unresolved jobs, rejecting unverifiable historical job state."""
-        self.initialize()
+        if initialize:
+            self.initialize()
+        else:
+            # Installation inspection/entry repair must not create staging
+            # directories or follow an unverified path merely to check state.
+            try:
+                assert_no_reparse_ancestors(self.jobs_root, allow_missing=True)
+                if not self.jobs_root.exists():
+                    return []
+                if not self.jobs_root.is_dir():
+                    raise OSError()
+            except (OSError, PathSafetyError) as exc:
+                raise UpdateMvpError("SYSTEM_UPDATE_RECOVERY_STATE_UNVERIFIED", status_code=409) from exc
         pending: list[str] = []
         try:
             for root in self.jobs_root.iterdir():

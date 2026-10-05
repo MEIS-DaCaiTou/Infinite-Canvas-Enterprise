@@ -15,7 +15,8 @@
     "frame_header": "8-byte lowercase hexadecimal length",
     "maximum_payload_bytes": 16384,
     "pipe_instances": 1,
-    "request_schema": "install-ux-1-request-v1",
+    "request_schema": "enterprise-install-maintenance-request-v2",
+    "legacy_request_schema": "install-ux-1-request-v1",
     "result_schema": "install-ux-1-result-v1",
     "scope": "current-user-only"
   },
@@ -28,8 +29,17 @@
   "installer_architecture": "x64",
   "installer_filename_pattern": "Infinite-Canvas-Enterprise-Setup-<version>-x64.exe",
   "installer_source": "installer/windows/InfiniteCanvasEnterprise.iss",
+  "maintenance_operations": ["install", "repair-entry"],
+  "native_entry": {
+    "filename": "InfiniteCanvas.exe",
+    "build_record_schema": "enterprise-native-entry-build-record-v1",
+    "same_commit_and_tree_as_release": true,
+    "installation_identity": "independent-uuid-current-user",
+    "repair_mutates_business_data": false
+  },
   "privileges": "current-user-lowest",
   "schema_version": "install-ux-1-build-policy-v1",
   "security_authority": "enterprise.fresh_install.install_greenfield",
-  "uninstaller_created": false
+  "uninstaller_created": false,
+  "full_lifecycle_complete": false
 }

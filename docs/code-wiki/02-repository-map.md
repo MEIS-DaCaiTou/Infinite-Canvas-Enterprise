@@ -12,10 +12,10 @@
 | `static/` | 旧版产品 UI：工作台、普通画布、智能画布、素材与设置页 | 必须保留原视觉与交互；无前端构建步骤 |
 | `enterprise/` | 企业认证、权限、Gateway、数据索引、Runtime、发布、安装、更新、安全审计 | 企业自有核心代码 |
 | `enterprise-static/` | 登录、管理后台、操作日志、个人中心 | 由 Gateway 直接提供 |
-| `enterprise/tests/` | Python 单元/集成/契约测试、PowerShell smoke/diagnose、浏览器清单 | 当前共 59 个 Python 测试文件 |
+| `enterprise/tests/` | Python 单元/集成/契约与编译后验证、PowerShell smoke/diagnose、浏览器清单 | 按证据层分组，实际文件数量以目录为准 |
 | `docs/` | ADR、实施记录、证据、路线与当前状态 | 历史记录不等于当前源码事实 |
 | `tools/` | 运维、发布、验证、打包和历史工具 | 使用前阅读对应记录，避免把历史脚本当正式入口 |
-| `installer/windows/` | Inno Setup 定义；固定 C# 入口及构建策略候选 | 既有首次安装分发与新候选边界见 CURRENT；尚未完成维护闭环 |
+| `installer/windows/` | Inno Setup 定义；已合入 main 的固定 C# 薄入口及构建策略 | 安装接线与入口修复候选边界见 CURRENT；尚未完成维护闭环 |
 | `runtime/windows/` | 固定 CPython/依赖闭包的来源、哈希锁与构建策略 | 大型二进制通常不直接提交 |
 | `release/windows/` | Windows Release/安装资产相关文件 | 与 Manifest 和 inventory 配套 |
 | `packages/` | 已归档 wheel 等离线依赖素材 | 不是 npm package workspace |
@@ -47,6 +47,7 @@
 | `security_bootstrap.py` | 角色/审计安全能力的计划、激活和恢复 |
 | `security_user_governance.py` | 三角色下的用户变更、CAS、审计与会话失效 |
 | `fresh_install.py` | Greenfield 首次安装事务 |
+| `install_entry.py` | 安装接线候选：固定 EXE/稳定实例 ID 的发布与入口专用修复；不写业务数据库 |
 | `install_cli.py` | 开发/命令行安装入口 |
 | `install_setup_bridge.py` | 安装器与固定 Python 间的受控 named-pipe 桥接 |
 

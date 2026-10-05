@@ -358,6 +358,28 @@ def test_unverifiable_prior_job_state_blocks_new_execution(tmp_path: Path):
     assert not store.lock_path.exists()
 
 
+def test_install_inspection_checks_recovery_without_initializing_directories(tmp_path: Path):
+    roots = _roots(tmp_path)
+    store = UpdateJobStore(roots)
+    assert store.pending_recovery_jobs(initialize=False) == []
+    assert not store.jobs_root.exists()
+    job_id, _ = store.create("actor-1")
+    store.write_status(job_id, "RECOVERY_REQUIRED", actor_user_id="actor-1",
+                       result_code="SYSTEM_UPDATE_DATABASE_RESTORE_INCOMPLETE")
+    before = {str(path): path.read_bytes() for path in store.jobs_root.rglob("*") if path.is_file()}
+    assert store.pending_recovery_jobs(initialize=False) == [job_id]
+    assert {str(path): path.read_bytes() for path in store.jobs_root.rglob("*") if path.is_file()} == before
+
+
+def test_install_inspection_rejects_invalid_recovery_root_without_mutation(tmp_path: Path):
+    store = UpdateJobStore(_roots(tmp_path))
+    store.jobs_root.parent.mkdir(parents=True)
+    store.jobs_root.write_bytes(b"unknown file, never replace")
+    with pytest.raises(UpdateMvpError, match="SYSTEM_UPDATE_RECOVERY_STATE_UNVERIFIED"):
+        store.pending_recovery_jobs(initialize=False)
+    assert store.jobs_root.read_bytes() == b"unknown file, never replace"
+
+
 def _reserved_worker_job(tmp_path: Path):
     roots = _roots(tmp_path)
     store = UpdateJobStore(roots)

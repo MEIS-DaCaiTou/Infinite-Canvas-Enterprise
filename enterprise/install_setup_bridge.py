@@ -22,6 +22,7 @@ from ctypes import wintypes
 
 
 REQUEST_SCHEMA = "install-ux-1-request-v1"
+MAINTENANCE_REQUEST_SCHEMA = "enterprise-install-maintenance-request-v2"
 RESULT_SCHEMA = "install-ux-1-result-v1"
 MAX_FRAME_BYTES = 16 * 1024
 CONNECT_TIMEOUT_SECONDS = 45.0
@@ -84,6 +85,8 @@ def _succeeded(result: object) -> dict[str, object]:
         "manifest_sha256": str(public["manifest_sha256"]),
         "payload_tree_sha256": str(public["payload_tree_sha256"]),
         "pointer_published": bool(public["pointer_published"]),
+        "installation_id": public.get("installation_id"),
+        "launcher_installed": bool(public.get("launcher_installed")),
     }
 
 
@@ -113,7 +116,14 @@ def _decode_request(raw: bytes) -> dict[str, object]:
         "install_mode",
         "install_root",
     }
-    if set(payload) != expected or payload.get("schema_version") != REQUEST_SCHEMA:
+    schema = payload.get("schema_version")
+    if schema == MAINTENANCE_REQUEST_SCHEMA:
+        expected.add("operation")
+        if payload.get("operation") not in {"install", "repair-entry"}:
+            raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
+    elif schema != REQUEST_SCHEMA:
+        raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
+    if set(payload) != expected:
         raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
     if payload.get("install_mode") not in {"quick", "custom"}:
         raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
@@ -126,6 +136,8 @@ def _decode_request(raw: bytes) -> dict[str, object]:
     if payload["install_mode"] == "quick" and install_root is not None:
         raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
     if payload["install_mode"] == "custom" and not install_root:
+        raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
+    if payload.get("operation") == "repair-entry" and any(payload[field] for field in ("username", "password", "password_confirmation")):
         raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
     return payload
 
@@ -231,13 +243,18 @@ def _validated_install_root(
             raise SetupBridgeError("INSTALL_TARGET_UNSAFE")
         target = candidate
     target = Path(os.path.abspath(os.fspath(target)))
+    if target == Path(target.anchor):
+        raise SetupBridgeError("INSTALL_TARGET_UNSAFE")
     _reject_reparse_ancestors(target)
     if _drive_type(target) != 3:  # DRIVE_FIXED
         raise SetupBridgeError("INSTALL_TARGET_NOT_LOCAL_FIXED_DISK")
     if _paths_overlap(target, raw_app_root) or _paths_overlap(target, release_dir):
         raise SetupBridgeError("INSTALL_TARGET_OVERLAP")
     try:
-        if target.exists() and (not target.is_dir() or any(target.iterdir())):
+        if request.get("operation", "install") == "repair-entry":
+            if not target.is_dir():
+                raise SetupBridgeError("INSTALL_ENTRY_SOURCE_INVALID")
+        elif target.exists() and (not target.is_dir() or any(target.iterdir())):
             raise SetupBridgeError("INSTALL_TARGET_NOT_GREENFIELD")
     except SetupBridgeError:
         raise
@@ -264,17 +281,23 @@ def _run_install_request(
     raw_app_root: Path,
 ) -> dict[str, object]:
     from enterprise.fresh_install import install_greenfield, verify_release_assets
+    from enterprise.install_entry import repair_fixed_entry, verify_entry_bundle
     from enterprise.runtime.portable import windows_local_app_data_known_folder
 
     known_folder = windows_local_app_data_known_folder()
     assets = _release_asset_directory(raw_app_root)
-    verify_release_assets(assets)
+    verified = verify_release_assets(assets)
     target = _validated_install_root(
         request,
         raw_app_root=raw_app_root,
         release_dir=assets,
         known_folder=known_folder,
     )
+    if request.get("operation") == "repair-entry":
+        source = verified.manifest.section("enterprise_source")
+        entry = verify_entry_bundle(assets / "native-entry", commit=str(source["commit"]), tree=str(source["tree"]))
+        result = repair_fixed_entry(install_root=target, entry=entry, local_app_data_base=known_folder)
+        return {"schema_version": RESULT_SCHEMA, "status": "succeeded", "code": "INSTALL_ENTRY_REPAIRED", **result}
     result = install_greenfield(
         release_dir=assets,
         install_root=target,
@@ -282,6 +305,7 @@ def _run_install_request(
         password=str(request["password"]),
         password_confirmation=str(request["password_confirmation"]),
         local_app_data_base=known_folder,
+        native_entry_dir=assets / "native-entry" if request.get("schema_version") == MAINTENANCE_REQUEST_SCHEMA else None,
     )
     return _succeeded(result)
 
