@@ -1,5 +1,7 @@
 # INSTALL-UX-1：Signed One-Click Windows Installer 实施记录
 
+> 2026-10-03：历史实施/验收记录。Gate A 证据保留；付费发布者签名和独立干净 Windows 设备已不是当前交付前提。现有新装实现仍不等于完整更新/修复/卸载产品，不关闭系统安全保护。[替代/现行入口](../decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md)。
+
 更新时间：2026-08-24
 
 ## 1. 状态与边界

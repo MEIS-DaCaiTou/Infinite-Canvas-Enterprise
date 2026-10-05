@@ -1,134 +1,69 @@
 # 无限画布企业版 · 安全基线
 
-本文档记录企业版部署前的最低安全要求和敏感文件治理方式。它不是一次性完成的安全审计，后续安全增强仍应通过 Issue、独立分支和 PR 继续推进。
+更新时间：2026-10-03
 
----
+本文是部署/维护的最低安全要求，不是一次审计通过证明。实际进展见 [CURRENT](docs/CURRENT_PROJECT_STATUS.md)，交付原则见 [统一交付 ADR](docs/decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md)。
 
-## 1. 生产部署前必须修改
+## 1. 首次配置与旧安装维护
 
-在局域网或服务器环境暴露服务前，必须复制 `enterprise.env.example` 为 `enterprise.env`，并至少修改：
+- 源码开发/手动新部署：按 `enterprise.env.example` 建立本地配置，设置唯一 JWT 密钥与强初始凭据再对外开放 Gateway。
+- 受控新装器负责首次配置和首个超级管理员，不再重复手动初始化。
+- 已有安装更新/修复沿用安装根配置和数据库，不覆盖配置、不复制示例、不重建管理员。
+- 治理激活、角色/auth-version 与审计须按精确安装状态核验，不仅看应用版本。
+- 例子和默认配置不是生产配置；真实秘密不得放进命令行、文档、日志输出或截图。
 
-- `JWT_SECRET`
-- `ADMIN_PASSWORD`
+## 2. 配置约束
 
-建议生成 32 字符以上随机 `JWT_SECRET`，例如：
+| 配置 | 边界 |
+| --- | --- |
+| `GATEWAY_PORT` | 企业入口，默认 8000；公网另外设计 TLS/反代/防火墙 |
+| `UPSTREAM_PORT` | 内部业务服务，默认 3001，loopback-only |
+| `JWT_SECRET` | 唯一长随机密钥，占位值禁止共享部署 |
+| `JWT_EXPIRE_HOURS` | 会话期限，更改考虑撤销与兼容 |
+| `ADMIN_USERNAME/ADMIN_PASSWORD` | 源码/旧式首次初始化参数，不是重置现有账号的接口 |
+| `DB_PATH` | 经路径根约束，更新不擅自迁移或覆盖 |
 
-```powershell
-python -c "import secrets; print(secrets.token_hex(32))"
-```
+生产/共享环境使用严格模式（`ENTERPRISE_ENV=production` 或 `ENTERPRISE_STRICT_SECURITY=1`）并核验。现有配置代码严格拒绝占位 JWT，但部分默认管理员配置仅警告；警告不是使用默认凭据的许可。要求强唯一凭据，禁止共享环境使用默认密码。
 
-真实 `enterprise.env` 不得提交到 Git。
+开发者可用 `secrets.token_hex(32)` 生成密钥，不提交结果或放进诊断包。JWT 轮换影响会话，升级不未经确认自动更改客户密钥。
 
----
+## 3. 认证、权限与 403
 
-## 2. enterprise.env 配置
+- UI 不是授权；HTTP、WebSocket、任务、更新和未来 Agent 在服务端校验，未知路径/事件/归属默认拒绝。
+- Canvas 不绕过 Gateway 对外暴露；管理员与超级管理员不同，高风险操作显式授权与审计。
+- `TRANSITIONAL_POLICY_DENIED` 可能是过渡保护，先核准治理状态、角色和 API 契约，不关闭保护以“修好按钮”。
+- 最后有效超级管理员、auth-version 会话失效、授予/撤销与恢复解除阻断须回归。
+- 不删除审计对象、升级锁或状态文件来绕过资格/恢复检查。
 
-示例文件：`enterprise.env.example`
+## 4. 数据与安装信任
 
-关键配置：
+更新核验完整来源/目标、Python、Manifest/资产和数据库。数据库、程序与指针恢复必须一致；业务已接受新写入后不能恢复旧快照丢新数据，未知恢复保留阻断和证据。
 
-| 配置项 | 说明 |
-|--------|------|
-| `GATEWAY_PORT` | 企业网关对外端口，默认 `8000` |
-| `UPSTREAM_PORT` | 内部上游端口，默认 `3001` |
-| `JWT_SECRET` | JWT 签名密钥，生产环境必须改为长随机值 |
-| `JWT_EXPIRE_HOURS` | 登录 Token 有效期，默认 `168` 小时 |
-| `ADMIN_USERNAME` | 首次启动默认管理员用户名 |
-| `ADMIN_PASSWORD` | 首次启动默认管理员密码，生产环境必须修改 |
-| `DB_PATH` | 企业层 SQLite 数据库路径 |
+没有付费发布者签名预算，EXE 明确未签名。可信下载与 SHA-256 不冒充 Windows 发布者认证；不关闭 Defender/SmartScreen、不指导禁用安全策略。企业策略若禁止未签名程序，应报告限制。清单密码学签名与 Authenticode 分开设计。
 
-可选生产保护：
+定位/修复仅限核准实例，名字相似不证明归属。卸载默认保留业务数据，清理不触碰其他项目或有效恢复资产。员工端未来更新自己，不继承服务端升级权限。
 
-- `ENTERPRISE_ENV=production`
-- `ENTERPRISE_STRICT_SECURITY=1`
+## 5. 敏感文件治理
 
-启用生产/严格模式后，如果 `JWT_SECRET` 仍是占位值，企业层会拒绝启动。
+环境配置、Provider 凭据、Token、Cookie、Authorization、私钥、密码、数据库、客户画布/素材、输出、日志、缓存、Runtime 状态和构建产物不得提交；详见 [代码边界](CODE_BOUNDARIES.md)。
 
----
+`data/api_providers.json` 是运行配置，示例为 `data/api_providers.example.json`。过去停止 Git 跟踪配置的操作是历史记录，不是每次升级步骤；不因示例更新而覆盖现有配置。丢失配置先恢复自己的备份并核验，不把示例占位值带入生产。
 
-## 3. 默认管理员密码风险
+仓库可见性不能代替秘密治理；公开代码和 Release 继续检查敏感信息、依赖与许可证，本文件不固化可见性。
 
-配置时必须使用 `ADMIN_PASSWORD=<generate-a-strong-unique-password>`。固定默认管理员密码仅允许出现在隔离、可丢弃的本地 fixture 中；共享环境、测试主机、staging 和生产环境一律禁止使用固定默认值。
+## 6. 诊断与可选采集
 
-企业层启动时如果检测到默认或示例管理员密码，会输出安全警告，但不会阻断本地开发启动。
+本地包脱敏后保留版本、作业/任务关联、错误类别、时间和必要状态；仍按内部运维资料处理。摘要不是全部日志。
 
----
+远程采集尚未启用；接入前落实管理员授权、客户端告知/开关、最小字段、租户隔离、传输认证、限流、留存/删除和撤回。默认不上传 API Key、完整提示词、画布、媒体或数据库；云资源提议不等于客户上传授权。
 
-## 4. JWT_SECRET 风险
+## 7. 部署/维护检查
 
-默认 `JWT_SECRET=PLEASE_CHANGE_THIS_SECRET_KEY` 或示例占位值不能用于生产。使用默认密钥会导致 Cookie Token 可被伪造或跨环境复用。
-
-企业层启动时会检查：
-
-- 是否仍使用默认/示例 JWT_SECRET
-- JWT_SECRET 是否少于 32 字符
-
-开发模式下输出警告；生产/严格模式下，默认 JWT_SECRET 会阻断启动。
-
----
-
-## 5. 不得提交到 Git 的文件
-
-以下文件或目录不得提交到 Git：
-
-- `enterprise.env`
-- `API/.env`
-- `.env`
-- `data/enterprise.db`
-- `data/*.db`
-- `data/api_providers.json`
-- `data/canvases/`
-- `data/conversations/`
-- `data/update_backups/`
-- `assets/input/`
-- `assets/output/`
-- `assets/library/`
-- `python/`
-- `python.zip`
-- `output/`
-
----
-
-## 6. 运行时配置处理方式
-
-`data/api_providers.json` 是运行时配置文件，可能包含环境相关服务地址、模型列表或未来新增的敏感字段。它不应继续作为仓库内的真实配置来源。
-
-治理方式：
-
-- 提交 `data/api_providers.example.json` 作为示例配置。
-- 将 `data/api_providers.json` 加入 `.gitignore`。
-- 使用 `git rm --cached data/api_providers.json` 仅停止 Git 跟踪，不删除本地真实配置文件。
-- 本地真实配置继续保留在工作区，供当前部署使用。
-
-迁移注意事项：
-
-- 合并本 PR 前，如果当前部署环境依赖 `data/api_providers.json`，请先备份该文件。
-- 合并或拉取本 PR 后，如果 `data/api_providers.json` 从工作区消失，请从备份恢复，或复制 `data/api_providers.example.json` 为 `data/api_providers.json` 后重新配置。
-- 恢复后的 `data/api_providers.json` 会被 `.gitignore` 忽略，不应再次提交。
-
----
-
-## 7. 仓库可见性建议
-
-企业版仓库包含企业维护逻辑、部署脚本和安全文档。即使敏感文件已忽略，也建议仓库保持 Private。
-
-如果仓库必须公开，应确保：
-
-- 不包含真实密钥、Token、Cookie、数据库
-- 不包含真实业务数据或用户资产
-- `enterprise.env` 和运行时配置未被跟踪
-
----
-
-## 8. 安全检查清单
-
-- [ ] `enterprise.env` 已从 `enterprise.env.example` 复制创建
-- [ ] `JWT_SECRET` 已改为 32 字符以上随机值
-- [ ] `ADMIN_PASSWORD` 已改为强密码
-- [ ] `enterprise.env` 未被 Git 跟踪
-- [ ] `API/.env` 未被 Git 跟踪
-- [ ] `data/api_providers.json` 未被 Git 跟踪
-- [ ] `data/api_providers.example.json` 不含真实密钥
-- [ ] `data/enterprise.db` 未被 Git 跟踪
-- [ ] 生产环境设置了 `ENTERPRISE_ENV=production` 或 `ENTERPRISE_STRICT_SECURITY=1`
-- [ ] 仓库可见性符合企业部署要求
+- [ ] 核准实例、模式、数据根和入口，不重复初始化。
+- [ ] 新部署配置唯一；旧安装沿用受保护配置。
+- [ ] Gateway 为唯一对外入口，内部业务端口 loopback-only。
+- [ ] 严格模式/治理生效，无默认凭据与占位秘密。
+- [ ] 文档/诊断/仓库不含秘密或客户原始数据。
+- [ ] 升级兼容、备份/恢复边界完整，不绕过审计或结构检查。
+- [ ] 未知恢复核验有授权/审计；业务开放后不盲目回旧快照。
+- [ ] 未签名风险告知，不禁用安全；远程采集默认关闭。

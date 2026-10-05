@@ -1,5 +1,7 @@
 # Infinite Canvas Enterprise 隔离数据域与 API 矩阵
 
+> 2026-10-03：历史场景矩阵，不是当前全量权限覆盖证明；本文保留原验收日期，角色治理、模块和交付变化以当前状态/测试为准。[替代/现行入口](docs/CURRENT_PROJECT_STATUS.md)。
+
 > 历史设计输入：本文保留早期数据域盘点和权限测试场景，不再是当前实现完成证明或路线图。实际覆盖以代码/测试和 [`docs/CURRENT_PROJECT_STATUS.md`](docs/CURRENT_PROJECT_STATUS.md) 为准；“上游同步”相关门禁已失效。
 
 更新时间：2026-07-08

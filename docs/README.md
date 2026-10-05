@@ -1,91 +1,66 @@
 # Infinite Canvas Enterprise 文档索引
 
-更新时间：2026-09-22
+更新时间：2026-10-03
 
-本文是仓库文档的唯一导航入口。文档必须区分：动态 `origin/main`、未合并分支、GitHub Release、单台客户设备现场结果和通用生产批准；这些状态不能合并表述。
+本文是唯一导航入口。[文档登记表](./document-register.json) 列出仓库全部受管理 Markdown／文本资料的角色；[本轮审查](./ops/DOC-3-DOCUMENT-SYSTEM-AUDIT-2026-10.md) 记录整改依据。文档数量不等于现行规则数量。
 
-## 1. 先读什么
+## 1. 每个问题只有一个事实源
 
-| 顺序 | 文档 | 只负责回答 |
+| 需要回答 | 唯一入口 | 使用边界 |
 | --- | --- | --- |
-| 1 | [当前项目状态](./CURRENT_PROJECT_STATUS.md) | 已实现、分支中、已发布、现场验证和未实现分别是什么 |
-| 2 | [当前架构](../ARCHITECTURE.md) | 当前运行拓扑、数据边界和架构限制 |
-| 3 | [开发路线图](./roadmap/DEVELOPMENT-ROADMAP-2026-2027.md) | 后续任务顺序、依赖和阶段验收条件 |
-| 4 | [代码边界](../CODE_BOUNDARIES.md) | 哪些位置可以修改、哪些数据不得提交 |
-| 5 | [Code Wiki](./code-wiki/README.md) | 模块、关键类/函数、依赖、运行和测试导航 |
-| 6 | [测试说明](../enterprise/tests/README.md) | 可执行验证入口与破坏性边界 |
+| 到哪里了：本地/PR/主线/发布/现场 | [当前项目状态](./CURRENT_PROJECT_STATUS.md) | 带核验日期的快照，不外推生产批准 |
+| 现在如何运行、模块与数据在哪里 | [当前架构](../ARCHITECTURE.md) | 当前实现与目标明确分开 |
+| 接下来按什么顺序开发 | [开发路线图](./roadmap/DEVELOPMENT-ROADMAP-2026-2027.md) | 唯一任务顺序和阶段验收 |
+| 产品包含什么、不包含什么 | [范围锁定](../PROJECT_SCOPE_LOCK.md) / [项目章程](../PROJECT_CHARTER.md) | 产品边界 / 长期原则，不另建任务队列 |
+| 完整安装、更新、恢复如何设计 | [ADR-DELIVERY-001](./decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md) | 已认可设计；实现状态回到项目状态 |
+| 哪些代码/数据能改 | [代码边界](../CODE_BOUNDARIES.md) | 修改、临时产物与数据保护规范 |
+| 怎样开发、验证和汇报 | [开发工作流](../CODEX_WORKFLOW.md) / [测试说明](../enterprise/tests/README.md) | 流程 / 执行命令，优先定向验证 |
+| 安全要求 | [安全基线](../SECURITY_BASELINE.md) | 不以页面按钮或安装确认代替授权 |
+| 查源码与接口 | [Code Wiki](./code-wiki/README.md) | 代码参考，不是第二份状态表/路线图 |
 
-根目录 [README](../README.md) 面向项目入口，[CODEX_WORKFLOW](../CODEX_WORKFLOW.md) 面向开发流程，[ENTERPRISE_DOCS](../ENTERPRISE_DOCS.md) 是企业层快速开发指南；三者不得复制完整当前状态或另建路线图。
+根目录 [README](../README.md) 是项目入口，[ENTERPRISE_DOCS](../ENTERPRISE_DOCS.md) 是快速开发指南；两者链接事实源，不复制整份状态和规划。
 
-## 2. 固定实施顺序
+## 2. 分层与读法
 
-唯一有效的产品演进顺序是：
+- **权威文件**：按上表回答各自问题；固定 SHA 只代表核验时点。
+- **决策**：`docs/decisions/` 保存原则、原因与替代关系。Accepted 表示决定有效，不能当作实现或部署完成。
+- **代码/操作参考**：Code Wiki、测试说明、集成工具 README 等；运行命令要说明源码、旧安装或已交付产品模式，不能混用。
+- **实施记录**：`docs/security/`、`docs/data/`、`docs/ops/`、`docs/env/` 的历史 PR、测试和故障记录。文中的“当前/下一步/未合并”只属于记录时点。
+- **冻结证据**：`docs/env/evidence/` 的原始验收结果，不能为美化进度改写结果、SHA 或限制。
+- **历史方案/来源**：旧蓝图、旧路线、旧上游运行教程。顶部标注替代入口；不再控制现行任务。
+- **产品/法律资源**：许可证、依赖声明、vendor 清单和运行时提示词。它们不是规划文档，不能当“无效文档”删除。
 
-> 安全修复 → 数据升级能力 → 在线升级体验 → 部门与任务 → 资源缓存与桌面壳 → PostgreSQL 及高可用 → 企业集成
+场景 Runbook 只在满足其前提、具有明确授权时使用。旧 CLI 激活手册不是普通客户的安装或升级流程；不执行未知结构上的命令。
 
-这条顺序的核心原因是：所有新增业务表、部门账本、任务记录和缓存元数据，都必须先具备可验证、可恢复、可回滚的数据库升级路径，才能安全交付给现有客户。其它文档不得另设相互竞争的阶段编号或开发路线。
+## 3. 当前关键决定
 
-## 3. 文档分层
+- [统一产品/安装/更新生命周期](./decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md)：长期保留 SQLite 单机；团队服务端目标 PostgreSQL；员工客户端本地缓存；共用更新引擎和稳定入口。
+- [模块化单体](./decisions/ADR-ENV-001-MODULAR-MONOLITH-MIDTERM-ARCHITECTURE-2026-07.md)、[不可变程序版本](./decisions/ADR-ENV-003-IMMUTABLE-RELEASE-STATIC-CACHE-2026-07.md)、[路径根](./decisions/ADR-ENV-004-PATH-ROOTS-AND-RELEASE-DIRECTORY-2026-07.md)、[Manifest/恢复](./decisions/ADR-OPS-006-RELEASE-MANIFEST-V2-DATABASE-ROLLBACK-2026-07.md)、[高风险权限治理](./decisions/ADR-SEC-1A-SUPER-ADMIN-CAPABILITY-GOVERNANCE-2026-07.md) 继续提供相应约束；文内实施状态是历史快照。
+- [旧 Greenfield-only 决策](./decisions/ADR-OPS-007-GREENFIELD-PRODUCTION-BASELINE-AND-LEGACY-NON-MIGRATION-2026-07.md) 的产品范围已被统一交付 ADR 替代，不再拒绝所有旧客户迁移。
+- [旧运维路线](./ops/OPS-ROADMAP-2026-07.md) 和 [旧企业蓝图](./architecture/ENTERPRISE-ARCHITECTURE-BLUEPRINT-2026-07.md) 仅作历史材料；当前顺序只认唯一路线图。
 
-### A. 当前事实源
+## 4. 原有重复入口与分支差异
 
-- [CURRENT_PROJECT_STATUS.md](./CURRENT_PROJECT_STATUS.md)
-- [ARCHITECTURE.md](../ARCHITECTURE.md)
-- [DEVELOPMENT-ROADMAP-2026-2027.md](./roadmap/DEVELOPMENT-ROADMAP-2026-2027.md)
-- [PROJECT_SCOPE_LOCK.md](../PROJECT_SCOPE_LOCK.md)
-- [CODE_BOUNDARIES.md](../CODE_BOUNDARIES.md)
-- [SECURITY_BASELINE.md](../SECURITY_BASELINE.md)
+主线已经删除 `AGENT_CONTEXT.md`、`HANDOVER.md`、`PROJECT_HANDOFF_FOR_NEW_AGENT.md`、`DEVELOPMENT_PLAN.md`、`docs/upstream/README.upstream.md` 等旧交接入口，可从 Git 历史审计。**这是主线事实，不表示所有维护分支都已删除。**
 
-只有这些文件可以陈述“当前是什么”和“下一步做什么”。固定 SHA 只代表记录时点，不得被解释为永久当前值。
+客户维护线仍有文档差异；回归主线时采用本索引与登记表，不把旧队列原样复活，也不把主线新记录丢弃。保留有价值的实施证据并分类，不能将原始历史文档伪装成当前规划。
 
-### B. 决策记录
+## 5. 后续维护规范
 
-`docs/decisions/` 保存不可轻易回退的架构与运维决定。ADR 的 `Accepted` 只表示决策生效，不表示实现、发布或生产部署已经完成。
+1. 一次任务只更新受影响事实源；只有阶段/测试入口改变时才改对应路线图/测试说明，避免纯拼写修改也扩散成全仓更新。
+2. 实现 PR 记录准确 Base/Head、通道、兼容、升级/恢复和验证范围；main、维护分支、Release、客户单设备结果分别写。
+3. 新增、移动或改名 Markdown／文本资料时同步登记表，说明为何不能复用现有入口。不得增加第二份动态状态、重复路线图或每次会话交接包。
+4. ADR 更改原则时写明被替代条款；实施状态更新不改写原始验收结论。冻结证据/法律资源的内容变更需要独立理由和审查。
+5. 运行命令不得包含真实凭据或客户数据；测试目录、构建产物、下载与备份不进入文档树或盘符根目录。
+6. 每轮完成时报告“已完成、验证证据、剩余风险、下一轮”；不把文档检查当业务运行测试。
+7. 以轻量文档检查防止漏登记、断链和重复事实源；不能用它判断全部语义正确、外链可达或客户版本兼容。
+8. 不设独立干净 Windows 设备或付费签名预算前置条件；保留已有 CI、定向故障测试与必要现场回归，不无理由重跑 PR 全套门禁。
 
-当前关键决策包括：
+从仓库根运行：
 
-- [模块化单体中期架构](./decisions/ADR-ENV-001-MODULAR-MONOLITH-MIDTERM-ARCHITECTURE-2026-07.md)
-- [不可变 Release 与静态资源策略](./decisions/ADR-ENV-003-IMMUTABLE-RELEASE-STATIC-CACHE-2026-07.md)
-- [路径根与版本目录](./decisions/ADR-ENV-004-PATH-ROOTS-AND-RELEASE-DIRECTORY-2026-07.md)
-- [Manifest v2 与数据库回滚](./decisions/ADR-OPS-006-RELEASE-MANIFEST-V2-DATABASE-ROLLBACK-2026-07.md)
-- [超级管理员高风险能力治理](./decisions/ADR-SEC-1A-SUPER-ADMIN-CAPABILITY-GOVERNANCE-2026-07.md)
+```powershell
+py -3.11 -B tools/check_docs.py
+py -3.11 -B -m unittest discover -s enterprise/tests -p test_documentation_contract.py
+```
 
-### C. 实施与验收记录
-
-- `docs/security/`：已经实施或审查的安全工作。
-- `docs/data/`：数据库 migration、backup、restore 基础。
-  - [DATA-MVP-1 独立复核记录](./data/DATA-MVP-1-INDEPENDENT-REVIEW-2026-09.md)
-  - [UPDATE-DATA-1 更新中心迁移/恢复集成](./data/UPDATE-DATA-1-UPDATE-CENTER-MIGRATION-INTEGRATION-2026-09.md)
-- `docs/ops/`：Release、Runtime、更新、安装和现场收敛记录。
-- `docs/env/`：可复现 Runtime、路径根、入口和环境验证。
-- `docs/env/evidence/`：只读验收证据，不作为当前任务入口。
-- `docs/runbooks/`：明确场景下的操作手册。
-
-记录型文档保留历史原貌；如果结论被替代，在顶部写明替代文档，不在正文中悄悄改写历史。
-
-### D. 历史来源材料
-
-`docs/upstream/` 只记录项目历史来源及 2026 年 7 月已经完成的受控同步。来源代码已冻结为历史基线，项目后续独立演进；该目录不得再被当作当前同步计划或开发门禁。
-
-## 4. 已清理的旧入口
-
-以下根目录文档曾包含 2026 年 6–7 月的状态、旧上游同步约束和重复任务队列，现已从工作树删除；需要审计时可从 Git 历史读取：
-
-- `AGENT_CONTEXT.md`
-- `HANDOVER.md`
-- `PROJECT_HANDOFF_FOR_NEW_AGENT.md`
-- `DEVELOPMENT_PLAN.md`
-- `docs/upstream/README.upstream.md`
-
-删除这些文件不会删除实现或验收证据；它只取消过时文档作为开发入口的资格。
-
-## 5. 维护规则
-
-1. 实现 PR 必须同步更新 `CURRENT_PROJECT_STATUS`、路线图对应阶段和测试说明。
-2. 规划内容使用“计划/未实现”，不能使用完成时态。
-3. 文档中的 Git 状态必须注明核验日期、分支/PR/Release 身份。
-4. 客户现场结果必须注明适用设备和版本，不能外推为所有环境。
-5. 不再新增 Agent 交接包、重复开发计划或根目录状态日志；统一更新本索引指向的事实源。
-6. 不在文档中保存 secret、真实令牌、客户数据、本机运行目录或临时诊断内容。
-7. 项目负责人已取消独立 Windows 主机验收门禁；CI 限制、未覆盖场景和人工验证仍须准确披露。
-8. 上游来源归属和许可证继续保留，但“持续同步上游”不再是产品约束。
+上例用于已有 Python 3.11 的 Windows 开发环境，不是客户安装步骤；其他环境使用已确认的 Python 解释器，不把商店别名空输出当成功。无需安装项目业务依赖，检查只读，不启动/停止服务或访问客户数据。其完整范围见 [审查记录](./ops/DOC-3-DOCUMENT-SYSTEM-AUDIT-2026-10.md)。
