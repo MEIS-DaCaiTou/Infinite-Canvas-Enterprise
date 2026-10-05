@@ -223,7 +223,7 @@ def _public(plan, status):
 
 
 def repair_program(*, install_root: Path, release_dir: Path, local_app_data_base: Path,
-                   confirm_no_active_tasks: bool = False) -> dict:
+                   confirm_no_active_tasks: bool = False, notify_progress=None) -> dict:
     if confirm_no_active_tasks is not True:
         _fail("INSTALL_PROGRAM_TASK_CONFIRMATION_REQUIRED")
     assets = verify_release_assets(release_dir)
@@ -258,18 +258,21 @@ def repair_program(*, install_root: Path, release_dir: Path, local_app_data_base
     area.mkdir(parents=True, exist_ok=True)
     directory.mkdir()
     candidate = directory / "candidate"
-    materialize_release_fixture(assets.manifest_path, assets.archive_path, assets.inventory_path, candidate)
     runner = _write_new(directory / "runner.lock", b"R")
-    plan = {"schema_version": PLAN_SCHEMA, "operation_id": operation,
-            "root_identity": roots.root_identity, "installation_id": installation_id,
-            "release_id": roots.APP_ROOT.name, "manifest_sha256": assets.manifest.raw_sha256,
-            "installation_record": record, "pointer": pointer, "original": original,
-            "candidate": _tree_token(candidate), "runner": _file_token(runner)}
-    _write_new(directory / "plan.json", canonical_json(plan))
-    sync_state_root_directory(directory)
-    marker = canonical_json({"schema_version": LOCK_SCHEMA, "operation_id": operation,
-                             "plan_sha256": _sha(canonical_json(plan)), "root_identity": roots.root_identity})
     with _runner_lease(directory / "runner.lock", runner):
+        from enterprise.install_repair_status import RepairProgress
+        binding = {"operation_id": operation, "root_identity": roots.root_identity,
+                   "installation_id": installation_id, "release_id": roots.APP_ROOT.name,
+                   "manifest_sha256": assets.manifest.raw_sha256, "installation_record": record,
+                   "pointer": pointer, "original": original, "runner": _file_token(runner)}
+        progress = RepairProgress(roots, binding, notify_progress)
+        progress.emit("preparing")
+        materialize_release_fixture(assets.manifest_path, assets.archive_path, assets.inventory_path, candidate)
+        plan = {"schema_version": PLAN_SCHEMA, **binding, "candidate": _tree_token(candidate)}
+        _write_new(directory / "plan.json", canonical_json(plan))
+        sync_state_root_directory(directory)
+        marker = canonical_json({"schema_version": LOCK_SCHEMA, "operation_id": operation,
+                                 "plan_sha256": _sha(canonical_json(plan)), "root_identity": roots.root_identity})
         try:
             lock = _write_new(lock_path, marker)
         except FileExistsError as exc:
@@ -279,6 +282,7 @@ def repair_program(*, install_root: Path, release_dir: Path, local_app_data_base
         terminal = False
         committed = False
         try:
+            progress.emit("locked")
             _checkpoint("locked")
             _safe(roots.RUNTIME_ROOT, missing=True).mkdir(parents=True, exist_ok=True)
             fence = _write_new(fence_path, marker)
@@ -288,16 +292,19 @@ def repair_program(*, install_root: Path, release_dir: Path, local_app_data_base
             if _tree_token(roots.APP_ROOT) != original or _tree_token(candidate) != plan["candidate"]:
                 _fail()
             _checkpoint("prepared")
+            progress.emit("publishing")
             if original is not None:
                 roots.APP_ROOT.rename(directory / "original")
             _checkpoint("original_moved")
             candidate.rename(roots.APP_ROOT)
             _checkpoint("candidate_published")
+            progress.emit("verifying")
             verify_materialized_release(roots.APP_ROOT, inventory_path=roots.APP_ROOT / "release-payload-inventory.json")
             _assert_plan_source(plan, *_identity_gate(root, assets, local_app_data_base))
             sync_state_root_directory(roots.RELEASE_ROOT)
             _result(directory, plan, "SUCCEEDED")
             committed = True
+            progress.emit("committed")
             _checkpoint("committed")
             terminal = True
         except Exception as exc:
@@ -305,6 +312,7 @@ def repair_program(*, install_root: Path, release_dir: Path, local_app_data_base
                 # A committed outcome must never be converted to a rollback.
                 if not committed:
                     _rollback(directory, plan, roots)
+                    progress.emit("rolled_back")
                 terminal = True
             except Exception as recovery_error:
                 raise ProgramRepairError("INSTALL_PROGRAM_RECOVERY_REQUIRED") from recovery_error
@@ -320,7 +328,7 @@ def repair_program(*, install_root: Path, release_dir: Path, local_app_data_base
 
 
 def recover_program(*, install_root: Path, release_dir: Path, local_app_data_base: Path,
-                    confirm_no_active_tasks: bool = False) -> dict:
+                    confirm_no_active_tasks: bool = False, notify_progress=None) -> dict:
     if confirm_no_active_tasks is not True:
         _fail("INSTALL_PROGRAM_TASK_CONFIRMATION_REQUIRED")
     assets = verify_release_assets(release_dir)
@@ -364,6 +372,9 @@ def recover_program(*, install_root: Path, release_dir: Path, local_app_data_bas
             fence = _write_new(fence_path, lock.data)
         _runtime_quiescent(roots)
         _assert_plan_source(plan, *_identity_gate(root, assets, local_app_data_base))
+        from enterprise.install_repair_status import RepairProgress, _binding
+        progress = RepairProgress(roots, _binding(plan), notify_progress)
+        progress.emit("recovering")
         result = _snapshot(directory / "result.json", maximum=16384)
         status = _document(result.data).get("status") if result else None
         if result and result.data != canonical_json({"schema_version": RESULT_SCHEMA,
@@ -380,4 +391,5 @@ def recover_program(*, install_root: Path, release_dir: Path, local_app_data_bas
             _fail()
         _release_marker(fence_path, fence)
         _release_marker(lock_path, lock)
+        progress.emit("committed" if status == "SUCCEEDED" else "rolled_back")
     return _public(plan, status)

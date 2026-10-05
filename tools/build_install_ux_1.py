@@ -299,6 +299,7 @@ def build(args: argparse.Namespace) -> dict[str, object]:
         "ArchiveFilename": assets.archive_path.name,
         "ArchiveSha256": str(asset_records[0]["sha256"]),
         "ArchiveSize": str(asset_records[0]["size_bytes"]),
+        "ArchiveUncompressedSize": str(archive_uncompressed),
         "ManifestFilename": assets.manifest_path.name,
         "ManifestSha256": str(asset_records[1]["sha256"]),
         "ManifestSize": str(asset_records[1]["size_bytes"]),

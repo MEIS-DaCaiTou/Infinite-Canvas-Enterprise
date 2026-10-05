@@ -17,6 +17,7 @@
     "pipe_instances": 1,
     "request_schema": "enterprise-install-maintenance-request-v2",
     "legacy_request_schema": "install-ux-1-request-v1",
+    "graphical_maintenance_request_schema": "enterprise-install-maintenance-request-v4",
     "result_schema": "install-ux-1-result-v1",
     "scope": "current-user-only"
   },
@@ -29,7 +30,14 @@
   "installer_architecture": "x64",
   "installer_filename_pattern": "Infinite-Canvas-Enterprise-Setup-<version>-x64.exe",
   "installer_source": "installer/windows/InfiniteCanvasEnterprise.iss",
-  "maintenance_operations": ["install", "repair-entry"],
+  "maintenance_operations": ["install", "repair-entry", "repair-program", "recover-program", "inspect-program"],
+  "program_maintenance": {
+    "same_release_only": true,
+    "progress_is_authority": false,
+    "closed_window_cancels_worker": false,
+    "payload_storage": "current-user-product-cache",
+    "unverified_payload_cleanup": false
+  },
   "native_entry": {
     "filename": "InfiniteCanvas.exe",
     "build_record_schema": "enterprise-native-entry-build-record-v1",
