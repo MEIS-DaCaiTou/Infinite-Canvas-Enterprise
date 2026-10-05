@@ -37,7 +37,7 @@
 
 ## 3. Portable 启动信任链
 
-下图为源码/旧安装 BAT 兼容链路。固定原生入口已通过 PR #138 选择性回归 main，不绑定应用目标，不另写 Runtime；安装接线及入口专用修复仍是后续候选，不是完整安装维护产品交付。
+下图为源码/旧安装 BAT 兼容链路。固定原生入口 #138、安装接线及入口专用修复 #139 已选择性回归 main，不绑定应用目标，不另写 Runtime；这不是完整安装维护产品交付。
 
 `installer/windows/native/` 用 C# 处理固定入口、Windows UI 和受限进程调用：读取 `state/current-release.json`，校验 Manifest 与完整 inventory，再调用该 Release 内 `python/python.exe -I -B enterprise/runtime/launcher.py portable <command>`。`tools/build_native_entry.py` 使用外置固定编译器双构建，仅生成全新 artifact 根，不写客户安装、不迁移数据库。构建、安装器接线和真实 Runtime 验收必须区分，见 [实施记录](../ops/DELIVERY-1-FIXED-NATIVE-ENTRY-2026-10.md)。
 
@@ -99,7 +99,7 @@ flowchart TD
 
 ## 6. 首次安装
 
-以下为 fresh-install 实现，不是完整更新/修复/卸载产品。安装接线候选将快捷方式指向 `<INSTALL_ROOT>/InfiniteCanvas.exe`，新装要求与 Release 同 commit/tree 的独立原生构建。`Uninstallable=no` 暂留，标准卸载是后续明确待办；旧主线接线/客户包不因本候选自动变化。
+以下为 fresh-install 实现，不是完整更新/修复/卸载产品。主线 #139 已将快捷方式指向 `<INSTALL_ROOT>/InfiniteCanvas.exe`，新装要求与 Release 同 commit/tree 的独立原生构建。`Uninstallable=no` 暂留，标准卸载是后续明确待办；已公开客户包不因主线合并自动变化。
 
 `fresh_install.py` 的主要阶段：
 
@@ -113,7 +113,7 @@ flowchart TD
 
 `install_setup_bridge.py` 通过当前用户 SID 约束的 named pipe 接收安装器输入，避免在命令行或环境变量中暴露密码。
 
-### 安装接线候选的入口修复
+### 已接线的入口专用修复
 
 `enterprise.install_entry` 只负责固定入口和实例元数据，不是第二套数据库/升级引擎：
 
@@ -123,6 +123,8 @@ flowchart TD
 - 共用 `system-update-active.lock`，原文件和写入文件都以内容＋文件身份约束；中途失败只恢复本次拥有的两个入口文件。未知文件、移位实例记录、重解析或已有锁阻断。
 - 不能证明入口恢复时保留锁及备份，不能删锁试错；崩溃后图形恢复及完整程序/运行环境修复尚未实现。
 - 新装对未支持的过深目的路径做写入前阻断，不更改 Windows 长路径策略；这不是宣称已兼容任意长路径。
+
+本轮增量候选在环境页与最后准备页明确安装根和“只修复入口、不是业务升级”的范围，不填写旧安装管理员密码；最终仍由 Python 完整核验，不以页面目录形状替代资格。真实安装副本/服务测试入口与其权限和证据边界见 [测试说明](../../enterprise/tests/README.md)。portable host 的路径修正保留 containment 校验，同时维持可信 KnownFolder 的原目录身份，避免 Windows 目录重定向被 `resolve()` 替换后导致 context 不匹配；不放宽完整进程/文件身份校验。
 
 ## 7. 在线更新
 
