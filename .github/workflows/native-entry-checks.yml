@@ -3,6 +3,7 @@ name: Native fixed entry checks
 on:
   pull_request:
     paths:
+      - '.gitattributes'
       - 'installer/windows/native/**'
       - 'installer/windows/native-entry-build-policy.json'
       - 'tools/build_native_entry.py'
@@ -13,6 +14,7 @@ on:
   push:
     branches: [main]
     paths:
+      - '.gitattributes'
       - 'installer/windows/native/**'
       - 'installer/windows/native-entry-build-policy.json'
       - 'tools/build_native_entry.py'
