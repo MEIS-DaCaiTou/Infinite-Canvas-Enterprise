@@ -23,6 +23,7 @@ from ctypes import wintypes
 
 REQUEST_SCHEMA = "install-ux-1-request-v1"
 MAINTENANCE_REQUEST_SCHEMA = "enterprise-install-maintenance-request-v2"
+PROGRAM_MAINTENANCE_REQUEST_SCHEMA = "enterprise-install-maintenance-request-v3"
 RESULT_SCHEMA = "install-ux-1-result-v1"
 MAX_FRAME_BYTES = 16 * 1024
 CONNECT_TIMEOUT_SECONDS = 45.0
@@ -117,7 +118,12 @@ def _decode_request(raw: bytes) -> dict[str, object]:
         "install_root",
     }
     schema = payload.get("schema_version")
-    if schema == MAINTENANCE_REQUEST_SCHEMA:
+    if schema == PROGRAM_MAINTENANCE_REQUEST_SCHEMA:
+        expected.update({"operation", "confirm_no_active_tasks"})
+        if (payload.get("operation") not in {"repair-program", "recover-program"}
+                or payload.get("confirm_no_active_tasks") is not True):
+            raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
+    elif schema == MAINTENANCE_REQUEST_SCHEMA:
         expected.add("operation")
         if payload.get("operation") not in {"install", "repair-entry"}:
             raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
@@ -137,7 +143,7 @@ def _decode_request(raw: bytes) -> dict[str, object]:
         raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
     if payload["install_mode"] == "custom" and not install_root:
         raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
-    if payload.get("operation") == "repair-entry" and any(payload[field] for field in ("username", "password", "password_confirmation")):
+    if payload.get("operation") in {"repair-entry", "repair-program", "recover-program"} and any(payload[field] for field in ("username", "password", "password_confirmation")):
         raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
     return payload
 
@@ -251,7 +257,7 @@ def _validated_install_root(
     if _paths_overlap(target, raw_app_root) or _paths_overlap(target, release_dir):
         raise SetupBridgeError("INSTALL_TARGET_OVERLAP")
     try:
-        if request.get("operation", "install") == "repair-entry":
+        if request.get("operation", "install") in {"repair-entry", "repair-program", "recover-program"}:
             if not target.is_dir():
                 raise SetupBridgeError("INSTALL_ENTRY_SOURCE_INVALID")
         elif target.exists() and (not target.is_dir() or any(target.iterdir())):
@@ -293,6 +299,14 @@ def _run_install_request(
         release_dir=assets,
         known_folder=known_folder,
     )
+    if request.get("operation") in {"repair-program", "recover-program"}:
+        from enterprise.install_repair import repair_program, recover_program
+        handler = recover_program if request["operation"] == "recover-program" else repair_program
+        result = handler(install_root=target, release_dir=assets, local_app_data_base=known_folder,
+                         confirm_no_active_tasks=request["confirm_no_active_tasks"])
+        return {"schema_version": RESULT_SCHEMA, "status": "succeeded",
+                "code": "INSTALL_PROGRAM_RECOVERED" if request["operation"] == "recover-program" else "INSTALL_PROGRAM_REPAIRED",
+                **result}
     if request.get("operation") == "repair-entry":
         source = verified.manifest.section("enterprise_source")
         entry = verify_entry_bundle(assets / "native-entry", commit=str(source["commit"]), tree=str(source["tree"]))

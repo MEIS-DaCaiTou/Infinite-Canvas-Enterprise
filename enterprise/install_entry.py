@@ -157,36 +157,40 @@ def validate_entry_target_paths(root: Path, release_id: str, inventory_path: Pat
         raise InstallEntryError("INSTALL_ENTRY_TARGET_PATH_TOO_LONG")
 
 
+def validate_installation_record(root: Path, before: Snapshot) -> dict:
+    """Validate an existing identity without creating one or changing its entry."""
+    old = _document(before.data)
+    if (set(old) != {"schema_version", "product", "installation_id", "install_root",
+                    "deployment_role", "scope", "data_relative", "config_relative",
+                    "release_pointer_relative", "update_protocol", "channel", "native_entry"}
+            or old.get("schema_version") != RECORD_SCHEMA or old.get("product") != PRODUCT
+            or not isinstance(old.get("installation_id"), str) or not INSTANCE.fullmatch(old["installation_id"])
+            or os.path.normcase(str(old.get("install_root"))) != os.path.normcase(str(root))
+            or old.get("deployment_role") != "single-host" or old.get("scope") != "current-user"
+            or old.get("data_relative") != "data" or old.get("config_relative") != "config"
+            or old.get("release_pointer_relative") != "state/current-release.json"
+            or type(old.get("update_protocol")) is not int or old["update_protocol"] != 1
+            or old.get("channel") not in {"stable", "development"}
+            or not isinstance(old.get("native_entry"), dict)
+            or set(old["native_entry"]) != {"filename", "sha256", "source_commit", "source_tree", "build_record_sha256"}
+            or old["native_entry"].get("filename") != ENTRY_NAME
+            or not all(isinstance(old["native_entry"].get(key), str) and SHA.fullmatch(old["native_entry"][key])
+                       for key in ("sha256", "build_record_sha256"))
+            or not all(isinstance(old["native_entry"].get(key), str) and COMMIT.fullmatch(old["native_entry"][key])
+                       for key in ("source_commit", "source_tree"))):
+        raise InstallEntryError("INSTALL_IDENTITY_INVALID")
+    return old
+
+
 def _record(root: Path, entry: NativeEntry, before: Snapshot | None) -> dict:
-    identity = uuid.uuid4().hex
-    if before is not None:
-        old = _document(before.data)
-        if (set(old) != {"schema_version", "product", "installation_id", "install_root",
-                         "deployment_role", "scope", "data_relative", "config_relative",
-                         "release_pointer_relative", "update_protocol", "channel", "native_entry"}
-                or old.get("schema_version") != RECORD_SCHEMA or old.get("product") != PRODUCT
-                or not isinstance(old.get("installation_id"), str) or not INSTANCE.fullmatch(old["installation_id"])
-                or os.path.normcase(str(old.get("install_root"))) != os.path.normcase(str(root))
-                or old.get("deployment_role") != "single-host" or old.get("scope") != "current-user"
-                or old.get("data_relative") != "data" or old.get("config_relative") != "config"
-                or old.get("release_pointer_relative") != "state/current-release.json"
-                or type(old.get("update_protocol")) is not int or old["update_protocol"] != 1
-                or old.get("channel") not in {"stable", "development"}
-                or not isinstance(old.get("native_entry"), dict)
-                or set(old["native_entry"]) != {"filename", "sha256", "source_commit", "source_tree", "build_record_sha256"}
-                or old["native_entry"].get("filename") != ENTRY_NAME
-                or not all(isinstance(old["native_entry"].get(key), str) and SHA.fullmatch(old["native_entry"][key])
-                           for key in ("sha256", "build_record_sha256"))
-                or not all(isinstance(old["native_entry"].get(key), str) and COMMIT.fullmatch(old["native_entry"][key])
-                           for key in ("source_commit", "source_tree"))):
-            raise InstallEntryError("INSTALL_IDENTITY_INVALID")
-        identity = old["installation_id"]
+    old = validate_installation_record(root, before) if before is not None else None
+    identity = old["installation_id"] if old else uuid.uuid4().hex
     return {
         "schema_version": RECORD_SCHEMA, "product": PRODUCT, "installation_id": identity,
         "install_root": str(root), "deployment_role": "single-host", "scope": "current-user",
         "data_relative": "data", "config_relative": "config",
         "release_pointer_relative": "state/current-release.json", "update_protocol": 1,
-        "channel": _document(before.data)["channel"] if before else "stable",
+        "channel": old["channel"] if old else "stable",
         "native_entry": {"filename": ENTRY_NAME, "sha256": entry.sha256,
                          "source_commit": entry.source_commit, "source_tree": entry.source_tree,
                          "build_record_sha256": entry.record_sha256},

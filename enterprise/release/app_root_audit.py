@@ -540,6 +540,7 @@ _OTHER_FLOW_BY_SYMBOL: dict[tuple[str, str], str] = {
     ("enterprise/runtime/state.py", "RuntimeStateStore.remove_ack"): "W26",
     ("enterprise/runtime/state.py", "RuntimeStateStore.reconcile_reboot_stale_state"): "W26",
     ("enterprise/runtime/state.py", "RuntimeStateStore.reserve_lock"): "W26",
+    ("enterprise/runtime/state.py", "RuntimeStateStore._reservation_survives_reconcile"): "W26",
     ("enterprise/runtime/state.py", "_atomic_json_replace"): "W26",
     ("enterprise/runtime/writable_probe.py", "probe_writable_root"): "W42",
     ("get-pip.py", "main"): "W35",
@@ -621,6 +622,15 @@ def _flow_for_operation(file: str, symbol: str) -> str:
         # constrain rollback. Existing business data and APP_ROOT are not
         # writable repair targets; unknown files and recovery locks block.
         return "W47"
+    if file == "enterprise/install_repair.py" and symbol in {
+        "_runner_lease", "_release_marker", "_rollback", "repair_program", "recover_program",
+    }:
+        # DELIVERY-1 stopped, same-Release maintenance is an explicit exception
+        # to runtime APP_ROOT immutability. A verified external bundle stages a
+        # full directory before a fenced, identity-bound rename; retain the old
+        # tree and immutable plan/result. Only this operation's locks and trees
+        # can be recovered. No database, config, pointer or entry writes.
+        return "W47"
     if file.startswith("tools/validation/windows/env_1b3/"):
         # ENV-1B3 writes only to explicit test-host roots, isolated tamper
         # copies, or development-owned candidate/evidence roots. It never
@@ -635,7 +645,7 @@ def _flow_for_operation(file: str, symbol: str) -> str:
 # every mapped site as (file, symbol, operation, normalized-call fingerprint,
 # Wxx flow). Line numbers are deliberately excluded, while duplicate identical
 # calls remain duplicate records. Any added/removed/changed call drifts it.
-EXPECTED_SITE_MANIFEST_DIGEST = "d71e4dfcef67e04bb6498bb767f12dcfa281da751068fa22ef3f7e16c66e2c93"
+EXPECTED_SITE_MANIFEST_DIGEST = "c6674e2e2e465949c6294180d5ae8099f37e879a9320e3a38da9663c1cee8af1"
 
 FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W01", "main.py", "startup_event"),

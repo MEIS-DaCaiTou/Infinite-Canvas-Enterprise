@@ -186,8 +186,7 @@ def test_fresh_install_publishes_entry_before_pointer_and_undoes_precommit_failu
         assert not (root / "state/system-update-active.lock").exists()
 
 
-@pytest.mark.parametrize("recovery_race", [False, True])
-def test_entry_repair_uses_real_release_verifier_and_leaves_database_and_pointer_untouched(tmp_path, monkeypatch, recovery_race):
+def qualified_program_fixture(tmp_path):
     manifest, archive, inventory, document = _fixture(tmp_path / "assets")
     # The verifier fixture intentionally omits a runnable application. Add the
     # portable layout without bypassing any source/policy/inventory bindings.
@@ -217,6 +216,13 @@ def test_entry_repair_uses_real_release_verifier_and_leaves_database_and_pointer
         "manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
         "activated_at": "2026-10-05T00:00:00Z", "previous_release_id": None})
     (root / "state/current-release.json").write_bytes(pointer)
+    return root, manifest, archive, inventory, document
+
+
+@pytest.mark.parametrize("recovery_race", [False, True])
+def test_entry_repair_uses_real_release_verifier_and_leaves_database_and_pointer_untouched(tmp_path, monkeypatch, recovery_race):
+    root, manifest, archive, inventory, document = qualified_program_fixture(tmp_path)
+    app = root / "releases" / str(document["identity"]["release_id"])
     before = {str(p): p.read_bytes() for p in root.rglob('*') if p.is_file()}
     entry = bundle(tmp_path / "native")
     if recovery_race:

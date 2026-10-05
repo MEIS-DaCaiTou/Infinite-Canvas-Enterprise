@@ -2,7 +2,7 @@
 
 记录日期：2026-10-05。本文是本轮实施证据，不是新路线图、客户安装教程或生产批准。状态只见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，任务顺序只见 [路线图](../roadmap/DEVELOPMENT-ROADMAP-2026-2027.md)。
 
-第 1–5 节保留固定入口首轮的准确基线与当时范围；安装接线见第 6 节，#139 合并及实际安装副本演练见第 7 节，不能把旧轮次的“未合并/未接线/未启动”继续当最新状态。
+第 1–5 节保留固定入口首轮的准确基线与当时范围；安装接线见第 6 节，#139 合并及实际安装副本演练见第 7 节，#140 合并及同版本程序修复候选见第 8 节。不能把旧轮次的“未合并/未接线/未启动”继续当最新状态。
 
 ## 1. 准确基线与文档审查
 
@@ -156,3 +156,61 @@ builder 的报告单独保存；交给安装器的资产目录仅含严格三资
 完整程序/Python 环境损坏修复、标准保留数据卸载、维护进程被终止后的图形恢复、worker 截止/取消、自动多跳/自更新、历史来源统一业务升级，以及客户实际图形新装/修复和长期运行验收仍未完成。入口修复的已知异常回退和未知锁阻止不能替代这些能力；当前阶段仍为阶段 3，不启动大规模业务扩张。
 
 本轮未连接客户设备、使用客户数据/密码、执行付费生成、改系统安全策略、开启诊断上传或清理其它项目。配置中的测试凭据仅属新建夹具，不写进公共测试输出或 PR。
+
+## 8. #140 审查合并与程序/Python 修复候选（2026-10-05）
+
+### 主线基线与审查
+
+- #140 Base `dc6a24fae88a74848d2c6d0eb6a088d892a1e2e3`，Head `c8715ebe534d7453e0222725d50c258e7eb0cfbe`。准确 binary commit-range diff 共 56,267 字节，SHA-256 `844288b586e8b6510cb49408ce73dd0ed60f9946911990166a0695a94cee63cf`。
+- 只读补丁影响审查检查 portable 路径/进程身份、安装器回调与现有测试，未发现阻断；建议经授权审查合并，不把尚未执行的修正向导点击写成验收。审查记录见 [#140 comment](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/140#issuecomment-5990288062)。
+- 准确 Head 四项 CI 全通过：Enterprise **1081 passed/29 skipped**、Runtime **36 passed**、原生构建/入口 **38 passed**＋安装检查 **3 passed**、文档检查及其 **17 单元测试**。CI 链接见 CURRENT；本轮没有额外手动重跑 #140 全套门禁。
+- 10-05 合并为 `ef4523d7c78a4422021c388289dea44bc341ae3d`，merge tree `c1da3d2ad629bd099bed556cfcff1e2d44f44ab1` 与已测试 Head tree 一致。
+- 本轮新候选 `codex/delivery-program-repair-20261005` 从该 main 创建，实现提交 `16f77c67f862af93a88ef99dc8de06818ba38147`。后面的安装包用于安装副本验证，未发布、不代替客户 09.9；主线/候选/公开 Release 分开。
+
+### 新实现范围
+
+`enterprise.install_repair` 只修复已登记、停止状态、**同一准确 Release/Manifest** 的程序目录和内置 Python，使用外部已核验完整包，不能要求损坏的安装 Python 自行修复。
+
+1. 复用 Manifest v2 校验/物化、安装身份验证、current pointer、共用维护锁和 Runtime 检查；不另写数据库升级引擎。只有已知程序路径允许损坏/缺失，额外未知文件/空目录拒绝，不猜测文件归属。
+2. 在安装根自己的 `staging/program-repairs/<操作短 ID>/` 准备 candidate、不可覆盖 plan/result 和独占 kernel lease；过深目的路径在准备前阻止。原始损坏树与 rejected 新树保留为证据，不递归清理未知目录。
+3. 共用 `system-update-active.lock` 与当前用户 Runtime fence。启动预约创建后再次检查 fence，避免修复与启动竞争。读当前 Runtime 状态/进程/端口，不停止、杀死或接管其它安装；未知锁/活动 Runtime 阻止操作。
+4. 准备成功再移动停止的程序目录；不打开业务数据库、不创建账号、不写配置/画布/素材/实例记录/根入口/版本指针。任务中心尚未完整交付，要求明确确认没有活动任务，不宣称可排空所有旧内存任务。
+5. 普通失败恢复修复前树；真实执行器退出后 kernel lease 由操作系统释放，第二执行器重新核验 plan、锁、文件身份和内容。没有成功记录时恢复原树；成功记录和新树一致时完成释放，不把成功操作转成回退。
+6. identity/pointer/plan/备份/锁变动、存活执行器或未知状态保持阻断和证据。**回退到原损坏程序只是恢复修复前一致状态，并不等于已修好；核验后可重试修复。** 不通过删锁或重建数据库“恢复”。
+
+`install_setup_bridge` 保留 v1/v2 的封闭协议，新增 v3 仅接 `repair-program` / `recover-program`，必须显式任务确认，拒绝管理员凭据和未知字段。当前 Inno 仍是 v2 入口专用修复；新后台 handler 不等于图形按钮已交付，也不接管旧入口专用锁或业务更新 RECOVERY_REQUIRED。
+
+### 定向验证与完整构建
+
+- 安装/入口/新程序修复初轮回归 **104 passed/1 skipped**；补严格端口语法后，新程序修复文件 **34 passed**。覆盖丢失整个程序目录、程序/Python 损坏、已知错误回退、五个中断点、未知文件/空目录/任务状态/待恢复作业阻止、身份/指针/计划/备份/锁变化保持证据、存活执行器不被抢占，以及两种启动预约的 fence 竞争。
+- Runtime 受影响路径/进程/监督回归：`test_runtime_reliability.py test_env_1b1c_b2_portable.py test_env_1b1c_b2_lifecycle_identity.py test_stab_1_supervisor_logging.py`，**106 passed**，266.37 秒；现有 FastAPI 事件弃用警告未扩大为本轮无关改造。
+- APP_ROOT 写入审计 **7 passed/23 deselected**。新写入明确属于 W47 停止状态同版本维护例外，Runtime fence 归 W26；不宣称 APP_ROOT 在所有维护阶段绝对不可写。冻结清单哈希 `c6674e2e2e465949c6294180d5ae8099f37e879a9320e3a38da9663c1cee8af1`，467 站点全部映射，无解析/未覆盖/漂移错误。
+- 从干净实现提交构建 `ice-2026.08.5-16f77c67f862`，tree `4ebffc68166dcb43e00b8b0deef46617338f52bb`，2116 个 inventory 文件；复用已核验 Runtime，仅重新构建应用，原生入口双构建一致且未签名。这个 VERSION 是主线历史值，不是客户升级推荐版本。
+
+完整安装副本用实际内置 CPython 3.14 和当前用户 SID named pipe 执行 v3 handler，**4 passed/5 deselected**，565.08 秒；证据根 `t/R6A1`。这里没有替换 OS Runtime 观察，也没有模拟进程退出：测试子进程用 `os._exit(86)` 直接退出，第二个独立进程接管已释放 kernel lease。
+
+| 实际安装副本场景 | 验证结果 |
+| --- | --- |
+| 程序损坏且 Python EXE 缺失 | 外部维护 Python 修复成功，完整 inventory 复核通过；库完整性/账号/审计及库/配置/画布/素材/指针/身份/根入口快照保持 |
+| 原树已移动后直接退出 | 第二进程恢复原损坏树，保留记录；重新修复成功，业务快照不变 |
+| 新树已发布、成功尚未记录时退出 | 第二进程只回退自身计划的新树，恢复原树；重试成功，不变更业务数据 |
+| 已记录成功、释放锁前退出 | 第二进程复核新树和成功记录，完成释放，不回退已成功操作；业务快照不变 |
+
+总耗时包括准备资源、多次新装、校验、故障注入、恢复和重试，不能当作一次修复耗时或客户端进度百分比。GUI/取消/性能优化需单独测量，不降低闭包校验。
+
+另外仅执行受影响的修复后实际生命周期场景：`-k actual_native_entry`，**1 passed/8 deselected**，205.29 秒，证据根 `t/R6L1`。先损坏并修复完整程序/Python，再通过根 EXE 实际 start/health/status/stop；Gateway/Upstream HTTP 200、readiness/进程/Release 身份匹配，stop ACK 确认退出和两随机端口释放，库完整性 ok，画布/素材/配置/指针/实例记录不变。单独 EXE 生命周期测量为 83.875 秒，不包含前面的新装和修复准备，不可当作纯启动时长。未重复执行前面的四个整包场景或其它旧门禁。
+
+文档检查通过 **123 文档、214 本地链接、21 冻结文件**，检查器 **17 单元测试** 通过；这些不是额外业务验收。本轮新增原始文件只有程序修复模块及其定向测试，文档复用现有事实源/实施记录，未增加另一套交接/规划目录。
+
+| 验证资产 | SHA-256 |
+| --- | --- |
+| 根入口 InfiniteCanvas.exe（22,528 字节） | `570ad6885cae124e39f534bc6a95073212eec0ad4d9c1d8085f5e0888d3987fd` |
+| 完整 Release ZIP | `258cd0a0b4823538f6cb559121411d7be641dd549eb01cb1a540aae85886b9e4` |
+| ops-release-manifest-v2.json | `f89f82c8dda75405bfdbce2f1e2a1efb8e0623c6149376968829973a825258ac` |
+| release-payload-inventory.json | `84aaeceb67841bc9a820fe90d3ce4ffa8920567792c5f50c21c92ec15c6df577` |
+
+构建根集中于 `D:\CodeProject\Infinite-Canvas-Enterprise-Artifacts\development\program-repair\20261005`；短测试根只在该产品 artifact 的 `t/R6*` 下新建。没有在 D 盘根目录新增散落目录，没有清理其它项目、旧用户安装或配置。原始开发 checkout 未修改。
+
+### 尚未交付
+
+本轮仍需新候选的 CI/审查及 Inno v3 图形接线、恢复状态解释/跨窗口进度、入口旧锁崩溃恢复、worker 截止/取消、标准保留数据卸载、磁盘/备份容量和清理策略、历史接管升级收敛。没有新客户应用 Release、图形安装执行、客户设备验证、断电/硬件故障恢复、更新器自更新、多跳、业务升级/迁移、机器级服务或多实例运行验收。不使用当前用户共享 Runtime 来推断多安装并行已支持。
