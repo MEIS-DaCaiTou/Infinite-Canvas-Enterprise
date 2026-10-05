@@ -383,6 +383,20 @@ def test_installer_source_is_single_user_gui_and_keeps_credentials_off_process_s
     assert "RegGetSubkeyNames(HKCU" in source
 
 
+def test_setup_summary_distinguishes_entry_repair_from_new_install_before_confirmation():
+    root = Path(__file__).resolve().parents[2]
+    source = (root / "installer/windows/InfiniteCanvasEnterprise.iss").read_text(encoding="utf-8")
+    assert "TargetPage.Add('安装根目录：')" in source
+    page = source[source.index("procedure CurPageChanged(") : source.index("function UpdateReadyMemo(")]
+    assert "CurPageID = EnvironmentPage.ID" in page
+    assert "ValidateTarget(SelectedInstallRoot, Code) then ShowMaintenanceScope" in page
+    memo = source[source.index("function UpdateReadyMemo(") : source.index("function NextButtonClick(")]
+    assert "只修复固定入口（不是业务升级）" in memo
+    assert "首次安装" in memo and "SelectedInstallRoot" in memo
+    assert "保留原账号、数据库、画布、素材、配置及当前版本" in memo
+    assert "CredentialPage.Values" not in memo
+
+
 def test_bridge_bootstraps_before_product_install_import_and_has_no_credential_cli() -> None:
     root = Path(__file__).resolve().parents[2]
     source = (root / "enterprise" / "install_setup_bridge.py").read_text(encoding="utf-8")

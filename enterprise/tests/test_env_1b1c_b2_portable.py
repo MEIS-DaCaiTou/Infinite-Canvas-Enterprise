@@ -28,6 +28,38 @@ def _sha(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
 
+@pytest.mark.parametrize("mode", ["portable-release", "development"])
+def test_host_cli_preserves_trusted_portable_paths_under_windows_redirection(tmp_path, monkeypatch, mode):
+    from enterprise.runtime.cli import _paths
+
+    app = (tmp_path / "install/releases/release-A").absolute()
+    logical = (tmp_path / "local/InfiniteCanvasEnterprise/runtime").absolute()
+    redirected = (tmp_path / "package/LocalCache/Local/InfiniteCanvasEnterprise/runtime").absolute()
+    original = Path.resolve
+
+    def resolve(path, *args, **kwargs):
+        return redirected if path == logical else original(path, *args, **kwargs)
+
+    # MSIX can redirect KnownFolder I/O without a filesystem reparse point.
+    # Full portable context verification must keep its original path identity.
+    monkeypatch.setattr(Path, "resolve", resolve)
+    selected_app, selected_runtime = _paths(SimpleNamespace(
+        app_root=str(app), runtime_root=str(logical), runtime_mode=mode,
+    ))
+    assert selected_app == app
+    assert selected_runtime == (logical if mode == "portable-release" else redirected)
+
+
+def test_host_cli_portable_paths_still_reject_runtime_under_application(tmp_path):
+    from enterprise.runtime.cli import _paths
+    from enterprise.runtime.control import RuntimeControlError
+
+    app = tmp_path / "install/releases/release-A"
+    with pytest.raises(RuntimeControlError):
+        _paths(SimpleNamespace(app_root=str(app), runtime_root=str(app / "data/runtime"),
+                               runtime_mode="portable-release"))
+
+
 def _fixture(tmp_path: Path) -> tuple[Path, Path, dict[str, object]]:
     install = tmp_path / "install"
     release_id = "ice-2026.07.6-bbbbbbbbbbbb"

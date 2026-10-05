@@ -472,15 +472,15 @@ begin
 
   ModePage := CreateInputOptionPage(wpWelcome, '选择安装或入口修复',
     '已有安装优先使用原位置', '已有安装仅修复固定入口，不重置账号、数据库、配置或当前版本。业务升级仍由更新中心执行。', True, False);
-  ModePage.Add('快速安装（推荐）');
-  ModePage.Add('自定义安装');
+  ModePage.Add('使用推荐位置（已有安装优先）');
+  ModePage.Add('选择安装位置');
   ModePage.SelectedValueIndex := 0;
   if MultipleInstalls then ModePage.SelectedValueIndex := 1;
 
   TargetPage := CreateInputDirPage(ModePage.ID, '选择安装位置',
     '选择全新目录，或要修复入口的已有安装。',
     '多个安装须明确选择；仅有目录/登记不代表已通过身份核验。其他项目、未知目录及损坏程序不会被覆盖。', False, '');
-  TargetPage.Add(DefaultInstallRoot);
+  TargetPage.Add('安装根目录：');
   TargetPage.Values[0] := DefaultInstallRoot;
 
   EnvironmentPage := CreateOutputMsgMemoPage(TargetPage.ID, '环境检查',
@@ -506,6 +506,47 @@ begin
     ((PageID = CredentialPage.ID) and ExistingEntryRepair);
 end;
 
+procedure ShowMaintenanceScope;
+begin
+  if ExistingEntryRepair then
+    EnvironmentPage.RichEditViewer.Text := '操作：只修复固定入口' + #13#10 +
+      '原安装目录：' + SelectedInstallRoot + #13#10 + #13#10 +
+      '已发现已有安装候选，执行时仍需完整核验其当前 Release。' + #13#10 +
+      '只修复固定 EXE、实例登记和快捷方式。不会初始化或迁移数据库，不会改变当前版本。' + #13#10 +
+      '业务升级请在管理后台执行；完整程序或运行环境修复尚未提供。'
+  else
+    EnvironmentPage.RichEditViewer.Text := '操作：首次安装' + #13#10 +
+      '安装根目录：' + SelectedInstallRoot + #13#10 + #13#10 +
+      '目标必须是全新空目录，已有数据不会被当作新安装重建。' + #13#10 +
+      'Windows x64；当前用户安装；本机固定磁盘与可用空间。' + #13#10 +
+      '执行时验证内嵌 Release 身份、核心资产和固定入口，再创建首个管理员。';
+end;
+
+procedure CurPageChanged(CurPageID: Integer);
+var
+  Code: String;
+begin
+  if CurPageID = EnvironmentPage.ID then begin
+    if ValidateTarget(SelectedInstallRoot, Code) then ShowMaintenanceScope
+    else EnvironmentPage.RichEditViewer.Text := '目标位置检查未通过：' + SelectedInstallRoot + #13#10 +
+      '错误代码：' + Code + #13#10 + '尚未执行安装；请选择有效目录。';
+  end;
+end;
+
+function UpdateReadyMemo(Space, NewLine, MemoUserInfoInfo, MemoDirInfo,
+  MemoTypeInfo, MemoComponentsInfo, MemoGroupInfo, MemoTasksInfo: String): String;
+begin
+  if ExistingEntryRepair then
+    Result := '操作：只修复固定入口（不是业务升级）' + NewLine +
+      Space + '原安装目录：' + SelectedInstallRoot + NewLine +
+      Space + '保留原账号、数据库、画布、素材、配置及当前版本。' + NewLine +
+      Space + '仅修复根 EXE、实例登记和快捷方式；完整程序/环境修复尚未提供。'
+  else
+    Result := '操作：首次安装' + NewLine + Space + '安装根目录：' + SelectedInstallRoot + NewLine +
+      Space + '安装版本：{#AppVersion}' + NewLine + Space + 'Release：{#ReleaseId}';
+  if MemoTasksInfo <> '' then Result := Result + NewLine + NewLine + MemoTasksInfo;
+end;
+
 function NextButtonClick(CurPageID: Integer): Boolean;
 var
   Code: String;
@@ -528,7 +569,7 @@ begin
       CredentialPage.Values[0] := '';
       CredentialPage.Values[1] := '';
       CredentialPage.Values[2] := '';
-      EnvironmentPage.RichEditViewer.Text := '已发现原安装。将完整校验其当前程序并只修复固定 EXE、实例登记和快捷方式。不会初始化或迁移数据库，不会改变当前版本。若校验失败则停止；业务更新请在管理后台执行。';
+      ShowMaintenanceScope;
     end;
   end;
   if CurPageID = CredentialPage.ID then begin
