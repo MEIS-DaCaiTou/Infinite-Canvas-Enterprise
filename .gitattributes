@@ -1,0 +1,3 @@
+# Native compiler inputs must be byte-identical across Windows Git settings.
+installer/windows/native/* text eol=lf
+installer/windows/native-entry-build-policy.json text eol=lf

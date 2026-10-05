@@ -26,6 +26,16 @@ def test_policy_is_version_independent_and_pins_unsigned_toolchain():
     assert policy['compiler_package_sha256'] == builder.COMPILER_SHA256
 
 
+def test_native_inputs_have_explicit_lf_checkout_contract():
+    paths = [str(builder.NATIVE_PATH / name).replace('\\', '/') for name in builder.SOURCES]
+    paths.append(builder.POLICY_PATH.as_posix())
+    attributes = subprocess.run(['git', 'check-attr', 'eol', '--', *paths], cwd=ROOT,
+                                check=True, capture_output=True, text=True).stdout.splitlines()
+    assert attributes == [path + ': eol: lf' for path in paths]
+    for path in paths:
+        assert b'\r\n' not in (ROOT / path).read_bytes(), 'Checkout newline drift changes deterministic compiler input'
+
+
 @pytest.mark.parametrize('field,value', [
     ('compiler_package_sha256', '0' * 64), ('compiler_relative', '../csc.exe'),
     ('language_version', 'latest'), ('signed', True),
