@@ -1,8 +1,8 @@
 """Opt-in full-payload installation-copy drills; never customer data or Setup UI.
 
 Build clean, same-source Release assets and a native entry beforehand. The real
-bundled Python/named pipe exercises the same v2 handler as Setup, without
-    changing global shortcuts, registry hints or authenticating a browser user.
+bundled Python/named pipe exercises Setup's v2 and the candidate v3 handlers,
+without changing global shortcuts, registry hints or authenticating a browser user.
 SQLite/config/media are fresh fixtures. Runtime listener checks are a separate
 explicit opt-in and use only dynamically allocated ports and owned processes.
 """
@@ -306,6 +306,11 @@ def test_actual_native_entry_and_supervisor_start_health_stop(resources):
     root = _root(resources)
     _install(resources, root)
     _fixture_business(root)
+    # Exercise the repaired interpreter/program, not only a fresh installation.
+    # Abort safely if any existing Runtime prevents stopped-state maintenance.
+    _damage_program(resources, root)
+    exit_code, repaired = _pipe(resources, root, "repair-program")
+    assert exit_code == 0 and repaired["repair_state"] == "SUCCEEDED", repaired
     # No inherited deployment secrets/ports or customer runtime. Hold both test
     # ports until just before launch; Runtime rechecks ownership before starting.
     reservations = [socket.socket() for _ in range(2)]
