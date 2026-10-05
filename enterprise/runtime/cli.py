@@ -37,6 +37,13 @@ def _configured_secret_values() -> tuple[str, ...]:
 def _paths(args: argparse.Namespace) -> tuple[Path, Path]:
     app_root = Path(args.app_root).resolve()
     runtime_root = validate_runtime_root(app_root, Path(args.runtime_root))
+    if getattr(args, "runtime_mode", "development") == "portable-release":
+        # Keep containment checks above, but preserve the trusted KnownFolder
+        # spelling. Windows package redirection can make resolve() return a
+        # different physical directory without a reparse point; substituting it
+        # invalidates the launch context. The host/supervisor still perform the
+        # full portable path, manifest, Python and process-identity verification.
+        return Path(args.app_root).absolute(), Path(args.runtime_root).absolute()
     return app_root, runtime_root
 
 
