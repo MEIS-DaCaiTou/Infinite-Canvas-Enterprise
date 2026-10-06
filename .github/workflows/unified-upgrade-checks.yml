@@ -97,6 +97,49 @@ jobs:
           $ReportPath = Join-Path $env:ICE_UNIFIED_ARTIFACT_ROOT 'installed-matrix.xml'
           python -m pytest -q enterprise/tests/test_unified_upgrade_installed.py --basetemp $TestBase --junitxml $ReportPath
           if ($LASTEXITCODE -ne 0) { throw 'Installed-copy verification failed' }
+      - name: Retain non-sensitive verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unified-upgrade-evidence
+          path: |
+            ${{ runner.temp }}/ice-unified-build/native/unsigned-native-build-record.json
+            ${{ runner.temp }}/ice-unified-build/installed-matrix.xml
+            ${{ runner.temp }}/ice-unified-build/verified-catalog.json
+          if-no-files-found: warn
+
+  real-runtime-recovery-windows:
+    name: Real historical runtime recovery (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 25
+    env:
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install affected test dependencies
+        run: python -m pip install -r requirements.txt -r enterprise/requirements.txt pytest
+      - name: Fetch exact 09.5 and 09.9 fixture assets
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ArtifactRoot = Join-Path $env:RUNNER_TEMP 'ice-real-recovery'
+          if (Test-Path -LiteralPath $ArtifactRoot) { throw 'Artifact root must be new' }
+          New-Item -ItemType Directory -Path $ArtifactRoot | Out-Null
+          $Assets = Join-Path $ArtifactRoot 'source-assets'
+          $Catalog = Get-Content -Raw installer/windows/historical-install-catalog.json | ConvertFrom-Json
+          foreach ($Source in ($Catalog.sources | Where-Object { $_.version -in @('2026.09.5','2026.09.9') })) {
+            $Folder = Join-Path $Assets $Source.version
+            New-Item -ItemType Directory -Path $Folder | Out-Null
+            gh release download $Source.version --repo MEIS-DaCaiTou/Infinite-Canvas-Enterprise --pattern $Source.archive_filename --pattern ops-release-manifest-v2.json --pattern release-payload-inventory.json --dir $Folder
+            if ($LASTEXITCODE -ne 0) { throw 'Historical asset download failed' }
+          }
+          ('ICE_HISTORICAL_ASSETS=' + $Assets) | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          ('ICE_UNIFIED_ARTIFACT_ROOT=' + $ArtifactRoot) | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Verify real historical partial-host recovery and live-target rollback
         shell: pwsh
         run: |
@@ -132,13 +175,10 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: unified-upgrade-evidence
+          name: real-runtime-recovery-evidence
           path: |
-            ${{ runner.temp }}/ice-unified-build/native/unsigned-native-build-record.json
-            ${{ runner.temp }}/ice-unified-build/installed-matrix.xml
-            ${{ runner.temp }}/ice-unified-build/verified-catalog.json
-            ${{ runner.temp }}/ice-unified-build/real-historical-recovery.xml
-            ${{ runner.temp }}/ice-unified-build/real-095-*-evidence.json
-            ${{ runner.temp }}/ice-unified-build/real-lifecycle.log
-            ${{ runner.temp }}/ice-unified-build/ci-lifecycle-driver-result.json
+            ${{ runner.temp }}/ice-real-recovery/real-historical-recovery.xml
+            ${{ runner.temp }}/ice-real-recovery/real-095-*-evidence.json
+            ${{ runner.temp }}/ice-real-recovery/real-lifecycle.log
+            ${{ runner.temp }}/ice-real-recovery/ci-lifecycle-driver-result.json
           if-no-files-found: warn

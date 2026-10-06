@@ -37,7 +37,8 @@ def legacy(command, root=app):
     done = subprocess.run([str(root/'python/python.exe'), '-I', '-B', str(host), '--fixture-app-root', str(root),
         '--fixture-local-base', str(local), '--fixture-entry', command], capture_output=True,
         text=True, encoding='utf-8', errors='replace', timeout=120, creationflags=subprocess.CREATE_NO_WINDOW)
-    payload = json.loads(done.stdout.strip().splitlines()[-1]) if done.stdout.strip() else {'result':'no_output'}
+    payload = json.loads(done.stdout.strip().splitlines()[-1]) if done.stdout.strip() else {
+        'result':'no_output', 'exit_code':done.returncode, 'fixture_stderr_tail':done.stderr[-3500:]}
     return done.returncode, payload
 runtime = local / 'InfiniteCanvasEnterprise/runtime'
 try:
