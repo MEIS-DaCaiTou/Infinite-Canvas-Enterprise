@@ -1,0 +1,185 @@
+name: Unified upgrade checks
+
+on:
+  pull_request:
+    paths:
+      - installer/windows/native/**
+      - installer/windows/native-build-policy.json
+      - installer/windows/historical-install-catalog.json
+      - tools/build_unified_upgrader.py
+      - tools/inventory_upgrade_sources.py
+      - tools/unified_upgrade.py
+      - enterprise/ops/update/historical_install.py
+      - enterprise/ops/update/mvp.py
+      - enterprise/runtime/**
+      - enterprise/tests/test_runtime_recovery_control.py
+      - enterprise/tests/test_historical_runtime_recovery_installed.py
+      - enterprise/tests/runtime_fixture_historical_host.py
+      - enterprise/tests/runtime_fixture_ci_driver.py
+      - enterprise/tests/test_stab_1_supervisor_logging.py
+      - enterprise/tests/test_unified_upgrade*.py
+      - .github/workflows/unified-upgrade-checks.yml
+
+permissions:
+  contents: read
+
+jobs:
+  native-upgrade-windows:
+    name: Historical upgrades and fixed EXE (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install affected test dependencies
+        run: python -m pip install -r requirements.txt -r enterprise/requirements.txt pytest
+      - name: Check affected contracts and tracked write audit
+        run: >-
+          python -m pytest -q
+          enterprise/tests/test_unified_upgrade.py
+          enterprise/tests/test_096_security_variant.py
+          enterprise/tests/test_update_mvp_1.py
+          enterprise/tests/test_runtime_recovery_control.py
+          enterprise/tests/test_env_1b1c_b2_portable.py
+          enterprise/tests/test_env_1b1c_b2_lifecycle_identity.py
+          enterprise/tests/test_env_1b1a_static_build.py::test_app_root_write_audit_anchors_and_structural_coverage
+      - name: Fetch and verify historical public assets
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ArtifactRoot = Join-Path $env:RUNNER_TEMP 'ice-unified-build'
+          if (Test-Path -LiteralPath $ArtifactRoot) { throw 'Artifact root must be new' }
+          New-Item -ItemType Directory -Path $ArtifactRoot | Out-Null
+          $Assets = Join-Path $ArtifactRoot 'source-assets'
+          $Catalog = Get-Content -Raw installer/windows/historical-install-catalog.json | ConvertFrom-Json
+          foreach ($Source in $Catalog.sources) {
+            $Folder = Join-Path $Assets $Source.version
+            New-Item -ItemType Directory -Path $Folder | Out-Null
+            gh release download $Source.version --repo MEIS-DaCaiTou/Infinite-Canvas-Enterprise --pattern $Source.archive_filename --pattern ops-release-manifest-v2.json --pattern release-payload-inventory.json --dir $Folder
+            if ($LASTEXITCODE -ne 0) { throw 'Historical asset download failed' }
+          }
+          $CatalogResult = Join-Path $ArtifactRoot 'verified-catalog.json'
+          python tools/inventory_upgrade_sources.py --asset-root $Assets --output $CatalogResult --expected-catalog installer/windows/historical-install-catalog.json
+          if ($LASTEXITCODE -ne 0) { throw 'Historical asset verification failed' }
+          ('ICE_HISTORICAL_ASSETS=' + $Assets) | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          ('ICE_UNIFIED_ARTIFACT_ROOT=' + $ArtifactRoot) | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Build two identical native executables from pinned compiler
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $Policy = Get-Content -Raw installer/windows/native-build-policy.json | ConvertFrom-Json
+          $Tools = Join-Path $env:ICE_UNIFIED_ARTIFACT_ROOT 'toolchain'
+          New-Item -ItemType Directory -Path $Tools | Out-Null
+          $Package = Join-Path $Tools $Policy.compiler_package
+          Invoke-WebRequest -Uri $Policy.compiler_package_url -OutFile $Package
+          if ((Get-FileHash -LiteralPath $Package).Hash.ToLowerInvariant() -ne $Policy.compiler_package_sha256) { throw 'Compiler package mismatch' }
+          $Compiler = Join-Path $Tools 'compiler'
+          python -m zipfile -e $Package $Compiler
+          if ($LASTEXITCODE -ne 0) { throw 'Compiler extraction failed' }
+          $Build = Join-Path $env:ICE_UNIFIED_ARTIFACT_ROOT 'native'
+          python tools/build_unified_upgrader.py --target-assets (Join-Path $env:ICE_HISTORICAL_ASSETS '2026.09.9') --compiler-package $Package --compiler-root $Compiler --output-root $Build
+          if ($LASTEXITCODE -ne 0) { throw 'Deterministic native build failed' }
+          ('ICE_NATIVE_BUILD_ROOT=' + $Build) | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Verify installed upgrades, rollback and compiled fixed entry
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Fresh, short run-owned root; never a user's installation directory.
+          $TestBase = 'C:\Temp\IU-' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT
+          if (Test-Path -LiteralPath $TestBase) { throw 'Test base must be new' }
+          New-Item -ItemType Directory -Path 'C:\Temp' -Force | Out-Null
+          $ReportPath = Join-Path $env:ICE_UNIFIED_ARTIFACT_ROOT 'installed-matrix.xml'
+          python -m pytest -q enterprise/tests/test_unified_upgrade_installed.py --basetemp $TestBase --junitxml $ReportPath
+          if ($LASTEXITCODE -ne 0) { throw 'Installed-copy verification failed' }
+      - name: Retain non-sensitive verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unified-upgrade-evidence
+          path: |
+            ${{ runner.temp }}/ice-unified-build/native/unsigned-native-build-record.json
+            ${{ runner.temp }}/ice-unified-build/installed-matrix.xml
+            ${{ runner.temp }}/ice-unified-build/verified-catalog.json
+          if-no-files-found: warn
+
+  real-runtime-recovery-windows:
+    name: Real historical runtime recovery (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 25
+    env:
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install affected test dependencies
+        run: python -m pip install -r requirements.txt -r enterprise/requirements.txt pytest
+      - name: Fetch exact 09.5 and 09.9 fixture assets
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ArtifactRoot = Join-Path $env:RUNNER_TEMP 'ice-real-recovery'
+          if (Test-Path -LiteralPath $ArtifactRoot) { throw 'Artifact root must be new' }
+          New-Item -ItemType Directory -Path $ArtifactRoot | Out-Null
+          $Assets = Join-Path $ArtifactRoot 'source-assets'
+          $Catalog = Get-Content -Raw installer/windows/historical-install-catalog.json | ConvertFrom-Json
+          foreach ($Source in ($Catalog.sources | Where-Object { $_.version -in @('2026.09.5','2026.09.9') })) {
+            $Folder = Join-Path $Assets $Source.version
+            New-Item -ItemType Directory -Path $Folder | Out-Null
+            gh release download $Source.version --repo MEIS-DaCaiTou/Infinite-Canvas-Enterprise --pattern $Source.archive_filename --pattern ops-release-manifest-v2.json --pattern release-payload-inventory.json --dir $Folder
+            if ($LASTEXITCODE -ne 0) { throw 'Historical asset download failed' }
+          }
+          ('ICE_HISTORICAL_ASSETS=' + $Assets) | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          ('ICE_UNIFIED_ARTIFACT_ROOT=' + $ArtifactRoot) | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Verify real historical partial-host recovery and live-target rollback
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $TestBase = 'C:\Temp\IR-' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT
+          if (Test-Path -LiteralPath $TestBase) { throw 'Recovery test base must be new' }
+          # The hosted runner's enclosing Job rejects CREATE_BREAKAWAY_FROM_JOB.
+          # WMI creates a test caller without inheriting that runner Job. The
+          # driver inspects any remaining Windows compatibility Job read-only
+          # and requires it to permit the original host flags. It verifies this
+          # and still uses ORIGINAL production host/child/Job flags and all ACK,
+          # PID exit, listener, HTTP and data assertions. Never patch production
+          # flags or relax the runner's security policy to make tests pass.
+          $TaskRepo = (Get-Location).Path
+          $TaskPython = (Get-Command python).Source
+          $TaskDriver = Join-Path $TaskRepo 'enterprise/tests/runtime_fixture_ci_driver.py'
+          $TaskCommand = '"' + $TaskPython + '" -B "' + $TaskDriver + '" --repo "' + $TaskRepo + '" --assets "' + $env:ICE_HISTORICAL_ASSETS + '" --base "' + $TestBase + '" --report-root "' + $env:ICE_UNIFIED_ARTIFACT_ROOT + '"'
+          $TaskStartupClass = Get-CimClass -ClassName Win32_ProcessStartup
+          $TaskStartup = New-CimInstance -CimClass $TaskStartupClass -ClientOnly -Property @{ ShowWindow = [UInt16]0 }
+          $TaskSpawn = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $TaskCommand; CurrentDirectory = $TaskRepo; ProcessStartupInformation = $TaskStartup }
+          if ($TaskSpawn.ReturnValue -ne 0) { throw 'Isolated lifecycle test caller failed to start' }
+          $TaskResult = Join-Path $env:ICE_UNIFIED_ARTIFACT_ROOT 'ci-lifecycle-driver-result.json'
+          $TaskDeadline = [DateTime]::UtcNow.AddSeconds(1100)
+          while (-not (Test-Path -LiteralPath $TaskResult)) {
+            if ([DateTime]::UtcNow -gt $TaskDeadline) { throw 'Lifecycle driver timed out; no success claim' }
+            if (-not (Get-Process -Id $TaskSpawn.ProcessId -ErrorAction SilentlyContinue)) { throw 'Lifecycle driver exited without a result' }
+            Start-Sleep -Seconds 2
+          }
+          $TaskReport = Get-Content -Raw -LiteralPath $TaskResult | ConvertFrom-Json
+          if ($TaskReport.exit_code -ne 0 -or $TaskReport.result -ne 'pass') { throw 'Real historical recovery verification failed; inspect retained evidence' }
+          Get-ChildItem -LiteralPath $TestBase -Filter 'real-095-*-evidence.json' -File | Copy-Item -Destination $env:ICE_UNIFIED_ARTIFACT_ROOT
+      - name: Retain non-sensitive verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: real-runtime-recovery-evidence
+          path: |
+            ${{ runner.temp }}/ice-real-recovery/real-historical-recovery.xml
+            ${{ runner.temp }}/ice-real-recovery/real-095-*-evidence.json
+            ${{ runner.temp }}/ice-real-recovery/real-lifecycle.log
+            ${{ runner.temp }}/ice-real-recovery/ci-lifecycle-driver-result.json
+            ${{ runner.temp }}/ice-real-recovery/historical-fixture-debug.json
+          if-no-files-found: warn

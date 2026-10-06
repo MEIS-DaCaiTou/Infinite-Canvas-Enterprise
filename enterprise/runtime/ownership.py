@@ -6,7 +6,7 @@ import ctypes
 import hashlib
 import json
 import os
-import subprocess
+import socket
 from dataclasses import asdict, dataclass
 from ctypes import wintypes
 from pathlib import Path
@@ -60,6 +60,7 @@ class PortListenerSnapshot:
     resolved_identities: tuple[ProcessIdentity, ...]
     unresolved_listener_pids: tuple[int, ...]
     inspection_failed: bool = False
+    failure_category: str | None = None
 
     @property
     def has_listeners(self) -> bool:
@@ -76,6 +77,7 @@ class PortListenerSnapshot:
             "resolved_identities": [identity.snapshot() for identity in self.resolved_identities],
             "unresolved_listener_pids": list(self.unresolved_listener_pids),
             "inspection_failed": self.inspection_failed,
+            "failure_category": self.failure_category,
         }
 
 
@@ -105,6 +107,66 @@ if os.name == "nt":
         ctypes.POINTER(wintypes.DWORD),
     )
     _kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+
+    # Query both address families directly. netstat's console text, process
+    # startup and short timeout are not an authoritative absence proof.
+    _iphlpapi = ctypes.WinDLL("iphlpapi", use_last_error=True, winmode=0x800)
+    _tcp_table_query = _iphlpapi.GetExtendedTcpTable
+    _tcp_table_query.argtypes = (
+        ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32),
+        ctypes.c_int, ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32,
+    )
+    _tcp_table_query.restype = ctypes.c_uint32
+
+
+class _Tcp4Row(ctypes.Structure):
+    _fields_ = [(name, ctypes.c_uint32) for name in (
+        "state", "local_address", "local_port", "remote_address", "remote_port", "pid")]
+
+
+class _Tcp6Row(ctypes.Structure):
+    _fields_ = [
+        ("local_address", ctypes.c_ubyte * 16), ("local_scope", ctypes.c_uint32),
+        ("local_port", ctypes.c_uint32), ("remote_address", ctypes.c_ubyte * 16),
+        ("remote_scope", ctypes.c_uint32), ("remote_port", ctypes.c_uint32),
+        ("state", ctypes.c_uint32), ("pid", ctypes.c_uint32),
+    ]
+
+
+class _TcpInspectionError(Exception):
+    pass
+
+
+def _listener_rows(family: int, query: Any) -> list[tuple[int, int]]:
+    """Bounded native table query; any incomplete table fails closed."""
+    size = ctypes.c_uint32(0)
+    buffer = None
+    row_type = _Tcp4Row if family == 2 else _Tcp6Row
+    for _ in range(4):
+        capacity = size.value
+        result = int(query(buffer, ctypes.byref(size), False, family, 3, 0))
+        if result == 122:  # ERROR_INSUFFICIENT_BUFFER, including table growth.
+            if not 4 <= size.value <= 16 * 1024 * 1024:
+                raise _TcpInspectionError("tcp_table_size_invalid")
+            buffer = ctypes.create_string_buffer(size.value)
+            continue
+        if result != 0:
+            raise _TcpInspectionError("tcp_table_query_failed")
+        if buffer is None or size.value < 4 or size.value > capacity:
+            raise _TcpInspectionError("tcp_table_data_invalid")
+        count = ctypes.c_uint32.from_buffer_copy(buffer.raw[:4]).value
+        row_size = ctypes.sizeof(row_type)
+        if count > 200000 or 4 + count * row_size > min(capacity, size.value):
+            raise _TcpInspectionError("tcp_table_data_invalid")
+        rows = []
+        for index in range(count):
+            offset = 4 + index * row_size
+            row = row_type.from_buffer_copy(buffer.raw[offset:offset + row_size])
+            if row.state != 2 or row.pid < 1 or row.local_port > 65535:
+                raise _TcpInspectionError("tcp_table_data_invalid")
+            rows.append((socket.ntohs(row.local_port), row.pid))
+        return rows
+    raise _TcpInspectionError("tcp_table_retry_exhausted")
 
 
 def _filetime_to_ticks(value: Any) -> int:
@@ -177,40 +239,36 @@ def same_process(expected: ProcessIdentity | None, actual: ProcessIdentity | Non
     )
 
 
+def process_exit_confirmed(expected: ProcessIdentity) -> bool:
+    """Prove this generation exited; access denial is NOT absence evidence."""
+    actual = process_identity(expected.pid)
+    if actual is not None:
+        if not same_process(expected, actual):
+            return True  # PID reused: never signal the new process.
+    if os.name != "nt":
+        return actual is None and not pid_exists(expected.pid)
+    handle = _kernel32.OpenProcess(_SYNCHRONIZE, False, expected.pid)
+    if not handle:
+        return ctypes.get_last_error() == 87  # ERROR_INVALID_PARAMETER: no such PID.
+    try:
+        return _kernel32.WaitForSingleObject(handle, 0) == 0
+    finally:
+        _kernel32.CloseHandle(handle)
+
+
 def inspect_port_listeners(port: int) -> PortListenerSnapshot:
-    """Inspect TCP listeners through one fixed OS command, never a shell string."""
+    """Inspect IPv4 AND IPv6 listeners without shell or console parsing."""
     if type(port) is not int or port < 1 or port > 65535:
         raise ValueError("port is invalid")
     if os.name != "nt":
         return PortListenerSnapshot(port, (), (), (), False)
-    creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
     try:
-        result = subprocess.run(
-            ["netstat", "-ano", "-p", "tcp"],
-            text=True,
-            capture_output=True,
-            timeout=3,
-            check=False,
-            shell=False,
-            creationflags=creationflags,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return PortListenerSnapshot(port, (), (), (), True)
-    if getattr(result, "returncode", 0) != 0:
-        return PortListenerSnapshot(port, (), (), (), True)
-    found: set[int] = set()
-    marker = f":{port}"
-    for raw_line in result.stdout.splitlines():
-        fields = raw_line.split()
-        if len(fields) < 5 or fields[0].upper() != "TCP" or fields[-2].upper() != "LISTENING":
-            continue
-        local_address = fields[1]
-        if not local_address.endswith(marker):
-            continue
-        try:
-            found.add(int(fields[-1]))
-        except ValueError:
-            continue
+        rows = _listener_rows(2, _tcp_table_query) + _listener_rows(23, _tcp_table_query)
+    except _TcpInspectionError as exc:
+        return PortListenerSnapshot(port, (), (), (), True, str(exc))
+    except (OSError, ValueError):
+        return PortListenerSnapshot(port, (), (), (), True, "tcp_table_query_failed")
+    found = {pid for local_port, pid in rows if local_port == port}
     pids = tuple(sorted(found))
     resolved: list[ProcessIdentity] = []
     unresolved: list[int] = []

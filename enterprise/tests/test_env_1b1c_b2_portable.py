@@ -384,7 +384,7 @@ def test_current_release_damage_uses_retained_context_for_diagnostic_or_owned_st
             assert value == "stop"
             return {"result": "stopped", "status": "stopped"}
 
-    snapshot = {"portable_ownership_valid": True, "status": "healthy"}
+    snapshot = {"portable_ownership_valid": True, "portable_control_valid": True, "status": "healthy"}
     monkeypatch.setattr("enterprise.runtime.control.RuntimeController", FakeController)
     monkeypatch.setattr("enterprise.runtime.control.inspect_runtime", lambda _config: dict(snapshot))
     payload, exit_code = execute_portable_command(app_root=app_root, command=command)

@@ -11,6 +11,9 @@ Before adding or changing scripts, read:
 
 ## Scripts
 
+- `test_unified_upgrade.py` covers the pinned historical catalog, approved full-schema variants, unchanged online defaults, reservation-before-stop, other-job lock preservation, read-only recovery checks, and uncertain recovery classification.
+- `test_unified_upgrade_installed.py` is an opt-in Windows public-archive matrix: 9 exact historical bundled interpreters, 18/28-object data states, migration/start failure recovery, preserved fixture data, compiled native rejection, and fixed-entry pointer following. Set `ICE_HISTORICAL_ASSETS` to verified assets grouped by tag, and `ICE_NATIVE_BUILD_ROOT` to the deterministic native build. Use a fresh, short, explicitly task-owned `--basetemp`; pytest removes an existing basetemp. Lifecycle callbacks are fixtures, not customer Supervisor acceptance. No customer data or shared Runtime is used.
+
 - `diagnose.ps1` checks local version, selected LAN IP, listening ports, proxy settings, and health endpoints.
 - `smoke.ps1` runs non-destructive HTTP smoke checks against a running enterprise gateway.
 - `test_start_stop.ps1` accepts a temporary runtime root, random ports and the fixed fixture-child wrapper for a non-production lifecycle check. It refuses to kill existing listeners, verifies short-lived CLI start, restart ACK/PID generation changes and owned-only stop/port release.

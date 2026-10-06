@@ -619,6 +619,35 @@ def test_target_start_failure_rolls_pointer_back_and_restores_source(tmp_path: P
     assert status["state"] == "ROLLED_BACK" and status["result_code"] == "TARGET_START_BLOCKED"
 
 
+@pytest.mark.parametrize('migrating', [False, True])
+def test_unconfirmed_target_stop_never_restores_database_or_pointer_under_live_target(tmp_path, monkeypatch, migrating):
+    if migrating:
+        database, step, plan, _ = _legacy_migration_case(tmp_path)
+    else:
+        database, step, plan = None, None, None
+    roots, store, job_id, pointer, calls, launcher = _execution_fixture(
+        tmp_path, monkeypatch, target_start_exit=2,
+        database_update=plan, migration_target=migrating,
+    )
+    def stop_refused(root, command):
+        if root.name == 'release-B' and command == 'stop':
+            calls.append((root.name, command))
+            return 2, {'result':'ownership_unavailable'}
+        return launcher(root, command)
+    options = {'database_path':database, 'migration_registry':(step,)} if migrating else {}
+    assert execute_update_job(roots, job_id, launcher=stop_refused, **options) == 2
+    assert pointer.release.release_id == 'release-B'
+    assert calls == [('release-B', 'start'), ('release-B', 'stop')]
+    status = store.read_status(job_id)
+    assert status['state'] == 'RECOVERY_REQUIRED' and status['recovery_required'] is True
+    assert status['result_code'] == 'SYSTEM_UPDATE_TARGET_STOP_UNCONFIRMED'
+    if migrating:
+        assert inspect_schema_metadata(database)['schema_version'] == 2
+    next_job, _ = store.create('other')
+    with pytest.raises(UpdateMvpError, match='SYSTEM_UPDATE_RECOVERY_REQUIRED'):
+        store.reserve_execution(next_job)
+
+
 def _create_update_database(path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     with closing(sqlite3.connect(path)) as conn:

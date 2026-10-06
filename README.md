@@ -1,6 +1,8 @@
 # Infinite Canvas Enterprise
 
-Last code-fact verification baseline: `main@396cccc68d63bd16393a2cb72d24e4a48fcf47cb` (PR #79 merged). The current repository HEAD is always the GitHub `main` branch; documentation-only PR #80 does not change runtime code facts. See [`docs/README.md`](docs/README.md) for the authoritative documentation index and [`docs/CURRENT_PROJECT_STATUS.md`](docs/CURRENT_PROJECT_STATUS.md) for implemented/not-implemented facts.
+> 2026-10-01 客户交付维护：正在统一经核验历史安装的升级工具与安装根目录固定 `InfiniteCanvas.exe` 入口，不再为每个旧版本增加专用工具。范围、来源目录、验证及未交付边界见 [通用升级器与固定入口](docs/ops/UNIFIED-UPGRADE-AND-FIXED-ENTRY-2026-10.md)。这是客户维护分支的实现，不等同于 `origin/main` 已合并或所有客户已验收。下文 Greenfield/旧生产约束保留为历史决策，不否定后来明确批准的客户原位升级。
+
+Historical code-fact baseline: `main@396cccc68d63bd16393a2cb72d24e4a48fcf47cb` (PR #79 merged), not the permanent current HEAD. Query Git for the current branch/commit and keep release maintenance separate from `origin/main`. See [`docs/README.md`](docs/README.md) and [`docs/CURRENT_PROJECT_STATUS.md`](docs/CURRENT_PROJECT_STATUS.md).
 
 Infinite Canvas Enterprise is the enterprise multi-user edition built on top of the upstream open-source project [hero8152/Infinite-Canvas](https://github.com/hero8152/Infinite-Canvas).
 
@@ -42,7 +44,7 @@ The enterprise gateway is the external entry point. The upstream app should stay
 
 ## Quick Start
 
-Windows startup:
+Installed copies with the unified tool use the installation-root `InfiniteCanvas.exe` or its desktop shortcut. The following BAT commands remain source-checkout/legacy instructions, not the new installed-copy entry:
 
 ```powershell
 .\启动企业版.bat

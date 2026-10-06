@@ -420,7 +420,7 @@ def execute_portable_command(*, app_root: Path, command: str) -> tuple[dict[str,
         public = _public_runtime_snapshot(snapshot)
         if command == "status":
             return public, 0
-        if snapshot.get("portable_ownership_valid") is not True:
+        if snapshot.get("portable_control_valid") is not True:
             return {"code": "PORTABLE_RUNTIME_OWNERSHIP_UNTRUSTED", "status": "blocked"}, 2
         payload = controller.send_command("stop")
         result = str(payload.get("result"))
@@ -429,7 +429,7 @@ def execute_portable_command(*, app_root: Path, command: str) -> tuple[dict[str,
         launcher_release_id=preflight.result.release_id,
         current_release_id=preflight.result.release_id,
         running_release_id=snapshot.get("running_release_id"),
-        owned_instance_valid=snapshot.get("portable_ownership_valid") is True,
+        owned_instance_valid=snapshot.get("portable_control_valid" if command == "stop" else "portable_ownership_valid") is True,
         command=command,
     )
     unsafe_dispositions = {
@@ -440,13 +440,15 @@ def execute_portable_command(*, app_root: Path, command: str) -> tuple[dict[str,
         "upstream_only",
         "gateway_only",
     }
-    if command != "status" and snapshot.get("start_disposition") in unsafe_dispositions:
+    verified_stop = command == "stop" and snapshot.get("portable_control_valid") is True
+    if command != "status" and not verified_stop and snapshot.get("start_disposition") in unsafe_dispositions:
         return {
             "code": "PORTABLE_RUNTIME_OWNERSHIP_UNTRUSTED",
             "status": "blocked",
         }, 2
     if (
         command != "status"
+        and not verified_stop
         and snapshot.get("start_disposition") not in {"stopped", "stale_runtime_state"}
         and snapshot.get("portable_ownership_valid") is not True
     ):

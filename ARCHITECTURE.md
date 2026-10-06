@@ -2,6 +2,8 @@
 
 本文档描述当前仓库已实现的 Infinite Canvas 企业多用户运行架构和主要模块职责；它不证明相同仓库基线已经部署到生产。
 
+> 2026-10-01 维护分支架构补充：通用原生升级器按准确 Release 和实际数据库状态识别来源，复用 Python DATA/更新引擎。根目录固定 C# `InfiniteCanvas.exe` 读取当前版本指针，再调用该版本现有 portable launcher；C# 不承担业务或另一套服务控制。此能力仍需 PR/CI 与客户实际操作分别验收，不代表完整桌面客户端、新装安装器或自动多跳更新。见 [当前交付说明](docs/ops/UNIFIED-UPGRADE-AND-FIXED-ENTRY-2026-10.md)。以下固定 SHA 及未实现结论是各自历史时点记录。
+
 > 最后一次代码事实核对基线：`main@105f3ca47f81207d2820fbd9acfa0a6d7b65770a`（PR #90 merge commit；tree `5a5fd040974ca9f74f0b2aa916edbb20c42dbd67`）。当前仓库具备 Manifest-v2-bound 不可变 Candidate 构建/materialization、fixed CP314 Runtime 信任链和复用 STAB-1 的 portable lifecycle；Candidate 08 已在独立 Windows Guest 完成 W01-W14 `14 PASS / 0 FAIL / 0 BLOCKED`。Fresh Install Bootstrap、DATA-1、Release activation、OPS-3B、formal Release、Production Baseline、restore rehearsal 和生产部署尚未完成。
 
 ---

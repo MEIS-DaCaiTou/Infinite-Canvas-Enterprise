@@ -1,0 +1,15 @@
+{
+  "schema_version": "enterprise-native-build-policy-v1",
+  "compiler_package": "microsoft.net.compilers.toolset.4.12.0.nupkg",
+  "compiler_package_url": "https://api.nuget.org/v3-flatcontainer/microsoft.net.compilers.toolset/4.12.0/microsoft.net.compilers.toolset.4.12.0.nupkg",
+  "compiler_package_sha256": "fe24ef31a6ffcb7c49383d2fd362763dee291ad9b9d98cc0c19ef80203b99ebc",
+  "compiler_relative": "tasks/net472/csc.exe",
+  "target_release_id": "ice-2026.09.9-54f9e67d1643",
+  "target_version": "2026.09.9",
+  "launcher_filename": "InfiniteCanvas.exe",
+  "upgrader_filename": "Infinite-Canvas-Enterprise-Unified-Upgrader-x64.exe",
+  "architecture": "x64",
+  "language_version": "7.3",
+  "signed": false,
+  "requires_administrator": false
+}
