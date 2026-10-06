@@ -619,6 +619,15 @@ def test_stop_supervisor_retries_exact_stale_generation_ack() -> None:
                 stop_supervisor(supervisor, thread)
 
 
+class FixtureCliFailure(AssertionError):
+    def __init__(self, payload):
+        self.public_details = {key:value for key,value in payload.items()
+            if key in {'code', 'status', 'failure_stage', 'errno', 'winerror'}
+            and (type(value) is int or isinstance(value, str) and len(value)<=100
+                and all(c.isascii() and (c.isalnum() or c=='_') for c in value))}
+        super().__init__('runtime CLI fixture failed')
+
+
 def run_cli(command: str, *, runtime_root: Path, upstream_port: int, gateway_port: int, timeout: float = 25.0) -> dict[str, object]:
     output_path = runtime_root.parent / f"cli-{command}-{time.time_ns()}.jsonl"
     arguments = [
@@ -649,9 +658,10 @@ def run_cli(command: str, *, runtime_root: Path, upstream_port: int, gateway_por
     output = output_path.read_text(encoding="utf-8", errors="replace")
     if result.returncode == 0:
         output_path.unlink()
-    assert result.returncode == 0, f"runtime CLI {command} failed"
     payload = json.loads(next(line for line in reversed(output.splitlines()) if line.startswith("{")))
     assert type(payload) is dict
+    if result.returncode != 0:
+        raise FixtureCliFailure(payload)
     return payload
 
 
@@ -668,6 +678,11 @@ def _write_lifecycle_report(path: Path, payload: dict[str, object]) -> None:
 def _worker_flags() -> int:
     if os.name != "nt":
         return 0
+    if os.environ.get('GITHUB_ACTIONS') == 'true':
+        # Hosted Windows runner callers belong to a runner-owned Job. Use
+        # the existing detached helper scope there; never change production
+        # host flags or weaken the exit/ACK/listener assertions.
+        return subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS | subprocess.CREATE_BREAKAWAY_FROM_JOB
     # These are short-lived test callers, not service hosts. Keep the caller
     # in the normal launch scope so nested job policies do not reject a
     # second BREAKAWAY. The actual production host still detaches and owns
@@ -794,7 +809,8 @@ def _run_cli_lifecycle_phase_worker(
         )
         return 0
     except Exception as exc:
-        _write_lifecycle_report(report_path, {"result": "fail", "phase": phase, "error_type": type(exc).__name__})
+        _write_lifecycle_report(report_path, {"result": "fail", "phase": phase,
+            "error_type": type(exc).__name__, "cli_failure":getattr(exc, 'public_details', {})})
         return 2
 
 
@@ -1628,7 +1644,7 @@ def test_real_cli_lifecycle_and_acknowledgements() -> None:
         worker.wait(timeout=60)
         if worker.returncode != 0:
             failure = json.loads(report_path.read_text(encoding="utf-8")) if report_path.is_file() else {}
-            raise AssertionError(f"CLI lifecycle phase worker failed: {failure.get('phase', 'unreported')}")
+            raise AssertionError(f"CLI lifecycle phase worker failed: {failure}")
         wait_for(lambda: report_path.is_file(), seconds=60, message="CLI lifecycle stop worker produced no report")
         report = json.loads(report_path.read_text(encoding="utf-8"))
         assert report == {"result": "pass"}, "CLI lifecycle worker failed"
