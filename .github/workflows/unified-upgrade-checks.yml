@@ -104,7 +104,9 @@ jobs:
           $TestBase = 'C:\Temp\IR-' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT
           if (Test-Path -LiteralPath $TestBase) { throw 'Recovery test base must be new' }
           # The hosted runner's enclosing Job rejects CREATE_BREAKAWAY_FROM_JOB.
-          # WMI creates a test caller outside that Job; the driver verifies this
+          # WMI creates a test caller without inheriting that runner Job. The
+          # driver inspects any remaining Windows compatibility Job read-only
+          # and requires it to permit the original host flags. It verifies this
           # and still uses ORIGINAL production host/child/Job flags and all ACK,
           # PID exit, listener, HTTP and data assertions. Never patch production
           # flags or relax the runner's security policy to make tests pass.

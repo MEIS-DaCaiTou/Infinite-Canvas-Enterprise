@@ -1,7 +1,8 @@
 """TEST ONLY: real lifecycle assertions outside a restrictive CI runner Job.
 
 Spawned by Win32_Process.Create (WMI) in Windows CI; never shipped. The driver
-checks its job boundary, then executes unchanged tests/production host flags.
+checks that its enclosing Job permits the unchanged production host flags.
+Windows compatibility Jobs may remain present even outside the runner Job.
 No Job limits are changed and no process is killed by this helper.
 """
 from __future__ import annotations
@@ -20,6 +21,7 @@ def main():
     parser = argparse.ArgumentParser()
     for name in ('repo', 'assets', 'base', 'report-root'):
         parser.add_argument('--'+name, type=Path, required=True)
+    parser.add_argument('--smoke-only', action='store_true')
     args = parser.parse_args()
     result = {'schema_version':'enterprise-ci-lifecycle-driver-v1', 'result':'failed', 'exit_code':2}
     try:
@@ -33,8 +35,22 @@ def main():
         inside = wintypes.BOOL()
         if not kernel.IsProcessInJob(kernel.GetCurrentProcess(), None, ctypes.byref(inside)):
             raise RuntimeError('CI_DRIVER_JOB_INSPECTION_FAILED')
+        job_flags = None
         if inside.value:
-            raise RuntimeError('CI_DRIVER_RUNNER_JOB_NOT_ISOLATED')
+            kernel.QueryInformationJobObject.argtypes = (wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD, ctypes.c_void_p)
+            kernel.QueryInformationJobObject.restype = wintypes.BOOL
+            information = ctypes.create_string_buffer(144)
+            if not kernel.QueryInformationJobObject(None, 9, information, len(information), None):
+                raise RuntimeError('CI_DRIVER_JOB_LIMIT_INSPECTION_FAILED')
+            job_flags = ctypes.c_uint32.from_buffer_copy(information.raw[16:20]).value
+            # Read only: never enable BREAKAWAY_OK or alter a runner Job.
+            if not job_flags & (0x800 | 0x1000):
+                raise RuntimeError('CI_DRIVER_CALLER_JOB_RESTRICTED')
+        result.update(caller_in_job=bool(inside.value), caller_job_limit_flags=job_flags,
+            caller_job_compatible=True, production_host_flags_unchanged=True)
+        if args.smoke_only:
+            result.update(result='pass', exit_code=0, smoke_only=True)
+            return 0
         environment = dict(os.environ)
         environment['PYTEST_DISABLE_PLUGIN_AUTOLOAD'] = '1'
         environment['PYTHONDONTWRITEBYTECODE'] = '1'
@@ -46,8 +62,7 @@ def main():
                 '--basetemp', str(args.base), '--junitxml', str(args.report_root/'real-historical-recovery.xml')],
                 cwd=args.repo, env=environment, stdin=subprocess.DEVNULL, stdout=output, stderr=output,
                 timeout=1000, creationflags=subprocess.CREATE_NO_WINDOW)
-        result.update(result='pass' if done.returncode == 0 else 'failed', exit_code=done.returncode,
-            caller_job_isolated=True, production_host_flags_unchanged=True)
+        result.update(result='pass' if done.returncode == 0 else 'failed', exit_code=done.returncode, smoke_only=False)
     except Exception as exc:
         code = str(exc)
         result['code'] = code if code.startswith('CI_DRIVER_') and len(code)<100 else 'CI_DRIVER_FAILED'
