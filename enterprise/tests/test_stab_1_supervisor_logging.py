@@ -678,14 +678,9 @@ def _write_lifecycle_report(path: Path, payload: dict[str, object]) -> None:
 def _worker_flags() -> int:
     if os.name != "nt":
         return 0
-    if os.environ.get('GITHUB_ACTIONS') == 'true':
-        # Hosted Windows runner callers belong to a runner-owned Job. Use
-        # the existing detached helper scope there; never change production
-        # host flags or weaken the exit/ACK/listener assertions.
-        return subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS | subprocess.CREATE_BREAKAWAY_FROM_JOB
     # These are short-lived test callers, not service hosts. Keep the caller
-    # in the normal launch scope so nested job policies do not reject a
-    # second BREAKAWAY. The actual production host still detaches and owns
+    # in the normal launch scope. Hosted CI uses a checked out-of-runner-Job
+    # test driver; the actual production host still detaches and owns
     # its Job; the stop worker proves it survives the caller's exact exit.
     return subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
 

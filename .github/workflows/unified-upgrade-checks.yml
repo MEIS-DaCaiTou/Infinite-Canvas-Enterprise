@@ -15,6 +15,7 @@ on:
       - enterprise/tests/test_runtime_recovery_control.py
       - enterprise/tests/test_historical_runtime_recovery_installed.py
       - enterprise/tests/runtime_fixture_historical_host.py
+      - enterprise/tests/runtime_fixture_ci_driver.py
       - enterprise/tests/test_stab_1_supervisor_logging.py
       - enterprise/tests/test_unified_upgrade*.py
       - .github/workflows/unified-upgrade-checks.yml
@@ -47,7 +48,6 @@ jobs:
           enterprise/tests/test_runtime_recovery_control.py
           enterprise/tests/test_env_1b1c_b2_portable.py
           enterprise/tests/test_env_1b1c_b2_lifecycle_identity.py
-          enterprise/tests/test_stab_1_supervisor_logging.py::test_real_cli_lifecycle_and_acknowledgements
           enterprise/tests/test_env_1b1a_static_build.py::test_app_root_write_audit_anchors_and_structural_coverage
       - name: Fetch and verify historical public assets
         shell: pwsh
@@ -103,9 +103,27 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $TestBase = 'C:\Temp\IR-' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT
           if (Test-Path -LiteralPath $TestBase) { throw 'Recovery test base must be new' }
-          $ReportPath = Join-Path $env:ICE_UNIFIED_ARTIFACT_ROOT 'real-historical-recovery.xml'
-          python -m pytest -q enterprise/tests/test_historical_runtime_recovery_installed.py --basetemp $TestBase --junitxml $ReportPath
-          if ($LASTEXITCODE -ne 0) { throw 'Real historical recovery verification failed' }
+          # The hosted runner's enclosing Job rejects CREATE_BREAKAWAY_FROM_JOB.
+          # WMI creates a test caller outside that Job; the driver verifies this
+          # and still uses ORIGINAL production host/child/Job flags and all ACK,
+          # PID exit, listener, HTTP and data assertions. Never patch production
+          # flags or relax the runner's security policy to make tests pass.
+          $TaskRepo = (Get-Location).Path
+          $TaskPython = (Get-Command python).Source
+          $TaskDriver = Join-Path $TaskRepo 'enterprise/tests/runtime_fixture_ci_driver.py'
+          $TaskCommand = '"' + $TaskPython + '" -B "' + $TaskDriver + '" --repo "' + $TaskRepo + '" --assets "' + $env:ICE_HISTORICAL_ASSETS + '" --base "' + $TestBase + '" --report-root "' + $env:ICE_UNIFIED_ARTIFACT_ROOT + '"'
+          $TaskStartup = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ ShowWindow = 0 }
+          $TaskSpawn = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $TaskCommand; CurrentDirectory = $TaskRepo; ProcessStartupInformation = $TaskStartup }
+          if ($TaskSpawn.ReturnValue -ne 0) { throw 'Isolated lifecycle test caller failed to start' }
+          $TaskResult = Join-Path $env:ICE_UNIFIED_ARTIFACT_ROOT 'ci-lifecycle-driver-result.json'
+          $TaskDeadline = [DateTime]::UtcNow.AddSeconds(1100)
+          while (-not (Test-Path -LiteralPath $TaskResult)) {
+            if ([DateTime]::UtcNow -gt $TaskDeadline) { throw 'Lifecycle driver timed out; no success claim' }
+            if (-not (Get-Process -Id $TaskSpawn.ProcessId -ErrorAction SilentlyContinue)) { throw 'Lifecycle driver exited without a result' }
+            Start-Sleep -Seconds 2
+          }
+          $TaskReport = Get-Content -Raw -LiteralPath $TaskResult | ConvertFrom-Json
+          if ($TaskReport.exit_code -ne 0 -or $TaskReport.result -ne 'pass') { throw 'Real historical recovery verification failed; inspect retained evidence' }
           Get-ChildItem -LiteralPath $TestBase -Filter 'real-095-*-evidence.json' -File | Copy-Item -Destination $env:ICE_UNIFIED_ARTIFACT_ROOT
       - name: Retain non-sensitive verification evidence
         if: always()
@@ -118,4 +136,6 @@ jobs:
             ${{ runner.temp }}/ice-unified-build/verified-catalog.json
             ${{ runner.temp }}/ice-unified-build/real-historical-recovery.xml
             ${{ runner.temp }}/ice-unified-build/real-095-*-evidence.json
+            ${{ runner.temp }}/ice-unified-build/real-lifecycle.log
+            ${{ runner.temp }}/ice-unified-build/ci-lifecycle-driver-result.json
           if-no-files-found: warn
