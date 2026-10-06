@@ -21,6 +21,7 @@ from enterprise.ops.update.mvp import UpdateJobStore, UpdateMvpService, _run_lau
 from enterprise.paths import install_path_roots_for_process
 from enterprise.release.current_release import read_current_release_result_from_state_root
 from enterprise.release.release_manifest_v2 import read_release_manifest_v2
+from enterprise.runtime.recovery_control import stop_portable_service, lifecycle_summary
 
 RESULT_SCHEMA = "enterprise-native-upgrade-result-v1"
 
@@ -34,7 +35,7 @@ def run(
     *, install_root: Path, catalog_path: Path, manifest_path: Path,
     archive_path: Path, inventory_path: Path, inspect_only: bool = False,
     confirm_no_active_tasks: bool = False, local_app_data_base: Path | None = None,
-    launcher=_run_launcher,
+    launcher=_run_launcher, recover_service_only: bool = False,
 ) -> dict[str, object]:
     job_id = None
     roots = None
@@ -43,6 +44,14 @@ def run(
     original_pointer_sha = None
     reservation_owned = False
     execution_started = False
+    lifecycle = []
+    def lifecycle_call(app_root, command):
+        if launcher is _run_launcher and command == "stop":
+            exit_code, payload = stop_portable_service(app_root, local_app_data_base=local_app_data_base)
+        else:
+            exit_code, payload = launcher(app_root, command)
+        lifecycle.append(lifecycle_summary(command, exit_code, payload))
+        return exit_code, payload
     try:
         catalog = read_catalog(catalog_path)
         summary, roots, source_manifest = inspect_historical_install(
@@ -59,6 +68,36 @@ def run(
                     "already_current": source_id == target.release_id}
         if not confirm_no_active_tasks:
             raise ValueError("ACTIVE_TASK_DRAIN_CONFIRMATION_REQUIRED")
+        if recover_service_only:
+            # Share the sole update reservation, but never prepare/migrate a
+            # database or switch a version in this service-restoration action.
+            install_path_roots_for_process(roots)
+            store = UpdateJobStore(roots)
+            original_pointer_sha = read_current_release_result_from_state_root(roots.STATE_ROOT).raw_sha256
+            job_id, _ = store.create("local-native-service-recovery")
+            store.write_status(job_id, "READY", actor_user_id="local-native-service-recovery",
+                result_code="NATIVE_SERVICE_RECOVERY_READY", source_release_id=source_id, target_release_id=source_id)
+            store.reserve_execution(job_id)
+            reservation_owned = True
+            stop_exit, stop_payload = lifecycle_call(roots.APP_ROOT, "stop")
+            if stop_exit != 0 or stop_payload.get("result") not in {"stopped", "already_stopped"}:
+                raise ValueError("NATIVE_UPGRADE_CONTROLLED_STOP_FAILED")
+            # Confirm identity again after quiescence, before starting source.
+            _, intact, _ = inspect_historical_install(install_root, catalog, local_app_data_base=local_app_data_base)
+            current = read_current_release_result_from_state_root(intact.STATE_ROOT)
+            if current.raw_sha256 != original_pointer_sha or current.release.release_id != source_id:
+                raise ValueError("NATIVE_UPGRADE_RECOVERY_IDENTITY_CHANGED")
+            start_exit, _ = lifecycle_call(intact.APP_ROOT, "start")
+            health_exit, _ = lifecycle_call(intact.APP_ROOT, "health") if start_exit == 0 else (2, {})
+            if start_exit != 0 or health_exit != 0:
+                raise ValueError("NATIVE_SERVICE_RECOVERY_START_FAILED")
+            store.write_status(job_id, "SUCCEEDED", actor_user_id="local-native-service-recovery",
+                result_code="NATIVE_SERVICE_RECOVERY_SUCCEEDED", source_release_id=source_id, target_release_id=source_id)
+            store.append_event(job_id, "SUCCEEDED", "NATIVE_SERVICE_RECOVERY_SUCCEEDED")
+            store.release_execution_lock(store.acquire_execution_lock(job_id), job_id)
+            reservation_owned = False
+            return {"result": "service_recovered", **summary, "job_id": job_id,
+                "result_code": "NATIVE_SERVICE_RECOVERY_SUCCEEDED", "source_recovery": "healthy", "lifecycle": lifecycle}
         if source_id == target.release_id:
             return {"result": "already_current", **summary, "target_release_id": target.release_id}
         install_path_roots_for_process(roots)
@@ -74,7 +113,7 @@ def run(
         store.reserve_execution(job_id)
         reservation_owned = True
         source_stopped = True  # A failed stop can also be partially completed.
-        stop_exit, stop_payload = launcher(roots.APP_ROOT, "stop")
+        stop_exit, stop_payload = lifecycle_call(roots.APP_ROOT, "stop")
         if stop_exit != 0 or stop_payload.get("result") not in {"stopped", "already_stopped"}:
             raise ValueError("NATIVE_UPGRADE_CONTROLLED_STOP_FAILED")
         store.write_status(job_id, "UPDATING", actor_user_id="local-native-upgrader",
@@ -82,14 +121,14 @@ def run(
             target_release_id=prepared.target_release_id)
         store.append_event(job_id, "UPDATING", "SYSTEM_UPDATE_STARTED")
         execution_started = True
-        exit_code = execute_update_job(roots, job_id, launcher=launcher, approved_legacy_security_source=approval)
+        exit_code = execute_update_job(roots, job_id, launcher=lifecycle_call, approved_legacy_security_source=approval)
         reservation_owned = False  # The worker releases its adopted lock.
         terminal = store.read_status(job_id)
         result = ("succeeded" if exit_code == 0 else
                   "recovery_required" if terminal["state"] == "RECOVERY_REQUIRED" else "failed_safe")
         return {"result": result, "job_id": job_id,
             "source_release_id": source_id, "target_release_id": prepared.target_release_id,
-            "terminal_state": terminal["state"], "result_code": terminal.get("result_code")}
+            "terminal_state": terminal["state"], "result_code": terminal.get("result_code"), "lifecycle": lifecycle}
     except Exception as exc:
         if job_id is not None and roots is not None and not reservation_owned and not execution_started:
             # Preparation belongs to this invocation, but another updater may
@@ -118,7 +157,7 @@ def run(
                     store.append_event(job_id, "RECOVERY_REQUIRED", "NATIVE_UPGRADE_WORKER_INTERRUPTED")
             except Exception:
                 pass  # Do not remove an unverified lock or recovery warning.
-        recovery = "not_needed"
+        recovery = "failed" if recover_service_only else "not_needed"
         if source_stopped and roots is not None:
             # Never start an uncertain or partially migrated source after a
             # failed orchestration. Revalidate pointer AND physical schema.
@@ -127,12 +166,21 @@ def run(
                 current = read_current_release_result_from_state_root(intact.STATE_ROOT)
                 if current.release.release_id != source_id or current.raw_sha256 != original_pointer_sha:
                     raise ValueError("NATIVE_UPGRADE_RECOVERY_IDENTITY_CHANGED")
-                start_exit, _ = launcher(intact.APP_ROOT, "start")
-                health_exit, _ = launcher(intact.APP_ROOT, "health") if start_exit == 0 else (2, {})
+                # If the old stop failed before an ACK, first complete that
+                # same controlled stop. Never blindly start into a half host.
+                stopped_exit, stopped_payload = lifecycle_call(intact.APP_ROOT, "stop")
+                if stopped_exit != 0 or stopped_payload.get("result") not in {"stopped", "already_stopped"}:
+                    raise ValueError("NATIVE_RUNTIME_RECOVERY_STOP_UNCONFIRMED")
+                start_exit, _ = lifecycle_call(intact.APP_ROOT, "start")
+                health_exit, _ = lifecycle_call(intact.APP_ROOT, "health") if start_exit == 0 else (2, {})
                 recovery = "healthy" if start_exit == 0 and health_exit == 0 else "failed"
-            except Exception:
-                recovery = "blocked_identity_changed"
-        return {"result": "blocked", "code": safe_code(exc), "job_id": job_id, "source_recovery": recovery}
+            except Exception as recovery_exc:
+                recovery_code = safe_code(recovery_exc)
+                recovery = ("stop_unconfirmed" if recovery_code == "NATIVE_RUNTIME_RECOVERY_STOP_UNCONFIRMED"
+                    else "blocked_identity_changed" if recovery_code in {
+                        "NATIVE_UPGRADE_RECOVERY_IDENTITY_CHANGED", "SYSTEM_UPDATE_RECOVERY_REQUIRED"}
+                    else "failed")
+        return {"result": "blocked", "code": safe_code(exc), "job_id": job_id, "source_recovery": recovery, "lifecycle": lifecycle}
 
 
 def main() -> int:
@@ -142,15 +190,18 @@ def main() -> int:
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--archive", required=True, type=Path)
     parser.add_argument("--inventory", required=True, type=Path)
-    parser.add_argument("--inspect-only", action="store_true")
+    action = parser.add_mutually_exclusive_group()
+    action.add_argument("--inspect-only", action="store_true")
+    action.add_argument("--recover-service-only", action="store_true")
     parser.add_argument("--confirm-no-active-tasks", action="store_true")
     args = parser.parse_args()
     result = run(install_root=args.install_root, catalog_path=args.catalog,
         manifest_path=args.manifest, archive_path=args.archive, inventory_path=args.inventory,
-        inspect_only=args.inspect_only, confirm_no_active_tasks=args.confirm_no_active_tasks)
+        inspect_only=args.inspect_only, confirm_no_active_tasks=args.confirm_no_active_tasks,
+        recover_service_only=args.recover_service_only)
     result["schema_version"] = RESULT_SCHEMA
     print(json.dumps(result, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
-    return 0 if result["result"] in {"succeeded", "already_current", "inspected"} else 2
+    return 0 if result["result"] in {"succeeded", "already_current", "inspected", "service_recovered"} else 2
 
 
 if __name__ == "__main__":

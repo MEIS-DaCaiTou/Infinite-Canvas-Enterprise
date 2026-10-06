@@ -309,6 +309,7 @@ def test_old_owned_release_stop_is_allowed_but_restart_is_blocked_before_write(
 ) -> None:
     controller = RuntimeController(_portable_config(tmp_path))
     old = _controller_snapshot(mismatch=True)
+    old['portable_control_valid'] = True
     monkeypatch.setattr("enterprise.runtime.control.inspect_runtime", lambda _config: old)
     submitted: list[str] = []
 

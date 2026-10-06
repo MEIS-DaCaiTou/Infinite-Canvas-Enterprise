@@ -20,6 +20,7 @@ from .ownership import (
     inspect_port_listeners,
     portable_supervisor_command_identity,
     process_identity,
+    process_exit_confirmed,
     same_process,
 )
 from .process import (
@@ -178,6 +179,7 @@ class RoleRuntime:
     started_at_monotonic: float | None = None
     last_exit_code: int | None = None
     last_exit_at: str | None = None
+    recovery_identity: ProcessIdentity | None = None
 
 
 class RuntimeSupervisor:
@@ -529,6 +531,7 @@ class RuntimeSupervisor:
             self._log("role_start_failed", role=role, failure_category=_failure_category(exc))
             return
         runtime.process = process
+        runtime.recovery_identity = None
         runtime.state = "starting"
         runtime.health = "unknown"
         runtime.health_failures = 0
@@ -548,15 +551,17 @@ class RuntimeSupervisor:
         managed = runtime.process
         runtime.restart_at = None
         if managed is None:
-            runtime.state = "stopped"
+            listeners = inspect_port_listeners(self.commands[role].port)
+            released = listeners.is_empty and (runtime.recovery_identity is None or process_exit_confirmed(runtime.recovery_identity))
+            runtime.state = "stopped" if released else "degraded"
             return {
                 "role": role,
                 "result": "already_stopped",
                 "graceful_timeout": False,
                 "pid": None,
-                "replacement_safe": True,
-                "owned_process_released": True,
-                "port_release": "released",
+                "replacement_safe": released,
+                "owned_process_released": released,
+                "port_release": "released" if released else "cleanup_unproven",
             }
         try:
             result = graceful_stop(managed)
@@ -572,6 +577,7 @@ class RuntimeSupervisor:
                 runtime.last_exit_code = managed.poll()
                 runtime.last_exit_at = utc_now()
                 runtime.process = None
+                runtime.recovery_identity = managed.identity if reconciliation["replacement_safe"] is not True else None
                 runtime.state = "stopped" if reconciliation["replacement_safe"] is True else "degraded"
                 runtime.health = "unknown"
             else:
@@ -1012,6 +1018,17 @@ class RuntimeSupervisor:
             self._start_role("gateway")
         if now - self._last_health_at >= self.config.health_interval_seconds:
             self._last_health_at = now
+            for role in ROLES:
+                runtime = self.roles[role]
+                if (runtime.process is None and runtime.health == "recovery_blocked"
+                        and runtime.recovery_identity is not None
+                        and process_exit_confirmed(runtime.recovery_identity)
+                        and inspect_port_listeners(self.commands[role].port).is_empty):
+                    # Retry only after NEW affirmative evidence, still using
+                    # the existing backoff and crash-loop budget.
+                    runtime.recovery_identity = None
+                    self._schedule_restart(role, reason="cleanup_reconciled", exit_code=runtime.last_exit_code)
+                    self._log("role_cleanup_reconciled", role=role)
             self._check_role_health("upstream")
             self._check_role_health("gateway")
         self._persist_state()

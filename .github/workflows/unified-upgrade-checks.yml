@@ -10,6 +10,12 @@ on:
       - tools/inventory_upgrade_sources.py
       - tools/unified_upgrade.py
       - enterprise/ops/update/historical_install.py
+      - enterprise/ops/update/mvp.py
+      - enterprise/runtime/**
+      - enterprise/tests/test_runtime_recovery_control.py
+      - enterprise/tests/test_historical_runtime_recovery_installed.py
+      - enterprise/tests/runtime_fixture_historical_host.py
+      - enterprise/tests/test_stab_1_supervisor_logging.py
       - enterprise/tests/test_unified_upgrade*.py
       - .github/workflows/unified-upgrade-checks.yml
 
@@ -38,6 +44,10 @@ jobs:
           enterprise/tests/test_unified_upgrade.py
           enterprise/tests/test_096_security_variant.py
           enterprise/tests/test_update_mvp_1.py
+          enterprise/tests/test_runtime_recovery_control.py
+          enterprise/tests/test_env_1b1c_b2_portable.py
+          enterprise/tests/test_env_1b1c_b2_lifecycle_identity.py
+          enterprise/tests/test_stab_1_supervisor_logging.py::test_real_cli_lifecycle_and_acknowledgements
           enterprise/tests/test_env_1b1a_static_build.py::test_app_root_write_audit_anchors_and_structural_coverage
       - name: Fetch and verify historical public assets
         shell: pwsh
@@ -87,6 +97,16 @@ jobs:
           $ReportPath = Join-Path $env:ICE_UNIFIED_ARTIFACT_ROOT 'installed-matrix.xml'
           python -m pytest -q enterprise/tests/test_unified_upgrade_installed.py --basetemp $TestBase --junitxml $ReportPath
           if ($LASTEXITCODE -ne 0) { throw 'Installed-copy verification failed' }
+      - name: Verify real historical partial-host recovery and live-target rollback
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $TestBase = 'C:\Temp\IR-' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT
+          if (Test-Path -LiteralPath $TestBase) { throw 'Recovery test base must be new' }
+          $ReportPath = Join-Path $env:ICE_UNIFIED_ARTIFACT_ROOT 'real-historical-recovery.xml'
+          python -m pytest -q enterprise/tests/test_historical_runtime_recovery_installed.py --basetemp $TestBase --junitxml $ReportPath
+          if ($LASTEXITCODE -ne 0) { throw 'Real historical recovery verification failed' }
+          Get-ChildItem -LiteralPath $TestBase -Filter 'real-095-*-evidence.json' -File | Copy-Item -Destination $env:ICE_UNIFIED_ARTIFACT_ROOT
       - name: Retain non-sensitive verification evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -96,4 +116,6 @@ jobs:
             ${{ runner.temp }}/ice-unified-build/native/unsigned-native-build-record.json
             ${{ runner.temp }}/ice-unified-build/installed-matrix.xml
             ${{ runner.temp }}/ice-unified-build/verified-catalog.json
+            ${{ runner.temp }}/ice-unified-build/real-historical-recovery.xml
+            ${{ runner.temp }}/ice-unified-build/real-095-*-evidence.json
           if-no-files-found: warn

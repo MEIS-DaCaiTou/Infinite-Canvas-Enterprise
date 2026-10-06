@@ -146,13 +146,40 @@ def test_failed_stop_leaves_no_owned_lock_and_checks_safe_restart(tmp_path, monk
     calls = []
     def launcher(root, command):
         calls.append(command)
-        return (2, {}) if command == 'stop' else (0, {})
+        return (2, {}) if len(calls) == 1 else (0, {'result': 'stopped'} if command == 'stop' else {})
     result = worker.run(**args, launcher=launcher, confirm_no_active_tasks=True)
     assert result['code'] == 'NATIVE_UPGRADE_CONTROLLED_STOP_FAILED'
     assert result['source_recovery'] == 'healthy'
-    assert calls == ['stop', 'start', 'health']
+    assert calls == ['stop', 'stop', 'start', 'health']
     assert not store.lock_path.exists()
     assert store.read_status(result['job_id'])['state'] == 'FAILED'
+
+
+def test_service_recovery_never_prepares_migrates_or_changes_pointer(tmp_path, monkeypatch):
+    roots, store, args = _worker_fixture(tmp_path, monkeypatch)
+    before = (roots.STATE_ROOT / 'current-release.json').read_bytes()
+    monkeypatch.setattr(worker, 'UpdateMvpService', lambda *a, **k: pytest.fail('no upgrade preparation'))
+    monkeypatch.setattr(worker, 'execute_update_job', lambda *a, **k: pytest.fail('no migration'))
+    calls = []
+    def launcher(root, command):
+        assert store.lock_path.exists()
+        calls.append(command)
+        return 0, {'result': 'stopped' if command == 'stop' else 'started'}
+    result = worker.run(**args, recover_service_only=True, confirm_no_active_tasks=True, launcher=launcher)
+    assert result['result'] == 'service_recovered'
+    assert calls == ['stop', 'start', 'health']
+    assert (roots.STATE_ROOT / 'current-release.json').read_bytes() == before
+    assert not store.lock_path.exists()
+
+
+def test_unconfirmed_stop_never_blindly_restarts_source(tmp_path, monkeypatch):
+    _, store, args = _worker_fixture(tmp_path, monkeypatch)
+    def launcher(root, command):
+        assert command == 'stop', 'must not start into unknown/foreign occupancy'
+        return 2, {'result': 'foreign_port_occupant'}
+    result = worker.run(**args, confirm_no_active_tasks=True, launcher=launcher)
+    assert result['source_recovery'] == 'stop_unconfirmed'
+    assert not store.lock_path.exists()
 
 
 def test_inspect_and_noop_do_not_prepare_stop_or_mutate_pointer(tmp_path, monkeypatch):

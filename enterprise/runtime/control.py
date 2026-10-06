@@ -18,6 +18,7 @@ from .ownership import (
     inspect_port_listeners,
     portable_supervisor_command_identity,
     process_identity,
+    process_exit_confirmed,
     same_process,
 )
 from .process import bundled_python, windows_extended_process_path
@@ -327,6 +328,8 @@ def _portable_identity_snapshot(
         and _role_owned_by_state(state, "gateway", gateway_listener.resolved_identities)
     )
     executable_match = False
+    control_roles_match = False
+    supervisor_executable_match = False
     if context is not None and type(state) is dict:
         expected = config.app_root.parent / context.release_id / "python" / "python.exe"
         expected_key = os.path.normcase(os.path.abspath(os.fspath(expected)))
@@ -335,7 +338,27 @@ def _portable_identity_snapshot(
             identity is not None and os.path.normcase(os.path.abspath(identity.executable)) == expected_key
             for identity in identities
         )
+        supervisor_executable_match = bool(identities[0] is not None and
+            os.path.normcase(os.path.abspath(identities[0].executable)) == expected_key)
+        # A missing/unhealthy child does not revoke the verified supervisor's
+        # authority to stop its own Job. Unknown or foreign listeners do.
+        control_roles_match = True
+        for role, listener in (("upstream", upstream_listener), ("gateway", gateway_listener)):
+            owned = _identity_from_role(state.get(role))
+            if listener.inspection_failed or listener.unresolved_listener_pids:
+                control_roles_match = False
+            elif owned is None:
+                if not listener.is_empty:
+                    control_roles_match = False
+            elif os.path.normcase(os.path.abspath(owned.executable)) != expected_key:
+                control_roles_match = False
+            elif not same_process(owned, process_identity(owned.pid)):
+                if not listener.is_empty or not process_exit_confirmed(owned):
+                    control_roles_match = False
+            elif any(not same_process(owned, item) for item in listener.resolved_identities):
+                control_roles_match = False
     ownership_valid = identity_fields_match and role_ownership and executable_match
+    control_valid = identity_fields_match and supervisor_executable_match and control_roles_match
     role_health = bool(snapshot.get("upstream_health", {}).get("ok") and snapshot.get("gateway_health", {}).get("ok"))
     release_match = running_release is not None and running_release == config.release_id
     trust_match = bool(
@@ -360,6 +383,7 @@ def _portable_identity_snapshot(
         "running_release_id": running_release,
         "running_release_mismatch": running_release is not None and not release_match,
         "portable_ownership_valid": ownership_valid,
+        "portable_control_valid": control_valid,
         "launch_context_identity": context.identity if context is not None else None,
         "readiness": readiness.snapshot(),
     }
@@ -701,14 +725,18 @@ class RuntimeController:
 
     def _stop_is_fully_quiescent(self, snapshot: dict[str, Any]) -> bool:
         state = snapshot.get("runtime_state")
-        if type(state) is dict and state.get("state") not in {"stopped", None}:
+        if type(state) is dict and state.get("state") not in {"stopped", "crash_loop", "degraded", None}:
             return False
         upstream_listener, gateway_listener = _port_snapshots(self.config)
         if not _ports_are_confirmed_clear(upstream_listener, gateway_listener):
             return False
         if snapshot.get("supervisor_identity_current") or snapshot.get("owned_child_current"):
             return False
-        lock = snapshot.get("lock")
+        if type(state) is dict:
+            identities = (_supervisor_identity_from_state(state), _identity_from_role(state.get("upstream")), _identity_from_role(state.get("gateway")))
+            if any(item is not None and not process_exit_confirmed(item) for item in identities):
+                return False
+        lock = self.store.read_lock()
         if type(lock) is dict and lock.get("lock_phase") in {"reserved", "adopted"}:
             return False
         instance_id = state.get("supervisor_instance_id") if type(state) is dict else None
@@ -768,7 +796,8 @@ class RuntimeController:
             # process ownership changes underneath the caller.
             verified = inspect_runtime(self.config)
             verified_state = verified.get("runtime_state")
-            if verified.get("portable_ownership_valid") is not True:
+            ownership_key = "portable_control_valid" if command == "stop" else "portable_ownership_valid"
+            if verified.get(ownership_key) is not True:
                 return {"result": "ownership_unavailable", "status": verified}
             if command == "restart" and verified.get("running_release_mismatch") is True:
                 return {"result": "release_mismatch", "status": verified}
@@ -801,6 +830,11 @@ class RuntimeController:
             if self.config.runtime_mode == "portable-release"
             else None,
         )
+        controlled_identities = [item for item in (
+            _supervisor_identity_from_state(state),
+            _identity_from_role(state.get("upstream")),
+            _identity_from_role(state.get("gateway")),
+        ) if item is not None]
         deadline = time.monotonic() + wait_seconds
         while time.monotonic() < deadline:
             ack = self.store.read_ack(request_id, instance_id=instance_id)
@@ -832,8 +866,19 @@ class RuntimeController:
                 if command == "stop" and result in {"stopped", "foreign_port_occupant", "unresolved_port_occupant", "stop_incomplete"}:
                     current = inspect_runtime(self.config)
                     if not current.get("supervisor_identity_current"):
+                        quiescent = self._stop_is_fully_quiescent(current) and all(
+                            process_exit_confirmed(item) for item in controlled_identities)
+                        if result == "stopped" and not quiescent:
+                            # The ACK alone cannot authorize migration or a
+                            # replacement service before all owned PIDs exit.
+                            time.sleep(0.2)
+                            continue
                         final_ack = dict(ack)
                         final_ack["supervisor_exit_confirmed"] = True
+                        if quiescent and result == "stop_incomplete":
+                            final_ack["reconciled_stop_result"] = result
+                            result = "stopped"
+                        final_ack["quiescence_confirmed"] = quiescent
                         self.store.remove_ack(request_id, instance_id=instance_id)
                         return {"result": result, "ack": final_ack, "status": current}
                 if isinstance(result, str) and result.startswith("rejected_"):

@@ -855,6 +855,7 @@ def _run_launcher(app_root: Path, command: str, *, timeout: int = 120) -> tuple[
             [str(python), "-I", "-B", str(launcher), "portable", command],
             cwd=str(app_root), env=environment, stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
     except (OSError, subprocess.TimeoutExpired):
         return 2, {"code": "SYSTEM_UPDATE_FORMAL_ENTRY_FAILED"}
@@ -1148,7 +1149,9 @@ def execute_update_job(
         if migration_result is not None:
             try:
                 if pointer_switched:
-                    launcher(target_root, "stop")
+                    target_stop, _ = launcher(target_root, "stop")
+                    if target_stop != 0:
+                        raise UpdateMvpError("SYSTEM_UPDATE_TARGET_STOP_UNCONFIRMED")
                 finalization = finalize_release_database_validation(
                     database_path,
                     migration_result,
@@ -1205,7 +1208,9 @@ def execute_update_job(
         store.write_status(job_id, "ROLLING_BACK", actor_user_id=actor, result_code=failure_code, source_release_id=source_id, target_release_id=target_id)
         store.append_event(job_id, "ROLLING_BACK", failure_code)
         try:
-            launcher(target_root, "stop")
+            target_stop, _ = launcher(target_root, "stop")
+            if target_stop != 0:
+                raise UpdateMvpError("SYSTEM_UPDATE_TARGET_STOP_UNCONFIRMED")
             current = read_current_release_result_from_state_root(roots.STATE_ROOT)
             if current.release.release_id != target_id:
                 raise UpdateMvpError("SYSTEM_UPDATE_ROLLBACK_POINTER_MISMATCH")
@@ -1224,8 +1229,8 @@ def execute_update_job(
             return 2
         except Exception as rollback_exc:
             rollback_code = str(getattr(rollback_exc, "code", "SYSTEM_UPDATE_ROLLBACK_FAILED"))
-            store.write_status(job_id, "FAILED", actor_user_id=actor, result_code=rollback_code, source_release_id=source_id, target_release_id=target_id)
-            store.append_event(job_id, "FAILED", rollback_code)
+            store.write_status(job_id, "RECOVERY_REQUIRED", actor_user_id=actor, result_code=rollback_code, source_release_id=source_id, target_release_id=target_id, recovery_required=True)
+            store.append_event(job_id, "RECOVERY_REQUIRED", rollback_code)
             return 2
     finally:
         store.release_execution_lock(lock, job_id)

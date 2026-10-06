@@ -231,6 +231,26 @@ namespace InfiniteCanvas.Native {
                 object value;
                 if (result.TryGetValue(key, out value) && (value is string || value is bool || value is int)) summary[key] = value;
             }
+            object lifecycle;
+            if (result.TryGetValue("lifecycle", out lifecycle) && lifecycle is System.Collections.IEnumerable && !(lifecycle is string)) {
+                var rows = new List<Dictionary<string, object>>();
+                string[] allowed = { "phase", "exit_code", "result", "code", "state", "start_disposition",
+                    "portable_control_valid", "portable_ownership_valid", "supervisor_identity_current", "owned_child_current",
+                    "upstream_inspection_failed", "gateway_inspection_failed", "upstream_failure_category", "gateway_failure_category",
+                    "quiescence_confirmed", "reconciled_stop_result" };
+                foreach (object item in ((System.Collections.IEnumerable)lifecycle).Cast<object>().Take(16)) {
+                    var row = item as Dictionary<string, object>;
+                    if (row == null) continue;
+                    var safe = new Dictionary<string, object>();
+                    foreach (string key in allowed) {
+                        object value;
+                        if (!row.TryGetValue(key, out value)) continue;
+                        if (value is bool || value is int || value is string && System.Text.RegularExpressions.Regex.IsMatch((string)value, @"\A[A-Za-z0-9_]{1,100}\z")) safe[key] = value;
+                    }
+                    rows.Add(safe);
+                }
+                summary["lifecycle"] = rows;
+            }
             var document = new Dictionary<string, object> { { "schema_version", "enterprise-native-diagnostics-v1" },
                 { "generated_at", DateTime.UtcNow.ToString("o") }, { "operation", summary } };
             byte[] bytes = Encoding.UTF8.GetBytes(Json.Serialize(document) + "\n");

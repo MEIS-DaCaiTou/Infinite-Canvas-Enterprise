@@ -442,24 +442,13 @@ def test_managed_children_preserve_process_group_without_forced_console_policy()
         assert not flags[1] & subprocess.CREATE_NO_WINDOW
 
 
-def test_netstat_listener_inspection_uses_no_window_and_fixed_arguments() -> None:
+def test_native_listener_inspection_queries_both_families_without_subprocess() -> None:
     if os.name != "nt":
         return
-    captured: dict[str, object] = {}
-
-    def fake_run(arguments, **kwargs):
-        captured["arguments"] = arguments
-        captured.update(kwargs)
-        return subprocess.CompletedProcess(arguments, 0, stdout="", stderr="")
-
-    with patch("enterprise.runtime.ownership.subprocess.run", side_effect=fake_run):
+    with patch("enterprise.runtime.ownership._listener_rows", return_value=[]) as query, patch("subprocess.run") as spawn:
         assert inspect_port_listeners(43123) == PortListenerSnapshot(43123, (), (), (), False)
-    assert captured["arguments"] == ["netstat", "-ano", "-p", "tcp"]
-    assert captured["shell"] is False
-    assert captured["check"] is False
-    assert captured["capture_output"] is True
-    assert captured["timeout"] == 3
-    assert int(captured["creationflags"]) & subprocess.CREATE_NO_WINDOW
+    assert [call.args[0] for call in query.call_args_list] == [2, 23]
+    spawn.assert_not_called()
 
 
 def test_bundled_python_missing_candidate_falls_back_to_sys_executable() -> None:
@@ -658,7 +647,8 @@ def run_cli(command: str, *, runtime_root: Path, upstream_port: int, gateway_por
             shell=False,
         )
     output = output_path.read_text(encoding="utf-8", errors="replace")
-    output_path.unlink()
+    if result.returncode == 0:
+        output_path.unlink()
     assert result.returncode == 0, f"runtime CLI {command} failed"
     payload = json.loads(next(line for line in reversed(output.splitlines()) if line.startswith("{")))
     assert type(payload) is dict
@@ -678,7 +668,11 @@ def _write_lifecycle_report(path: Path, payload: dict[str, object]) -> None:
 def _worker_flags() -> int:
     if os.name != "nt":
         return 0
-    return subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS | subprocess.CREATE_BREAKAWAY_FROM_JOB
+    # These are short-lived test callers, not service hosts. Keep the caller
+    # in the normal launch scope so nested job policies do not reject a
+    # second BREAKAWAY. The actual production host still detaches and owns
+    # its Job; the stop worker proves it survives the caller's exact exit.
+    return subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
 
 
 def _run_cli_lifecycle_stop_worker(
@@ -1139,13 +1133,11 @@ def test_unresolved_listener_is_fail_closed() -> None:
             stopped = controller.send_command("stop", wait_seconds=0)
         assert stopped["result"] == "unresolved_port_occupant"
 
-        result = type("Netstat", (), {"stdout": "", "returncode": 1})()
-        with patch.object(runtime_ownership.subprocess, "run", return_value=result):
+        with patch.object(runtime_ownership, "_listener_rows", side_effect=OSError('fixture native query unavailable')):
             failed = inspect_port_listeners(upstream_port)
         assert failed.inspection_failed is True and failed.listener_pids == ()
 
-        netstat = type("Netstat", (), {"stdout": f"  TCP    0.0.0.0:{upstream_port}    0.0.0.0:0    LISTENING    23456\n", "returncode": 0})()
-        with patch.object(runtime_ownership.subprocess, "run", return_value=netstat), patch.object(
+        with patch.object(runtime_ownership, "_listener_rows", return_value=[(upstream_port, 23456)]), patch.object(
             runtime_ownership, "process_identity", return_value=None
         ):
             raw_snapshot = inspect_port_listeners(upstream_port)
@@ -1656,7 +1648,7 @@ CASES = {
     "explicit-stubborn-restart": test_explicit_restart_reconciles_stubborn_owned_child,
     "background-window": test_managed_children_preserve_process_group_without_forced_console_policy,
     "background-window-real": test_service_host_child_has_no_visible_window,
-    "netstat-window": test_netstat_listener_inspection_uses_no_window_and_fixed_arguments,
+    "native-listener": test_native_listener_inspection_queries_both_families_without_subprocess,
     "python-fallback": test_bundled_python_missing_candidate_falls_back_to_sys_executable,
     "role-isolation": test_role_isolation_and_stop,
     "crash-loop": test_crash_loop_and_explicit_stop,
@@ -1828,7 +1820,7 @@ def run_all() -> None:
     test_cleanup_never_terminates_reused_foreign_pid()
     test_managed_children_preserve_process_group_without_forced_console_policy()
     test_service_host_child_has_no_visible_window()
-    test_netstat_listener_inspection_uses_no_window_and_fixed_arguments()
+    test_native_listener_inspection_queries_both_families_without_subprocess()
     test_bundled_python_missing_candidate_falls_back_to_sys_executable()
     test_health_recovery_forces_stubborn_owned_child_before_replacement()
     test_explicit_restart_reconciles_stubborn_owned_child()

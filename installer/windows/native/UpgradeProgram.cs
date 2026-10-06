@@ -23,12 +23,12 @@ namespace InfiniteCanvas.Native {
                 if (args.Length == 0) {
                     Application.EnableVisualStyles(); Application.Run(new UpgradeForm()); return 0;
                 }
-                var options = Core.Options(args, new[] { "--inspect", "--upgrade", "--confirm-no-active-tasks", "--portable-entry" }, new[] { "--install-root", "--result-file" });
-                if (!options.ContainsKey("--install-root") || options.ContainsKey("--inspect") == options.ContainsKey("--upgrade")) throw Core.Block("NATIVE_ARGUMENT_INVALID");
+                var options = Core.Options(args, new[] { "--inspect", "--upgrade", "--recover-service", "--confirm-no-active-tasks", "--portable-entry" }, new[] { "--install-root", "--result-file" });
+                if (!options.ContainsKey("--install-root") || new[] { "--inspect", "--upgrade", "--recover-service" }.Count(options.ContainsKey) != 1) throw Core.Block("NATIVE_ARGUMENT_INVALID");
                 bool inspect = options.ContainsKey("--inspect");
                 // Do not extract/run anything if a required confirmation is absent.
                 if (!inspect && !options.ContainsKey("--confirm-no-active-tasks")) throw Core.Block("ACTIVE_TASK_DRAIN_CONFIRMATION_REQUIRED");
-                var result = Execute(options["--install-root"], inspect, !options.ContainsKey("--portable-entry"));
+                var result = Execute(options["--install-root"], inspect, !options.ContainsKey("--portable-entry"), options.ContainsKey("--recover-service"));
                 Core.WriteResult(options.ContainsKey("--result-file") ? options["--result-file"] : null, result);
                 return Success(result) ? 0 : 2;
             } catch (Exception exc) {
@@ -47,7 +47,7 @@ namespace InfiniteCanvas.Native {
         }
         internal static bool Success(Dictionary<string, object> value) {
             object result;
-            return value.TryGetValue("result", out result) && new[] { "inspected", "succeeded", "already_current" }.Contains(result as string);
+            return value.TryGetValue("result", out result) && new[] { "inspected", "succeeded", "already_current", "service_recovered" }.Contains(result as string);
         }
         private static Dictionary<string, Dictionary<string, object>> Catalog() {
             byte[] raw = Resource("Catalog"); Core.RequireHash(Core.Hash(raw), BuildInfo.CatalogSha);
@@ -108,9 +108,10 @@ namespace InfiniteCanvas.Native {
                 }
             } catch { } // Leave a changed/unverified file intact for investigation.
         }
-        internal static Dictionary<string, object> Execute(string root, bool inspect, bool registerEntry = true) {
+        internal static Dictionary<string, object> Execute(string root, bool inspect, bool registerEntry = true, bool recoverService = false) {
+            if (inspect && recoverService) throw Core.Block("NATIVE_ARGUMENT_INVALID");
             var install = ApprovedInstall(root); Core.VerifyPayload(install);
-            if (install.Root.TrimEnd('\\').Length + 1 + BuildInfo.TargetSuffixLength > 240) throw Core.Block("NATIVE_LEGACY_PATH_TOO_LONG");
+            if (!inspect && !recoverService && install.Root.TrimEnd('\\').Length + 1 + BuildInfo.TargetSuffixLength > 240) throw Core.Block("NATIVE_LEGACY_PATH_TOO_LONG");
             string bundle = ExtractBundle();
             try {
                 var args = new List<string> {
@@ -120,8 +121,9 @@ namespace InfiniteCanvas.Native {
                 "--inventory", Core.Under(bundle, "core/release-payload-inventory.json"),
                 inspect ? "--inspect-only" : "--confirm-no-active-tasks",
             };
+                if (recoverService) args.Add("--recover-service-only");
                 var result = Core.RunPython(install, Core.Under(bundle, "engine/tools/unified_upgrade.py"), args);
-                if (!inspect && Success(result)) {
+                if (!inspect && !recoverService && Success(result)) {
                 // Entry installation is a separate outcome. Never misreport a
                 // committed healthy upgrade as failed and invite a paid retry.
                     try { PublishEntry(install.Root, Core.Under(bundle, "InfiniteCanvas.exe"), registerEntry); result["launcher_installed"] = true; }
@@ -237,7 +239,7 @@ namespace InfiniteCanvas.Native {
         private readonly ComboBox locations;
         private readonly Label state;
         private readonly CheckBox confirmed;
-        private readonly Button inspect, upgrade, browse, export;
+        private readonly Button inspect, upgrade, browse, export, recover;
         private readonly ProgressBar progress;
         private bool busy;
         private Dictionary<string, object> lastResult;
@@ -248,12 +250,13 @@ namespace InfiniteCanvas.Native {
             locations = new ComboBox { Left = 24, Top = 75, Width = 490, DropDownStyle = ComboBoxStyle.DropDown };
             browse = new Button { Left = 527, Top = 73, Width = 110, Height = 32, Text = "浏览目录" };
             browse.Click += (s, e) => { using (var dialog = new FolderBrowserDialog()) if (dialog.ShowDialog(this) == DialogResult.OK) locations.Text = dialog.SelectedPath; };
-            confirmed = new CheckBox { Left = 24, Top = 123, Width = 610, Text = "我已确认没有未完成的 AI 任务；允许暂停服务并执行安全升级。" };
+            confirmed = new CheckBox { Left = 24, Top = 123, Width = 610, Text = "我已确认没有未完成的 AI 任务；允许暂停服务并执行恢复或升级。" };
             state = new Label { Left = 24, Top = 170, Width = 610, Height = 64, Text = "请先检查安装。成功后将在根目录安装固定的 InfiniteCanvas.exe，并创建桌面快捷方式。" };
             inspect = new Button { Left = 24, Top = 260, Width = 145, Height = 35, Text = "只读检查" };
             upgrade = new Button { Left = 480, Top = 260, Width = 156, Height = 35, Text = "确认并升级" };
             progress = new ProgressBar { Left = 24, Top = 235, Width = 612, Height = 8, Visible = false, Style = ProgressBarStyle.Marquee };
             export = new Button { Left = 185, Top = 260, Width = 130, Height = 35, Text = "导出诊断摘要" };
+            recover = new Button { Left = 330, Top = 260, Width = 138, Height = 35, Text = "恢复当前服务" };
             export.Click += (s, e) => {
                 if (lastResult == null) { state.Text = "请先检查安装，再导出诊断摘要。"; return; }
                 using (var dialog = new SaveFileDialog { Filter = "诊断 ZIP|*.zip", FileName = "canvas-upgrade-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".zip", OverwritePrompt = true }) {
@@ -262,8 +265,11 @@ namespace InfiniteCanvas.Native {
                     catch (Exception exc) { state.Text = "导出未完成：" + Core.Code(exc); }
                 }
             };
-            Controls.AddRange(new Control[] { locations, browse, confirmed, state, inspect, upgrade, progress, export });
+            Controls.AddRange(new Control[] { locations, browse, confirmed, state, inspect, upgrade, progress, export, recover });
             inspect.Click += async (s, e) => await Run(true); upgrade.Click += async (s, e) => await Run(false);
+            recover.Click += async (s, e) => {
+                if (MessageBox.Show(this, "仅恢复所选安装的当前版本服务；不升级、不迁移数据库、不更改画布和素材。确认无活动 AI 任务后继续？", "恢复当前服务", MessageBoxButtons.OKCancel) == DialogResult.OK) await Run(false, true);
+            };
             FormClosing += (s, e) => { if (busy) { e.Cancel = true; state.Text = "操作正在进行。请等待升级与恢复结果，不要关闭窗口。"; } };
             Shown += async (s, e) => {
                 var result = await Task.Run(() => UpgradeProgram.Discover());
@@ -274,20 +280,21 @@ namespace InfiniteCanvas.Native {
                 else if (result.Roots.Count > 1) state.Text = "检测到多个安装，请明确选择。工具不会自动操作其他目录。";
             };
         }
-        private async Task Run(bool readOnly) {
+        private async Task Run(bool readOnly, bool recoverService = false) {
             if (String.IsNullOrWhiteSpace(locations.Text)) { state.Text = "请明确选择已有安装目录。"; return; }
             if (!readOnly && !confirmed.Checked) { state.Text = "请先完成无活动任务确认。"; return; }
-            string root = locations.Text; busy = true; locations.Enabled = browse.Enabled = inspect.Enabled = upgrade.Enabled = confirmed.Enabled = export.Enabled = false; progress.Visible = true;
-            state.Text = readOnly ? "正在只读核验版本、完整文件和数据库……" : "正在校验、准备、保护数据、切换与检查结果；失败时自动回退。";
+            string root = locations.Text; busy = true; locations.Enabled = browse.Enabled = inspect.Enabled = upgrade.Enabled = confirmed.Enabled = export.Enabled = recover.Enabled = false; progress.Visible = true;
+            state.Text = readOnly ? "正在只读核验版本、完整文件和数据库……" : recoverService ? "正在核验并受控停止、启动当前版本；不会迁移数据库或切换版本。" : "正在校验、准备、保护数据、切换与检查结果；失败时自动回退。";
             try {
-                var result = await Task.Run(() => UpgradeProgram.Execute(root, readOnly));
+                var result = await Task.Run(() => UpgradeProgram.Execute(root, readOnly, true, recoverService));
                 lastResult = result;
                 string resultName = Core.Text(result, "result");
                 if (resultName == "inspected") state.Text = "检查通过：" + Core.Text(result, "source_version") + "；数据库状态：" + Core.Text(result, "database_variant") + "。";
+                else if (resultName == "service_recovered") state.Text = "当前版本服务已恢复，版本和业务数据未切换。请打开原网页地址验收登录与已有画布。";
                 else if (UpgradeProgram.Success(result)) state.Text = "升级成功／已是目标版本。" + (result.ContainsKey("launcher_installed") && (bool)result["launcher_installed"] ? "今后使用桌面固定入口启停。" : "固定入口安装需处理：" + Core.Text(result, "launcher_code"));
-                else state.Text = "升级未完成：" + (result.ContainsKey("result_code") ? Core.Text(result, "result_code") : Core.Text(result, "code")) + "。请保留诊断，不要反复重试。";
+                else state.Text = "操作未完成：" + (result.ContainsKey("result_code") ? Core.Text(result, "result_code") : Core.Text(result, "code")) + "；原服务恢复：" + (Core.Text(result, "source_recovery") == "healthy" ? "已恢复" : "未确认") + "。请导出诊断，不要反复重试。";
             } catch (Exception exc) { lastResult = new Dictionary<string, object> { { "result", "blocked" }, { "code", Core.Code(exc) } }; state.Text = "操作被安全阻止：" + Core.Code(exc); }
-            finally { busy = false; progress.Visible = false; locations.Enabled = browse.Enabled = inspect.Enabled = upgrade.Enabled = confirmed.Enabled = export.Enabled = true; }
+            finally { busy = false; progress.Visible = false; locations.Enabled = browse.Enabled = inspect.Enabled = upgrade.Enabled = confirmed.Enabled = export.Enabled = recover.Enabled = true; }
         }
     }
 }
