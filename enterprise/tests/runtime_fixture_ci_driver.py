@@ -67,6 +67,18 @@ def main():
         code = str(exc)
         result['code'] = code if code.startswith('CI_DRIVER_') and len(code)<100 else 'CI_DRIVER_FAILED'
     finally:
+        # Only isolated synthetic-fixture logs; no customer directory is read.
+        # Retain why a frozen host never reached readiness on a hosted VM.
+        fixture_logs = []
+        if args.base.is_dir():
+            allowed = {'launcher.log', 'supervisor.log', 'upstream.stderr.log', 'gateway.stderr.log', 'runtime-state.json'}
+            for path in sorted(args.base.rglob('*')):
+                if path.is_file() and path.name in allowed and len(fixture_logs) < 16:
+                    with path.open('rb') as handle:
+                        handle.seek(max(0, path.stat().st_size - 12000))
+                        tail = handle.read(12000).decode('utf-8', errors='replace')
+                    fixture_logs.append({'fixture_file':str(path.relative_to(args.base)), 'tail':tail})
+        (args.report_root/'historical-fixture-debug.json').write_text(json.dumps(fixture_logs, sort_keys=True), encoding='utf-8')
         (args.report_root/'ci-lifecycle-driver-result.json').write_text(json.dumps(result, sort_keys=True), encoding='utf-8')
     return result['exit_code']
 

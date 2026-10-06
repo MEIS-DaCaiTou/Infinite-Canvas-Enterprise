@@ -181,4 +181,5 @@ jobs:
             ${{ runner.temp }}/ice-real-recovery/real-095-*-evidence.json
             ${{ runner.temp }}/ice-real-recovery/real-lifecycle.log
             ${{ runner.temp }}/ice-real-recovery/ci-lifecycle-driver-result.json
+            ${{ runner.temp }}/ice-real-recovery/historical-fixture-debug.json
           if-no-files-found: warn
