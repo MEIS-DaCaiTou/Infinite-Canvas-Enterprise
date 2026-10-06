@@ -170,7 +170,7 @@ namespace InfiniteCanvas.Native {
             text.Append('\\', slashes * 2); text.Append('"');
             return text.ToString();
         }
-        internal static Dictionary<string, object> RunPython(InstallIdentity install, string script, IEnumerable<string> arguments) {
+        internal static Dictionary<string, object> RunPython(InstallIdentity install, string script, IEnumerable<string> arguments, int maximumResultChars = 65536) {
             SafePath(script, false);
             var start = new ProcessStartInfo(install.Python, String.Join(" ", new[] { "-I", "-B", script }.Concat(arguments).Select(Quote))) {
                 UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = install.AppRoot,
@@ -187,7 +187,7 @@ namespace InfiniteCanvas.Native {
                 var outputTask = Task.Run(() => {
                     string line;
                     while ((line = process.StandardOutput.ReadLine()) != null) {
-                        if (line.Length <= 65536 && line.StartsWith("{", StringComparison.Ordinal)) last = line;
+                        if (line.Length <= maximumResultChars && line.StartsWith("{", StringComparison.Ordinal)) last = line;
                     }
                 });
                 var errorTask = Task.Run(() => { while (process.StandardError.ReadLine() != null) { } });
@@ -222,7 +222,7 @@ namespace InfiniteCanvas.Native {
             }
             return null; // Never guess a configured port or follow a supplied URL.
         }
-        internal static void ExportReport(string path, Dictionary<string, object> result) {
+        internal static void ExportReport(string path, Dictionary<string, object> result, Dictionary<string, object> projectLogs = null) {
             string[] keys = { "result", "code", "job_id", "source_release_id", "target_release_id", "source_version", "release_id",
                 "manifest_sha256", "source_manifest_sha256", "database_variant", "database_objects_sha256", "object_count",
                 "integrity_check", "terminal_state", "result_code", "source_recovery", "launcher_installed", "launcher_code", "worker_exit_code" };
@@ -256,8 +256,27 @@ namespace InfiniteCanvas.Native {
             byte[] bytes = Encoding.UTF8.GetBytes(Json.Serialize(document) + "\n");
             SafePath(path, true); SafePath(Path.GetDirectoryName(path), false);
             using (var target = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-            using (var zip = new ZipArchive(target, ZipArchiveMode.Create))
-            using (var entry = zip.CreateEntry("native-diagnostics.json").Open()) entry.Write(bytes, 0, bytes.Length);
+            using (var zip = new ZipArchive(target, ZipArchiveMode.Create)) {
+                using (var entry = zip.CreateEntry("native-diagnostics.json").Open()) entry.Write(bytes, 0, bytes.Length);
+                if (projectLogs == null) return;
+                var metadata = new Dictionary<string, object>();
+                foreach (string key in new[] { "result", "code", "source_count", "truncated" })
+                    if (projectLogs.ContainsKey(key)) metadata[key] = projectLogs[key];
+                if (Text(projectLogs, "result") == "diagnostics_collected") {
+                    byte[] projectBytes = Convert.FromBase64String(Text(projectLogs, "project_logs_zip_base64"));
+                    if (projectBytes.Length > 2 * 1024 * 1024) throw Block("NATIVE_DIAGNOSTICS_LIMIT_EXCEEDED");
+                    RequireHash(Hash(projectBytes), Text(projectLogs, "project_logs_sha256"));
+                    using (var sourceZip = new ZipArchive(new MemoryStream(projectBytes), ZipArchiveMode.Read)) {
+                        var item = sourceZip.GetEntry("project-diagnostics.json");
+                        if (sourceZip.Entries.Count != 1 || item == null || item.Length > 1024 * 1024) throw Block("NATIVE_DIAGNOSTICS_LIMIT_EXCEEDED");
+                        using (var source = item.Open())
+                        using (var entry = zip.CreateEntry("project-diagnostics.json").Open()) source.CopyTo(entry);
+                    }
+                }
+                using (var entry = zip.CreateEntry("project-log-collection.json").Open()) {
+                    byte[] meta = Encoding.UTF8.GetBytes(Json.Serialize(metadata)); entry.Write(meta, 0, meta.Length);
+                }
+            }
         }
         internal static Dictionary<string, string> Options(string[] args, IEnumerable<string> switches, IEnumerable<string> values) {
             var flags = new HashSet<string>(switches); var named = new HashSet<string>(values);

@@ -23,7 +23,13 @@ namespace InfiniteCanvas.Native {
                 if (args.Length == 0) {
                     Application.EnableVisualStyles(); Application.Run(new UpgradeForm()); return 0;
                 }
-                var options = Core.Options(args, new[] { "--inspect", "--upgrade", "--recover-service", "--confirm-no-active-tasks", "--portable-entry" }, new[] { "--install-root", "--result-file" });
+                var options = Core.Options(args, new[] { "--inspect", "--upgrade", "--recover-service", "--export-diagnostics", "--confirm-no-active-tasks", "--portable-entry" }, new[] { "--install-root", "--result-file" });
+                if (options.ContainsKey("--export-diagnostics")) {
+                    if (!options.ContainsKey("--install-root") || !options.ContainsKey("--result-file") || new[] { "--inspect", "--upgrade", "--recover-service" }.Any(options.ContainsKey)) throw Core.Block("NATIVE_ARGUMENT_INVALID");
+                    var project = CollectProjectLogs(options["--install-root"]);
+                    Core.ExportReport(options["--result-file"], new Dictionary<string, object> { {"result","diagnostics_exported"} }, project);
+                    return Core.Text(project,"result") == "diagnostics_collected" ? 0 : 2;
+                }
                 if (!options.ContainsKey("--install-root") || new[] { "--inspect", "--upgrade", "--recover-service" }.Count(options.ContainsKey) != 1) throw Core.Block("NATIVE_ARGUMENT_INVALID");
                 bool inspect = options.ContainsKey("--inspect");
                 // Do not extract/run anything if a required confirmation is absent.
@@ -131,6 +137,20 @@ namespace InfiniteCanvas.Native {
                 }
                 return result;
             } finally { CleanBundle(bundle); }
+        }
+        internal static Dictionary<string, object> CollectProjectLogs(string root) {
+            try {
+                var install = ApprovedInstall(root); Core.VerifyPayload(install);
+                string bundle = ExtractBundle();
+                try {
+                    return Core.RunPython(install, Core.Under(bundle,"engine/tools/unified_upgrade.py"), new[] {
+                        "--install-root",install.Root,"--catalog",Core.Under(bundle,"catalog.json"),
+                        "--manifest",Core.Under(bundle,"core/ops-release-manifest-v2.json"),
+                        "--archive",Core.Under(bundle,"core/release.zip"),
+                        "--inventory",Core.Under(bundle,"core/release-payload-inventory.json"),"--diagnostics-only"
+                    }, 2 * 1024 * 1024);
+                } finally { CleanBundle(bundle); }
+            } catch (Exception exc) { return new Dictionary<string, object> { {"result","diagnostics_unavailable"}, {"code",Core.Code(exc)} }; }
         }
         private static void PublishEntry(string root, string source, bool registerEntry) {
             string target = Path.Combine(root, "InfiniteCanvas.exe"), record = Path.Combine(root, @"state\native-entry.json");
@@ -255,14 +275,22 @@ namespace InfiniteCanvas.Native {
             inspect = new Button { Left = 24, Top = 260, Width = 145, Height = 35, Text = "只读检查" };
             upgrade = new Button { Left = 480, Top = 260, Width = 156, Height = 35, Text = "确认并升级" };
             progress = new ProgressBar { Left = 24, Top = 235, Width = 612, Height = 8, Visible = false, Style = ProgressBarStyle.Marquee };
-            export = new Button { Left = 185, Top = 260, Width = 130, Height = 35, Text = "导出诊断摘要" };
+            export = new Button { Left = 185, Top = 260, Width = 130, Height = 35, Text = "导出诊断日志" };
             recover = new Button { Left = 330, Top = 260, Width = 138, Height = 35, Text = "恢复当前服务" };
-            export.Click += (s, e) => {
-                if (lastResult == null) { state.Text = "请先检查安装，再导出诊断摘要。"; return; }
+            export.Click += async (s, e) => {
+                string root = locations.Text;
+                var operation = lastResult ?? new Dictionary<string, object> { {"result","not_run"} };
                 using (var dialog = new SaveFileDialog { Filter = "诊断 ZIP|*.zip", FileName = "canvas-upgrade-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".zip", OverwritePrompt = true }) {
                     if (dialog.ShowDialog(this) != DialogResult.OK) return;
-                    try { Core.ExportReport(dialog.FileName, lastResult); state.Text = "已导出不含账号、密钥或素材的摘要；完整运行日志在管理后台导出。"; }
+                    busy = true; locations.Enabled = browse.Enabled = inspect.Enabled = upgrade.Enabled = confirmed.Enabled = export.Enabled = recover.Enabled = false; progress.Visible = true;
+                    state.Text = "正在只读收集工具阶段和脱敏 Runtime／更新日志，不更改版本或业务数据……";
+                    try {
+                        var project = await Task.Run(() => UpgradeProgram.CollectProjectLogs(root));
+                        Core.ExportReport(dialog.FileName, operation, project);
+                        state.Text = Core.Text(project,"result") == "diagnostics_collected" ? "已导出工具阶段及脱敏项目日志；有范围和大小上限。请检查业务信息后发送 ZIP。" : "已导出工具摘要；项目日志未收集：" + Core.Text(project,"code") + "。不会运行无法核验的安装。";
+                    }
                     catch (Exception exc) { state.Text = "导出未完成：" + Core.Code(exc); }
+                    finally { busy = false; progress.Visible = false; locations.Enabled = browse.Enabled = inspect.Enabled = upgrade.Enabled = confirmed.Enabled = export.Enabled = recover.Enabled = true; }
                 }
             };
             Controls.AddRange(new Control[] { locations, browse, confirmed, state, inspect, upgrade, progress, export, recover });

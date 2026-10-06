@@ -193,8 +193,17 @@ def main() -> int:
     action = parser.add_mutually_exclusive_group()
     action.add_argument("--inspect-only", action="store_true")
     action.add_argument("--recover-service-only", action="store_true")
+    action.add_argument("--diagnostics-only", action="store_true")
     parser.add_argument("--confirm-no-active-tasks", action="store_true")
     args = parser.parse_args()
+    if args.diagnostics_only:
+        from enterprise.ops.update.native_diagnostics import collect_project_logs
+        try:
+            result = collect_project_logs(args.install_root, args.catalog)
+        except Exception as exc:
+            result = {"result":"diagnostics_unavailable", "code":safe_code(exc)}
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+        return 0 if result["result"] == "diagnostics_collected" else 2
     result = run(install_root=args.install_root, catalog_path=args.catalog,
         manifest_path=args.manifest, archive_path=args.archive, inventory_path=args.inventory,
         inspect_only=args.inspect_only, confirm_no_active_tasks=args.confirm_no_active_tasks,
