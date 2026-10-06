@@ -148,6 +148,35 @@ def test_stop_ack_does_not_replace_fresh_quiescence_confirmation(tmp_path, monke
     if quiescent: assert result['ack']['quiescence_confirmed'] is True
 
 
+@pytest.mark.parametrize('change,expected', [('generation','stopped'),('supervisor','ownership_unavailable'),('context','ownership_unavailable')])
+def test_partial_stop_refreshes_only_same_verified_supervisor(tmp_path, monkeypatch, change, expected):
+    from enterprise.runtime.control import RuntimeController
+    from enterprise.tests.test_env_1b1c_b2_lifecycle_identity import _portable_config, _controller_snapshot
+    controller = RuntimeController(_portable_config(tmp_path))
+    initial = _controller_snapshot(generation=124)
+    initial.update(state='degraded', start_disposition='upstream_only', portable_control_valid=True,
+                   portable_ownership_valid=False)
+    initial['runtime_state'].update(supervisor_pid=100, supervisor_process_created_at=200,
+                                   supervisor_executable='python.exe')
+    verified = {**initial, 'runtime_state':{**initial['runtime_state'], 'state_generation':125}}
+    if change == 'supervisor': verified['runtime_state']['supervisor_process_created_at'] = 999
+    if change == 'context': verified['launch_context_identity'] = 'c'*64
+    stopped = {**verified, 'state':'stopped', 'supervisor_identity_current':False,
+               'runtime_state':{**verified['runtime_state'], 'state':'stopped'}}
+    snapshots = iter((initial, verified, stopped))
+    monkeypatch.setattr('enterprise.runtime.control.inspect_runtime', lambda _:next(snapshots))
+    monkeypatch.setattr(controller, '_stop_is_fully_quiescent', lambda snapshot:snapshot is stopped)
+    monkeypatch.setattr('enterprise.runtime.control.process_exit_confirmed', lambda _:True)
+    submitted = []
+    monkeypatch.setattr(controller.store, 'submit_command', lambda **kwargs:submitted.append(kwargs) or 'request')
+    monkeypatch.setattr(controller.store, 'read_ack', lambda *a,**k:{'result':'stopped','launch_context_identity':'b'*64})
+    monkeypatch.setattr(controller.store, 'remove_ack', lambda *a,**k:None)
+    result = controller.send_command('stop', wait_seconds=.01)
+    assert result['result'] == expected
+    if expected == 'stopped': assert submitted[0]['expected_state_generation'] == 125
+    else: assert not submitted
+
+
 @pytest.mark.parametrize('arguments,code', [
     (['--recover-service'], 'ACTIVE_TASK_DRAIN_CONFIRMATION_REQUIRED'),
     (['--recover-service', '--upgrade', '--confirm-no-active-tasks'], 'NATIVE_ARGUMENT_INVALID'),

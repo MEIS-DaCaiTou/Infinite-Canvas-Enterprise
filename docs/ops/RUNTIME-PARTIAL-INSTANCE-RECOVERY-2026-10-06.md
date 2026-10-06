@@ -10,6 +10,10 @@
 
 ## 实现
 
+2026-10-06 后续现场反馈：第 2 次工具修订返回 `ownership_unavailable`，但诊断中的 `portable_control_valid=true`、Supervisor/上游仍为当前进程、监听检查没有失败。停止没有进入迁移或切换；现场上游在操作期间重新启动，状态序号发生更新。小型用例复现了“两次快照之间同一 Supervisor 更新 state_generation 被误拒绝”的代码缺陷；这与现场症状一致，但上一包没有记录具体拒绝分支，不能把它写成已确认的唯一现场原因。
+
+第 3 次工具修订仅修正 STOP 的该项判定：最新快照仍须完整证明停止授权，instance/context 不变、Supervisor PID/创建时间/程序身份相同，且 state_generation 合法前进，才能使用最新序号提交；原接收方仍执行 generation CAS。restart 与 update handoff 不放宽；Supervisor/上下文改变或代际倒退仍阻止。拒绝结果新增固定错误分类，继续通过现有诊断日志导出，不泄露原始命令或凭据。客户服务恢复仍待原设备确认。
+
 - Windows 监听检查改用原生 `GetExtendedTcpTable`，分别核验 IPv4/IPv6 监听 PID。不启动 netstat 或依赖控制台输出；查询失败、未知或外部进程仍阻止操作。
 - 停止控制权与健康就绪分开。完整核验安装、指针、Manifest、Python、launch context、Supervisor/lock/命令身份后，允许其停止自身部分运行的 Job；此授权不允许未知实例启动、重启或执行升级。
 - STOP ACK 不能单独证明安全：继续确认原进程世代退出、端口为空、锁和待处理 STOP 已收口，才允许开始迁移或替换服务。历史 `stop_incomplete` 只有在这些新鲜证据齐全时才能收口为停止成功。

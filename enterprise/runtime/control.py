@@ -798,17 +798,29 @@ class RuntimeController:
             verified_state = verified.get("runtime_state")
             ownership_key = "portable_control_valid" if command == "stop" else "portable_ownership_valid"
             if verified.get(ownership_key) is not True:
-                return {"result": "ownership_unavailable", "status": verified}
+                return {"result": "ownership_unavailable", "code":"CONTROL_AUTHORITY_UNAVAILABLE", "status": verified}
             if command == "restart" and verified.get("running_release_mismatch") is True:
                 return {"result": "release_mismatch", "status": verified}
             if (
                 type(state) is not dict
                 or type(verified_state) is not dict
                 or state.get("supervisor_instance_id") != verified_state.get("supervisor_instance_id")
-                or state.get("state_generation") != verified_state.get("state_generation")
                 or snapshot.get("launch_context_identity") != verified.get("launch_context_identity")
             ):
-                return {"result": "ownership_unavailable", "status": verified}
+                return {"result": "ownership_unavailable", "code":"CONTROL_INSTANCE_CONTEXT_CHANGED", "status": verified}
+            before_generation = state.get("state_generation")
+            after_generation = verified_state.get("state_generation")
+            if before_generation != after_generation:
+                # Health/restart progress can update state while HTTP probes
+                # are running. STOP may use the freshest generation ONLY for
+                # the same fully verified supervisor generation and context;
+                # the existing receiver still performs its generation CAS.
+                refresh_allowed = (command == "stop" and type(before_generation) is int
+                    and type(after_generation) is int and after_generation > before_generation
+                    and same_process(_supervisor_identity_from_state(state),
+                                     _supervisor_identity_from_state(verified_state)))
+                if not refresh_allowed:
+                    return {"result":"ownership_unavailable", "code":"CONTROL_STATE_GENERATION_CHANGED", "status":verified}
             snapshot = verified
             state = verified_state
 
@@ -843,7 +855,7 @@ class RuntimeController:
                 and self.config.runtime_mode == "portable-release"
                 and ack.get("launch_context_identity") != snapshot.get("launch_context_identity")
             ):
-                return {"result": "ownership_unavailable", "status": inspect_runtime(self.config)}
+                return {"result": "ownership_unavailable", "code":"CONTROL_ACK_CONTEXT_CHANGED", "status": inspect_runtime(self.config)}
             if ack is not None:
                 result = ack.get("result")
                 if command == "restart" and result == "restarted":
