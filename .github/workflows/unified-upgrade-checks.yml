@@ -112,7 +112,8 @@ jobs:
           $TaskPython = (Get-Command python).Source
           $TaskDriver = Join-Path $TaskRepo 'enterprise/tests/runtime_fixture_ci_driver.py'
           $TaskCommand = '"' + $TaskPython + '" -B "' + $TaskDriver + '" --repo "' + $TaskRepo + '" --assets "' + $env:ICE_HISTORICAL_ASSETS + '" --base "' + $TestBase + '" --report-root "' + $env:ICE_UNIFIED_ARTIFACT_ROOT + '"'
-          $TaskStartup = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ ShowWindow = 0 }
+          $TaskStartupClass = Get-CimClass -ClassName Win32_ProcessStartup
+          $TaskStartup = New-CimInstance -CimClass $TaskStartupClass -ClientOnly -Property @{ ShowWindow = [UInt16]0 }
           $TaskSpawn = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $TaskCommand; CurrentDirectory = $TaskRepo; ProcessStartupInformation = $TaskStartup }
           if ($TaskSpawn.ReturnValue -ne 0) { throw 'Isolated lifecycle test caller failed to start' }
           $TaskResult = Join-Path $env:ICE_UNIFIED_ARTIFACT_ROOT 'ci-lifecycle-driver-result.json'
