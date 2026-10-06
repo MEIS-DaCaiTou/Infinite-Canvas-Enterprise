@@ -180,11 +180,11 @@ def test_pipe_security_descriptor_is_current_user_only() -> None:
         bridge.kernel32.LocalFree(descriptor)
 
 
-def _client_exchange(suffix: str, request: dict[str, object]) -> dict[str, object]:
+def _client_exchange(suffix: str, request: dict[str, object], on_progress=None) -> dict[str, object]:
     from enterprise import install_setup_bridge as bridge
 
     name = rf"\\.\pipe\{bridge.PIPE_PREFIX}{suffix}"
-    deadline = time.monotonic() + 5
+    deadline = time.monotonic() + 45
     while not bridge.kernel32.WaitNamedPipeW(name, 100):
         if time.monotonic() >= deadline:
             raise AssertionError("server pipe was not available")
@@ -213,8 +213,14 @@ def _client_exchange(suffix: str, request: dict[str, object]) -> dict[str, objec
                 output.extend(chunk.raw[: received.value])
             return bytes(output)
 
-        size = int(read_exact(8).decode("ascii"), 16)
-        return json.loads(read_exact(size).decode("utf-8"))
+        while True:
+            size = int(read_exact(8).decode("ascii"), 16)
+            assert 1 <= size <= MAX_FRAME_BYTES
+            response = json.loads(read_exact(size).decode("utf-8"))
+            if response.get("event") != "progress":
+                return response
+            if on_progress and on_progress(response) is False:
+                return response  # Close only the view, never the server.
     finally:
         bridge.kernel32.CloseHandle(handle)
 
@@ -430,7 +436,9 @@ def test_toolchain_and_build_policies_are_pinned_and_nonsecret() -> None:
     assert build["core_asset_count"] == 3
     assert build["security_authority"] == "enterprise.fresh_install.install_greenfield"
     assert build["credential_channel"]["request_schema"] == "enterprise-install-maintenance-request-v2"
-    assert build["maintenance_operations"] == ["install", "repair-entry"]
+    assert build["maintenance_operations"] == ["install", "repair-entry", "repair-program", "recover-program", "inspect-program"]
+    assert build["credential_channel"]["graphical_maintenance_request_schema"] == "enterprise-install-maintenance-request-v4"
+    assert build["program_maintenance"]["progress_is_authority"] is False
     assert build["native_entry"]["same_commit_and_tree_as_release"] is True
     assert build["native_entry"]["repair_mutates_business_data"] is False
     assert build["full_lifecycle_complete"] is False

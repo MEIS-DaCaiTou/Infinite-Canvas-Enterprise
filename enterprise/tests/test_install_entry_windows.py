@@ -11,6 +11,7 @@ import json
 import os
 import subprocess
 import time
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -40,9 +41,12 @@ def test_pinned_inno_compiles_changed_pascal_and_shortcuts_twice(tmp_path):
     native = required_path("ICE_NATIVE_ENTRY").parent
     entry = verify_entry_bundle(native)
     manifest, archive, inventory, document = _fixture(tmp_path / "compile-input")
+    with zipfile.ZipFile(archive) as payload:
+        archive_uncompressed = sum(info.file_size for info in payload.infolist())
     definitions = {
         "AppVersion": "2026.08.5", "ReleaseId": document["identity"]["release_id"],
         "ArchiveRootPrefix": document["archive"]["root_prefix"], "AssetDir": str(manifest.parent),
+        "ArchiveUncompressedSize": str(archive_uncompressed),
         "MetadataPath": str(manifest), "NativeEntryDir": str(native),
         "OutputBaseFilename": "compile-contract-not-customer-setup",
         "NativeEntrySha256": entry.sha256, "NativeEntrySize": str(len(entry.data)),

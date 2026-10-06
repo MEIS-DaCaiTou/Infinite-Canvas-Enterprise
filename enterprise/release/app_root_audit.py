@@ -631,6 +631,9 @@ def _flow_for_operation(file: str, symbol: str) -> str:
         # tree and immutable plan/result. Only this operation's locks and trees
         # can be recovered. No database, config, pointer or entry writes.
         return "W47"
+    if file == "enterprise/install_repair_status.py" and symbol in {"RepairProgress.__init__", "RepairProgress.emit"}:
+        # Bounded display records in STATE/STAGING only; never recovery authority.
+        return "W47"
     if file.startswith("tools/validation/windows/env_1b3/"):
         # ENV-1B3 writes only to explicit test-host roots, isolated tamper
         # copies, or development-owned candidate/evidence roots. It never

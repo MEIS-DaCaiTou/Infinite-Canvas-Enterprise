@@ -61,11 +61,11 @@ Source: "{#NativeEntryDir}\InfiniteCanvas.exe"; Flags: dontcopy noencryption not
 Source: "{#NativeEntryDir}\native-entry-build-record.json"; Flags: dontcopy noencryption notimestamp
 
 [Icons]
-Name: "{autoprograms}\无限画布企业版"; Filename: "{code:GetInstalledEntry}"; WorkingDir: "{code:GetInstallRoot}"
-Name: "{autodesktop}\无限画布企业版"; Filename: "{code:GetInstalledEntry}"; WorkingDir: "{code:GetInstallRoot}"; Tasks: desktopicon
+Name: "{autoprograms}\无限画布企业版"; Filename: "{code:GetInstalledEntry}"; WorkingDir: "{code:GetInstallRoot}"; Check: ShouldMaintainEntry
+Name: "{autodesktop}\无限画布企业版"; Filename: "{code:GetInstalledEntry}"; WorkingDir: "{code:GetInstallRoot}"; Tasks: desktopicon; Check: ShouldMaintainEntry
 
 [Run]
-Filename: "{code:GetInstalledEntry}"; Description: "打开无限画布企业版启动窗口"; Flags: postinstall nowait skipifsilent; Tasks: launchafter
+Filename: "{code:GetInstalledEntry}"; Description: "打开无限画布企业版启动窗口"; Flags: postinstall nowait skipifsilent; Tasks: launchafter; Check: ShouldMaintainEntry
 
 [Code]
 const
@@ -83,8 +83,11 @@ var
   ModePage: TInputOptionWizardPage;
   TargetPage: TInputDirWizardPage;
   EnvironmentPage: TOutputMsgMemoWizardPage;
+  OperationPage: TInputOptionWizardPage;
+  TaskConfirmationPage: TInputOptionWizardPage;
   CredentialPage: TInputQueryWizardPage;
   InstallProgress: TOutputProgressWizardPage;
+  DetachButton, StatusButton: TNewButton;
   SelectedInstallRoot: String;
   BundleRoot: String;
   LastStableCode: String;
@@ -92,6 +95,9 @@ var
   ExistingEntryRepair: Boolean;
   MultipleInstalls: Boolean;
   InstallationId: String;
+  RepairState: String;
+  ObservedPhase: String;
+  GraphicalPipeActive, Detached, PersistentBundle: Boolean;
 
 function CreateFileW(lpFileName: String; dwDesiredAccess, dwShareMode: Cardinal;
   lpSecurityAttributes: LongWord; dwCreationDisposition, dwFlagsAndAttributes: Cardinal;
@@ -107,6 +113,65 @@ function GetFileAttributesW(lpFileName: String): Cardinal;
   external 'GetFileAttributesW@kernel32.dll stdcall';
 function GetTickCount64: Int64;
   external 'GetTickCount64@kernel32.dll stdcall';
+function PeekNamedPipe(hNamedPipe: THandle; lpBuffer, nBufferSize, lpBytesRead: LongWord;
+  var lpTotalBytesAvail: Cardinal; lpBytesLeftThisMessage: LongWord): Boolean;
+  external 'PeekNamedPipe@kernel32.dll stdcall';
+
+function MaintenanceOperation: String;
+begin
+  Result := 'install';
+  if not ExistingEntryRepair then exit;
+  case OperationPage.SelectedValueIndex of
+    0: Result := 'repair-entry';
+    1: Result := 'repair-program';
+    2: Result := 'recover-program';
+    3: Result := 'inspect-program';
+  end;
+end;
+
+function ShouldMaintainEntry: Boolean;
+begin
+  Result := (MaintenanceOperation = 'install') or (MaintenanceOperation = 'repair-entry');
+end;
+
+function MaintenanceCaption: String;
+begin
+  Result := '仅查看维护状态';
+  if MaintenanceOperation = 'repair-program' then Result := '修复当前版本程序与 Python'
+  else if MaintenanceOperation = 'recover-program' then Result := '恢复上次中断的程序修复';
+end;
+
+procedure PrepareBundle; forward;
+
+function PhaseCaption(const Phase: String): String;
+begin
+  Result := '正在核验维护状态';
+  if Phase = 'preparing' then Result := '正在准备完整程序与 Python（尚未切换）'
+  else if Phase = 'locked' then Result := '正在核验停机、安装身份与维护锁'
+  else if Phase = 'publishing' then Result := '正在替换已核验的同版本程序'
+  else if Phase = 'verifying' then Result := '正在复核完整程序与运行环境'
+  else if Phase = 'committed' then Result := '程序修复已提交，正在确认收尾'
+  else if Phase = 'recovering' then Result := '正在核验上次记录并恢复一致状态'
+  else if Phase = 'rolled_back' then Result := '已回退到修复前状态，仍需重新修复';
+end;
+
+procedure PaintMaintenanceProgress;
+begin
+  InstallProgress.SetText(MaintenanceCaption + '：' + PhaseCaption(ObservedPhase), '关闭查看不取消后台作业；重开安装包可仅查看状态。');
+  InstallProgress.SetProgress(0, 0); { Real phase only, no invented percentage. }
+end;
+
+procedure ObserveMaintenancePhase(const Response: String);
+begin
+  { Allow-listed backend phases only; no arbitrary response text. }
+  if Pos('"phase":"preparing"', Response) > 0 then ObservedPhase := 'preparing'
+  else if Pos('"phase":"locked"', Response) > 0 then ObservedPhase := 'locked'
+  else if Pos('"phase":"publishing"', Response) > 0 then ObservedPhase := 'publishing'
+  else if Pos('"phase":"verifying"', Response) > 0 then ObservedPhase := 'verifying'
+  else if Pos('"phase":"committed"', Response) > 0 then ObservedPhase := 'committed'
+  else if Pos('"phase":"recovering"', Response) > 0 then ObservedPhase := 'recovering'
+  else if Pos('"phase":"rolled_back"', Response) > 0 then ObservedPhase := 'rolled_back';
+end;
 function UTF8Bytes(const Value: String): AnsiString;
 begin
   Result := Utf8Encode(Value);
@@ -151,10 +216,9 @@ end;
 
 function RequestJson: String;
 var
-  Mode, Target, Operation: String;
+  Mode, Target, Operation, Schema, Confirmation: String;
 begin
-  Operation := 'install';
-  if ExistingEntryRepair then Operation := 'repair-entry';
+  Operation := MaintenanceOperation;
   if (ModePage.SelectedValueIndex = 0) and not ExistingEntryRepair and not MultipleInstalls then begin
     Mode := 'quick';
     Target := 'null';
@@ -162,10 +226,17 @@ begin
     Mode := 'custom';
     Target := '"' + JsonEscape(SelectedInstallRoot) + '"';
   end;
-  Result := '{"operation":"' + Operation + '","install_mode":"' + Mode + '","install_root":' + Target +
+  Schema := 'enterprise-install-maintenance-request-v2';
+  Confirmation := '';
+  if not ShouldMaintainEntry then begin
+    Schema := 'enterprise-install-maintenance-request-v4';
+    if Operation = 'inspect-program' then Confirmation := ',"confirm_no_active_tasks":false'
+    else Confirmation := ',"confirm_no_active_tasks":true';
+  end;
+  Result := '{"operation":"' + Operation + '","install_mode":"' + Mode + '","install_root":' + Target + Confirmation +
     ',"password":"' + JsonEscape(CredentialPage.Values[1]) +
     '","password_confirmation":"' + JsonEscape(CredentialPage.Values[2]) +
-    '","schema_version":"enterprise-install-maintenance-request-v2","username":"' +
+    '","schema_version":"' + Schema + '","username":"' +
     JsonEscape(CredentialPage.Values[0]) + '"}';
 end;
 
@@ -187,13 +258,22 @@ end;
 
 function ReadExact(Stream: THandleStream; Count: Integer; var Data: AnsiString): Boolean;
 var
-  Received: Integer;
+  Received, Wanted: Integer;
+  Available: Cardinal;
   Chunk: AnsiString;
 begin
   Result := False;
   Data := '';
   while Length(Data) < Count do begin
-    SetLength(Chunk, Count - Length(Data));
+    Wanted := Count - Length(Data);
+    if GraphicalPipeActive then begin
+      PaintMaintenanceProgress;
+      if Detached then exit;
+      if not PeekNamedPipe(Stream.Handle, 0, 0, 0, Available, 0) then exit;
+      if Available = 0 then begin Sleep(75); continue; end;
+      if Available < Cardinal(Wanted) then Wanted := Available;
+    end;
+    SetLength(Chunk, Wanted);
     Received := Stream.Read(Chunk, Length(Chunk));
     if Received <= 0 then exit;
     SetLength(Chunk, Received);
@@ -209,6 +289,10 @@ begin
   Result := False;
   Deadline := GetTickCount64 + PipeWaitMilliseconds;
   repeat
+    if GraphicalPipeActive then begin
+      PaintMaintenanceProgress;
+      if Detached then exit;
+    end;
     if WaitNamedPipeW(PipeName, 250) then begin
       Result := True;
       exit;
@@ -241,13 +325,20 @@ begin
     LastStableCode := 'INSTALL_SETUP_BRIDGE_WRITE_FAILED';
     if not WriteAll(Stream, Frame) then exit;
     LastStableCode := 'INSTALL_SETUP_BRIDGE_READ_FAILED';
-    if not ReadExact(Stream, 8, Header) then exit;
-    ResponseLength := StrToIntDef('$' + String(Header), -1);
-    LastStableCode := 'INSTALL_SETUP_BRIDGE_RESPONSE_INVALID';
-    if (ResponseLength < 1) or (ResponseLength > MaxFrameBytes) then exit;
-    LastStableCode := 'INSTALL_SETUP_BRIDGE_READ_FAILED';
-    if not ReadExact(Stream, ResponseLength, ResponseBytes) then exit;
-    Response := UTF8Text(ResponseBytes);
+    repeat
+      if not ReadExact(Stream, 8, Header) then exit;
+      ResponseLength := StrToIntDef('$' + String(Header), -1);
+      LastStableCode := 'INSTALL_SETUP_BRIDGE_RESPONSE_INVALID';
+      if (ResponseLength < 1) or (ResponseLength > MaxFrameBytes) then exit;
+      LastStableCode := 'INSTALL_SETUP_BRIDGE_READ_FAILED';
+      if not ReadExact(Stream, ResponseLength, ResponseBytes) then exit;
+      Response := UTF8Text(ResponseBytes);
+      if GraphicalPipeActive and (Pos('"event":"progress"', Response) > 0) then begin
+        { Backend enum only; do not display paths, credentials or arbitrary response. }
+        ObserveMaintenancePhase(Response);
+        PaintMaintenanceProgress;
+      end else break;
+    until False;
     Result := True;
   finally
     Stream.Free;
@@ -388,8 +479,18 @@ end;
 
 procedure SetStage(const Caption: String; Position: Integer);
 begin
-  InstallProgress.SetText(Caption, '请勿关闭安装程序。');
-  InstallProgress.SetProgress(Position, 6);
+  if not ShouldMaintainEntry then begin
+    InstallProgress.SetText(Caption, '程序维护不会改变业务数据；后台接管后可关闭查看。');
+    InstallProgress.SetProgress(0, 0);
+  end else begin
+    InstallProgress.SetText(Caption, '请勿关闭安装程序。');
+    InstallProgress.SetProgress(Position, 6);
+  end;
+end;
+
+procedure DetachProgress(Sender: TObject);
+begin
+  Detached := True; { Presentation only: never terminate the backend. }
 end;
 
 procedure RequireEmbeddedFile(const Path, ExpectedHash: String; ExpectedSize: Int64);
@@ -428,6 +529,10 @@ var
   ProcessResult: Integer;
 begin
   Result := False;
+  Detached := False;
+  ObservedPhase := '';
+  RepairState := '';
+  InstallationId := '';
   RawRoot := BundleRoot + '\raw\{#ArchiveRootPrefix}';
   PythonExe := RawRoot + '\python\python.exe';
   BridgePath := RawRoot + '\enterprise\install_setup_bridge.py';
@@ -446,9 +551,17 @@ begin
   Request := RequestJson;
   CredentialPage.Values[1] := '';
   CredentialPage.Values[2] := '';
-  if not PipeExchange(PipeSuffix, Request, Response) then begin
-    Request := '';
-    exit;
+  GraphicalPipeActive := not ShouldMaintainEntry;
+  DetachButton.Visible := GraphicalPipeActive and (MaintenanceOperation <> 'inspect-program');
+  try
+    if not PipeExchange(PipeSuffix, Request, Response) then begin
+      Request := '';
+      if Detached then LastStableCode := 'INSTALL_PROGRAM_VIEW_DETACHED';
+      exit;
+    end;
+  finally
+    GraphicalPipeActive := False;
+    DetachButton.Visible := False;
   end;
   Request := '';
   LastStableCode := ExtractCode(Response);
@@ -459,8 +572,49 @@ begin
       LastStableCode := 'INSTALL_IDENTITY_INVALID';
       Result := False;
     end;
+    if not ShouldMaintainEntry then begin
+      ObserveMaintenancePhase(Response);
+      if Pos('"repair_state":"SUCCEEDED"', Response) > 0 then RepairState := 'SUCCEEDED'
+      else if Pos('"repair_state":"ROLLED_BACK"', Response) > 0 then RepairState := 'ROLLED_BACK'
+      else if Pos('"repair_state":"RUNNING"', Response) > 0 then RepairState := 'RUNNING'
+      else if Pos('"repair_state":"RECOVERY_REQUIRED"', Response) > 0 then RepairState := 'RECOVERY_REQUIRED'
+      else if Pos('"repair_state":"STOPPED_BEFORE_SWITCH"', Response) > 0 then RepairState := 'STOPPED_BEFORE_SWITCH'
+      else if Pos('"repair_state":"NONE"', Response) > 0 then RepairState := 'NONE'
+      else begin Result := False; LastStableCode := 'INSTALL_SETUP_BRIDGE_RESPONSE_INVALID'; end;
+    end;
   end;
   Response := '';
+end;
+
+function RepairStateCaption: String;
+begin
+  Result := '状态尚未核准；请保留记录，不要重复提交或删除锁文件。';
+  if RepairState = 'RUNNING' then Result := '后台仍在执行：' + PhaseCaption(ObservedPhase) + #13#10 + '请稍后刷新，不要重复提交。'
+  else if RepairState = 'RECOVERY_REQUIRED' then Result := '上次执行已中断；请选择恢复，后台核验后才会解除本次修复阻断。'
+  else if RepairState = 'SUCCEEDED' then Result := '程序修复已完成；当前版本与业务数据未改变。'
+  else if RepairState = 'ROLLED_BACK' then Result := '已恢复到修复前状态，原有损坏也可能仍在；请重新修复，不能当作修好。'
+  else if RepairState = 'STOPPED_BEFORE_SWITCH' then Result := '作业在切换前停止，原程序未改变；可重新确认修复。'
+  else if RepairState = 'NONE' then Result := '暂无程序修复记录；未执行修复或恢复。';
+end;
+
+procedure InspectMaintenance(Sender: TObject);
+var
+  SelectedOperation: Integer;
+begin
+  SelectedOperation := OperationPage.SelectedValueIndex;
+  OperationPage.SelectedValueIndex := 3;
+  InstallProgress.Show;
+  try
+    PrepareBundle;
+    if RunBridge then MsgBox(RepairStateCaption, mbInformation, MB_OK)
+    else MsgBox('状态未核准：' + LastStableCode + #13#10 +
+      '没有执行恢复；请保留诊断与恢复记录。', mbError, MB_OK);
+  except
+    MsgBox('状态检查未完成；没有执行恢复。' + #13#10 + GetExceptionMessage, mbError, MB_OK);
+  finally
+    OperationPage.SelectedValueIndex := SelectedOperation;
+    InstallProgress.Hide;
+  end;
 end;
 
 procedure InitializeWizard;
@@ -470,15 +624,15 @@ begin
   WizardForm.WelcomeLabel2.Caption := '版本 {#AppVersion}' + #13#10 + #13#10 +
     '安装包已包含独立 Python 运行环境，无需安装 Python。';
 
-  ModePage := CreateInputOptionPage(wpWelcome, '选择安装或入口修复',
-    '已有安装优先使用原位置', '已有安装仅修复固定入口，不重置账号、数据库、配置或当前版本。业务升级仍由更新中心执行。', True, False);
+  ModePage := CreateInputOptionPage(wpWelcome, '选择安装或维护位置',
+    '已有安装优先使用原位置', '维护不重置账号、数据库、配置或当前版本；后续页面明确选择入口修复、程序修复、恢复或查看状态。业务升级仍由更新中心执行。', True, False);
   ModePage.Add('使用推荐位置（已有安装优先）');
   ModePage.Add('选择安装位置');
   ModePage.SelectedValueIndex := 0;
   if MultipleInstalls then ModePage.SelectedValueIndex := 1;
 
   TargetPage := CreateInputDirPage(ModePage.ID, '选择安装位置',
-    '选择全新目录，或要修复入口的已有安装。',
+    '选择全新目录，或要维护的已有安装。',
     '多个安装须明确选择；仅有目录/登记不代表已通过身份核验。其他项目、未知目录及损坏程序不会被覆盖。', False, '');
   TargetPage.Add('安装根目录：');
   TargetPage.Values[0] := DefaultInstallRoot;
@@ -491,19 +645,53 @@ begin
     '新装目录安全，或已有安装完整 Release 身份' + #13#10 +
     '内嵌 Release 身份和三个核心资产');
 
-  CredentialPage := CreateInputQueryPage(EnvironmentPage.ID, '创建首个管理员',
+  OperationPage := CreateInputOptionPage(EnvironmentPage.ID, '选择维护操作',
+    '保留原账号、数据库、画布、素材、配置及当前版本',
+    '程序修复需要与当前 Release 完全相同的安装包，且服务已停止。未知升级或恢复记录不能由这里解除。', True, False);
+  OperationPage.Add('只修复固定入口与快捷方式');
+  OperationPage.Add('修复当前版本程序与 Python（不是业务升级）');
+  OperationPage.Add('恢复上次中断的程序修复');
+  OperationPage.Add('仅查看维护状态／跨窗口进度（不执行恢复）');
+  OperationPage.SelectedValueIndex := 0;
+  StatusButton := TNewButton.Create(WizardForm);
+  StatusButton.Parent := OperationPage.Surface;
+  StatusButton.Caption := '刷新维护状态';
+  StatusButton.Width := ScaleX(125);
+  StatusButton.Height := ScaleY(28);
+  StatusButton.Top := OperationPage.SurfaceHeight - StatusButton.Height;
+  StatusButton.OnClick := @InspectMaintenance;
+
+  TaskConfirmationPage := CreateInputOptionPage(OperationPage.ID, '确认安全维护',
+    '此操作不取消或重新提交 AI 任务',
+    '请先确认没有未完成的 AI 任务，并从固定入口停止本安装服务。后台还会核验进程、端口与维护锁；不会强行停止其他安装。', False, False);
+  TaskConfirmationPage.Add('我确认没有未完成的 AI 任务，并已停止本安装服务。');
+  TaskConfirmationPage.Values[0] := False;
+
+  CredentialPage := CreateInputQueryPage(TaskConfirmationPage.ID, '创建首个管理员',
     '创建唯一的首个 super_admin', '凭据只通过当前用户的一次性内存管道传递，不写入命令行、环境或文件。');
   CredentialPage.Add('管理员用户名：', False);
   CredentialPage.Add('密码：', True);
   CredentialPage.Add('确认密码：', True);
 
   InstallProgress := CreateOutputProgressPage('正在安装', '安装未完成前不会发布 current-release 指针。');
+  DetachButton := TNewButton.Create(WizardForm);
+  DetachButton.Parent := InstallProgress.Surface;
+  DetachButton.Caption := '关闭查看（后台继续）';
+  DetachButton.Width := ScaleX(185);
+  DetachButton.Height := ScaleY(28);
+  DetachButton.Left := InstallProgress.SurfaceWidth - DetachButton.Width;
+  DetachButton.Top := InstallProgress.SurfaceHeight - DetachButton.Height;
+  DetachButton.OnClick := @DetachProgress;
+  DetachButton.Visible := False;
 end;
 
 function ShouldSkipPage(PageID: Integer): Boolean;
 begin
   Result := ((PageID = TargetPage.ID) and (ModePage.SelectedValueIndex = 0) and not MultipleInstalls) or
-    ((PageID = CredentialPage.ID) and ExistingEntryRepair);
+    ((PageID = CredentialPage.ID) and ExistingEntryRepair) or
+    ((PageID = OperationPage.ID) and not ExistingEntryRepair) or
+    ((PageID = TaskConfirmationPage.ID) and (ShouldMaintainEntry or (MaintenanceOperation = 'inspect-program'))) or
+    ((PageID = wpSelectTasks) and not ShouldMaintainEntry);
 end;
 
 procedure ShowMaintenanceScope;
@@ -513,7 +701,7 @@ begin
       '原安装目录：' + SelectedInstallRoot + #13#10 + #13#10 +
       '已发现已有安装候选，执行时仍需完整核验其当前 Release。' + #13#10 +
       '只修复固定 EXE、实例登记和快捷方式。不会初始化或迁移数据库，不会改变当前版本。' + #13#10 +
-      '业务升级请在管理后台执行；完整程序或运行环境修复尚未提供。'
+      '下一页明确选择入口修复、同版本程序/Python 修复、上次中断恢复或只读进度查看。'
   else
     EnvironmentPage.RichEditViewer.Text := '操作：首次安装' + #13#10 +
       '安装根目录：' + SelectedInstallRoot + #13#10 + #13#10 +
@@ -536,11 +724,16 @@ end;
 function UpdateReadyMemo(Space, NewLine, MemoUserInfoInfo, MemoDirInfo,
   MemoTypeInfo, MemoComponentsInfo, MemoGroupInfo, MemoTasksInfo: String): String;
 begin
-  if ExistingEntryRepair then
+  if ExistingEntryRepair and not ShouldMaintainEntry then
+    Result := '操作：' + MaintenanceCaption + NewLine +
+      Space + '原安装目录：' + SelectedInstallRoot + NewLine +
+      Space + '保留原账号、数据库、画布、素材、配置及当前版本。' + NewLine +
+      Space + '后台复核准确身份与停机状态；不是业务升级，不解除未知恢复阻断。'
+  else if ExistingEntryRepair then
     Result := '操作：只修复固定入口（不是业务升级）' + NewLine +
       Space + '原安装目录：' + SelectedInstallRoot + NewLine +
       Space + '保留原账号、数据库、画布、素材、配置及当前版本。' + NewLine +
-      Space + '仅修复根 EXE、实例登记和快捷方式；完整程序/环境修复尚未提供。'
+      Space + '仅修复根 EXE、实例登记和快捷方式。'
   else
     Result := '操作：首次安装' + NewLine + Space + '安装根目录：' + SelectedInstallRoot + NewLine +
       Space + '安装版本：{#AppVersion}' + NewLine + Space + 'Release：{#ReleaseId}';
@@ -584,17 +777,51 @@ begin
       Result := False;
     end;
   end;
+  if (CurPageID = TaskConfirmationPage.ID) and not TaskConfirmationPage.Values[0] then begin
+    MsgBox('请先确认没有未完成任务，并停止本安装服务。', mbError, MB_OK);
+    Result := False;
+  end;
+  if (CurPageID = OperationPage.ID) and (MaintenanceOperation = 'inspect-program') then begin
+    InspectMaintenance(nil);
+    Result := False; { Inspection never reaches installation/shortcut/registry steps. }
+  end;
 end;
 
-function PrepareToInstall(var NeedsRestart: Boolean): String;
+function HasReparseAncestors(const Path: String): Boolean;
 var
-  MetadataPath, ArchivePath, ManifestPath, InventoryPath, RawDir, ExceptionCode: String;
+  Current, Parent: String;
 begin
-  Result := '';
-  LastStableCode := 'INSTALL_SETUP_FAILED';
-  BundleRoot := ExpandConstant('{tmp}\install-ux-bundle');
-  InstallProgress.Show;
-  try
+  Result := True;
+  Current := Path;
+  repeat
+    if HasExistingReparseLeaf(Current) then exit;
+    Parent := ExtractFileDir(Current);
+    if (Parent = Current) or (Parent = '') then break;
+    Current := Parent;
+  until False;
+  Result := False;
+end;
+
+procedure PrepareBundle;
+var
+  MetadataPath, ArchivePath, ManifestPath, InventoryPath, RawDir, CacheRoot: String;
+  FreeBytes, TotalBytes, RequiredBytes: Int64;
+begin
+    if BundleRoot <> '' then begin
+      if not ShouldMaintainEntry and not PersistentBundle then
+        RaiseException('INSTALL_PROGRAM_REOPEN_REQUIRED');
+      exit;
+    end;
+    PersistentBundle := not ShouldMaintainEntry;
+    if PersistentBundle then begin
+      CacheRoot := ExpandConstant('{localappdata}\Infinite-Canvas-Enterprise\maintenance-payloads');
+      if HasReparseAncestors(CacheRoot) then RaiseException('INSTALL_TEMP_ROOT_UNSAFE');
+      RequiredBytes := StrToInt64('{#ArchiveSize}') + StrToInt64('{#ArchiveUncompressedSize}') + 67108864;
+      if not GetSpaceOnDisk64(ExtractFileDrive(CacheRoot) + '\', FreeBytes, TotalBytes) then
+        RaiseException('INSTALL_DISK_SPACE_CHECK_FAILED');
+      if FreeBytes < RequiredBytes then RaiseException('INSTALL_DISK_SPACE_INSUFFICIENT');
+      BundleRoot := CacheRoot + '\' + BuildPipeSuffix + '\install-ux-bundle';
+    end else BundleRoot := ExpandConstant('{tmp}\install-ux-bundle');
     SetStage('验证安装包', 1);
     LastStableCode := 'INSTALL_TEMP_ROOT_UNSAFE';
     if HasExistingReparseLeaf(ExpandConstant('{tmp}')) then
@@ -633,16 +860,41 @@ begin
     RawDir := BundleRoot + '\raw';
     ForceDirectories(RawDir);
     ExtractArchive(ArchivePath, RawDir, '', True, nil);
+end;
 
-    if ExistingEntryRepair then SetStage('核验并修复固定入口（不修改业务数据）', 3)
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  ExceptionCode: String;
+begin
+  Result := '';
+  LastStableCode := 'INSTALL_SETUP_FAILED';
+  InstallProgress.Show;
+  try
+    if not ShouldMaintainEntry and not TaskConfirmationPage.Values[0] then
+      RaiseException('INSTALL_PROGRAM_TASK_CONFIRMATION_REQUIRED');
+    PrepareBundle;
+    if not ShouldMaintainEntry then SetStage('核验并执行已确认的程序维护', 3)
+    else if ExistingEntryRepair then SetStage('核验并修复固定入口（不修改业务数据）', 3)
     else SetStage('初始化企业数据库', 3);
     LastStableCode := 'INSTALL_SETUP_BRIDGE_FAILED';
     if not RunBridge then begin
       if LastStableCode = 'INSTALL_ENTRY_TARGET_PATH_TOO_LONG' then
         Result := '安装目录过深，请选择较短的本机路径；尚未初始化安装或业务数据。' + #13#10
+      else if LastStableCode = 'INSTALL_PROGRAM_VIEW_DETACHED' then
+        Result := '已关闭进度查看，后台作业可能仍在继续；关闭此安装包，重开后选择刷新维护状态。不要重复提交。' + #13#10
       else Result := '操作未完成；不会把原目录当作新安装重建。请保留诊断与恢复记录。' + #13#10;
       Result := Result +
         '错误代码：' + LastStableCode;
+      exit;
+    end;
+    if not ShouldMaintainEntry then begin
+      if RepairState <> 'SUCCEEDED' then begin
+        Result := RepairStateCaption;
+        exit;
+      end;
+      WizardForm.FinishedLabel.Caption := RepairStateCaption + #13#10 +
+        '服务未自动启动；可从原固定入口查看状态并启动。';
+      SetStage('同版本程序维护完成（业务数据不变）', 6);
       exit;
     end;
     SetStage('固定入口已就绪', 4);
@@ -680,7 +932,7 @@ procedure CurStepChanged(CurStep: TSetupStep);
 var
   Key: String;
 begin
-  if (CurStep = ssPostInstall) and (InstallationId <> '') then begin
+  if (CurStep = ssPostInstall) and ShouldMaintainEntry and (InstallationId <> '') then begin
     Key := 'Software\Infinite-Canvas-Enterprise\Installations\' + InstallationId;
     if not RegWriteStringValue(HKCU, Key, 'InstallLocation', SelectedInstallRoot) or
        not RegWriteStringValue(HKCU, Key, 'Launcher', GetInstalledEntry('')) then
@@ -690,6 +942,8 @@ end;
 
 procedure DeinitializeSetup;
 begin
-  if BundleRoot <> '' then
+  { Never remove the external interpreter beneath a detached worker. Persistent
+    payloads stay in this product's cache pending verified retention/cleanup. }
+  if (BundleRoot <> '') and not PersistentBundle then
     DelTree(BundleRoot, True, True, True);
 end;

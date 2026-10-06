@@ -24,6 +24,7 @@ from ctypes import wintypes
 REQUEST_SCHEMA = "install-ux-1-request-v1"
 MAINTENANCE_REQUEST_SCHEMA = "enterprise-install-maintenance-request-v2"
 PROGRAM_MAINTENANCE_REQUEST_SCHEMA = "enterprise-install-maintenance-request-v3"
+GRAPHICAL_MAINTENANCE_REQUEST_SCHEMA = "enterprise-install-maintenance-request-v4"
 RESULT_SCHEMA = "install-ux-1-result-v1"
 MAX_FRAME_BYTES = 16 * 1024
 CONNECT_TIMEOUT_SECONDS = 45.0
@@ -118,7 +119,13 @@ def _decode_request(raw: bytes) -> dict[str, object]:
         "install_root",
     }
     schema = payload.get("schema_version")
-    if schema == PROGRAM_MAINTENANCE_REQUEST_SCHEMA:
+    if schema == GRAPHICAL_MAINTENANCE_REQUEST_SCHEMA:
+        expected.update({"operation", "confirm_no_active_tasks"})
+        operation = payload.get("operation")
+        if (operation not in {"repair-program", "recover-program", "inspect-program"}
+                or payload.get("confirm_no_active_tasks") is not (operation != "inspect-program")):
+            raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
+    elif schema == PROGRAM_MAINTENANCE_REQUEST_SCHEMA:
         expected.update({"operation", "confirm_no_active_tasks"})
         if (payload.get("operation") not in {"repair-program", "recover-program"}
                 or payload.get("confirm_no_active_tasks") is not True):
@@ -143,7 +150,7 @@ def _decode_request(raw: bytes) -> dict[str, object]:
         raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
     if payload["install_mode"] == "custom" and not install_root:
         raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
-    if payload.get("operation") in {"repair-entry", "repair-program", "recover-program"} and any(payload[field] for field in ("username", "password", "password_confirmation")):
+    if payload.get("operation") in {"repair-entry", "repair-program", "recover-program", "inspect-program"} and any(payload[field] for field in ("username", "password", "password_confirmation")):
         raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
     return payload
 
@@ -257,7 +264,7 @@ def _validated_install_root(
     if _paths_overlap(target, raw_app_root) or _paths_overlap(target, release_dir):
         raise SetupBridgeError("INSTALL_TARGET_OVERLAP")
     try:
-        if request.get("operation", "install") in {"repair-entry", "repair-program", "recover-program"}:
+        if request.get("operation", "install") in {"repair-entry", "repair-program", "recover-program", "inspect-program"}:
             if not target.is_dir():
                 raise SetupBridgeError("INSTALL_ENTRY_SOURCE_INVALID")
         elif target.exists() and (not target.is_dir() or any(target.iterdir())):
@@ -285,6 +292,7 @@ def _run_install_request(
     request: dict[str, object],
     *,
     raw_app_root: Path,
+    notify_progress=None,
 ) -> dict[str, object]:
     from enterprise.fresh_install import install_greenfield, verify_release_assets
     from enterprise.install_entry import repair_fixed_entry, verify_entry_bundle
@@ -299,11 +307,15 @@ def _run_install_request(
         release_dir=assets,
         known_folder=known_folder,
     )
+    if request.get("operation") == "inspect-program":
+        from enterprise.install_repair_status import inspect_program_repair
+        result = inspect_program_repair(install_root=target, release_dir=assets, local_app_data_base=known_folder)
+        return {"schema_version": RESULT_SCHEMA, "status": "succeeded", "code": "INSTALL_PROGRAM_STATUS", **result}
     if request.get("operation") in {"repair-program", "recover-program"}:
         from enterprise.install_repair import repair_program, recover_program
         handler = recover_program if request["operation"] == "recover-program" else repair_program
         result = handler(install_root=target, release_dir=assets, local_app_data_base=known_folder,
-                         confirm_no_active_tasks=request["confirm_no_active_tasks"])
+                         confirm_no_active_tasks=request["confirm_no_active_tasks"], notify_progress=notify_progress)
         return {"schema_version": RESULT_SCHEMA, "status": "succeeded",
                 "code": "INSTALL_PROGRAM_RECOVERED" if request["operation"] == "recover-program" else "INSTALL_PROGRAM_REPAIRED",
                 **result}
@@ -526,6 +538,7 @@ def _serve_once(
         if not kernel32.SetNamedPipeHandleState(handle, ctypes.byref(wait_mode), None, None):
             raise SetupBridgeError("INSTALL_SETUP_BRIDGE_CONNECT_FAILED")
         _validate_client_sid(handle, expected_sid)
+        graphical = False
         try:
             header = _read_exact(handle, 8)
             try:
@@ -535,14 +548,32 @@ def _serve_once(
             if not 1 <= size <= MAX_FRAME_BYTES:
                 raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_TOO_LARGE")
             request = _decode_request(_read_exact(handle, size))
-            response = handler(request)
+            graphical = request["schema_version"] == GRAPHICAL_MAINTENANCE_REQUEST_SCHEMA
+            if graphical:
+                def notify(phase, operation_id):
+                    # The pipe is presentation only. Closing a Setup window
+                    # must not cancel the shared transaction or trigger rollback.
+                    try:
+                        _write_all(handle, _encode_frame({"schema_version": RESULT_SCHEMA, "event": "progress",
+                            "status": "running", "code": "INSTALL_PROGRAM_PROGRESS",
+                            "phase": phase, "operation_id": operation_id}))
+                    except SetupBridgeError:
+                        pass
+                response = handler(request, notify_progress=notify)
+                response = {**response, "event": "result"}
+            else:
+                response = handler(request)
         except BaseException as exc:
             response = _blocked(_stable_code(exc))
         finally:
             if "request" in locals():
                 request.clear()
-        _write_all(handle, _encode_frame(response))
-        kernel32.FlushFileBuffers(handle)
+        try:
+            _write_all(handle, _encode_frame(response))
+            kernel32.FlushFileBuffers(handle)
+        except SetupBridgeError:
+            if not graphical:
+                raise
         return 0 if response["status"] == "succeeded" else 2
     finally:
         if connected:
@@ -571,7 +602,7 @@ def main(argv: list[str] | None = None) -> int:
             raise SetupBridgeError("INSTALL_BOOTSTRAP_INVALID")
         return _serve_once(
             args.pipe_name,
-            lambda request: _run_install_request(request, raw_app_root=raw_app_root),
+            lambda request, **kwargs: _run_install_request(request, raw_app_root=raw_app_root, **kwargs),
         )
     except SetupBridgeError:
         return 2

@@ -1,7 +1,7 @@
 """Opt-in full-payload installation-copy drills; never customer data or Setup UI.
 
 Build clean, same-source Release assets and a native entry beforehand. The real
-bundled Python/named pipe exercises Setup's v2 and the candidate v3 handlers,
+bundled Python/named pipe exercises Setup's v2/v3 and graphical v4 handlers,
 without changing global shortcuts, registry hints or authenticating a browser user.
 SQLite/config/media are fresh fixtures. Runtime listener checks are a separate
 explicit opt-in and use only dynamically allocated ports and owned processes.
@@ -25,7 +25,9 @@ import pytest
 
 from enterprise import fresh_install as fresh
 from enterprise import install_entry as entry_module
-from enterprise.install_setup_bridge import MAINTENANCE_REQUEST_SCHEMA, PROGRAM_MAINTENANCE_REQUEST_SCHEMA
+from enterprise.install_setup_bridge import (
+    GRAPHICAL_MAINTENANCE_REQUEST_SCHEMA, MAINTENANCE_REQUEST_SCHEMA, PROGRAM_MAINTENANCE_REQUEST_SCHEMA,
+)
 from enterprise.paths import PortableRootInputs, derive_portable_path_roots
 from enterprise.release.release_manifest_v2 import materialize_release_fixture
 from enterprise.tests.test_install_ux_1 import _client_exchange
@@ -87,7 +89,7 @@ def _install(resources, root):
     )
 
 
-def _pipe(resources, root, operation):
+def _pipe(resources, root, operation, *, graphical=False, on_progress=None):
     suffix = uuid.uuid4().hex
     app = resources["app"]
     request = {"schema_version": MAINTENANCE_REQUEST_SCHEMA, "operation": operation,
@@ -97,6 +99,9 @@ def _pipe(resources, root, operation):
                "password_confirmation": PASSWORD if operation == "install" else ""}
     if operation in {"repair-program", "recover-program"}:
         request.update(schema_version=PROGRAM_MAINTENANCE_REQUEST_SCHEMA, confirm_no_active_tasks=True)
+    if graphical:
+        request.update(schema_version=GRAPHICAL_MAINTENANCE_REQUEST_SCHEMA,
+                       confirm_no_active_tasks=operation != "inspect-program")
     observed = {}
     process = subprocess.Popen(
         [str(app / "python/python.exe"), "-I", "-B", str(app / "enterprise/install_setup_bridge.py"),
@@ -106,7 +111,7 @@ def _pipe(resources, root, operation):
     )
     def exchange():
         try:
-            observed["result"] = _client_exchange(suffix, request)
+            observed["result"] = _client_exchange(suffix, request, on_progress=on_progress)
         except BaseException as exc:
             observed["error"] = type(exc).__name__
     worker = threading.Thread(target=exchange, daemon=True)
@@ -251,14 +256,7 @@ def test_actual_bundled_python_program_and_environment_repair(resources):
     assert (app / "python/python.exe").is_file()
 
 
-@pytest.mark.parametrize("checkpoint", ["original_moved", "candidate_published", "committed"])
-def test_actual_process_death_recovers_only_its_program_transaction(resources, checkpoint):
-    root = _root(resources)
-    _install(resources, root)
-    _fixture_business(root)
-    before, database = _maintenance_snapshot(root), _database(root)
-    _damage_program(resources, root)
-    damaged = _snapshot(_program(resources, root))
+def _crash_program_runner(resources, root, checkpoint):
     app = resources["app"]
     # Kill this owned runner without finally blocks; the second process must
     # acquire the Windows-released lease, verify the saved plan and recover.
@@ -278,6 +276,17 @@ repair.repair_program(install_root=pathlib.Path(sys.argv[2]), release_dir=pathli
                              cwd=resources["base"], capture_output=True, timeout=180,
                              creationflags=subprocess.CREATE_NO_WINDOW)
     assert process.returncode == 86, (process.returncode, process.stdout, process.stderr)
+
+
+@pytest.mark.parametrize("checkpoint", ["original_moved", "candidate_published", "committed"])
+def test_actual_process_death_recovers_only_its_program_transaction(resources, checkpoint):
+    root = _root(resources)
+    _install(resources, root)
+    _fixture_business(root)
+    before, database = _maintenance_snapshot(root), _database(root)
+    _damage_program(resources, root)
+    damaged = _snapshot(_program(resources, root))
+    _crash_program_runner(resources, root, checkpoint)
     lock = root / "state/system-update-active.lock"
     assert lock.is_file()
     exit_code, recovered = _pipe(resources, root, "recover-program")
@@ -289,6 +298,62 @@ repair.repair_program(install_root=pathlib.Path(sys.argv[2]), release_dir=pathli
         assert _snapshot(_program(resources, root)) == damaged
         exit_code, retried = _pipe(resources, root, "repair-program")
         assert exit_code == 0 and retried["repair_state"] == "SUCCEEDED", retried
+    assert _maintenance_snapshot(root) == before and _database(root) == database
+
+
+def test_actual_graphical_repair_survives_detach_and_later_query(resources):
+    root = _root(resources)
+    _install(resources, root)
+    _fixture_business(root)
+    before, database = _maintenance_snapshot(root), _database(root)
+    _damage_program(resources, root)
+    started = time.monotonic()
+    # Only the client view disconnects; the unmodified external worker exits
+    # after committing the actual full program/interpreter repair.
+    exit_code, frame = _pipe(resources, root, "repair-program", graphical=True,
+                             on_progress=lambda progress: False)
+    assert exit_code == 0 and frame["event"] == "progress" and frame["phase"] == "preparing", frame
+    complete = _snapshot(root)
+    exit_code, status = _pipe(resources, root, "inspect-program", graphical=True)
+    assert exit_code == 0 and status["code"] == "INSTALL_PROGRAM_STATUS", status
+    assert status["repair_state"] == "SUCCEEDED" and status["operation_id"] == frame["operation_id"]
+    assert status["database_changed"] is status["pointer_changed"] is status["entry_changed"] is False
+    assert _snapshot(root) == complete
+    assert _maintenance_snapshot(root) == before and _database(root) == database
+    from enterprise.release.release_manifest_v2 import verify_materialized_release
+    app = _program(resources, root)
+    verify_materialized_release(app, inventory_path=app / "release-payload-inventory.json")
+    print("full-payload detached graphical repair and query seconds", round(time.monotonic() - started, 3))
+
+
+def test_actual_graphical_interruption_query_recovery_and_retry(resources):
+    root = _root(resources)
+    _install(resources, root)
+    _fixture_business(root)
+    before, database = _maintenance_snapshot(root), _database(root)
+    _damage_program(resources, root)
+    damaged = _snapshot(_program(resources, root))
+    _crash_program_runner(resources, root, "candidate_published")
+    complete = _snapshot(root)
+    exit_code, status = _pipe(resources, root, "inspect-program", graphical=True)
+    assert exit_code == 0 and status["repair_state"] == "RECOVERY_REQUIRED", status
+    assert _snapshot(root) == complete  # Inspection is not recovery.
+    phases = []
+    def observe(frame):
+        phases.append(frame["phase"])
+    exit_code, recovered = _pipe(resources, root, "recover-program", graphical=True, on_progress=observe)
+    assert exit_code == 0 and recovered["repair_state"] == "ROLLED_BACK", recovered
+    assert phases == ["recovering", "rolled_back"]
+    assert _snapshot(_program(resources, root)) == damaged
+    assert not (root / "state/system-update-active.lock").exists()
+    complete = _snapshot(root)
+    exit_code, status = _pipe(resources, root, "inspect-program", graphical=True)
+    assert exit_code == 0 and status["repair_state"] == "ROLLED_BACK", status
+    assert _snapshot(root) == complete
+    phases.clear()
+    exit_code, repaired = _pipe(resources, root, "repair-program", graphical=True, on_progress=observe)
+    assert exit_code == 0 and repaired["repair_state"] == "SUCCEEDED", repaired
+    assert phases == ["preparing", "locked", "publishing", "verifying", "committed"]
     assert _maintenance_snapshot(root) == before and _database(root) == database
 
 

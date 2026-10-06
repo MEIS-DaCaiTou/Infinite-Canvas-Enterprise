@@ -47,7 +47,8 @@
 | `security_bootstrap.py` | 角色/审计安全能力的计划、激活和恢复 |
 | `security_user_governance.py` | 三角色下的用户变更、CAS、审计与会话失效 |
 | `fresh_install.py` | Greenfield 首次安装事务 |
-| `install_entry.py` | 安装接线候选：固定 EXE/稳定实例 ID 的发布与入口专用修复；不写业务数据库 |
+| `install_entry.py` | 主线安装接线：固定 EXE/稳定实例 ID 的发布与入口专用修复；不写业务数据库 |
+| `install_repair.py` / `install_repair_status.py` | 同 Release 程序/Python 修复与自己的中断恢复；候选状态层只观察 plan/result/lease 和展示真实阶段，不代替恢复授权 |
 | `install_cli.py` | 开发/命令行安装入口 |
 | `install_setup_bridge.py` | 安装器与固定 Python 间的受控 named-pipe 桥接 |
 
