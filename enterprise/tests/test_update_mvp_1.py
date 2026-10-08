@@ -1046,7 +1046,8 @@ def test_diagnostics_are_bounded_redacted_and_zip_safe(tmp_path: Path):
 def test_update_center_ui_never_persists_password_and_hides_dangerous_actions():
     html = (Path(__file__).resolve().parents[2] / "enterprise-static" / "admin.html").read_text(encoding="utf-8")
     assert 'type="password" id="updateConfirmPassword"' in html
-    assert "update-dangerous" in html and "SYSTEM_UPDATE" not in html
+    assert "update-dangerous" in html
+    assert "SYSTEM_UPDATE_EMERGENCY_SWITCH_DISABLED" in html
     assert "document.getElementById('updateConfirmPassword').value = ''" in html
     assert "localStorage" not in html[html.index("async function executeSystemUpdate"):html.index("async function refreshUpdateJob")]
 
@@ -1103,6 +1104,66 @@ def test_update_api_denies_unprivileged_roles_before_provider_or_filesystem(monk
             )
         )
     assert user_denial.value.status_code == 403
+
+
+@pytest.mark.parametrize("role,deployment_enabled,feature_enabled,denial_code", [
+    ("super_admin", True, True, None),
+    ("super_admin", False, True, "SYSTEM_UPDATE_EMERGENCY_SWITCH_DISABLED"),
+    ("super_admin", True, False, "SYSTEM_UPDATE_PERMISSION_DENIED"),
+    ("super_admin", False, False, "SYSTEM_UPDATE_EMERGENCY_SWITCH_DISABLED"),
+    ("admin", True, True, "SYSTEM_UPDATE_SUPER_ADMIN_REQUIRED"),
+    ("admin", False, False, "SYSTEM_UPDATE_SUPER_ADMIN_REQUIRED"),
+])
+def test_update_access_explains_gates_without_changing_operator_authorization(
+    monkeypatch, role, deployment_enabled, feature_enabled, denial_code,
+):
+    from enterprise import update_api
+
+    current = {
+        "id": "actor", "role": role, "is_active": True, "auth_version": 4,
+    }
+    allowed = feature_enabled and role == "super_admin"
+    effective = {
+        "allowed": allowed, "global_enabled": feature_enabled,
+        "source": "super_admin" if feature_enabled else "global_disabled",
+    }
+    monkeypatch.setattr(update_api, "ENTERPRISE_UPDATE_ENABLED", deployment_enabled)
+    monkeypatch.setattr(update_api.edb, "get_user_by_id", lambda _uid: current)
+    monkeypatch.setattr(update_api.edb, "get_effective_feature_value", lambda *_args: effective)
+    monkeypatch.setattr(update_api.edb, "can_use_feature", lambda *_args: allowed)
+    monkeypatch.setattr(update_api, "_provider", lambda: pytest.fail("no provider/network access"))
+    # A stale role claim must not replace the current persisted role.
+    request = _Request({"user_id": "actor", "auth_version": 4, "role": "super_admin"})
+    result = asyncio.run(update_api.update_access(request))
+    assert result == {
+        "role": role, "can_operate": denial_code is None,
+        "global_update_enabled": deployment_enabled and feature_enabled,
+        "deployment_update_enabled": deployment_enabled,
+        "feature_update_enabled": feature_enabled,
+        "denial_code": denial_code, "permission_source": effective["source"],
+    }
+    if denial_code is None:
+        assert update_api._require_update_operator(request) == current
+    else:
+        with pytest.raises(HTTPException) as denied:
+            update_api._require_update_operator(request)
+        assert denied.value.status_code == 403
+        assert denied.value.detail["code"] == denial_code
+
+
+def test_update_access_does_not_accept_stale_or_inactive_sessions(monkeypatch):
+    from enterprise import update_api
+
+    monkeypatch.setattr(update_api.edb, "get_effective_feature_value", lambda *_args: pytest.fail("stale identity"))
+    request = _Request({"user_id": "actor", "auth_version": 1})
+    for current in (
+        {"id": "actor", "role": "super_admin", "is_active": False, "auth_version": 1},
+        {"id": "actor", "role": "super_admin", "is_active": True, "auth_version": 2},
+    ):
+        monkeypatch.setattr(update_api.edb, "get_user_by_id", lambda _uid: current)
+        with pytest.raises(HTTPException) as denied:
+            asyncio.run(update_api.update_access(request))
+        assert denied.value.status_code == 401
 
 
 @pytest.mark.parametrize("candidate_version,available", [
