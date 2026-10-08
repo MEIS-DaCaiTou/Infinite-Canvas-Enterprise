@@ -11,7 +11,7 @@ Before adding or changing scripts, read:
 - `../../ENTERPRISE_DOCS.md`
 - `SMOKE_CHECKLIST.md`
 
-Reviewed: 2026-10-05
+Reviewed: 2026-10-09
 
 ## Verification policy
 
@@ -27,6 +27,9 @@ py -3.11 -B -m unittest discover -s enterprise/tests -p test_documentation_contr
 They check registration, authority roles/dates, local Markdown file/heading links, replacement headers and frozen evidence/resources. They do not prove prose semantics, external links, customer upgrades or Provider behavior. Historical test descriptions below retain their original evidence scope; latest state belongs in CURRENT.
 
 ## Scripts
+
+- `test_admin_update_guidance.py/js` checks the actual admin HTML role rows/filtering, deployment/feature/role gate explanations and fail-closed refresh; synthetic DOM tests are not rendered-browser acceptance. The baseline closeout also checks the real HTML with existing Playwright against loopback intercepted fixture APIs, never production.
+- `test_versioned_release_snapshot.py` checks the unified builder's default and explicit v2 evidence against official 09.9/10.1 schema/registry hashes, greenfield shape parity and read-only same-schema planning. `test_install_mvp_1.py` retains v1 evidence compatibility and adds v2 install plus evidence-tamper refusal. These do not publish a Release or upgrade a customer.
 
 - `test_native_entry_build.py` checks the target-independent entry policy, pinned compiler package/extracted closure, external new artifact roots, dirty-source refusal and reparse rejection. `test_native_entry_windows.py` runs the actual EXE with a test-only C# `ContractWorker`: pointer switching/rollback, Unicode/space paths, isolated direct-script handoff, changed/extra/missing payload rejection, nonblocking CLI errors and result-file non-overwrite. This does not execute Python, a real Supervisor, migration, browser or GUI clicks. Set `ICE_NATIVE_ENTRY`, `ICE_NATIVE_COMPILER_PACKAGE` and `ICE_NATIVE_COMPILER_ROOT` on Windows to run compiled cases; missing binaries skip explicitly. Scoped Windows CI compiles twice and runs both files. No customer data, listeners or paid providers are used. See `../../docs/ops/DELIVERY-1-FIXED-NATIVE-ENTRY-2026-10.md` for boundaries.
 - `test_install_entry.py` checks same-source native bundle qualification, stable installation UUID, idempotent entry publication, unknown-file/state rejection, owned-only rollback and recovery blocking, pointer-last fresh install, read-only full Release repair qualification, the v2 maintenance request, and unsupported deep destinations rejected before writes. Unit MZ bytes are not an executable. `test_update_mvp_1.py` also checks no-create recovery inspection. `test_install_entry_windows.py` compiles the actual Pascal Setup twice using pinned portable Inno, then separately repairs entry files against full pinned 09.5/09.9 public payload copies and runs the actual EXE identity check. Databases/config/media are non-customer preservation fixtures; no Python lifecycle or service starts. Set `ICE_INNO_COMPILER`, `ICE_INNO_OFFICIAL_INSTALLER`, `ICE_NATIVE_ENTRY`, and `ICE_ENTRY_RELEASE_ASSETS`; missing resources skip explicitly. Compile-only Setup samples are NOT installable customer packages. Scoped Windows CI prepares these resources automatically.

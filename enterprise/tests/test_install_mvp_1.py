@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import sqlite3
 import subprocess
 import sys
@@ -21,10 +22,16 @@ from enterprise.migrations.sec_1b2_activation import BOOTSTRAP_READY, inspect_bo
 from enterprise.migrations.sec_1f0_security_audit import inspect_security_audit_schema
 from enterprise.migrations.versioned import (
     BASELINE_SCHEMA_VERSION,
+    DEFAULT_MIGRATIONS,
     LEDGER_TABLE,
     STATE_READY as VERSIONED_SCHEMA_READY,
     STATE_TABLE,
     inspect_schema_metadata,
+    initialize_current_schema_in_transaction,
+    initialize_schema_metadata_in_transaction,
+    migration_registry_sha256,
+    schema_objects,
+    schema_snapshot_sha256,
 )
 from enterprise.paths import PortableRootInputs, derive_portable_path_roots
 from enterprise.release.current_release import read_current_release
@@ -40,6 +47,8 @@ PAYLOAD_SHA = "c" * 64
 class _Manifest:
     release_id = RELEASE_ID
     raw_sha256 = MANIFEST_SHA
+    schema_version = BASELINE_SCHEMA_VERSION
+    migration_mode = "same-schema-no-migration"
 
     def section(self, name: str) -> dict[str, object]:
         if name == "database_contract":
@@ -50,9 +59,11 @@ class _Manifest:
                     "sec_1b2_activation",
                     "sec_1f0_security_audit",
                 ],
-                "migration_compatibility": "same-schema-no-migration",
-                "rollback_classification": "code-release-pointer",
+                "migration_compatibility": self.migration_mode,
+                "rollback_classification": "database-backup-restore" if self.migration_mode == "versioned-forward-migration" else "code-release-pointer",
                 "ops3b_activation_eligible": True,
+                "schema_snapshot_path": "release-evidence/database-schema.json",
+                "schema_snapshot_sha256": hashlib.sha256(_fixture_schema_bytes()).hexdigest(),
             }
         if name == "archive":
             return {"filename": f"Infinite-Canvas-Enterprise-{RELEASE_ID}-win-x64.zip"}
@@ -69,12 +80,45 @@ def _assets() -> VerifiedReleaseAssets:
     )
 
 
+def _fixture_schema_bytes() -> bytes:
+    from enterprise.migrations.sec_1b2_activation import ensure_bootstrap_lifecycle_schema_in_transaction
+    from enterprise.security_audit import ensure_security_audit_schema_in_transaction
+
+    conn = sqlite3.connect(":memory:")
+    try:
+        db.ensure_db_schema_in_connection(conn)
+        conn.execute("BEGIN IMMEDIATE")
+        ensure_security_audit_schema_in_transaction(conn)
+        ensure_bootstrap_lifecycle_schema_in_transaction(conn)
+        if _Manifest.schema_version == BASELINE_SCHEMA_VERSION:
+            initialize_schema_metadata_in_transaction(conn)
+            registry = ()
+        else:
+            initialize_current_schema_in_transaction(conn)
+            registry = DEFAULT_MIGRATIONS
+        evidence = {
+            "schema_id": "enterprise-database-contract-v1",
+            "migration_ids": ["sec_1b1_role_auth", "sec_1b2_activation", "sec_1f0_security_audit"],
+            "schema_version": _Manifest.schema_version,
+            "schema_objects_sha256": schema_snapshot_sha256(conn),
+            "objects": schema_objects(conn),
+            "migration_registry_sha256": migration_registry_sha256(registry),
+            "versioned_migration_ids": [step.migration_id for step in registry],
+        }
+        conn.rollback()
+        return (json.dumps(evidence, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    finally:
+        conn.close()
+
+
 def _fake_materialize(_manifest: Path, _archive: Path, _inventory: Path, destination: Path):
     destination.mkdir(parents=True)
     (destination / "main.py").write_text("# fixture\n", encoding="utf-8")
     (destination / "static").mkdir()
     (destination / "python").mkdir()
     (destination / "python" / "python.exe").write_bytes(b"fixture")
+    (destination / "release-evidence").mkdir()
+    (destination / "release-evidence" / "database-schema.json").write_bytes(_fixture_schema_bytes())
     return SimpleNamespace(result="pass")
 
 
@@ -214,6 +258,37 @@ def test_greenfield_install_creates_one_super_admin_and_pointer_last(monkeypatch
     assert effective["allowed"] is True
     assert effective["source"] == "super_admin"
     assert require_gateway_database_ready(roots, database_path) == database_path
+
+
+@pytest.mark.parametrize("mode", ["same-schema-no-migration", "versioned-forward-migration"])
+def test_greenfield_install_uses_verified_v2_contract_without_losing_entry_guards(monkeypatch, tmp_path, mode):
+    monkeypatch.setattr(_Manifest, "schema_version", 2)
+    monkeypatch.setattr(_Manifest, "migration_mode", mode)
+    result, roots = _install(monkeypatch, tmp_path)
+    inspection = inspect_schema_metadata(roots.DATA_ROOT / "enterprise.db")
+    assert inspection["schema_version"] == 2
+    assert inspection["migration_ids"] == ["ice_096_security_schema_v2"]
+    assert result.active_super_admin_count == 1
+    assert result.pointer_published is True
+
+
+def test_greenfield_rejects_changed_database_evidence_before_publishing_pointer(monkeypatch, tmp_path):
+    import enterprise.fresh_install as fresh
+
+    def changed_manifest(*args):
+        result = _fake_materialize(*args)
+        (args[-1] / "release-evidence" / "database-schema.json").write_bytes(b"{}")
+        return result
+
+    monkeypatch.setattr(fresh, "verify_release_assets", lambda _path: _assets())
+    monkeypatch.setattr(fresh, "materialize_release_fixture", changed_manifest)
+    with pytest.raises(FreshInstallError, match="INSTALL_DATABASE_CONTRACT_UNSUPPORTED"):
+        install_greenfield(
+            release_dir=tmp_path / "assets", install_root=tmp_path / "install",
+            username="first-admin", password=FIXTURE_PASSWORD,
+            password_confirmation=FIXTURE_PASSWORD, local_app_data_base=tmp_path / "local",
+        )
+    assert not (tmp_path / "install" / "state" / "current-release.json").exists()
 
 
 @pytest.mark.parametrize(

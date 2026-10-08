@@ -1,6 +1,6 @@
 # Infinite Canvas Enterprise 当前架构
 
-更新时间：2026-10-03
+更新时间：2026-10-09
 
 本文只描述当前运行架构与已确定的演进边界。实现状态以 [docs/CURRENT_PROJECT_STATUS.md](docs/CURRENT_PROJECT_STATUS.md) 为准，未来顺序以 [开发路线图](docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md) 为准。
 
@@ -94,7 +94,9 @@ Runtime Supervisor 分别管理 Gateway 和 Canvas application，并持久化运
 
 ## 6. Release 与在线更新
 
-主线已有不可变 Release、Manifest v2、准备、数据迁移/恢复、一次确认和准确路由检查。客户维护线另行交付 09.9 与通用工具验收包，并非 main 全量发布。
+主线已有不可变 Release、Manifest v2、准备、数据迁移/恢复、一次确认和准确路由检查。正式 10.1 来自维护线，是 09.9 同数据库结构的后台维护包，不是 main 全量发布；两台设备成功反馈与剩余限制见 [CURRENT](docs/CURRENT_PROJECT_STATUS.md)。
+
+本轮统一开发基线接回 `ice_096_security_schema_v2` 登记、v2 snapshot 和构建模式。默认未来构建生成与正式 09.9/10.1 同源的 30 对象/schema v2 证据；Greenfield 按已验证包内 evidence 选择受支持的 v1/v2 初始化并验证元数据/账本/结构，固定入口、密码和 pointer-last 保护保留。普通启动不隐式迁移旧库，28 对象历史变体不默认开放；历史资产须从冻结 refs 重建，不能用当前源码的旧 VERSION 标记伪造旧包。
 
 主要缺口是统一安装维护、更新器接管/自身更新、跨重启自动多跳及任务/业务写入隔离。遵循 [统一交付 ADR](docs/decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md)。下面是目标完整流程，不声称每一步都已落地。
 

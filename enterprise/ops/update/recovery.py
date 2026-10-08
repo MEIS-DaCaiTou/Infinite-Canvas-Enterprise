@@ -20,6 +20,7 @@ from enterprise.migrations.versioned import (
     STATE_READY,
     inspect_schema_metadata_connection,
     schema_objects,
+    schema_snapshot_sha256,
 )
 from enterprise.path_safety import PathSafetyError, assert_no_reparse_ancestors, assert_path_within_root, lexical_path_state
 from enterprise.paths import PathRoots, validate_release_component
@@ -54,6 +55,7 @@ def _database_identity(database_path: Path, app_root: Path, manifest: Any) -> di
         missing="SYSTEM_UPDATE_RECOVERY_DATABASE_UNVERIFIED",
         invalid="SYSTEM_UPDATE_RECOVERY_DATABASE_UNVERIFIED",
     )
+    versioned_evidence = "schema_version" in evidence
     if evidence.get("schema_id") != manifest.section("database_contract")["schema_id"]:
         raise UpdateMvpError("SYSTEM_UPDATE_RECOVERY_DATABASE_UNVERIFIED", status_code=409)
     try:
@@ -64,14 +66,16 @@ def _database_identity(database_path: Path, app_root: Path, manifest: Any) -> di
             if conn.execute("PRAGMA foreign_key_check").fetchone() is not None:
                 raise UpdateMvpError("SYSTEM_UPDATE_RECOVERY_DATABASE_UNVERIFIED", status_code=409)
             objects = schema_objects(conn)
-            if evidence.get("objects") != objects:
-                raise UpdateMvpError("SYSTEM_UPDATE_RECOVERY_DATABASE_UNVERIFIED", status_code=409)
+            actual_schema_sha = schema_snapshot_sha256(conn)
             inspection = inspect_schema_metadata_connection(conn)
     except (OSError, sqlite3.Error, PathSafetyError) as exc:
         raise UpdateMvpError("SYSTEM_UPDATE_RECOVERY_DATABASE_UNVERIFIED", status_code=409) from exc
-    if "schema_version" in evidence:
+    if versioned_evidence:
         if (
-            inspection.get("current_state") != STATE_READY
+            type(evidence.get("schema_version")) is not int
+            or not isinstance(evidence.get("schema_objects_sha256"), str)
+            or actual_schema_sha != evidence.get("schema_objects_sha256")
+            or inspection.get("current_state") != STATE_READY
             or inspection.get("schema_version") != evidence.get("schema_version")
             or inspection.get("schema_sha256") != evidence.get("schema_objects_sha256")
         ):
@@ -82,6 +86,8 @@ def _database_identity(database_path: Path, app_root: Path, manifest: Any) -> di
             "schema_sha256": inspection["schema_sha256"],
             "ledger_sha256": inspection["ledger_sha256"],
         }
+    if evidence.get("objects") != objects:
+        raise UpdateMvpError("SYSTEM_UPDATE_RECOVERY_DATABASE_UNVERIFIED", status_code=409)
     if inspection.get("current_state") != STATE_MISSING:
         raise UpdateMvpError("SYSTEM_UPDATE_RECOVERY_DATABASE_UNVERIFIED", status_code=409)
     if evidence.get("migration_ids") != manifest.section("database_contract")["migration_ids"]:

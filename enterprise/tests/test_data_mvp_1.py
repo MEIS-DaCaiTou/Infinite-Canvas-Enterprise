@@ -552,14 +552,15 @@ def test_release_database_snapshot_binds_versioned_schema_contract(tmp_path: Pat
     repository = Path(__file__).resolve().parents[2]
     payload = json.loads(_database_snapshot(repository, tmp_path / "snapshot.tmp"))
     assert payload["schema_id"] == "enterprise-database-contract-v1"
-    assert payload["schema_version"] == 1
-    assert payload["versioned_migration_ids"] == []
+    assert payload["schema_version"] == 2
+    assert payload["versioned_migration_ids"] == ["ice_096_security_schema_v2"]
     assert payload["schema_objects_sha256"] == sha256_bytes(canonical_json(payload["objects"]))
-    assert payload["migration_registry_sha256"] == migration_registry_sha256()
+    assert payload["migration_registry_sha256"] == "34dedc0c49d4cb4b9f69231bdcbe24a3ebb49fb04199544aab531d7602fc7774"
     assert payload["migration_ids"] == [
         "sec_1b1_role_auth",
         "sec_1b2_activation",
         "sec_1f0_security_audit",
+        "sqlite_existing",
     ]
     object_names = {item["name"] for item in payload["objects"]}
     assert {STATE_TABLE, LEDGER_TABLE, "security_audit_events", "security_governance_bootstrap"} <= object_names

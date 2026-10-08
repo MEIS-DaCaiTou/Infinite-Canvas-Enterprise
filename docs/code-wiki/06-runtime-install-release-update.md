@@ -2,7 +2,7 @@
 
 [返回索引](./README.md)
 
-更新时间：2026-10-05。主线、维护线和固定入口候选边界见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，生命周期设计见 [统一交付 ADR](../decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md)。
+更新时间：2026-10-09。主线、维护线和固定入口边界见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，生命周期设计见 [统一交付 ADR](../decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md)。
 
 ## 1. PathRoots
 
@@ -93,6 +93,8 @@ flowchart TD
 
 从干净 Git 身份构建确定性静态树和 Release archive，绑定 commit/tree/manifest/inventory，避免从脏工作区制作不可追溯发布包。
 
+统一基线默认 snapshot 为正式 09.9/10.1 同源 v2。构建参数 `--database-contract-mode` 支持默认 `same-schema-no-migration`、明确改表的 `versioned-forward-migration`，以及维护构建的 `same-versioned-schema-no-migration`（wire 仍为同结构/code-pointer）。构建模式不能代替准确 source/target route、registry 和安装副本验收；本轮不改 VERSION、不发布新包。
+
 ### Windows Runtime
 
 `windows_runtime_build.py` 和 `runtime/windows/` 策略固定 CPython 3.14 x64、哈希 requirements、wheelhouse 闭包、pip-check、SBOM、来源与可复现构建证据。源码工作区内另有开发用 Python 3.10.11，不应与正式 portable Runtime 混为同一个信任对象。
@@ -110,6 +112,8 @@ flowchart TD
 5. 创建 Greenfield SQLite 数据库和首个超级管理员。
 6. 发布配置、数据库和可选固定入口/实例记录；current pointer 最后发布。
 7. 失败时只清理本次拥有的对象，不删除外部未知文件。
+
+数据库创建前重新校验已 materialize 的 schema evidence 哈希，按受支持的 v1/v2 版本和精确 registry 初始化；创建后核对 schema 哈希、版本和账本。无版本/未知 evidence 拒绝新装，不靠显示版本猜测，不删除主线的固定入口、最大密码长度或最终 pointer 发布保护。
 
 `install_setup_bridge.py` 通过当前用户 SID 约束的 named pipe 接收安装器输入，避免在命令行或环境变量中暴露密码。
 
