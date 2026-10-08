@@ -35,8 +35,9 @@ def _configured_secret_values() -> tuple[str, ...]:
 
 
 def _paths(args: argparse.Namespace) -> tuple[Path, Path]:
-    app_root = Path(args.app_root).resolve()
-    runtime_root = validate_runtime_root(app_root, Path(args.runtime_root))
+    portable = getattr(args, "runtime_mode", "development") == "portable-release"
+    app_root = Path(args.app_root).absolute() if portable else Path(args.app_root).resolve()
+    runtime_root = validate_runtime_root(app_root, Path(args.runtime_root), preserve_lexical_roots=portable)
     return app_root, runtime_root
 
 

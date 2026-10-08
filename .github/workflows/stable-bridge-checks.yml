@@ -40,6 +40,7 @@ jobs:
           enterprise/tests/test_upgrade_routes.py
           enterprise/tests/test_upgrade_route_catalog.py
           enterprise/tests/test_update_mvp_1.py
+          enterprise/tests/test_runtime_update_diagnostics.py
           enterprise/tests/test_data_mvp_1.py
           enterprise/tests/test_install_mvp_1.py
           enterprise/tests/test_096_security_variant.py

@@ -21,6 +21,37 @@ _CODE_RE = re.compile(r"^[A-Z0-9_]{3,64}$")
 _SAFE_DETAIL_KEY_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _CORRELATION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
+_LIFECYCLE_STAGES = frozenset({
+    "service_host_log", "bootstrap_marker_prepare", "host_entry_check",
+    "service_host_create", "service_host_readiness_wait", "launcher_create",
+    "launcher_wait", "launcher_output",
+})
+_BOOTSTRAP_CATEGORIES = frozenset({
+    "host_entry_unavailable", "host_import_failed", "host_entry_failed", "portable_host_identity_failed",
+    "service_host_nonzero_exit", "module_not_found", "bootstrap_output_empty",
+    "bootstrap_output_unclassified",
+})
+
+
+def public_lifecycle_details(value: object) -> dict[str, object]:
+    """Only fixed categories and bounded integers; never exception text/paths."""
+    if type(value) is not dict:
+        return {}
+    result: dict[str, object] = {}
+    if isinstance(value.get("failure_stage"), str) and value["failure_stage"] in _LIFECYCLE_STAGES:
+        result["failure_stage"] = value["failure_stage"]
+    if isinstance(value.get("bootstrap_failure_category"), str) and value["bootstrap_failure_category"] in _BOOTSTRAP_CATEGORIES:
+        result["bootstrap_failure_category"] = value["bootstrap_failure_category"]
+    for key in ("errno", "winerror", "host_exit_code"):
+        number = value.get(key)
+        if type(number) is int and -(2**31) <= number <= 2**32 - 1:
+            result[key] = number
+    return result
+
+
+def public_lifecycle_code(value: object, *, fallback: str) -> str:
+    return value if isinstance(value, str) and _CODE_RE.fullmatch(value) else fallback
+
 
 @dataclass(frozen=True)
 class ErrorDefinition:
