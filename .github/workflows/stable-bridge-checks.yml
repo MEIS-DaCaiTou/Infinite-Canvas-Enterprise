@@ -45,3 +45,4 @@ jobs:
           enterprise/tests/test_096_security_variant.py
           enterprise/tests/test_versioned_release_snapshot.py
           enterprise/tests/test_customer_095_bridge_candidate.py
+          enterprise/tests/test_maintenance_admin.py
