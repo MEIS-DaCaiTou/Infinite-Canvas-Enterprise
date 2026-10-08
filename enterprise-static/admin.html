@@ -91,7 +91,7 @@
     .user-table { min-width: 1080px; table-layout: fixed; }
     .user-table th:nth-child(1) { width: 120px; }
     .user-table th:nth-child(2) { width: 140px; }
-    .user-table th:nth-child(3) { width: 90px; }
+    .user-table th:nth-child(3) { width: 120px; }
     .user-table th:nth-child(4) { width: 86px; }
     .user-table th:nth-child(5) { width: 132px; }
     .user-table th:nth-child(6) { width: 132px; }
@@ -108,6 +108,7 @@
 
     .badge {
       display: inline-flex; align-items: center;
+      white-space: nowrap;
       height: 20px; padding: 0 8px; border-radius: 999px;
       font-size: 10px; font-weight: 900; letter-spacing: .04em;
     }
@@ -1579,15 +1580,40 @@
     }
   }
 
+  function updateAccessExplanation(access) {
+    if (!access) return '无法确认更新权限，已禁止操作。请刷新页面或重新登录。';
+    if (access.denial_code === 'SYSTEM_UPDATE_SUPER_ADMIN_REQUIRED' || access.role !== 'super_admin') {
+      return '系统升级仅允许超级管理员操作。当前账号没有该角色；已禁止更新操作。';
+    }
+    if (access.denial_code === 'SYSTEM_UPDATE_EMERGENCY_SWITCH_DISABLED' || access.deployment_update_enabled === false) {
+      return '当前账号已是超级管理员，但此设备的部署配置禁用了更新入口（ENTERPRISE_UPDATE_ENABLED=false）。请在维护窗口受控启用配置；不需要重新初始化账号。';
+    }
+    if (access.feature_update_enabled === false || access.permission_source === 'global_disabled') {
+      return '当前账号已是超级管理员，但“权限开关”中的系统更新全局开关未启用。请由超级管理员在权限开关中启用；部署配置也必须允许更新。';
+    }
+    if (access.denial_code === 'SYSTEM_UPDATE_PERMISSION_DENIED') {
+      return '当前账号的系统更新权限未通过核验，已禁止更新操作。请检查权限开关并刷新登录状态。';
+    }
+    if (boolFlag(access.can_operate)) return '';
+    // An older API exposes only a combined switch. Do not guess which of its
+    // two conditions failed, or tell an authenticated super admin to bootstrap.
+    return '当前账号已是超级管理员，但更新仍被禁用。请分别核对设备部署配置和“权限开关”中的系统更新开关；旧版接口不能区分这两个原因。';
+  }
+
   async function loadUpdateCenter() {
+    // Fail closed before fetching: a stale successful view must not retain
+    // enabled buttons if the authorization refresh fails.
+    _updateAccess = null;
+    document.querySelectorAll('.update-dangerous').forEach(el => { el.style.display = 'none'; });
+    const notice = document.getElementById('updateAccessNotice');
+    notice.style.display = 'block';
+    notice.textContent = '正在核验更新权限…';
+    updateStartButton();
     try {
       _updateAccess = await apiFetch('/enterprise/api/update-mvp/access');
-      const notice = document.getElementById('updateAccessNotice');
       const allowed = boolFlag(_updateAccess.can_operate);
       notice.style.display = allowed ? 'none' : 'block';
-      notice.textContent = allowed
-        ? ''
-        : '系统升级仅允许超级管理员操作，且全局总开关必须开启。危险操作已隐藏；后端同样会返回 403。';
+      notice.textContent = updateAccessExplanation(_updateAccess);
       document.querySelectorAll('.update-dangerous').forEach(el => { el.style.display = allowed ? 'flex' : 'none'; });
       document.getElementById('updateRecoveryActions').style.display = 'none';
       const rememberedJob = sessionStorage.getItem('enterprise_update_job_id');
@@ -1603,6 +1629,11 @@
       if (allowed) await checkSystemUpdate();
       updateStartButton();
     } catch (e) {
+      _updateAccess = null;
+      document.querySelectorAll('.update-dangerous').forEach(el => { el.style.display = 'none'; });
+      updateStartButton();
+      notice.style.display = 'block';
+      notice.textContent = '更新中心状态加载失败，未确认当前权限。请刷新页面重试；未发起升级。';
       showToast('加载更新中心失败: ' + e.message, 'error');
     }
   }
