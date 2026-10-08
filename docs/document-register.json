@@ -5,6 +5,10 @@
   "scope": "All Git-managed or non-ignored new Markdown/text files; roles are not runtime or release approval. Frozen hashes normalize CRLF to LF only.",
   "documents": [
     {
+      "path": "docs/ops/MAINTENANCE-2026.10.1-RELEASE-RECORD.md",
+      "kind": "record"
+    },
+    {
       "path": "新手运行与使用教程.md",
       "kind": "historical",
       "superseded_by": [
