@@ -65,6 +65,8 @@ ADR 的 `Accepted` 只表示决策冻结，不表示对应能力已经实现或�
 
 ## 专项参考
 
+- [2026.10.1 后台维护更新](./ops/MAINTENANCE-2026.10.1-ADMIN-UPDATE-ENTRY.md)：精确 09.9 来源的同结构维护范围记录；不替代主线当前事实或现场验收。
+
 - Architecture：[architecture/](./architecture/)
 - ENV：ADR-ENV-001 至 ADR-ENV-005 已由 PR #80 冻结；ENV-1B1A 至 ENV-1B3 的已授权 repository/validation 阶段已分别合并。CPython 3.14.6 / cp314、OPS Release Manifest v2 与独立 clean-Windows Candidate 08 均已有对应证据，`ENV_1B2_completed=true`、`ENV_1B3_completed=true`。UPDATE-MVP-1、INSTALL-MVP-1 与 INSTALL-UX-1 Gate A repository implementation 均已完成相应批准范围；DATA-1 暂停，INSTALL-UX-1 Gate B、完整 activation、OPS-3B、Production Baseline 和 production approval 均未完成。
 - OPS：[ops/](./ops/)

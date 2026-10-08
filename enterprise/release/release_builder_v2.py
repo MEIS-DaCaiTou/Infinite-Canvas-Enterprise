@@ -552,8 +552,13 @@ def build_release_v2(*, repo: Path, output_root: Path, runtime_root: Path, runti
         raise ReleaseManifestV2Error("RELEASE_BUILD_OUTPUT_INVALID") from exc
     assert_non_overlapping_roots(repo, output_root, runtime_root, runtime_evidence_root)
     if output_root.exists(): raise ReleaseManifestV2Error("RELEASE_BUILD_OUTPUT_EXISTS")
-    if database_contract_mode not in {"same-schema-no-migration", "versioned-forward-migration"}:
+    if database_contract_mode not in {"same-schema-no-migration", "versioned-forward-migration", "same-versioned-schema-no-migration"}:
         raise ReleaseManifestV2Error("RELEASE_DATABASE_MODE_INVALID")
+    # A maintenance release preserves an already-versioned schema, rather than
+    # silently publishing the legacy unversioned database evidence. This is a
+    # build-time choice; the installed updater keeps its existing wire mode.
+    versioned_snapshot = database_contract_mode in {"versioned-forward-migration", "same-versioned-schema-no-migration"}
+    migration_mode = "same-schema-no-migration" if database_contract_mode == "same-versioned-schema-no-migration" else database_contract_mode
     identity = clean_git_identity(repo, commit); commit = str(identity["commit"]); tree = str(identity["tree"]); epoch = int(identity["source_date_epoch"])
     version_bytes = subprocess.check_output(["git", "-C", os.fspath(repo), "show", f"{commit}:VERSION"])
     version = version_bytes.decode("utf-8").strip(); release_id = derive_release_id(version, commit)
@@ -614,7 +619,7 @@ def build_release_v2(*, repo: Path, output_root: Path, runtime_root: Path, runti
         machine, notice, license_count = _license_documents(sbom_bytes, payload, runtime_root, version, commit, vendor_policy)
         (evidence / "third-party-licenses.json").write_bytes(machine); (payload / "THIRD-PARTY-LICENSES.txt").write_bytes(notice)
         config_bytes = _config_contract(); (evidence / "config-contract.json").write_bytes(config_bytes)
-        snapshot_builder = _versioned_database_snapshot if database_contract_mode == "versioned-forward-migration" else _database_snapshot
+        snapshot_builder = _versioned_database_snapshot if versioned_snapshot else _database_snapshot
         db_bytes = snapshot_builder(repo, output_root / ".database-snapshot.tmp"); (evidence / "database-schema.json").write_bytes(db_bytes)
         inventory = build_inventory(payload)
         inventory_path = output_root / "release-payload-inventory.json"; inventory_path.write_bytes(inventory.canonical_bytes)
@@ -628,7 +633,7 @@ def build_release_v2(*, repo: Path, output_root: Path, runtime_root: Path, runti
             "archive": {"file_count": len(inventory.entries) + 1, "filename": archive_path.name, "inventory_sha256": inventory.sha256, "payload_excludes": ["release-manifest.json"], "payload_tree_sha256": inventory.tree_sha256, "root_prefix": root_prefix, "sha256": archive_hash, "size_bytes": archive_size, "total_uncompressed_bytes": inventory.total_size_bytes + len(inventory.canonical_bytes)},
             "compatibility": {"minimum_launcher_contract": PORTABLE_RELEASE_CONTRACT_VERSION, "minimum_runtime_contract": PORTABLE_RELEASE_CONTRACT_VERSION, "portable_release_only": True, "supported_architecture": "x64", "supported_platform": "windows"},
             "config_contract": {"schema_id": CONFIG_SCHEMA, "schema_path": "release-evidence/config-contract.json", "schema_sha256": sha256_bytes(config_bytes), "secret_values_embedded": False},
-            "database_contract": {"migration_compatibility": database_contract_mode, "migration_ids": database_payload["migration_ids"], "ops3b_activation_eligible": True, "rollback_classification": "database-backup-restore" if database_contract_mode == "versioned-forward-migration" else "code-release-pointer", "schema_id": DATABASE_SCHEMA, "schema_snapshot_path": "release-evidence/database-schema.json", "schema_snapshot_sha256": sha256_bytes(db_bytes)},
+            "database_contract": {"migration_compatibility": migration_mode, "migration_ids": database_payload["migration_ids"], "ops3b_activation_eligible": True, "rollback_classification": "database-backup-restore" if migration_mode == "versioned-forward-migration" else "code-release-pointer", "schema_id": DATABASE_SCHEMA, "schema_snapshot_path": "release-evidence/database-schema.json", "schema_snapshot_sha256": sha256_bytes(db_bytes)},
             "enterprise_source": {"commit": commit, "repository": ENTERPRISE_REPOSITORY, "tree": tree, "version": version, "version_file_sha256": sha256_bytes(version_bytes)},
             "identity": {"manifest_builder_version": BUILDER_VERSION, "release_channel": "enterprise-portable", "release_id": release_id, "release_version": version, "source_date_epoch": epoch},
             "licenses": {"component_count": license_count, "component_policy_path": "release-evidence/third-party-component-policy.json", "component_policy_sha256": sha256_bytes(vendor_policy_bytes), "human_notice_path": "THIRD-PARTY-LICENSES.txt", "human_notice_sha256": sha256_bytes(notice), "inventory_complete": True, "legal_review_complete": False, "machine_inventory_path": "release-evidence/third-party-licenses.json", "machine_inventory_sha256": sha256_bytes(machine), "unresolved_count": 0},

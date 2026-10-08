@@ -90,7 +90,7 @@
     .user-table { min-width: 1080px; table-layout: fixed; }
     .user-table th:nth-child(1) { width: 120px; }
     .user-table th:nth-child(2) { width: 140px; }
-    .user-table th:nth-child(3) { width: 90px; }
+    .user-table th:nth-child(3) { width: 120px; }
     .user-table th:nth-child(4) { width: 86px; }
     .user-table th:nth-child(5) { width: 132px; }
     .user-table th:nth-child(6) { width: 132px; }
@@ -107,10 +107,12 @@
 
     .badge {
       display: inline-flex; align-items: center;
+      white-space: nowrap;
       height: 20px; padding: 0 8px; border-radius: 999px;
       font-size: 10px; font-weight: 900; letter-spacing: .04em;
     }
     .badge-admin  { background: rgba(99,102,241,.1); color: #6366f1; border: 1px solid rgba(99,102,241,.2); }
+    .badge-super-admin { background: rgba(245,158,11,.1); color: #b45309; border: 1px solid rgba(245,158,11,.25); }
     .badge-user   { background: var(--soft); color: var(--muted); border: 1px solid var(--line); }
     .badge-active { background: rgba(34,197,94,.1); color: #16a34a; border: 1px solid rgba(34,197,94,.2); }
     .badge-disabled { background: rgba(239,68,68,.08); color: #ef4444; border: 1px solid rgba(239,68,68,.2); }
@@ -364,6 +366,7 @@
             <span class="field-frame">
               <select id="memberRoleFilter" onchange="applyMemberFilters()">
                 <option value="all" selected>全部角色</option>
+                <option value="super_admin">超级管理员</option>
                 <option value="admin">管理员</option>
                 <option value="user">普通用户</option>
               </select>
@@ -877,6 +880,18 @@
     return String(a.username || '').localeCompare(String(b.username || ''), 'zh-CN', { sensitivity: 'base' });
   }
 
+  function roleOf(user) {
+    if (['super_admin', 'admin', 'user'].includes(user?.role)) return user.role;
+    return boolFlag(user?.is_admin) ? 'admin' : 'user';
+  }
+
+  function rolePresentation(user) {
+    const role = roleOf(user);
+    if (role === 'super_admin') return { label: '超级管理员', badge: 'badge-super-admin' };
+    if (role === 'admin') return { label: '管理员', badge: 'badge-admin' };
+    return { label: '普通用户', badge: 'badge-user' };
+  }
+
   function syncMemberFiltersFromDom() {
     _memberStatusFilter = document.getElementById('memberStatusFilter')?.value || 'active';
     _memberRoleFilter = document.getElementById('memberRoleFilter')?.value || 'all';
@@ -892,10 +907,8 @@
     } else if (_memberStatusFilter === 'disabled') {
       users = users.filter(u => !boolFlag(u.is_active));
     }
-    if (_memberRoleFilter === 'admin') {
-      users = users.filter(u => boolFlag(u.is_admin));
-    } else if (_memberRoleFilter === 'user') {
-      users = users.filter(u => !boolFlag(u.is_admin));
+    if (['super_admin', 'admin', 'user'].includes(_memberRoleFilter)) {
+      users = users.filter(u => roleOf(u) === _memberRoleFilter);
     }
     if (_memberSearchQuery) {
       users = users.filter(u => {
@@ -928,13 +941,15 @@
     const total = _users.length;
     const active = _users.filter(u => boolFlag(u.is_active)).length;
     const disabled = total - active;
-    const admins = _users.filter(u => boolFlag(u.is_admin)).length;
+    const admins = _users.filter(u => roleOf(u) === 'admin').length;
+    const superAdmins = _users.filter(u => roleOf(u) === 'super_admin').length;
     const current = filteredUsers.length;
     statsEl.innerHTML = [
       ['全部用户', total],
       ['正常用户', active],
       ['已停用', disabled],
       ['管理员', admins],
+      ['超级管理员', superAdmins],
       ['当前显示', current],
     ].map(([label, value]) => `
       <div class="member-stat-card">
@@ -984,21 +999,25 @@
       const displayNameHtml = u.display_name ? escapeHtml(u.display_name) : '—';
       const isAdmin = boolFlag(u.is_admin);
       const isActive = boolFlag(u.is_active);
+      const role = rolePresentation(u);
+      const protectedRole = roleOf(u) === 'super_admin';
       return `
       <tr class="${isActive ? '' : 'disabled-user-row'}">
         <td class="truncate-cell" style="font-weight:800;" title="${usernameHtml}">${usernameHtml}</td>
         <td class="truncate-cell" style="color:var(--muted);" title="${displayNameHtml === '—' ? '' : displayNameHtml}">${displayNameHtml}</td>
-        <td><span class="badge ${isAdmin ? 'badge-admin' : 'badge-user'}">${isAdmin ? '管理员' : '普通用户'}</span></td>
+        <td><span class="badge ${role.badge}">${role.label}</span></td>
         <td><span class="badge ${isActive ? 'badge-active' : 'badge-disabled'}">${isActive ? '正常' : '已禁用'}</span></td>
         <td style="color:var(--muted);font-size:12px;">${fmtDate(u.created_at)}</td>
         <td style="color:var(--muted);font-size:12px;">${fmtDate(u.last_login)}</td>
         <td class="user-actions-cell">
           <div class="row-actions">
+            ${protectedRole ? '<span style="font-size:12px;color:var(--muted);">受固定角色策略保护</span>' : `
             <button class="row-btn" onclick="openProfileModal('${id}','${username}','${displayName}')">编辑名称</button>
             <button class="row-btn" onclick="toggleRole('${id}','${username}',${isAdmin})">${isAdmin ? '撤销管理员' : '设为管理员'}</button>
             <button class="row-btn" onclick="openPwdModal('${id}','${username}')">重置密码</button>
             <button class="row-btn ${isActive ? 'danger' : ''}" onclick="setUserActive('${id}','${username}',${!isActive})">${isActive ? '禁用' : '启用'}</button>
             <button class="row-btn" onclick="openImpactModal('${id}','${username}')">影响预览</button>
+            `}
           </div>
         </td>
       </tr>`;
@@ -1361,7 +1380,7 @@
     const select = document.getElementById('featureUserSelect');
     const previous = select.value;
     select.innerHTML = '<option value="">选择用户</option>' + _users.map(u => {
-      const label = `${u.username}${u.display_name ? ' (' + u.display_name + ')' : ''}${boolFlag(u.is_admin) ? ' [管理员]' : ''}`;
+      const label = `${u.username}${u.display_name ? ' (' + u.display_name + ')' : ''} [${rolePresentation(u).label}]`;
       return `<option value="${escapeHtml(u.id)}">${escapeHtml(label)}</option>`;
     }).join('');
     if (previous && _users.some(u => u.id === previous)) select.value = previous;
@@ -1442,15 +1461,36 @@
     }
   }
 
+  function updateAccessExplanation(access) {
+    if (!access) return '无法确认更新权限，已禁止操作。请刷新页面或重新登录。';
+    if (access.denial_code === 'SYSTEM_UPDATE_SUPER_ADMIN_REQUIRED' || access.role !== 'super_admin') {
+      return '系统升级仅允许超级管理员操作。当前账号没有该角色；已禁止更新操作。';
+    }
+    if (access.denial_code === 'SYSTEM_UPDATE_EMERGENCY_SWITCH_DISABLED' || access.deployment_update_enabled === false) {
+      return '当前账号已是超级管理员，但此设备的部署配置禁用了更新入口（ENTERPRISE_UPDATE_ENABLED=false）。请在维护窗口受控启用配置；不需要重新初始化账号。';
+    }
+    if (access.feature_update_enabled === false || access.permission_source === 'global_disabled') {
+      return '当前账号已是超级管理员，但“权限开关”中的系统更新全局开关未启用。请由超级管理员在权限开关中启用；部署配置也必须允许更新。';
+    }
+    if (access.denial_code === 'SYSTEM_UPDATE_PERMISSION_DENIED') {
+      return '当前账号的系统更新权限未通过核验，已禁止更新操作。请检查权限开关并刷新登录状态。';
+    }
+    if (boolFlag(access.can_operate)) return '';
+    return '当前账号已是超级管理员，但更新仍被禁用。请分别核对设备部署配置和“权限开关”中的系统更新开关；旧版接口不能区分这两个原因。';
+  }
+
   async function loadUpdateCenter() {
+    _updateAccess = null;
+    document.querySelectorAll('.update-dangerous').forEach(el => { el.style.display = 'none'; });
+    const notice = document.getElementById('updateAccessNotice');
+    notice.style.display = 'block';
+    notice.textContent = '正在核验更新权限…';
+    updateStartButton();
     try {
       _updateAccess = await apiFetch('/enterprise/api/update-mvp/access');
-      const notice = document.getElementById('updateAccessNotice');
       const allowed = boolFlag(_updateAccess.can_operate);
       notice.style.display = allowed ? 'none' : 'block';
-      notice.textContent = allowed
-        ? ''
-        : '系统升级仅允许超级管理员操作，且全局总开关必须开启。危险操作已隐藏；后端同样会返回 403。';
+      notice.textContent = updateAccessExplanation(_updateAccess);
       document.querySelectorAll('.update-dangerous').forEach(el => { el.style.display = allowed ? 'flex' : 'none'; });
       document.getElementById('updateRecoveryActions').style.display = 'none';
       const rememberedJob = sessionStorage.getItem('enterprise_update_job_id');
@@ -1466,6 +1506,11 @@
       if (allowed) await checkSystemUpdate();
       updateStartButton();
     } catch (e) {
+      _updateAccess = null;
+      document.querySelectorAll('.update-dangerous').forEach(el => { el.style.display = 'none'; });
+      updateStartButton();
+      notice.style.display = 'block';
+      notice.textContent = '更新中心状态加载失败，未确认当前权限。请刷新页面重试；未发起升级。';
       showToast('加载更新中心失败: ' + e.message, 'error');
     }
   }

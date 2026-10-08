@@ -38,7 +38,7 @@ def _parser() -> argparse.ArgumentParser:
     build.add_argument("--commit")
     build.add_argument(
         "--database-contract-mode",
-        choices=("same-schema-no-migration", "versioned-forward-migration"),
+        choices=("same-schema-no-migration", "versioned-forward-migration", "same-versioned-schema-no-migration"),
         default="same-schema-no-migration",
     )
     verify = commands.add_parser("verify")
