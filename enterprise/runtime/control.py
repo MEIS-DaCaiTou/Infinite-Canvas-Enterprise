@@ -10,7 +10,10 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from enterprise.path_safety import PathSafetyError, assert_no_reparse_ancestors
+
 from .health import gateway_health, tcp_check, upstream_health
+from .error_contract import public_lifecycle_details
 from .logging import RuntimeLogs
 from .ownership import (
     ProcessIdentity,
@@ -63,6 +66,7 @@ _BOOTSTRAP_FAILURE_CATEGORIES = frozenset(
         "host_entry_unavailable",
         "host_import_failed",
         "host_entry_failed",
+        "portable_host_identity_failed",
         "service_host_nonzero_exit",
         "module_not_found",
     }
@@ -82,9 +86,19 @@ def _inside(candidate: Path, parent: Path) -> bool:
         return False
 
 
-def validate_runtime_root(app_root: Path, runtime_root: Path) -> Path:
-    app = app_root.resolve()
-    root = runtime_root.resolve()
+def validate_runtime_root(app_root: Path, runtime_root: Path, *, preserve_lexical_roots: bool = False) -> Path:
+    if preserve_lexical_roots:
+        # Windows package virtualization can resolve a Known Folder into its
+        # package cache. Portable identity uses the validated lexical roots;
+        # never rebind them through GetFinalPathNameByHandle here.
+        app, root = app_root.absolute(), runtime_root.absolute()
+        try:
+            assert_no_reparse_ancestors(app)
+            assert_no_reparse_ancestors(root, allow_missing=True)
+        except (OSError, PathSafetyError) as exc:
+            raise RuntimeControlError("portable runtime path is untrusted") from exc
+    else:
+        app, root = app_root.resolve(), runtime_root.resolve()
     forbidden = (app, app / "data", app / "assets", app / "output", app / "python", app / "logs")
     if any(_inside(root, item) for item in forbidden):
         raise RuntimeControlError("runtime root must be outside application and runtime-data directories")
@@ -103,7 +117,10 @@ def _prepare_bootstrap_failure_path(runtime_root: Path) -> Path:
     except FileNotFoundError:
         pass
     except OSError as exc:
-        raise RuntimeControlError("runtime service host bootstrap capture could not be prepared") from exc
+        details = {"failure_stage": "bootstrap_marker_prepare", "errno": exc.errno,
+                   "winerror": getattr(exc, "winerror", None)}
+        raise RuntimeControlError("runtime service host bootstrap capture could not be prepared",
+                                  public_details=public_lifecycle_details(details)) from exc
     return path
 
 
@@ -566,12 +583,16 @@ class RuntimeController:
                 raise
         host: subprocess.Popen[bytes] | None = None
         bootstrap_path: Path | None = None
-        logs = RuntimeLogs(self.config.log_root or self.config.runtime_root, secret_values=self.config.secret_values)
+        logs: RuntimeLogs | None = None
+        failure_stage = "service_host_log"
         try:
+            logs = RuntimeLogs(self.config.log_root or self.config.runtime_root, secret_values=self.config.secret_values)
             logs.write(
                 "launcher.log", "background_start_requested", supervisor_instance_id=instance_id, mode="service-host"
             )
+            failure_stage = "bootstrap_marker_prepare"
             bootstrap_path = _prepare_bootstrap_failure_path(self.config.runtime_root)
+            failure_stage = "host_entry_check"
             host_entry = self.config.app_root / "enterprise" / "runtime" / "host.py"
             if not host_entry.is_file():
                 self.store.release_lock(instance_id)
@@ -620,6 +641,7 @@ class RuntimeController:
                     | subprocess.DETACHED_PROCESS
                     | subprocess.CREATE_BREAKAWAY_FROM_JOB
                 )
+            failure_stage = "service_host_create"
             host = subprocess.Popen(
                 arguments,
                 executable=windows_extended_process_path(str(executable)),
@@ -631,18 +653,32 @@ class RuntimeController:
                 close_fds=True,
                 shell=False,
             )
-        except RuntimeServiceHostStartupError:
+        except RuntimeServiceHostStartupError as exc:
+            try:
+                logs.write("launcher.log", "service_host_start_failed", code=exc.code,
+                           supervisor_instance_id=instance_id,
+                           **public_lifecycle_details({"failure_stage": failure_stage, **exc.public_details}))
+            except OSError:
+                pass
             raise
         except (OSError, RuntimeError) as exc:
             self.store.release_lock(instance_id)
             if bootstrap_path is not None:
                 _discard_bootstrap_failure(bootstrap_path, logs=logs)
-            details: dict[str, object] = {"failure_stage": "service_host_create"}
+            details: dict[str, object] = {"failure_stage": failure_stage}
+            details.update(public_lifecycle_details(getattr(exc, "public_details", None)))
             if isinstance(exc, OSError):
                 if type(exc.errno) is int:
                     details["errno"] = exc.errno
                 if type(getattr(exc, "winerror", None)) is int:
                     details["winerror"] = exc.winerror
+            details = public_lifecycle_details(details)
+            try:
+                if logs is not None:
+                    logs.write("launcher.log", "service_host_start_failed", code="RUNTIME_CONTROL_ERROR",
+                               supervisor_instance_id=instance_id, **details)
+            except OSError:
+                pass
             raise RuntimeControlError("runtime service host could not be started", public_details=details) from exc
         deadline = time.monotonic() + wait_seconds
         while time.monotonic() < deadline:
@@ -697,7 +733,13 @@ class RuntimeController:
             self.store.release_lock(instance_id)
         if bootstrap_path is not None:
             _discard_bootstrap_failure(bootstrap_path, logs=logs)
-        raise RuntimeControlError("runtime service host startup timed out")
+        details = {"failure_stage": "service_host_readiness_wait"}
+        try:
+            logs.write("launcher.log", "service_host_start_failed", code="RUNTIME_CONTROL_ERROR",
+                       supervisor_instance_id=instance_id, **details)
+        except OSError:
+            pass
+        raise RuntimeControlError("runtime service host startup timed out", public_details=details)
 
     def _stop_is_fully_quiescent(self, snapshot: dict[str, Any]) -> bool:
         state = snapshot.get("runtime_state")

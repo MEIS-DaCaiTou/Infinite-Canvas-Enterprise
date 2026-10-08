@@ -39,7 +39,7 @@ from enterprise.release.release_manifest_v2 import (
     verify_materialized_release,
 )
 
-from .error_contract import RuntimeContractError, error_payload
+from .error_contract import RuntimeContractError, error_payload, public_lifecycle_code, public_lifecycle_details
 from .launch_context import LAUNCH_CONTEXT_FILENAME, RuntimeLaunchContext, read_launch_context
 from .mode import parse_runtime_mode
 from .preflight import StartupPreflightResult, build_startup_preflight_result
@@ -305,10 +305,8 @@ def stable_error_document(error: BaseException) -> dict[str, object]:
 
     if isinstance(error, RuntimeContractError):
         return error.payload.as_public_dict()
-    code = getattr(error, "code", None)
-    if not isinstance(code, str) or not code or len(code) > 64:
-        code = "PORTABLE_BOOTSTRAP_INVALID"
-    return {"code": code, "status": "blocked"}
+    code = public_lifecycle_code(getattr(error, "code", None), fallback="PORTABLE_BOOTSTRAP_INVALID")
+    return {"code": code, "status": "blocked", **public_lifecycle_details(getattr(error, "public_details", None))}
 
 
 def stable_error_json(error: BaseException) -> bytes:

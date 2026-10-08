@@ -137,7 +137,7 @@ def _write_config(config_root: Path, upstream_port: int, gateway_port: int) -> N
     (config_root / "enterprise.env").write_text(document, encoding="utf-8", newline="\n")
 
 
-def _setup_release_pair(build_root: Path, install_root: Path, local_base: Path):
+def _setup_release_pair(build_root: Path, install_root: Path, local_base: Path, source_build: Path | None = None):
     from enterprise.paths import PortableRootInputs, derive_portable_path_roots, prepare_install_state_directories
     from enterprise.release.current_release import CurrentRelease, atomic_write_current_release
     from enterprise.release.release_manifest_v2 import (
@@ -152,13 +152,23 @@ def _setup_release_pair(build_root: Path, install_root: Path, local_base: Path):
     if not manifest.is_file() or not inventory.is_file() or len(archives) != 1:
         raise RuntimeError("UPDATE_MVP_R1_BUILD_ARTIFACTS_INVALID")
     target = read_release_manifest_v2(manifest)
-    source_bytes, source_id = _source_manifest(manifest, "2026.07.5")
+    if source_build is None:
+        source_bytes, source_id = _source_manifest(manifest, "2026.07.5")
+        source_manifest, source_inventory, source_archive = manifest, inventory, archives[0]
+    else:
+        source_manifest = source_build / "ops-release-manifest-v2.json"
+        source_inventory = source_build / "release-payload-inventory.json"
+        source = read_release_manifest_v2(source_manifest)
+        source_id = source.release_id
+        source_archive = source_build / source.section("archive")["filename"]
+        source_bytes = None
     roots = derive_portable_path_roots(PortableRootInputs(install_root, local_base), source_id)
     prepare_install_state_directories(roots)
     roots.RELEASE_ROOT.mkdir(parents=True, exist_ok=True)
     source_root = roots.RELEASE_ROOT / source_id
-    materialize_release_fixture(manifest, archives[0], inventory, source_root)
-    (source_root / "release-manifest.json").write_bytes(source_bytes)
+    materialize_release_fixture(source_manifest, source_archive, source_inventory, source_root)
+    if source_bytes is not None:
+        (source_root / "release-manifest.json").write_bytes(source_bytes)
     source = read_release_manifest_v2(source_root / "release-manifest.json")
     verify_materialized_release(
         source_root,
@@ -193,6 +203,32 @@ def _launcher(app_root: Path, command: str) -> tuple[int, dict[str, object]]:
         env={key: value for key, value in os.environ.items() if key not in {"PYTHONHOME", "PYTHONPATH", "PYTHONSTARTUP", "PYTHONINSPECT"}},
     )
     return completed.returncode, _last_json(completed.stdout)
+
+
+def _seed_versioned_fixture_database(source_root: Path, data_root: Path) -> None:
+    """Initialize only this new test database, never a customer's database."""
+    import sqlite3
+    from enterprise.release.release_manifest_v2 import read_release_manifest_v2
+
+    manifest = read_release_manifest_v2(source_root / "release-manifest.json")
+    snapshot = json.loads((source_root / manifest.section("database_contract")["schema_snapshot_path"]).read_text(encoding="utf-8"))
+    if snapshot.get("schema_version") != 2:
+        return
+    database = data_root / "enterprise.db"
+    if database.exists():
+        raise RuntimeError("UPDATE_MVP_R1_FIXTURE_DATABASE_EXISTS")
+    from enterprise.db import ensure_db_schema_in_connection
+    from enterprise.migrations.sec_1b2_activation import ensure_bootstrap_lifecycle_schema_in_transaction
+    from enterprise.migrations.versioned import initialize_current_schema_in_transaction
+    from enterprise.security_audit import ensure_security_audit_schema_in_transaction
+
+    data_root.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(database) as connection:
+        ensure_db_schema_in_connection(connection)
+        connection.execute("BEGIN IMMEDIATE")
+        ensure_security_audit_schema_in_transaction(connection)
+        ensure_bootstrap_lifecycle_schema_in_transaction(connection)
+        initialize_current_schema_in_transaction(connection)
 
 
 def _read_status(path: Path) -> dict[str, object] | None:
@@ -268,7 +304,8 @@ def _update_worker_pids(python_executable: Path, job_id: str) -> tuple[int, ...]
     return tuple(sorted(set(values)))
 
 
-def _run_scenario(script: Path, build_root: Path, scenario_root: Path, local_base: Path, scenario: str) -> dict[str, object]:
+def _run_scenario(script: Path, build_root: Path, scenario_root: Path, local_base: Path, scenario: str,
+                  source_build: Path | None = None) -> dict[str, object]:
     from enterprise.ops.update.mvp import UpdateJobStore, UpdateMvpService
     from enterprise.release.current_release import atomic_write_current_release, read_current_release_result_from_state_root
     from enterprise.release.release_manifest_v2 import read_release_manifest_v2, verify_materialized_release
@@ -278,10 +315,12 @@ def _run_scenario(script: Path, build_root: Path, scenario_root: Path, local_bas
     install_root = scenario_root / "install"
     upstream_port, gateway_port = _free_port(), _free_port()
     roots, source_root, target_manifest, manifest, inventory, archive = _setup_release_pair(
-        build_root, install_root, local_base
+        build_root, install_root, local_base, source_build
     )
     _write_config(roots.CONFIG_ROOT, upstream_port, gateway_port)
+    _seed_versioned_fixture_database(source_root, roots.DATA_ROOT)
     start_exit, start_payload = _launcher(source_root, "start")
+    (scenario_root / "source-start.json").write_bytes(_json_bytes({"exit_code": start_exit, "payload": start_payload}))
     if start_exit != 0:
         raise RuntimeError(f"UPDATE_MVP_R1_SOURCE_START_FAILED:{start_payload.get('code')}")
     source_status_exit, source_status = _launcher(source_root, "status")
@@ -395,6 +434,7 @@ def _run_scenario(script: Path, build_root: Path, scenario_root: Path, local_bas
     return {
         "schema_version": "update-mvp-1-r1-windows-smoke-v1",
         "scenario": scenario,
+        "source_identity_kind": "exact_asset" if source_build is not None else "synthetic_fixture_version",
         "source_release_id": prepared.source_release_id,
         "target_release_id": prepared.target_release_id,
         "job_id": prepared.job_id,
@@ -412,6 +452,8 @@ def _run_scenario(script: Path, build_root: Path, scenario_root: Path, local_bas
         "source_restart_result": "not_applicable" if scenario == "success" else "pass",
         "source_health_result": "not_applicable" if scenario == "success" else "pass",
         "final_job_state": terminal["state"],
+        "runtime_phases": terminal.get("runtime_phases", {}),
+        "failure_code": terminal.get("failure_code"),
         "active_update_lock_absent": True,
         "runtime_supervisor_lock_absent_after_cleanup": True,
         "remaining_owned_processes": 0,
@@ -419,16 +461,6 @@ def _run_scenario(script: Path, build_root: Path, scenario_root: Path, local_bas
         "production_touched": False,
         "temporary_business_environment_touched": False,
     }
-
-
-def _safe_generated_remove(path: Path, local_base: Path) -> None:
-    if path.parent != local_base or path.name not in {"InfiniteCanvasEnterprise", "Infinite-Canvas-Enterprise"}:
-        raise RuntimeError("UPDATE_MVP_R1_LOCAL_ROOT_IDENTITY_INVALID")
-    if path.exists():
-        runtime_lock = path / "runtime" / "runtime-supervisor.lock"
-        if runtime_lock.exists():
-            raise RuntimeError("UPDATE_MVP_R1_LOCAL_RUNTIME_STILL_ACTIVE")
-        shutil.rmtree(path)
 
 
 def _stop_current_install(install_root: Path) -> None:
@@ -456,7 +488,7 @@ def _stop_current_install(install_root: Path) -> None:
         raise RuntimeError("UPDATE_MVP_R1_FORMAL_CLEANUP_IDENTITY_INVALID") from exc
 
 
-def _run_all(script: Path, build_root: Path, evidence_root: Path) -> int:
+def _run_all(script: Path, build_root: Path, evidence_root: Path, source_build: Path | None = None) -> int:
     if os.name != "nt":
         raise RuntimeError("UPDATE_MVP_R1_WINDOWS_REQUIRED")
     if evidence_root.exists():
@@ -467,6 +499,7 @@ def _run_all(script: Path, build_root: Path, evidence_root: Path) -> int:
     local_base = windows_local_app_data_known_folder()
     names = ("InfiniteCanvasEnterprise", "Infinite-Canvas-Enterprise")
     nonce = uuid.uuid4().hex
+    # Keep materialized Windows payload paths below the legacy MAX_PATH bound.
     workspace_parent = Path(evidence_root.anchor) / "_ICE_UPDATE_R1"
     workspace_root = workspace_parent / nonce
     if workspace_root.exists():
@@ -474,7 +507,25 @@ def _run_all(script: Path, build_root: Path, evidence_root: Path) -> int:
     workspace_root.mkdir(parents=True, exist_ok=False)
     backups: list[tuple[Path, Path]] = []
     results: list[dict[str, object]] = []
+    isolated = False
     try:
+        from enterprise.path_safety import assert_no_reparse_ancestors
+        from enterprise.runtime.ownership import process_identity
+        # All gates precede any move, including the second legacy directory.
+        for name in names:
+            current = local_base / name
+            assert_no_reparse_ancestors(current, allow_missing=True)
+            if (current / "runtime" / "runtime-supervisor.lock").exists():
+                raise RuntimeError("UPDATE_MVP_R1_PREEXISTING_RUNTIME_ACTIVE")
+            state_path = current / "runtime" / "runtime-state.json"
+            if state_path.exists():
+                state = json.loads(state_path.read_text(encoding="utf-8"))
+                if state.get("state") != "stopped":
+                    raise RuntimeError("UPDATE_MVP_R1_PREEXISTING_RUNTIME_NOT_STOPPED")
+                for role in (state, state.get("gateway", {}), state.get("upstream", {})):
+                    pid = role.get("supervisor_pid", role.get("pid"))
+                    if type(pid) is int and process_identity(pid) is not None:
+                        raise RuntimeError("UPDATE_MVP_R1_PREEXISTING_PROCESS_PRESENT")
         for name in names:
             current = local_base / name
             backup = local_base / f".{name}.update-mvp-r1-backup-{nonce}"
@@ -485,18 +536,19 @@ def _run_all(script: Path, build_root: Path, evidence_root: Path) -> int:
                     raise RuntimeError("UPDATE_MVP_R1_PREEXISTING_RUNTIME_ACTIVE")
                 os.replace(current, backup)
                 backups.append((current, backup))
+        isolated = True
         for scenario in ("success", "rollback"):
             scenario_root = workspace_root / scenario
             scenario_root.mkdir()
             try:
-                result = _run_scenario(script, build_root, scenario_root, local_base, scenario)
+                result = _run_scenario(script, build_root, scenario_root, local_base, scenario, source_build)
             except Exception:
                 _stop_current_install(scenario_root / "install")
                 raise
             (evidence_root / f"WU-{scenario.upper()}.json").write_bytes(_json_bytes(result))
             results.append(result)
             for name in names:
-                _safe_generated_remove(local_base / name, local_base)
+                _retain_generated_root(local_base / name, local_base, local_base / f".ice-update-fixture-{nonce}-{scenario}")
         summary = {
             "schema_version": "update-mvp-1-r1-windows-evidence-v1",
             "environment": "repository-external isolated Windows fixture",
@@ -520,15 +572,27 @@ def _run_all(script: Path, build_root: Path, evidence_root: Path) -> int:
                 if scenario_install.is_dir():
                     _stop_current_install(scenario_install)
         for name in names:
-            _safe_generated_remove(local_base / name, local_base)
+            if isolated:
+                _retain_generated_root(local_base / name, local_base, local_base / f".ice-update-fixture-{nonce}-final")
         for current, backup in reversed(backups):
             if current.exists() or not backup.exists():
                 raise RuntimeError("UPDATE_MVP_R1_LOCAL_BACKUP_RESTORE_BLOCKED")
             os.replace(backup, current)
-        if workspace_root.is_dir():
-            if workspace_root.parent != workspace_parent or workspace_parent.parent != Path(evidence_root.anchor):
-                raise RuntimeError("UPDATE_MVP_R1_WORKSPACE_IDENTITY_INVALID")
-            shutil.rmtree(workspace_root)
+        # Preserve this task's fixtures and logs; never delete pre-existing data.
+
+
+def _retain_generated_root(path: Path, local_base: Path, destination: Path) -> None:
+    if path.parent != local_base or path.name not in {"InfiniteCanvasEnterprise", "Infinite-Canvas-Enterprise"}:
+        raise RuntimeError("UPDATE_MVP_R1_LOCAL_ROOT_IDENTITY_INVALID")
+    if not path.exists():
+        return
+    if (path / "runtime" / "runtime-supervisor.lock").exists():
+        raise RuntimeError("UPDATE_MVP_R1_LOCAL_RUNTIME_STILL_ACTIVE")
+    from enterprise.path_safety import assert_no_reparse_ancestors
+    assert_no_reparse_ancestors(path)
+    assert_no_reparse_ancestors(destination, allow_missing=True)
+    destination.mkdir(parents=True, exist_ok=True)
+    os.replace(path, destination / path.name)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -538,6 +602,7 @@ def _parser() -> argparse.ArgumentParser:
     modes.add_argument("--invoke-handoff", action="store_true")
     modes.add_argument("--rollback-listener", action="store_true")
     parser.add_argument("--target-build", type=Path)
+    parser.add_argument("--source-build", type=Path)
     parser.add_argument("--evidence-root", type=Path)
     parser.add_argument("--app-root", type=Path)
     parser.add_argument("--job-id")
@@ -556,7 +621,8 @@ def main() -> int:
         return _rollback_listener(args.status_path, args.pointer_path, args.source_release_id, args.gateway_port)
     if args.target_build is None or args.evidence_root is None:
         raise RuntimeError("UPDATE_MVP_R1_SMOKE_ARGUMENTS_INVALID")
-    return _run_all(Path(__file__).resolve(), args.target_build.resolve(), args.evidence_root.resolve())
+    return _run_all(Path(__file__).resolve(), args.target_build.resolve(), args.evidence_root.resolve(),
+                    args.source_build.resolve() if args.source_build else None)
 
 
 if __name__ == "__main__":
