@@ -1260,7 +1260,8 @@ def test_diagnostics_are_bounded_redacted_and_zip_safe(tmp_path: Path):
 def test_update_center_ui_never_persists_password_and_hides_dangerous_actions():
     html = (Path(__file__).resolve().parents[2] / "enterprise-static" / "admin.html").read_text(encoding="utf-8")
     assert 'type="password" id="updateConfirmPassword"' in html
-    assert "update-dangerous" in html and "SYSTEM_UPDATE" not in html
+    assert "update-dangerous" in html
+    assert "SYSTEM_UPDATE_EMERGENCY_SWITCH_DISABLED" in html
     assert "document.getElementById('updateConfirmPassword').value = ''" in html
     assert "localStorage" not in html[html.index("async function executeSystemUpdate"):html.index("async function refreshUpdateJob")]
 

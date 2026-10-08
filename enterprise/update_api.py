@@ -176,10 +176,21 @@ def _route_previews(provider, releases, source_manifest, source_pointer) -> dict
 async def update_access(request: Request):
     current = _require_admin_view(request)
     effective = edb.get_effective_feature_value(current, "system_update")
+    if current.get("role") != ROLE_SUPER_ADMIN:
+        denial_code = "SYSTEM_UPDATE_SUPER_ADMIN_REQUIRED"
+    elif not ENTERPRISE_UPDATE_ENABLED:
+        denial_code = "SYSTEM_UPDATE_EMERGENCY_SWITCH_DISABLED"
+    elif not effective.get("allowed"):
+        denial_code = "SYSTEM_UPDATE_PERMISSION_DENIED"
+    else:
+        denial_code = None
     return {
         "role": current.get("role"),
-        "can_operate": bool(ENTERPRISE_UPDATE_ENABLED and effective.get("allowed")),
+        "can_operate": denial_code is None,
         "global_update_enabled": bool(ENTERPRISE_UPDATE_ENABLED and effective.get("global_enabled")),
+        "deployment_update_enabled": bool(ENTERPRISE_UPDATE_ENABLED),
+        "feature_update_enabled": bool(effective.get("global_enabled")),
+        "denial_code": denial_code,
         "permission_source": effective.get("source"),
     }
 
