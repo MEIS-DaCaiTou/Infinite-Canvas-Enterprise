@@ -53,3 +53,22 @@ portable CLI 保留已经核准的 lexical APP/Runtime 根，不再通过 `resol
 真实 CLI 与执行器故障注入是两组独立证据，不能拼接为完整固定入口→handoff→目标启动→自动恢复验收。未新增 schema、付费 Provider 调用、长稳/硬件故障测试、Release、生产启停或零停机声明。
 
 早前生产失败的缺失 stage/errno 仍是 `not_recorded`；本增量只能改进未来记录。EXE 重建上下文后 10.1 成功不能证明旧失败的唯一根因，也不能证明已解决全部长期崩溃问题。
+
+## 6. 评审合并后：完整固定 EXE 演练准备
+
+#147 已于 2026-10-09 合并。准确 Head `222b2dfd8adc2c1237ff8d38cddd3093640139ba` 经评审、三个 CI 检查通过并按 Head 校验合并；merge 为 `a5a6aa10b7882c46f129ec6df854239ee111da18`。没有发布新 Release、覆盖 10.1 或连接生产。
+
+后续分支 `codex/fixed-exe-update-validation-20261009` 增加独立 opt-in 脚本 `enterprise/tests/fixed_exe_update_windows_smoke.py`。它使用真实固定 EXE、自己的全新数据库/账号/配置/画布/素材、实际登录及密码授权 HTTP execute、真实 detached handoff worker，预期核验三种终态：`SUCCEEDED`、瞬时端口冲突后的 `ROLLED_BACK`、端口冲突持续时的 `RECOVERY_REQUIRED`。同时验证源进程退出、worker 退出、指针、阶段记录、业务身份及配置/素材保留、完整程序 payload。不是直接伪造启动器返回值或作业终态。
+
+两个包从干净、可追溯 Git 提交独立构建，产物仅在仓库外开发 artifact 目录：
+
+| 测试身份 | 准确源码 | ZIP SHA-256 | detached Manifest SHA-256 |
+| --- | --- | --- | --- |
+| 源 `ice-2026.08.4-df69184a3f01` | `df69184a3f0181669828f94199fd533f3832aa26`，仅把测试源 VERSION 从合并后的 main 改成 2026.08.4 | `d245ff10012cc91aaa1d12f12c0c031a48e8662db49801b5c1edf72b9a019d6f` | `91c124c1f64c7f0c91fe301e664506f948b80dee97b0db51e4e2743d32c1d12f` |
+| 目标 `ice-2026.08.5-a5a6aa10b788` | `a5a6aa10b7882c46f129ec6df854239ee111da18` | `a4a6399b7e1ac96760d1d17a8f0cc7bc14762819ca2c6bbcc64642a8ecb7a267` | `8f9bffebce014e3a288579b2eceb33ad7820aec1a76734baccd5afd087b6dbe8` |
+
+两份 native build 也分别绑定对应提交，固定 EXE 双构建一致，SHA-256 为 `570ad6885cae124e39f534bc6a95073212eec0ad4d9c1d8085f5e0888d3987fd`。同结构 v2 数据库；已有 CPython 3.14.6 x64 Runtime 按构建器核验后复用。测试版本号仅为引擎的 newer-only 路由提供准确夹具身份，不代表历史客户 08.4/08.5 资产，也不发布这些测试包或源 fixture 分支。
+
+安全定向组 `test_fixed_exe_update_smoke_safety.py`、既有烟测清理保护与生命周期诊断 **48 passed / 4.02 秒**。它只证明未授权不移动、停止身份门槛、未知锁不清理、目录边界、保存副本完整性、恢复不覆盖及继承配置隔离；不是三条真实 EXE 场景已通过。
+
+开发机历史默认根已只读核验为 stopped、无活动实例，仍未移动。完整执行等待对临时封存/原样恢复这两处历史 Runtime/cache 的明确许可；默认拒绝占用根，不删除历史材料，也不把新账户/干净设备作为门槛。异常清理或恢复目的地被占用时保留两份材料，不为通过测试覆盖。当前状态为 **工具与资产已准备，完整运行未完成**；新脚本/文档的合并状态以其后续 PR 为准。
