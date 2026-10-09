@@ -1,6 +1,6 @@
 {
   "schema_version": "enterprise-documents-v1",
-  "reviewed_at": "2026-10-09",
+  "reviewed_at": "2026-10-10",
   "audit_base_commit": "309b35fb41956bd457d009cd54762bb647db15a3",
   "scope": "All Git-managed or non-ignored new Markdown/text files; roles are not runtime or release approval. Frozen hashes normalize CRLF to LF only.",
   "documents": [
@@ -110,7 +110,7 @@
       "path": "docs/CURRENT_PROJECT_STATUS.md",
       "kind": "authority",
       "authority": "status",
-      "reviewed_at": "2026-10-09"
+      "reviewed_at": "2026-10-10"
     },
     {
       "path": "docs/data/DATA-MVP-1-INDEPENDENT-REVIEW-2026-09.md",

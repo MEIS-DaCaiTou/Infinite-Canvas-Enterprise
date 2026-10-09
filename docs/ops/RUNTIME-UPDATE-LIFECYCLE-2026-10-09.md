@@ -221,3 +221,23 @@ Supervisor、API 超时处理及 worker 终态写入共用每个作业的 sessio
 同一开发设备，经现有 Explorer 文件夹视图的普通当前用户 ShellExecute、PowerShell 7 启动相同资格工具，观察源/runner Job 为 `0x1800`；原 worker 精确源 Job 非成员、source lease、后续 host 创建/清理、原 worker 退出及自建 Job 关闭全部通过。无需新设备、SYSTEM、账户密码、提权或修改外部限制。一次 Windows PowerShell 5 的包装调用因无 BOM UTF-8 中文路径解释失败，未进入资格探针；更正包装工具后才取得有效结果，旧失败材料保留。
 
 资格通过不等于三项应用门禁通过。随后使用准确干净提交构建仅 VERSION 不同的合成源/目标、固定 EXE 和原始固定 Runtime，在同一已核验桌面上下文集中运行三项完整场景；仍要求真实 HTTP 密码授权、源/worker 停止、目标启动、自动恢复/持续失败阻断、业务数据保留及历史根原样恢复。不操作生产、不调用付费 Provider、不覆盖正式 Release；三门禁及独立审查完成前 #148 保持 Draft。
+
+### 10.4 最终代码的三项真实合成门禁全部通过
+
+最终目标代码为 `6002300eff5fd4750f84bfe684b41a739c541120`；源 fixture `8ee392cfc42cee1352a4610d9eb2072a74fe03ac` 的父提交就是该目标，差异仅 VERSION 的 2026.08.5 → 2026.08.4。使用核验过的 CPython 3.14.6 Runtime，固定 EXE 确定性双构建 SHA-256 为 `570ad6885cae124e39f534bc6a95073212eec0ad4d9c1d8085f5e0888d3987fd`。没有把历史发行包临时改成测试包，也不推送 fixture 分支或发布测试资产。
+
+2026-10-10 北京时间 **04:45:40—04:54:13**（约 8 分 33 秒），上述普通桌面上下文通过严格 v2 资格后连续执行 `--run-all`；runner 退出码 0，最终 `THREE_GATES_PASSED`。准确证据在仓库外 `D:\CodeProject\review-artifacts\t\WPB4\e`，不是只有终态字符串的模拟测试。
+
+| 真实门禁 | 实际链路和预期终态 | 验收 |
+| --- | --- | --- |
+| 完整升级 | 作业 `43b7096f54454357af4d45cddd86362c`；target_start/target_health 均 exit 0、`SYSTEM_UPDATE_RUNTIME_PHASE_OK`；目标指针和真实健康核验，终态 `SUCCEEDED` | PASS |
+| 目标失败自动恢复 | 作业 `8fd44bfd4dc949aeb5f32f522c314f7a`；target_start exit 2、`PORTABLE_RUNTIME_OWNERSHIP_UNTRUSTED`；确认 target_stop exit 0 后 source_start/source_health 均 exit 0；源指针/健康恢复，终态 `ROLLED_BACK` | PASS |
+| 持续失败安全阻断 | 作业 `5b5ebc2a5faa4df1a3b5e77ba89d2db1`；target_start/target_stop 均 exit 2、`PORTABLE_RUNTIME_OWNERSHIP_UNTRUSTED`；未确认目标停止时不启动源、不盲目恢复数据；终态 `RECOVERY_REQUIRED / SYSTEM_UPDATE_TARGET_STOP_UNCONFIRMED`，后续更新保持恢复阻断 | PASS |
+
+三项均由固定原生 EXE 启动源服务、真实超级管理员登录和当前密码授权 HTTP execute 触发，不直接调用更新执行器代替业务路径。原源进程及 detached worker 已退出，nonce 自有测试实例和端口清理确认，源/目标完整 payload 核验通过；合成身份、选定配置、画布/素材和数据库完整性/外键保留检查通过。数据库行值比较限定合成 `users`、`user_canvas_map`、`feature_flags` 等既定夹具，不能扩大为全部客户数据或历史 schema 迁移证明。
+
+`historical_roots_preserved=false`：这次桌面 KnownFolder 上下文没有既有默认 Runtime/cache 需要封存。因此 `historical_roots_restored=true` 只表示无需恢复的收尾条件满足，**不是本轮搬动并恢复了用户历史目录**；此前 F1/J7 的原字节/mtime/目录身份恢复证据仍单独保留。测试没有 GUI 点击验收、付费 Provider 请求、客户环境或实际已发布 09.9 → 10.1 兼容验证，不证明长期稳定性或业务写入后任意无损降级。
+
+只含两份 share 摘要的 `pr148-synthetic-gates-report.zip` SHA-256 为 `774998779da8b49adb31d1f869ca8360fa785436f37b4fa2f6b7d3589b29b09d`；完整 qualification、drill SUMMARY/status/events 和私有合成日志留本机，不提交原始数据库/配置/业务材料。此前 WPB3 对 `093e95a0b3157927e617a8e8279cd2cca9edfe1f` 的三门禁结果保留；本节以补上已接受后停止超时保护并重建的 WPB4 最终代码为准，不用早前结果替代最终源码验收。
+
+#148 继续保持 Draft，提交文档收口后的 PR Head 与上述运行时测试提交分开记录；若后续只有文档变更，不将新 Head 伪称为重新构建演练的代码。等待准确最终 Head 的 CI 和独立审查，不自动合并、发布 Release 或操作生产。正式路线图仍是唯一实施顺序，下一工程候选是阶段 3 剩余安装维护闭环，新增业务仍未授权。
