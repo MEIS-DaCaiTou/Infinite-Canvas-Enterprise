@@ -342,7 +342,8 @@ def _scenario(args, scenario, local_base, nonce):
     evidence.mkdir(exist_ok=False)
     # Windows update preparation uses a nonce-bearing partial Release name;
     # keep the fixture install path short without overriding system policy.
-    install = args.evidence_root / "f" / {"success": "s", "rollback": "r", "recovery-required": "g"}[scenario] / "i"
+    install = args.evidence_root / "f" / {"success": "s", "rollback": "r", "recovery-required": "g",
+                                        "job-blocked": "b"}[scenario] / "i"
     ports = ()
     roots = None
     watcher = None
@@ -371,7 +372,7 @@ def _scenario(args, scenario, local_base, nonce):
             manifest_path=target.manifest_path, archive_path=target.archive_path, inventory_path=target.inventory_path)
         store = UpdateJobStore(roots)
         status_path = store.job_root(prepared.job_id) / "status.json"
-        if scenario != "success":
+        if scenario not in {"success", "job-blocked"}:
             watcher = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--fault-listener",
                 "--status-path", str(status_path), "--port", str(ports[1]), "--evidence-root", str(evidence),
                 *( ["--retain-fault"] if scenario == "recovery-required" else [] )],
@@ -387,18 +388,20 @@ def _scenario(args, scenario, local_base, nonce):
             watcher.wait(timeout=30)
             if watcher.returncode != 0 or not (evidence / "fault-acquired.json").exists():
                 raise RuntimeError("FIXED_EXE_FAULT_NOT_EXECUTED")
-        expected = {"success": "SUCCEEDED", "rollback": "ROLLED_BACK", "recovery-required": "RECOVERY_REQUIRED"}[scenario]
+        expected = {"success": "SUCCEEDED", "rollback": "ROLLED_BACK", "recovery-required": "RECOVERY_REQUIRED",
+                    "job-blocked": "FAILED"}[scenario]
         if terminal["state"] != expected:
             raise RuntimeError("FIXED_EXE_UNEXPECTED_TERMINAL:" + terminal["state"])
         pointer = json.loads((roots.STATE_ROOT / "current-release.json").read_bytes())
-        expected_id = prepared.source_release_id if scenario == "rollback" else prepared.target_release_id
-        if pointer["release_id"] != expected_id or not _owned_identities_absent(source_identities):
+        expected_id = prepared.source_release_id if scenario in {"rollback", "job-blocked"} else prepared.target_release_id
+        if pointer["release_id"] != expected_id or (scenario != "job-blocked" and not _owned_identities_absent(source_identities)):
             raise RuntimeError("FIXED_EXE_POINTER_OR_SOURCE_EXIT_INVALID")
         _wait(lambda: not _update_worker_pids(roots.PYTHON_RUNTIME / "python.exe", prepared.job_id),
               seconds=60, label="detached-worker-exit")
         phases = terminal.get("runtime_phases", {})
         phase_set = {"target_start", "target_health"} if scenario == "success" else (
-            {"target_start", "target_stop", "source_start", "source_health"} if scenario == "rollback" else {"target_start", "target_stop"})
+            {"target_start", "target_stop", "source_start", "source_health"} if scenario == "rollback" else (
+                set() if scenario == "job-blocked" else {"target_start", "target_stop"}))
         if set(phases) != phase_set:
             raise RuntimeError("FIXED_EXE_PHASES_INVALID")
         if scenario == "recovery-required":
@@ -409,6 +412,12 @@ def _scenario(args, scenario, local_base, nonce):
             if exit_code != 0 or active_health.get("readiness", {}).get("ready") is not True:
                 raise RuntimeError("FIXED_EXE_FINAL_HEALTH_INVALID")
             _login_and_execute(ports[1])
+        if scenario == "job-blocked":
+            if terminal.get("result_code") != "SYSTEM_UPDATE_HANDOFF_JOB_BLOCKED":
+                raise RuntimeError("FIXED_EXE_JOB_GUARD_CODE_MISSING")
+            exit_code, still_running = _native(install, "status", evidence)
+            if exit_code != 0 or _runtime_identities(still_running) != source_identities:
+                raise RuntimeError("FIXED_EXE_JOB_GUARD_STOPPED_SOURCE")
         if store.lock_path.exists() or _database_snapshot(roots.DATA_ROOT / "enterprise.db") != database:
             raise RuntimeError("FIXED_EXE_DATA_OR_LOCK_INVALID")
         if any((install / p).read_bytes() != value for p, value in business.items()):
@@ -419,7 +428,8 @@ def _scenario(args, scenario, local_base, nonce):
         _json_new(evidence / "terminal.json", terminal)
         return {"scenario": scenario, "state": expected, "source_release_id": prepared.source_release_id,
                 "target_release_id": prepared.target_release_id, "fixed_exe": True, "real_http_execute": True,
-                "detached_worker_exited": True, "source_processes_exited": True,
+                "detached_worker_exited": True, "source_processes_exited": scenario != "job-blocked",
+                **({"source_stop_prevented": True, "source_healthy_after_guard": True} if scenario == "job-blocked" else {}),
                 "business_identity_config_and_media_retained": True, "runtime_phases": phases,
                 "automatic_source_recovery": scenario == "rollback", "production_touched": False}
     finally:
@@ -451,6 +461,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     modes = parser.add_mutually_exclusive_group(required=True)
     modes.add_argument("--run-all", action="store_true")
+    modes.add_argument("--restricted-job-guard", action="store_true",
+                       help="Negative real-EXE drill: unsafe Job handoff must fail before source shutdown")
     modes.add_argument("--fault-listener", action="store_true")
     parser.add_argument("--source-build", type=Path)
     parser.add_argument("--source-native-entry", type=Path)
@@ -484,7 +496,7 @@ def main():
     nonce = uuid.uuid4().hex
     results = []
     with preserved_local_roots(local_base, nonce, explicitly_authorized=args.preserve_existing_local_roots) as preservation:
-        for scenario in ("success", "rollback", "recovery-required"):
+        for scenario in (("job-blocked",) if args.restricted_job_guard else ("success", "rollback", "recovery-required")):
             _create_owned_local_roots(local_base, NAMES, nonce)
             results.append(_scenario(args, scenario, local_base, nonce))
     summary = {"schema_version": "fixed-exe-update-windows-drill-v1", "results": results,

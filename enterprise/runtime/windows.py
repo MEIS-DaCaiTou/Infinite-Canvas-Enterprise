@@ -82,6 +82,19 @@ def current_job_diagnostics() -> dict[str, object]:
         return result
 
 
+def process_in_any_job(process: subprocess.Popen[bytes]) -> bool:
+    """Query the exact owned Popen handle, not a reopened/reused process ID."""
+    if os.name != "nt":
+        return False
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.IsProcessInJob.argtypes = (wintypes.HANDLE, wintypes.HANDLE, ctypes.POINTER(wintypes.BOOL))
+    kernel32.IsProcessInJob.restype = wintypes.BOOL
+    in_job = wintypes.BOOL()
+    if not kernel32.IsProcessInJob(wintypes.HANDLE(int(process._handle)), None, ctypes.byref(in_job)):
+        raise JobObjectError("owned process Job membership could not be queried")
+    return bool(in_job.value)
+
+
 class ProcessJob:
     """A service-host-owned kill-on-close Job Object.
 
@@ -128,6 +141,19 @@ class ProcessJob:
             return
         if not self._kernel32.AssignProcessToJobObject(self._handle, wintypes.HANDLE(int(process._handle))):
             raise JobObjectError("child process could not be assigned to the service Job Object")
+
+    def contains_current_process(self) -> bool:
+        """Distinguish this owned runtime Job from an unknown inherited Job."""
+        if self._handle is None:
+            return False
+        self._kernel32.GetCurrentProcess.argtypes = ()
+        self._kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        self._kernel32.IsProcessInJob.argtypes = (wintypes.HANDLE, wintypes.HANDLE, ctypes.POINTER(wintypes.BOOL))
+        self._kernel32.IsProcessInJob.restype = wintypes.BOOL
+        member = wintypes.BOOL()
+        if not self._kernel32.IsProcessInJob(self._kernel32.GetCurrentProcess(), self._handle, ctypes.byref(member)):
+            raise JobObjectError("runtime Job membership could not be queried")
+        return bool(member.value)
 
     def terminate(self, exit_code: int = 1) -> None:
         if self._handle is not None and not self._kernel32.TerminateJobObject(self._handle, int(exit_code)):

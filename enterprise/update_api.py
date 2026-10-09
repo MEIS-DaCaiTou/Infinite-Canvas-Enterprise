@@ -352,9 +352,11 @@ def _launch_handoff(job_id: str, actor_user_id: str) -> None:
     try:
         result = request_portable_update_handoff(app_root=PATH_ROOTS.APP_ROOT, job_id=job_id)
         if result.get("result") != "update_handoff_started":
-            store.write_status(job_id, "FAILED", actor_user_id=actor_user_id, result_code="SYSTEM_UPDATE_HANDOFF_FAILED")
-            store.append_event(job_id, "FAILED", "SYSTEM_UPDATE_HANDOFF_FAILED")
-            edb.log_action(actor_user_id, "system_update_failed", json.dumps({"job_id": job_id, "result_code": "SYSTEM_UPDATE_HANDOFF_FAILED"}, ensure_ascii=False))
+            result_code = ("SYSTEM_UPDATE_HANDOFF_JOB_BLOCKED"
+                           if result.get("result") == "update_handoff_job_blocked" else "SYSTEM_UPDATE_HANDOFF_FAILED")
+            store.write_status(job_id, "FAILED", actor_user_id=actor_user_id, result_code=result_code)
+            store.append_event(job_id, "FAILED", result_code)
+            edb.log_action(actor_user_id, "system_update_failed", json.dumps({"job_id": job_id, "result_code": result_code}, ensure_ascii=False))
             try:
                 lock = store.acquire_execution_lock(job_id)
                 store.release_execution_lock(lock, job_id)

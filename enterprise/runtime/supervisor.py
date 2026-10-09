@@ -33,7 +33,7 @@ from .process import (
     start_process,
 )
 from .state import STARTUP_LOCK_GRACE_SECONDS, RuntimeStateError, RuntimeStateStore, initial_state
-from .windows import JobObjectError, ProcessJob, current_job_diagnostics
+from .windows import JobObjectError, ProcessJob, current_job_diagnostics, process_in_any_job
 
 
 ROLES = ("upstream", "gateway")
@@ -408,6 +408,17 @@ class RuntimeSupervisor:
         except JobObjectError as exc:
             self.store.release_lock(self.instance_id)
             raise RuntimeSupervisorError("runtime process ownership is unavailable") from exc
+        context = current_job_diagnostics()
+        member_query = getattr(self._job, "contains_current_process", None)
+        try:
+            if callable(member_query):
+                context["process_in_owned_runtime_job"] = member_query()
+        except JobObjectError:
+            context["owned_runtime_job_query_ok"] = False
+        try:
+            self._log("supervisor_job_context", **context)
+        except OSError:
+            pass
 
     def _control_path(self, prefix: str, role: str, suffix: str) -> Path:
         return self.config.runtime_root / "control" / f"{prefix}-{self.instance_id[:12]}-{role}.{suffix}"
@@ -898,13 +909,22 @@ class RuntimeSupervisor:
         environment["PYTHONNOUSERSITE"] = "1"
         environment["PYTHONDONTWRITEBYTECODE"] = "1"
         creationflags = 0
+        creation_context = current_job_diagnostics()
         if os.name == "nt":
             creationflags = int(getattr(subprocess, "DETACHED_PROCESS", 0)) | int(
                 getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
             )
+            # Prove handoff independence before committing to source shutdown.
+            # Never retry ordinary creation merely to hide a breakaway denial.
+            silent_only = (creation_context.get("process_in_job") is True
+                           and type(creation_context.get("job_limit_flags")) is int
+                           and creation_context["job_limit_flags"] & 0x1000
+                           and not creation_context["job_limit_flags"] & 0x0800)
+            if not silent_only:
+                creationflags |= subprocess.CREATE_BREAKAWAY_FROM_JOB
         try:
             try:
-                self._log("update_handoff_create_context", creation_flags=creationflags, **current_job_diagnostics())
+                self._log("update_handoff_create_context", creation_flags=creationflags, **creation_context)
             except OSError:
                 pass
             process = subprocess.Popen(
@@ -918,12 +938,40 @@ class RuntimeSupervisor:
                 creationflags=creationflags,
                 shell=False,
             )
-        except OSError:
-            self._ack(request, result="update_handoff_failed", before=before, after=before)
+        except OSError as exc:
+            restrictive_job = (creation_context.get("process_in_job") is True
+                               and creation_context.get("job_query_ok") is True
+                               and type(creation_context.get("job_limit_flags")) is int
+                               and not creation_context["job_limit_flags"] & (0x0800 | 0x1000))
+            result = ("update_handoff_job_blocked" if restrictive_job and getattr(exc, "winerror", None) == 5
+                      else "update_handoff_failed")
+            self._ack(request, result=result, before=before, after=before)
             return
         identity = process_identity(process.pid)
         if process.poll() is not None or identity is None or os.path.normcase(identity.executable) != os.path.normcase(str(python)):
             self._ack(request, result="update_handoff_failed", before=before, after=before)
+            return
+        try:
+            independent = not process_in_any_job(process)
+        except (OSError, JobObjectError):
+            independent = None
+        if independent is not True:
+            # The worker waits for this supervisor's lock to disappear, so it
+            # cannot migrate before this proof. Use only its original handle.
+            stopped = False
+            try:
+                process.terminate()
+                process.wait(timeout=5)
+                stopped = True
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+            try:
+                self._log("update_handoff_job_blocked", worker_stop_confirmed=stopped,
+                          job_query_ok=independent is not None,
+                          **({"worker_process_in_job": True} if independent is False else {}))
+            except OSError:
+                pass
+            self._ack(request, result="update_handoff_job_blocked", before=before, after=before)
             return
         after = self._command_snapshot()
         after["update_worker_pid"] = process.pid

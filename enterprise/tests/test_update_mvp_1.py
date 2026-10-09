@@ -1389,6 +1389,8 @@ def test_supervisor_handoff_uses_only_fixed_source_python_and_worker(tmp_path: P
     supervisor._ack = lambda request, **fields: acknowledgements.append((request, fields))
     supervisor._log = lambda *_args, **_kwargs: None
     monkeypatch.setattr("enterprise.runtime.supervisor.subprocess.Popen", popen)
+    monkeypatch.setattr("enterprise.runtime.supervisor.current_job_diagnostics", lambda: {})
+    monkeypatch.setattr("enterprise.runtime.supervisor.process_in_any_job", lambda process: False)
     monkeypatch.setattr(
         "enterprise.runtime.supervisor.process_identity",
         lambda pid: ProcessIdentity(pid, 1, str(python)),

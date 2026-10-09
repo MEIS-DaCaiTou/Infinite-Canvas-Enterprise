@@ -3,6 +3,7 @@ import json
 import io
 import os
 import ctypes
+from types import SimpleNamespace
 from contextlib import redirect_stdout
 import subprocess
 import zipfile
@@ -174,6 +175,67 @@ def test_worker_creation_context_survives_the_launcher_return(tmp_path):
     assert exit_code == 2 and payload == {"code": "RUNTIME_CONTROL_ERROR", "winerror": 5,
         "worker_creation_flags": 0, **{"worker_" + k: v for k, v in context.items()}}
     assert create.call_args.kwargs.get("creationflags", 0) == 0
+
+
+@pytest.mark.parametrize("failure", ["foreign-job", "query-failed", "creation-denied", "other-denial"])
+def test_handoff_job_failure_never_stops_source_or_retries_ordinary_creation(tmp_path, monkeypatch, failure):
+    from enterprise.runtime import supervisor as module
+    from enterprise.runtime.ownership import ProcessIdentity
+    from enterprise.runtime.windows import JobObjectError
+    from unittest.mock import Mock
+    app = tmp_path / "source"
+    python, worker = app / "python/python.exe", app / "enterprise/ops/update/handoff.py"
+    python.parent.mkdir(parents=True)
+    worker.parent.mkdir(parents=True)
+    python.touch()
+    worker.touch()
+    supervisor = module.RuntimeSupervisor.__new__(module.RuntimeSupervisor)
+    supervisor.config = SimpleNamespace(app_root=app, python_executable=str(python), runtime_mode="portable-release")
+    supervisor._update_handoff_request = {"request_id": "request", "update_job_id": "a" * 32}
+    supervisor._stopping = False
+    supervisor._command_snapshot = lambda: {"state": "healthy"}
+    supervisor._ack = Mock()
+    supervisor._log = Mock()
+    process = Mock(pid=123)
+    process.poll.return_value = None
+    popen = Mock(return_value=process)
+    if failure in {"creation-denied", "other-denial"}:
+        error = OSError(13, "private-secret")
+        error.winerror = 5
+        popen.side_effect = error
+    monkeypatch.setattr(module, "current_job_diagnostics", lambda: {
+        "process_in_job": failure != "other-denial", "job_query_ok": True, "job_limit_flags": 0x2000})
+    monkeypatch.setattr(module.subprocess, "Popen", popen)
+    monkeypatch.setattr(module, "process_identity", lambda pid: ProcessIdentity(pid, 1, str(python)))
+    query = Mock(return_value=True)
+    if failure == "query-failed":
+        query.side_effect = JobObjectError("private-secret")
+    monkeypatch.setattr(module, "process_in_any_job", query)
+    supervisor._perform_update_handoff()
+    expected = "update_handoff_failed" if failure == "other-denial" else "update_handoff_job_blocked"
+    assert supervisor._ack.call_args.kwargs["result"] == expected
+    assert supervisor._stopping is False and popen.call_count == 1
+    if os.name == "nt":
+        assert popen.call_args.kwargs["creationflags"] == 0x01000208
+    if failure in {"foreign-job", "query-failed"}:
+        process.terminate.assert_called_once_with()
+        process.wait.assert_called_once_with(timeout=5)
+    else:
+        process.terminate.assert_not_called()
+
+
+def test_blocked_handoff_has_durable_specific_code_and_releases_only_own_reservation(tmp_path, monkeypatch):
+    from enterprise import update_api
+    roots, store, job_id, pointer, calls, launcher = _execution_fixture(tmp_path, monkeypatch)
+    monkeypatch.setattr(update_api, "PATH_ROOTS", roots)
+    monkeypatch.setattr(update_api, "request_portable_update_handoff", lambda **kw: {"result": "update_handoff_job_blocked"})
+    monkeypatch.setattr(update_api.edb, "log_action", lambda *_args: None)
+    actor = store.read_plan(job_id)["actor_user_id"]
+    update_api._launch_handoff(job_id, actor)
+    assert store.read_status(job_id)["state"] == "FAILED"
+    assert store.read_status(job_id)["result_code"] == "SYSTEM_UPDATE_HANDOFF_JOB_BLOCKED"
+    assert not store.lock_path.exists() and pointer.release.release_id == "release-A" and calls == []
+    assert "SYSTEM_UPDATE_HANDOFF_JOB_BLOCKED" in (store.job_root(job_id) / "events.jsonl").read_text()
 
 
 def test_update_records_target_and_automatic_recovery_separately(tmp_path, monkeypatch):
