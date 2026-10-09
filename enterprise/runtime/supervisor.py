@@ -954,9 +954,14 @@ class RuntimeSupervisor:
                       else "update_handoff_failed")
             self._ack(request, result=result, before=before, after=before)
             return
-        identity = process_identity(process.pid)
-        if process.poll() is not None or identity is None or os.path.normcase(identity.executable) != os.path.normcase(str(python)):
-            self._ack(request, result="update_handoff_failed", before=before, after=before)
+        try:
+            identity = process_identity(process.pid)
+            identity_valid = (process.poll() is None and identity is not None
+                              and os.path.normcase(identity.executable) == os.path.normcase(str(python)))
+        except OSError:
+            identity_valid = False
+        if not identity_valid:
+            self._reject_update_worker(request, process, before, "update_handoff_failed")
             return
         try:
             independent = not process_in_any_job(process)
@@ -965,26 +970,41 @@ class RuntimeSupervisor:
         if independent is not True:
             # The worker waits for this supervisor's lock to disappear, so it
             # cannot migrate before this proof. Use only its original handle.
-            stopped = False
             try:
-                process.terminate()
-                process.wait(timeout=5)
-                stopped = True
-            except (OSError, subprocess.TimeoutExpired):
-                pass
-            try:
-                self._log("update_handoff_job_blocked", worker_stop_confirmed=stopped,
-                          job_query_ok=independent is not None,
+                self._log("update_handoff_job_blocked", job_query_ok=independent is not None,
                           **({"worker_process_in_job": True} if independent is False else {}))
             except OSError:
                 pass
-            self._ack(request, result="update_handoff_job_blocked", before=before, after=before)
+            self._reject_update_worker(request, process, before, "update_handoff_job_blocked")
             return
         after = self._command_snapshot()
         after["update_worker_pid"] = process.pid
         self._ack(request, result="update_handoff_started", before=before, after=after)
         self._log("update_handoff_started", request_id=request["request_id"], update_job_id=job_id)
         self._stopping = True
+
+    def _reject_update_worker(self, request, process, before, result) -> None:
+        """Reap only the original Popen handle; uncertain cleanup blocks updates.
+
+        The API persists RECOVERY_REQUIRED and retains the reservation when
+        absence cannot be confirmed. The worker must respect that terminal
+        state even if the source is subsequently stopped by the operator.
+        """
+        stopped = False
+        try:
+            if process.poll() is None:
+                process.terminate()
+            process.wait(timeout=5)
+            stopped = process.poll() is not None
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        try:
+            self._log("update_handoff_worker_cleanup", worker_stop_confirmed=stopped)
+        except OSError:
+            pass
+        if not stopped:
+            result = "update_handoff_cleanup_unconfirmed"
+        self._ack(request, result=result, before=before, after=before)
 
     def _perform_restart(self) -> None:
         request = self._restart_request

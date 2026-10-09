@@ -23,6 +23,7 @@ from enterprise.ops.update.diagnostics import diagnostics_zip, recent_diagnostic
 from enterprise.ops.update.download import atomic_download
 from enterprise.ops.update.mvp import (
     MAX_ARCHIVE_BYTES,
+    TERMINAL_STATES,
     UpdateJobStore,
     UpdateMvpError,
     UpdateMvpService,
@@ -351,25 +352,30 @@ def _launch_handoff(job_id: str, actor_user_id: str) -> None:
     store = UpdateJobStore(PATH_ROOTS)
     try:
         result = request_portable_update_handoff(app_root=PATH_ROOTS.APP_ROOT, job_id=job_id)
-        if result.get("result") != "update_handoff_started":
-            result_code = ("SYSTEM_UPDATE_HANDOFF_JOB_BLOCKED"
-                           if result.get("result") == "update_handoff_job_blocked" else "SYSTEM_UPDATE_HANDOFF_FAILED")
-            store.write_status(job_id, "FAILED", actor_user_id=actor_user_id, result_code=result_code)
-            store.append_event(job_id, "FAILED", result_code)
-            edb.log_action(actor_user_id, "system_update_failed", json.dumps({"job_id": job_id, "result_code": result_code}, ensure_ascii=False))
-            try:
-                lock = store.acquire_execution_lock(job_id)
-                store.release_execution_lock(lock, job_id)
-            except UpdateMvpError:
-                pass
     except Exception:
+        # No acknowledgement means worker creation/cleanup is unknown.
+        result = {"result": "update_handoff_cleanup_unconfirmed"}
+    if result.get("result") == "update_handoff_started":
+        return
+    uncertain = result.get("result") == "update_handoff_cleanup_unconfirmed"
+    if uncertain and store.read_status(job_id).get("state") in TERMINAL_STATES:
+        return  # A late/lost acknowledgement cannot overwrite a worker result.
+    result_code = ("SYSTEM_UPDATE_HANDOFF_CLEANUP_UNCONFIRMED" if uncertain else
+                   "SYSTEM_UPDATE_HANDOFF_JOB_BLOCKED" if result.get("result") == "update_handoff_job_blocked"
+                   else "SYSTEM_UPDATE_HANDOFF_FAILED")
+    state = "RECOVERY_REQUIRED" if uncertain else "FAILED"
+    store.write_status(job_id, state, actor_user_id=actor_user_id, result_code=result_code,
+                       **({"recovery_required": True} if uncertain else {}))
+    store.append_event(job_id, state, result_code)
+    try:
+        edb.log_action(actor_user_id, "system_update_failed", json.dumps({"job_id": job_id, "result_code": result_code}, ensure_ascii=False))
+    except Exception:
+        pass  # Audit failure must not downgrade or unlock uncertain cleanup.
+    if not uncertain:
         try:
-            store.write_status(job_id, "FAILED", actor_user_id=actor_user_id, result_code="SYSTEM_UPDATE_HANDOFF_FAILED")
-            store.append_event(job_id, "FAILED", "SYSTEM_UPDATE_HANDOFF_FAILED")
-            edb.log_action(actor_user_id, "system_update_failed", json.dumps({"job_id": job_id, "result_code": "SYSTEM_UPDATE_HANDOFF_FAILED"}, ensure_ascii=False))
             lock = store.acquire_execution_lock(job_id)
             store.release_execution_lock(lock, job_id)
-        except Exception:
+        except UpdateMvpError:
             pass
 
 

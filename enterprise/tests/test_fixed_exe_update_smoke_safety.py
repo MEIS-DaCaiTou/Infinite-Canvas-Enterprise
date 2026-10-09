@@ -1,10 +1,12 @@
 """Small safety regressions; the full Windows/EXE drill remains opt-in."""
 import json
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
 from enterprise.tests import fixed_exe_update_windows_smoke as drill
+from enterprise.tests import fixed_exe_handoff_qualification as qualification
 
 
 def _history(tmp_path):
@@ -154,3 +156,28 @@ def test_owned_cleanup_retains_unverified_or_active_roots(tmp_path, reason):
     with pytest.raises(RuntimeError, match="FIXED_EXE_LOCAL"):
         drill._remove_owned_local_root(root, tmp_path, "test")
     assert root.is_dir()
+
+
+@pytest.mark.skipif(drill.os.name != "nt", reason="Windows creation flags")
+@pytest.mark.parametrize("limits,expected", [(0x2000, 0x01000208), (0x1000, 0x208),
+                                            (0x1800, 0x01000208), (None, 0x01000208)])
+def test_runner_qualification_uses_guarded_worker_flags(limits, expected):
+    assert qualification.worker_flags({"process_in_job": True, "job_limit_flags": limits}) == expected
+
+
+@pytest.mark.skipif(drill.os.name != "nt", reason="Windows creation flags")
+@pytest.mark.parametrize("in_job", [False, True, "query-error"])
+def test_runner_qualification_never_accepts_unknown_or_foreign_job(monkeypatch, in_job):
+    process = Mock()
+    process.poll.side_effect = [None, 0]
+    monkeypatch.setattr(qualification, "current_job_diagnostics", lambda: {})
+    monkeypatch.setattr(qualification.subprocess, "Popen", lambda *a, **k: process)
+    query = Mock(return_value=in_job)
+    if in_job == "query-error":
+        query.side_effect = OSError("test query failed")
+    monkeypatch.setattr(qualification, "process_in_any_job", query)
+    result = qualification.qualify_owned_child()
+    assert result["qualified"] is (in_job is False)
+    assert result["worker_stop_confirmed"] is True
+    process.terminate.assert_called_once_with()
+    process.wait.assert_called_once_with(timeout=5)

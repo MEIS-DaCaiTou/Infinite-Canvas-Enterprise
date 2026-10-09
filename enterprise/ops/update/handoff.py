@@ -45,12 +45,16 @@ def _finalize_terminal_failure(roots: object, job_id: str, result_code: str) -> 
     and the open-file identity.  A foreign, replaced, malformed, or missing
     lock is therefore never removed here.
     """
-    from enterprise.ops.update.mvp import UpdateJobStore
+    from enterprise.ops.update.mvp import TERMINAL_STATES, UpdateJobStore
 
     store = UpdateJobStore(roots)
     plan = store.read_plan(job_id)
     actor = str(plan.get("actor_user_id") or "")
     current_state = str(store.read_status(job_id).get("state") or "")
+    if current_state in TERMINAL_STATES:
+        # A rejected but unconfirmed worker must not clear the API's safety
+        # block or reservation when it later times out or loses the source.
+        return False
     uncertain_database_or_pointer = current_state in {"MIGRATING", "RESTARTING", "VERIFYING"}
     terminal_state = "RECOVERY_REQUIRED" if uncertain_database_or_pointer else "FAILED"
     store.write_status(
