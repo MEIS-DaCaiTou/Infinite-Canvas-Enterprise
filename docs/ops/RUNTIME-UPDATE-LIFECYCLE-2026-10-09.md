@@ -193,3 +193,29 @@ portable CLI 保留已经核准的 lexical APP/Runtime 根，不再通过 `resol
 - 回传只含资格结果、准确源/目标提交、三门禁状态及阶段码的两文件报告 ZIP；数据库、JWT 配置及原始日志留测试设备。终态标签本身不能使门禁通过；必须同时确认真实 HTTP、固定 EXE、worker/source 退出、数据保留、自动恢复及历史根恢复。
 
 门禁包的生成/校验、定向测试或交付本身不是测试设备三门禁完成。只有设备产生 `THREE_GATES_PASSED` 并独立审查其证据后，才具备讨论 #148 合并的前提；本轮不自动合并、发布 Release 或操作生产，也不启动工作包 C 或新增业务。
+
+## 10. 工作包 B 连续收口：交接能力、接受竞争与本机真实门禁
+
+2026-10-10 负责人要求优先由开发设备自主完成已经授权的工作，不再将本机能够执行的测试转交负责人。以上各轮证据保留；本节说明后续策略变化，不回写历史测试的观察或结论。
+
+### 10.1 独立性门槛的精确化
+
+- 第 8/9 节的“worker 不属于任何 Job”是当时的保守条件，不再作为当前单一判断。使用 Supervisor 持有的精确业务 Job 句柄及原 Popen 进程句柄，确认 worker 不在该源 Job；任意 Job 的成员查询仍须成功，但成员为 true 只作诊断。不能用 immediate Job 的 breakaway 位推断所有祖先限制或完整交接能力。
+- worker 在源停止前持有绑定 PID、创建时间、解释器和 liveness 的原源进程 lease。再由普通 launcher 创建与实际控制器相同标志的 host，核验 host 身份、其自身 Job 创建/关闭，以及 launcher/host 退出。这是应用无关的能力探针，不启动产品或连接数据库，也不允许 WinError 5 后取消隔离标志重试。
+- READY 经原 stdout 管道传递，包含作业及源/worker 创建身份、source lease 和 host 创建/清理证据。缺字段、身份不符、超时、Job 查询失败或后代清理未知均拒绝停源。原 worker 退出不等于其探针后代已清理；未知情况保留 `RECOVERY_REQUIRED` 和预约。
+- source lease 的原句柄必须已退出且 Runtime lock 已消失，worker 才能迁移。PID 再查询、锁单独消失或普通进程创建成功不能替代这两项。
+- 不修改外部 Job、祖先限制、系统保护或业务进程 KILL_ON_CLOSE；固定 host 创建标志不变。普通桌面是另外的真实运行上下文，不是取消产品门槛或新增提权 broker。
+
+### 10.2 超时、状态与提交保护
+
+Supervisor、API 超时处理及 worker 终态写入共用每个作业的 session-local Windows named mutex。在同一短期 gate 内重核当前预约/UPDATING 状态与原 worker 身份，再持久化 `handoff_committed=true`；只有成功接受才停止源。迟到控制请求也受原请求时间和预约身份检查，不能在 API 取消后停源。
+
+接受标志跨状态转换保留。接受后的 ACK/日志失败不撤销已接受 worker；未接受的 ACK 失败也不能触发源停机。gate 获取/清理失败及终态写入未知保留预约，不宣传可安全重试。worker 的等待失败终态必须与提交序列互斥，不能抢先写 FAILED 并释放随后被源接受的预约。
+
+### 10.3 环境证据与验收边界
+
+开发命令宿主的真实 CPython 3.14.6 资格检查：源 immediate Job 为 `0x2800`，worker 使用 `0x01000208` 创建且不在精确源 Job，但后续 `probe_host_create` 返回 WinError 5 / errno 13，后代清理未证实。未运行产品，未停源或改数据；该上下文仍不合格，不能反推旧生产失败的未记录原因。
+
+同一开发设备，经现有 Explorer 文件夹视图的普通当前用户 ShellExecute、PowerShell 7 启动相同资格工具，观察源/runner Job 为 `0x1800`；原 worker 精确源 Job 非成员、source lease、后续 host 创建/清理、原 worker 退出及自建 Job 关闭全部通过。无需新设备、SYSTEM、账户密码、提权或修改外部限制。一次 Windows PowerShell 5 的包装调用因无 BOM UTF-8 中文路径解释失败，未进入资格探针；更正包装工具后才取得有效结果，旧失败材料保留。
+
+资格通过不等于三项应用门禁通过。随后使用准确干净提交构建仅 VERSION 不同的合成源/目标、固定 EXE 和原始固定 Runtime，在同一已核验桌面上下文集中运行三项完整场景；仍要求真实 HTTP 密码授权、源/worker 停止、目标启动、自动恢复/持续失败阻断、业务数据保留及历史根原样恢复。不操作生产、不调用付费 Provider、不覆盖正式 Release；三门禁及独立审查完成前 #148 保持 Draft。

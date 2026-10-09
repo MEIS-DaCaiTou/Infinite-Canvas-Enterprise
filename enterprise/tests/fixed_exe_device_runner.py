@@ -148,12 +148,13 @@ def _check_run_paths(root, evidence):
 
 
 def _qualification(root, evidence, environment):
+    from enterprise.tests.fixed_exe_handoff_qualification import qualified_result
     result = subprocess.run([sys.executable, "-I", "-B", "-m", "enterprise.tests.fixed_exe_handoff_qualification",
         "--output", str(evidence / "qualification.json")], cwd=root / "driver", env=environment,
         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
     path = evidence / "qualification.json"
-    payload = json.loads(path.read_bytes()) if path.is_file() else {}
-    return result.returncode == 0 and payload.get("qualified") is True, payload
+    payload = json.loads(path.read_bytes()) if path.is_file() and path.stat().st_size <= 32768 else {}
+    return result.returncode == 0 and qualified_result(payload), payload
 
 
 def _deliver(evidence, report, qualification):
@@ -176,6 +177,7 @@ def _deliver(evidence, report, qualification):
 
 def run_kit(root, evidence, manifest, *, preserve=False):
     from enterprise.tests.fixed_exe_update_windows_smoke import _environment
+    from enterprise.tests.fixed_exe_handoff_qualification import qualified_result
     _check_run_paths(root, evidence)
     evidence.mkdir(parents=True, exist_ok=False)
     assert_no_reparse_ancestors(evidence)
@@ -187,7 +189,7 @@ def run_kit(root, evidence, manifest, *, preserve=False):
     qualification = {}
     try:
         qualified, qualification = _qualification(root, evidence, _environment())
-        if qualified:
+        if qualified and qualified_result(qualification):
             command = [sys.executable, "-I", "-B", "-m", "enterprise.tests.fixed_exe_update_windows_smoke",
                 "--run-all", "--source-build", str(root / "source"), "--target-build", str(root / "target"),
                 "--source-native-entry", str(root / "native"), "--evidence-root", str(evidence / "drill")]

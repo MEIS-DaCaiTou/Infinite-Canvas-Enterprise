@@ -15,6 +15,7 @@ from enterprise.path_safety import PathSafetyError, assert_no_reparse_ancestors
 from .health import gateway_health, tcp_check, upstream_health
 from .error_contract import public_lifecycle_details
 from .windows import current_job_diagnostics
+from .handoff_lifecycle import host_creation_flags
 from .logging import RuntimeLogs
 from .ownership import (
     ProcessIdentity,
@@ -636,16 +637,9 @@ class RuntimeController:
                 )
             if self.config.fixture_child_wrapper:
                 arguments.append("--fixture-child-wrapper")
-            flags = 0
-            if os.name == "nt":
-                # The service-host must not remain in a short-lived launcher's
-                # inherited Job Object.  Its own Job Object owns only runtime
-                # children after the detached host starts.
-                flags = (
-                    subprocess.CREATE_NEW_PROCESS_GROUP
-                    | subprocess.DETACHED_PROCESS
-                    | subprocess.CREATE_BREAKAWAY_FROM_JOB
-                )
+            # The pre-stop handoff capability check uses this same contract.
+            # No ordinary-creation fallback can hide a breakaway denial.
+            flags = host_creation_flags()
             failure_stage = "service_host_create"
             creation_details = public_lifecycle_details({"creation_flags": flags, **current_job_diagnostics()})
             try:

@@ -155,6 +155,26 @@ class ProcessJob:
             raise JobObjectError("runtime Job membership could not be queried")
         return bool(member.value)
 
+    def contains_process(self, process: subprocess.Popen[bytes]) -> bool:
+        """Query this exact owned Job and original child handle, never a PID.
+
+        A closed/missing Windows Job is unknown, not proof of independence.
+        This does not inspect or change an ambient/ancestor Job.
+        """
+        if os.name != "nt":
+            return False
+        if self._handle is None:
+            raise JobObjectError("owned runtime Job is unavailable")
+        self._kernel32.IsProcessInJob.argtypes = (
+            wintypes.HANDLE, wintypes.HANDLE, ctypes.POINTER(wintypes.BOOL))
+        self._kernel32.IsProcessInJob.restype = wintypes.BOOL
+        member = wintypes.BOOL()
+        if not self._kernel32.IsProcessInJob(
+            wintypes.HANDLE(int(process._handle)), self._handle, ctypes.byref(member)
+        ):
+            raise JobObjectError("owned child runtime Job membership could not be queried")
+        return bool(member.value)
+
     def terminate(self, exit_code: int = 1) -> None:
         if self._handle is not None and not self._kernel32.TerminateJobObject(self._handle, int(exit_code)):
             raise JobObjectError("owned Job Object could not be terminated")

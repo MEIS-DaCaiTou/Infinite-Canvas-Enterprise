@@ -138,19 +138,22 @@ def _bounded_json(path: Path, maximum: int, *, missing: str, invalid: str) -> di
 def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
     encoded = _canonical(payload)
     temporary = path.with_name(f".{path.name}-{uuid.uuid4().hex}.tmp")
+    published = False
     try:
         with temporary.open("xb") as handle:
             handle.write(encoded)
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, path)
+        published = True
     except OSError as exc:
         raise UpdateMvpError("SYSTEM_UPDATE_STATE_WRITE_FAILED", status_code=500) from exc
     finally:
-        try:
-            temporary.unlink()
-        except FileNotFoundError:
-            pass
+        if not published:
+            try:
+                temporary.unlink()
+            except OSError:
+                pass  # Best-effort cleanup must not mask the publication error.
 
 
 def _copy_bounded(source: Path, destination: Path, maximum: int) -> tuple[str, int]:
@@ -285,7 +288,7 @@ class UpdateJobStore:
             "created_at": created_at or existing.get("created_at") or utc_now(),
             "updated_at": utc_now(),
             "result_code": result_code,
-            **{key: existing[key] for key in ("runtime_phases", "failure_code") if key in existing},
+            **{key: existing[key] for key in ("runtime_phases", "failure_code", "handoff_committed") if key in existing},
             **fields,
         }
         _atomic_json(path, payload)
@@ -296,6 +299,48 @@ class UpdateJobStore:
         if payload.get("schema_version") != JOB_SCHEMA or payload.get("job_id") != job_id or payload.get("state") not in STATES:
             raise UpdateMvpError("SYSTEM_UPDATE_STATE_INVALID")
         return payload
+
+    def active_handoff_reservation(self, job_id: str, source_release_id: str) -> tuple[int, int]:
+        """Read the API reservation without adopting, creating or unlocking it.
+
+        A late worker readiness result must not authorize stopping a source
+        after the API recorded a terminal/recovery state or lost this lock.
+        """
+        plan, status = self.read_plan(job_id), self.read_status(job_id)
+        if (status.get("state") != "UPDATING"
+                or status.get("actor_user_id") != plan.get("actor_user_id")
+                or plan.get("source_release_id") != source_release_id
+                or status.get("source_release_id") != source_release_id):
+            raise UpdateMvpError("SYSTEM_UPDATE_JOB_NOT_EXECUTABLE", status_code=409)
+        assert_no_reparse_ancestors(self.lock_path)
+        with self.lock_path.open("rb") as handle:
+            raw = handle.read(16 * 1024 + 1)
+            if len(raw) > 16 * 1024:
+                raise UpdateMvpError("SYSTEM_UPDATE_LOCK_INVALID", status_code=409)
+            try:
+                payload = json.loads(raw)
+            except (ValueError, UnicodeError) as exc:
+                raise UpdateMvpError("SYSTEM_UPDATE_LOCK_INVALID", status_code=409) from exc
+            owned = os.fstat(handle.fileno())
+            current = os.stat(self.lock_path, follow_symlinks=False)
+            identity = (owned.st_dev, owned.st_ino)
+            if (type(payload) is not dict or payload.get("schema_version") != LOCK_SCHEMA
+                    or payload.get("job_id") != job_id
+                    or identity != (current.st_dev, current.st_ino)):
+                raise UpdateMvpError("SYSTEM_UPDATE_LOCK_INVALID", status_code=409)
+        return identity
+
+    def commit_handoff(self, job_id: str, source_release_id: str, reservation: tuple[int, int]) -> None:
+        """Persist acceptance inside the caller's cross-process handoff gate."""
+        if self.active_handoff_reservation(job_id, source_release_id) != reservation:
+            raise UpdateMvpError("SYSTEM_UPDATE_LOCK_INVALID", status_code=409)
+        status = self.read_status(job_id)
+        fields = {key: value for key, value in status.items() if key not in {
+            "schema_version", "job_id", "state", "actor_user_id", "result_code", "created_at", "updated_at",
+            "handoff_committed"}}
+        self.write_status(job_id, "UPDATING", actor_user_id=status["actor_user_id"],
+                          result_code=status["result_code"], created_at=status["created_at"],
+                          handoff_committed=True, **fields)
 
     def append_event(self, job_id: str, state: str, code: str, **fields: Any) -> None:
         if state not in STATES:

@@ -423,6 +423,51 @@ def test_source_stop_timeout_finalizes_evidence_and_releases_matching_reservatio
     store.release_execution_lock(handle, subsequent)
 
 
+def test_committed_status_success_does_not_unlink_the_renamed_temporary(tmp_path: Path, monkeypatch):
+    from enterprise.ops.update import mvp
+    roots, store, job_id, root = _reserved_worker_job(tmp_path)
+    store.write_status(job_id, "UPDATING", actor_user_id="actor-1", result_code="SYSTEM_UPDATE_STARTED",
+                       source_release_id="release-A", target_release_id="release-B")
+    reservation = store.active_handoff_reservation(job_id, "release-A")
+    original_lock = store.lock_path.read_bytes()
+    original_unlink = Path.unlink
+    cleanup_calls = []
+    def denied_cleanup(path, *args, **kwargs):
+        if path.name.startswith(".status.json-") and path.suffix == ".tmp":
+            cleanup_calls.append(path)
+            raise PermissionError(13, "private-secret")
+        return original_unlink(path, *args, **kwargs)
+    monkeypatch.setattr(Path, "unlink", denied_cleanup)
+    store.commit_handoff(job_id, "release-A", reservation)
+    assert store.read_status(job_id)["handoff_committed"] is True
+    assert store.lock_path.read_bytes() == original_lock and cleanup_calls == []
+    assert list(root.glob(".status.json-*.tmp")) == []
+
+
+def test_atomic_status_failure_cleanup_keeps_original_write_error(tmp_path: Path, monkeypatch):
+    from enterprise.ops.update import mvp
+    roots, store, job_id, root = _reserved_worker_job(tmp_path)
+    original_status, original_lock = store.read_status(job_id), store.lock_path.read_bytes()
+    original_unlink = Path.unlink
+    original_replace = mvp.os.replace
+    def replace(source, destination):
+        if Path(destination) == root / "status.json":
+            raise PermissionError(13, "replace-private-secret")
+        return original_replace(source, destination)
+    def unlink(path, *args, **kwargs):
+        if path.name.startswith(".status.json-") and path.suffix == ".tmp":
+            raise PermissionError(13, "cleanup-private-secret")
+        return original_unlink(path, *args, **kwargs)
+    monkeypatch.setattr(mvp.os, "replace", replace)
+    monkeypatch.setattr(Path, "unlink", unlink)
+    with pytest.raises(UpdateMvpError) as caught:
+        store.write_status(job_id, "FAILED", actor_user_id="actor-1", result_code="fixture")
+    assert caught.value.code == "SYSTEM_UPDATE_STATE_WRITE_FAILED"
+    assert isinstance(caught.value.__cause__, PermissionError)
+    assert "replace-private-secret" in str(caught.value.__cause__)
+    assert store.read_status(job_id) == original_status and store.lock_path.read_bytes() == original_lock
+
+
 def test_terminal_failure_preserves_foreign_reservation(tmp_path: Path, monkeypatch):
     roots = _roots(tmp_path)
     store = UpdateJobStore(roots)
@@ -483,9 +528,10 @@ def test_worker_interruption_after_database_or_pointer_work_requires_recovery(
         result_code="SYSTEM_UPDATE_IN_PROGRESS",
     )
     monkeypatch.setattr("enterprise.ops.update.handoff._emit_terminal_audit", lambda *_args: None)
-    assert _finalize_terminal_failure(roots, job_id, "SYSTEM_UPDATE_WORKER_FAILED") is True
+    assert _finalize_terminal_failure(roots, job_id, "SYSTEM_UPDATE_WORKER_FAILED") is False
     status = store.read_status(job_id)
     assert status["state"] == "RECOVERY_REQUIRED"
+    assert store.lock_path.exists()
     assert status["recovery_required"] is True
     assert status["interrupted_state"] == interrupted_state
     events = [json.loads(line) for line in (root / "events.jsonl").read_text(encoding="utf-8").splitlines()]
@@ -1388,15 +1434,26 @@ def test_supervisor_handoff_uses_only_fixed_source_python_and_worker(tmp_path: P
     supervisor._command_snapshot = lambda: {"state": "healthy"}
     supervisor._ack = lambda request, **fields: acknowledgements.append((request, fields))
     supervisor._log = lambda *_args, **_kwargs: None
+    supervisor.supervisor_identity = ProcessIdentity(999, 1, str(python))
+    supervisor._handoff_reservation = lambda *_args: (1, 2)
+    def committed(*_args):
+        supervisor._stopping = True
+        return True
+    supervisor._commit_update_handoff = committed
+    supervisor._job = SimpleNamespace(contains_process=lambda process: False)
     monkeypatch.setattr("enterprise.runtime.supervisor.subprocess.Popen", popen)
-    monkeypatch.setattr("enterprise.runtime.supervisor.current_job_diagnostics", lambda: {})
-    monkeypatch.setattr("enterprise.runtime.supervisor.process_in_any_job", lambda process: False)
+    monkeypatch.setattr("enterprise.runtime.supervisor.current_job_diagnostics", lambda: {"job_query_ok": True})
+    # Being in a foreign enclosing Job is not itself proof of source ownership.
+    monkeypatch.setattr("enterprise.runtime.supervisor.process_in_any_job", lambda process: True)
+    monkeypatch.setattr("enterprise.runtime.supervisor.read_worker_ready", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
         "enterprise.runtime.supervisor.process_identity",
         lambda pid: ProcessIdentity(pid, 1, str(python)),
     )
     RuntimeSupervisor._perform_update_handoff(supervisor)
-    assert launched[0][0] == [str(python), "-I", "-B", str(worker), "--job-id", "b" * 32]
+    assert launched[0][0] == [str(python), "-I", "-B", str(worker), "--job-id", "b" * 32,
+                              "--source-pid", "999", "--source-created-at", "1",
+                              "--source-executable", str(python)]
     assert launched[0][1]["stdin"] is not None
     assert launched[0][1]["stdout"] is not None
     assert launched[0][1]["stderr"] is not None

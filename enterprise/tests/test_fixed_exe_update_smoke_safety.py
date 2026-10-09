@@ -165,19 +165,105 @@ def test_runner_qualification_uses_guarded_worker_flags(limits, expected):
     assert qualification.worker_flags({"process_in_job": True, "job_limit_flags": limits}) == expected
 
 
-@pytest.mark.skipif(drill.os.name != "nt", reason="Windows creation flags")
-@pytest.mark.parametrize("in_job", [False, True, "query-error"])
-def test_runner_qualification_never_accepts_unknown_or_foreign_job(monkeypatch, in_job):
-    process = Mock()
-    process.poll.side_effect = [None, 0]
-    monkeypatch.setattr(qualification, "current_job_diagnostics", lambda: {})
-    monkeypatch.setattr(qualification.subprocess, "Popen", lambda *a, **k: process)
-    query = Mock(return_value=in_job)
-    if in_job == "query-error":
-        query.side_effect = OSError("test query failed")
-    monkeypatch.setattr(qualification, "process_in_any_job", query)
+def _qualification_mocks(monkeypatch):
+    source = qualification.ProcessIdentity(qualification.os.getpid(), 10, qualification.sys.executable)
+    worker = qualification.ProcessIdentity(42, 20, qualification.sys.executable)
+    process = Mock(pid=worker.pid)
+    live = {"exited": False}
+    process.poll.side_effect = lambda: 0 if live["exited"] else None
+    process.wait.side_effect = lambda **kwargs: live.update(exited=True) or 0
+    job = Mock()
+    job.contains_process.return_value = False
+    context = {"job_query_ok": True, "process_in_job": True, "job_limit_flags": 0x1800}
+    monkeypatch.setattr(qualification, "current_job_diagnostics", lambda: context)
+    monkeypatch.setattr(qualification, "ProcessJob", lambda: job)
+    identities = {source.pid: source, worker.pid: worker}
+    monkeypatch.setattr(qualification, "process_identity", lambda pid: identities.get(pid))
+    monkeypatch.setattr(qualification, "worker_flags", lambda _: 0x01000208)
+    spawn = Mock(return_value=process)
+    monkeypatch.setattr(qualification.subprocess, "Popen", spawn)
+    ready = Mock(return_value=True)
+    monkeypatch.setattr(qualification, "_read_ready", ready)
+    diagnostic = Mock(return_value=True)
+    monkeypatch.setattr(qualification, "process_in_any_job", diagnostic)
+    return process, job, context, identities, spawn, ready, diagnostic
+
+
+@pytest.mark.parametrize("ambient_job", [False, True])
+def test_qualification_uses_bound_source_job_and_ready_not_ambient_job(monkeypatch, ambient_job):
+    process, job, _, identities, spawn, ready, diagnostic = _qualification_mocks(monkeypatch)
+    diagnostic.return_value = ambient_job
     result = qualification.qualify_owned_child()
-    assert result["qualified"] is (in_job is False)
-    assert result["worker_stop_confirmed"] is True
+    assert qualification.qualified_owned_result(result)
+    assert result["worker_not_in_source_job"] is True
+    job.contains_process.assert_called_once_with(process)
+    source = identities[qualification.os.getpid()]
+    ready.assert_called_once_with(process, spawn.call_args.args[0][6], source, identities[42])
+    assert spawn.call_args.kwargs["creationflags"] == 0x01000208
+    assert spawn.call_args.kwargs["stdout"] == qualification.subprocess.PIPE
     process.terminate.assert_called_once_with()
     process.wait.assert_called_once_with(timeout=5)
+    process.stdout.close.assert_called_once_with()
+    job.close.assert_called_once_with()
+
+
+@pytest.mark.parametrize("failure", ["context", "context-shape", "source", "worker", "source-member",
+                                    "membership-query", "membership-shape", "ready", "ready-error",
+                                    "ambient-query", "ambient-shape", "cleanup-denied", "cleanup-timeout",
+                                    "cleanup-unconfirmed", "job-close"])
+def test_qualification_refuses_unknown_identity_membership_ready_or_cleanup(monkeypatch, failure):
+    process, job, context, identities, spawn, ready, diagnostic = _qualification_mocks(monkeypatch)
+    if failure == "context":
+        context["job_query_ok"] = False
+    elif failure == "context-shape":
+        context.pop("job_limit_flags")
+    elif failure == "source":
+        identities.pop(qualification.os.getpid())
+    elif failure == "worker":
+        identities.pop(42)
+    elif failure == "source-member":
+        job.contains_process.return_value = True
+    elif failure == "membership-query":
+        job.contains_process.side_effect = qualification.JobObjectError("owned query unavailable")
+    elif failure == "membership-shape":
+        job.contains_process.return_value = None
+    elif failure == "ready":
+        ready.return_value = False
+    elif failure == "ready-error":
+        ready.side_effect = OSError("bounded handshake failed")
+    elif failure == "ambient-query":
+        diagnostic.side_effect = qualification.JobObjectError("ambient membership query unavailable")
+    elif failure == "ambient-shape":
+        diagnostic.return_value = None
+    elif failure == "cleanup-denied":
+        process.terminate.side_effect = OSError("owned terminate denied")
+    elif failure == "cleanup-timeout":
+        process.wait.side_effect = qualification.subprocess.TimeoutExpired("owned worker", 5)
+    elif failure == "cleanup-unconfirmed":
+        process.wait.side_effect = None
+    else:
+        job.close.side_effect = qualification.JobObjectError("owned close unavailable")
+    result = qualification.qualify_owned_child()
+    assert not qualification.qualified_owned_result(result)
+    assert result["qualified"] is False
+    if failure in {"ambient-query", "ambient-shape"}:
+        ready.assert_not_called()
+        assert result["worker_any_job_query_ok"] is False
+    if failure in {"context", "context-shape", "source"}:
+        spawn.assert_not_called()
+    else:
+        assert spawn.call_count == 1
+        assert process.terminate.call_count == 1
+        if failure != "cleanup-denied":
+            process.wait.assert_called_once_with(timeout=5)
+        job.close.assert_called_once_with()
+
+
+def test_qualification_breakaway_denial_has_no_unisolated_fallback(monkeypatch):
+    _, job, _, _, spawn, ready, _ = _qualification_mocks(monkeypatch)
+    spawn.side_effect = OSError("guarded creation denied")
+    result = qualification.qualify_owned_child()
+    assert result["qualified"] is False
+    assert spawn.call_count == 1
+    ready.assert_not_called()
+    job.close.assert_called_once_with()

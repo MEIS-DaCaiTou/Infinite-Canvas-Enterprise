@@ -349,6 +349,7 @@ def _prepare_update_sync(actor_user_id: str, provider_release_id: str) -> dict[s
 
 
 def _launch_handoff(job_id: str, actor_user_id: str) -> None:
+    from enterprise.runtime.handoff_commit import HandoffCommitGate, HandoffCommitUnavailable
     store = UpdateJobStore(PATH_ROOTS)
     try:
         result = request_portable_update_handoff(app_root=PATH_ROOTS.APP_ROOT, job_id=job_id)
@@ -357,15 +358,22 @@ def _launch_handoff(job_id: str, actor_user_id: str) -> None:
         result = {"result": "update_handoff_cleanup_unconfirmed"}
     if result.get("result") == "update_handoff_started":
         return
-    uncertain = result.get("result") == "update_handoff_cleanup_unconfirmed"
-    if uncertain and store.read_status(job_id).get("state") in TERMINAL_STATES:
-        return  # A late/lost acknowledgement cannot overwrite a worker result.
+    uncertain = result.get("result") in {"update_handoff_cleanup_unconfirmed", "control_timeout"}
     result_code = ("SYSTEM_UPDATE_HANDOFF_CLEANUP_UNCONFIRMED" if uncertain else
                    "SYSTEM_UPDATE_HANDOFF_JOB_BLOCKED" if result.get("result") == "update_handoff_job_blocked"
                    else "SYSTEM_UPDATE_HANDOFF_FAILED")
     state = "RECOVERY_REQUIRED" if uncertain else "FAILED"
-    store.write_status(job_id, state, actor_user_id=actor_user_id, result_code=result_code,
-                       **({"recovery_required": True} if uncertain else {}))
+    try:
+        with HandoffCommitGate(job_id):
+            status = store.read_status(job_id)
+            if status.get("state") in TERMINAL_STATES or status.get("handoff_committed") is True:
+                return  # A lost ACK cannot cancel an atomically accepted worker.
+            store.write_status(job_id, state, actor_user_id=actor_user_id, result_code=result_code,
+                               **({"recovery_required": True} if uncertain else {}))
+    except HandoffCommitUnavailable:
+        # Acceptance is unknown. Keep UPDATING/reservation, never race a commit
+        # or advertise an unlocked retry; the source/worker owns the next result.
+        return
     store.append_event(job_id, state, result_code)
     try:
         edb.log_action(actor_user_id, "system_update_failed", json.dumps({"job_id": job_id, "result_code": result_code}, ensure_ascii=False))
