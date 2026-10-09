@@ -47,6 +47,15 @@ def public_lifecycle_details(value: object) -> dict[str, object]:
         number = value.get(key)
         if type(number) is int and -(2**31) <= number <= 2**32 - 1:
             result[key] = number
+    for prefix in ("", "worker_"):
+        for key in ("creation_flags", "job_limit_flags", "job_query_winerror"):
+            number = value.get(prefix + key)
+            if type(number) is int and 0 <= number <= 2**32 - 1:
+                result[prefix + key] = number
+        for key in ("process_in_job", "job_query_ok"):
+            boolean = value.get(prefix + key)
+            if type(boolean) is bool:
+                result[prefix + key] = boolean
     return result
 
 

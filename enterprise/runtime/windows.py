@@ -47,6 +47,41 @@ if os.name == "nt":
         ]
 
 
+def current_job_diagnostics() -> dict[str, object]:
+    """Read only the calling process's immediate Job; never query ancestors.
+
+    Missing/failed observations must not change process creation behaviour.
+    No handles, names, paths, environment, or exception text are exported.
+    """
+    if os.name != "nt":
+        return {}
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.GetCurrentProcess.argtypes = ()
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        kernel32.IsProcessInJob.argtypes = (wintypes.HANDLE, wintypes.HANDLE, ctypes.POINTER(wintypes.BOOL))
+        kernel32.IsProcessInJob.restype = wintypes.BOOL
+        kernel32.QueryInformationJobObject.argtypes = (
+            wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD, wintypes.LPVOID)
+        kernel32.QueryInformationJobObject.restype = wintypes.BOOL
+        in_job = wintypes.BOOL()
+        if not kernel32.IsProcessInJob(kernel32.GetCurrentProcess(), None, ctypes.byref(in_job)):
+            return {"job_query_ok": False, "job_query_winerror": ctypes.get_last_error()}
+        result: dict[str, object] = {"process_in_job": bool(in_job.value), "job_query_ok": True}
+        if in_job.value:
+            info = _JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+            if not kernel32.QueryInformationJobObject(None, 9, ctypes.byref(info), ctypes.sizeof(info), None):
+                return {"process_in_job": True, "job_query_ok": False,
+                        "job_query_winerror": ctypes.get_last_error()}
+            result["job_limit_flags"] = int(info.BasicLimitInformation.LimitFlags)
+        return result
+    except OSError as exc:
+        result = {"job_query_ok": False}
+        if type(getattr(exc, "winerror", None)) is int:
+            result["job_query_winerror"] = exc.winerror
+        return result
+
+
 class ProcessJob:
     """A service-host-owned kill-on-close Job Object.
 

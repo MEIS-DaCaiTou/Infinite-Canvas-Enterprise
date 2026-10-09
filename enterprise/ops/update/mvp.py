@@ -848,6 +848,9 @@ def _run_launcher(app_root: Path, command: str, *, timeout: int = 120) -> tuple[
     for name in ("PYTHONHOME", "PYTHONPATH", "PYTHONSTARTUP", "PYTHONINSPECT"):
         environment.pop(name, None)
     environment["PYTHONNOUSERSITE"] = "1"; environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    from enterprise.runtime.windows import current_job_diagnostics
+    worker_details = public_lifecycle_details({"worker_creation_flags": 0,
+        **{"worker_" + key: value for key, value in current_job_diagnostics().items()}})
     try:
         completed = subprocess.run(
             [str(python), "-I", "-B", str(launcher), "portable", command],
@@ -855,10 +858,10 @@ def _run_launcher(app_root: Path, command: str, *, timeout: int = 120) -> tuple[
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, check=False,
         )
     except OSError as exc:
-        return 2, {"code": "SYSTEM_UPDATE_FORMAL_ENTRY_FAILED", **public_lifecycle_details({
+        return 2, {"code": "SYSTEM_UPDATE_FORMAL_ENTRY_FAILED", **worker_details, **public_lifecycle_details({
             "failure_stage": "launcher_create", "errno": exc.errno, "winerror": getattr(exc, "winerror", None)})}
     except subprocess.TimeoutExpired:
-        return 2, {"code": "SYSTEM_UPDATE_FORMAL_ENTRY_FAILED", "failure_stage": "launcher_wait"}
+        return 2, {"code": "SYSTEM_UPDATE_FORMAL_ENTRY_FAILED", "failure_stage": "launcher_wait", **worker_details}
     lines = completed.stdout.decode("utf-8", errors="replace").splitlines()
     payload: dict[str, Any] = {}
     for line in reversed(lines):
@@ -869,9 +872,9 @@ def _run_launcher(app_root: Path, command: str, *, timeout: int = 120) -> tuple[
         if type(value) is dict:
             payload = value; break
     if not payload:
-        payload = {"code": "SYSTEM_UPDATE_FORMAL_ENTRY_OUTPUT_INVALID", "failure_stage": "launcher_output"}
+        payload = {"code": "SYSTEM_UPDATE_FORMAL_ENTRY_OUTPUT_INVALID", "failure_stage": "launcher_output", **worker_details}
         return 2, payload
-    return int(completed.returncode), payload
+    return int(completed.returncode), {**payload, **worker_details}
 
 
 def _database_result_record(roots: PathRoots, result: MigrationResult) -> dict[str, Any]:

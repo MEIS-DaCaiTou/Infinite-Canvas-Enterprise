@@ -33,7 +33,7 @@ from .process import (
     start_process,
 )
 from .state import STARTUP_LOCK_GRACE_SECONDS, RuntimeStateError, RuntimeStateStore, initial_state
-from .windows import JobObjectError, ProcessJob
+from .windows import JobObjectError, ProcessJob, current_job_diagnostics
 
 
 ROLES = ("upstream", "gateway")
@@ -903,6 +903,10 @@ class RuntimeSupervisor:
                 getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
             )
         try:
+            try:
+                self._log("update_handoff_create_context", creation_flags=creationflags, **current_job_diagnostics())
+            except OSError:
+                pass
             process = subprocess.Popen(
                 [str(python), "-I", "-B", str(worker), "--job-id", job_id],
                 cwd=str(self.config.app_root),

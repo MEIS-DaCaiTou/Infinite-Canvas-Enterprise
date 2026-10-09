@@ -14,6 +14,7 @@ from enterprise.path_safety import PathSafetyError, assert_no_reparse_ancestors
 
 from .health import gateway_health, tcp_check, upstream_health
 from .error_contract import public_lifecycle_details
+from .windows import current_job_diagnostics
 from .logging import RuntimeLogs
 from .ownership import (
     ProcessIdentity,
@@ -587,6 +588,7 @@ class RuntimeController:
         bootstrap_path: Path | None = None
         logs: RuntimeLogs | None = None
         failure_stage = "service_host_log"
+        creation_details: dict[str, object] = {}
         try:
             logs = RuntimeLogs(self.config.log_root or self.config.runtime_root, secret_values=self.config.secret_values)
             logs.write(
@@ -645,6 +647,12 @@ class RuntimeController:
                     | subprocess.CREATE_BREAKAWAY_FROM_JOB
                 )
             failure_stage = "service_host_create"
+            creation_details = public_lifecycle_details({"creation_flags": flags, **current_job_diagnostics()})
+            try:
+                logs.write("launcher.log", "service_host_create_context", supervisor_instance_id=instance_id,
+                           **creation_details)
+            except OSError:
+                pass
             host = subprocess.Popen(
                 arguments,
                 executable=windows_extended_process_path(str(executable)),
@@ -668,7 +676,7 @@ class RuntimeController:
             self.store.release_lock(instance_id)
             if bootstrap_path is not None:
                 _discard_bootstrap_failure(bootstrap_path, logs=logs)
-            details: dict[str, object] = {"failure_stage": failure_stage}
+            details: dict[str, object] = {"failure_stage": failure_stage, **creation_details}
             details.update(public_lifecycle_details(getattr(exc, "public_details", None)))
             if isinstance(exc, OSError):
                 if type(exc.errno) is int:

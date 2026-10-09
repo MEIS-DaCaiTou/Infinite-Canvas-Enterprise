@@ -1,6 +1,8 @@
 """Targeted lifecycle evidence checks; no customer data or services."""
 import json
 import io
+import os
+import ctypes
 from contextlib import redirect_stdout
 import subprocess
 import zipfile
@@ -82,10 +84,13 @@ def test_controller_failure_is_durable_and_releases_reserved_lock(tmp_path, stag
     failure_patch = (patch("enterprise.runtime.control.subprocess.Popen", side_effect=error)
                      if stage == "service_host_create" else patch.object(Path, "unlink", autospec=True, side_effect=unlink))
     with patch("enterprise.runtime.control.inspect_runtime", return_value={"start_disposition": "stopped"}), \
+         patch("enterprise.runtime.control.current_job_diagnostics", return_value={}), \
          failure_patch:
         with pytest.raises(RuntimeControlError) as caught:
             controller.start(wait_seconds=1)
-    assert caught.value.public_details == {"failure_stage": stage, "errno": 13, "winerror": 5}
+    assert caught.value.public_details == {"failure_stage": stage, "errno": 13, "winerror": 5,
+                                          **({"creation_flags": (0x01000208 if os.name == "nt" else 0)}
+                                             if stage == "service_host_create" else {})}
     assert not controller.store.lock_path.exists()
     raw = (tmp_path / "runtime" / "launcher.log").read_text(encoding="utf-8")
     assert "secret-private-path" not in raw
@@ -102,6 +107,73 @@ def test_log_constructor_failure_still_releases_reservation(tmp_path):
             controller.start(wait_seconds=1)
     assert caught.value.public_details == {"failure_stage": "service_host_log", "errno": 13}
     assert not controller.store.lock_path.exists()
+
+
+def test_job_context_allowlist_rejects_unbounded_or_coerced_values():
+    payload = {"creation_flags": 0x01000208, "process_in_job": True,
+               "job_query_ok": True, "job_limit_flags": 0x2000,
+               "worker_creation_flags": 0, "worker_process_in_job": True,
+               "worker_job_query_ok": False, "worker_job_query_winerror": 5}
+    assert public_lifecycle_details({**payload, "job_name": "secret", "ancestor_jobs": "secret"}) == payload
+    for value in (True, -1, 2**32, "secret", None):
+        assert public_lifecycle_details({"creation_flags": value, "worker_job_limit_flags": value}) == {}
+    for value in (0, 1, "true", None):
+        assert public_lifecycle_details({"process_in_job": value, "worker_job_query_ok": value}) == {}
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows structures")
+@pytest.mark.parametrize("in_job,is_error,query_error", [(False, 0, 0), (True, 0, 0),
+                                                       (True, 5, 0), (True, 0, 6)])
+def test_job_observation_is_read_only_and_failure_is_explicit(in_job, is_error, query_error):
+    from enterprise.runtime import windows
+    from ctypes import wintypes
+    calls = []
+    class Api:
+        def __init__(self, callback):
+            self.callback = callback
+        def __call__(self, *args):
+            return self.callback(*args)
+    def membership(process, job, result):
+        calls.append("IsProcessInJob")
+        assert job is None and process == 123
+        ctypes.cast(result, ctypes.POINTER(wintypes.BOOL))[0] = in_job
+        return not is_error
+    def query(job, kind, result, size, returned):
+        calls.append("QueryInformationJobObject")
+        assert job is None and kind == 9 and returned is None
+        info = ctypes.cast(result, ctypes.POINTER(windows._JOBOBJECT_EXTENDED_LIMIT_INFORMATION)).contents
+        info.BasicLimitInformation.LimitFlags = 0x2000
+        return not query_error
+    class Kernel:
+        GetCurrentProcess = Api(lambda: 123)
+        IsProcessInJob = Api(membership)
+        QueryInformationJobObject = Api(query)
+    with patch.object(ctypes, "WinDLL", return_value=Kernel()), \
+         patch.object(ctypes, "get_last_error", return_value=is_error or query_error):
+        result = windows.current_job_diagnostics()
+    if is_error:
+        assert result == {"job_query_ok": False, "job_query_winerror": is_error}
+    elif query_error:
+        assert result == {"process_in_job": True, "job_query_ok": False, "job_query_winerror": query_error}
+    else:
+        assert result == {"process_in_job": in_job, "job_query_ok": True,
+                          **({"job_limit_flags": 0x2000} if in_job else {})}
+    assert calls == ["IsProcessInJob"] + (["QueryInformationJobObject"] if in_job and not is_error else [])
+
+
+def test_worker_creation_context_survives_the_launcher_return(tmp_path):
+    (tmp_path / "python").mkdir()
+    (tmp_path / "python/python.exe").touch()
+    (tmp_path / "enterprise/runtime").mkdir(parents=True)
+    (tmp_path / "enterprise/runtime/launcher.py").touch()
+    context = {"process_in_job": True, "job_limit_flags": 0x2000, "job_query_ok": True}
+    completed = subprocess.CompletedProcess([], 2, stdout=b'{"code":"RUNTIME_CONTROL_ERROR","winerror":5}\n')
+    with patch("enterprise.runtime.windows.current_job_diagnostics", return_value=context), \
+         patch("enterprise.ops.update.mvp.subprocess.run", return_value=completed) as create:
+        exit_code, payload = _run_launcher(tmp_path, "start")
+    assert exit_code == 2 and payload == {"code": "RUNTIME_CONTROL_ERROR", "winerror": 5,
+        "worker_creation_flags": 0, **{"worker_" + k: v for k, v in context.items()}}
+    assert create.call_args.kwargs.get("creationflags", 0) == 0
 
 
 def test_update_records_target_and_automatic_recovery_separately(tmp_path, monkeypatch):
