@@ -91,6 +91,57 @@ portable CLI 保留已经核准的 lexical APP/Runtime 根，不再通过 `resol
 
 证据保留在 `D:\CodeProject\review-artifacts\t\F1` 的真实安装副本、作业 status/events 与 native 结果中；未生成成功 SUMMARY。失败注入的 rollback/recovery-required 两场景因首场景失败而未执行，不报告三条链路通过。阶段/错误落盘有效，但恢复闭环尚未通过。
 
-测试实例和 worker 已结束，开发机历史根通过原字节/mtime/目录身份恢复验证；曾因旧清理 helper 的 resolve 别名误拒绝留下的两个 fixture marker 目录也保留，没有删除历史内容。下一步应以该失败为输入核清 Windows 创建宿主条件（包括 Job Object 继承/脱离策略），修复并重验真实成功与失败链路；Job 机制目前仅为待核验假设，不能从 WinError 5 单独认定根因，也不能反推旧生产失败的缺失字段。
+测试实例和 worker 已结束，开发机历史根通过原字节/mtime/目录身份恢复验证；曾因旧清理 helper 的 resolve 别名误拒绝留下的两个 fixture marker 目录也保留，没有删除历史内容。F1 当时仅提出 Job 继承/脱离的待核验假设，没有从 WinError 5 单独认定根因，也不能反推旧生产失败的缺失字段。随后新增真实创建上下文及保护验证见下一节，不改写这次原始失败证据。
 
 #148 继续保持 Draft，不合并未通过的完整验收，不发布新版本。定向安全/清理/诊断测试扩至 **53 passed**；文档和后续 CI 以实际 Head 记录，不以初版绿 CI 代表这些补充已经验证。
+
+## 8. 真实 Job 上下文与停机前安全阻断
+
+本节记录 #148 在 2026-10-09 的定向调查和工程修复，不变更正式路线图、需求范围、数据库表或客户环境。根因证据及最小建议先记录于 [PR 调查记录](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/148#issuecomment-6079147935)，随后实施停机前保护。
+
+### 8.1 真实失败上下文，不以匿名探针代替
+
+只读诊断提交 `283ef49a896532b5465efbb7abffc9bbd977109f` 不改创建行为。源 fixture `84eafac563ecff5cab921bd5a805044c0f79c423` 与目标诊断提交分别构建完整测试包；固定 EXE 字节及 CP314 Runtime 不变，Manifest/Inventory/ZIP 校验通过。原 F1 和正式 10.1 资产未修改。
+
+真实作业 `ee3e9ebffd7c4257b1d6eee62ca56f02` 在仓库外 `D:\CodeProject\review-artifacts\t\J2` 复现：
+
+| 真实创建位置 | CreateProcess flags | 查询到的 immediate Job flags | 结果 |
+| --- | --- | --- | --- |
+| 固定 EXE 初次启动源 service-host | 0x01000208 | 0x2800 | 启动、健康成功 |
+| Supervisor 创建 handoff | 0x00000208 | 0x2000 | 普通 detached 创建成功 |
+| handoff 创建目标和恢复 launcher | 0 | 0x2000 | launcher 创建成功 |
+| 目标及恢复 launcher 创建 service-host | 0x01000208 | 0x2000 | 两次 service_host_create，errno=13 / winerror=5 |
+
+`0x01000208` 包含 BREAKAWAY_FROM_JOB、DETACHED_PROCESS 与 NEW_PROCESS_GROUP；`0x2000` 仅 KILL_ON_CLOSE，`0x2800` 另含 BREAKAWAY_OK。Job 查询成功、源/目标两个真实阶段均保留这些白名单字段和 worker 上下文，终态仍为 RECOVERY_REQUIRED。诊断/清理定向测试 **55 passed**；不是完整升级通过。
+
+本次真实失败的直接条件得到核验：禁止 breakaway 的调用 Job 与必须脱离的宿主创建不相容。初次成功后变成另一个 Job 的解释与 [Windows 嵌套 Job 部分脱离契约](https://learn.microsoft.com/en-us/windows/win32/procthread/nested-jobs) 一致；没有枚举全部祖先、取得外部 Job 名称/句柄或证明其创建者。`QueryInformationJobObject(NULL)` 只代表 immediate Job。后续 J7 真实日志进一步确认 Supervisor **不属于自己创建的 runtime Job**，因此不能靠放宽业务子进程 Job 来修复外部限制。旧生产失败的缺失字段仍不补猜测。
+
+### 8.2 最小保护与影响
+
+- handoff 在停止源服务前明确请求 Job 独立性；普通 SILENT_BREAKAWAY 情形使用其自动脱离契约，其他 Windows 创建请求包含 BREAKAWAY。
+- 创建失败不取消隔离标志重试；创建成功也使用原 Popen 进程句柄核验 worker 不属于任何 Job。无法证明独立性时，仅回收刚创建的 worker，源服务不进入 stopping。遇查询失败仍阻断，不伪造“无 Job”。
+- WinError 5 只有在已查明的 restrictive Job 条件下归为 Job 创建阻断；其他拒绝保留一般创建失败。新 handoff 创建失败日志也使用 stage 之外的固定上下文、errno/winerror 白名单，不保存异常正文。
+- 更新持久记录专用结果码 `SYSTEM_UPDATE_HANDOFF_JOB_BLOCKED`，释放自身预约；不创建 target_start/source_start 假阶段、不切换指针或迁移数据库。
+- runtime 业务子进程 Job 的 KILL_ON_CLOSE、gateway/upstream 创建标志、身份/fence/lease、端口停止确认、目标 stop 与数据库 expected-current 恢复保护不变。不修改外部 Job、不向所有业务子进程开放 breakaway、不运行逃逸 broker 或系统调度绕过限制。
+
+### 8.3 真实负向保护演练通过，不是升级成功
+
+安全保护提交 `21145a02fc2760c369fe615c99404f4cbc4187cc` 的合成源 fixture 为 `17f3662d92a1088d6185313b821e006dcbfa868a`，仅使用 older-only 路由所需 VERSION 差异。源码和固定 EXE 从干净提交完整构建，包校验通过。固定 EXE SHA-256 仍为 `570ad6885cae124e39f534bc6a95073212eec0ad4d9c1d8085f5e0888d3987fd`；不是对已发布文件打补丁。
+
+可重复调用 opt-in `--restricted-job-guard` 模式；证据 `D:\CodeProject\review-artifacts\t\J7`，真实作业 `ad3d2528eb3e41e78b5c1db3e9f9a02a`：
+
+- 真实源 EXE 启动、super_admin 登录、密码授权 HTTP execute 均执行。
+- 源 Supervisor 的外部 Job 为 0x2000，`process_in_owned_runtime_job=false`；带 BREAKAWAY 的 handoff 在源仍 healthy 时被拒绝。
+- 终态 **FAILED / SYSTEM_UPDATE_HANDOFF_JOB_BLOCKED** 为预期负向结果；`runtime_phases` 没有执行项、指针保持 source。
+- 原三进程的创建身份未变化，源健康与再次登录通过；预约释放、无残留 worker、业务身份/数据/配置/画布/素材保留，以及源/目标完整 payload 校验通过。
+- 最后只停止自己的测试实例；原开发历史 Runtime/cache 已通过字节/mtime/目录身份恢复。无生产操作、付费请求或 GUI 点击验收。
+
+故障前阻断、更新/诊断/隔离安全定向组 **115 passed**；APP_ROOT 写入审计定向 **7 passed**。最后增加的 handoff 错误落盘属于同一策略的诊断补充，另做定向复核；不冒充 J7 已重建执行该后续日志补充。
+
+| 完整真实门禁 | 本轮状态 |
+| --- | --- |
+| 固定 EXE 完整升级成功 | 未通过；受限环境现在正确停在停机前保护 |
+| 目标失败后自动恢复 source | 未通过；J2 已观测失败，J7 未运行该场景 |
+| 持续失败后的恢复安全阻断 | 未完成完整场景；现有执行器定向检查不替代它 |
+
+#148 保持 Draft。完成三门禁需要真实允许独立宿主的启动上下文及完整安装副本；不会以去掉隔离标志或绕过外部 Job 的方式制造通过结果。本节不形成第二套路线图，也不把源码、定向测试、CI、合并、Release 与现场验收合并为一个完成状态。

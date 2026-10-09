@@ -222,6 +222,9 @@ def test_handoff_job_failure_never_stops_source_or_retries_ordinary_creation(tmp
         process.wait.assert_called_once_with(timeout=5)
     else:
         process.terminate.assert_not_called()
+        failed = [call for call in supervisor._log.call_args_list if call.args == ("update_handoff_create_failed",)]
+        assert len(failed) == 1 and failed[0].kwargs["winerror"] == 5 and failed[0].kwargs["errno"] == 13
+        assert "private-secret" not in str(failed)
 
 
 def test_blocked_handoff_has_durable_specific_code_and_releases_only_own_reservation(tmp_path, monkeypatch):

@@ -34,6 +34,7 @@ from .process import (
 )
 from .state import STARTUP_LOCK_GRACE_SECONDS, RuntimeStateError, RuntimeStateStore, initial_state
 from .windows import JobObjectError, ProcessJob, current_job_diagnostics, process_in_any_job
+from .error_contract import public_lifecycle_details
 
 
 ROLES = ("upstream", "gateway")
@@ -939,6 +940,12 @@ class RuntimeSupervisor:
                 shell=False,
             )
         except OSError as exc:
+            try:
+                self._log("update_handoff_create_failed", **public_lifecycle_details({
+                    "creation_flags": creationflags, **creation_context,
+                    "errno": exc.errno, "winerror": getattr(exc, "winerror", None)}))
+            except OSError:
+                pass
             restrictive_job = (creation_context.get("process_in_job") is True
                                and creation_context.get("job_query_ok") is True
                                and type(creation_context.get("job_limit_flags")) is int
