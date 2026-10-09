@@ -2,7 +2,7 @@
 
 更新时间：2026-10-09
 
-本文件是产品范围与正式需求基线的唯一权威入口，并保留 Release payload 与自动化依赖的稳定文件名。项目当前事实见 [docs/CURRENT_PROJECT_STATUS.md](docs/CURRENT_PROJECT_STATUS.md)，实施顺序只见 [开发路线图](docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md)。本次修订为 Docs-only Draft PR：范围已经负责人确认，文档尚待独立审查/合并，不授权新增业务实施。
+本文件是产品范围与正式需求基线的唯一权威入口，并保留 Release payload 与自动化依赖的稳定文件名。项目当前事实见 [docs/CURRENT_PROJECT_STATUS.md](docs/CURRENT_PROJECT_STATUS.md)，实施顺序只见 [开发路线图](docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md)。范围确认和文档合入均不产生新增业务实施许可；源码实施、数据库变更、合并、Release 与部署须分别取得对应授权。文档修订的历史审查记录见 [需求决策登记](docs/decisions/REQUIREMENTS-DECISION-REGISTER.md)，当前 PR 状态以 GitHub 为准。
 
 ## 1. 项目身份
 
@@ -104,7 +104,7 @@
 
 历史 N34→N33 直接依赖及经 N33 到 N31 的间接依赖从当前设计移除；原文不存在 N34→N31 直接箭头，不伪造。N34 不等待整个 B20 完成；独立 N31/N33 不再作为核心前置。来源事实仍在历史原文中保留。
 
-当前仍优先阶段 3，尤其 #148 的真实固定 EXE 目标启动/自动源恢复失败。本次 Docs-only 工作不暂停已有授权的定向诊断，也不授权 N29/N34/N37 业务代码、新表、生产部署、Release、历史维护线整合或 PR 合并。
+实施顺序仍优先阶段 3；2026-10-09 的核查记录中，#148 真实固定 EXE 目标启动/自动源恢复失败，后续状态以对应工程证据为准。需求文档维护不暂停已有授权的定向诊断，也不授权 N29/N34/N37 业务代码、新表、生产部署、Release、历史维护线整合或 PR 合并；文档合入不改变该边界。
 
 ### 7.4 未批准政策不因范围确认而生效
 

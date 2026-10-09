@@ -1,12 +1,14 @@
 # 需求决策登记
 
-日期：2026-10-09。文档状态：DOCS_ONLY_DRAFT_PR / MERGE_NOT_AUTHORIZED。
+日期：2026-10-09。登记性质：REQUIREMENTS_DECISION_RECORD / BUSINESS_IMPLEMENTATION_REQUIRES_SEPARATE_AUTHORIZATION。文档所在分支、合并状态及 CI 以 GitHub 为准，不作为需求确认状态。
 
 唯一需求入口是 [PROJECT_SCOPE_LOCK](../../PROJECT_SCOPE_LOCK.md)；实施顺序只由 [现行路线图](../roadmap/DEVELOPMENT-ROADMAP-2026-2027.md) 控制。本登记记录决定/待决政策，不是第二份需求正文、实施队列或当前进度表。
 
 ## 1. 来源与覆盖关系
 
-SRC-PACK 中的 DEC-001—DEC-022 保留原 ID。下表是受控修订视图，不回写原 ZIP 或旧报告；准确来源身份与哈希见 [来源登记](../requirements/TRACEABILITY-CONTRACT.md)。负责人已认可范围核查结论，并明确批准本次 Docs-only 分支/Draft PR，未批准合并或新增业务实施。
+SRC-PACK 中的 DEC-001—DEC-022 保留原 ID。下表是受控修订视图，不回写原 ZIP 或旧报告；准确来源身份与哈希见 [来源登记](../requirements/TRACEABILITY-CONTRACT.md)。负责人已认可范围核查结论；范围确认及文档合入不替代具体业务实施授权。
+
+历史审查记录（2026-10-09）：负责人先授权 Docs-only 独立分支及 Draft PR #149；对 Head `c39838a11f0f1639c9294a395599a6981c9cc09d` 独立审查后总体认可范围、追踪及 N37 草案，要求状态措辞和可重复核验说明收口，彼时仍未授权合并（MERGE_NOT_AUTHORIZED）。该记录保留当时事实，不宣称未来 `main` 中的文档仍未合并；后续合并许可及实际状态须另取 GitHub/负责人证据。
 
 SCOPE-2026-10-09（已确认）：
 
@@ -14,7 +16,7 @@ SCOPE-2026-10-09（已确认）：
 - N29/N34/N37 为三个核心新增业务方向；N30 readonly→N29，N31 源文件/工作流复用→N34，N33 基础交付质量→N29/N34。
 - N28/N32/N35/N36 及 N30 展示区、N31/N33 独立产品移出当前范围；已有功能不删除，不自动排期。
 - N37 与 B17/B20/N34 共用资产版本/来源契约，优先复用 Photoshop Connector。
-- 当前仍处理阶段 3/#148；仅文档调整，不授权业务表/代码、合并、发行、现场或维护线整合。
+- 现行路线图仍优先阶段 3；#148 在本次核查时尚未通过真实固定 EXE 闭环。范围及文档确认不授权业务表/代码、合并、发行、现场或维护线整合，不暂停已有工程诊断授权。
 
 ## 2. 原 22 条决定的当前语义
 
