@@ -59,12 +59,14 @@ def _finalize_terminal_failure(roots: object, job_id: str, result_code: str,
         with HandoffCommitGate(job_id):
             plan = store.read_plan(job_id)
             actor = str(plan.get("actor_user_id") or "")
-            current_state = str(store.read_status(job_id).get("state") or "")
+            status = store.read_status(job_id)
+            current_state = str(status.get("state") or "")
             if current_state in TERMINAL_STATES:
                 # A late worker cannot clear an already persisted safety block.
                 return False
             uncertain_database_or_pointer = current_state in {"MIGRATING", "RESTARTING", "VERIFYING"}
-            uncertain = uncertain_database_or_pointer or handoff_cleanup_unconfirmed
+            uncertain = (uncertain_database_or_pointer or handoff_cleanup_unconfirmed
+                         or status.get("handoff_committed") is True)
             terminal_state = "RECOVERY_REQUIRED" if uncertain else "FAILED"
             store.write_status(
                 job_id,

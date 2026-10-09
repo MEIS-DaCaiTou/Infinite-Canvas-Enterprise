@@ -437,6 +437,24 @@ def test_probe_cleanup_uncertainty_retains_recovery_state_and_reservation(tmp_pa
     assert calls == [] and pointer.release.release_id == "release-A"
 
 
+@pytest.mark.parametrize("result_code", ["SYSTEM_UPDATE_SOURCE_STOP_TIMEOUT", "SYSTEM_UPDATE_WORKER_FAILED"])
+def test_committed_updating_worker_failure_retains_recovery_and_reservation(tmp_path, monkeypatch, result_code):
+    from enterprise.ops.update.handoff import _finalize_terminal_failure
+    roots, store, job_id, pointer, calls, launcher = _execution_fixture(tmp_path, monkeypatch)
+    store.reserve_execution(job_id)
+    original_lock = store.lock_path.read_bytes()
+    store.write_status(job_id, "UPDATING", actor_user_id="actor-1", result_code="SYSTEM_UPDATE_STARTED",
+                       source_release_id="release-A", target_release_id="release-B", handoff_committed=True)
+    monkeypatch.setattr("enterprise.ops.update.handoff._emit_terminal_audit", lambda *_args: None)
+    assert _finalize_terminal_failure(roots, job_id, result_code) is False
+    status = store.read_status(job_id)
+    assert status["state"] == "RECOVERY_REQUIRED" and status["recovery_required"] is True
+    assert status["handoff_committed"] is True and status["interrupted_state"] == "UPDATING"
+    assert status["result_code"] == result_code and store.lock_path.read_bytes() == original_lock
+    assert store.pending_recovery_jobs() == [job_id]
+    assert calls == [] and pointer.release.release_id == "release-A"
+
+
 def test_worker_terminal_read_write_and_unlock_share_the_commit_gate(tmp_path, monkeypatch):
     from enterprise.ops.update import handoff, mvp
     from enterprise.runtime import handoff_commit
