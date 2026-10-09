@@ -32,7 +32,7 @@
 
 场景 Runbook 只在满足其前提、具有明确授权时使用。旧 CLI 激活手册不是普通客户的安装或升级流程；不执行未知结构上的命令。
 
-本轮收口依据：[开发基线对齐记录](./ops/DEVELOPMENT-BASELINE-CLOSEOUT-2026-10-09.md)、[10.1 固定发行记录](./ops/MAINTENANCE-2026.10.1-RELEASE-RECORD.md)。它们是有时点的证据/运维参考，不是第二份状态表，也不授权执行旧现场任务书。
+本轮收口依据：[开发基线对齐记录](./ops/DEVELOPMENT-BASELINE-CLOSEOUT-2026-10-09.md)、[10.1 固定发行记录](./ops/MAINTENANCE-2026.10.1-RELEASE-RECORD.md)、[主线生命周期诊断实施](./ops/RUNTIME-UPDATE-LIFECYCLE-2026-10-09.md)。它们是有时点的证据/运维参考，不是第二份状态表，也不授权执行旧现场任务书。
 
 ## 3. 当前关键决定
 
