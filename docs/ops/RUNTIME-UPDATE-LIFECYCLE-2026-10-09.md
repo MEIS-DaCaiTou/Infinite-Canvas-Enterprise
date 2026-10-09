@@ -71,4 +71,26 @@ portable CLI 保留已经核准的 lexical APP/Runtime 根，不再通过 `resol
 
 安全定向组 `test_fixed_exe_update_smoke_safety.py`、既有烟测清理保护与生命周期诊断 **48 passed / 4.02 秒**。它只证明未授权不移动、停止身份门槛、未知锁不清理、目录边界、保存副本完整性、恢复不覆盖及继承配置隔离；不是三条真实 EXE 场景已通过。
 
-开发机历史默认根已只读核验为 stopped、无活动实例，仍未移动。完整执行等待对临时封存/原样恢复这两处历史 Runtime/cache 的明确许可；默认拒绝占用根，不删除历史材料，也不把新账户/干净设备作为门槛。异常清理或恢复目的地被占用时保留两份材料，不为通过测试覆盖。当前状态为 **工具与资产已准备，完整运行未完成**；新脚本/文档的合并状态以其后续 PR 为准。
+截至 #148 初版 Head `43dd5e9a163cbe3d9580baab90e5fee4a82397ed`，开发机历史默认根只读核验为 stopped、无活动实例，尚未移动，完整执行等待明确许可。该 Head 三个 CI 检查随后通过。默认拒绝占用根，不删除历史材料，也不把新账户/干净设备作为门槛；异常清理或恢复目的地被占用时保留两份材料。获授权后的执行结果见下节，不能继续把本段未执行状态当作最新结果。
+
+## 7. 获授权后的真实链路结果：未通过
+
+负责人明确确认允许临时封存开发机两处默认 Runtime/cache 并原样恢复。测试不连接生产，不使用客户数据、配置或密钥，也不调用付费 Provider。
+
+准备过程中修正了测试工具边界：历史缓存长文件使用 Windows extended-length 命名空间读取，仍逐项检查 reparse；保留 builder 原始输出和 attestation，另建已完整校验的三资产安装视图；KnownFolder fixture 清理保留 lexical 身份，不用可能虚拟化的 `resolve()` 替换；测试安装根缩短到仓库外 `D:\CodeProject\review-artifacts\t\F1\f\s\i`，避免准备阶段的 nonce partial 目录触发 WinError 206。没有改系统长路径设置、正式源码/资产或生产配置。
+
+真实作业 `2cc8dbfb5b2e447c854322d1774a712e` 已完成固定 EXE 启动、健康、实际超级管理员登录、当前密码授权 HTTP execute 和 detached handoff，但预期成功场景最终失败：
+
+| 实际阶段 | 观测结果 |
+| --- | --- |
+| 源固定 EXE 启动与健康 | `started`；readiness 全部 true |
+| target_start | exit 2；`RUNTIME_CONTROL_ERROR`；`failure_stage=service_host_create`；`errno=13`；`winerror=5` |
+| target_stop | exit 0；`SYSTEM_UPDATE_RUNTIME_PHASE_OK` |
+| source_start 自动恢复 | exit 2；相同创建宿主阶段和 OS 错误 |
+| 最终状态 | `RECOVERY_REQUIRED / SYSTEM_UPDATE_ROLLBACK_HEALTH_FAILED`；原始 `failure_code=RUNTIME_CONTROL_ERROR` 保留 |
+
+证据保留在 `D:\CodeProject\review-artifacts\t\F1` 的真实安装副本、作业 status/events 与 native 结果中；未生成成功 SUMMARY。失败注入的 rollback/recovery-required 两场景因首场景失败而未执行，不报告三条链路通过。阶段/错误落盘有效，但恢复闭环尚未通过。
+
+测试实例和 worker 已结束，开发机历史根通过原字节/mtime/目录身份恢复验证；曾因旧清理 helper 的 resolve 别名误拒绝留下的两个 fixture marker 目录也保留，没有删除历史内容。下一步应以该失败为输入核清 Windows 创建宿主条件（包括 Job Object 继承/脱离策略），修复并重验真实成功与失败链路；Job 机制目前仅为待核验假设，不能从 WinError 5 单独认定根因，也不能反推旧生产失败的缺失字段。
+
+#148 继续保持 Draft，不合并未通过的完整验收，不发布新版本。定向安全/清理/诊断测试扩至 **53 passed**；文档和后续 CI 以实际 Head 记录，不以初版绿 CI 代表这些补充已经验证。

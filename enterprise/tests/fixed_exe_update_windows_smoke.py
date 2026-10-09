@@ -28,7 +28,7 @@ from enterprise.path_safety import assert_no_reparse_ancestors
 from enterprise.tests.update_mvp_1_windows_smoke import (
     _assert_unused_local_roots, _create_owned_local_roots, _free_port,
     _owned_identities_absent, _port_open, _read_status, _runtime_identities,
-    _safe_generated_remove, _update_worker_pids, _wait,
+    _update_worker_pids, _wait,
 )
 
 NAMES = ("InfiniteCanvasEnterprise", "Infinite-Canvas-Enterprise")
@@ -48,6 +48,10 @@ def _json_new(path, value):
 def _tree_snapshot(root):
     """Hash without exporting contents; reject links and bound enumeration."""
     assert_no_reparse_ancestors(root)
+    # Historical extracted packages can exceed MAX_PATH. Keep lexical checks
+    # and no-follow semantics, but use Windows' extended-length namespace for
+    # enumeration/stat/open so present long files are not reported as absent.
+    root = _snapshot_io_root(root)
     files = {}
     count = 0
     for folder, directories, names in os.walk(root, followlinks=False):
@@ -71,6 +75,14 @@ def _tree_snapshot(root):
                 raise RuntimeError("FIXED_EXE_SAVED_TREE_CHANGED")
             files[path.relative_to(root).as_posix()] = (before.st_size, before.st_mtime_ns, digest.hexdigest())
     return files
+
+
+def _snapshot_io_root(root):
+    absolute = Path(os.path.abspath(os.fspath(root)))
+    if os.name != "nt" or str(absolute).startswith("\\\\?\\"):
+        return absolute
+    value = str(absolute)
+    return Path("\\\\?\\UNC\\" + value[2:]) if value.startswith("\\\\") else Path("\\\\?\\" + value)
 
 
 def _require_quiescent(local_base):
@@ -175,6 +187,41 @@ def _environment():
                 "GATEWAY_PORT", "UPSTREAM_PORT", "UPSTREAM_URL", "ENTERPRISE_UPDATE_ENABLED"):
         result.pop(key, None)
     return result
+
+
+def _remove_owned_local_root(path, local_base, nonce):
+    """Use the lexical KnownFolder identity, not a virtualized resolve alias."""
+    if path.parent != local_base or path.name not in NAMES:
+        raise RuntimeError("FIXED_EXE_LOCAL_ROOT_IDENTITY_INVALID")
+    assert_no_reparse_ancestors(path, allow_missing=True)
+    if not path.exists():
+        return
+    marker = path / ".ops3b-drill-owned"
+    assert_no_reparse_ancestors(marker)
+    if not marker.is_file() or marker.read_text(encoding="ascii") != nonce:
+        raise RuntimeError("FIXED_EXE_LOCAL_ROOT_NOT_OWNED")
+    if (path / "runtime/runtime-supervisor.lock").exists():
+        raise RuntimeError("FIXED_EXE_LOCAL_RUNTIME_STILL_ACTIVE")
+    # Exact named, no-reparse, nonce-owned directory only. Historical roots
+    # remain in the preservation directory, never under this removal target.
+    shutil.rmtree(_snapshot_io_root(path))
+
+
+def _asset_view(build, destination):
+    """Builder records stay intact; install consumes a closed three-asset view."""
+    from enterprise import fresh_install as fresh
+    from enterprise.release.release_manifest_v2 import read_release_manifest_v2
+
+    manifest = read_release_manifest_v2(build / fresh.MANIFEST_NAME)
+    names = (fresh.MANIFEST_NAME, fresh.INVENTORY_NAME, str(manifest.section("archive")["filename"]))
+    destination.mkdir(parents=True, exist_ok=False)
+    for name in names:
+        source = build / name
+        assert_no_reparse_ancestors(source)
+        if not source.is_file():
+            raise RuntimeError("FIXED_EXE_BUILD_ASSET_MISSING")
+        shutil.copyfile(source, destination / name)
+    return fresh.verify_release_assets(destination)
 
 
 def _native(install, command, evidence):
@@ -293,7 +340,9 @@ def _scenario(args, scenario, local_base, nonce):
 
     evidence = args.evidence_root / scenario
     evidence.mkdir(exist_ok=False)
-    install = args.evidence_root / "fixtures" / scenario / "install"
+    # Windows update preparation uses a nonce-bearing partial Release name;
+    # keep the fixture install path short without overriding system policy.
+    install = args.evidence_root / "f" / {"success": "s", "rollback": "r", "recovery-required": "g"}[scenario] / "i"
     ports = ()
     roots = None
     watcher = None
@@ -330,6 +379,10 @@ def _scenario(args, scenario, local_base, nonce):
         _login_and_execute(ports[1], prepared.job_id)
         terminal = _wait(lambda: (s if (s := _read_status(status_path)) and s.get("state") in TERMINAL else None),
                          seconds=300, label=scenario + "-terminal")
+        # Retain observed failure evidence even when the expected scenario
+        # fails. Fixture cleanup must not make a failed drill look unexecuted.
+        _json_new(evidence / "observed-terminal.json", terminal)
+        shutil.copyfile(store.job_root(prepared.job_id) / "events.jsonl", evidence / "events.jsonl")
         if watcher:
             watcher.wait(timeout=30)
             if watcher.returncode != 0 or not (evidence / "fault-acquired.json").exists():
@@ -364,7 +417,6 @@ def _scenario(args, scenario, local_base, nonce):
             app = roots.RELEASE_ROOT / release_id
             verify_materialized_release(app, inventory_path=app / "release-payload-inventory.json")
         _json_new(evidence / "terminal.json", terminal)
-        shutil.copyfile(store.job_root(prepared.job_id) / "events.jsonl", evidence / "events.jsonl")
         return {"scenario": scenario, "state": expected, "source_release_id": prepared.source_release_id,
                 "target_release_id": prepared.target_release_id, "fixed_exe": True, "real_http_execute": True,
                 "detached_worker_exited": True, "source_processes_exited": True,
@@ -379,7 +431,7 @@ def _scenario(args, scenario, local_base, nonce):
             _wait(lambda: not _update_worker_pids(roots.PYTHON_RUNTIME / "python.exe", prepared.job_id),
                   seconds=60, label="cleanup-worker-exit")
         for name in NAMES:
-            _safe_generated_remove(local_base / name, local_base, nonce)
+            _remove_owned_local_root(local_base / name, local_base, nonce)
 
 
 def _validate_evidence_root(evidence_root, protected_roots):
@@ -421,6 +473,14 @@ def main():
     _validate_evidence_root(args.evidence_root, (REPO, local_base, args.source_build,
                                                args.source_native_entry, args.target_build))
     args.evidence_root.mkdir(parents=True, exist_ok=False)
+    # Reject unqualified inputs before temporarily moving any historical root.
+    source_assets = _asset_view(args.source_build, args.evidence_root / "qualified-source")
+    _asset_view(args.target_build, args.evidence_root / "qualified-target")
+    from enterprise.install_entry import verify_entry_bundle
+    source = source_assets.manifest.section("enterprise_source")
+    verify_entry_bundle(args.source_native_entry, commit=str(source["commit"]), tree=str(source["tree"]))
+    args.source_build = args.evidence_root / "qualified-source"
+    args.target_build = args.evidence_root / "qualified-target"
     nonce = uuid.uuid4().hex
     results = []
     with preserved_local_roots(local_base, nonce, explicitly_authorized=args.preserve_existing_local_roots) as preservation:

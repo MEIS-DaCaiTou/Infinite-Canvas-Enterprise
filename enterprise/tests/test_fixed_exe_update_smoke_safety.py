@@ -116,3 +116,41 @@ def test_saved_snapshot_includes_empty_directories(tmp_path):
     root.mkdir()
     (root / "empty").mkdir()
     assert drill._tree_snapshot(root) == {"empty/": ("directory",)}
+
+
+@pytest.mark.skipif(drill.os.name != "nt", reason="Windows extended-length path behavior")
+def test_snapshot_hashes_existing_long_files_without_weakening_path_gates(tmp_path):
+    root = tmp_path / "long-history"
+    extended = drill._snapshot_io_root(root)
+    leaf = extended
+    for index in range(5):
+        leaf /= str(index) + "x" * 48
+    leaf.mkdir(parents=True)
+    (leaf / "retain.bin").write_bytes(b"long retained file")
+    snapshot = drill._tree_snapshot(root)
+    relative = (leaf / "retain.bin").relative_to(extended).as_posix()
+    assert len(str(leaf / "retain.bin")) > 260
+    assert snapshot[relative][0] == len(b"long retained file")
+    assert snapshot[relative][2] == drill.hashlib.sha256(b"long retained file").hexdigest()
+
+
+def test_owned_cleanup_does_not_replace_lexical_identity_with_resolve(tmp_path, monkeypatch):
+    root = tmp_path / drill.NAMES[0]
+    root.mkdir()
+    (root / ".ops3b-drill-owned").write_text("test", encoding="ascii")
+    monkeypatch.setattr(Path, "resolve", lambda *a, **k: pytest.fail("must keep lexical KnownFolder identity"))
+    drill._remove_owned_local_root(root, tmp_path, "test")
+    assert not root.exists()
+
+
+@pytest.mark.parametrize("reason", ["foreign-marker", "active-lock", "wrong-name"])
+def test_owned_cleanup_retains_unverified_or_active_roots(tmp_path, reason):
+    root = tmp_path / ("other" if reason == "wrong-name" else drill.NAMES[0])
+    root.mkdir()
+    (root / ".ops3b-drill-owned").write_text("other" if reason == "foreign-marker" else "test", encoding="ascii")
+    if reason == "active-lock":
+        (root / "runtime").mkdir()
+        (root / "runtime/runtime-supervisor.lock").write_bytes(b"retain")
+    with pytest.raises(RuntimeError, match="FIXED_EXE_LOCAL"):
+        drill._remove_owned_local_root(root, tmp_path, "test")
+    assert root.is_dir()
