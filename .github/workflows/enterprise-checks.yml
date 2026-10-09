@@ -57,6 +57,7 @@ jobs:
           python -m pytest -q
           enterprise/tests/test_runtime_reliability.py
           enterprise/tests/test_canvas_task_journal.py
+          enterprise/tests/test_runtime_update_diagnostics.py
           enterprise/tests/test_stab_1_supervisor_logging.py::test_detached_service_host_lifecycle
           enterprise/tests/test_stab_1_supervisor_logging.py::test_role_isolation_and_stop
           enterprise/tests/test_stab_1_supervisor_logging.py::test_instance_bound_command_acknowledgements

@@ -175,6 +175,7 @@ sequenceDiagram
     RT->>PTR: compare and switch
     RT->>RT: start target and health check
     alt target fails
+        RT->>RT: confirm target stop; unknown means RECOVERY_REQUIRED
         RT->>DB: restore expected-current backup
         RT->>PTR: restore source pointer
         RT->>RT: restart source release
@@ -191,12 +192,15 @@ sequenceDiagram
 - `execute_update_job()`：重读迁移证据、备份/迁移、pointer 切换、启动/健康、数据库恢复和代码回滚。
 - `request_portable_update_handoff()`：只把 job ID 交给 Supervisor 控制通道。
 
+main 派生的生命周期诊断增量为每个实际执行的 `target_start/target_health/target_stop/source_start/source_health` 保存 started/result 事件及 status 摘要，绑定 Release、命令、退出码与白名单 stage/errno/winerror/bootstrap 类别；不存原始 stderr、异常正文、环境或密钥。`failure_code` 保留最初失败，最终 `result_code` 表示更新/恢复结果，两个码不能互相替代。未执行阶段不补猜测值。准确实现/验证边界见 [实施记录](../ops/RUNTIME-UPDATE-LIFECYCLE-2026-10-09.md)。
+
 ## 8. 更新限制
 
 - Update Center 支持相同 Schema 单跳升级，以及经过 registry、Manifest v2 和当前数据库身份共同约束的版本化前向迁移。
 - 版本化迁移在 pointer 切换前创建一致性备份；目标启动或健康失败时按 expected-current 约束恢复数据库、pointer 和 source Runtime。
 - 如果迁移已提交但结果尚未返回就发生异常，不能凭 `MigrationResult` 缺失推断数据库未改变；执行器必须复核持久化的 source pointer 与 schema 身份，无法证明一致时进入 `RECOVERY_REQUIRED`，不得启动旧版。
 - `RECOVERY_REQUIRED` 表示无法证明三者已经恢复一致，不能自动重试或伪装成普通失败。
+- 恢复数据库或 source pointer 之前先确认目标停止；非零退出不继续恢复或启动 source，保留恢复阻断。source 启动失败时不虚构后续 health 调用。入口退出 0 但没有有效结果文档仍判为失败。
 - 维护线已发布 09.9 改表目标，并有测试设备受控桥接成功反馈，不外推 main 已统一交付或全部客户批准。
 - 当前候选目录最多最近 50 Release、规划最多 8 跳，没有一次确认自动多跳。09.6 治理激活状态不能由旧更新器直接识别，不删审计对象绕过。
 - 完整通知/任务和业务写入隔离、更新器自更新及图形恢复仍待落地；业务写入已开放后不盲目回旧备份。

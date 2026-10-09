@@ -63,6 +63,7 @@ from enterprise.release.release_manifest_v2 import (
     verify_release_manifest_v2,
 )
 from enterprise.runtime.logging import redact_value, utc_now
+from enterprise.runtime.error_contract import public_lifecycle_code, public_lifecycle_details
 from enterprise.ops.update.versions import compare_versions
 
 
@@ -284,6 +285,7 @@ class UpdateJobStore:
             "created_at": created_at or existing.get("created_at") or utc_now(),
             "updated_at": utc_now(),
             "result_code": result_code,
+            **{key: existing[key] for key in ("runtime_phases", "failure_code") if key in existing},
             **fields,
         }
         _atomic_json(path, payload)
@@ -308,6 +310,32 @@ class UpdateJobStore:
                 os.fsync(handle.fileno())
         except OSError as exc:
             raise UpdateMvpError("SYSTEM_UPDATE_EVENT_WRITE_FAILED", status_code=500) from exc
+
+    def record_runtime_phase(self, job_id: str, phase: str, release_id: str,
+                             command: str, exit_code: int, payload: object) -> None:
+        """Persist a bounded, attributed result without retaining launcher output."""
+        commands = {"target_start": "start", "target_health": "health", "target_stop": "stop",
+                    "source_start": "start", "source_health": "health"}
+        if not isinstance(phase, str) or commands.get(phase) != command:
+            raise UpdateMvpError("SYSTEM_UPDATE_RUNTIME_PHASE_INVALID")
+        document = payload if type(payload) is dict else {}
+        result = {
+            "release_id": validate_release_component(release_id),
+            "command": command,
+            "launcher_exit_code": exit_code if type(exit_code) is int and -(2**31) <= exit_code <= 2**32 - 1 else 2,
+            "code": public_lifecycle_code(document.get("code"), fallback=(
+                "SYSTEM_UPDATE_RUNTIME_PHASE_OK" if exit_code == 0 else "SYSTEM_UPDATE_FORMAL_ENTRY_FAILED")),
+            **public_lifecycle_details(document),
+        }
+        status = self.read_status(job_id)
+        self.append_event(job_id, status["state"], "SYSTEM_UPDATE_RUNTIME_PHASE_RESULT", phase=phase,
+                          result_code=result["code"], **{key: value for key, value in result.items() if key != "code"})
+        phases = {**status.get("runtime_phases", {}), phase: {"recorded_at": utc_now(), **result}}
+        fields = {key: value for key, value in status.items() if key not in {
+            "schema_version", "job_id", "state", "actor_user_id", "result_code", "created_at", "updated_at", "runtime_phases"}}
+        self.write_status(job_id, status["state"], actor_user_id=status["actor_user_id"],
+                          result_code=status["result_code"], created_at=status["created_at"],
+                          runtime_phases=phases, **fields)
 
     def pending_recovery_jobs(self, *, initialize: bool = True) -> list[str]:
         """Return unresolved jobs, rejecting unverifiable historical job state."""
@@ -826,8 +854,11 @@ def _run_launcher(app_root: Path, command: str, *, timeout: int = 120) -> tuple[
             cwd=str(app_root), env=environment, stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, check=False,
         )
-    except (OSError, subprocess.TimeoutExpired):
-        return 2, {"code": "SYSTEM_UPDATE_FORMAL_ENTRY_FAILED"}
+    except OSError as exc:
+        return 2, {"code": "SYSTEM_UPDATE_FORMAL_ENTRY_FAILED", **public_lifecycle_details({
+            "failure_stage": "launcher_create", "errno": exc.errno, "winerror": getattr(exc, "winerror", None)})}
+    except subprocess.TimeoutExpired:
+        return 2, {"code": "SYSTEM_UPDATE_FORMAL_ENTRY_FAILED", "failure_stage": "launcher_wait"}
     lines = completed.stdout.decode("utf-8", errors="replace").splitlines()
     payload: dict[str, Any] = {}
     for line in reversed(lines):
@@ -838,7 +869,8 @@ def _run_launcher(app_root: Path, command: str, *, timeout: int = 120) -> tuple[
         if type(value) is dict:
             payload = value; break
     if not payload:
-        payload = {"code": "SYSTEM_UPDATE_FORMAL_ENTRY_OUTPUT_INVALID"}
+        payload = {"code": "SYSTEM_UPDATE_FORMAL_ENTRY_OUTPUT_INVALID", "failure_stage": "launcher_output"}
+        return 2, payload
     return int(completed.returncode), payload
 
 
@@ -880,6 +912,26 @@ def execute_update_job(
     target_id = validate_release_component(plan.get("target_release_id"))
     source_root = roots.RELEASE_ROOT / source_id
     target_root = roots.RELEASE_ROOT / target_id
+    def run_phase(phase: str, app_root: Path, command: str) -> tuple[int, dict[str, Any]]:
+        store.append_event(job_id, store.read_status(job_id)["state"],
+                           "SYSTEM_UPDATE_RUNTIME_PHASE_STARTED", phase=phase,
+                           release_id=app_root.name, command=command)
+        try:
+            exit_code, payload = launcher(app_root, command)
+        except Exception as exc:
+            details = public_lifecycle_details(getattr(exc, "public_details", None))
+            if isinstance(exc, OSError):
+                details.update(public_lifecycle_details({"errno": exc.errno, "winerror": getattr(exc, "winerror", None)}))
+            store.record_runtime_phase(job_id, phase, app_root.name, command, 2, {
+                "code": public_lifecycle_code(getattr(exc, "code", None), fallback="SYSTEM_UPDATE_FORMAL_ENTRY_FAILED"),
+                **details,
+            })
+            raise
+        if type(exit_code) is not int or not -(2**31) <= exit_code <= 2**32 - 1 or type(payload) is not dict or not payload:
+            exit_code, payload = 2, {"code": "SYSTEM_UPDATE_FORMAL_ENTRY_OUTPUT_INVALID", "failure_stage": "launcher_output"}
+        store.record_runtime_phase(job_id, phase, app_root.name, command, exit_code, payload)
+        return exit_code, payload
+
     pointer_switched = False
     migration_result: MigrationResult | None = None
     database_result_sha: str | None = None
@@ -1001,14 +1053,14 @@ def execute_update_job(
             expected_existing_raw_sha256=current.raw_sha256,
         )
         pointer_switched = True
-        start_exit, start_payload = launcher(target_root, "start")
+        start_exit, start_payload = run_phase("target_start", target_root, "start")
         if start_exit != 0:
-            raise UpdateMvpError(str(start_payload.get("code") or "SYSTEM_UPDATE_TARGET_START_FAILED"))
+            raise UpdateMvpError(public_lifecycle_code(start_payload.get("code"), fallback="SYSTEM_UPDATE_TARGET_START_FAILED"))
         validation_failure = "health_failed"
         store.write_status(job_id, "VERIFYING", actor_user_id=actor, result_code="SYSTEM_UPDATE_VERIFYING", source_release_id=source_id, target_release_id=target_id)
-        health_exit, health_payload = launcher(target_root, "health")
+        health_exit, health_payload = run_phase("target_health", target_root, "health")
         if health_exit != 0:
-            raise UpdateMvpError(str(health_payload.get("code") or "SYSTEM_UPDATE_TARGET_HEALTH_FAILED"))
+            raise UpdateMvpError(public_lifecycle_code(health_payload.get("code"), fallback="SYSTEM_UPDATE_TARGET_HEALTH_FAILED"))
         if migration_result is not None:
             finalize_release_database_validation(
                 database_path,
@@ -1033,7 +1085,11 @@ def execute_update_job(
         store.append_event(job_id, "SUCCEEDED", "SYSTEM_UPDATE_SUCCEEDED", source_release_id=source_id, target_release_id=target_id)
         return 0
     except Exception as exc:
-        failure_code = str(getattr(exc, "code", "SYSTEM_UPDATE_EXECUTION_FAILED"))
+        failure_code = public_lifecycle_code(getattr(exc, "code", None), fallback="SYSTEM_UPDATE_EXECUTION_FAILED")
+        current_status = store.read_status(job_id)
+        store.write_status(job_id, current_status["state"], actor_user_id=actor,
+                           result_code=failure_code, failure_code=failure_code,
+                           source_release_id=source_id, target_release_id=target_id)
         database_may_have_changed = bool(getattr(exc, "database_may_have_changed", False))
         if not pointer_switched:
             try:
@@ -1084,8 +1140,11 @@ def execute_update_job(
                 )
                 store.append_event(job_id, "RECOVERY_REQUIRED", failure_code)
                 return 2
-            source_start, _ = launcher(source_root, "start")
-            source_health, _ = launcher(source_root, "health") if source_start == 0 else (2, {})
+            try:
+                source_start, _ = run_phase("source_start", source_root, "start")
+                source_health, _ = run_phase("source_health", source_root, "health") if source_start == 0 else (2, {})
+            except Exception:
+                source_start, source_health = 2, 2
             if source_start != 0 or source_health != 0:
                 recovery_code = "SYSTEM_UPDATE_SOURCE_RECOVERY_FAILED"
                 store.write_status(
@@ -1114,7 +1173,9 @@ def execute_update_job(
         if migration_result is not None:
             try:
                 if pointer_switched:
-                    launcher(target_root, "stop")
+                    stop_exit, _ = run_phase("target_stop", target_root, "stop")
+                    if stop_exit != 0:
+                        raise UpdateMvpError("SYSTEM_UPDATE_TARGET_STOP_UNCONFIRMED")
                 finalization = finalize_release_database_validation(
                     database_path,
                     migration_result,
@@ -1132,8 +1193,8 @@ def execute_update_job(
                     )
                 elif current.release.release_id != source_id:
                     raise UpdateMvpError("SYSTEM_UPDATE_ROLLBACK_POINTER_MISMATCH")
-                source_start, _ = launcher(source_root, "start")
-                source_health, _ = launcher(source_root, "health") if source_start == 0 else (2, {})
+                source_start, _ = run_phase("source_start", source_root, "start")
+                source_health, _ = run_phase("source_health", source_root, "health") if source_start == 0 else (2, {})
                 if source_start != 0 or source_health != 0:
                     raise UpdateMvpError("SYSTEM_UPDATE_ROLLBACK_HEALTH_FAILED")
                 store.write_status(
@@ -1150,7 +1211,7 @@ def execute_update_job(
                 store.append_event(job_id, "ROLLED_BACK", failure_code, database_restored=True)
                 return 2
             except Exception as restore_exc:
-                recovery_code = str(getattr(restore_exc, "code", "SYSTEM_UPDATE_DATABASE_RESTORE_FAILED"))
+                recovery_code = public_lifecycle_code(getattr(restore_exc, "code", None), fallback="SYSTEM_UPDATE_DATABASE_RESTORE_FAILED")
                 store.write_status(
                     job_id,
                     "RECOVERY_REQUIRED",
@@ -1171,7 +1232,9 @@ def execute_update_job(
         store.write_status(job_id, "ROLLING_BACK", actor_user_id=actor, result_code=failure_code, source_release_id=source_id, target_release_id=target_id)
         store.append_event(job_id, "ROLLING_BACK", failure_code)
         try:
-            launcher(target_root, "stop")
+            stop_exit, _ = run_phase("target_stop", target_root, "stop")
+            if stop_exit != 0:
+                raise UpdateMvpError("SYSTEM_UPDATE_TARGET_STOP_UNCONFIRMED")
             current = read_current_release_result_from_state_root(roots.STATE_ROOT)
             if current.release.release_id != target_id:
                 raise UpdateMvpError("SYSTEM_UPDATE_ROLLBACK_POINTER_MISMATCH")
@@ -1181,17 +1244,18 @@ def execute_update_job(
                 expected_manifest_sha256=source_manifest.raw_sha256,
                 expected_existing_raw_sha256=current.raw_sha256,
             )
-            source_start, _ = launcher(source_root, "start")
-            source_health, _ = launcher(source_root, "health")
+            source_start, _ = run_phase("source_start", source_root, "start")
+            source_health, _ = run_phase("source_health", source_root, "health") if source_start == 0 else (2, {})
             if source_start != 0 or source_health != 0:
                 raise UpdateMvpError("SYSTEM_UPDATE_ROLLBACK_HEALTH_FAILED")
             store.write_status(job_id, "ROLLED_BACK", actor_user_id=actor, result_code=failure_code, source_release_id=source_id, target_release_id=target_id)
             store.append_event(job_id, "ROLLED_BACK", failure_code)
             return 2
         except Exception as rollback_exc:
-            rollback_code = str(getattr(rollback_exc, "code", "SYSTEM_UPDATE_ROLLBACK_FAILED"))
-            store.write_status(job_id, "FAILED", actor_user_id=actor, result_code=rollback_code, source_release_id=source_id, target_release_id=target_id)
-            store.append_event(job_id, "FAILED", rollback_code)
+            rollback_code = public_lifecycle_code(getattr(rollback_exc, "code", None), fallback="SYSTEM_UPDATE_ROLLBACK_FAILED")
+            store.write_status(job_id, "RECOVERY_REQUIRED", actor_user_id=actor, result_code=rollback_code,
+                               source_release_id=source_id, target_release_id=target_id, recovery_required=True)
+            store.append_event(job_id, "RECOVERY_REQUIRED", rollback_code)
             return 2
     finally:
         store.release_execution_lock(lock, job_id)

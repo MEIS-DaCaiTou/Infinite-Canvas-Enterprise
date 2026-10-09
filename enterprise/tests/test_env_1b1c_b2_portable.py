@@ -36,6 +36,7 @@ def test_host_cli_preserves_trusted_portable_paths_under_windows_redirection(tmp
     logical = (tmp_path / "local/InfiniteCanvasEnterprise/runtime").absolute()
     redirected = (tmp_path / "package/LocalCache/Local/InfiniteCanvasEnterprise/runtime").absolute()
     original = Path.resolve
+    app.mkdir(parents=True)
 
     def resolve(path, *args, **kwargs):
         return redirected if path == logical else original(path, *args, **kwargs)
@@ -55,6 +56,7 @@ def test_host_cli_portable_paths_still_reject_runtime_under_application(tmp_path
     from enterprise.runtime.control import RuntimeControlError
 
     app = tmp_path / "install/releases/release-A"
+    app.mkdir(parents=True)
     with pytest.raises(RuntimeControlError):
         _paths(SimpleNamespace(app_root=str(app), runtime_root=str(app / "data/runtime"),
                                runtime_mode="portable-release"))
