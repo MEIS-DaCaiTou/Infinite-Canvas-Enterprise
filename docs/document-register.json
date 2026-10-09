@@ -1,9 +1,21 @@
 {
   "schema_version": "enterprise-documents-v1",
   "reviewed_at": "2026-10-10",
-  "audit_base_commit": "309b35fb41956bd457d009cd54762bb647db15a3",
+  "audit_base_commit": "a5a6aa10b7882c46f129ec6df854239ee111da18",
   "scope": "All Git-managed or non-ignored new Markdown/text files; roles are not runtime or release approval. Frozen hashes normalize CRLF to LF only.",
   "documents": [
+    {
+      "path": "docs/decisions/REQUIREMENTS-DECISION-REGISTER.md",
+      "kind": "decision"
+    },
+    {
+      "path": "docs/requirements/TRACEABILITY-CONTRACT.md",
+      "kind": "reference"
+    },
+    {
+      "path": "docs/requirements/N37-ASSET-INTEROP-CONTRACT-DRAFT.md",
+      "kind": "reference"
+    },
     {
       "path": "docs/ops/RUNTIME-UPDATE-LIFECYCLE-2026-10-09.md",
       "kind": "record"
@@ -540,7 +552,7 @@
       "path": "PROJECT_SCOPE_LOCK.md",
       "kind": "authority",
       "authority": "scope",
-      "reviewed_at": "2026-10-03"
+      "reviewed_at": "2026-10-09"
     },
     {
       "path": "README.md",
@@ -592,6 +604,29 @@
     {
       "path": "tools/validation/windows/env_1b3/README.md",
       "kind": "reference"
+    }
+  ],
+  "tabular_resources": [
+    {
+      "path": "docs/requirements/REQUIREMENT-TRACEABILITY.csv",
+      "kind": "reference",
+      "owner": "PROJECT_SCOPE_LOCK.md",
+      "contract": "docs/requirements/TRACEABILITY-CONTRACT.md",
+      "expected_rows": 14
+    },
+    {
+      "path": "docs/requirements/HISTORICAL-PLAN-MAPPING.csv",
+      "kind": "reference",
+      "owner": "PROJECT_SCOPE_LOCK.md",
+      "contract": "docs/requirements/TRACEABILITY-CONTRACT.md",
+      "expected_rows": 37
+    },
+    {
+      "path": "docs/requirements/ACCEPTANCE-SCENARIOS.csv",
+      "kind": "reference",
+      "owner": "PROJECT_SCOPE_LOCK.md",
+      "contract": "docs/requirements/TRACEABILITY-CONTRACT.md",
+      "expected_rows": 104
     }
   ]
 }

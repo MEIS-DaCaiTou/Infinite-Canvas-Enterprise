@@ -11,7 +11,8 @@
 | 到哪里了：本地/PR/主线/发布/现场 | [当前项目状态](./CURRENT_PROJECT_STATUS.md) | 带核验日期的快照，不外推生产批准 |
 | 现在如何运行、模块与数据在哪里 | [当前架构](../ARCHITECTURE.md) | 当前实现与目标明确分开 |
 | 接下来按什么顺序开发 | [开发路线图](./roadmap/DEVELOPMENT-ROADMAP-2026-2027.md) | 唯一任务顺序和阶段验收 |
-| 产品包含什么、不包含什么 | [范围锁定](../PROJECT_SCOPE_LOCK.md) / [项目章程](../PROJECT_CHARTER.md) | 产品边界 / 长期原则，不另建任务队列 |
+| 产品需求与范围是什么、哪些仍待确认 | [范围锁定与需求基线](../PROJECT_SCOPE_LOCK.md) | 唯一需求入口；下属追踪表/契约草案不另立路线图 |
+| 长期产品原则 | [项目章程](../PROJECT_CHARTER.md) | 章程不复制详细需求或任务队列 |
 | 完整安装、更新、恢复如何设计 | [ADR-DELIVERY-001](./decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md) | 已认可设计；实现状态回到项目状态 |
 | 哪些代码/数据能改 | [代码边界](../CODE_BOUNDARIES.md) | 修改、临时产物与数据保护规范 |
 | 怎样开发、验证和汇报 | [开发工作流](../CODEX_WORKFLOW.md) / [测试说明](../enterprise/tests/README.md) | 流程 / 执行命令，优先定向验证 |
@@ -40,6 +41,8 @@
 - [模块化单体](./decisions/ADR-ENV-001-MODULAR-MONOLITH-MIDTERM-ARCHITECTURE-2026-07.md)、[不可变程序版本](./decisions/ADR-ENV-003-IMMUTABLE-RELEASE-STATIC-CACHE-2026-07.md)、[路径根](./decisions/ADR-ENV-004-PATH-ROOTS-AND-RELEASE-DIRECTORY-2026-07.md)、[Manifest/恢复](./decisions/ADR-OPS-006-RELEASE-MANIFEST-V2-DATABASE-ROLLBACK-2026-07.md)、[高风险权限治理](./decisions/ADR-SEC-1A-SUPER-ADMIN-CAPABILITY-GOVERNANCE-2026-07.md) 继续提供相应约束；文内实施状态是历史快照。
 - [旧 Greenfield-only 决策](./decisions/ADR-OPS-007-GREENFIELD-PRODUCTION-BASELINE-AND-LEGACY-NON-MIGRATION-2026-07.md) 的产品范围已被统一交付 ADR 替代，不再拒绝所有旧客户迁移。
 - [旧运维路线](./ops/OPS-ROADMAP-2026-07.md) 和 [旧企业蓝图](./architecture/ENTERPRISE-ARCHITECTURE-BLUEPRINT-2026-07.md) 仅作历史材料；当前顺序只认唯一路线图。
+- [2026-10-09 需求决策登记](./decisions/REQUIREMENTS-DECISION-REGISTER.md)：B01—B27 保留工程方向，N29/N34/N37 核心保留，N30/N31/N33 基础契约承接，其余独立产品范围按负责人决定移出。需求内容回到范围基线，不自行派工。
+- 范围基线下属 [追踪规则](./requirements/TRACEABILITY-CONTRACT.md) 登记 14 BR / 37 历史项 / 104 场景；[N37 草案](./requirements/N37-ASSET-INTEROP-CONTRACT-DRAFT.md) 只提出接口和无正式编号的专项验收方案。追踪完整不是测试通过或新增业务授权。
 
 ## 4. 原有重复入口与分支差异
 
