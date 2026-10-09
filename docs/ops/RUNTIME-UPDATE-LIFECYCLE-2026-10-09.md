@@ -105,7 +105,7 @@ portable CLI 保留已经核准的 lexical APP/Runtime 根，不再通过 `resol
 
 真实作业 `ee3e9ebffd7c4257b1d6eee62ca56f02` 在仓库外 `D:\CodeProject\review-artifacts\t\J2` 复现：
 
-| 真实创建位置 | CreateProcess flags | 查询到的 immediate Job flags | 结果 |
+| 真实创建位置 | 观测的 Python creationflags 请求值 | 查询到的 immediate Job flags | 结果 |
 | --- | --- | --- | --- |
 | 固定 EXE 初次启动源 service-host | 0x01000208 | 0x2800 | 启动、健康成功 |
 | Supervisor 创建 handoff | 0x00000208 | 0x2000 | 普通 detached 创建成功 |
@@ -113,6 +113,8 @@ portable CLI 保留已经核准的 lexical APP/Runtime 根，不再通过 `resol
 | 目标及恢复 launcher 创建 service-host | 0x01000208 | 0x2000 | 两次 service_host_create，errno=13 / winerror=5 |
 
 `0x01000208` 包含 BREAKAWAY_FROM_JOB、DETACHED_PROCESS 与 NEW_PROCESS_GROUP；`0x2000` 仅 KILL_ON_CLOSE，`0x2800` 另含 BREAKAWAY_OK。Job 查询成功、源/目标两个真实阶段均保留这些白名单字段和 worker 上下文，终态仍为 RECOVERY_REQUIRED。诊断/清理定向测试 **55 passed**；不是完整升级通过。
+
+标志精度边界：日志记录的是实际调用 `subprocess.Popen/run` 的请求参数，不是独立 WinAPI Hook/ETW 记录。[CPython 3.14.6 的 _winapi 后端源码](https://github.com/python/cpython/blob/v3.14.6/Modules/_winapi.c#L1304-L1315) 在 `CreateProcessW` 时再 OR `EXTENDED_STARTUPINFO_PRESENT`（0x00080000）及 `CREATE_UNICODE_ENVIRONMENT`（0x00000400）。按这份已固定版本源码推导，上表请求 0 / 0x208 / 0x01000208 对应 API 参数 0x00080400 / 0x00080608 / 0x01080608；这些附加位不改变 breakaway 判断。原始诊断值不补改，也不声称捕获了 .NET 初始 launcher 创建时的全部 API 标志。
 
 本次真实失败的直接条件得到核验：禁止 breakaway 的调用 Job 与必须脱离的宿主创建不相容。初次成功后变成另一个 Job 的解释与 [Windows 嵌套 Job 部分脱离契约](https://learn.microsoft.com/en-us/windows/win32/procthread/nested-jobs) 一致；没有枚举全部祖先、取得外部 Job 名称/句柄或证明其创建者。`QueryInformationJobObject(NULL)` 只代表 immediate Job。后续 J7 真实日志进一步确认 Supervisor **不属于自己创建的 runtime Job**，因此不能靠放宽业务子进程 Job 来修复外部限制。旧生产失败的缺失字段仍不补猜测。
 
