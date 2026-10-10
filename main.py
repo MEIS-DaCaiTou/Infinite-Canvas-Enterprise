@@ -3851,6 +3851,18 @@ def images_api_unsupported(response):
     text = str(getattr(response, "text", "") or "").lower()
     return "images api is not supported" in text or "not supported for this platform" in text
 
+def image_api_explicitly_rejected(response):
+    """Only switch paid endpoints after an explicit client-side rejection."""
+    return getattr(response, "status_code", None) in {400, 404, 405, 415, 422} and images_api_unsupported(response)
+
+def provider_submission_unknown(detail):
+    error = HTTPException(
+        status_code=502,
+        detail=f"PROVIDER_SUBMISSION_UNKNOWN：{detail}；请先核对供应商任务与账单，不要直接重新提交。",
+    )
+    error.submission_unknown = True
+    return error
+
 def responses_image_size_instruction(size: str) -> str:
     """RS 中转多为网页版逆向：结构化 size 参数（tool.size / 顶层 size / --size 尾注）全被无视，
     只有内部模型能“听懂”的自然语言比例要求有效（实测中文明确说横版+比例+禁止正方形可让
@@ -5863,6 +5875,8 @@ def image_task_fail_reason(payload):
 
 async def httpx_request_with_transient_retries(client, method, url, attempts=2, retry_delay=1.2, **kwargs):
     attempts = max(1, int(attempts or 1))
+    if attempts > 1 and str(method).upper() not in {"GET", "HEAD"}:
+        raise ValueError("Non-idempotent provider requests must not be retried")
     last_exc = None
     retry_statuses = {502, 503, 504, 520, 522, 524}
     for attempt in range(attempts):
@@ -10015,11 +10029,8 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
             if image_refs:
                 body["images"] = [await openai_video_proxy_public_reference_url(ref) for ref in image_refs[:6]]
             video_url = f"{base_url}/videos" if base_url.endswith("/v1") else f"{base_url}/v1/videos"
-            response = await httpx_request_with_transient_retries(
-                client,
-                "POST",
+            response = await client.post(
                 video_url,
-                attempts=2,
                 headers=api_headers(provider=provider, model=model),
                 json=body,
             )
@@ -10073,7 +10084,7 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
             if quality:
                 body["quality"] = quality
             response = await client.post(gen_url, headers=api_headers(provider=provider, model=model), json=body)
-            if response.status_code >= 400 and images_api_unsupported(response):
+            if image_api_explicitly_rejected(response):
                 response = await post_openai_edits()
         elif image_refs:
             # 1) OpenAI 协议的图生图/编辑用 multipart 提交到 /images/edits；
@@ -10101,11 +10112,10 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
                     if response.status_code >= 400:
                         edit_failed_status = response.status_code
                         edit_failed_text = response.text[:500]
-                        response = None
+                        if image_api_explicitly_rejected(response):
+                            response = None
                 except httpx.HTTPError as e:
-                    edit_failed_status = -1
-                    edit_failed_text = str(e)
-                    response = None
+                    raise provider_submission_unknown("图像编辑请求的响应中断，是否已被供应商受理尚不确定") from e
             finally:
                 for fh in opened:
                     fh.close()
@@ -10116,7 +10126,7 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
                         status_code=502,
                         detail=f"GPT-Image-2 编辑接口 /images/edits 调用失败：{edit_failed_text[:300] or edit_failed_status}。已停止自动重试，避免上游可能已扣费后再次请求。"
                     )
-                print(f"/images/edits failed ({edit_failed_status}): {edit_failed_text[:200]} → 回退到 /images/generations + image:[] JSON")
+                print(f"/images/edits failed ({edit_failed_status}): {edit_failed_text[:200]!a} -> fallback /images/generations + image:[] JSON")
                 image_payload = [reference_to_data_url(ref, max_size=1536) for ref in image_refs[:ONLINE_IMAGE_REFERENCE_MAX]]
                 body = {
                     "model": model, "prompt": prompt, "size": size,
@@ -10126,7 +10136,7 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
                 if quality:
                     body["quality"] = quality
                 response = await client.post(gen_url, headers=api_headers(provider=provider, model=model), json=body)
-                if response.status_code >= 400 and images_api_unsupported(response):
+                if image_api_explicitly_rejected(response):
                     raise HTTPException(
                         status_code=502,
                         detail=f"编辑接口 /images/edits 调用失败，且该平台不支持 /images/generations：{edit_failed_text[:300] or edit_failed_status}"
@@ -10140,7 +10150,7 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
                 headers=api_headers(provider=provider, model=model),
                 json=body,
             )
-            if response.status_code >= 400 and images_api_unsupported(response):
+            if image_api_explicitly_rejected(response):
                 response = await post_openai_edits()
         response.raise_for_status()
         raw = response.json()
@@ -10162,7 +10172,7 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
         try:
             task_result = await wait_for_image_task(client, task_id, provider)
             return extract_image(task_result), task_result
-        except HTTPException as exc:
+        except (HTTPException, httpx.HTTPError) as exc:
             setattr(exc, "upstream_task_id", task_id)
             raise
 
@@ -12631,13 +12641,19 @@ async def build_online_image_result(payload: OnlineImageRequest):
         generated = await asyncio.gather(*(generate_one() for _ in range(count)))
     except httpx.HTTPStatusError as exc:
         log_net_error(f"生图 HTTP状态错误 provider={provider.get('id')} model={model} size={payload.size}", exc)
+        if exc.response.status_code >= 500:
+            error = provider_submission_unknown(f"供应商返回 HTTP {exc.response.status_code}，是否已受理生成请求尚不确定")
+            error.upstream_task_id = getattr(exc, "upstream_task_id", "")
+            raise error from exc
         text = exc.response.text or ''
         friendly = friendly_image_error_detail(text, payload.size, model)
         detail = friendly or f"上游生图接口错误：{text[:300]}"
         raise HTTPException(status_code=exc.response.status_code, detail=detail) from exc
     except httpx.HTTPError as exc:
         log_net_error(f"生图 网络/TLS错误 provider={provider.get('id')} model={model}", exc)
-        raise HTTPException(status_code=502, detail=f"请求上游生图接口失败：{exc}") from exc
+        error = provider_submission_unknown("生成请求的网络响应中断，是否已被供应商受理尚不确定")
+        error.upstream_task_id = getattr(exc, "upstream_task_id", "")
+        raise error from exc
 
     local_urls = [url for urls, _items, _raw in generated for url in (urls or []) if url]
     local_items = [item for _urls, items, _raw in generated for item in (items or []) if item.get("url")]
@@ -12825,6 +12841,8 @@ async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
             "status_code": status_code,
             "upstream_task_id": upstream_task_id,
         }
+        if getattr(exc, "submission_unknown", False):
+            changes.update(recovery_required=True, error_code="PROVIDER_SUBMISSION_UNKNOWN")
     await asyncio.to_thread(CANVAS_TASK_JOURNAL.finish, task_id, changes)
 
 @app.post("/api/canvas-image-tasks")
@@ -13756,15 +13774,15 @@ async def canvas_video(payload: CanvasVideoRequest):
                 is_last = idx == total_candidates - 1
                 response = await client.post(submit_url, headers=api_headers(provider=provider), json=body)
                 last_response = response
+                endpoint_missing = response.status_code in (404, 405)
                 if response.status_code >= 400:
-                    # 404/405（或直接返回网页 HTML）通常表示该平台不支持这个端点路径——
+                    # 只有明确的 404/405 才表示端点不存在，可以尝试下一个候选路径；
                     # 例如有的站点只实现了统一格式的 /v2/videos/generations，而我们先试了 /v1。
-                    # 这种情况要继续尝试下一个候选端点（关键修复：以前在这里直接 raise_for_status，
-                    # 第一个 /v1 报错就抛出，永远轮不到 /v2，表现为“接口错误”）。
-                    # 其它错误（模型不支持/时长/额度等请求被拒）说明端点是存在的，直接抛出交给外层友好提示。
-                    endpoint_missing = response.status_code in (404, 405) or looks_like_html_response(response.text)
+                    # HTML、5xx 和网络中断都不能证明请求未被受理，不得再提交。
                     if endpoint_missing and not is_last:
                         continue
+                    if response.status_code >= 500:
+                        raise provider_submission_unknown(f"视频提交接口返回 HTTP {response.status_code}，是否已受理任务尚不确定")
                     response.raise_for_status()
                 try:
                     raw = response.json()
@@ -13773,7 +13791,8 @@ async def canvas_video(payload: CanvasVideoRequest):
                     last_json_error = exc
                     if looks_like_html_response(response.text):
                         html_response = response
-                        continue
+                    if not endpoint_missing:
+                        raise provider_submission_unknown("视频提交接口返回非 JSON 响应，是否已受理任务尚不确定") from exc
                     if not is_last:
                         continue
                     resp_text = response.text[:500]
@@ -13859,7 +13878,7 @@ async def canvas_video(payload: CanvasVideoRequest):
         raise HTTPException(status_code=exc.response.status_code, detail=f"上游视频接口错误：{text}") from exc
     except httpx.HTTPError as exc:
         log_net_error(f"视频 网络/TLS错误 provider={provider.get('id')} model={payload.model}", exc)
-        raise HTTPException(status_code=502, detail=f"请求上游视频接口失败：{exc}") from exc
+        raise provider_submission_unknown("视频提交或任务查询的网络响应中断，是否已被供应商受理尚不确定") from exc
 
 # --- Canvas LLM ---
 
