@@ -220,12 +220,17 @@ def test_entry_repair_postpublication_failure_restores_only_owned_files(resource
         with pytest.raises(entry_module.InstallEntryError, match="INSTALL_ENTRY_RECOVERY_REQUIRED"):
             entry_module.repair_fixed_entry(install_root=root, entry=resources["entry"],
                                            local_app_data_base=resources["base"] / "local")
-    # Backups are retained evidence, not business data or an incomplete active lock.
+    # A newly observed update recovery blocks even entry rollback until the
+    # exact source is proven again. Do not guess that deleting its lock is safe.
     after = _snapshot(root)
     assert all(after.get(name) == digest for name, digest in before.items())
     assert not (root / "InfiniteCanvas.exe").exists()
-    assert not (root / "state/system-update-active.lock").exists()
+    assert (root / "state/system-update-active.lock").exists()
     assert UpdateJobStore.pending_recovery_jobs is original
+    recovered = entry_module.recover_fixed_entry(install_root=root, entry=resources["entry"],
+                                                 local_app_data_base=resources["base"] / "local")
+    assert recovered["repair_state"] == "ROLLED_BACK" and not recovered["launcher_installed"]
+    assert not (root / "state/system-update-active.lock").exists()
     repaired = entry_module.repair_fixed_entry(install_root=root, entry=resources["entry"],
                                                local_app_data_base=resources["base"] / "local")
     assert repaired["installation_id"] == installed.installation_id

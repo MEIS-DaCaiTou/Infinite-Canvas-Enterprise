@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from enterprise.install_entry import repair_fixed_entry, verify_entry_bundle
+from enterprise.paths import PortableRootInputs, derive_portable_path_roots
 from enterprise.release.release_manifest_v2 import canonical_json, materialize_release_fixture
 from enterprise.tests.test_ops_release_manifest_v2 import _fixture
 from tools.build_install_ux_1 import _compile, _verify_toolchain
@@ -110,4 +111,5 @@ def test_fixed_entry_repair_and_real_full_payload_identity_preserve_install(vers
     assert all(hashlib.sha256(Path(path).read_bytes()).hexdigest() == digest for path, digest in before.items())
     print("full-payload identity seconds", version, round(identity_seconds, 3))
     assert not (root / "state/system-update-active.lock").exists()
-    assert not (tmp_path / "local/Infinite-Canvas-Enterprise/runtime/runtime-reconcile.lock").exists()
+    roots = derive_portable_path_roots(PortableRootInputs(root, tmp_path / "local"), app.name)
+    assert not (roots.RUNTIME_ROOT / "runtime-reconcile.lock").exists()

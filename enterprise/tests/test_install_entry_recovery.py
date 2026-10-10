@@ -384,6 +384,7 @@ def test_explicit_unlock_failure_still_closes_the_kernel_runner_lease(installed,
     before = _business(roots)
     result = entry.repair_fixed_entry(**arguments)
     assert result["repair_state"] == "SUCCEEDED" and failures
+    assert result["cleanup_warning"] == "INSTALL_ENTRY_LEASE_RELEASE_UNCONFIRMED"
     directory = roots.STAGING_ROOT / "entry-repairs" / result["operation_id"][:12]
     runner = directory / "runner.lock"
     # Closing the first handle released the OS lock despite injected UNLCK.
