@@ -1,8 +1,12 @@
 """Targeted lifecycle evidence checks; no customer data or services."""
 import json
 import io
+import os
+import ctypes
+from types import SimpleNamespace
 from contextlib import redirect_stdout
 import subprocess
+import sys
 import zipfile
 from pathlib import Path
 from unittest.mock import patch
@@ -82,10 +86,13 @@ def test_controller_failure_is_durable_and_releases_reserved_lock(tmp_path, stag
     failure_patch = (patch("enterprise.runtime.control.subprocess.Popen", side_effect=error)
                      if stage == "service_host_create" else patch.object(Path, "unlink", autospec=True, side_effect=unlink))
     with patch("enterprise.runtime.control.inspect_runtime", return_value={"start_disposition": "stopped"}), \
+         patch("enterprise.runtime.control.current_job_diagnostics", return_value={}), \
          failure_patch:
         with pytest.raises(RuntimeControlError) as caught:
             controller.start(wait_seconds=1)
-    assert caught.value.public_details == {"failure_stage": stage, "errno": 13, "winerror": 5}
+    assert caught.value.public_details == {"failure_stage": stage, "errno": 13, "winerror": 5,
+                                          **({"creation_flags": (0x01000208 if os.name == "nt" else 0)}
+                                             if stage == "service_host_create" else {})}
     assert not controller.store.lock_path.exists()
     raw = (tmp_path / "runtime" / "launcher.log").read_text(encoding="utf-8")
     assert "secret-private-path" not in raw
@@ -102,6 +109,542 @@ def test_log_constructor_failure_still_releases_reservation(tmp_path):
             controller.start(wait_seconds=1)
     assert caught.value.public_details == {"failure_stage": "service_host_log", "errno": 13}
     assert not controller.store.lock_path.exists()
+
+
+def test_job_context_allowlist_rejects_unbounded_or_coerced_values():
+    payload = {"creation_flags": 0x01000208, "process_in_job": True,
+               "job_query_ok": True, "job_limit_flags": 0x2000,
+               "worker_creation_flags": 0, "worker_process_in_job": True,
+               "worker_job_query_ok": False, "worker_job_query_winerror": 5}
+    assert public_lifecycle_details({**payload, "job_name": "secret", "ancestor_jobs": "secret"}) == payload
+    for value in (True, -1, 2**32, "secret", None):
+        assert public_lifecycle_details({"creation_flags": value, "worker_job_limit_flags": value}) == {}
+    for value in (0, 1, "true", None):
+        assert public_lifecycle_details({"process_in_job": value, "worker_job_query_ok": value}) == {}
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows structures")
+@pytest.mark.parametrize("in_job,is_error,query_error", [(False, 0, 0), (True, 0, 0),
+                                                       (True, 5, 0), (True, 0, 6)])
+def test_job_observation_is_read_only_and_failure_is_explicit(in_job, is_error, query_error):
+    from enterprise.runtime import windows
+    from ctypes import wintypes
+    calls = []
+    class Api:
+        def __init__(self, callback):
+            self.callback = callback
+        def __call__(self, *args):
+            return self.callback(*args)
+    def membership(process, job, result):
+        calls.append("IsProcessInJob")
+        assert job is None and process == 123
+        ctypes.cast(result, ctypes.POINTER(wintypes.BOOL))[0] = in_job
+        return not is_error
+    def query(job, kind, result, size, returned):
+        calls.append("QueryInformationJobObject")
+        assert job is None and kind == 9 and returned is None
+        info = ctypes.cast(result, ctypes.POINTER(windows._JOBOBJECT_EXTENDED_LIMIT_INFORMATION)).contents
+        info.BasicLimitInformation.LimitFlags = 0x2000
+        return not query_error
+    class Kernel:
+        GetCurrentProcess = Api(lambda: 123)
+        IsProcessInJob = Api(membership)
+        QueryInformationJobObject = Api(query)
+    with patch.object(ctypes, "WinDLL", return_value=Kernel()), \
+         patch.object(ctypes, "get_last_error", return_value=is_error or query_error):
+        result = windows.current_job_diagnostics()
+    if is_error:
+        assert result == {"job_query_ok": False, "job_query_winerror": is_error}
+    elif query_error:
+        assert result == {"process_in_job": True, "job_query_ok": False, "job_query_winerror": query_error}
+    else:
+        assert result == {"process_in_job": in_job, "job_query_ok": True,
+                          **({"job_limit_flags": 0x2000} if in_job else {})}
+    assert calls == ["IsProcessInJob"] + (["QueryInformationJobObject"] if in_job and not is_error else [])
+
+
+def test_worker_creation_context_survives_the_launcher_return(tmp_path):
+    (tmp_path / "python").mkdir()
+    (tmp_path / "python/python.exe").touch()
+    (tmp_path / "enterprise/runtime").mkdir(parents=True)
+    (tmp_path / "enterprise/runtime/launcher.py").touch()
+    context = {"process_in_job": True, "job_limit_flags": 0x2000, "job_query_ok": True}
+    completed = subprocess.CompletedProcess([], 2, stdout=b'{"code":"RUNTIME_CONTROL_ERROR","winerror":5}\n')
+    with patch("enterprise.runtime.windows.current_job_diagnostics", return_value=context), \
+         patch("enterprise.ops.update.mvp.subprocess.run", return_value=completed) as create:
+        exit_code, payload = _run_launcher(tmp_path, "start")
+    assert exit_code == 2 and payload == {"code": "RUNTIME_CONTROL_ERROR", "winerror": 5,
+        "worker_creation_flags": 0, **{"worker_" + k: v for k, v in context.items()}}
+    assert create.call_args.kwargs.get("creationflags", 0) == 0
+
+
+@pytest.mark.parametrize("failure", ["source-job", "query-failed", "creation-denied", "other-denial",
+                                     "identity-missing", "identity-mismatch", "readiness-failed",
+                                     "reservation-cancelled", "identity-requery-failed", "missing-source-job"])
+def test_handoff_job_failure_never_stops_source_or_retries_ordinary_creation(tmp_path, monkeypatch, failure):
+    from enterprise.runtime import supervisor as module
+    from enterprise.runtime.ownership import ProcessIdentity
+    from enterprise.runtime.windows import JobObjectError
+    from unittest.mock import Mock
+    app = tmp_path / "source"
+    python, worker = app / "python/python.exe", app / "enterprise/ops/update/handoff.py"
+    python.parent.mkdir(parents=True)
+    worker.parent.mkdir(parents=True)
+    python.touch()
+    worker.touch()
+    supervisor = module.RuntimeSupervisor.__new__(module.RuntimeSupervisor)
+    supervisor.config = SimpleNamespace(app_root=app, python_executable=str(python), runtime_mode="portable-release")
+    supervisor._update_handoff_request = {"request_id": "request", "update_job_id": "a" * 32}
+    supervisor._stopping = False
+    supervisor._command_snapshot = lambda: {"state": "healthy"}
+    supervisor._ack = Mock()
+    supervisor._log = Mock()
+    supervisor.supervisor_identity = ProcessIdentity(999, 1, str(python))
+    supervisor._handoff_reservation = Mock(side_effect=[(1, 2), None] if failure == "reservation-cancelled"
+                                         else None, return_value=(1, 2))
+    supervisor._job = None if failure == "missing-source-job" else Mock()
+    if supervisor._job is not None:
+        supervisor._job.contains_process.return_value = failure == "source-job"
+    process = Mock(pid=123)
+    process.poll.return_value = None
+    if failure == "readiness-failed":
+        process.handoff_ready_failure = {
+            "stage": "probe_host_create", "code": "HANDOFF_READINESS_UNCONFIRMED",
+            "winerror": 5, "errno": 13, "probe_cleanup_confirmed": False,
+        }
+    def reaped(**kwargs):
+        process.poll.return_value = 0
+        return 0
+    process.wait.side_effect = reaped
+    popen = Mock(return_value=process)
+    if failure in {"creation-denied", "other-denial"}:
+        error = OSError(13, "private-secret")
+        error.winerror = 5
+        popen.side_effect = error
+    monkeypatch.setattr(module, "current_job_diagnostics", lambda: {
+        "process_in_job": failure != "other-denial", "job_query_ok": True, "job_limit_flags": 0x2000})
+    monkeypatch.setattr(module.subprocess, "Popen", popen)
+    queried = []
+    def identity(pid):
+        if pid == 999:
+            return supervisor.supervisor_identity
+        queried.append(pid)
+        if failure == "identity-requery-failed" and len(queried) > 1:
+            raise OSError(5, "private-secret")
+        return (None if failure == "identity-missing" else
+                ProcessIdentity(pid, 1, str(python) + (".foreign" if failure == "identity-mismatch" else "")))
+    monkeypatch.setattr(module, "process_identity", identity)
+    monkeypatch.setattr(module, "read_worker_ready", lambda *_args, **_kwargs: failure != "readiness-failed")
+    query = Mock(return_value=True)
+    if failure == "query-failed":
+        query.side_effect = JobObjectError("private-secret")
+    monkeypatch.setattr(module, "process_in_any_job", query)
+    supervisor._perform_update_handoff()
+    expected = ("update_handoff_failed" if failure == "other-denial"
+                else "update_handoff_rejected" if failure in {"reservation-cancelled", "identity-requery-failed"}
+                else "update_handoff_job_blocked" if failure == "creation-denied"
+                else "update_handoff_cleanup_unconfirmed")
+    assert supervisor._ack.call_args.kwargs["result"] == expected
+    assert supervisor._stopping is False and popen.call_count == 1
+    if failure == "readiness-failed":
+        rejected = [call for call in supervisor._log.call_args_list
+                    if call.args == ("update_handoff_readiness_rejected",)]
+        assert len(rejected) == 1 and rejected[0].kwargs == process.handoff_ready_failure
+        assert "private-secret" not in str(rejected)
+    if os.name == "nt":
+        assert popen.call_args.kwargs["creationflags"] == 0x01000208
+    if failure not in {"creation-denied", "other-denial"}:
+        process.terminate.assert_called_once_with()
+        process.wait.assert_called_once_with(timeout=5)
+    else:
+        process.terminate.assert_not_called()
+        failed = [call for call in supervisor._log.call_args_list if call.args == ("update_handoff_create_failed",)]
+        assert len(failed) == 1 and failed[0].kwargs["winerror"] == 5 and failed[0].kwargs["errno"] == 13
+        assert "private-secret" not in str(failed)
+
+
+@pytest.mark.parametrize("cleanup", ["terminate-denied", "wait-timeout", "absence-unknown"])
+def test_worker_cleanup_unconfirmed_never_claims_safe_failure(tmp_path, cleanup):
+    from enterprise.runtime.supervisor import RuntimeSupervisor
+    from unittest.mock import Mock
+    supervisor = RuntimeSupervisor.__new__(RuntimeSupervisor)
+    supervisor._ack, supervisor._log = Mock(), Mock()
+    supervisor._stopping = False
+    process = Mock()
+    process.poll.return_value = None
+    if cleanup == "terminate-denied":
+        process.terminate.side_effect = OSError(5, "private-secret")
+    elif cleanup == "wait-timeout":
+        process.wait.side_effect = subprocess.TimeoutExpired("private-secret", 5)
+    supervisor._reject_update_worker({}, process, {"state": "healthy"}, "update_handoff_failed")
+    assert supervisor._ack.call_args.kwargs["result"] == "update_handoff_cleanup_unconfirmed"
+    assert supervisor._stopping is False
+    assert "private-secret" not in str(supervisor._log.call_args_list)
+
+
+@pytest.mark.parametrize("exited,lock_exists", [(False, False), (True, True), (True, False)])
+def test_worker_requires_original_source_exit_and_lock_absence(monkeypatch, exited, lock_exists):
+    from enterprise.ops.update import handoff
+    from unittest.mock import Mock
+    lease, lock = Mock(), Mock()
+    lease.wait_for_exit.return_value = exited
+    lock.exists.return_value = lock_exists
+    ticks = iter([0, 0, 2])
+    monkeypatch.setattr(handoff.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(handoff.time, "sleep", Mock())
+    assert handoff._wait_source_stopped(lease, lock, timeout_seconds=1) is (exited and not lock_exists)
+    lease.wait_for_exit.assert_called_once_with(0.1)
+
+
+@pytest.mark.parametrize("condition", ["active", "terminal", "actor-mismatch", "source-mismatch",
+                                       "foreign-lock", "malformed-lock", "missing-lock", "replaced-lock"])
+def test_handoff_reservation_read_is_nonmutating_and_fail_closed(tmp_path, monkeypatch, condition):
+    from enterprise.ops.update import mvp
+    roots, store, job_id, pointer, calls, launcher = _execution_fixture(tmp_path, monkeypatch)
+    store.reserve_execution(job_id)
+    store.write_status(job_id, "FAILED" if condition == "terminal" else "UPDATING",
+                       actor_user_id="foreign" if condition == "actor-mismatch" else "actor-1",
+                       result_code="fixture", source_release_id="release-A")
+    if condition == "foreign-lock":
+        payload = json.loads(store.lock_path.read_bytes())
+        payload["job_id"] = "b" * 32
+        store.lock_path.write_text(json.dumps(payload))
+    elif condition == "malformed-lock":
+        store.lock_path.write_bytes(b"invalid")
+    elif condition == "missing-lock":
+        store.lock_path.unlink()
+    before = store.lock_path.read_bytes() if store.lock_path.exists() else None
+    status = store.read_status(job_id)
+    real_stat = os.stat
+    if condition == "replaced-lock":
+        def stat(path, *args, **kwargs):
+            actual = real_stat(path, *args, **kwargs)
+            if Path(path) == store.lock_path and kwargs.get("follow_symlinks") is False:
+                return SimpleNamespace(st_dev=actual.st_dev, st_ino=actual.st_ino + 1)
+            return actual
+        monkeypatch.setattr(mvp.os, "stat", stat)
+    if condition == "active":
+        identity = store.active_handoff_reservation(job_id, "release-A")
+        actual = real_stat(store.lock_path)
+        assert identity == (actual.st_dev, actual.st_ino)
+    else:
+        with pytest.raises((mvp.UpdateMvpError, OSError, PathSafetyError)):
+            store.active_handoff_reservation(job_id, "foreign" if condition == "source-mismatch" else "release-A")
+    assert (store.lock_path.read_bytes() if store.lock_path.exists() else None) == before
+    assert store.read_status(job_id) == status and calls == [] and pointer.release.release_id == "release-A"
+
+
+@pytest.mark.parametrize("age", [11, -1, None])
+def test_late_or_invalid_handoff_request_never_resolves_install_roots(monkeypatch, age):
+    from datetime import datetime, timedelta, timezone
+    from enterprise.runtime.supervisor import RuntimeSupervisor
+    supervisor = RuntimeSupervisor.__new__(RuntimeSupervisor)
+    request = {"issued_at": (datetime.now(timezone.utc) - timedelta(seconds=age)).isoformat()
+               if age is not None else "invalid"}
+    with patch("enterprise.runtime.portable.windows_local_app_data_known_folder",
+               side_effect=AssertionError("late request must not touch roots")):
+        assert supervisor._handoff_reservation("a" * 32, request) is None
+
+
+@pytest.mark.skipif(os.name != "nt", reason="real owned Windows child")
+@pytest.mark.parametrize("deny_termination", [False, True])
+def test_real_owned_worker_cleanup_and_timeout_are_bounded(deny_termination):
+    from enterprise.runtime.supervisor import RuntimeSupervisor
+    from unittest.mock import Mock
+    supervisor = RuntimeSupervisor.__new__(RuntimeSupervisor)
+    supervisor._ack, supervisor._log = Mock(), Mock()
+    supervisor._stopping = False
+    process = subprocess.Popen([sys.executable, "-I", "-B", "-c", "import time; time.sleep(30)"],
+                               stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        if deny_termination:
+            with patch.object(process, "terminate", return_value=None):
+                supervisor._reject_update_worker({}, process, {}, "update_handoff_failed",
+                                                  probe_cleanup_confirmed=True)
+            assert process.poll() is None
+            assert supervisor._ack.call_args.kwargs["result"] == "update_handoff_cleanup_unconfirmed"
+        else:
+            supervisor._reject_update_worker({}, process, {}, "update_handoff_failed",
+                                              probe_cleanup_confirmed=True)
+            assert process.poll() is not None
+            assert supervisor._ack.call_args.kwargs["result"] == "update_handoff_failed"
+        assert supervisor._stopping is False
+    finally:
+        if process.poll() is None:
+            process.terminate()  # Exact original child handle, never PID enumeration.
+        process.wait(timeout=5)
+
+
+def test_blocked_handoff_has_durable_specific_code_and_releases_only_own_reservation(tmp_path, monkeypatch):
+    from enterprise import update_api
+    roots, store, job_id, pointer, calls, launcher = _execution_fixture(tmp_path, monkeypatch)
+    monkeypatch.setattr(update_api, "PATH_ROOTS", roots)
+    monkeypatch.setattr(update_api, "request_portable_update_handoff", lambda **kw: {"result": "update_handoff_job_blocked"})
+    monkeypatch.setattr(update_api.edb, "log_action", lambda *_args: None)
+    actor = store.read_plan(job_id)["actor_user_id"]
+    update_api._launch_handoff(job_id, actor)
+    assert store.read_status(job_id)["state"] == "FAILED"
+    assert store.read_status(job_id)["result_code"] == "SYSTEM_UPDATE_HANDOFF_JOB_BLOCKED"
+    assert not store.lock_path.exists() and pointer.release.release_id == "release-A" and calls == []
+    assert "SYSTEM_UPDATE_HANDOFF_JOB_BLOCKED" in (store.job_root(job_id) / "events.jsonl").read_text()
+
+
+@pytest.mark.parametrize("acknowledgement", ["cleanup-unconfirmed", "acknowledgement-lost", "control-timeout"])
+def test_uncertain_worker_keeps_recovery_block_reservation_and_data(tmp_path, monkeypatch, acknowledgement):
+    from enterprise import update_api
+    from enterprise.ops.update.mvp import UpdateMvpError
+    from enterprise.ops.update.handoff import _finalize_terminal_failure
+    from unittest.mock import Mock
+    roots, store, job_id, pointer, calls, launcher = _execution_fixture(tmp_path, monkeypatch)
+    store.reserve_execution(job_id)
+    lock_bytes = store.lock_path.read_bytes()
+    monkeypatch.setattr(update_api, "PATH_ROOTS", roots)
+    request = Mock(return_value={"result": "update_handoff_cleanup_unconfirmed"})
+    if acknowledgement == "acknowledgement-lost":
+        request.side_effect = OSError(5, "private-secret")
+    if acknowledgement == "control-timeout":
+        request.return_value = {"result": "control_timeout"}
+    monkeypatch.setattr(update_api, "request_portable_update_handoff", request)
+    # Audit failure must not reclassify uncertainty or remove its reservation.
+    monkeypatch.setattr(update_api.edb, "log_action", Mock(side_effect=OSError(5, "private-secret")))
+    actor = store.read_plan(job_id)["actor_user_id"]
+    update_api._launch_handoff(job_id, actor)
+    result = store.read_status(job_id)
+    assert result["state"] == "RECOVERY_REQUIRED" and result["recovery_required"] is True
+    assert result["result_code"] == "SYSTEM_UPDATE_HANDOFF_CLEANUP_UNCONFIRMED"
+    assert store.lock_path.read_bytes() == lock_bytes
+    assert _finalize_terminal_failure(roots, job_id, "SYSTEM_UPDATE_WORKER_FAILED") is False
+    assert store.read_status(job_id) == result and store.lock_path.read_bytes() == lock_bytes
+    assert pointer.release.release_id == "release-A" and calls == []
+    assert store.pending_recovery_jobs() == [job_id]
+    with pytest.raises(UpdateMvpError) as blocked:
+        store.reserve_execution("b" * 32)
+    assert blocked.value.code == "SYSTEM_UPDATE_RECOVERY_REQUIRED"
+    assert "private-secret" not in json.dumps(result)
+
+
+def test_probe_cleanup_uncertainty_retains_recovery_state_and_reservation(tmp_path, monkeypatch):
+    from enterprise.ops.update.handoff import _finalize_terminal_failure
+    roots, store, job_id, pointer, calls, launcher = _execution_fixture(tmp_path, monkeypatch)
+    store.reserve_execution(job_id)
+    original = store.lock_path.read_bytes()
+    monkeypatch.setattr("enterprise.ops.update.handoff._emit_terminal_audit", lambda *_args: None)
+    assert _finalize_terminal_failure(roots, job_id, "SYSTEM_UPDATE_WORKER_FAILED",
+                                      handoff_cleanup_unconfirmed=True) is False
+    status = store.read_status(job_id)
+    assert status["state"] == "RECOVERY_REQUIRED" and status["recovery_required"] is True
+    assert store.lock_path.read_bytes() == original
+    assert calls == [] and pointer.release.release_id == "release-A"
+
+
+@pytest.mark.parametrize("result_code", ["SYSTEM_UPDATE_SOURCE_STOP_TIMEOUT", "SYSTEM_UPDATE_WORKER_FAILED"])
+def test_committed_updating_worker_failure_retains_recovery_and_reservation(tmp_path, monkeypatch, result_code):
+    from enterprise.ops.update.handoff import _finalize_terminal_failure
+    roots, store, job_id, pointer, calls, launcher = _execution_fixture(tmp_path, monkeypatch)
+    store.reserve_execution(job_id)
+    original_lock = store.lock_path.read_bytes()
+    store.write_status(job_id, "UPDATING", actor_user_id="actor-1", result_code="SYSTEM_UPDATE_STARTED",
+                       source_release_id="release-A", target_release_id="release-B", handoff_committed=True)
+    monkeypatch.setattr("enterprise.ops.update.handoff._emit_terminal_audit", lambda *_args: None)
+    assert _finalize_terminal_failure(roots, job_id, result_code) is False
+    status = store.read_status(job_id)
+    assert status["state"] == "RECOVERY_REQUIRED" and status["recovery_required"] is True
+    assert status["handoff_committed"] is True and status["interrupted_state"] == "UPDATING"
+    assert status["result_code"] == result_code and store.lock_path.read_bytes() == original_lock
+    assert store.pending_recovery_jobs() == [job_id]
+    assert calls == [] and pointer.release.release_id == "release-A"
+
+
+def test_worker_terminal_read_write_and_unlock_share_the_commit_gate(tmp_path, monkeypatch):
+    from enterprise.ops.update import handoff, mvp
+    from enterprise.runtime import handoff_commit
+    roots, store, job_id, pointer, calls, launcher = _execution_fixture(tmp_path, monkeypatch)
+    store.reserve_execution(job_id)
+    held, observed = [], []
+    class Gate:
+        def __enter__(self):
+            held.append(True)
+        def __exit__(self, *_exc):
+            held.pop()
+    monkeypatch.setattr(handoff_commit, "HandoffCommitGate", lambda _job: Gate())
+    monkeypatch.setattr(mvp, "UpdateJobStore", lambda _roots: store)
+    for name in ("read_plan", "read_status", "write_status", "acquire_execution_lock", "release_execution_lock"):
+        original = getattr(store, name)
+        def guarded(*args, _name=name, _original=original, **kwargs):
+            assert held == [True]
+            observed.append(_name)
+            return _original(*args, **kwargs)
+        monkeypatch.setattr(store, name, guarded)
+    monkeypatch.setattr(handoff, "_emit_terminal_audit", lambda *_args: None)
+    assert handoff._finalize_terminal_failure(roots, job_id, "SYSTEM_UPDATE_WORKER_FAILED") is True
+    assert observed == ["read_plan", "read_status", "write_status", "acquire_execution_lock", "release_execution_lock"]
+    assert held == [] and not store.lock_path.exists() and calls == []
+
+
+@pytest.mark.parametrize("failure", ["gate", "status-write"])
+def test_worker_terminal_gate_or_write_failure_keeps_reservation(tmp_path, monkeypatch, failure):
+    from contextlib import nullcontext
+    from unittest.mock import Mock
+    from enterprise.ops.update import handoff, mvp
+    from enterprise.runtime import handoff_commit
+    roots, store, job_id, pointer, calls, launcher = _execution_fixture(tmp_path, monkeypatch)
+    store.reserve_execution(job_id)
+    original_lock, original_status = store.lock_path.read_bytes(), store.read_status(job_id)
+    monkeypatch.setattr(mvp, "UpdateJobStore", lambda _roots: store)
+    monkeypatch.setattr(handoff, "_emit_terminal_audit", Mock())
+    if failure == "gate":
+        monkeypatch.setattr(handoff_commit, "HandoffCommitGate",
+                            Mock(side_effect=handoff_commit.HandoffCommitUnavailable("fixture")))
+    else:
+        monkeypatch.setattr(handoff_commit, "HandoffCommitGate", lambda _job: nullcontext())
+        monkeypatch.setattr(store, "write_status", Mock(side_effect=OSError(5, "private-secret")))
+    assert handoff._finalize_terminal_failure(roots, job_id, "SYSTEM_UPDATE_WORKER_FAILED") is False
+    assert store.lock_path.read_bytes() == original_lock and store.read_status(job_id) == original_status
+    handoff._emit_terminal_audit.assert_not_called()
+    assert calls == [] and pointer.release.release_id == "release-A"
+
+
+def test_worker_terminal_waits_for_commit_gate_and_rereads_api_recovery(tmp_path, monkeypatch):
+    import threading
+    from enterprise.ops.update import handoff
+    from enterprise.runtime import handoff_commit
+    roots, store, job_id, pointer, calls, launcher = _execution_fixture(tmp_path, monkeypatch)
+    store.reserve_execution(job_id)
+    original_lock = store.lock_path.read_bytes()
+    original_gate = handoff_commit.HandoffCommitGate
+    attempted, finished = threading.Event(), threading.Event()
+    results = []
+    class ObservedGate(original_gate):
+        def __enter__(self):
+            attempted.set()
+            return super().__enter__()
+    # Thread fallback supplies a deterministic ordering test, not Windows qualification.
+    monkeypatch.setattr(handoff_commit, "os", SimpleNamespace(name="posix"))
+    monkeypatch.setattr(handoff_commit, "HandoffCommitGate", ObservedGate)
+    monkeypatch.setattr(handoff, "_emit_terminal_audit", lambda *_args: None)
+    def finalize():
+        try:
+            results.append(handoff._finalize_terminal_failure(roots, job_id, "SYSTEM_UPDATE_WORKER_FAILED"))
+        finally:
+            finished.set()
+    thread = threading.Thread(target=finalize)
+    with original_gate(job_id):
+        thread.start()
+        assert attempted.wait(timeout=1)
+        assert not finished.is_set()
+        assert store.read_status(job_id)["state"] == "UPDATING"
+        store.write_status(job_id, "RECOVERY_REQUIRED", actor_user_id="actor-1",
+                           result_code="SYSTEM_UPDATE_HANDOFF_CLEANUP_UNCONFIRMED", recovery_required=True)
+        recovery_status = store.read_status(job_id)
+    thread.join(timeout=3)
+    assert not thread.is_alive() and results == [False]
+    assert store.read_status(job_id) == recovery_status and store.lock_path.read_bytes() == original_lock
+    assert calls == [] and pointer.release.release_id == "release-A"
+
+
+@pytest.mark.parametrize("phase", ["UPDATING", "MIGRATING", "RESTARTING", "VERIFYING"])
+def test_lost_ack_cannot_cancel_committed_handoff_or_later_phase(tmp_path, monkeypatch, phase):
+    from enterprise import update_api
+    roots, store, job_id, pointer, calls, launcher = _execution_fixture(tmp_path, monkeypatch)
+    store.reserve_execution(job_id)
+    store.write_status(job_id, "UPDATING", actor_user_id="actor-1", result_code="fixture",
+                       source_release_id="release-A", target_release_id="release-B")
+    reservation = store.active_handoff_reservation(job_id, "release-A")
+    store.commit_handoff(job_id, "release-A", reservation)
+    store.write_status(job_id, phase, actor_user_id="actor-1", result_code="fixture")
+    original, status = store.lock_path.read_bytes(), store.read_status(job_id)
+    assert status["handoff_committed"] is True
+    monkeypatch.setattr(update_api, "PATH_ROOTS", roots)
+    monkeypatch.setattr(update_api, "request_portable_update_handoff", lambda **_kw: {"result": "control_timeout"})
+    update_api._launch_handoff(job_id, "actor-1")
+    assert store.read_status(job_id) == status and store.lock_path.read_bytes() == original
+    assert calls == [] and pointer.release.release_id == "release-A"
+
+
+def test_api_commit_mutex_timeout_keeps_acceptance_unknown_and_reserved(tmp_path, monkeypatch):
+    from enterprise import update_api
+    from enterprise.runtime import handoff_commit
+    from unittest.mock import Mock
+    roots, store, job_id, pointer, calls, launcher = _execution_fixture(tmp_path, monkeypatch)
+    store.reserve_execution(job_id)
+    original, status = store.lock_path.read_bytes(), store.read_status(job_id)
+    monkeypatch.setattr(update_api, "PATH_ROOTS", roots)
+    monkeypatch.setattr(update_api, "request_portable_update_handoff", lambda **_kw: {"result": "control_timeout"})
+    monkeypatch.setattr(handoff_commit, "HandoffCommitGate",
+                        Mock(side_effect=handoff_commit.HandoffCommitUnavailable("fixture")))
+    update_api._launch_handoff(job_id, "actor-1")
+    assert store.read_status(job_id) == status and store.lock_path.read_bytes() == original
+    assert calls == [] and pointer.release.release_id == "release-A"
+
+
+@pytest.mark.parametrize("decision", ["accepted", "cancelled", "write-failed", "mutex-close-failed"])
+def test_source_commit_and_timeout_decision_are_serialized(tmp_path, monkeypatch, decision):
+    from contextlib import nullcontext
+    from enterprise.runtime import supervisor as module
+    from enterprise.runtime.ownership import ProcessIdentity
+    from unittest.mock import Mock
+    supervisor = module.RuntimeSupervisor.__new__(module.RuntimeSupervisor)
+    supervisor._stopping = False
+    supervisor.config = SimpleNamespace(app_root=tmp_path / "release-A")
+    supervisor._handoff_reservation = Mock(return_value=None if decision == "cancelled" else (1, 2))
+    store = Mock()
+    if decision == "write-failed":
+        store.commit_handoff.side_effect = OSError(5, "private-secret")
+    supervisor._handoff_store = lambda: store
+    identity = ProcessIdentity(123, 1, "fixed-python.exe")
+    process = Mock(pid=123)
+    process.poll.return_value = None
+    monkeypatch.setattr(module, "process_identity", lambda _pid: identity)
+    if decision == "mutex-close-failed":
+        class Gate:
+            def __enter__(self):
+                return self
+            def __exit__(self, *_args):
+                raise OSError(5, "private-secret")
+        monkeypatch.setattr(module, "HandoffCommitGate", lambda *_args: Gate())
+    else:
+        monkeypatch.setattr(module, "HandoffCommitGate", lambda *_args: nullcontext())
+    accepted = decision in {"accepted", "mutex-close-failed"}
+    assert supervisor._commit_update_handoff("a" * 32, {}, (1, 2), process, identity) is accepted
+    assert supervisor._stopping is accepted
+    assert store.commit_handoff.call_count == (0 if decision == "cancelled" else 1)
+
+
+def test_uncommitted_ack_io_failure_cannot_stop_the_source():
+    from enterprise.runtime.supervisor import RuntimeSupervisor
+    from unittest.mock import Mock
+    supervisor = RuntimeSupervisor.__new__(RuntimeSupervisor)
+    supervisor._stopping = False
+    supervisor._ack = Mock(side_effect=OSError(5, "private-secret"))
+    assert supervisor._safe_handoff_ack({}, result="update_handoff_rejected") is False
+    assert supervisor._stopping is False
+
+
+def test_safe_handoff_failure_releases_reservation_even_when_audit_fails(tmp_path, monkeypatch):
+    from enterprise import update_api
+    from unittest.mock import Mock
+    roots, store, job_id, pointer, calls, launcher = _execution_fixture(tmp_path, monkeypatch)
+    store.reserve_execution(job_id)
+    monkeypatch.setattr(update_api, "PATH_ROOTS", roots)
+    monkeypatch.setattr(update_api, "request_portable_update_handoff", lambda **kw: {"result": "update_handoff_failed"})
+    monkeypatch.setattr(update_api.edb, "log_action", Mock(side_effect=OSError(5, "private-secret")))
+    update_api._launch_handoff(job_id, store.read_plan(job_id)["actor_user_id"])
+    assert store.read_status(job_id)["state"] == "FAILED"
+    assert not store.lock_path.exists() and calls == []
+
+
+@pytest.mark.parametrize("terminal", ["SUCCEEDED", "ROLLED_BACK", "RECOVERY_REQUIRED"])
+def test_lost_acknowledgement_cannot_overwrite_completed_worker(tmp_path, monkeypatch, terminal):
+    from enterprise import update_api
+    from unittest.mock import Mock
+    roots, store, job_id, pointer, calls, launcher = _execution_fixture(tmp_path, monkeypatch)
+    actor = store.read_plan(job_id)["actor_user_id"]
+    store.write_status(job_id, terminal, actor_user_id=actor, result_code="SYSTEM_UPDATE_TEST_TERMINAL")
+    before = store.read_status(job_id)
+    monkeypatch.setattr(update_api, "PATH_ROOTS", roots)
+    monkeypatch.setattr(update_api, "request_portable_update_handoff", Mock(side_effect=OSError(5, "private-secret")))
+    update_api._launch_handoff(job_id, actor)
+    assert store.read_status(job_id) == before and calls == []
 
 
 def test_update_records_target_and_automatic_recovery_separately(tmp_path, monkeypatch):

@@ -10,6 +10,7 @@ import time
 import uuid
 from collections import deque
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -33,7 +34,10 @@ from .process import (
     start_process,
 )
 from .state import STARTUP_LOCK_GRACE_SECONDS, RuntimeStateError, RuntimeStateStore, initial_state
-from .windows import JobObjectError, ProcessJob
+from .windows import JobObjectError, ProcessJob, current_job_diagnostics, process_in_any_job
+from .handoff_lifecycle import read_worker_ready, worker_creation_flags
+from .handoff_commit import HandoffCommitGate
+from .error_contract import public_lifecycle_details
 
 
 ROLES = ("upstream", "gateway")
@@ -408,6 +412,17 @@ class RuntimeSupervisor:
         except JobObjectError as exc:
             self.store.release_lock(self.instance_id)
             raise RuntimeSupervisorError("runtime process ownership is unavailable") from exc
+        context = current_job_diagnostics()
+        member_query = getattr(self._job, "contains_current_process", None)
+        try:
+            if callable(member_query):
+                context["process_in_owned_runtime_job"] = member_query()
+        except JobObjectError:
+            context["owned_runtime_job_query_ok"] = False
+        try:
+            self._log("supervisor_job_context", **context)
+        except OSError:
+            pass
 
     def _control_path(self, prefix: str, role: str, suffix: str) -> Path:
         return self.config.runtime_root / "control" / f"{prefix}-{self.instance_id[:12]}-{role}.{suffix}"
@@ -890,42 +905,199 @@ class RuntimeSupervisor:
             or not worker.is_file()
             or not python.is_file()
         ):
-            self._ack(request, result="update_handoff_rejected", before=before, after=before)
+            self._safe_handoff_ack(request, result="update_handoff_rejected", before=before, after=before)
+            return
+        reservation = self._handoff_reservation(job_id, request)
+        if reservation is None:
+            self._safe_handoff_ack(request, result="update_handoff_rejected", before=before, after=before)
+            return
+        source_identity = self.supervisor_identity
+        try:
+            source_valid = same_process(source_identity, process_identity(source_identity.pid))
+        except OSError:
+            source_valid = False
+        if not source_valid:
+            self._safe_handoff_ack(request, result="update_handoff_rejected", before=before, after=before)
             return
         environment = dict(os.environ)
         for name in ("PYTHONHOME", "PYTHONPATH", "PYTHONSTARTUP", "PYTHONINSPECT"):
             environment.pop(name, None)
         environment["PYTHONNOUSERSITE"] = "1"
         environment["PYTHONDONTWRITEBYTECODE"] = "1"
-        creationflags = 0
-        if os.name == "nt":
-            creationflags = int(getattr(subprocess, "DETACHED_PROCESS", 0)) | int(
-                getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-            )
+        creation_context = current_job_diagnostics()
+        if os.name == "nt" and creation_context.get("job_query_ok") is not True:
+            self._safe_handoff_ack(request, result="update_handoff_job_blocked", before=before, after=before)
+            return
+        creationflags = worker_creation_flags(creation_context)
         try:
+            try:
+                self._log("update_handoff_create_context", creation_flags=creationflags, **creation_context)
+            except OSError:
+                pass
             process = subprocess.Popen(
-                [str(python), "-I", "-B", str(worker), "--job-id", job_id],
+                [str(python), "-I", "-B", str(worker), "--job-id", job_id,
+                 "--source-pid", str(source_identity.pid),
+                 "--source-created-at", str(source_identity.created_at),
+                 "--source-executable", str(source_identity.executable)],
                 cwd=str(self.config.app_root),
                 env=environment,
                 stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
                 close_fds=True,
                 creationflags=creationflags,
                 shell=False,
             )
+        except OSError as exc:
+            try:
+                self._log("update_handoff_create_failed", **public_lifecycle_details({
+                    "creation_flags": creationflags, **creation_context,
+                    "errno": exc.errno, "winerror": getattr(exc, "winerror", None)}))
+            except OSError:
+                pass
+            restrictive_job = (creation_context.get("process_in_job") is True
+                               and creation_context.get("job_query_ok") is True
+                               and type(creation_context.get("job_limit_flags")) is int
+                               and not creation_context["job_limit_flags"] & (0x0800 | 0x1000))
+            result = ("update_handoff_job_blocked" if restrictive_job and getattr(exc, "winerror", None) == 5
+                      else "update_handoff_failed")
+            self._safe_handoff_ack(request, result=result, before=before, after=before)
+            return
+        try:
+            identity = process_identity(process.pid)
+            identity_valid = (process.poll() is None and identity is not None
+                              and os.path.normcase(identity.executable) == os.path.normcase(str(python)))
         except OSError:
-            self._ack(request, result="update_handoff_failed", before=before, after=before)
+            identity_valid = False
+        if not identity_valid:
+            self._reject_update_worker(request, process, before, "update_handoff_failed")
             return
-        identity = process_identity(process.pid)
-        if process.poll() is not None or identity is None or os.path.normcase(identity.executable) != os.path.normcase(str(python)):
-            self._ack(request, result="update_handoff_failed", before=before, after=before)
+        try:
+            worker_in_job = process_in_any_job(process)
+            independent = self._job is not None and self._job.contains_process(process) is False
+        except (OSError, JobObjectError):
+            independent = None
+        if independent is not True:
+            # The worker waits for this supervisor's lock to disappear, so it
+            # cannot migrate before this proof. Use only its original handle.
+            try:
+                self._log("update_handoff_job_blocked", job_query_ok=independent is not None,
+                          **({"worker_process_in_job": worker_in_job} if independent is not None else {}))
+            except OSError:
+                pass
+            self._reject_update_worker(request, process, before, "update_handoff_job_blocked")
             return
-        after = self._command_snapshot()
-        after["update_worker_pid"] = process.pid
-        self._ack(request, result="update_handoff_started", before=before, after=after)
-        self._log("update_handoff_started", request_id=request["request_id"], update_job_id=job_id)
-        self._stopping = True
+        if not read_worker_ready(process, job_id, source_identity, identity, timeout_seconds=5):
+            failure = getattr(process, "handoff_ready_failure", None)
+            if type(failure) is dict:
+                try:
+                    # read_worker_ready exposes only its fixed diagnostic
+                    # whitelist, never exception text, paths or environment.
+                    self._log("update_handoff_readiness_rejected", **failure)
+                except OSError:
+                    pass
+            self._reject_update_worker(request, process, before, "update_handoff_job_blocked")
+            return
+        # Readiness is bound to the original pipe/identities, and is not a
+        # durable permission to stop a source after cancellation or timeout.
+        try:
+            still_valid = (process.poll() is None and same_process(identity, process_identity(process.pid))
+                           and self._handoff_reservation(job_id, request) == reservation)
+        except OSError:
+            still_valid = False
+        if not still_valid:
+            self._reject_update_worker(request, process, before, "update_handoff_rejected",
+                                       probe_cleanup_confirmed=True)
+            return
+        try:
+            self._log("update_handoff_independence_verified", worker_process_in_job=worker_in_job,
+                      worker_not_in_source_job=True, host_creation_verified=True, host_cleanup_confirmed=True)
+        except OSError:
+            self._reject_update_worker(request, process, before, "update_handoff_failed",
+                                       probe_cleanup_confirmed=True)
+            return
+        if not self._commit_update_handoff(job_id, request, reservation, process, identity):
+            self._reject_update_worker(request, process, before, "update_handoff_cleanup_unconfirmed",
+                                       probe_cleanup_confirmed=True)
+            return
+        # Durable acceptance is the point of no return. Lost ACK/log I/O may
+        # not undo it or kill the worker; API timeout reads the same commit.
+        try:
+            after = self._command_snapshot()
+            after["update_worker_pid"] = process.pid
+            self._ack(request, result="update_handoff_started", before=before, after=after)
+            self._log("update_handoff_started", request_id=request["request_id"], update_job_id=job_id)
+        except Exception:
+            pass
+
+    def _commit_update_handoff(self, job_id, request, reservation, process, identity):
+        try:
+            with HandoffCommitGate(job_id):
+                if (process.poll() is not None or not same_process(identity, process_identity(process.pid))
+                        or self._handoff_reservation(job_id, request) != reservation):
+                    return False
+                self._handoff_store().commit_handoff(job_id, self.config.app_root.name, reservation)
+                self._stopping = True
+            return True
+        except Exception:
+            # Releasing a mutex must not revoke a successfully committed stop.
+            return self._stopping is True
+
+    def _handoff_store(self):
+        from enterprise.paths import PortableRootInputs, derive_portable_path_roots
+        from enterprise.runtime.portable import windows_local_app_data_known_folder
+        from enterprise.ops.update.mvp import UpdateJobStore
+        roots = derive_portable_path_roots(
+            PortableRootInputs(self.config.app_root.parent.parent, windows_local_app_data_known_folder()),
+            self.config.app_root.name,
+        )
+        return UpdateJobStore(roots)
+
+    def _safe_handoff_ack(self, request, **fields):
+        try:
+            self._ack(request, **fields)
+            return True
+        except Exception:
+            return False  # Uncommitted ACK errors may never tear down the source.
+
+    def _handoff_reservation(self, job_id, request):
+        """Reject late control work before it can stop a healthy source."""
+        try:
+            issued = datetime.fromisoformat(request["issued_at"].replace("Z", "+00:00"))
+            age = (datetime.now(timezone.utc) - issued).total_seconds()
+            # send_update_handoff waits 15 seconds. Leave margin for the ack;
+            # this is an operation safety deadline, not an investigation limit.
+            if issued.tzinfo is None or not 0 <= age < 10:
+                return None
+            return self._handoff_store().active_handoff_reservation(job_id, self.config.app_root.name)
+        except Exception:
+            return None
+
+    def _reject_update_worker(self, request, process, before, result, *, probe_cleanup_confirmed=False) -> None:
+        """Reap only the original Popen handle; uncertain cleanup blocks updates.
+
+        The API persists RECOVERY_REQUIRED and retains the reservation when
+        absence cannot be confirmed. The worker must respect that terminal
+        state even if the source is subsequently stopped by the operator.
+        """
+        stopped = False
+        try:
+            if process.poll() is None:
+                process.terminate()
+            process.wait(timeout=5)
+            stopped = process.poll() is not None
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        try:
+            self._log("update_handoff_worker_cleanup", worker_stop_confirmed=stopped)
+        except OSError:
+            pass
+        if not stopped or probe_cleanup_confirmed is not True:
+            result = "update_handoff_cleanup_unconfirmed"
+        try:
+            self._ack(request, result=result, before=before, after=before)
+        except Exception:
+            pass  # ACK I/O failure is not permission to stop the source.
 
     def _perform_restart(self) -> None:
         request = self._restart_request

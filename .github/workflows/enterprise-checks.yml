@@ -6,6 +6,12 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      fixed_exe_gates:
+        description: 'Opt-in synthetic fixed EXE gates; qualify handoff before building'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -13,6 +19,7 @@ permissions:
 jobs:
   enterprise-python-311:
     name: Enterprise suite (Windows, Python 3.11)
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.fixed_exe_gates }}
     runs-on: windows-latest
     timeout-minutes: 25
     env:
@@ -36,6 +43,7 @@ jobs:
 
   runtime-python-314:
     name: Runtime reliability (Windows, Python 3.14)
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.fixed_exe_gates }}
     runs-on: windows-latest
     timeout-minutes: 15
     env:
@@ -61,3 +69,118 @@ jobs:
           enterprise/tests/test_stab_1_supervisor_logging.py::test_detached_service_host_lifecycle
           enterprise/tests/test_stab_1_supervisor_logging.py::test_role_isolation_and_stop
           enterprise/tests/test_stab_1_supervisor_logging.py::test_instance_bound_command_acknowledgements
+
+  fixed-exe-gates:
+    name: Fixed EXE real gates (opt-in, synthetic data)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.fixed_exe_gates }}
+    runs-on: windows-latest
+    timeout-minutes: 35
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Qualify independent handoff before touching synthetic installation roots
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $artifactRoot = Join-Path $env:RUNNER_TEMP ('ICE-fixed-exe-' + $env:GITHUB_RUN_ID)
+          New-Item -ItemType Directory -Path $artifactRoot | Out-Null
+          "ICE_EXE_GATE_ROOT=$artifactRoot" | Add-Content -LiteralPath $env:GITHUB_ENV
+          python -B -m enterprise.tests.fixed_exe_handoff_qualification --output (Join-Path $artifactRoot 'qualification.json')
+          if ($LASTEXITCODE -ne 0) { throw 'INDEPENDENT_HANDOFF_ENVIRONMENT_NOT_VERIFIED' }
+      - name: Install only the existing harness application dependencies
+        run: python -m pip install -r requirements.txt -r enterprise/requirements.txt
+      - name: Prepare immutable Runtime inputs and pinned compiler
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function Fetch-Verified($url, $path, $sha, $size) {
+            if (Test-Path -LiteralPath $path) { throw 'Input destination exists' }
+            Invoke-WebRequest -Uri $url -OutFile $path -TimeoutSec 120
+            if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -ne $sha) { throw 'Pinned input hash mismatch' }
+            if ($size -and (Get-Item -LiteralPath $path).Length -ne $size) { throw 'Pinned input size mismatch' }
+          }
+          $root = $env:ICE_EXE_GATE_ROOT
+          $source = Get-Content -LiteralPath 'runtime/windows/python-source.json' -Raw | ConvertFrom-Json
+          Fetch-Verified $source.official_source_url (Join-Path $root $source.archive_filename) $source.sha256 $source.size_bytes
+          $lock = Get-Content -LiteralPath 'runtime/windows/wheelhouse.lock.json' -Raw | ConvertFrom-Json
+          $policy = Get-Content -LiteralPath 'runtime/windows/build-policy.json' -Raw | ConvertFrom-Json
+          foreach ($collection in @(@{name='wheels'; items=$lock.wheels}, @{name='bootstrap'; items=$policy.bootstrap_wheels})) {
+            $destination = Join-Path $root $collection.name
+            New-Item -ItemType Directory -Path $destination | Out-Null
+            foreach ($wheel in $collection.items) {
+              $metadata = Invoke-RestMethod -Uri ('https://pypi.org/pypi/' + $wheel.package + '/' + $wheel.version + '/json') -TimeoutSec 60
+              $matches = @($metadata.urls | Where-Object { $_.filename -eq $wheel.filename })
+              if ($matches.Count -ne 1 -or $matches[0].digests.sha256 -ne $wheel.sha256 -or $matches[0].size -ne $wheel.size_bytes -or !$matches[0].url.StartsWith('https://files.pythonhosted.org/')) { throw 'Pinned wheel provenance mismatch' }
+              Fetch-Verified $matches[0].url (Join-Path $destination $wheel.filename) $wheel.sha256 $wheel.size_bytes
+            }
+          }
+          $compiler = Get-Content -LiteralPath 'installer/windows/native-entry-build-policy.json' -Raw | ConvertFrom-Json
+          $package = Join-Path $root $compiler.compiler_package
+          Fetch-Verified $compiler.compiler_package_url $package $compiler.compiler_package_sha256 0
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          [System.IO.Compression.ZipFile]::ExtractToDirectory($package, (Join-Path $root 'compiler'))
+          git fetch --no-tags --depth=1 https://github.com/hero8152/Infinite-Canvas.git f1dd6834a72f3e7ff8340be05a84347d931e9cb9
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned upstream fetch failed' }
+      - name: Build clean synthetic source and target using the unchanged Runtime contract
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = $env:ICE_EXE_GATE_ROOT
+          $repo = (Get-Location).Path
+          $head = git rev-parse HEAD
+          $sourcePolicy = Join-Path $repo 'runtime/windows/python-source.json'
+          $source = Get-Content -LiteralPath $sourcePolicy -Raw | ConvertFrom-Json
+          $runtimeArgs = @('--source-archive', (Join-Path $root $source.archive_filename), '--source-policy', $sourcePolicy,
+            '--requirements-lock', (Join-Path $repo 'runtime/windows/requirements.lock'), '--wheelhouse-lock', (Join-Path $repo 'runtime/windows/wheelhouse.lock.json'),
+            '--build-policy', (Join-Path $repo 'runtime/windows/build-policy.json'), '--wheelhouse', (Join-Path $root 'wheels'),
+            '--bootstrap-wheelhouse', (Join-Path $root 'bootstrap'), '--enterprise-commit', $head, '--enterprise-worktree', $repo, '--output', (Join-Path $root 'runtime-build'))
+          foreach ($command in @('build-runtime', 'build-archive', 'verify-archive')) {
+            python -B tools/build_windows_runtime.py $command @runtimeArgs
+            if ($LASTEXITCODE -ne 0) { throw ('Runtime fixture failed: ' + $command) }
+          }
+          $fixture = Join-Path $root 'source-fixture'
+          git worktree add --detach $fixture $head
+          if ($LASTEXITCODE -ne 0) { throw 'Synthetic source worktree failed' }
+          if ((Get-Content -LiteralPath (Join-Path $fixture 'VERSION') -Raw).Trim() -ne '2026.08.5') { throw 'Synthetic version assumption changed' }
+          # A local test-only Git identity: same implementation, VERSION-only difference.
+          [IO.File]::WriteAllText((Join-Path $fixture 'VERSION'), "2026.08.4`n", [Text.UTF8Encoding]::new($false))
+          git -C $fixture add -- VERSION
+          git -C $fixture -c user.name='ICE Synthetic Fixture' -c user.email='fixture@invalid' commit -m 'test fixture: source version 2026.08.4 only'
+          if ($LASTEXITCODE -ne 0) { throw 'Synthetic source identity failed' }
+          foreach ($build in @(@{repo=$fixture; name='source-build'}, @{repo=$repo; name='target-build'})) {
+            python -B tools/build_release_manifest_v2.py build --repo $build.repo --output-root (Join-Path $root $build.name) --runtime-root (Join-Path $root 'runtime-build/runtime') --runtime-evidence-root (Join-Path $root 'runtime-build/evidence')
+            if ($LASTEXITCODE -ne 0) { throw 'Clean synthetic payload build failed' }
+          }
+          $compiler = Get-Content -LiteralPath 'installer/windows/native-entry-build-policy.json' -Raw | ConvertFrom-Json
+          python -B tools/build_native_entry.py --repo $fixture --compiler-package (Join-Path $root $compiler.compiler_package) --compiler-root (Join-Path $root 'compiler') --output-root (Join-Path $root 'source-native')
+          if ($LASTEXITCODE -ne 0) { throw 'Fixed EXE build failed' }
+      - name: Run all three real fixed EXE gates once
+        shell: pwsh
+        run: |
+          $root = $env:ICE_EXE_GATE_ROOT
+          python -B -m enterprise.tests.fixed_exe_update_windows_smoke --run-all --source-build (Join-Path $root 'source-build') --source-native-entry (Join-Path $root 'source-native') --target-build (Join-Path $root 'target-build') --evidence-root (Join-Path $root 'smoke')
+          if ($LASTEXITCODE -ne 0) { throw 'Fixed EXE real gates did not all pass' }
+      - name: Preserve bounded synthetic evidence, never publish a Release
+        if: ${{ always() && env.ICE_EXE_GATE_ROOT != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: fixed-exe-gates-${{ github.sha }}
+          path: |
+            ${{ env.ICE_EXE_GATE_ROOT }}/qualification.json
+            ${{ env.ICE_EXE_GATE_ROOT }}/source-build/build-report.json
+            ${{ env.ICE_EXE_GATE_ROOT }}/target-build/build-report.json
+            ${{ env.ICE_EXE_GATE_ROOT }}/source-native/native-entry-build-record.json
+            ${{ env.ICE_EXE_GATE_ROOT }}/smoke/SUMMARY.json
+            ${{ env.ICE_EXE_GATE_ROOT }}/smoke/*/observed-terminal.json
+            ${{ env.ICE_EXE_GATE_ROOT }}/smoke/*/terminal.json
+            ${{ env.ICE_EXE_GATE_ROOT }}/smoke/*/events.jsonl
+            ${{ env.ICE_EXE_GATE_ROOT }}/smoke/*/fault-acquired.json
+            ${{ env.ICE_EXE_GATE_ROOT }}/smoke/*/cleanup*.json
+          retention-days: 7

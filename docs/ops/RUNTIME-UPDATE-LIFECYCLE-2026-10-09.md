@@ -53,3 +53,191 @@ portable CLI 保留已经核准的 lexical APP/Runtime 根，不再通过 `resol
 真实 CLI 与执行器故障注入是两组独立证据，不能拼接为完整固定入口→handoff→目标启动→自动恢复验收。未新增 schema、付费 Provider 调用、长稳/硬件故障测试、Release、生产启停或零停机声明。
 
 早前生产失败的缺失 stage/errno 仍是 `not_recorded`；本增量只能改进未来记录。EXE 重建上下文后 10.1 成功不能证明旧失败的唯一根因，也不能证明已解决全部长期崩溃问题。
+
+## 6. 评审合并后：完整固定 EXE 演练准备
+
+#147 已于 2026-10-09 合并。准确 Head `222b2dfd8adc2c1237ff8d38cddd3093640139ba` 经评审、三个 CI 检查通过并按 Head 校验合并；merge 为 `a5a6aa10b7882c46f129ec6df854239ee111da18`。没有发布新 Release、覆盖 10.1 或连接生产。
+
+后续分支 `codex/fixed-exe-update-validation-20261009` 增加独立 opt-in 脚本 `enterprise/tests/fixed_exe_update_windows_smoke.py`。它使用真实固定 EXE、自己的全新数据库/账号/配置/画布/素材、实际登录及密码授权 HTTP execute、真实 detached handoff worker，预期核验三种终态：`SUCCEEDED`、瞬时端口冲突后的 `ROLLED_BACK`、端口冲突持续时的 `RECOVERY_REQUIRED`。同时验证源进程退出、worker 退出、指针、阶段记录、业务身份及配置/素材保留、完整程序 payload。不是直接伪造启动器返回值或作业终态。
+
+两个包从干净、可追溯 Git 提交独立构建，产物仅在仓库外开发 artifact 目录：
+
+| 测试身份 | 准确源码 | ZIP SHA-256 | detached Manifest SHA-256 |
+| --- | --- | --- | --- |
+| 源 `ice-2026.08.4-df69184a3f01` | `df69184a3f0181669828f94199fd533f3832aa26`，仅把测试源 VERSION 从合并后的 main 改成 2026.08.4 | `d245ff10012cc91aaa1d12f12c0c031a48e8662db49801b5c1edf72b9a019d6f` | `91c124c1f64c7f0c91fe301e664506f948b80dee97b0db51e4e2743d32c1d12f` |
+| 目标 `ice-2026.08.5-a5a6aa10b788` | `a5a6aa10b7882c46f129ec6df854239ee111da18` | `a4a6399b7e1ac96760d1d17a8f0cc7bc14762819ca2c6bbcc64642a8ecb7a267` | `8f9bffebce014e3a288579b2eceb33ad7820aec1a76734baccd5afd087b6dbe8` |
+
+两份 native build 也分别绑定对应提交，固定 EXE 双构建一致，SHA-256 为 `570ad6885cae124e39f534bc6a95073212eec0ad4d9c1d8085f5e0888d3987fd`。同结构 v2 数据库；已有 CPython 3.14.6 x64 Runtime 按构建器核验后复用。测试版本号仅为引擎的 newer-only 路由提供准确夹具身份，不代表历史客户 08.4/08.5 资产，也不发布这些测试包或源 fixture 分支。
+
+安全定向组 `test_fixed_exe_update_smoke_safety.py`、既有烟测清理保护与生命周期诊断 **48 passed / 4.02 秒**。它只证明未授权不移动、停止身份门槛、未知锁不清理、目录边界、保存副本完整性、恢复不覆盖及继承配置隔离；不是三条真实 EXE 场景已通过。
+
+截至 #148 初版 Head `43dd5e9a163cbe3d9580baab90e5fee4a82397ed`，开发机历史默认根只读核验为 stopped、无活动实例，尚未移动，完整执行等待明确许可。该 Head 三个 CI 检查随后通过。默认拒绝占用根，不删除历史材料，也不把新账户/干净设备作为门槛；异常清理或恢复目的地被占用时保留两份材料。获授权后的执行结果见下节，不能继续把本段未执行状态当作最新结果。
+
+## 7. 获授权后的真实链路结果：未通过
+
+负责人明确确认允许临时封存开发机两处默认 Runtime/cache 并原样恢复。测试不连接生产，不使用客户数据、配置或密钥，也不调用付费 Provider。
+
+准备过程中修正了测试工具边界：历史缓存长文件使用 Windows extended-length 命名空间读取，仍逐项检查 reparse；保留 builder 原始输出和 attestation，另建已完整校验的三资产安装视图；KnownFolder fixture 清理保留 lexical 身份，不用可能虚拟化的 `resolve()` 替换；测试安装根缩短到仓库外 `D:\CodeProject\review-artifacts\t\F1\f\s\i`，避免准备阶段的 nonce partial 目录触发 WinError 206。没有改系统长路径设置、正式源码/资产或生产配置。
+
+真实作业 `2cc8dbfb5b2e447c854322d1774a712e` 已完成固定 EXE 启动、健康、实际超级管理员登录、当前密码授权 HTTP execute 和 detached handoff，但预期成功场景最终失败：
+
+| 实际阶段 | 观测结果 |
+| --- | --- |
+| 源固定 EXE 启动与健康 | `started`；readiness 全部 true |
+| target_start | exit 2；`RUNTIME_CONTROL_ERROR`；`failure_stage=service_host_create`；`errno=13`；`winerror=5` |
+| target_stop | exit 0；`SYSTEM_UPDATE_RUNTIME_PHASE_OK` |
+| source_start 自动恢复 | exit 2；相同创建宿主阶段和 OS 错误 |
+| 最终状态 | `RECOVERY_REQUIRED / SYSTEM_UPDATE_ROLLBACK_HEALTH_FAILED`；原始 `failure_code=RUNTIME_CONTROL_ERROR` 保留 |
+
+证据保留在 `D:\CodeProject\review-artifacts\t\F1` 的真实安装副本、作业 status/events 与 native 结果中；未生成成功 SUMMARY。失败注入的 rollback/recovery-required 两场景因首场景失败而未执行，不报告三条链路通过。阶段/错误落盘有效，但恢复闭环尚未通过。
+
+测试实例和 worker 已结束，开发机历史根通过原字节/mtime/目录身份恢复验证；曾因旧清理 helper 的 resolve 别名误拒绝留下的两个 fixture marker 目录也保留，没有删除历史内容。F1 当时仅提出 Job 继承/脱离的待核验假设，没有从 WinError 5 单独认定根因，也不能反推旧生产失败的缺失字段。随后新增真实创建上下文及保护验证见下一节，不改写这次原始失败证据。
+
+#148 继续保持 Draft，不合并未通过的完整验收，不发布新版本。定向安全/清理/诊断测试扩至 **53 passed**；文档和后续 CI 以实际 Head 记录，不以初版绿 CI 代表这些补充已经验证。
+
+## 8. 真实 Job 上下文与停机前安全阻断
+
+本节记录 #148 在 2026-10-09 的定向调查和工程修复，不变更正式路线图、需求范围、数据库表或客户环境。根因证据及最小建议先记录于 [PR 调查记录](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/148#issuecomment-6079147935)，随后实施停机前保护。
+
+### 8.1 真实失败上下文，不以匿名探针代替
+
+只读诊断提交 `283ef49a896532b5465efbb7abffc9bbd977109f` 不改创建行为。源 fixture `84eafac563ecff5cab921bd5a805044c0f79c423` 与目标诊断提交分别构建完整测试包；固定 EXE 字节及 CP314 Runtime 不变，Manifest/Inventory/ZIP 校验通过。原 F1 和正式 10.1 资产未修改。
+
+真实作业 `ee3e9ebffd7c4257b1d6eee62ca56f02` 在仓库外 `D:\CodeProject\review-artifacts\t\J2` 复现：
+
+| 真实创建位置 | 观测的 Python creationflags 请求值 | 查询到的 immediate Job flags | 结果 |
+| --- | --- | --- | --- |
+| 固定 EXE 初次启动源 service-host | 0x01000208 | 0x2800 | 启动、健康成功 |
+| Supervisor 创建 handoff | 0x00000208 | 0x2000 | 普通 detached 创建成功 |
+| handoff 创建目标和恢复 launcher | 0 | 0x2000 | launcher 创建成功 |
+| 目标及恢复 launcher 创建 service-host | 0x01000208 | 0x2000 | 两次 service_host_create，errno=13 / winerror=5 |
+
+`0x01000208` 包含 BREAKAWAY_FROM_JOB、DETACHED_PROCESS 与 NEW_PROCESS_GROUP；`0x2000` 仅 KILL_ON_CLOSE，`0x2800` 另含 BREAKAWAY_OK。Job 查询成功、源/目标两个真实阶段均保留这些白名单字段和 worker 上下文，终态仍为 RECOVERY_REQUIRED。诊断/清理定向测试 **55 passed**；不是完整升级通过。
+
+标志精度边界：日志记录的是实际调用 `subprocess.Popen/run` 的请求参数，不是独立 WinAPI Hook/ETW 记录。[CPython 3.14.6 的 _winapi 后端源码](https://github.com/python/cpython/blob/v3.14.6/Modules/_winapi.c#L1304-L1315) 在 `CreateProcessW` 时再 OR `EXTENDED_STARTUPINFO_PRESENT`（0x00080000）及 `CREATE_UNICODE_ENVIRONMENT`（0x00000400）。按这份已固定版本源码推导，上表请求 0 / 0x208 / 0x01000208 对应 API 参数 0x00080400 / 0x00080608 / 0x01080608；这些附加位不改变 breakaway 判断。原始诊断值不补改，也不声称捕获了 .NET 初始 launcher 创建时的全部 API 标志。
+
+本次真实失败的直接条件得到核验：禁止 breakaway 的调用 Job 与必须脱离的宿主创建不相容。初次成功后变成另一个 Job 的解释与 [Windows 嵌套 Job 部分脱离契约](https://learn.microsoft.com/en-us/windows/win32/procthread/nested-jobs) 一致；没有枚举全部祖先、取得外部 Job 名称/句柄或证明其创建者。`QueryInformationJobObject(NULL)` 只代表 immediate Job。后续 J7 真实日志进一步确认 Supervisor **不属于自己创建的 runtime Job**，因此不能靠放宽业务子进程 Job 来修复外部限制。旧生产失败的缺失字段仍不补猜测。
+
+### 8.2 最小保护与影响
+
+- handoff 在停止源服务前明确请求 Job 独立性；普通 SILENT_BREAKAWAY 情形使用其自动脱离契约，其他 Windows 创建请求包含 BREAKAWAY。
+- 创建失败不取消隔离标志重试；创建成功也使用原 Popen 进程句柄核验 worker 不属于任何 Job。无法证明独立性时，仅回收刚创建的 worker，源服务不进入 stopping。遇查询失败仍阻断，不伪造“无 Job”。
+- WinError 5 只有在已查明的 restrictive Job 条件下归为 Job 创建阻断；其他拒绝保留一般创建失败。新 handoff 创建失败日志也使用 stage 之外的固定上下文、errno/winerror 白名单，不保存异常正文。
+- 更新持久记录专用结果码 `SYSTEM_UPDATE_HANDOFF_JOB_BLOCKED`，释放自身预约；不创建 target_start/source_start 假阶段、不切换指针或迁移数据库。
+- runtime 业务子进程 Job 的 KILL_ON_CLOSE、gateway/upstream 创建标志、身份/fence/lease、端口停止确认、目标 stop 与数据库 expected-current 恢复保护不变。不修改外部 Job、不向所有业务子进程开放 breakaway、不运行逃逸 broker 或系统调度绕过限制。
+
+### 8.3 真实负向保护演练通过，不是升级成功
+
+安全保护提交 `21145a02fc2760c369fe615c99404f4cbc4187cc` 的合成源 fixture 为 `17f3662d92a1088d6185313b821e006dcbfa868a`，仅使用 older-only 路由所需 VERSION 差异。源码和固定 EXE 从干净提交完整构建，包校验通过。固定 EXE SHA-256 仍为 `570ad6885cae124e39f534bc6a95073212eec0ad4d9c1d8085f5e0888d3987fd`；不是对已发布文件打补丁。
+
+可重复调用 opt-in `--restricted-job-guard` 模式；证据 `D:\CodeProject\review-artifacts\t\J7`，真实作业 `ad3d2528eb3e41e78b5c1db3e9f9a02a`：
+
+- 真实源 EXE 启动、super_admin 登录、密码授权 HTTP execute 均执行。
+- 源 Supervisor 的外部 Job 为 0x2000，`process_in_owned_runtime_job=false`；带 BREAKAWAY 的 handoff 在源仍 healthy 时被拒绝。
+- 终态 **FAILED / SYSTEM_UPDATE_HANDOFF_JOB_BLOCKED** 为预期负向结果；`runtime_phases` 没有执行项、指针保持 source。
+- 原三进程的创建身份未变化，源健康与再次登录通过；预约释放、无残留 worker、业务身份/数据/配置/画布/素材保留，以及源/目标完整 payload 校验通过。
+- 最后只停止自己的测试实例；原开发历史 Runtime/cache 已通过字节/mtime/目录身份恢复。无生产操作、付费请求或 GUI 点击验收。
+
+故障前阻断、更新/诊断/隔离安全定向组 **115 passed**；APP_ROOT 写入审计定向 **7 passed**。最后增加的 handoff 错误落盘属于同一策略的诊断补充，另做定向复核；不冒充 J7 已重建执行该后续日志补充。
+
+| 完整真实门禁 | 本轮状态 |
+| --- | --- |
+| 固定 EXE 完整升级成功 | 未通过；受限环境现在正确停在停机前保护 |
+| 目标失败后自动恢复 source | 未通过；J2 已观测失败，J7 未运行该场景 |
+| 持续失败后的恢复安全阻断 | 未完成完整场景；现有执行器定向检查不替代它 |
+
+#148 保持 Draft。完成三门禁需要真实允许独立宿主的启动上下文及完整安装副本；不会以去掉隔离标志或绕过外部 Job 的方式制造通过结果。本节不形成第二套路线图，也不把源码、定向测试、CI、合并、Release 与现场验收合并为一个完成状态。
+
+## 9. 工作包 B：关联异常收口与测试环境门槛
+
+负责人已确认以一个可靠性交付工作包连续处理相关实现、回归和真实验收，不逐项申请小修改审批；本工作包仍使用 #148，不增加产品范围或另一套路线图。#149 的 Docs-only 需求基线已独立批准并合入 main（`b9a9d860bf202737dd4dc491e2b7ce9ea9058d15`），不授权核心业务代码、Release 或生产操作。
+
+### 9.1 本轮关联修复
+
+- 新 worker 的身份缺失、解释器不匹配、身份读取失败及 Job 查询失败统一走原 Popen 句柄回收，不能只返回失败而遗留等待源停止的 worker。正常确认退出才允许作为安全失败释放自身预约。
+- 回收被拒绝、等待超时或无法确认退出时，源不进入 stopping；API 持久化 `RECOVERY_REQUIRED / SYSTEM_UPDATE_HANDOFF_CLEANUP_UNCONFIRMED` 并保留预约，阻止再次升级。无须停止仍健康的业务服务，但也不自动解除恢复警告。
+- 未取得 handoff 确认属于未知，不猜测未创建 worker；迟到/丢失确认不覆盖已完成的终态。审计写入失败不降级恢复阻断，不释放不确定 worker 的预约。
+- 被拒绝的 worker 后续超时或执行失败不得把既有终态改成普通 FAILED，也不得清除已保存的阻断/预约。只有 UPDATING 作业可进入执行器；不确定清理的作业不能迁移或切换指针。
+- 不改 gateway/upstream Job 隔离、角色创建标志、停止确认、expected-current 数据恢复、身份权限或业务数据库格式。真实停止未确认仍不能启动 source 或盲目恢复数据。
+
+### 9.2 集中验证与环境结论
+
+关联回归集中覆盖身份失败、Job 查询失败、创建拒绝、清理超时、预约/终态保留、迟到确认、数据指针不变，以及原诊断、执行恢复与烟测清理保护。另用自己的真实 Windows 子进程验证成功回收与 5 秒超时；超时测试的终止请求被定向抑制，最后仅回收原子进程，不操作其他 PID。
+
+本轮四个直接相关模块集中回归：158 passed（含两个真实子进程用例），23.28 秒；`tools/check_docs.py` 通过，`git diff --check` 通过。这些结果不是固定 EXE 三门禁或现场稳定性证据。
+
+此前 J2 真实失败和 J7 真实停机前阻断直接复用，未再次在同一受限宿主运行完整升级。本轮仓库外 `D:\CodeProject\review-artifacts\t\WPB1` 仅评估替代启动上下文：
+
+- 当前账户、RunLevel=0、InteractiveToken 的一次性调度资格检查运行后已移除自建任务；观察到 Job flags=0，未证明独立性。未用 SYSTEM、提权、账户密码、持久运行任务或修改 Job。
+- 普通 Shell 自动化创建仍保留原受限链；经现有 Explorer/桌面上下文的资格检查观察到 0x800 → 0x1800。实际 CP314 Runtime 在有限三层创建后仍报告属于 Job，未达到当前 handoff 的强独立性检查。
+- 0x1800 包含允许 breakaway 的位，不能写成“禁止创建”；也不能把成功创建等同于 worker 已不属于任何 Job。没有据此扩大到读全部祖先句柄、改外部限制、假定其所有者或放宽产品保护。
+- 资格检查不移动历史 Runtime/cache，不安装应用、不切换指针、不连接业务库；所有临时子进程已结束。它不是三条固定 EXE 完整场景的执行结果。
+
+**环境状态：INDEPENDENT_HANDOFF_ENVIRONMENT_NOT_VERIFIED。** 不继续重复相同无新证据的失败演练，也不以 CI 或上述小探针替代真实门禁。后续仍为本工作包 B：优先使用现有 GitHub Windows Runner 或可证明独立性的开发/测试会话；不强制要求新设备、干净用户或关闭系统安全保护。选定宿主后，用同一 `fixed_exe_update_windows_smoke` 的 `--run-all` 一次集中执行完整升级、目标失败自动恢复和持续失败安全阻断；沿用准确合成源码/Manifest/Inventory/Runtime/EXE 身份与原数据保留检查。
+
+现有 `enterprise-checks.yml` 增加手动 `fixed_exe_gates=true` 入口（默认关闭），先用普通 detached 宿主及产品相同的 breakaway 策略验证原句柄独立性，未通过即停止。不降低 Job 门槛，也不重复执行默认两组 CI。通过后才下载 SHA-256 固定的 Runtime/轮子/编译器，使用当前准确 clean Head 构建合成目标和仅 VERSION 不同的本地合成源提交，再运行上述三门禁。只保留小型合成证据 7 天，不发布正式版本，不携带客户数据或凭据。Runner 资格用例新增 7 项定向检查，烟测保护模块共 32 passed；资格检查通过本身仍不等于 EXE 演练通过。
+
+在三项真实门禁全部通过前，#148 仍 Draft，工作包 B 尚未完整交付，也不启动阶段 3 之外的业务开发。集中交付证据在 PR 汇总，不为各错误条件建立新项目或重复交接包。
+
+### 9.3 已批准的测试设备：离线合成门禁包
+
+2026-10-10 负责人批准在此前测试设备继续工作包 B。此前开发宿主的外部 Job 限制不再重复调查；GitHub 手动 run `37948426926` 也在资格检查阶段观测到 guarded worker 创建 WinError 5，后续构建及三场景未运行。两项结果只说明对应启动上下文不合格，不代表此前生产升级失败的完整根因。
+
+新增 `enterprise/tests/fixed_exe_device_runner.py` 是该工作包的可复用离线测试入口，不是新的业务安装器。交付包包含准确 clean Head 导出的测试工具、已核验 CPython 3.14.6 Runtime、仅 VERSION 不同的可追溯合成源提交与目标包、原生固定 EXE 及构建记录。旧 fixture 提交、原始记录与正式 Release 均不覆盖。
+
+- 现场先核对交付 ZIP SHA-256，并从桌面启动包内入口；不要由受限 Agent shell 反复运行同一失败链，也不得关闭 Job 检查、系统安全保护或提权绕过。
+- 全包 SHA-256/大小/成员闭合检查及独立 handoff 资格检查通过后，才运行既有 `fixed_exe_update_windows_smoke --run-all`。资格失败只生成小型报告，三门禁仍为 NOT_RUN；不启停原服务、不连接原数据库、不移动 Runtime/cache。
+- 仅使用合成账号、数据库、画布与素材，不调用付费 Provider，不升级原测试安装，不连接生产。使用短 D 盘工作目录，不回退至 C 盘或修改机器的长路径策略。
+- 已有测试设备默认 Runtime/cache 必须先经固定 EXE 正常停止并核验身份/端口/锁；明确允许临时封存才使用 `--preserve-existing-local-roots`。脚本不代替停止原服务，不清理未知锁；保存目录原样恢复且验证字节、mtime、目录身份。清理/恢复无法确认时保留现场，不以删除或覆盖制造通过。
+- 不对演练父进程强行超时终止，避免跳过其受控退出与历史恢复。现场不重试失败场景、不清理证据、不运行旧生产回退脚本。
+- 回传只含资格结果、准确源/目标提交、三门禁状态及阶段码的两文件报告 ZIP；数据库、JWT 配置及原始日志留测试设备。终态标签本身不能使门禁通过；必须同时确认真实 HTTP、固定 EXE、worker/source 退出、数据保留、自动恢复及历史根恢复。
+
+门禁包的生成/校验、定向测试或交付本身不是测试设备三门禁完成。只有设备产生 `THREE_GATES_PASSED` 并独立审查其证据后，才具备讨论 #148 合并的前提；本轮不自动合并、发布 Release 或操作生产，也不启动工作包 C 或新增业务。
+
+## 10. 工作包 B 连续收口：交接能力、接受竞争与本机真实门禁
+
+2026-10-10 负责人要求优先由开发设备自主完成已经授权的工作，不再将本机能够执行的测试转交负责人。以上各轮证据保留；本节说明后续策略变化，不回写历史测试的观察或结论。
+
+### 10.1 独立性门槛的精确化
+
+- 第 8/9 节的“worker 不属于任何 Job”是当时的保守条件，不再作为当前单一判断。使用 Supervisor 持有的精确业务 Job 句柄及原 Popen 进程句柄，确认 worker 不在该源 Job；任意 Job 的成员查询仍须成功，但成员为 true 只作诊断。不能用 immediate Job 的 breakaway 位推断所有祖先限制或完整交接能力。
+- worker 在源停止前持有绑定 PID、创建时间、解释器和 liveness 的原源进程 lease。再由普通 launcher 创建与实际控制器相同标志的 host，核验 host 身份、其自身 Job 创建/关闭，以及 launcher/host 退出。这是应用无关的能力探针，不启动产品或连接数据库，也不允许 WinError 5 后取消隔离标志重试。
+- READY 经原 stdout 管道传递，包含作业及源/worker 创建身份、source lease 和 host 创建/清理证据。缺字段、身份不符、超时、Job 查询失败或后代清理未知均拒绝停源。原 worker 退出不等于其探针后代已清理；未知情况保留 `RECOVERY_REQUIRED` 和预约。
+- source lease 的原句柄必须已退出且 Runtime lock 已消失，worker 才能迁移。PID 再查询、锁单独消失或普通进程创建成功不能替代这两项。
+- 不修改外部 Job、祖先限制、系统保护或业务进程 KILL_ON_CLOSE；固定 host 创建标志不变。普通桌面是另外的真实运行上下文，不是取消产品门槛或新增提权 broker。
+
+### 10.2 超时、状态与提交保护
+
+Supervisor、API 超时处理及 worker 终态写入共用每个作业的 session-local Windows named mutex。在同一短期 gate 内重核当前预约/UPDATING 状态与原 worker 身份，再持久化 `handoff_committed=true`；只有成功接受才停止源。迟到控制请求也受原请求时间和预约身份检查，不能在 API 取消后停源。
+
+接受标志跨状态转换保留。接受后的 ACK/日志失败不撤销已接受 worker；未接受的 ACK 失败也不能触发源停机。gate 获取/清理失败及终态写入未知保留预约，不宣传可安全重试。worker 的等待失败终态必须与提交序列互斥，不能抢先写 FAILED 并释放随后被源接受的预约。
+
+即使仍显示 UPDATING，已接受的 worker 遇源停止超时或早期异常，也写 `RECOVERY_REQUIRED` 保留原预约和接受标志；不能因尚未迁移数据而假定源仍健康、允许直接再升级。状态 atomic replace 已成功后的临时文件清理不再反向宣布发布失败。六个直接相关模块的最终集中回归为 **310 passed**；APP_ROOT 写入审计无未覆盖、过时映射、缺失锚点或解析失败，文档登记检查通过。以上是源码/定向验证，不代表三项真实门禁或客户稳定性通过。
+
+### 10.3 环境证据与验收边界
+
+开发命令宿主的真实 CPython 3.14.6 资格检查：源 immediate Job 为 `0x2800`，worker 使用 `0x01000208` 创建且不在精确源 Job，但后续 `probe_host_create` 返回 WinError 5 / errno 13，后代清理未证实。未运行产品，未停源或改数据；该上下文仍不合格，不能反推旧生产失败的未记录原因。
+
+同一开发设备，经现有 Explorer 文件夹视图的普通当前用户 ShellExecute、PowerShell 7 启动相同资格工具，观察源/runner Job 为 `0x1800`；原 worker 精确源 Job 非成员、source lease、后续 host 创建/清理、原 worker 退出及自建 Job 关闭全部通过。无需新设备、SYSTEM、账户密码、提权或修改外部限制。一次 Windows PowerShell 5 的包装调用因无 BOM UTF-8 中文路径解释失败，未进入资格探针；更正包装工具后才取得有效结果，旧失败材料保留。
+
+资格通过不等于三项应用门禁通过。随后使用准确干净提交构建仅 VERSION 不同的合成源/目标、固定 EXE 和原始固定 Runtime，在同一已核验桌面上下文集中运行三项完整场景；仍要求真实 HTTP 密码授权、源/worker 停止、目标启动、自动恢复/持续失败阻断、业务数据保留及历史根原样恢复。不操作生产、不调用付费 Provider、不覆盖正式 Release；三门禁及独立审查完成前 #148 保持 Draft。
+
+### 10.4 最终代码的三项真实合成门禁全部通过
+
+最终目标代码为 `6002300eff5fd4750f84bfe684b41a739c541120`；源 fixture `8ee392cfc42cee1352a4610d9eb2072a74fe03ac` 的父提交就是该目标，差异仅 VERSION 的 2026.08.5 → 2026.08.4。使用核验过的 CPython 3.14.6 Runtime，固定 EXE 确定性双构建 SHA-256 为 `570ad6885cae124e39f534bc6a95073212eec0ad4d9c1d8085f5e0888d3987fd`。没有把历史发行包临时改成测试包，也不推送 fixture 分支或发布测试资产。
+
+2026-10-10 北京时间 **04:45:40—04:54:13**（约 8 分 33 秒），上述普通桌面上下文通过严格 v2 资格后连续执行 `--run-all`；runner 退出码 0，最终 `THREE_GATES_PASSED`。准确证据在仓库外 `D:\CodeProject\review-artifacts\t\WPB4\e`，不是只有终态字符串的模拟测试。
+
+| 真实门禁 | 实际链路和预期终态 | 验收 |
+| --- | --- | --- |
+| 完整升级 | 作业 `43b7096f54454357af4d45cddd86362c`；target_start/target_health 均 exit 0、`SYSTEM_UPDATE_RUNTIME_PHASE_OK`；目标指针和真实健康核验，终态 `SUCCEEDED` | PASS |
+| 目标失败自动恢复 | 作业 `8fd44bfd4dc949aeb5f32f522c314f7a`；target_start exit 2、`PORTABLE_RUNTIME_OWNERSHIP_UNTRUSTED`；确认 target_stop exit 0 后 source_start/source_health 均 exit 0；源指针/健康恢复，终态 `ROLLED_BACK` | PASS |
+| 持续失败安全阻断 | 作业 `5b5ebc2a5faa4df1a3b5e77ba89d2db1`；target_start/target_stop 均 exit 2、`PORTABLE_RUNTIME_OWNERSHIP_UNTRUSTED`；未确认目标停止时不启动源、不盲目恢复数据；终态 `RECOVERY_REQUIRED / SYSTEM_UPDATE_TARGET_STOP_UNCONFIRMED`，后续更新保持恢复阻断 | PASS |
+
+三项均由固定原生 EXE 启动源服务、真实超级管理员登录和当前密码授权 HTTP execute 触发，不直接调用更新执行器代替业务路径。原源进程及 detached worker 已退出，nonce 自有测试实例和端口清理确认，源/目标完整 payload 核验通过；合成身份、选定配置、画布/素材和数据库完整性/外键保留检查通过。数据库行值比较限定合成 `users`、`user_canvas_map`、`feature_flags` 等既定夹具，不能扩大为全部客户数据或历史 schema 迁移证明。
+
+`historical_roots_preserved=false`：这次桌面 KnownFolder 上下文没有既有默认 Runtime/cache 需要封存。因此 `historical_roots_restored=true` 只表示无需恢复的收尾条件满足，**不是本轮搬动并恢复了用户历史目录**；此前 F1/J7 的原字节/mtime/目录身份恢复证据仍单独保留。测试没有 GUI 点击验收、付费 Provider 请求、客户环境或实际已发布 09.9 → 10.1 兼容验证，不证明长期稳定性或业务写入后任意无损降级。
+
+只含两份 share 摘要的 `pr148-synthetic-gates-report.zip` SHA-256 为 `774998779da8b49adb31d1f869ca8360fa785436f37b4fa2f6b7d3589b29b09d`；完整 qualification、drill SUMMARY/status/events 和私有合成日志留本机，不提交原始数据库/配置/业务材料。此前 WPB3 对 `093e95a0b3157927e617a8e8279cd2cca9edfe1f` 的三门禁结果保留；本节以补上已接受后停止超时保护并重建的 WPB4 最终代码为准，不用早前结果替代最终源码验收。
+
+#148 继续保持 Draft，提交文档收口后的 PR Head 与上述运行时测试提交分开记录；若后续只有文档变更，不将新 Head 伪称为重新构建演练的代码。等待准确最终 Head 的 CI 和独立审查，不自动合并、发布 Release 或操作生产。正式路线图仍是唯一实施顺序，下一工程候选是阶段 3 剩余安装维护闭环，新增业务仍未授权。
