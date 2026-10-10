@@ -241,3 +241,7 @@ Supervisor、API 超时处理及 worker 终态写入共用每个作业的 sessio
 只含两份 share 摘要的 `pr148-synthetic-gates-report.zip` SHA-256 为 `774998779da8b49adb31d1f869ca8360fa785436f37b4fa2f6b7d3589b29b09d`；完整 qualification、drill SUMMARY/status/events 和私有合成日志留本机，不提交原始数据库/配置/业务材料。此前 WPB3 对 `093e95a0b3157927e617a8e8279cd2cca9edfe1f` 的三门禁结果保留；本节以补上已接受后停止超时保护并重建的 WPB4 最终代码为准，不用早前结果替代最终源码验收。
 
 #148 继续保持 Draft，提交文档收口后的 PR Head 与上述运行时测试提交分开记录；若后续只有文档变更，不将新 Head 伪称为重新构建演练的代码。等待准确最终 Head 的 CI 和独立审查，不自动合并、发布 Release 或操作生产。正式路线图仍是唯一实施顺序，下一工程候选是阶段 3 剩余安装维护闭环，新增业务仍未授权。
+
+### 10.5 独立审查与合并收口（2026-10-10）
+
+上段 Draft/待审查描述保留为演练完成时的历史状态，不是当前 PR 状态。准确最终 Head `fd8303337ea22bab91d4d1eb84606dcaa410f4ca` 的三项常规 CI 通过，独立审查核对源/目标构建、完整三门禁证据、清理/状态保护及变更边界后批准；#148 已合并为 `main@d95e256f068a014064f299a3655f2c1758f7b3cd`。未重新构建文档-only Head、未发布 Release 或操作生产。下一安装维护工作包见 [入口修复恢复记录](./ENTRY-REPAIR-RECOVERY-2026-10-10.md)。

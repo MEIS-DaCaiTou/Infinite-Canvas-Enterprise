@@ -40,6 +40,13 @@ def _snapshot(root):
             for p in root.rglob("*") if p.is_file()}
 
 
+def _entry_preserved_snapshot(root):
+    # Only new, owned entry journals may accumulate during entry maintenance.
+    # Do not exempt unrelated staging files, program repairs or installation state.
+    return {name: digest for name, digest in _snapshot(root).items()
+            if not Path(name).parts[:2] == ("staging", "entry-repairs")}
+
+
 def _database(root):
     # Read-only, explicitly close even under assertion failure (Windows locks).
     with contextlib.closing(sqlite3.connect((root / "data/enterprise.db").as_uri() + "?mode=ro", uri=True)) as conn:
@@ -136,6 +143,24 @@ def _fixture_business(root):
     (root / "assets/maintenance-fixture.bin").write_bytes(b"test media; no customer material")
 
 
+def _fixture_stale_entry_record(root):
+    """Seed owned stale metadata, NOT a real historical native Release.
+
+    The compiled EXE hash, installation identity, root and all Release assets
+    remain valid and unchanged. Only this synthetic installation's build-record
+    reference is intentionally stale, so real record publication/restoration is
+    nonempty even when the deterministic same-source EXE bytes are identical.
+    """
+    from enterprise.release.release_manifest_v2 import canonical_json
+    path = root / "state/installation.json"
+    expected = path.read_bytes()
+    value = json.loads(expected)
+    value["native_entry"]["build_record_sha256"] = hashlib.sha256(b"fixture-only-stale-build-record").hexdigest()
+    path.write_bytes(canonical_json(value))
+    assert path.read_bytes() != expected
+    return expected
+
+
 def test_actual_bundled_python_new_install_duplicate_rejection_and_repair(resources):
     root = _root(resources)
     exit_code, result = _pipe(resources, root, "install")
@@ -156,7 +181,7 @@ def test_actual_bundled_python_new_install_duplicate_rejection_and_repair(resour
         assert exit_code == 0 and repaired["code"] == "INSTALL_ENTRY_REPAIRED", repaired
         assert repaired["installation_id"] == identity
         assert repaired["database_changed"] is repaired["pointer_changed"] is False
-    assert _snapshot(root) == before and _database(root) == database
+    assert _entry_preserved_snapshot(root) == before and _database(root) == database
 
 
 def test_real_new_install_pointer_failure_rolls_back_then_retry_succeeds(resources, monkeypatch):
@@ -195,12 +220,17 @@ def test_entry_repair_postpublication_failure_restores_only_owned_files(resource
         with pytest.raises(entry_module.InstallEntryError, match="INSTALL_ENTRY_RECOVERY_REQUIRED"):
             entry_module.repair_fixed_entry(install_root=root, entry=resources["entry"],
                                            local_app_data_base=resources["base"] / "local")
-    # Backups are retained evidence, not business data or an incomplete active lock.
+    # A newly observed update recovery blocks even entry rollback until the
+    # exact source is proven again. Do not guess that deleting its lock is safe.
     after = _snapshot(root)
     assert all(after.get(name) == digest for name, digest in before.items())
     assert not (root / "InfiniteCanvas.exe").exists()
-    assert not (root / "state/system-update-active.lock").exists()
+    assert (root / "state/system-update-active.lock").exists()
     assert UpdateJobStore.pending_recovery_jobs is original
+    recovered = entry_module.recover_fixed_entry(install_root=root, entry=resources["entry"],
+                                                 local_app_data_base=resources["base"] / "local")
+    assert recovered["repair_state"] == "ROLLED_BACK" and not recovered["launcher_installed"]
+    assert not (root / "state/system-update-active.lock").exists()
     repaired = entry_module.repair_fixed_entry(install_root=root, entry=resources["entry"],
                                                local_app_data_base=resources["base"] / "local")
     assert repaired["installation_id"] == installed.installation_id
@@ -276,6 +306,116 @@ repair.repair_program(install_root=pathlib.Path(sys.argv[2]), release_dir=pathli
                              cwd=resources["base"], capture_output=True, timeout=180,
                              creationflags=subprocess.CREATE_NO_WINDOW)
     assert process.returncode == 86, (process.returncode, process.stdout, process.stderr)
+
+
+def _crash_entry_runner(resources, root, checkpoint, *, recovering=False):
+    app = resources["app"]
+    # The runner really exits: no monkeypatched OS inspector, no finally-based
+    # lease release and no in-process recovery. A distinct Setup bridge acquires
+    # the Windows-released lease and rechecks the retained immutable identities.
+    code = """
+import os, pathlib, sys
+sys.path.insert(0, sys.argv[1])
+from enterprise import install_entry, install_entry_repair
+from enterprise.runtime.portable import windows_local_app_data_known_folder
+def crash(name):
+    if name == sys.argv[4]: os._exit(86)
+install_entry_repair._checkpoint = crash
+entry = install_entry.verify_entry_bundle(pathlib.Path(sys.argv[3]) / 'native-entry')
+operation = install_entry.recover_fixed_entry if sys.argv[5] == 'recover' else install_entry.repair_fixed_entry
+operation(install_root=pathlib.Path(sys.argv[2]), entry=entry,
+    local_app_data_base=windows_local_app_data_known_folder())
+"""
+    process = subprocess.run([str(app / "python/python.exe"), "-I", "-B", "-c", code,
+                              str(app), str(root), str(resources["assets"]), checkpoint,
+                              "recover" if recovering else "repair"],
+                             cwd=resources["base"], capture_output=True, timeout=180,
+                             creationflags=subprocess.CREATE_NO_WINDOW)
+    assert process.returncode == 86, (process.returncode, process.stdout, process.stderr)
+
+
+@pytest.mark.parametrize("checkpoint", ["locked", "prepared", "entry_published", "record_published", "committed"])
+def test_actual_process_death_recovers_only_its_fixed_entry_transaction(resources, checkpoint):
+    root = _root(resources)
+    _install(resources, root)
+    _fixture_business(root)
+    expected_record = _fixture_stale_entry_record(root)
+    # A same-source native build has equal bytes before and after maintenance.
+    # Removing ONLY this fixture's owned entry proves real nonempty publication
+    # and absent-entry rollback. Different nonempty old bytes are a unit contract,
+    # not a claimed real historical native build validated by this drill.
+    (root / "InfiniteCanvas.exe").unlink()
+    before, database = _entry_preserved_snapshot(root), _database(root)
+    _crash_entry_runner(resources, root, checkpoint)
+    lock = root / "state/system-update-active.lock"
+    assert lock.is_file()
+    exit_code, recovered = _pipe(resources, root, "recover-entry")
+    expected = "SUCCEEDED" if checkpoint == "committed" else "ROLLED_BACK"
+    assert exit_code == 0 and recovered["code"] == "INSTALL_ENTRY_RECOVERED", recovered
+    assert recovered["repair_state"] == expected
+    assert recovered["database_changed"] is recovered["pointer_changed"] is False
+    assert not lock.exists()
+    if expected == "ROLLED_BACK":
+        assert not (root / "InfiniteCanvas.exe").exists()
+        assert _entry_preserved_snapshot(root) == before
+        exit_code, repaired = _pipe(resources, root, "repair-entry")
+        assert exit_code == 0 and repaired["repair_state"] == "SUCCEEDED", repaired
+    assert (root / "InfiniteCanvas.exe").read_bytes() == resources["entry"].data
+    assert (root / "state/installation.json").read_bytes() == expected_record
+    after = _entry_preserved_snapshot(root)
+    assert all(after[name] == digest for name, digest in before.items() if name != str(Path("state/installation.json")))
+    assert _database(root) == database
+
+
+@pytest.mark.parametrize("checkpoint", ["record_restored", "entry_restored"])
+def test_actual_second_process_death_resumes_fixed_entry_restoration(resources, checkpoint):
+    root = _root(resources)
+    _install(resources, root)
+    _fixture_business(root)
+    expected_record = _fixture_stale_entry_record(root)
+    (root / "InfiniteCanvas.exe").unlink()
+    before, database = _entry_preserved_snapshot(root), _database(root)
+    _crash_entry_runner(resources, root, "record_published")
+    _crash_entry_runner(resources, root, checkpoint, recovering=True)
+    exit_code, recovered = _pipe(resources, root, "recover-entry")
+    assert exit_code == 0 and recovered["repair_state"] == "ROLLED_BACK", recovered
+    assert _entry_preserved_snapshot(root) == before and _database(root) == database
+    assert not (root / "state/system-update-active.lock").exists()
+    exit_code, repaired = _pipe(resources, root, "repair-entry")
+    assert exit_code == 0 and repaired["repair_state"] == "SUCCEEDED", repaired
+    assert (root / "InfiniteCanvas.exe").read_bytes() == resources["entry"].data
+    assert (root / "state/installation.json").read_bytes() == expected_record
+
+
+def test_actual_d_install_c_knownfolder_fence_recovers_with_same_volume_markers(resources):
+    from enterprise.runtime.portable import windows_local_app_data_known_folder
+    from enterprise import install_entry_repair
+    local_base = windows_local_app_data_known_folder()
+    root = _root(resources)
+    roots = derive_portable_path_roots(PortableRootInputs(root, local_base), resources["release_id"])
+    if root.drive.upper() != "D:" or roots.RUNTIME_ROOT.drive.upper() != "C:":
+        pytest.skip("actual D installation / C KnownFolder cross-volume gate requires those real host drives")
+    _install(resources, root)
+    _fixture_business(root)
+    (root / "InfiniteCanvas.exe").unlink()
+    before, database = _entry_preserved_snapshot(root), _database(root)
+    _crash_entry_runner(resources, root, "prepared")
+    common = root / "state/system-update-active.lock"
+    marker = json.loads(common.read_bytes())
+    directory = root / "staging/entry-repairs" / marker["operation_id"][:12]
+    retained = install_entry_repair._fence_retained(roots, marker["operation_id"])
+    fence = roots.RUNTIME_ROOT / "runtime-reconcile.lock"
+    assert directory.drive.upper() == "D:" and retained.drive.upper() == fence.drive.upper() == "C:"
+    assert retained.read_bytes() == fence.read_bytes()
+    assert (retained.stat().st_dev, retained.stat().st_ino) == (fence.stat().st_dev, fence.stat().st_ino)
+    assert list((retained.stat().st_dev, retained.stat().st_ino)) == marker["fence"]["identity"]
+    assert (directory / "common.marker").read_bytes() == common.read_bytes()
+    assert (directory / "common.marker").stat().st_ino == common.stat().st_ino
+    exit_code, recovered = _pipe(resources, root, "recover-entry")
+    assert exit_code == 0 and recovered["repair_state"] == "ROLLED_BACK", recovered
+    assert _entry_preserved_snapshot(root) == before and _database(root) == database
+    assert not common.exists() and not fence.exists()
+    assert retained.exists()  # Retained evidence, never a guessed cleanup target.
 
 
 @pytest.mark.parametrize("checkpoint", ["original_moved", "candidate_published", "committed"])
@@ -371,14 +511,20 @@ def test_actual_native_entry_and_supervisor_start_health_stop(resources):
     root = _root(resources)
     _install(resources, root)
     _fixture_business(root)
-    # Exercise the repaired interpreter/program, not only a fresh installation.
-    # Abort safely if any existing Runtime prevents stopped-state maintenance.
-    _damage_program(resources, root)
-    exit_code, repaired = _pipe(resources, root, "repair-program")
+    # Exercise a fixed entry recreated after real interrupted publication and
+    # second-process rollback, not the already-validated program-repair path.
+    (root / "InfiniteCanvas.exe").unlink()
+    _crash_entry_runner(resources, root, "entry_published")
+    exit_code, recovered = _pipe(resources, root, "recover-entry")
+    assert exit_code == 0 and recovered["repair_state"] == "ROLLED_BACK", recovered
+    assert not (root / "InfiniteCanvas.exe").exists()
+    exit_code, repaired = _pipe(resources, root, "repair-entry")
     assert exit_code == 0 and repaired["repair_state"] == "SUCCEEDED", repaired
     # No inherited deployment secrets/ports or customer runtime. Hold both test
     # ports until just before launch; Runtime rechecks ownership before starting.
     reservations = [socket.socket() for _ in range(2)]
+    from enterprise.tests.update_mvp_1_windows_smoke import _owned_identities_absent, _runtime_identities, _wait
+    identities = ()
     try:
         for reservation in reservations:
             reservation.bind(("127.0.0.1", 0))
@@ -407,12 +553,22 @@ def test_actual_native_entry_and_supervisor_start_health_stop(resources):
         exit_code, result = _native(root, "start", evidence / "start.json", environment)
         assert exit_code == 0 and result.get("result") == "started", result
         exit_code, healthy = _native(root, "health", evidence / "health.json", environment)
-        assert exit_code == 0, healthy
+        assert exit_code == 0 and healthy.get("readiness", {}).get("ready") is True, healthy
         exit_code, status = _native(root, "status", evidence / "status.json", environment)
-        assert exit_code == 0, status
+        identities = _runtime_identities(status)
+        assert exit_code == 0 and len(identities) == 3, status
+        assert status.get("portable_ownership_valid") is True and status.get("running_release_id") == resources["release_id"], status
+        assert status.get("running_release_mismatch") is False and status.get("readiness", {}).get("ready") is True, status
+        pointer = json.loads((root / "state/current-release.json").read_bytes())
+        assert status["runtime_state"]["release_manifest_sha256"] == pointer["manifest_sha256"]
     finally:
+        if not identities:
+            _exit_code, observed = _native(root, "status", evidence / "cleanup-status.json", environment)
+            identities = _runtime_identities(observed)
         exit_code, stopped = _native(root, "stop", evidence / "stop.json", environment)
         assert exit_code == 0 and stopped.get("result") in {"stopped", "already_stopped"}, stopped
+        if identities:
+            _wait(lambda: _owned_identities_absent(identities), seconds=60, label="entry-repair-owned-process-exit")
     for port in ports:
         with socket.socket() as probe:
             assert probe.connect_ex(("127.0.0.1", port)) != 0

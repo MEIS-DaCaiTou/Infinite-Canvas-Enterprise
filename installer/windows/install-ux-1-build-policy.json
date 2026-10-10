@@ -30,7 +30,7 @@
   "installer_architecture": "x64",
   "installer_filename_pattern": "Infinite-Canvas-Enterprise-Setup-<version>-x64.exe",
   "installer_source": "installer/windows/InfiniteCanvasEnterprise.iss",
-  "maintenance_operations": ["install", "repair-entry", "repair-program", "recover-program", "inspect-program"],
+  "maintenance_operations": ["install", "repair-entry", "repair-program", "recover-program", "inspect-program", "recover-entry"],
   "program_maintenance": {
     "same_release_only": true,
     "progress_is_authority": false,
@@ -44,6 +44,12 @@
     "same_commit_and_tree_as_release": true,
     "installation_identity": "independent-uuid-current-user",
     "repair_mutates_business_data": false
+  },
+  "entry_maintenance": {
+    "journal_protocol": "enterprise-entry-maintenance-plan-v2",
+    "recovery_requires_runner_lease": true,
+    "unknown_and_legacy_lock_adoption": false,
+    "runtime_must_be_stopped": true
   },
   "privileges": "current-user-lowest",
   "schema_version": "install-ux-1-build-policy-v1",
