@@ -24,14 +24,28 @@ C2 单独完成“准备包归属记录 → 占用/恢复依赖核验 → 显式
 
 ## 验证与交付状态
 
-阶段性记录：源码/测试/图形接线已编写；完整 payload、bundled Python、实际当前用户管道、实际进程退出与清理中进程死亡演练正在准备。未将 GUI 源码、安装器编译或普通 CI 视为完成图形点击验收；后续在本记录补充准确提交、产物与结果。
+截至本记录日期，实现及本机门禁已经完成，工作包以独立 Draft PR 交付；CI、独立审查及是否合并须另按准确 Head 的 GitHub 记录判断。完整准备包与图形验收使用干净源码 `350f20d87ec70d1d91db41268e1fc30bb986d583`、tree `fd6aa17a613c83ecb7a737b49cd80dfcd575f8a3`；后续本提交仅更新交付文档，不将文档 Head 冒充已构建源码。所有数据、凭据和媒体均为开发机新建的合成 fixture，没有客户数据或付费请求。
 
 | 层次 | 当前证据 | 限制 |
 | --- | --- | --- |
-| 定向关联回归 | 初轮 137 PASS / 1 SKIP，59.24 秒；实际解包闭包修复后，CPython 3.11 清理与 bridge 合计 62 项 PASS（33.44 秒），bundled CPython 3.14 清理 35 项 PASS（18.97 秒）；追加字节再核验用例单列 | 小型封闭 fixture；多数退出观测替换，不算完整 GUI 或完整生产负载；计数有重合，不相加 |
-| 实际完整准备包与 CPython | 尚待执行本工作包的准确源码构建 | 环境变量缺失的 SKIP 不算 PASS |
-| 完整图形操作 | NOT_RUN | 不把 v5 管道、源码断言或编译通过当作真实点击验收 |
-| PR / 合并 / Release / 现场 | 本工作包尚未提交 PR；不批准自动合并、发行或客户操作 | #150 的合并不是 C2 的合并 |
+| 定向关联回归 | 初轮 137 PASS / 1 SKIP，59.24 秒；实际解包闭包修复后，CPython 3.11 清理与 bridge 合计 62 项 PASS（33.44 秒），bundled CPython 3.14 清理 35 项 PASS（18.97 秒）；追加的两项核验后字节变化场景 2 PASS（1.71 秒） | 小型封闭 fixture；多数退出观测替换，不算完整 GUI 或完整生产负载；计数有重合，不相加；最终 37 项清理合同由 CI 统一执行 |
+| 实际完整准备包与 CPython | 同源完整 payload、bundled CPython 3.14、认证管道及真实客户端/worker；4 场景 PASS，1721.90 秒；每次清理后整个合成安装的文件 SHA 不变 | 无进程/verifier/file API 替换；本机特定 Windows 环境、合成单安装，不是生产负载或性能承诺；环境变量缺失的 SKIP 不算 PASS |
+| C2 真实图形操作 | 双次一致性编译的实际 Setup；中文自定义合成安装根、预览无默认选择、未知/忙碌项保留、默认“否”的明确删除确认、删除成功及显式刷新通过；负责人在最终点击前明确批准唯一合成副本 | 仅 C2 页面及删除闭环，不是完整新装/修复/卸载/重装 GUI 验收；当前安装器准备包保留，未另行删除 |
+| PR / 合并 / Release / 现场 | 独立 PR 交付；CI、审查、Draft 转换和合并分别以准确 Head 的 GitHub 记录为准；本历史记录不自行授权合并 | #150 的合并不是 C2 的合并；本轮没有 Release 或生产/客户操作 |
+
+实验资产：测试 Release ID 为 `ice-2026.08.5-350f20d87ec7`，仅沿用历史 VERSION 构建未发布的开发候选，不改变正式 10.1。
+
+- archive SHA-256：`1de7b2ac9ae7ce08b2599eff756d78bedf39fcd43d56bfe6d22ad0f76b572432`。
+- 外置 Manifest SHA-256：`2df2bc9d5b250aa609a484b8cb3a24df49b8502d8769ca39b4120a46e6133a76`。
+- Inventory SHA-256：`bb344f7492f539e45240677221846f876592e8065f22e99f2776b2e53388611d`。
+- 原生入口 SHA-256：`570ad6885cae124e39f534bc6a95073212eec0ad4d9c1d8085f5e0888d3987fd`；同源双次编译一致，22528 字节。
+- Setup SHA-256：`c26ad31aae802043f637416e7b64ad6054e7964749426d586d3cdc3bbe303a07`；固定 Inno 7.1.0 闭包核验及双次编译一致，33153032 字节，未签名、未时间戳。
+
+本机完整输入位于 `D:\CodeProject\review-artifacts\t\WPC2\assets2`、`native2`、`setup2`；四场景使用全新 `WPC2-full-4`，不可作为以后 pytest basetemp 重用。图形实际删除的是明确登记且已关闭的旧合成准备副本 `13cdb24d18ed4e56b0766f28f66a3e3f`（105888171 字节），不是安装目录。其对应合成安装 `WPC2-full-3/i-6a511057` 的 2129 个文件，按相对路径及各文件 SHA-256 聚合的前后指纹同为 `156f7157b26c8400e86cc0068adfd87fb5a87c9b23757b98bbce77aadcf90c34`；记录保留，程序副本可从原资产重新准备。三个未知包及当前 Setup 副本均保留，窗口已正常退出。
+
+本轮主要阻断是运行时/打包真实契约差异，现已消除：CPython 文件时间/卷身份语义、测试错误带入编译 pass 目录、实际 Setup 不含 raw Manifest，以及测试误把既有 import 警告当作管道失败。只接受精确白名单中的既有合成环境 JWT 提示及两个 CPython 3.14 SyntaxWarning；没有屏蔽其他 stderr 或修改发行源码来绕过核验。早前未登记/中止准备包保留，不反复运行相同失败条件。完整 Windows 演练耗时较长，主要是逐对象/字节核验和多次完整准备；未由此设置生产 RTO。
+
+仍未完成：独立审查、C2 合并/发行/现场验收，标准保留数据卸载/重装及其恢复验证，完整安装维护 GUI、多语言验收、长期 ledger/容量治理。维护后退出仍使用 Inno 的标准安装退出文案，属于后续完整 GUI 收口项，不能据此把本次只清理流程写成进行了安装。正式路线图和业务授权不变。
 
 可重复定向检查：`python -B -m pytest -q enterprise/tests/test_install_cache.py enterprise/tests/test_install_ux_1.py enterprise/tests/test_install_entry.py enterprise/tests/test_install_program_repair.py enterprise/tests/test_install_repair_status.py`。测试根应是本轮全新、明确属于测试的短路径；pytest 的旧 `--basetemp` 不可复用，因为框架会先清空它。
 
