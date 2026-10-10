@@ -1,13 +1,13 @@
 # Infinite Canvas Enterprise 当前项目状态
 
-更新时间：2026-10-10
+更新时间：2026-10-11
 核验对象：GitHub 主线、相关 PR/CI、正式 Release、开发机固定 EXE 合成演练，以及负责人此前提供的两台设备升级结果和生产诊断包。没有连接或操作生产设备；客户运行状态仍以既有采集时点为准。
 
 ## 1. 开发基线、发行与现场必须分开
 
 | 层级 | 本次事实 | 不能据此声称 |
 | --- | --- | --- |
-| 主线核验基点 | `main@d95e256f068a014064f299a3655f2c1758f7b3cd`；#137–#142、[#146](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/146)、[#147](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/147)、[#148](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/148) 和 Docs-only [#149](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/149) 已合并 | 主线全部能力已随 10.1 正式交付；需求文档合并授权新增业务实施 |
+| 主线核验基点 | `main@63394178b4c3d05c491c39d42c75518f000ed3cf`；#137–#142、[#146](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/146)、[#147](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/147)、[#148](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/148)、Docs-only [#149](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/149) 和入口恢复 [#150](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/150) 已合并 | 主线全部能力已随 10.1 正式交付；需求文档合并授权新增业务实施 |
 | 开发基线收口 | #146 选择性接回 10.1 同源页面提示和数据库 v2 迁移/构建契约，保留主线安全治理、任务回执、原生入口和恢复保护；准确整合范围与验证见 [收口记录](./ops/DEVELOPMENT-BASELINE-CLOSEOUT-2026-10-09.md) | 整条维护分支已合并；任意历史安装已受支持 |
 | 主线诊断/恢复增量 | #147、#148 已合并。#148 工作包 B 完成精确 Job/READY、源进程 lease、接受竞争和超时恢复保护；310 项关联回归通过。代码 `6002300eff5fd4750f84bfe684b41a739c541120` 的本机固定 EXE 合成三门禁通过、测试进程/端口清理确认；准确最终 Head `fd8303337ea22bab91d4d1eb84606dcaa410f4ca` 三项常规 CI 及独立审查通过，2026-10-10 合并；[实施与验证记录](./ops/RUNTIME-UPDATE-LIFECYCLE-2026-10-09.md) | 已进入正式 10.1、所有安装副本或客户环境已验收、现场旧失败根因已确定 |
 | 正式 Release | [v2026.10.1](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.10.1)，Latest、非预发布；`ice-2026.10.1-bf1143a7bc54`，提交 `bf1143a7bc54ac24d53b9e7d7db5a9b50da8b57c`，2026-10-08 发布 | 将该不可变包覆盖为新的 main 源码 |
@@ -57,7 +57,7 @@
 当前仍是 **阶段 3：统一安装与在线升级体验收敛**，顺序只在 [路线图](./roadmap/DEVELOPMENT-ROADMAP-2026-2027.md) 维护。
 
 1. 基线已由 #146 收口，诊断/恢复增量 #147/#148 已合并，需求基线 #149 已入档且不授权新业务代码。#148 的早前完整演练失败及受限 Job 停机前阻断证据保留；同一工作包已补齐交接/接受/清理保护，并在开发机普通桌面上下文通过固定 EXE、HTTP 授权、成功升级、自动恢复及持续失败安全阻断三项合成门禁。现继续阶段 3 的安装维护工作包 C，先收口同版入口修复的持久事务及显式中断恢复，准确范围与门禁见 [入口恢复记录](./ops/ENTRY-REPAIR-RECOVERY-2026-10-10.md)。不自动发行；不能将开发机复现直接认定为旧现场唯一根因。
-2. 同版入口修复 v2 持久事务与显式中断恢复已完成限定开发机验证：9 个实际 Windows 场景通过，含恢复中再次退出、D 安装/C Runtime、编译 EXE 的启动/健康/停止；准确源码、产物和 PR 状态边界见 [入口恢复记录](./ops/ENTRY-REPAIR-RECOVERY-2026-10-10.md)。统一安装维护仍缺标准保留数据卸载/重装、入口旧 v1/未知锁接管、维护缓存拥有者/容量限定清理和完整 GUI 验收；`Uninstallable=no` 未变，不把分支验证当作正式发行或客户验收。
+2. 同版入口修复 v2 持久事务与显式中断恢复已完成限定开发机验证：9 个实际 Windows 场景通过，含恢复中再次退出、D 安装/C Runtime、编译 EXE 的启动/健康/停止；#150 的准确最终 Head 四项常规 CI 及风险审查通过，已合并。准确源码、产物与限制仍见 [入口恢复记录](./ops/ENTRY-REPAIR-RECOVERY-2026-10-10.md)。现推进独立 C2 的 [维护准备包安全清理](./ops/MAINTENANCE-CACHE-LIFECYCLE-2026-10-11.md)，其源码、测试、图形验收、PR 与合并分别记录。标准保留数据卸载/重装、入口旧 v1/未知锁接管、长期容量治理和完整安装维护 GUI 验收仍未完成；`Uninstallable=no` 未变，不把分支验证当作正式发行或客户验收。
 3. 长期更新仍缺一次授权跨重启多跳、更新器自更新、目录分页扩容和完整业务维护态；当前最多 50 Release/8 跳。正式版不强制经过开发版。
 4. [#123](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/123) 付费提交止损仍 OPEN；回执基础不是统一持久任务、费用账本、预算及对账。
 5. SQLite＋文件/JSON 单机/LAN 仍是当前部署；PostgreSQL、完整资源 CAS/员工桌面、SSO/Agent 委托、远程采集与长期支持政策未交付。不把 SQLite 放网络共享盘当 HA，也不以用户数估容量。

@@ -644,6 +644,15 @@ def _flow_for_operation(file: str, symbol: str) -> str:
     if file == "enterprise/install_repair_status.py" and symbol in {"RepairProgress.__init__", "RepairProgress.emit"}:
         # Bounded display records in STATE/STAGING only; never recovery authority.
         return "W47"
+    if file == "enterprise/install_cache.py" and symbol in {
+        "_new_json", "_state", "_lease", "setup_cache_session", "clean_cache",
+    }:
+        # Explicit selected Setup preparation bundles only. The outside ledger
+        # binds closed Release files, directory identities and a kernel lease.
+        # Unknown/active/recovery-dependent bundles are retained. Quarantine is
+        # same-volume; native handle-bound rename/deletion is manually reviewed
+        # (not discovered by this AST scanner). No install/business/backup writes.
+        return "W47"
     if file.startswith("tools/validation/windows/env_1b3/"):
         # ENV-1B3 writes only to explicit test-host roots, isolated tamper
         # copies, or development-owned candidate/evidence roots. It never
@@ -658,7 +667,7 @@ def _flow_for_operation(file: str, symbol: str) -> str:
 # every mapped site as (file, symbol, operation, normalized-call fingerprint,
 # Wxx flow). Line numbers are deliberately excluded, while duplicate identical
 # calls remain duplicate records. Any added/removed/changed call drifts it.
-EXPECTED_SITE_MANIFEST_DIGEST = "c433cdfa014ee175872f9697c0bb5f7bef9979b3e3c0aed42bc0a424eb3197e8"
+EXPECTED_SITE_MANIFEST_DIGEST = "bbdf16a853509100c7de858d9f7d11d82df2e60de025cdfe819bf5171bd41efa"
 
 FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W01", "main.py", "startup_event"),

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+from contextvars import ContextVar
 import json
 import os
 import re
@@ -25,6 +26,8 @@ REQUEST_SCHEMA = "install-ux-1-request-v1"
 MAINTENANCE_REQUEST_SCHEMA = "enterprise-install-maintenance-request-v2"
 PROGRAM_MAINTENANCE_REQUEST_SCHEMA = "enterprise-install-maintenance-request-v3"
 GRAPHICAL_MAINTENANCE_REQUEST_SCHEMA = "enterprise-install-maintenance-request-v4"
+CACHE_MAINTENANCE_REQUEST_SCHEMA = "enterprise-install-maintenance-request-v5"
+_AUTHENTICATED_CLIENT = ContextVar("setup_pipe_client_identity", default=None)
 RESULT_SCHEMA = "install-ux-1-result-v1"
 MAX_FRAME_BYTES = 16 * 1024
 CONNECT_TIMEOUT_SECONDS = 45.0
@@ -119,7 +122,19 @@ def _decode_request(raw: bytes) -> dict[str, object]:
         "install_root",
     }
     schema = payload.get("schema_version")
-    if schema == GRAPHICAL_MAINTENANCE_REQUEST_SCHEMA:
+    if schema == CACHE_MAINTENANCE_REQUEST_SCHEMA:
+        expected.update({"operation", "cache_id", "cache_token", "confirm_cache_cleanup"})
+        operation = payload.get("operation")
+        if (operation not in {"inspect-cache", "clean-cache"}
+                or payload.get("confirm_cache_cleanup") is not (operation == "clean-cache")):
+            raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
+        if operation == "inspect-cache":
+            if payload.get("cache_id") != "" or payload.get("cache_token") != "":
+                raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
+        elif (not isinstance(payload.get("cache_id"), str) or not PIPE_SUFFIX_PATTERN.fullmatch(payload["cache_id"])
+              or not isinstance(payload.get("cache_token"), str) or not re.fullmatch(r"[0-9a-f]{64}", payload["cache_token"])):
+            raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
+    elif schema == GRAPHICAL_MAINTENANCE_REQUEST_SCHEMA:
         expected.update({"operation", "confirm_no_active_tasks"})
         operation = payload.get("operation")
         if (operation not in {"repair-program", "recover-program", "inspect-program"}
@@ -150,7 +165,7 @@ def _decode_request(raw: bytes) -> dict[str, object]:
         raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
     if payload["install_mode"] == "custom" and not install_root:
         raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
-    if payload.get("operation") in {"repair-entry", "recover-entry", "repair-program", "recover-program", "inspect-program"} and any(payload[field] for field in ("username", "password", "password_confirmation")):
+    if payload.get("operation") in {"repair-entry", "recover-entry", "repair-program", "recover-program", "inspect-program", "inspect-cache", "clean-cache"} and any(payload[field] for field in ("username", "password", "password_confirmation")):
         raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
     return payload
 
@@ -261,10 +276,11 @@ def _validated_install_root(
     _reject_reparse_ancestors(target)
     if _drive_type(target) != 3:  # DRIVE_FIXED
         raise SetupBridgeError("INSTALL_TARGET_NOT_LOCAL_FIXED_DISK")
-    if _paths_overlap(target, raw_app_root) or _paths_overlap(target, release_dir):
+    if (_paths_overlap(target, raw_app_root) or _paths_overlap(target, release_dir)
+            or _paths_overlap(target, known_folder / "Infinite-Canvas-Enterprise" / "maintenance-payloads")):
         raise SetupBridgeError("INSTALL_TARGET_OVERLAP")
     try:
-        if request.get("operation", "install") in {"repair-entry", "recover-entry", "repair-program", "recover-program", "inspect-program"}:
+        if request.get("operation", "install") in {"repair-entry", "recover-entry", "repair-program", "recover-program", "inspect-program", "inspect-cache", "clean-cache"}:
             if not target.is_dir():
                 raise SetupBridgeError("INSTALL_ENTRY_SOURCE_INVALID")
         elif target.exists() and (not target.is_dir() or any(target.iterdir())):
@@ -294,8 +310,7 @@ def _run_install_request(
     raw_app_root: Path,
     notify_progress=None,
 ) -> dict[str, object]:
-    from enterprise.fresh_install import install_greenfield, verify_release_assets
-    from enterprise.install_entry import repair_fixed_entry, recover_fixed_entry, verify_entry_bundle
+    from enterprise.fresh_install import verify_release_assets
     from enterprise.runtime.portable import windows_local_app_data_known_folder
 
     known_folder = windows_local_app_data_known_folder()
@@ -307,6 +322,37 @@ def _run_install_request(
         release_dir=assets,
         known_folder=known_folder,
     )
+    from enterprise.install_cache import CacheError, setup_cache_session, finish_setup_cache
+    response = None
+    try:
+        with setup_cache_session(local_app_data_base=known_folder, assets=assets,
+                                 raw_app_root=raw_app_root, verified=verified, target=target,
+                                 client=_AUTHENTICATED_CLIENT.get()) as session:
+            response = _execute_install_request(request, assets=assets, verified=verified, target=target,
+                                                known_folder=known_folder, notify_progress=notify_progress)
+            finish_setup_cache(session, response)
+    except (CacheError, OSError):
+        if response is None:
+            raise  # Pre-operation/operation failures cannot be disguised as success.
+        response["cache_warning"] = "INSTALL_CACHE_RETAINED"
+    return response
+
+
+def _execute_install_request(request, *, assets, verified, target, known_folder, notify_progress=None):
+    from enterprise.fresh_install import install_greenfield
+    from enterprise.install_entry import repair_fixed_entry, recover_fixed_entry, verify_entry_bundle
+    if request.get("operation") in {"inspect-cache", "clean-cache"}:
+        from enterprise.install_cache import inspect_cache, clean_cache
+        if request["operation"] == "inspect-cache":
+            result = inspect_cache(local_app_data_base=known_folder)
+            # Fixed, bounded display protocol: no paths, secrets or arbitrary text.
+            rows = [f'{item["cache_id"]},{item["size_bytes"]},{item["token"]},{item["status"]}' for item in result["candidates"]]
+            return {"schema_version": RESULT_SCHEMA, "status": "succeeded", "code": "INSTALL_CACHE_PREVIEW",
+                    "cache_rows": ";".join(rows), "retained_unknown": result["retained_unknown"]}
+        result = clean_cache(local_app_data_base=known_folder, cache_id=request["cache_id"],
+                             token=request["cache_token"], confirmed=request["confirm_cache_cleanup"])
+        return {"schema_version": RESULT_SCHEMA, "status": "succeeded", "code": "INSTALL_CACHE_REMOVED",
+                "cache_id": result["cache_id"], "deleted_bytes": result["deleted_bytes"], "cache_state": result["status"]}
     if request.get("operation") == "inspect-program":
         from enterprise.install_repair_status import inspect_program_repair
         result = inspect_program_repair(install_root=target, release_dir=assets, local_app_data_base=known_folder)
@@ -483,7 +529,7 @@ def _write_all(handle: int, raw: bytes) -> None:
         offset += written.value
 
 
-def _validate_client_sid(pipe_handle: int, expected_sid: str) -> None:
+def _validate_client_sid(pipe_handle: int, expected_sid: str):
     client_pid = wintypes.ULONG()
     if not kernel32.GetNamedPipeClientProcessId(pipe_handle, ctypes.byref(client_pid)):
         raise SetupBridgeError("INSTALL_SETUP_BRIDGE_CLIENT_IDENTITY_FAILED")
@@ -495,6 +541,11 @@ def _validate_client_sid(pipe_handle: int, expected_sid: str) -> None:
             raise SetupBridgeError("INSTALL_SETUP_BRIDGE_CLIENT_IDENTITY_MISMATCH")
     finally:
         kernel32.CloseHandle(process)
+    from enterprise.runtime.ownership import process_identity
+    identity = process_identity(int(client_pid.value))
+    if identity is None:
+        raise SetupBridgeError("INSTALL_SETUP_BRIDGE_CLIENT_IDENTITY_FAILED")
+    return identity
 
 
 def _serve_once(
@@ -540,7 +591,8 @@ def _serve_once(
         wait_mode = wintypes.DWORD(0)
         if not kernel32.SetNamedPipeHandleState(handle, ctypes.byref(wait_mode), None, None):
             raise SetupBridgeError("INSTALL_SETUP_BRIDGE_CONNECT_FAILED")
-        _validate_client_sid(handle, expected_sid)
+        client = _validate_client_sid(handle, expected_sid)
+        client_context = _AUTHENTICATED_CLIENT.set(client)
         graphical = False
         try:
             header = _read_exact(handle, 8)
@@ -551,7 +603,7 @@ def _serve_once(
             if not 1 <= size <= MAX_FRAME_BYTES:
                 raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_TOO_LARGE")
             request = _decode_request(_read_exact(handle, size))
-            graphical = request["schema_version"] == GRAPHICAL_MAINTENANCE_REQUEST_SCHEMA
+            graphical = request["schema_version"] in {GRAPHICAL_MAINTENANCE_REQUEST_SCHEMA, CACHE_MAINTENANCE_REQUEST_SCHEMA}
             if graphical:
                 def notify(phase, operation_id):
                     # The pipe is presentation only. Closing a Setup window
@@ -569,6 +621,7 @@ def _serve_once(
         except BaseException as exc:
             response = _blocked(_stable_code(exc))
         finally:
+            _AUTHENTICATED_CLIENT.reset(client_context)
             if "request" in locals():
                 request.clear()
         try:
