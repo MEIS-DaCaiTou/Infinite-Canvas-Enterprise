@@ -419,6 +419,7 @@ def test_bridge_bootstraps_before_product_install_import_and_has_no_credential_c
 
 def test_toolchain_and_build_policies_are_pinned_and_nonsecret() -> None:
     root = Path(__file__).resolve().parents[2]
+    script = (root / "installer/windows/InfiniteCanvasEnterprise.iss").read_text(encoding="utf-8")
     tool = json.loads(
         (root / "installer" / "windows" / "inno-setup-toolchain-policy.json").read_text(
             encoding="utf-8"
@@ -436,7 +437,14 @@ def test_toolchain_and_build_policies_are_pinned_and_nonsecret() -> None:
     assert build["core_asset_count"] == 3
     assert build["security_authority"] == "enterprise.fresh_install.install_greenfield"
     assert build["credential_channel"]["request_schema"] == "enterprise-install-maintenance-request-v2"
-    assert build["maintenance_operations"] == ["install", "repair-entry", "repair-program", "recover-program", "inspect-program"]
+    assert build["maintenance_operations"] == ["install", "repair-entry", "repair-program", "recover-program", "inspect-program", "recover-entry"]
+    assert build["entry_maintenance"] == {
+        "journal_protocol": "enterprise-entry-maintenance-plan-v2",
+        "recovery_requires_runner_lease": True,
+        "unknown_and_legacy_lock_adoption": False,
+        "runtime_must_be_stopped": True,
+    }
+    assert "PersistentBundle := MaintenanceOperation <> 'install';" in script
     assert build["credential_channel"]["graphical_maintenance_request_schema"] == "enterprise-install-maintenance-request-v4"
     assert build["program_maintenance"]["progress_is_authority"] is False
     assert build["native_entry"]["same_commit_and_tree_as_release"] is True

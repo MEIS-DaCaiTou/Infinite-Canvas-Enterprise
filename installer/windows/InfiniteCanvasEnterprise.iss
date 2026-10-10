@@ -126,19 +126,22 @@ begin
     1: Result := 'repair-program';
     2: Result := 'recover-program';
     3: Result := 'inspect-program';
+    4: Result := 'recover-entry';
   end;
 end;
 
 function ShouldMaintainEntry: Boolean;
 begin
-  Result := (MaintenanceOperation = 'install') or (MaintenanceOperation = 'repair-entry');
+  Result := (MaintenanceOperation = 'install') or (MaintenanceOperation = 'repair-entry') or
+    (MaintenanceOperation = 'recover-entry');
 end;
 
 function MaintenanceCaption: String;
 begin
   Result := '仅查看维护状态';
   if MaintenanceOperation = 'repair-program' then Result := '修复当前版本程序与 Python'
-  else if MaintenanceOperation = 'recover-program' then Result := '恢复上次中断的程序修复';
+  else if MaintenanceOperation = 'recover-program' then Result := '恢复上次中断的程序修复'
+  else if MaintenanceOperation = 'recover-entry' then Result := '恢复上次中断的固定入口修复';
 end;
 
 procedure PrepareBundle; forward;
@@ -572,7 +575,7 @@ begin
       LastStableCode := 'INSTALL_IDENTITY_INVALID';
       Result := False;
     end;
-    if not ShouldMaintainEntry then begin
+    if not ShouldMaintainEntry or (MaintenanceOperation = 'recover-entry') then begin
       ObserveMaintenancePhase(Response);
       if Pos('"repair_state":"SUCCEEDED"', Response) > 0 then RepairState := 'SUCCEEDED'
       else if Pos('"repair_state":"ROLLED_BACK"', Response) > 0 then RepairState := 'ROLLED_BACK'
@@ -652,6 +655,7 @@ begin
   OperationPage.Add('修复当前版本程序与 Python（不是业务升级）');
   OperationPage.Add('恢复上次中断的程序修复');
   OperationPage.Add('仅查看维护状态／跨窗口进度（不执行恢复）');
+  OperationPage.Add('恢复上次中断的固定入口修复（仅核验本包可证明的事务）');
   OperationPage.SelectedValueIndex := 0;
   StatusButton := TNewButton.Create(WizardForm);
   StatusButton.Parent := OperationPage.Surface;
@@ -733,7 +737,7 @@ begin
     Result := '操作：只修复固定入口（不是业务升级）' + NewLine +
       Space + '原安装目录：' + SelectedInstallRoot + NewLine +
       Space + '保留原账号、数据库、画布、素材、配置及当前版本。' + NewLine +
-      Space + '仅修复根 EXE、实例登记和快捷方式。'
+      Space + '仅修复或恢复根 EXE 与实例登记；未知或旧 v1 锁不会自动解除。'
   else
     Result := '操作：首次安装' + NewLine + Space + '安装根目录：' + SelectedInstallRoot + NewLine +
       Space + '安装版本：{#AppVersion}' + NewLine + Space + 'Release：{#ReleaseId}';
@@ -808,11 +812,12 @@ var
   FreeBytes, TotalBytes, RequiredBytes: Int64;
 begin
     if BundleRoot <> '' then begin
-      if not ShouldMaintainEntry and not PersistentBundle then
+      if (MaintenanceOperation <> 'install') and not PersistentBundle then
         RaiseException('INSTALL_PROGRAM_REOPEN_REQUIRED');
       exit;
     end;
-    PersistentBundle := not ShouldMaintainEntry;
+    { Closing Setup does not prove the external maintenance Python has exited. }
+    PersistentBundle := MaintenanceOperation <> 'install';
     if PersistentBundle then begin
       CacheRoot := ExpandConstant('{localappdata}\Infinite-Canvas-Enterprise\maintenance-payloads');
       if HasReparseAncestors(CacheRoot) then RaiseException('INSTALL_TEMP_ROOT_UNSAFE');
@@ -885,6 +890,11 @@ begin
       else Result := '操作未完成；不会把原目录当作新安装重建。请保留诊断与恢复记录。' + #13#10;
       Result := Result +
         '错误代码：' + LastStableCode;
+      exit;
+    end;
+    if (MaintenanceOperation = 'recover-entry') and (RepairState <> 'SUCCEEDED') then begin
+      Result := '入口事务已恢复到修复前状态；原入口可能仍缺失，请重新选择入口修复。' + #13#10 +
+        '业务数据、配置及当前版本未改变；不会生成指向缺失入口的快捷方式或自动启动。';
       exit;
     end;
     if not ShouldMaintainEntry then begin

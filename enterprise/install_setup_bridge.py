@@ -132,7 +132,7 @@ def _decode_request(raw: bytes) -> dict[str, object]:
             raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
     elif schema == MAINTENANCE_REQUEST_SCHEMA:
         expected.add("operation")
-        if payload.get("operation") not in {"install", "repair-entry"}:
+        if payload.get("operation") not in {"install", "repair-entry", "recover-entry"}:
             raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
     elif schema != REQUEST_SCHEMA:
         raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
@@ -150,7 +150,7 @@ def _decode_request(raw: bytes) -> dict[str, object]:
         raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
     if payload["install_mode"] == "custom" and not install_root:
         raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
-    if payload.get("operation") in {"repair-entry", "repair-program", "recover-program", "inspect-program"} and any(payload[field] for field in ("username", "password", "password_confirmation")):
+    if payload.get("operation") in {"repair-entry", "recover-entry", "repair-program", "recover-program", "inspect-program"} and any(payload[field] for field in ("username", "password", "password_confirmation")):
         raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
     return payload
 
@@ -264,7 +264,7 @@ def _validated_install_root(
     if _paths_overlap(target, raw_app_root) or _paths_overlap(target, release_dir):
         raise SetupBridgeError("INSTALL_TARGET_OVERLAP")
     try:
-        if request.get("operation", "install") in {"repair-entry", "repair-program", "recover-program", "inspect-program"}:
+        if request.get("operation", "install") in {"repair-entry", "recover-entry", "repair-program", "recover-program", "inspect-program"}:
             if not target.is_dir():
                 raise SetupBridgeError("INSTALL_ENTRY_SOURCE_INVALID")
         elif target.exists() and (not target.is_dir() or any(target.iterdir())):
@@ -295,7 +295,7 @@ def _run_install_request(
     notify_progress=None,
 ) -> dict[str, object]:
     from enterprise.fresh_install import install_greenfield, verify_release_assets
-    from enterprise.install_entry import repair_fixed_entry, verify_entry_bundle
+    from enterprise.install_entry import repair_fixed_entry, recover_fixed_entry, verify_entry_bundle
     from enterprise.runtime.portable import windows_local_app_data_known_folder
 
     known_folder = windows_local_app_data_known_folder()
@@ -319,11 +319,14 @@ def _run_install_request(
         return {"schema_version": RESULT_SCHEMA, "status": "succeeded",
                 "code": "INSTALL_PROGRAM_RECOVERED" if request["operation"] == "recover-program" else "INSTALL_PROGRAM_REPAIRED",
                 **result}
-    if request.get("operation") == "repair-entry":
+    if request.get("operation") in {"repair-entry", "recover-entry"}:
         source = verified.manifest.section("enterprise_source")
         entry = verify_entry_bundle(assets / "native-entry", commit=str(source["commit"]), tree=str(source["tree"]))
-        result = repair_fixed_entry(install_root=target, entry=entry, local_app_data_base=known_folder)
-        return {"schema_version": RESULT_SCHEMA, "status": "succeeded", "code": "INSTALL_ENTRY_REPAIRED", **result}
+        handler = recover_fixed_entry if request["operation"] == "recover-entry" else repair_fixed_entry
+        result = handler(install_root=target, entry=entry, local_app_data_base=known_folder)
+        return {"schema_version": RESULT_SCHEMA, "status": "succeeded",
+                "code": "INSTALL_ENTRY_RECOVERED" if request["operation"] == "recover-entry" else "INSTALL_ENTRY_REPAIRED",
+                **result}
     result = install_greenfield(
         release_dir=assets,
         install_root=target,

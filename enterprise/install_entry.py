@@ -15,13 +15,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from enterprise.path_safety import assert_no_reparse_ancestors
-from enterprise.paths import PathRoots, PortableRootInputs, validate_path_roots_for_use
-from enterprise.release.current_release import (
-    read_current_release_result_from_state_root, resolve_portable_path_roots,
-)
+from enterprise.paths import PathRoots, validate_path_roots_for_use
 from enterprise.release.release_manifest_v2 import (
-    INVENTORY_MAX_BYTES, canonical_json, enforce_portable_contract_compatibility,
-    parse_inventory_bytes, read_release_manifest_v2, verify_materialized_release,
+    INVENTORY_MAX_BYTES, canonical_json, parse_inventory_bytes,
 )
 
 PRODUCT = "MEIS-DaCaiTou/Infinite-Canvas-Enterprise"
@@ -328,36 +324,15 @@ def publish_fixed_entry(roots: PathRoots, entry: NativeEntry) -> EntryPublicatio
 
 
 def repair_fixed_entry(*, install_root: Path, entry: NativeEntry, local_app_data_base: Path) -> dict:
-    try:
-        inputs = PortableRootInputs(install_root, local_app_data_base)
-        roots = resolve_portable_path_roots(inputs)
-        pointer = read_current_release_result_from_state_root(roots.STATE_ROOT)
-        manifest = read_release_manifest_v2(roots.APP_ROOT / "release-manifest.json")
-        if manifest.raw_sha256 != pointer.release.manifest_sha256 or manifest.release_id != pointer.release.release_id:
-            raise InstallEntryError("INSTALL_ENTRY_SOURCE_INVALID")
-        enforce_portable_contract_compatibility(manifest)
-        validate_entry_target_paths(roots.INSTALL_ROOT, manifest.release_id, roots.APP_ROOT / "release-payload-inventory.json")
-        verify_materialized_release(roots.APP_ROOT, inventory_path=roots.APP_ROOT / "release-payload-inventory.json")
-        from enterprise.ops.update.mvp import UpdateJobStore
-        store = UpdateJobStore(roots)
-        if store.pending_recovery_jobs(initialize=False):
-            raise InstallEntryError("INSTALL_ENTRY_RECOVERY_REQUIRED")
-        publication = publish_fixed_entry(roots, entry)
-        try:
-            # An update may have completed with unresolved recovery between
-            # the initial inspection and our lock acquisition. Recheck while
-            # holding that same lock before accepting the entry publication.
-            if store.pending_recovery_jobs(initialize=False):
-                raise InstallEntryError("INSTALL_ENTRY_RECOVERY_REQUIRED")
-            if read_current_release_result_from_state_root(roots.STATE_ROOT) != pointer:
-                raise InstallEntryError("INSTALL_ENTRY_SOURCE_CHANGED")
-            publication.complete()
-        except Exception:
-            publication.rollback()
-            raise
-        return {"installation_id": publication.installation_id, "release_id": pointer.release.release_id,
-                "launcher_installed": True, "database_changed": False, "pointer_changed": False}
-    except InstallEntryError:
-        raise
-    except Exception as exc:
-        raise InstallEntryError("INSTALL_ENTRY_SOURCE_INVALID") from exc
+    # Existing-install maintenance has a durable journal and process-death
+    # recovery. Greenfield publication above retains its pointer-last contract.
+    from enterprise.install_entry_repair import repair_entry_transaction
+    return repair_entry_transaction(install_root=install_root, entry=entry,
+                                    local_app_data_base=local_app_data_base)
+
+
+def recover_fixed_entry(*, install_root: Path, entry: NativeEntry, local_app_data_base: Path) -> dict:
+    """Explicit recovery of one proven v2 entry transaction, never an unlock."""
+    from enterprise.install_entry_repair import recover_entry_transaction
+    return recover_entry_transaction(install_root=install_root, entry=entry,
+                                     local_app_data_base=local_app_data_base)

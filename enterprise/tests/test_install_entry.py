@@ -223,29 +223,42 @@ def qualified_program_fixture(tmp_path):
 def test_entry_repair_uses_real_release_verifier_and_leaves_database_and_pointer_untouched(tmp_path, monkeypatch, recovery_race):
     root, manifest, archive, inventory, document = qualified_program_fixture(tmp_path)
     app = root / "releases" / str(document["identity"]["release_id"])
+    from enterprise import install_entry_repair as recovery
+    monkeypatch.setattr(recovery, "_runtime_quiescent", lambda roots: None)
+    source = document["enterprise_source"]
+    entry = bundle(tmp_path / "native", commit=source["commit"], tree=source["tree"])
+    roots = derive_portable_path_roots(PortableRootInputs(root, tmp_path / "local"), app.name)
+    publication = delivery.publish_fixed_entry(roots, entry)
+    publication.complete()
     before = {str(p): p.read_bytes() for p in root.rglob('*') if p.is_file()}
-    entry = bundle(tmp_path / "native")
     if recovery_race:
         from enterprise.ops.update.mvp import UpdateJobStore
-        inspections = iter(([], ["unresolved-update"]))
-        monkeypatch.setattr(UpdateJobStore, "pending_recovery_jobs", lambda self, **kwargs: next(inspections))
-        with pytest.raises(delivery.InstallEntryError, match="INSTALL_ENTRY_RECOVERY_REQUIRED"):
+        inspections = 0
+        def pending(self, **kwargs):
+            nonlocal inspections
+            inspections += 1
+            return [] if inspections == 1 else ["unresolved-update"]
+        monkeypatch.setattr(UpdateJobStore, "pending_recovery_jobs", pending)
+        with pytest.raises(delivery.InstallEntryError, match="RECOVERY_REQUIRED"):
             delivery.repair_fixed_entry(install_root=root, entry=entry, local_app_data_base=tmp_path / "local")
-        assert {str(p): p.read_bytes() for p in root.rglob('*') if p.is_file()} == before
+        assert all(Path(p).read_bytes() == data for p, data in before.items())
+        assert (root / "state/system-update-active.lock").exists()
         return
     result = delivery.repair_fixed_entry(install_root=root, entry=entry, local_app_data_base=tmp_path / "local")
     assert result["database_changed"] is result["pointer_changed"] is False
     assert all(Path(p).read_bytes() == data for p, data in before.items())
-    assert not (root / "staging").exists(), "Recovery inspection must not create state"
+    assert result["repair_state"] == "SUCCEEDED"
+    assert not (root / "state/system-update-active.lock").exists()
     (app / "foreign.py").write_bytes(b"unowned import")
     snapshot = {str(p): p.read_bytes() for p in root.rglob('*') if p.is_file()}
     with pytest.raises(delivery.InstallEntryError, match="INSTALL_ENTRY_SOURCE_INVALID"):
-        delivery.repair_fixed_entry(install_root=root, entry=bundle(tmp_path / "native2", b"newer"), local_app_data_base=tmp_path / "local")
+        delivery.repair_fixed_entry(install_root=root, entry=bundle(tmp_path / "native2", b"newer", source["commit"], source["tree"]), local_app_data_base=tmp_path / "local")
     assert {str(p): p.read_bytes() for p in root.rglob('*') if p.is_file()} == snapshot
 
 
-def test_maintenance_request_requires_explicit_operation_and_no_repair_password():
-    value = {"schema_version": MAINTENANCE_REQUEST_SCHEMA, "operation": "repair-entry",
+@pytest.mark.parametrize("operation", ["repair-entry", "recover-entry"])
+def test_maintenance_request_requires_explicit_operation_and_no_repair_password(operation):
+    value = {"schema_version": MAINTENANCE_REQUEST_SCHEMA, "operation": operation,
              "install_mode": "custom", "install_root": "C:\\fixture install", "username": "",
              "password": "", "password_confirmation": ""}
     assert _decode_request(canonical_json(value)) == value

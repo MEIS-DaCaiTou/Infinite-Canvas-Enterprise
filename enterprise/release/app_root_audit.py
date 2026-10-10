@@ -631,6 +631,16 @@ def _flow_for_operation(file: str, symbol: str) -> str:
         # tree and immutable plan/result. Only this operation's locks and trees
         # can be recovered. No database, config, pointer or entry writes.
         return "W47"
+    if file == "enterprise/install_entry_repair.py" and symbol in {
+        "_runner_lease", "_fill_prepared_marker", "_link_marker", "_publish",
+        "_rollback", "_cleanup", "repair_entry_transaction",
+    }:
+        # Same-Release entry-only maintenance: prepared, identity-bound files
+        # in STAGING/STATE and retained Runtime markers on their own volume.
+        # Publish/restore only the root EXE and installation record; shared
+        # fences and kernel lease prevent concurrent Runtime/maintenance use.
+        # Unknown evidence blocks; DATA/CONFIG/APP_ROOT/pointer are read-only.
+        return "W47"
     if file == "enterprise/install_repair_status.py" and symbol in {"RepairProgress.__init__", "RepairProgress.emit"}:
         # Bounded display records in STATE/STAGING only; never recovery authority.
         return "W47"
@@ -648,7 +658,7 @@ def _flow_for_operation(file: str, symbol: str) -> str:
 # every mapped site as (file, symbol, operation, normalized-call fingerprint,
 # Wxx flow). Line numbers are deliberately excluded, while duplicate identical
 # calls remain duplicate records. Any added/removed/changed call drifts it.
-EXPECTED_SITE_MANIFEST_DIGEST = "94dd3333e2bfd618c401fd862e25dcb0f5bc55c6ff53cf29a5695a9066a4fbe9"
+EXPECTED_SITE_MANIFEST_DIGEST = "c433cdfa014ee175872f9697c0bb5f7bef9979b3e3c0aed42bc0a424eb3197e8"
 
 FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W01", "main.py", "startup_event"),

@@ -98,6 +98,7 @@ def test_fixed_entry_repair_and_real_full_payload_identity_preserve_install(vers
     for _ in range(2):
         result = repair_fixed_entry(install_root=root, entry=entry, local_app_data_base=tmp_path / "local")
         assert result["database_changed"] is result["pointer_changed"] is False
+        assert result["repair_state"] == "SUCCEEDED"
     started = time.monotonic()
     response_path = tmp_path / "identity.json"
     completed = subprocess.run([str(root / "InfiniteCanvas.exe"), "--identity", "--result-file", str(response_path)],
@@ -108,4 +109,5 @@ def test_fixed_entry_repair_and_real_full_payload_identity_preserve_install(vers
     assert result["release_id"] == app.name
     assert all(hashlib.sha256(Path(path).read_bytes()).hexdigest() == digest for path, digest in before.items())
     print("full-payload identity seconds", version, round(identity_seconds, 3))
-    assert not (root / "staging").exists()
+    assert not (root / "state/system-update-active.lock").exists()
+    assert not (tmp_path / "local/Infinite-Canvas-Enterprise/runtime/runtime-reconcile.lock").exists()
