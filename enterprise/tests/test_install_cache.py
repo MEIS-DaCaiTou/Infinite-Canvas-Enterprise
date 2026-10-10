@@ -83,6 +83,34 @@ def test_registration_proves_closed_program_tree_not_arbitrary_directory(prepare
     assert before == preserved(args)
 
 
+def test_actual_setup_archive_layout_without_detached_raw_manifest_is_supported(prepared):
+    args, container = prepared
+    cache._io(args["raw_app_root"] / "release-manifest.json").unlink()
+    seal(prepared)
+    receipt, _ = cache._read(container.parent / ".ledger" / container.name / "receipt.json")
+    assert receipt["files"] == cache._tree(container)["files"]
+
+
+def test_optional_detached_raw_manifest_must_match_verified_asset(prepared):
+    args, container = prepared
+    cache._io(args["raw_app_root"] / "release-manifest.json").write_bytes(b"unproven manifest")
+    with pytest.raises(cache.CacheError, match="INSTALL_CACHE_CONTENT_UNPROVEN"):
+        seal(prepared)
+    assert not (container.parent / ".ledger" / container.name).exists()
+
+
+@pytest.mark.parametrize("member", ["archive", "raw-program"])
+def test_registration_rechecks_bytes_against_detached_verified_inventory(prepared, member):
+    args, container = prepared
+    path = args["verified"].archive_path if member == "archive" else args["raw_app_root"] / "main.py"
+    cache._io(path).write_bytes(b"changed after three-asset verification")
+    before = preserved(args)
+    with pytest.raises(cache.CacheError, match="INSTALL_CACHE_CONTENT_UNPROVEN"):
+        seal(prepared)
+    assert before == preserved(args)
+    assert not (container.parent / ".ledger" / container.name).exists()
+
+
 @pytest.mark.parametrize("extra", ["customer.db", "enterprise.env", "unknown-empty-directory/"])
 def test_unproven_extra_content_is_not_registered(prepared, extra):
     args, container = prepared

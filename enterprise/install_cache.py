@@ -312,18 +312,47 @@ def _exited(value):
 
 def _closed_payload(container, assets, raw_app_root, verified):
     from enterprise.install_entry import verify_entry_bundle
-    from enterprise.release.release_manifest_v2 import parse_inventory_bytes, verify_materialized_release
+    from enterprise.release.release_manifest_v2 import parse_inventory_bytes
     source = verified.manifest.section("enterprise_source")
-    verify_entry_bundle(_io(assets / "native-entry"), commit=source["commit"], tree=source["tree"])
-    verify_materialized_release(_io(raw_app_root), inventory_path=_io(raw_app_root / "release-payload-inventory.json"))
-    inventory = parse_inventory_bytes(verified.inventory_path.read_bytes())
+    entry = verify_entry_bundle(_io(assets / "native-entry"), commit=source["commit"], tree=source["tree"])
+    with _io(verified.inventory_path).open("rb") as handle:
+        inventory_bytes = handle.read(MAX_LEDGER_BYTES + 1)
+    if len(inventory_bytes) > MAX_LEDGER_BYTES:
+        _fail("INSTALL_CACHE_LIMIT")
+    inventory = parse_inventory_bytes(inventory_bytes)
+    if inventory.sha256 != verified.manifest.section("release_payload")["inventory_sha256"]:
+        _fail("INSTALL_CACHE_CONTENT_UNPROVEN")
     expected = {_logical(path).relative_to(container).as_posix() for path in (
         verified.archive_path, verified.manifest_path, verified.inventory_path,
         assets / "native-entry/InfiniteCanvas.exe", assets / "native-entry/native-entry-build-record.json")}
     prefix = raw_app_root.relative_to(container).as_posix() + "/"
     expected.update(prefix + item.path for item in inventory.entries)
-    expected.update(prefix + value for value in ("release-manifest.json", "release-payload-inventory.json"))
+    expected.add(prefix + "release-payload-inventory.json")
+    # Setup expands the archive; fixture materialization additionally attaches
+    # the detached Manifest. Accept that known optional member only byte-exact.
+    raw_manifest = raw_app_root / "release-manifest.json"
+    if _exists(raw_manifest):
+        if _file(raw_manifest)["sha256"] != verified.manifest.raw_sha256:
+            _fail("INSTALL_CACHE_CONTENT_UNPROVEN")
+        expected.add(prefix + "release-manifest.json")
     tree = _tree(container)
+    # Bind the real archive expansion to the already verified detached assets;
+    # do not mutate it just to manufacture fixture-only materialization metadata.
+    expected_hashes = {
+        _logical(verified.archive_path).relative_to(container).as_posix(): verified.verification.archive_sha256,
+        _logical(verified.manifest_path).relative_to(container).as_posix(): verified.manifest.raw_sha256,
+        _logical(verified.inventory_path).relative_to(container).as_posix(): inventory.sha256,
+        (assets / "native-entry/InfiniteCanvas.exe").relative_to(container).as_posix(): entry.sha256,
+        (assets / "native-entry/native-entry-build-record.json").relative_to(container).as_posix(): entry.record_sha256,
+        prefix + "release-payload-inventory.json": inventory.sha256,
+    }
+    for name, digest in expected_hashes.items():
+        if tree["files"].get(name, {}).get("sha256") != digest:
+            _fail("INSTALL_CACHE_CONTENT_UNPROVEN")
+    for item in inventory.entries:
+        actual = tree["files"].get(prefix + item.path, {})
+        if actual.get("sha256") != item.sha256 or actual.get("size_bytes") != item.size_bytes:
+            _fail("INSTALL_CACHE_CONTENT_UNPROVEN")
     expected_dirs = {""}
     for name in expected:
         parent = PurePosixPath(name).parent

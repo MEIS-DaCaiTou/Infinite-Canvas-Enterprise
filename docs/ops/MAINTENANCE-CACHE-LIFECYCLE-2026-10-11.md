@@ -11,6 +11,7 @@ C2 单独完成“准备包归属记录 → 占用/恢复依赖核验 → 显式
 ## 契约与安全边界
 
 - 只处理当前用户 KnownFolder `Infinite-Canvas-Enterprise/maintenance-payloads/<32hex>/install-ux-bundle` 的 Setup 准备副本。核心三资产、原生入口及完整展开程序必须核验，并且整树不得混入未登记文件、额外空目录、硬链接或 reparse。已有未知/未登记历史包不自动接管或删除。
+- 实际 Setup 的 archive 展开目录不含物化工具额外附上的 `release-manifest.json`；闭包核验使用已验证的外置三资产逐成员复核 hash/size，不在原目录补造 metadata。若 raw 内有这份可选 Manifest，必须与外置 Manifest 字节相同，不能接受任意内容。
 - `.ledger/<32hex>` 在清理树之外保存封闭字节/文件及目录身份、Release/Manifest、lease 身份和终态。记录不授权删除安装根的 Release、数据库、配置、媒体、备份、Runtime 或历史事务证据。
 - 只有维护/检查成功、没有未知恢复依赖、已验证当前用户的 Setup 客户端与后台 worker 均真实退出且 kernel lease 可取得时，才显示 `CLEANABLE`。PID 查询失败不等于不存在；PID 复用按创建身份及可执行路径区分。当前窗口自身准备包继续保留。
 - v5 当前用户管道只接受 `inspect-cache` / `clean-cache`；凭据必须为空。清理一次仅绑定一个明确 cache ID、预览 SHA 和布尔确认。预览后任何归属、字节、对象身份、占用或依赖变化都重新阻断；没有自动重试。
@@ -27,7 +28,7 @@ C2 单独完成“准备包归属记录 → 占用/恢复依赖核验 → 显式
 
 | 层次 | 当前证据 | 限制 |
 | --- | --- | --- |
-| 定向关联回归 | 137 PASS / 1 SKIP，59.24 秒；最终统一句柄身份版本：CPython 3.11 的 33 项 PASS（24.51 秒），bundled CPython 3.14 的 33 项 PASS（12.99 秒） | 小型封闭 fixture；多数退出观测替换，不算完整 GUI 或完整生产负载；计数有重合，不相加 |
+| 定向关联回归 | 初轮 137 PASS / 1 SKIP，59.24 秒；实际解包闭包修复后，CPython 3.11 清理与 bridge 合计 62 项 PASS（33.44 秒），bundled CPython 3.14 清理 35 项 PASS（18.97 秒）；追加字节再核验用例单列 | 小型封闭 fixture；多数退出观测替换，不算完整 GUI 或完整生产负载；计数有重合，不相加 |
 | 实际完整准备包与 CPython | 尚待执行本工作包的准确源码构建 | 环境变量缺失的 SKIP 不算 PASS |
 | 完整图形操作 | NOT_RUN | 不把 v5 管道、源码断言或编译通过当作真实点击验收 |
 | PR / 合并 / Release / 现场 | 本工作包尚未提交 PR；不批准自动合并、发行或客户操作 | #150 的合并不是 C2 的合并 |

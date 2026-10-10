@@ -173,6 +173,8 @@ end;
 
 procedure PaintMaintenanceProgress;
 begin
+  InstallProgress.Caption := MaintenanceCaption;
+  InstallProgress.Description := '只处理已确认的维护范围；业务数据与备份保持不变。';
   InstallProgress.SetText(MaintenanceCaption + '：' + PhaseCaption(ObservedPhase), '关闭查看不取消后台作业；重开安装包可仅查看状态。');
   InstallProgress.SetProgress(0, 0); { Real phase only, no invented percentage. }
 end;
@@ -500,6 +502,13 @@ end;
 
 procedure SetStage(const Caption: String; Position: Integer);
 begin
+  if MaintenanceOperation <> 'install' then begin
+    InstallProgress.Caption := MaintenanceCaption;
+    InstallProgress.Description := '只处理已确认的维护范围；业务数据与备份保持不变。';
+  end else begin
+    InstallProgress.Caption := '正在安装';
+    InstallProgress.Description := '安装未完成前不会发布 current-release 指针。';
+  end;
   if not ShouldMaintainEntry then begin
     InstallProgress.SetText(Caption, '程序维护不会改变业务数据；后台接管后可关闭查看。');
     InstallProgress.SetProgress(0, 0);
