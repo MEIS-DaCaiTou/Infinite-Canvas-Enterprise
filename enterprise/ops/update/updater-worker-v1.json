@@ -1,0 +1,7 @@
+{
+  "schema_version": "enterprise-updater-worker-v1",
+  "minimum_controller_contract": 1,
+  "worker_protocol": 2,
+  "updater_contract": 4,
+  "worker_entry": "enterprise/ops/update/handoff.py"
+}

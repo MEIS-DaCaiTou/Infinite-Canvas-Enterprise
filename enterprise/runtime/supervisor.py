@@ -911,6 +911,17 @@ class RuntimeSupervisor:
         if reservation is None:
             self._safe_handoff_ack(request, result="update_handoff_rejected", before=before, after=before)
             return
+        try:
+            updater = self._select_handoff_updater(job_id)
+        except Exception:
+            self._safe_handoff_ack(request, result="update_handoff_updater_rejected", before=before, after=before)
+            return
+        updater_binding = updater.readiness_binding if updater is not None else None
+        worker_root = self.config.app_root
+        extra_arguments = []
+        if updater is not None:
+            python, worker, worker_root = updater.python, updater.worker, updater.app_root
+            extra_arguments = ["--source-release-id", self.config.app_root.name]
         source_identity = self.supervisor_identity
         try:
             source_valid = same_process(source_identity, process_identity(source_identity.pid))
@@ -938,8 +949,8 @@ class RuntimeSupervisor:
                 [str(python), "-I", "-B", str(worker), "--job-id", job_id,
                  "--source-pid", str(source_identity.pid),
                  "--source-created-at", str(source_identity.created_at),
-                 "--source-executable", str(source_identity.executable)],
-                cwd=str(self.config.app_root),
+                 "--source-executable", str(source_identity.executable), *extra_arguments],
+                cwd=str(worker_root),
                 env=environment,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
@@ -987,7 +998,8 @@ class RuntimeSupervisor:
                 pass
             self._reject_update_worker(request, process, before, "update_handoff_job_blocked")
             return
-        if not read_worker_ready(process, job_id, source_identity, identity, timeout_seconds=5):
+        if not read_worker_ready(process, job_id, source_identity, identity, timeout_seconds=5,
+                                 updater_binding=updater_binding):
             failure = getattr(process, "handoff_ready_failure", None)
             if type(failure) is dict:
                 try:
@@ -1002,7 +1014,8 @@ class RuntimeSupervisor:
         # durable permission to stop a source after cancellation or timeout.
         try:
             still_valid = (process.poll() is None and same_process(identity, process_identity(process.pid))
-                           and self._handoff_reservation(job_id, request) == reservation)
+                           and self._handoff_reservation(job_id, request) == reservation
+                           and self._handoff_binding_matches(job_id, updater_binding))
         except OSError:
             still_valid = False
         if not still_valid:
@@ -1012,11 +1025,15 @@ class RuntimeSupervisor:
         try:
             self._log("update_handoff_independence_verified", worker_process_in_job=worker_in_job,
                       worker_not_in_source_job=True, host_creation_verified=True, host_cleanup_confirmed=True)
+            if updater_binding is not None:
+                self._log("update_handoff_updater_verified", update_job_id=job_id,
+                          updater_execution=updater_binding)
         except OSError:
             self._reject_update_worker(request, process, before, "update_handoff_failed",
                                        probe_cleanup_confirmed=True)
             return
-        if not self._commit_update_handoff(job_id, request, reservation, process, identity):
+        commit_arguments = {"updater_binding": updater_binding} if updater_binding is not None else {}
+        if not self._commit_update_handoff(job_id, request, reservation, process, identity, **commit_arguments):
             self._reject_update_worker(request, process, before, "update_handoff_cleanup_unconfirmed",
                                        probe_cleanup_confirmed=True)
             return
@@ -1030,11 +1047,12 @@ class RuntimeSupervisor:
         except Exception:
             pass
 
-    def _commit_update_handoff(self, job_id, request, reservation, process, identity):
+    def _commit_update_handoff(self, job_id, request, reservation, process, identity, *, updater_binding=None):
         try:
             with HandoffCommitGate(job_id):
                 if (process.poll() is not None or not same_process(identity, process_identity(process.pid))
-                        or self._handoff_reservation(job_id, request) != reservation):
+                        or self._handoff_reservation(job_id, request) != reservation
+                        or not self._handoff_binding_matches(job_id, updater_binding)):
                     return False
                 self._handoff_store().commit_handoff(job_id, self.config.app_root.name, reservation)
                 self._stopping = True
@@ -1042,6 +1060,22 @@ class RuntimeSupervisor:
         except Exception:
             # Releasing a mutex must not revoke a successfully committed stop.
             return self._stopping is True
+
+    def _select_handoff_updater(self, job_id):
+        from enterprise.ops.update.updater import select_verified_updater
+        store = self._handoff_store()
+        return select_verified_updater(store.roots, store.read_plan(job_id), store.read_status(job_id))
+
+    def _handoff_binding_matches(self, job_id, expected):
+        if expected is None:
+            return True  # Preserve the immutable legacy single-hop contract.
+        from enterprise.ops.update.updater import sealed_updater_binding
+        try:
+            store = self._handoff_store()
+            actual = sealed_updater_binding(store.read_plan(job_id), store.read_status(job_id))
+            return actual == expected
+        except Exception:
+            return False
 
     def _handoff_store(self):
         from enterprise.paths import PortableRootInputs, derive_portable_path_roots

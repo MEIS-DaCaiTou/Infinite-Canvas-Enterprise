@@ -15,6 +15,7 @@ from enterprise.migrations.versioned import STATE_MISSING, STATE_READY, inspect_
 from enterprise.ops.update.models import ReleaseMetadataV2
 from enterprise.ops.update.mvp import _database_evidence
 from enterprise.ops.update.providers import GitHubReleasesProvider
+from enterprise.ops.update.updater import UPDATER_CONTRACT
 from enterprise.ops.update.upgrade_routes import MAX_ROUTE_BYTES, ReleaseState, UpgradeRouteError, UpgradeRoutes, parse_upgrade_routes
 from enterprise.release.release_manifest_v2 import MANIFEST_MAX_BYTES, ReleaseManifestV2, canonical_json, parse_release_manifest_v2_bytes
 
@@ -22,7 +23,7 @@ from enterprise.release.release_manifest_v2 import MANIFEST_MAX_BYTES, ReleaseMa
 # This code can plan and verify route declarations. An installed release may
 # advertise a lower contract in its own route asset; never infer that every
 # historical release provides the current updater's capabilities.
-UPDATER_ROUTE_CONTRACT = 3
+UPDATER_ROUTE_CONTRACT = UPDATER_CONTRACT
 MAX_PREVIEW_CACHE_ENTRIES = 1000
 
 

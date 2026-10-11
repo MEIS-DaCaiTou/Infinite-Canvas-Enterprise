@@ -27,6 +27,7 @@ from enterprise.runtime.ownership import ProcessIdentity, process_identity
 from enterprise.runtime.windows import JobObjectError, ProcessJob, current_job_diagnostics
 
 READY_SCHEMA = "runtime-handoff-ready-v1"
+BOUND_READY_SCHEMA = "runtime-handoff-ready-v2"
 FAILURE_SCHEMA = "runtime-handoff-rejected-v1"
 _FAILURE_STAGES = frozenset({
     "worker_job_query", "source_lease", "worker_identity", "probe_launcher_create",
@@ -255,7 +256,7 @@ def _identity_field(identity, name: str):
 
 
 def read_worker_ready(process, job_id: str, source_identity, worker_identity,
-                      timeout_seconds: float = 5) -> bool:
+                      timeout_seconds: float = 5, *, updater_binding: dict | None = None) -> bool:
     """Accept only a live, identity-bound worker's strict readiness JSON."""
     timeout = min(_duration(timeout_seconds), 5.0)
     if process.poll() is not None:
@@ -276,8 +277,16 @@ def read_worker_ready(process, job_id: str, source_identity, worker_identity,
         return False
     if message is None or process.poll() is not None:
         return False
-    if message.get("schema") != READY_SCHEMA or message.get("job_id") != job_id:
+    schema = READY_SCHEMA if updater_binding is None else BOUND_READY_SCHEMA
+    if message.get("schema") != schema or message.get("job_id") != job_id:
         return False
+    if updater_binding is None and "updater_execution" in message:
+        return False
+    if updater_binding is not None:
+        actual = message.get("updater_execution")
+        if (type(actual) is not dict
+                or json.dumps(actual, sort_keys=True) != json.dumps(updater_binding, sort_keys=True)):
+            return False
     for prefix, identity in (("source", source_identity), ("worker", worker_identity)):
         for name in ("pid", "created_at"):
             expected = _identity_field(identity, name)
@@ -437,7 +446,7 @@ def _verify_host_creation() -> None:
 
 
 def prepare_worker_ready(job_id: str, source_pid: int, source_created_at: int,
-                         source_executable: str):
+                         source_executable: str, *, updater_binding: dict | None = None):
     if type(job_id) is not str or re.fullmatch(r"[0-9a-f]{32}", job_id) is None:
         raise ValueError("job identity is invalid")
     context = current_job_diagnostics()
@@ -459,11 +468,12 @@ def prepare_worker_ready(job_id: str, source_pid: int, source_created_at: int,
         if lease.wait_for_exit(0):
             raise HandoffLifecycleError("source exited before readiness")
         return lease, {
-            "schema": READY_SCHEMA, "job_id": job_id,
+            "schema": READY_SCHEMA if updater_binding is None else BOUND_READY_SCHEMA, "job_id": job_id,
             "source_pid": source_pid, "source_created_at": source_created_at,
             "worker_pid": worker.pid, "worker_created_at": worker.created_at,
             "source_process_lease_opened": True,
             "host_creation_verified": True, "host_cleanup_confirmed": True,
+            **({"updater_execution": updater_binding} if updater_binding is not None else {}),
         }
     except (JobObjectError, OSError, ValueError, subprocess.TimeoutExpired) as exc:
         lease.close()

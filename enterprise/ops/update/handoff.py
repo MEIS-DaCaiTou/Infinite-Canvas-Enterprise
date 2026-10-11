@@ -4,14 +4,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
 
 
-APP_ROOT = Path(__file__).resolve().parents[3]
-if str(APP_ROOT) not in sys.path:
-    sys.path.insert(0, str(APP_ROOT))
+CODE_ROOT = Path(__file__).resolve().parents[3]
+if str(CODE_ROOT) not in sys.path:
+    sys.path.insert(0, str(CODE_ROOT))
 
 
 def _arguments() -> argparse.Namespace:
@@ -20,6 +21,7 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument("--source-pid", required=True, type=int)
     parser.add_argument("--source-created-at", required=True, type=int)
     parser.add_argument("--source-executable", required=True)
+    parser.add_argument("--source-release-id")
     return parser.parse_args()
 
 
@@ -121,6 +123,40 @@ class _SilentStdout:
         return False
 
 
+def _source_app_root(source_release_id: str | None) -> Path:
+    if source_release_id is None:
+        return CODE_ROOT
+    from enterprise.path_safety import assert_no_reparse_ancestors
+    from enterprise.paths import validate_release_component
+    from enterprise.ops.update.updater import UpdaterExecutionError
+    if CODE_ROOT.parent.name.casefold() != "releases":
+        raise UpdaterExecutionError()
+    source = CODE_ROOT.parent / validate_release_component(source_release_id)
+    assert_no_reparse_ancestors(source)
+    if not source.is_dir() or source == CODE_ROOT:
+        raise UpdaterExecutionError()
+    return source
+
+
+def _worker_binding(roots, job_id: str, source_release_id: str | None):
+    from enterprise.ops.update.mvp import UpdateJobStore
+    from enterprise.ops.update.updater import UPDATER_CONTRACT, UpdaterExecutionError, select_verified_updater
+    store = UpdateJobStore(roots)
+    plan, status = store.read_plan(job_id), store.read_status(job_id)
+    selected = select_verified_updater(roots, plan, status)
+    if source_release_id is None:
+        if selected is not None:
+            raise UpdaterExecutionError()  # Bound jobs cannot downgrade to the source worker.
+        return None
+    if (selected is None or selected.app_root != CODE_ROOT
+            or plan.get("source_release_id") != source_release_id
+            or os.path.normcase(str(selected.python)) != os.path.normcase(sys.executable)
+            or selected.readiness_binding["updater_contract"] != UPDATER_CONTRACT):
+        raise UpdaterExecutionError()
+    store.active_handoff_reservation(job_id, source_release_id)
+    return selected.readiness_binding
+
+
 def main() -> int:
     arguments = _arguments()
     roots = None
@@ -131,21 +167,23 @@ def main() -> int:
         from enterprise.paths import PortableRootInputs, derive_portable_path_roots, install_path_roots_for_process
         from enterprise.runtime.portable import windows_local_app_data_known_folder
 
-        install_root = APP_ROOT.parent.parent
+        app_root = _source_app_root(arguments.source_release_id)
+        install_root = app_root.parent.parent
         roots = derive_portable_path_roots(
             PortableRootInputs(install_root, windows_local_app_data_known_folder()),
-            APP_ROOT.name,
+            app_root.name,
         )
         install_path_roots_for_process(roots)
-        from enterprise.config import DB_PATH
         from enterprise.ops.update.mvp import UpdateJobStore, execute_update_job
         from enterprise.runtime.handoff_lifecycle import prepare_worker_ready
 
         job_id = UpdateJobStore.validate_job_id(arguments.job_id)
+        updater_binding = _worker_binding(roots, job_id, arguments.source_release_id)
         # Hold the verified original source process handle before announcing
         # readiness. A disappearing/replaced lock alone never proves exit.
         source_lease, readiness = prepare_worker_ready(
-            job_id, arguments.source_pid, arguments.source_created_at, arguments.source_executable)
+            job_id, arguments.source_pid, arguments.source_created_at, arguments.source_executable,
+            updater_binding=updater_binding)
         print(json.dumps(readiness, sort_keys=True), flush=True)
         readiness_sent = True
         # The source owns the read end and will exit. Do not retain that pipe
@@ -158,6 +196,7 @@ def main() -> int:
         status = UpdateJobStore(roots).read_status(job_id)
         if status.get("state") != "UPDATING" or status.get("handoff_committed") is not True:
             return 2  # Rejected/late worker cannot overwrite a recovery block.
+        from enterprise.config import DB_PATH
         result = execute_update_job(roots, job_id, database_path=Path(DB_PATH))
         try:
             from enterprise import db as edb
