@@ -18,6 +18,7 @@
     "request_schema": "enterprise-install-maintenance-request-v2",
     "legacy_request_schema": "install-ux-1-request-v1",
     "graphical_maintenance_request_schema": "enterprise-install-maintenance-request-v4",
+    "lifecycle_request_schema": "enterprise-install-maintenance-request-v6",
     "result_schema": "install-ux-1-result-v1",
     "scope": "current-user-only"
   },
@@ -30,7 +31,7 @@
   "installer_architecture": "x64",
   "installer_filename_pattern": "Infinite-Canvas-Enterprise-Setup-<version>-x64.exe",
   "installer_source": "installer/windows/InfiniteCanvasEnterprise.iss",
-  "maintenance_operations": ["install", "repair-entry", "repair-program", "recover-program", "inspect-program", "recover-entry"],
+  "maintenance_operations": ["install", "repair-entry", "repair-program", "recover-program", "inspect-program", "recover-entry", "inspect-cache", "clean-cache", "inspect-lifecycle", "uninstall-retain", "recover-uninstall", "reinstall-retained"],
   "program_maintenance": {
     "same_release_only": true,
     "progress_is_authority": false,
@@ -54,6 +55,14 @@
   "privileges": "current-user-lowest",
   "schema_version": "install-ux-1-build-policy-v1",
   "security_authority": "enterprise.fresh_install.install_greenfield",
-  "uninstaller_created": false,
+  "uninstaller_created": true,
+  "retained_lifecycle": {
+    "registered_scope": "current-user-instance",
+    "default_preserve_business_data": true,
+    "program_recovery_copy_retained": true,
+    "reinstall_same_release_only": true,
+    "reinstall_initializes_database": false,
+    "unknown_source_adoption": false
+  },
   "full_lifecycle_complete": false
 }

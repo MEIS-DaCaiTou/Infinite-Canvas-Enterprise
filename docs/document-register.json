@@ -5,6 +5,10 @@
   "scope": "All Git-managed or non-ignored new Markdown/text files; roles are not runtime or release approval. Frozen hashes normalize CRLF to LF only.",
   "documents": [
     {
+      "path": "docs/ops/RETAINED-UNINSTALL-REINSTALL-2026-10-11.md",
+      "kind": "record"
+    },
+    {
       "path": "docs/ops/MAINTENANCE-CACHE-LIFECYCLE-2026-10-11.md",
       "kind": "record"
     },
@@ -54,13 +58,13 @@
       "path": "ARCHITECTURE.md",
       "kind": "authority",
       "authority": "architecture",
-      "reviewed_at": "2026-10-09"
+      "reviewed_at": "2026-10-11"
     },
     {
       "path": "CODE_BOUNDARIES.md",
       "kind": "authority",
       "authority": "code-boundaries",
-      "reviewed_at": "2026-10-03"
+      "reviewed_at": "2026-10-11"
     },
     {
       "path": "CODEX_WORKFLOW.md",
@@ -454,7 +458,7 @@
       "path": "docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md",
       "kind": "authority",
       "authority": "roadmap",
-      "reviewed_at": "2026-10-09"
+      "reviewed_at": "2026-10-11"
     },
     {
       "path": "docs/runbooks/SEC-1B2-PRODUCTION-ACTIVATION-RUNBOOK-2026-07.md",
@@ -560,7 +564,7 @@
       "path": "PROJECT_SCOPE_LOCK.md",
       "kind": "authority",
       "authority": "scope",
-      "reviewed_at": "2026-10-09"
+      "reviewed_at": "2026-10-11"
     },
     {
       "path": "README.md",

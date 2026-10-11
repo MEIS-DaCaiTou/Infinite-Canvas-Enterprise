@@ -27,6 +27,7 @@ MAINTENANCE_REQUEST_SCHEMA = "enterprise-install-maintenance-request-v2"
 PROGRAM_MAINTENANCE_REQUEST_SCHEMA = "enterprise-install-maintenance-request-v3"
 GRAPHICAL_MAINTENANCE_REQUEST_SCHEMA = "enterprise-install-maintenance-request-v4"
 CACHE_MAINTENANCE_REQUEST_SCHEMA = "enterprise-install-maintenance-request-v5"
+LIFECYCLE_REQUEST_SCHEMA = "enterprise-install-maintenance-request-v6"
 _AUTHENTICATED_CLIENT = ContextVar("setup_pipe_client_identity", default=None)
 RESULT_SCHEMA = "install-ux-1-result-v1"
 MAX_FRAME_BYTES = 16 * 1024
@@ -122,7 +123,13 @@ def _decode_request(raw: bytes) -> dict[str, object]:
         "install_root",
     }
     schema = payload.get("schema_version")
-    if schema == CACHE_MAINTENANCE_REQUEST_SCHEMA:
+    if schema == LIFECYCLE_REQUEST_SCHEMA:
+        expected.update({"operation", "confirm_no_active_tasks"})
+        operation = payload.get("operation")
+        if (operation not in {"inspect-lifecycle", "uninstall-retain", "recover-uninstall", "reinstall-retained"}
+                or payload.get("confirm_no_active_tasks") is not (operation != "inspect-lifecycle")):
+            raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
+    elif schema == CACHE_MAINTENANCE_REQUEST_SCHEMA:
         expected.update({"operation", "cache_id", "cache_token", "confirm_cache_cleanup"})
         operation = payload.get("operation")
         if (operation not in {"inspect-cache", "clean-cache"}
@@ -165,7 +172,7 @@ def _decode_request(raw: bytes) -> dict[str, object]:
         raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
     if payload["install_mode"] == "custom" and not install_root:
         raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
-    if payload.get("operation") in {"repair-entry", "recover-entry", "repair-program", "recover-program", "inspect-program", "inspect-cache", "clean-cache"} and any(payload[field] for field in ("username", "password", "password_confirmation")):
+    if payload.get("operation") in {"repair-entry", "recover-entry", "repair-program", "recover-program", "inspect-program", "inspect-cache", "clean-cache", "inspect-lifecycle", "uninstall-retain", "recover-uninstall", "reinstall-retained"} and any(payload[field] for field in ("username", "password", "password_confirmation")):
         raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
     return payload
 
@@ -280,7 +287,7 @@ def _validated_install_root(
             or _paths_overlap(target, known_folder / "Infinite-Canvas-Enterprise" / "maintenance-payloads")):
         raise SetupBridgeError("INSTALL_TARGET_OVERLAP")
     try:
-        if request.get("operation", "install") in {"repair-entry", "recover-entry", "repair-program", "recover-program", "inspect-program", "inspect-cache", "clean-cache"}:
+        if request.get("operation", "install") in {"repair-entry", "recover-entry", "repair-program", "recover-program", "inspect-program", "inspect-cache", "clean-cache", "inspect-lifecycle", "uninstall-retain", "recover-uninstall", "reinstall-retained"}:
             if not target.is_dir():
                 raise SetupBridgeError("INSTALL_ENTRY_SOURCE_INVALID")
         elif target.exists() and (not target.is_dir() or any(target.iterdir())):
@@ -341,6 +348,19 @@ def _run_install_request(
 def _execute_install_request(request, *, assets, verified, target, known_folder, notify_progress=None):
     from enterprise.fresh_install import install_greenfield
     from enterprise.install_entry import repair_fixed_entry, recover_fixed_entry, verify_entry_bundle
+    if request.get("operation") in {"inspect-lifecycle", "uninstall-retain", "recover-uninstall", "reinstall-retained"}:
+        from enterprise.install_lifecycle import inspect_lifecycle, uninstall_retaining_data, reinstall_retained
+        arguments = dict(install_root=target, release_dir=assets, local_app_data_base=known_folder)
+        operation = request["operation"]
+        if operation == "inspect-lifecycle":
+            result = inspect_lifecycle(**arguments)
+        else:
+            arguments["confirm_no_active_tasks"] = request["confirm_no_active_tasks"]
+            if operation == "reinstall-retained":
+                result = reinstall_retained(**arguments)
+            else:
+                result = uninstall_retaining_data(**arguments, recover=operation == "recover-uninstall")
+        return {"schema_version": RESULT_SCHEMA, "status": "succeeded", "code": "INSTALL_LIFECYCLE_RESULT", **result}
     if request.get("operation") in {"inspect-cache", "clean-cache"}:
         from enterprise.install_cache import inspect_cache, clean_cache
         if request["operation"] == "inspect-cache":
@@ -603,7 +623,7 @@ def _serve_once(
             if not 1 <= size <= MAX_FRAME_BYTES:
                 raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_TOO_LARGE")
             request = _decode_request(_read_exact(handle, size))
-            graphical = request["schema_version"] in {GRAPHICAL_MAINTENANCE_REQUEST_SCHEMA, CACHE_MAINTENANCE_REQUEST_SCHEMA}
+            graphical = request["schema_version"] in {GRAPHICAL_MAINTENANCE_REQUEST_SCHEMA, CACHE_MAINTENANCE_REQUEST_SCHEMA, LIFECYCLE_REQUEST_SCHEMA}
             if graphical:
                 def notify(phase, operation_id):
                     # The pipe is presentation only. Closing a Setup window
