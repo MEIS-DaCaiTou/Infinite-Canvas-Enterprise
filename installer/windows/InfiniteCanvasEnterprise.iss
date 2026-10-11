@@ -1095,6 +1095,30 @@ begin
   RequireEmbeddedFile(Result, ExpectedSha, StrToInt64(Size));
 end;
 
+procedure PrepareLifecycleSupport;
+var
+  Directory, Info, Target, Source, Digest: String;
+  Size: Int64;
+begin
+  if not ((MaintenanceOperation = 'install') or
+      ((MaintenanceOperation = 'repair-entry') and MatchingLifecycleRelease) or
+      ((MaintenanceOperation = 'reinstall-retained') and (LifecycleState = 'INSTALLED'))) then exit;
+  Directory := AddBackslash(SelectedInstallRoot) + 'state\windows-maintenance';
+  Info := SupportInfo(SelectedInstallRoot);
+  Target := AddBackslash(Directory) + 'maintenance-setup.exe';
+  Source := ExpandConstant('{srcexe}');
+  Digest := GetSHA256OfFile(Source);
+  if HasReparseAncestors(Directory) or not FileSize64(Source, Size) or (Size <= 0) then
+    RaiseException('INSTALL_UNINSTALL_SUPPORT_UNPROVEN');
+  if FileExists(Info) then begin
+    if CheckedMaintenanceSetup(SelectedInstallRoot) <> Target then RaiseException('INSTALL_UNINSTALL_SUPPORT_UNPROVEN');
+    RequireEmbeddedFile(Target, Digest, Size);
+  end else if FileExists(Target) then RequireEmbeddedFile(Target, Digest, Size);
+  { Inno's FileCopy cannot copy Setup itself in PrepareToInstall. Mark only
+    proven eligibility here; ssInstall publishes before Inno changes anything. }
+  LifecycleSupportReady := True;
+end;
+
 procedure PublishLifecycleSupport;
 var
   Directory, Info, Target, Source, Digest: String;
@@ -1307,7 +1331,7 @@ begin
     end;
     if IsLifecycleOperation then begin
       if (MaintenanceOperation = 'reinstall-retained') and (LifecycleState = 'INSTALLED') then begin
-        PublishLifecycleSupport;
+        PrepareLifecycleSupport;
         WizardForm.FinishedLabel.Caption := '原账号、数据库、素材、配置和安装身份已保留；同版本程序与固定入口已恢复。服务未自动启动。';
         SetStage('保留数据重装完成', 6);
         exit;
@@ -1334,7 +1358,7 @@ begin
       exit;
     end;
     SetStage('固定入口已就绪', 4);
-    PublishLifecycleSupport;
+    PrepareLifecycleSupport;
     if ExistingEntryRepair then begin
       SetStage('原账号、数据及当前版本保持不变', 5);
       SetStage('入口修复完成', 6);
@@ -1369,6 +1393,13 @@ procedure CurStepChanged(CurStep: TSetupStep);
 var
   Key, Info, Uninstaller: String;
 begin
+  if (CurStep = ssInstall) and RegisterLifecycle then begin
+    try PublishLifecycleSupport;
+    except
+      LifecycleSupportReady := False;
+      RaiseException('INSTALL_UNINSTALL_SUPPORT_PUBLICATION_FAILED');
+    end;
+  end;
   if (CurStep = ssPostInstall) and ShouldMaintainEntry and (InstallationId <> '') then begin
     Key := 'Software\Infinite-Canvas-Enterprise\Installations\' + InstallationId;
     if not RegWriteStringValue(HKCU, Key, 'InstallLocation', SelectedInstallRoot) or
