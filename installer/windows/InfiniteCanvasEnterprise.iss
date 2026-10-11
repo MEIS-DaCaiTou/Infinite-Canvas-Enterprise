@@ -24,6 +24,7 @@ DefaultDirName={localappdata}\Infinite-Canvas-Enterprise\install
 CreateAppDir=no
 DisableDirPage=yes
 UsePreviousAppDir=no
+UsePreviousLanguage=no
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
