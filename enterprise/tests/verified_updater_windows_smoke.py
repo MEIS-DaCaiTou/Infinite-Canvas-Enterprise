@@ -7,6 +7,7 @@ customer device, paid provider or installer GUI acceptance is involved.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -50,6 +51,10 @@ def scenario(args, name, local_base, nonce):
         fixed._configure(roots, *ports)
         business = fixed._seed_business(roots, installed.first_user_id)
         database = fixed._database_snapshot(roots.DATA_ROOT / "enterprise.db")
+        fixed._json_new(evidence / "data-preservation-baseline.json", {
+            "protected_files_sha256": {path: hashlib.sha256(value).hexdigest() for path, value in business.items()},
+            "database_snapshot_sha256": hashlib.sha256(json.dumps(database, sort_keys=True).encode()).hexdigest(),
+        })
         exit_code, started = fixed._native(install, "start", evidence)
         if exit_code != 0 or started.get("result") != "started":
             raise RuntimeError("C5_SOURCE_START_FAILED")
@@ -120,8 +125,10 @@ def scenario(args, name, local_base, nonce):
             fixed._wait(lambda: not fixed._update_worker_pids(target_python, prepared.job_id), seconds=60, label="C5-worker-exit")
             if store.lock_path.exists():
                 raise RuntimeError("C5_RESERVATION_NOT_RELEASED")
-            if name == "rollback" and not (evidence / "FAULT.json").is_file():
-                raise RuntimeError("C5_ROLLBACK_FAULT_NOT_OBSERVED")
+            if name == "rollback":
+                fault = json.loads((evidence / "fault-acquired.json").read_bytes())
+                if fault.get("bound") is not True or fault.get("port") != ports[1]:
+                    raise RuntimeError("C5_ROLLBACK_FAULT_NOT_OBSERVED")
         pointer = json.loads((roots.STATE_ROOT / "current-release.json").read_bytes())
         if name in {"tampered", "incompatible"}:
             exit_code, active = fixed._native(install, "status", evidence)
@@ -173,6 +180,8 @@ def main():
     for name in ("source-build", "source-native-entry", "target-build", "incompatible-build", "evidence-root"):
         parser.add_argument("--" + name, type=Path, required=True)
     parser.add_argument("--expected-target-contract", type=int, default=5)
+    parser.add_argument("--scenarios", nargs="+", choices=("success", "rollback", "tampered", "incompatible"),
+                        default=("success", "rollback", "tampered", "incompatible"))
     parser.add_argument("--preserve-existing-local-roots", action="store_true")
     args = parser.parse_args()
     if os.name != "nt":
@@ -183,6 +192,16 @@ def main():
     fixed._validate_evidence_root(args.evidence_root, (REPO, local_base, args.source_build,
         args.source_native_entry, args.target_build, args.incompatible_build))
     args.evidence_root.mkdir(parents=True, exist_ok=False)
+    from enterprise.tests.fixed_exe_handoff_qualification import qualified_result
+    # Qualify the driver context before any historical roots are moved or a
+    # synthetic service is installed. A restrictive Job is a safety refusal,
+    # never a reason to weaken application handoff or repeat a whole drill.
+    qualification_path = args.evidence_root / "driver-qualification.json"
+    result = subprocess.run([sys.executable, "-I", "-B",
+        str(REPO / "enterprise/tests/fixed_exe_handoff_qualification.py"), "--output", str(qualification_path)],
+        stdin=subprocess.DEVNULL, capture_output=True, timeout=30)
+    if result.returncode != 0 or not qualified_result(json.loads(qualification_path.read_bytes())):
+        raise RuntimeError("C5_DRIVER_HANDOFF_CONTEXT_UNQUALIFIED")
     for key in ("source_build", "target_build", "incompatible_build"):
         destination = args.evidence_root / key.replace("_", "-")
         assets = fixed._asset_view(getattr(args, key), destination)
@@ -193,10 +212,11 @@ def main():
     nonce = uuid.uuid4().hex
     results = []
     with fixed.preserved_local_roots(local_base, nonce, explicitly_authorized=args.preserve_existing_local_roots) as preservation:
-        for name in ("success", "rollback", "tampered", "incompatible"):
+        for name in args.scenarios:
             fixed._create_owned_local_roots(local_base, fixed.NAMES, nonce)
             results.append(scenario(args, name, local_base, nonce))
     summary = {"schema_version": "verified-updater-windows-drill-v1", "results": results, **preservation,
+               "driver_context_qualified": True,
                "historical_roots_restored": True, "production_touched": False, "release_published": False,
                "paid_provider_called": False, "gui_acceptance": False}
     fixed._json_new(args.evidence_root / "SUMMARY.json", summary)

@@ -1801,7 +1801,7 @@
   function renderUpdateProgress(data) {
     const labels = {
       PREPARING: '正在下载并校验发布包', READY: '发布包已校验，等待切换',
-      UPDATING: '正在安全停止服务', MIGRATING: '正在备份并迁移数据库',
+      UPDATING: '正在核验并交接服务', MIGRATING: '正在备份并迁移数据库',
       RESTARTING: '正在启动新版本', VERIFYING: '正在检查新版本健康状态',
       SUCCEEDED: '升级成功', ROLLING_BACK: '升级未完成，正在恢复原版本',
       ROLLED_BACK: '升级失败，已恢复原版本', FAILED: '升级未完成',
@@ -1814,7 +1814,7 @@
       data?.job_id ? `作业 ID：${data.job_id}` : '发布包准备期间，当前服务仍可使用。',
       data?.result_code ? `结果代码：${data.result_code}` : '',
       data?.updater_execution?.mode === 'target-release'
-        ? `更新工具：已核验目标版本 ${data.updater_execution.worker_release_id}` : '',
+        ? `更新工具：准备时已核验目标版本 ${data.updater_execution.worker_release_id}` : '',
       data?.result_code === 'SYSTEM_UPDATE_UPDATER_UNVERIFIED'
         ? '更新工具或维护计划核验失败，服务交接未执行。请重新检查发布包。' : '',
       state === 'RECOVERY_REQUIRED' ? '请勿重试升级；先核对数据与运行状态，再使用下方人工恢复核验。' : '',
