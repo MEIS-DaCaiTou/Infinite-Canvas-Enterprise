@@ -36,7 +36,7 @@ from enterprise.ops.update.errors import (
     ReleaseManifestError,
     ReleaseStagingError,
 )
-from enterprise.ops.update.http_client import SafeHttpClient, UrlPolicy
+from enterprise.ops.update.http_client import JsonHttpResponse, SafeHttpClient, UrlPolicy
 from enterprise.ops.update.jobs import UpdateJob
 from enterprise.ops.update.manifest import parse_release_manifest, parse_release_manifest_bytes
 from enterprise.ops.update.providers import DEFAULT_GITHUB_REPOSITORY, GitHubReleasesProvider, LocalFixtureProvider
@@ -383,6 +383,9 @@ class StaticGitHubClient:
         assert maximum_bytes > 0 and headers["Accept"]
         self.request_headers.append(dict(headers))
         return self.payload
+
+    def read_json_response(self, url: str, **kwargs) -> JsonHttpResponse:
+        return JsonHttpResponse(self.read_json(url, **kwargs))
 
 
 class LoopbackGitHubProvider(GitHubReleasesProvider):

@@ -29,7 +29,8 @@ from enterprise.ops.update.mvp import (
     UpdateMvpService,
 )
 from enterprise.ops.update.providers import GitHubReleasesProvider
-from enterprise.ops.update.route_catalog import inspect_installed_route_state, read_release_routes, verify_target_route_schema
+from enterprise.ops.update.release_catalog import ReleaseCatalogCache
+from enterprise.ops.update.route_catalog import RoutePreviewCache, inspect_installed_route_state, read_release_routes, verify_target_route_schema
 from enterprise.ops.update.upgrade_routes import UpgradeRouteError, plan_upgrade_path
 from enterprise.ops.update.versions import compare_versions
 from enterprise.ops.update.recovery import assess_recovery, clear_recovery
@@ -46,12 +47,15 @@ from enterprise.runtime.portable import request_portable_update_handoff
 
 
 router = APIRouter()
+_catalog_cache = ReleaseCatalogCache()
+_route_preview_cache = RoutePreviewCache()
 
 
 def _error(exc: Exception) -> None:
     code = str(getattr(exc, "code", getattr(exc, "detail_code", "SYSTEM_UPDATE_FAILED")))
     status = int(getattr(exc, "status_code", 400))
     message = {
+        "RELEASE_CATALOG_INCOMPLETE": "历史发布目录未能完整核验，请稍后重新检查；未启动升级。",
         "SYSTEM_UPDATE_DATABASE_CONTRACT_UNSUPPORTED": "无法验证此版本的数据库迁移与恢复契约，已拒绝准备升级。",
         "SYSTEM_UPDATE_RECOVERY_REQUIRED": "上一升级作业仍需人工恢复，已拒绝再次升级。",
         "SYSTEM_UPDATE_RECOVERY_STATE_UNVERIFIED": "无法核验既有升级作业的恢复状态，已拒绝再次升级。",
@@ -106,7 +110,7 @@ def _require_update_operator(request: Request) -> dict:
 
 
 def _provider() -> GitHubReleasesProvider:
-    return GitHubReleasesProvider()
+    return GitHubReleasesProvider(catalog_cache=_catalog_cache)
 
 
 def _metadata_by_id(provider: GitHubReleasesProvider, release_id: str):
@@ -144,7 +148,7 @@ def _route_previews(provider, releases, source_manifest, source_pointer) -> dict
             previews[key] = {"route_status": "route_missing", "upgrade_path": []}
             continue
         try:
-            declaration = read_release_routes(provider, release)
+            declaration = _route_preview_cache.read(provider, release, read_release_routes)
         except Exception:
             previews[key] = {"route_status": "route_invalid", "upgrade_path": []}
             continue
@@ -232,6 +236,10 @@ def _check_update_sync() -> dict[str, object]:
         return {
             "current_release_id": current.release.release_id,
             "current_version": current_version,
+            "catalog": (
+                provider.catalog_snapshot.public_summary()
+                if getattr(provider, "catalog_snapshot", None) is not None else None
+            ),
             # A higher version alone is not an offer to upgrade. Keep the
             # legacy flag stable-only and fail closed without a direct route.
             "update_available": latest is not None,

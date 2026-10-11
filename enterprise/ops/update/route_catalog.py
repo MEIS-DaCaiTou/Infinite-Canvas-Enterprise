@@ -6,6 +6,8 @@ import hashlib
 import json
 import sqlite3
 import zipfile
+import threading
+from collections import OrderedDict
 from pathlib import Path
 
 from enterprise.migrations.sqlite_existing import open_existing_sqlite
@@ -21,6 +23,41 @@ from enterprise.release.release_manifest_v2 import MANIFEST_MAX_BYTES, ReleaseMa
 # advertise a lower contract in its own route asset; never infer that every
 # historical release provides the current updater's capabilities.
 UPDATER_ROUTE_CONTRACT = 3
+MAX_PREVIEW_CACHE_ENTRIES = 1000
+
+
+class RoutePreviewCache:
+    """Reuse verified immutable declarations for advisory UI only.
+
+    A freshly verified complete GitHub catalog precedes every use. The route
+    digest, release identity, channel, URLs and sizes all bind the cache key.
+    Prepare/execution never consult this cache and re-download/revalidate.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._routes: OrderedDict[tuple, UpgradeRoutes] = OrderedDict()
+
+    def read(self, provider, metadata, loader) -> UpgradeRoutes | None:
+        if not isinstance(provider, GitHubReleasesProvider) or provider.catalog_snapshot is None:
+            return loader(provider, metadata)
+        key = (*provider.preview_cache_subject(), metadata.provider_release_id,
+               metadata.version, metadata.prerelease, metadata.manifest_url,
+               metadata.manifest_size_bytes, metadata.upgrade_routes_url,
+               metadata.upgrade_routes_size_bytes, metadata.upgrade_routes_sha256)
+        with self._lock:
+            value = self._routes.get(key)
+            if value is not None:
+                self._routes.move_to_end(key)
+                return value
+        value = loader(provider, metadata)
+        if value is not None:
+            with self._lock:
+                self._routes[key] = value
+                self._routes.move_to_end(key)
+                while len(self._routes) > MAX_PREVIEW_CACHE_ENTRIES:
+                    self._routes.popitem(last=False)
+        return value
 
 
 def inspect_installed_route_state(

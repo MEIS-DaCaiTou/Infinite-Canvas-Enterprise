@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 from pathlib import Path
 from typing import Literal, Mapping, Protocol
@@ -11,11 +12,13 @@ from urllib.parse import urlparse
 from enterprise.ops.update.errors import ReleaseProviderError
 from enterprise.ops.update.http_client import SafeHttpClient, UrlPolicy
 from enterprise.ops.update.models import ReleaseMetadata, ReleaseMetadataV2
+from enterprise.ops.update.release_catalog import CatalogSnapshot, ReleaseCatalogCache, read_catalog
 from enterprise.ops.update.upgrade_routes import MAX_ROUTE_BYTES, ROUTE_ASSET_NAME
 from enterprise.ops.update.versions import parse_version
 
 
 DEFAULT_GITHUB_REPOSITORY = "MEIS-DaCaiTou/Infinite-Canvas-Enterprise"
+DEFAULT_GITHUB_REPOSITORY_ID = 1255587052
 TRUSTED_GITHUB_REPOSITORIES = frozenset({DEFAULT_GITHUB_REPOSITORY})
 GITHUB_ALLOWED_HOSTS = frozenset(
     {
@@ -203,6 +206,7 @@ class GitHubReleasesProvider:
         *,
         repository: str = DEFAULT_GITHUB_REPOSITORY,
         http_client: SafeHttpClient | None = None,
+        catalog_cache: ReleaseCatalogCache | None = None,
     ) -> None:
         if repository not in TRUSTED_GITHUB_REPOSITORIES:
             raise ReleaseProviderError("GitHub repository is not approved")
@@ -210,11 +214,15 @@ class GitHubReleasesProvider:
         self.http_client = http_client or SafeHttpClient(self.url_policy)
         self.diagnostics: tuple[str, ...] = ()
         self.record_count = 0
+        self.catalog_snapshot: CatalogSnapshot | None = None
+        self._catalog_cache = catalog_cache or ReleaseCatalogCache()
         self._asset_request_headers: dict[str, str] = {}
 
-    def list_releases(self) -> list[ReleaseMetadata]:
-        url = f"https://api.github.com/repos/{self.repository}/releases?per_page=50"
-        headers = {"Accept": GITHUB_METADATA_ACCEPT, "User-Agent": GITHUB_USER_AGENT}
+    def _catalog_records(self) -> tuple[object, ...]:
+        self.catalog_snapshot = None
+        self.record_count = 0
+        self.diagnostics = ()
+        headers = {"Accept": GITHUB_METADATA_ACCEPT, "User-Agent": GITHUB_USER_AGENT, "X-GitHub-Api-Version": GITHUB_API_VERSION}
         token = os.environ.get("GITHUB_TOKEN")
         if token:
             headers["Authorization"] = f"Bearer {token}"
@@ -223,10 +231,17 @@ class GitHubReleasesProvider:
         # logs, URLs, or exceptions. SafeHttpClient strips it on any redirect
         # that crosses an origin boundary.
         self._asset_request_headers = {"Authorization": headers["Authorization"]} if "Authorization" in headers else {}
-        payload = self.http_client.read_json(url, maximum_bytes=MAX_GITHUB_METADATA_BYTES, headers=headers)
-        if type(payload) is not list or len(payload) > 50:
-            raise ReleaseProviderError("GitHub release metadata is invalid")
-        self.record_count = len(payload)
+        snapshot = read_catalog(
+            repository=self.repository, repository_id=DEFAULT_GITHUB_REPOSITORY_ID,
+            client=self.http_client, cache=self._catalog_cache,
+            maximum_bytes=MAX_GITHUB_METADATA_BYTES, headers=headers,
+        )
+        self.catalog_snapshot = snapshot
+        self.record_count = len(snapshot.records)
+        return snapshot.records
+
+    def list_releases(self) -> list[ReleaseMetadata]:
+        payload = self._catalog_records()
         releases: list[ReleaseMetadata] = []
         diagnostics: list[str] = []
 
@@ -282,17 +297,15 @@ class GitHubReleasesProvider:
         self.diagnostics = tuple(diagnostics)
         return releases
 
+    def preview_cache_subject(self) -> tuple[str, bytes]:
+        """Credential-isolated advisory cache key; never return the credential."""
+        return self.repository, hashlib.sha256(
+            self._asset_request_headers.get("Authorization", "").encode("utf-8"),
+        ).digest()
+
     def list_release_v2_candidates(self, *, include_prerelease: bool = False) -> list[ReleaseMetadataV2]:
         """Return complete, non-draft Manifest v2 releases; opt in to development releases."""
-        url = f"https://api.github.com/repos/{self.repository}/releases?per_page=50"
-        headers = {"Accept": GITHUB_METADATA_ACCEPT, "User-Agent": GITHUB_USER_AGENT}
-        token = os.environ.get("GITHUB_TOKEN")
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
-        self._asset_request_headers = {"Authorization": headers["Authorization"]} if "Authorization" in headers else {}
-        payload = self.http_client.read_json(url, maximum_bytes=MAX_GITHUB_METADATA_BYTES, headers=headers)
-        if type(payload) is not list or len(payload) > 50:
-            raise ReleaseProviderError("GitHub release metadata is invalid")
+        payload = self._catalog_records()
         candidates: list[ReleaseMetadataV2] = []
         diagnostics: list[str] = []
         for release in payload:
