@@ -84,6 +84,7 @@ var
   TargetPage: TInputDirWizardPage;
   EnvironmentPage: TOutputMsgMemoWizardPage;
   OperationPage: TInputOptionWizardPage;
+  CachePage: TInputOptionWizardPage;
   TaskConfirmationPage: TInputOptionWizardPage;
   CredentialPage: TInputQueryWizardPage;
   InstallProgress: TOutputProgressWizardPage;
@@ -98,6 +99,10 @@ var
   RepairState: String;
   ObservedPhase: String;
   GraphicalPipeActive, Detached, PersistentBundle: Boolean;
+  CacheCleaning: Boolean;
+  CacheIds, CacheTokens, CacheSizes: TArrayOfString;
+  CacheRows, SelectedCacheId, SelectedCacheToken: String;
+  CacheRefreshButton: TNewButton;
 
 function CreateFileW(lpFileName: String; dwDesiredAccess, dwShareMode: Cardinal;
   lpSecurityAttributes: LongWord; dwCreationDisposition, dwFlagsAndAttributes: Cardinal;
@@ -119,6 +124,7 @@ function PeekNamedPipe(hNamedPipe: THandle; lpBuffer, nBufferSize, lpBytesRead: 
 
 function MaintenanceOperation: String;
 begin
+  if CacheCleaning then begin Result := 'clean-cache'; exit; end;
   Result := 'install';
   if not ExistingEntryRepair then exit;
   case OperationPage.SelectedValueIndex of
@@ -127,7 +133,13 @@ begin
     2: Result := 'recover-program';
     3: Result := 'inspect-program';
     4: Result := 'recover-entry';
+    5: Result := 'inspect-cache';
   end;
+end;
+
+function IsCacheOperation: Boolean;
+begin
+  Result := (MaintenanceOperation = 'inspect-cache') or (MaintenanceOperation = 'clean-cache');
 end;
 
 function ShouldMaintainEntry: Boolean;
@@ -139,6 +151,7 @@ end;
 function MaintenanceCaption: String;
 begin
   Result := '仅查看维护状态';
+  if IsCacheOperation then begin Result := '维护准备包管理（不清理业务数据）'; exit; end;
   if MaintenanceOperation = 'repair-program' then Result := '修复当前版本程序与 Python'
   else if MaintenanceOperation = 'recover-program' then Result := '恢复上次中断的程序修复'
   else if MaintenanceOperation = 'recover-entry' then Result := '恢复上次中断的固定入口修复';
@@ -160,6 +173,8 @@ end;
 
 procedure PaintMaintenanceProgress;
 begin
+  InstallProgress.Caption := MaintenanceCaption;
+  InstallProgress.Description := '只处理已确认的维护范围；业务数据与备份保持不变。';
   InstallProgress.SetText(MaintenanceCaption + '：' + PhaseCaption(ObservedPhase), '关闭查看不取消后台作业；重开安装包可仅查看状态。');
   InstallProgress.SetProgress(0, 0); { Real phase only, no invented percentage. }
 end;
@@ -231,7 +246,12 @@ begin
   end;
   Schema := 'enterprise-install-maintenance-request-v2';
   Confirmation := '';
-  if not ShouldMaintainEntry then begin
+  if IsCacheOperation then begin
+    Schema := 'enterprise-install-maintenance-request-v5';
+    if CacheCleaning then Confirmation := ',"confirm_cache_cleanup":true'
+    else Confirmation := ',"confirm_cache_cleanup":false';
+    Confirmation := Confirmation + ',"cache_id":"' + SelectedCacheId + '","cache_token":"' + SelectedCacheToken + '"';
+  end else if not ShouldMaintainEntry then begin
     Schema := 'enterprise-install-maintenance-request-v4';
     if Operation = 'inspect-program' then Confirmation := ',"confirm_no_active_tasks":false'
     else Confirmation := ',"confirm_no_active_tasks":true';
@@ -482,6 +502,13 @@ end;
 
 procedure SetStage(const Caption: String; Position: Integer);
 begin
+  if MaintenanceOperation <> 'install' then begin
+    InstallProgress.Caption := MaintenanceCaption;
+    InstallProgress.Description := '只处理已确认的维护范围；业务数据与备份保持不变。';
+  end else begin
+    InstallProgress.Caption := '正在安装';
+    InstallProgress.Description := '安装未完成前不会发布 current-release 指针。';
+  end;
   if not ShouldMaintainEntry then begin
     InstallProgress.SetText(Caption, '程序维护不会改变业务数据；后台接管后可关闭查看。');
     InstallProgress.SetProgress(0, 0);
@@ -555,7 +582,7 @@ begin
   CredentialPage.Values[1] := '';
   CredentialPage.Values[2] := '';
   GraphicalPipeActive := not ShouldMaintainEntry;
-  DetachButton.Visible := GraphicalPipeActive and (MaintenanceOperation <> 'inspect-program');
+  DetachButton.Visible := GraphicalPipeActive and (MaintenanceOperation <> 'inspect-program') and not IsCacheOperation;
   try
     if not PipeExchange(PipeSuffix, Request, Response) then begin
       Request := '';
@@ -569,6 +596,10 @@ begin
   Request := '';
   LastStableCode := ExtractCode(Response);
   Result := Pos('"status":"succeeded"', Response) > 0;
+  if Result and IsCacheOperation then begin
+    CacheRows := Response;
+    exit; { Cache-only requests never register an installation or maintain shortcuts. }
+  end;
   if Result then begin
     InstallationId := ExtractInstallationId(Response);
     if InstallationId = '' then begin
@@ -587,6 +618,86 @@ begin
     end;
   end;
   Response := '';
+end;
+
+function TakePart(var Value: String; Separator: String): String;
+var
+  Position: Integer;
+begin
+  Position := Pos(Separator, Value);
+  if Position = 0 then begin Result := Value; Value := ''; end
+  else begin Result := Copy(Value, 1, Position - 1); Delete(Value, 1, Position); end;
+end;
+
+function HexValue(const Value: String; RequiredLength: Integer): Boolean;
+var
+  I: Integer;
+begin
+  Result := False;
+  if Length(Value) <> RequiredLength then exit;
+  for I := 1 to Length(Value) do if Pos(Value[I], HexDigits) = 0 then exit;
+  Result := True;
+end;
+
+function ExtractCacheRows(const Response: String): String;
+var
+  StartAt, EndAt: Integer;
+begin
+  Result := '';
+  StartAt := Pos('"cache_rows":"', Response);
+  if StartAt = 0 then RaiseException('INSTALL_SETUP_BRIDGE_RESPONSE_INVALID');
+  StartAt := StartAt + Length('"cache_rows":"');
+  EndAt := StartAt;
+  while (EndAt <= Length(Response)) and (Response[EndAt] <> '"') do begin
+    if (Ord(Response[EndAt]) < 32) or (Ord(Response[EndAt]) > 126) or (Response[EndAt] = '\') then
+      RaiseException('INSTALL_SETUP_BRIDGE_RESPONSE_INVALID');
+    EndAt := EndAt + 1;
+  end;
+  if EndAt > Length(Response) then RaiseException('INSTALL_SETUP_BRIDGE_RESPONSE_INVALID');
+  Result := Copy(Response, StartAt, EndAt - StartAt);
+end;
+
+procedure PreviewMaintenanceCache(Sender: TObject);
+var
+  Rows, Row, CacheId, Size, Token, State, Caption: String;
+  I: Integer;
+begin
+  SelectedCacheId := '';
+  SelectedCacheToken := '';
+  CacheCleaning := False;
+  CachePage.CheckListBox.Items.Clear;
+  SetArrayLength(CacheIds, 0);
+  SetArrayLength(CacheTokens, 0);
+  SetArrayLength(CacheSizes, 0);
+  InstallProgress.Show;
+  try
+    PrepareBundle;
+    if not RunBridge then RaiseException(LastStableCode);
+    Rows := ExtractCacheRows(CacheRows);
+    while Rows <> '' do begin
+      Row := TakePart(Rows, ';');
+      CacheId := TakePart(Row, ',');
+      Size := TakePart(Row, ',');
+      Token := TakePart(Row, ',');
+      State := TakePart(Row, ',');
+      if (Row <> '') or not HexValue(CacheId, 32) or (StrToInt64(Size) < 0) or
+         ((State = 'CLEANABLE') and not HexValue(Token, 64)) or
+         ((State <> 'CLEANABLE') and ((Copy(State, 1, 14) <> 'INSTALL_CACHE_') or (Token <> ''))) then
+        RaiseException('INSTALL_SETUP_BRIDGE_RESPONSE_INVALID');
+      I := GetArrayLength(CacheIds);
+      if I >= 64 then RaiseException('INSTALL_CACHE_LIMIT');
+      SetArrayLength(CacheIds, I + 1); CacheIds[I] := CacheId;
+      SetArrayLength(CacheTokens, I + 1); CacheTokens[I] := Token;
+      SetArrayLength(CacheSizes, I + 1); CacheSizes[I] := Size;
+      Caption := '保留 ' + State + '：' + CacheId;
+      if State = 'CLEANABLE' then Caption := '可清理 ' + IntToStr(StrToInt64(Size) div 1048576) + ' MiB：' + CacheId;
+      CachePage.Add(Caption);
+    end;
+    CachePage.SelectedValueIndex := -1;
+  finally
+    CacheRows := '';
+    InstallProgress.Hide;
+  end;
 end;
 
 function RepairStateCaption: String;
@@ -656,6 +767,7 @@ begin
   OperationPage.Add('恢复上次中断的程序修复');
   OperationPage.Add('仅查看维护状态／跨窗口进度（不执行恢复）');
   OperationPage.Add('恢复上次中断的固定入口修复（仅核验本包可证明的事务）');
+  OperationPage.Add('查看并明确选择清理已完成的维护准备包（不是业务数据）');
   OperationPage.SelectedValueIndex := 0;
   StatusButton := TNewButton.Create(WizardForm);
   StatusButton.Parent := OperationPage.Surface;
@@ -665,7 +777,18 @@ begin
   StatusButton.Top := OperationPage.SurfaceHeight - StatusButton.Height;
   StatusButton.OnClick := @InspectMaintenance;
 
-  TaskConfirmationPage := CreateInputOptionPage(OperationPage.ID, '确认安全维护',
+  CachePage := CreateInputOptionPage(OperationPage.ID, '维护准备包安全清理',
+    '不按时间或容量自动删除；只清理本次明确选择的一项',
+    '未知旧包、当前安装器、活动进程及恢复依赖均保留。仅删除已核验的 ZIP、程序与 Python 准备副本；不删除安装版本、数据库、素材、配置或备份。中断后需刷新并再次确认。', True, False);
+  CacheRefreshButton := TNewButton.Create(WizardForm);
+  CacheRefreshButton.Parent := CachePage.Surface;
+  CacheRefreshButton.Caption := '刷新准备包列表';
+  CacheRefreshButton.Width := ScaleX(150);
+  CacheRefreshButton.Height := ScaleY(28);
+  CacheRefreshButton.Top := CachePage.SurfaceHeight - CacheRefreshButton.Height;
+  CacheRefreshButton.OnClick := @PreviewMaintenanceCache;
+
+  TaskConfirmationPage := CreateInputOptionPage(CachePage.ID, '确认安全维护',
     '此操作不取消或重新提交 AI 任务',
     '请先确认没有未完成的 AI 任务，并从固定入口停止本安装服务。后台还会核验进程、端口与维护锁；不会强行停止其他安装。', False, False);
   TaskConfirmationPage.Add('我确认没有未完成的 AI 任务，并已停止本安装服务。');
@@ -694,7 +817,8 @@ begin
   Result := ((PageID = TargetPage.ID) and (ModePage.SelectedValueIndex = 0) and not MultipleInstalls) or
     ((PageID = CredentialPage.ID) and ExistingEntryRepair) or
     ((PageID = OperationPage.ID) and not ExistingEntryRepair) or
-    ((PageID = TaskConfirmationPage.ID) and (ShouldMaintainEntry or (MaintenanceOperation = 'inspect-program'))) or
+    ((PageID = CachePage.ID) and not IsCacheOperation) or
+    ((PageID = TaskConfirmationPage.ID) and (ShouldMaintainEntry or (MaintenanceOperation = 'inspect-program') or IsCacheOperation)) or
     ((PageID = wpSelectTasks) and not ShouldMaintainEntry);
 end;
 
@@ -747,6 +871,7 @@ end;
 function NextButtonClick(CurPageID: Integer): Boolean;
 var
   Code: String;
+  Index: Integer;
 begin
   Result := True;
   if CurPageID = ModePage.ID then begin
@@ -788,6 +913,40 @@ begin
   if (CurPageID = OperationPage.ID) and (MaintenanceOperation = 'inspect-program') then begin
     InspectMaintenance(nil);
     Result := False; { Inspection never reaches installation/shortcut/registry steps. }
+  end;
+  if (CurPageID = OperationPage.ID) and IsCacheOperation then begin
+    try PreviewMaintenanceCache(nil);
+    except
+      MsgBox('列表核验未完成；未清理任何准备包。' + #13#10 + GetExceptionMessage, mbError, MB_OK);
+      Result := False;
+    end;
+  end;
+  if CurPageID = CachePage.ID then begin
+    Result := False; { Never reach installation, registry, shortcuts, or auto-start. }
+    Index := CachePage.SelectedValueIndex;
+    if (Index < 0) or (Index >= GetArrayLength(CacheIds)) then begin
+      MsgBox('请明确选择一个可清理准备包；无可清理项时可直接关闭安装器。', mbInformation, MB_OK);
+      exit;
+    end;
+    if CacheTokens[Index] = '' then begin
+      MsgBox('该项归属、占用或恢复状态未通过；不能清理。请保留原记录。', mbInformation, MB_OK);
+      exit;
+    end;
+    if MsgBox('确定永久删除这个已核验的维护准备包？' + #13#10 + CacheIds[Index] + #13#10 +
+      '大小：' + CacheSizes[Index] + ' 字节。仅此程序准备副本会删除，业务数据与备份不变。' + #13#10 +
+      '当前安装器自身准备包继续保留，关闭后才可能成为可清理项。', mbConfirmation, MB_YESNO or MB_DEFBUTTON2) <> IDYES then exit;
+    SelectedCacheId := CacheIds[Index];
+    SelectedCacheToken := CacheTokens[Index];
+    CacheCleaning := True;
+    InstallProgress.Show;
+    try
+      if RunBridge then MsgBox('所选准备包已删除；业务数据、备份和安装版本未修改。', mbInformation, MB_OK)
+      else MsgBox('清理未完成或预览已变化。已隔离的剩余材料保留；请刷新，需再次明确确认才继续。' + #13#10 + LastStableCode, mbError, MB_OK);
+    finally
+      CacheCleaning := False;
+      SelectedCacheId := ''; SelectedCacheToken := ''; CacheRows := '';
+      InstallProgress.Hide;
+    end;
   end;
 end;
 
@@ -875,6 +1034,7 @@ begin
   LastStableCode := 'INSTALL_SETUP_FAILED';
   InstallProgress.Show;
   try
+    if IsCacheOperation then RaiseException('INSTALL_CACHE_INSPECTION_ONLY');
     if not ShouldMaintainEntry and not TaskConfirmationPage.Values[0] then
       RaiseException('INSTALL_PROGRAM_TASK_CONFIRMATION_REQUIRED');
     PrepareBundle;
