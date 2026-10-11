@@ -15,18 +15,24 @@
 #define ProductNameZh "无限画布企业版"
 
 [Setup]
-AppId={{39A24659-F291-4C88-A57F-A8B5E990BAA2}
+AppId={code:GetLifecycleAppId}
 AppName={#ProductName}
 AppVerName={#ProductNameZh} {#AppVersion}
 AppVersion={#AppVersion}
 AppPublisher=MEIS-DaCaiTou
 DefaultDirName={localappdata}\Infinite-Canvas-Enterprise\install
-CreateAppDir=no
+CreateAppDir=yes
+DisableDirPage=yes
+UsePreviousAppDir=no
+UsePreviousLanguage=no
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 SetupArchitecture=x64
-Uninstallable=no
+Uninstallable=RegisterLifecycle
+UninstallFilesDir={app}\state\windows-uninstaller
+UninstallDisplayName={#ProductNameZh} {#AppVersion} ({app})
+UninstallDisplayIcon={app}\InfiniteCanvas.exe
 OutputDir={#OutputDir}
 OutputBaseFilename={#OutputBaseFilename}
 Compression=lzma2/max
@@ -61,8 +67,8 @@ Source: "{#NativeEntryDir}\InfiniteCanvas.exe"; Flags: dontcopy noencryption not
 Source: "{#NativeEntryDir}\native-entry-build-record.json"; Flags: dontcopy noencryption notimestamp
 
 [Icons]
-Name: "{autoprograms}\无限画布企业版"; Filename: "{code:GetInstalledEntry}"; WorkingDir: "{code:GetInstallRoot}"; Check: ShouldMaintainEntry
-Name: "{autodesktop}\无限画布企业版"; Filename: "{code:GetInstalledEntry}"; WorkingDir: "{code:GetInstallRoot}"; Tasks: desktopicon; Check: ShouldMaintainEntry
+Name: "{autoprograms}\无限画布企业版\{code:GetLifecycleInstance}\无限画布企业版"; Filename: "{code:GetInstalledEntry}"; WorkingDir: "{code:GetInstallRoot}"; Check: ShouldMaintainEntry
+Name: "{autodesktop}\无限画布企业版-{code:GetLifecycleInstance}"; Filename: "{code:GetInstalledEntry}"; WorkingDir: "{code:GetInstallRoot}"; Tasks: desktopicon; Check: ShouldMaintainEntry
 
 [Run]
 Filename: "{code:GetInstalledEntry}"; Description: "打开无限画布企业版启动窗口"; Flags: postinstall nowait skipifsilent; Tasks: launchafter; Check: ShouldMaintainEntry
@@ -103,6 +109,11 @@ var
   CacheIds, CacheTokens, CacheSizes: TArrayOfString;
   CacheRows, SelectedCacheId, SelectedCacheToken: String;
   CacheRefreshButton: TNewButton;
+  HeadlessLifecycle, LifecycleSupportReady, MatchingLifecycleRelease: Boolean;
+  HeadlessOperation, HeadlessRoot, LifecycleState: String;
+
+procedure ExitProcess(ExitCode: Cardinal);
+  external 'ExitProcess@kernel32.dll stdcall';
 
 function CreateFileW(lpFileName: String; dwDesiredAccess, dwShareMode: Cardinal;
   lpSecurityAttributes: LongWord; dwCreationDisposition, dwFlagsAndAttributes: Cardinal;
@@ -124,6 +135,7 @@ function PeekNamedPipe(hNamedPipe: THandle; lpBuffer, nBufferSize, lpBytesRead: 
 
 function MaintenanceOperation: String;
 begin
+  if HeadlessLifecycle then begin Result := HeadlessOperation; exit; end;
   if CacheCleaning then begin Result := 'clean-cache'; exit; end;
   Result := 'install';
   if not ExistingEntryRepair then exit;
@@ -134,7 +146,19 @@ begin
     3: Result := 'inspect-program';
     4: Result := 'recover-entry';
     5: Result := 'inspect-cache';
+    6: Result := 'uninstall-retain';
+    7: Result := 'recover-uninstall';
+    8: Result := 'reinstall-retained';
+    9: Result := 'inspect-lifecycle';
   end;
+end;
+
+function IsLifecycleOperation: Boolean;
+begin
+  Result := (MaintenanceOperation = 'uninstall-retain') or
+    (MaintenanceOperation = 'recover-uninstall') or
+    (MaintenanceOperation = 'reinstall-retained') or
+    (MaintenanceOperation = 'inspect-lifecycle');
 end;
 
 function IsCacheOperation: Boolean;
@@ -145,19 +169,23 @@ end;
 function ShouldMaintainEntry: Boolean;
 begin
   Result := (MaintenanceOperation = 'install') or (MaintenanceOperation = 'repair-entry') or
-    (MaintenanceOperation = 'recover-entry');
+    (MaintenanceOperation = 'recover-entry') or (MaintenanceOperation = 'reinstall-retained');
 end;
 
 function MaintenanceCaption: String;
 begin
   Result := '仅查看维护状态';
+  if IsLifecycleOperation then begin Result := '保留数据卸载／重装'; exit; end;
   if IsCacheOperation then begin Result := '维护准备包管理（不清理业务数据）'; exit; end;
+  if MaintenanceOperation = 'repair-entry' then begin Result := '修复固定入口与快捷方式'; exit; end;
+  if MaintenanceOperation = 'install' then begin Result := '安装无限画布企业版'; exit; end;
   if MaintenanceOperation = 'repair-program' then Result := '修复当前版本程序与 Python'
   else if MaintenanceOperation = 'recover-program' then Result := '恢复上次中断的程序修复'
   else if MaintenanceOperation = 'recover-entry' then Result := '恢复上次中断的固定入口修复';
 end;
 
 procedure PrepareBundle; forward;
+procedure RunRegisteredUninstall; forward;
 
 function PhaseCaption(const Phase: String): String;
 begin
@@ -246,7 +274,11 @@ begin
   end;
   Schema := 'enterprise-install-maintenance-request-v2';
   Confirmation := '';
-  if IsCacheOperation then begin
+  if IsLifecycleOperation then begin
+    Schema := 'enterprise-install-maintenance-request-v6';
+    if Operation = 'inspect-lifecycle' then Confirmation := ',"confirm_no_active_tasks":false'
+    else Confirmation := ',"confirm_no_active_tasks":true';
+  end else if IsCacheOperation then begin
     Schema := 'enterprise-install-maintenance-request-v5';
     if CacheCleaning then Confirmation := ',"confirm_cache_cleanup":true'
     else Confirmation := ',"confirm_cache_cleanup":false';
@@ -562,6 +594,8 @@ begin
   Detached := False;
   ObservedPhase := '';
   RepairState := '';
+  LifecycleState := '';
+  MatchingLifecycleRelease := False;
   InstallationId := '';
   RawRoot := BundleRoot + '\raw\{#ArchiveRootPrefix}';
   PythonExe := RawRoot + '\python\python.exe';
@@ -582,7 +616,7 @@ begin
   CredentialPage.Values[1] := '';
   CredentialPage.Values[2] := '';
   GraphicalPipeActive := not ShouldMaintainEntry;
-  DetachButton.Visible := GraphicalPipeActive and (MaintenanceOperation <> 'inspect-program') and not IsCacheOperation;
+  DetachButton.Visible := GraphicalPipeActive and (MaintenanceOperation <> 'inspect-program') and not IsCacheOperation and not IsLifecycleOperation;
   try
     if not PipeExchange(PipeSuffix, Request, Response) then begin
       Request := '';
@@ -596,6 +630,7 @@ begin
   Request := '';
   LastStableCode := ExtractCode(Response);
   Result := Pos('"status":"succeeded"', Response) > 0;
+  MatchingLifecycleRelease := Result and (Pos('"release_id":"{#ReleaseId}"', Response) > 0);
   if Result and IsCacheOperation then begin
     CacheRows := Response;
     exit; { Cache-only requests never register an installation or maintain shortcuts. }
@@ -606,7 +641,14 @@ begin
       LastStableCode := 'INSTALL_IDENTITY_INVALID';
       Result := False;
     end;
-    if not ShouldMaintainEntry or (MaintenanceOperation = 'recover-entry') then begin
+    if IsLifecycleOperation then begin
+      if Pos('"lifecycle_state":"UNINSTALLED"', Response) > 0 then LifecycleState := 'UNINSTALLED'
+      else if Pos('"lifecycle_state":"INSTALLED"', Response) > 0 then LifecycleState := 'INSTALLED'
+      else if Pos('"lifecycle_state":"UNINSTALLING"', Response) > 0 then LifecycleState := 'UNINSTALLING'
+      else if Pos('"lifecycle_state":"REINSTALLING"', Response) > 0 then LifecycleState := 'REINSTALLING'
+      else if Pos('"lifecycle_state":"NONE"', Response) > 0 then LifecycleState := 'NONE'
+      else begin Result := False; LastStableCode := 'INSTALL_SETUP_BRIDGE_RESPONSE_INVALID'; end;
+    end else if not ShouldMaintainEntry or (MaintenanceOperation = 'recover-entry') then begin
       ObserveMaintenancePhase(Response);
       if Pos('"repair_state":"SUCCEEDED"', Response) > 0 then RepairState := 'SUCCEEDED'
       else if Pos('"repair_state":"ROLLED_BACK"', Response) > 0 then RepairState := 'ROLLED_BACK'
@@ -637,6 +679,26 @@ begin
   if Length(Value) <> RequiredLength then exit;
   for I := 1 to Length(Value) do if Pos(Value[I], HexDigits) = 0 then exit;
   Result := True;
+end;
+
+function GetLifecycleAppId(Param: String): String;
+begin
+  Result := '';
+  if HexValue(InstallationId, 32) then Result := 'InfiniteCanvasEnterprise-' + InstallationId;
+end;
+
+function GetLifecycleInstance(Param: String): String;
+begin
+  if not HexValue(InstallationId, 32) then RaiseException('INSTALL_IDENTITY_INVALID');
+  Result := InstallationId;
+end;
+
+function RegisterLifecycle: Boolean;
+begin
+  Result := LifecycleSupportReady and HexValue(InstallationId, 32) and
+    ((MaintenanceOperation = 'install') or
+     ((MaintenanceOperation = 'repair-entry') and MatchingLifecycleRelease) or
+     ((MaintenanceOperation = 'reinstall-retained') and (LifecycleState = 'INSTALLED')));
 end;
 
 function ExtractCacheRows(const Response: String): String;
@@ -768,6 +830,10 @@ begin
   OperationPage.Add('仅查看维护状态／跨窗口进度（不执行恢复）');
   OperationPage.Add('恢复上次中断的固定入口修复（仅核验本包可证明的事务）');
   OperationPage.Add('查看并明确选择清理已完成的维护准备包（不是业务数据）');
+  OperationPage.Add('运行本安装的 Windows 标准卸载（默认保留业务数据）');
+  OperationPage.Add('完成上次中断的保留数据卸载（需本包证明原事务）');
+  OperationPage.Add('恢复保留数据安装／上次中断的重装（只接受同一 Release）');
+  OperationPage.Add('仅检查卸载／重装状态（不执行恢复）');
   OperationPage.SelectedValueIndex := 0;
   StatusButton := TNewButton.Create(WizardForm);
   StatusButton.Parent := OperationPage.Surface;
@@ -810,6 +876,21 @@ begin
   DetachButton.Top := InstallProgress.SurfaceHeight - DetachButton.Height;
   DetachButton.OnClick := @DetachProgress;
   DetachButton.Visible := False;
+  if HeadlessLifecycle then begin
+    SelectedInstallRoot := HeadlessRoot;
+    ExistingEntryRepair := True;
+    ModePage.SelectedValueIndex := 1;
+    TargetPage.Values[0] := HeadlessRoot;
+    CredentialPage.Values[0] := ''; CredentialPage.Values[1] := ''; CredentialPage.Values[2] := '';
+    TaskConfirmationPage.Values[0] := True;
+    try
+      PrepareBundle;
+      if RunBridge and (LifecycleState = 'UNINSTALLED') then ExitProcess(0);
+    except
+      LastStableCode := 'INSTALL_UNINSTALL_BOOTSTRAP_FAILED';
+    end;
+    ExitProcess(1); { Bootstrap only: never install/register/create shortcuts. }
+  end;
 end;
 
 function ShouldSkipPage(PageID: Integer): Boolean;
@@ -818,7 +899,7 @@ begin
     ((PageID = CredentialPage.ID) and ExistingEntryRepair) or
     ((PageID = OperationPage.ID) and not ExistingEntryRepair) or
     ((PageID = CachePage.ID) and not IsCacheOperation) or
-    ((PageID = TaskConfirmationPage.ID) and (ShouldMaintainEntry or (MaintenanceOperation = 'inspect-program') or IsCacheOperation)) or
+    ((PageID = TaskConfirmationPage.ID) and ((ShouldMaintainEntry and not IsLifecycleOperation) or (MaintenanceOperation = 'inspect-program') or (MaintenanceOperation = 'inspect-lifecycle') or IsCacheOperation)) or
     ((PageID = wpSelectTasks) and not ShouldMaintainEntry);
 end;
 
@@ -852,7 +933,13 @@ end;
 function UpdateReadyMemo(Space, NewLine, MemoUserInfoInfo, MemoDirInfo,
   MemoTypeInfo, MemoComponentsInfo, MemoGroupInfo, MemoTasksInfo: String): String;
 begin
-  if ExistingEntryRepair and not ShouldMaintainEntry then
+  if IsLifecycleOperation then
+    Result := '操作：' + MaintenanceCaption + NewLine +
+      Space + '原安装目录：' + SelectedInstallRoot + NewLine +
+      Space + '保留原账号、数据库、画布、素材、配置、备份及安装身份。' + NewLine +
+      Space + '只接受同一 Release；恢复已核验的原程序，不创建新账号或升级数据库。' + NewLine +
+      Space + '卸载保留程序恢复副本；服务不会自动启动。'
+  else if ExistingEntryRepair and not ShouldMaintainEntry then
     Result := '操作：' + MaintenanceCaption + NewLine +
       Space + '原安装目录：' + SelectedInstallRoot + NewLine +
       Space + '保留原账号、数据库、画布、素材、配置及当前版本。' + NewLine +
@@ -888,11 +975,13 @@ begin
         mbError, MB_OK);
       Result := False;
     end else if ExistingEntryRepair then begin
+      WizardForm.DirEdit.Text := SelectedInstallRoot;
       CredentialPage.Values[0] := '';
       CredentialPage.Values[1] := '';
       CredentialPage.Values[2] := '';
       ShowMaintenanceScope;
     end;
+    if Result then WizardForm.DirEdit.Text := SelectedInstallRoot;
   end;
   if CurPageID = CredentialPage.ID then begin
     if Trim(CredentialPage.Values[0]) = '' then begin
@@ -909,6 +998,21 @@ begin
   if (CurPageID = TaskConfirmationPage.ID) and not TaskConfirmationPage.Values[0] then begin
     MsgBox('请先确认没有未完成任务，并停止本安装服务。', mbError, MB_OK);
     Result := False;
+  end;
+  if (CurPageID = TaskConfirmationPage.ID) and Result and (MaintenanceOperation = 'uninstall-retain') then begin
+    Result := False; { Use the actual Windows uninstaller, never a Setup install step. }
+    try RunRegisteredUninstall;
+    except MsgBox('Windows 卸载入口未通过核验；未删除程序或业务数据。' + #13#10 + GetExceptionMessage, mbError, MB_OK); end;
+  end;
+  if (CurPageID = OperationPage.ID) and (MaintenanceOperation = 'inspect-lifecycle') then begin
+    Result := False;
+    InstallProgress.Show;
+    try
+      PrepareBundle;
+      if RunBridge then MsgBox('已核验的卸载／重装状态：' + LifecycleState + #13#10 +
+        '没有执行恢复或初始化业务数据。', mbInformation, MB_OK)
+      else MsgBox('状态未通过核验，请保留原记录。' + #13#10 + LastStableCode, mbError, MB_OK);
+    finally InstallProgress.Hide; end;
   end;
   if (CurPageID = OperationPage.ID) and (MaintenanceOperation = 'inspect-program') then begin
     InspectMaintenance(nil);
@@ -963,6 +1067,178 @@ begin
     Current := Parent;
   until False;
   Result := False;
+end;
+
+function SupportInfo(const Root: String): String;
+begin
+  Result := AddBackslash(Root) + 'state\windows-maintenance\support.ini';
+end;
+
+function CheckedMaintenanceSetup(const Root: String): String;
+var
+  Info, ExpectedId, ExpectedSha, Size: String;
+  RecordBytes: AnsiString;
+begin
+  Info := SupportInfo(Root);
+  if HasReparseAncestors(Root) or HasReparseAncestors(Info) or
+     not FileExists(Info) then RaiseException('INSTALL_UNINSTALL_SUPPORT_UNPROVEN');
+  ExpectedId := GetIniString('Lifecycle', 'InstallationId', '', Info);
+  ExpectedSha := GetIniString('Lifecycle', 'SetupSha256', '', Info);
+  Size := GetIniString('Lifecycle', 'SetupSize', '', Info);
+  if not HexValue(ExpectedId, 32) or not HexValue(ExpectedSha, 64) or
+     (GetIniString('Lifecycle', 'Product', '', Info) <> 'MEIS-DaCaiTou/Infinite-Canvas-Enterprise') or
+     not LoadStringFromFile(AddBackslash(Root) + 'state\installation.json', RecordBytes) or
+     (ExtractInstallationId(String(RecordBytes)) <> ExpectedId) then
+    RaiseException('INSTALL_UNINSTALL_SUPPORT_UNPROVEN');
+  Result := AddBackslash(Root) + 'state\windows-maintenance\maintenance-setup.exe';
+  if HasReparseAncestors(Result) then RaiseException('INSTALL_UNINSTALL_SUPPORT_UNPROVEN');
+  RequireEmbeddedFile(Result, ExpectedSha, StrToInt64(Size));
+end;
+
+procedure PrepareLifecycleSupport;
+var
+  Directory, Info, Target, Source, Digest: String;
+  Size: Int64;
+begin
+  if not ((MaintenanceOperation = 'install') or
+      ((MaintenanceOperation = 'repair-entry') and MatchingLifecycleRelease) or
+      ((MaintenanceOperation = 'reinstall-retained') and (LifecycleState = 'INSTALLED'))) then exit;
+  Directory := AddBackslash(SelectedInstallRoot) + 'state\windows-maintenance';
+  Info := SupportInfo(SelectedInstallRoot);
+  Target := AddBackslash(Directory) + 'maintenance-setup.exe';
+  Source := ExpandConstant('{srcexe}');
+  Digest := GetSHA256OfFile(Source);
+  if HasReparseAncestors(Directory) or not FileSize64(Source, Size) or (Size <= 0) then
+    RaiseException('INSTALL_UNINSTALL_SUPPORT_UNPROVEN');
+  if FileExists(Info) then begin
+    if CheckedMaintenanceSetup(SelectedInstallRoot) <> Target then RaiseException('INSTALL_UNINSTALL_SUPPORT_UNPROVEN');
+    RequireEmbeddedFile(Target, Digest, Size);
+  end else if FileExists(Target) then RequireEmbeddedFile(Target, Digest, Size);
+  { Inno's FileCopy cannot copy Setup itself in PrepareToInstall. Mark only
+    proven eligibility here; ssInstall publishes before Inno changes anything. }
+  LifecycleSupportReady := True;
+end;
+
+procedure PublishLifecycleSupport;
+var
+  Directory, Info, Target, Source, Digest: String;
+  Size: Int64;
+begin
+  if not ((MaintenanceOperation = 'install') or
+      ((MaintenanceOperation = 'repair-entry') and MatchingLifecycleRelease) or
+      ((MaintenanceOperation = 'reinstall-retained') and (LifecycleState = 'INSTALLED'))) then exit;
+  Directory := AddBackslash(SelectedInstallRoot) + 'state\windows-maintenance';
+  if HasReparseAncestors(Directory) then RaiseException('INSTALL_UNINSTALL_SUPPORT_UNPROVEN');
+  Info := SupportInfo(SelectedInstallRoot);
+  Target := AddBackslash(Directory) + 'maintenance-setup.exe';
+  Source := ExpandConstant('{srcexe}');
+  Digest := GetSHA256OfFile(Source);
+  if not FileSize64(Source, Size) or (Size <= 0) then RaiseException('INSTALL_UNINSTALL_SUPPORT_UNPROVEN');
+  if FileExists(Info) then begin
+    if CheckedMaintenanceSetup(SelectedInstallRoot) <> Target then RaiseException('INSTALL_UNINSTALL_SUPPORT_UNPROVEN');
+    RequireEmbeddedFile(Target, Digest, Size);
+  end else begin
+    if not ForceDirectories(Directory) then
+      RaiseException('INSTALL_UNINSTALL_SUPPORT_PUBLICATION_FAILED');
+    if not FileExists(Target) and not FileCopy(Source, Target, True) then
+      RaiseException('INSTALL_UNINSTALL_SUPPORT_PUBLICATION_FAILED');
+    RequireEmbeddedFile(Target, Digest, Size);
+    if not SetIniString('Lifecycle', 'Product', 'MEIS-DaCaiTou/Infinite-Canvas-Enterprise', Info) or
+       not SetIniString('Lifecycle', 'InstallationId', InstallationId, Info) or
+       not SetIniString('Lifecycle', 'SetupSha256', Digest, Info) or
+       not SetIniString('Lifecycle', 'SetupSize', IntToStr(Size), Info) then
+      RaiseException('INSTALL_UNINSTALL_SUPPORT_PUBLICATION_FAILED');
+  end;
+  LifecycleSupportReady := True;
+end;
+
+function InitializeSetup: Boolean;
+begin
+  Result := True;
+  HeadlessOperation := ExpandConstant('{param:ICE_LIFECYCLE|}');
+  HeadlessLifecycle := HeadlessOperation <> '';
+  if HeadlessLifecycle then begin
+    HeadlessRoot := ExpandConstant('{param:ICE_LIFECYCLE_ROOT|}');
+    if ((HeadlessOperation <> 'uninstall-retain') and (HeadlessOperation <> 'recover-uninstall')) or
+       (HeadlessRoot = '') or
+       (ExpandConstant('{param:ICE_LIFECYCLE_CONFIRMED|}') <> '1') then begin
+      Result := False;
+    end;
+  end;
+end;
+
+procedure RunRegisteredUninstall;
+var
+  Info, Name, Uninstaller, Hash: String;
+  ExitCode: Integer;
+begin
+  CheckedMaintenanceSetup(SelectedInstallRoot);
+  Info := SupportInfo(SelectedInstallRoot);
+  Name := GetIniString('Lifecycle', 'Uninstaller', '', Info);
+  Hash := GetIniString('Lifecycle', 'UninstallerSha256', '', Info);
+  if (Length(Name) <> 12) or (Copy(Name, 1, 5) <> 'unins') or
+     (Copy(Name, 9, 4) <> '.exe') or not HexValue(Hash, 64) or
+     (Pos(Name[6], '0123456789') = 0) or (Pos(Name[7], '0123456789') = 0) or
+     (Pos(Name[8], '0123456789') = 0) then RaiseException('INSTALL_UNINSTALL_SUPPORT_UNPROVEN');
+  Uninstaller := AddBackslash(SelectedInstallRoot) + 'state\windows-uninstaller\' + Name;
+  if HasReparseAncestors(Uninstaller) or (GetSHA256OfFile(Uninstaller) <> Hash) then
+    RaiseException('INSTALL_UNINSTALL_SUPPORT_UNPROVEN');
+  if not Exec(Uninstaller, '', SelectedInstallRoot, SW_SHOWNORMAL, ewNoWait, ExitCode) then
+    RaiseException('INSTALL_UNINSTALL_LAUNCH_FAILED');
+end;
+
+function InitializeUninstall: Boolean;
+begin
+  Result := False;
+  try
+    CheckedMaintenanceSetup(ExpandConstant('{app}'));
+    Result := True;
+  except
+    MsgBox('卸载支持身份未通过；没有删除程序或业务数据。请保留原位置，用同版本安装包检查。' + #13#10 + GetExceptionMessage, mbError, MB_OK);
+  end;
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  Root, Helper, Parameters, Key, Operation, RegisteredRoot, RegisteredLauncher: String;
+  ExitCode: Integer;
+  StateBytes: AnsiString;
+begin
+  Root := ExpandConstant('{app}');
+  if CurUninstallStep = usUninstall then begin
+    if UninstallSilent then begin
+      if ExpandConstant('{param:ICECONFIRM_NO_ACTIVE_TASKS|}') <> '1' then Abort;
+    end else if MsgBox('确认没有未完成 AI 任务，且已从固定入口停止本安装服务？' + #13#10 +
+      '卸载默认保留账号、数据库、画布、素材、配置、备份和恢复记录。程序会移入已核验恢复副本，未自动释放该副本空间；同版本重装可恢复。',
+      mbConfirmation, MB_YESNO or MB_DEFBUTTON2) <> IDYES then Abort;
+    try
+      Helper := CheckedMaintenanceSetup(Root);
+      Operation := 'uninstall-retain';
+      if FileExists(AddBackslash(Root) + 'state\system-update-active.lock') then Operation := 'recover-uninstall';
+      Parameters := '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /ICE_LIFECYCLE=' + Operation +
+        ' /ICE_LIFECYCLE_CONFIRMED=1 /ICE_LIFECYCLE_ROOT="' + Root + '"';
+      if not Exec(Helper, Parameters, Root, SW_HIDE, ewWaitUntilTerminated, ExitCode) or (ExitCode <> 0) or
+         not LoadStringFromFile(AddBackslash(Root) + 'state\retained-installation.json', StateBytes) or
+         (Pos('"status":"UNINSTALLED"', String(StateBytes)) = 0) then
+        RaiseException('INSTALL_UNINSTALL_RECOVERY_REQUIRED');
+      Key := 'Software\Infinite-Canvas-Enterprise\Installations\' +
+        GetIniString('Lifecycle', 'InstallationId', '', SupportInfo(Root));
+      { This product locator contains only the two values written by Setup. }
+      if RegValueExists(HKCU, Key, 'InstallLocation') then begin
+        if RegQueryStringValue(HKCU, Key, 'InstallLocation', RegisteredRoot) and
+           RegQueryStringValue(HKCU, Key, 'Launcher', RegisteredLauncher) and
+           (CompareText(RegisteredRoot, Root) = 0) and
+           (CompareText(RegisteredLauncher, AddBackslash(Root) + 'InfiniteCanvas.exe') = 0) then begin
+          RegDeleteValue(HKCU, Key, 'InstallLocation');
+          RegDeleteValue(HKCU, Key, 'Launcher');
+          RegDeleteKeyIfEmpty(HKCU, Key);
+        end;
+      end;
+    except
+      MsgBox('卸载未完成，Windows 登记和剩余程序保留；业务数据未重建。请从同版本安装包检查或显式恢复。' + #13#10 + GetExceptionMessage, mbError, MB_OK);
+      Abort; { Stop before Inno removes registration, shortcuts or its log. }
+    end;
+  end;
 end;
 
 procedure PrepareBundle;
@@ -1035,7 +1311,8 @@ begin
   InstallProgress.Show;
   try
     if IsCacheOperation then RaiseException('INSTALL_CACHE_INSPECTION_ONLY');
-    if not ShouldMaintainEntry and not TaskConfirmationPage.Values[0] then
+    if MaintenanceOperation = 'uninstall-retain' then RaiseException('INSTALL_UNINSTALL_WINDOWS_ENTRY_REQUIRED');
+    if (not ShouldMaintainEntry or IsLifecycleOperation) and not TaskConfirmationPage.Values[0] then
       RaiseException('INSTALL_PROGRAM_TASK_CONFIRMATION_REQUIRED');
     PrepareBundle;
     if not ShouldMaintainEntry then SetStage('核验并执行已确认的程序维护', 3)
@@ -1051,6 +1328,19 @@ begin
       Result := Result +
         '错误代码：' + LastStableCode;
       exit;
+    end;
+    if IsLifecycleOperation then begin
+      if (MaintenanceOperation = 'reinstall-retained') and (LifecycleState = 'INSTALLED') then begin
+        PrepareLifecycleSupport;
+        WizardForm.FinishedLabel.Caption := '原账号、数据库、素材、配置和安装身份已保留；同版本程序与固定入口已恢复。服务未自动启动。';
+        SetStage('保留数据重装完成', 6);
+        exit;
+      end;
+      if (MaintenanceOperation = 'recover-uninstall') and (LifecycleState = 'UNINSTALLED') then begin
+        Result := '保留数据卸载事务已完成；请再次运行原 Windows 卸载入口注销登记。也可在本包选择同版本恢复安装。';
+        exit;
+      end;
+      RaiseException('INSTALL_LIFECYCLE_STATE_UNPROVEN');
     end;
     if (MaintenanceOperation = 'recover-entry') and (RepairState <> 'SUCCEEDED') then begin
       Result := '入口事务已恢复到修复前状态；原入口可能仍缺失，请重新选择入口修复。' + #13#10 +
@@ -1068,6 +1358,7 @@ begin
       exit;
     end;
     SetStage('固定入口已就绪', 4);
+    PrepareLifecycleSupport;
     if ExistingEntryRepair then begin
       SetStage('原账号、数据及当前版本保持不变', 5);
       SetStage('入口修复完成', 6);
@@ -1100,13 +1391,27 @@ end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 var
-  Key: String;
+  Key, Info, Uninstaller: String;
 begin
+  if (CurStep = ssInstall) and RegisterLifecycle then begin
+    try PublishLifecycleSupport;
+    except
+      LifecycleSupportReady := False;
+      RaiseException('INSTALL_UNINSTALL_SUPPORT_PUBLICATION_FAILED');
+    end;
+  end;
   if (CurStep = ssPostInstall) and ShouldMaintainEntry and (InstallationId <> '') then begin
     Key := 'Software\Infinite-Canvas-Enterprise\Installations\' + InstallationId;
     if not RegWriteStringValue(HKCU, Key, 'InstallLocation', SelectedInstallRoot) or
        not RegWriteStringValue(HKCU, Key, 'Launcher', GetInstalledEntry('')) then
       MsgBox('固定入口已安装，但自动定位登记未完成。请从原安装根打开 InfiniteCanvas.exe；业务数据未重建。', mbInformation, MB_OK);
+  end;
+  if (CurStep = ssDone) and RegisterLifecycle then begin
+    Info := SupportInfo(SelectedInstallRoot);
+    Uninstaller := ExpandConstant('{uninstallexe}');
+    if not SetIniString('Lifecycle', 'Uninstaller', ExtractFileName(Uninstaller), Info) or
+       not SetIniString('Lifecycle', 'UninstallerSha256', GetSHA256OfFile(Uninstaller), Info) then
+      MsgBox('安装已完成，但卸载入口登记未完成；请保留同版本安装包进行检查。业务数据未重建。', mbInformation, MB_OK);
   end;
 end;
 

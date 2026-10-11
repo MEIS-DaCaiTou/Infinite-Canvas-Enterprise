@@ -333,7 +333,9 @@ def test_installer_source_is_single_user_gui_and_keeps_credentials_off_process_s
     lowered = source.casefold()
     assert "privilegesrequired=lowest" in lowered
     assert "setuparchitecture=x64" in lowered
-    assert "uninstallable=no" in lowered
+    assert "uninstallable=registerlifecycle" in lowered
+    assert "uninstallfilesdir={app}\\state\\windows-uninstaller" in lowered
+    assert "[uninstalldelete]" not in lowered
     assert "createinputquerypage" in lowered
     assert "password\":\"" in source
     parameters_body = source[source.index("Parameters :=") : source.index("if not Exec(")]
@@ -437,7 +439,7 @@ def test_toolchain_and_build_policies_are_pinned_and_nonsecret() -> None:
     assert build["core_asset_count"] == 3
     assert build["security_authority"] == "enterprise.fresh_install.install_greenfield"
     assert build["credential_channel"]["request_schema"] == "enterprise-install-maintenance-request-v2"
-    assert build["maintenance_operations"] == ["install", "repair-entry", "repair-program", "recover-program", "inspect-program", "recover-entry"]
+    assert build["maintenance_operations"] == ["install", "repair-entry", "repair-program", "recover-program", "inspect-program", "recover-entry", "inspect-cache", "clean-cache", "inspect-lifecycle", "uninstall-retain", "recover-uninstall", "reinstall-retained"]
     assert build["entry_maintenance"] == {
         "journal_protocol": "enterprise-entry-maintenance-plan-v2",
         "recovery_requires_runner_lease": True,
@@ -450,7 +452,8 @@ def test_toolchain_and_build_policies_are_pinned_and_nonsecret() -> None:
     assert build["native_entry"]["same_commit_and_tree_as_release"] is True
     assert build["native_entry"]["repair_mutates_business_data"] is False
     assert build["full_lifecycle_complete"] is False
-    assert build["uninstaller_created"] is False
+    assert build["uninstaller_created"] is True
+    assert build["retained_lifecycle"]["reinstall_initializes_database"] is False
     combined = json.dumps({"tool": tool, "build": build}).casefold()
     assert "private_key" not in combined
     assert "password" not in combined
