@@ -21,7 +21,9 @@ Windows Python/进程入口留在既有交付及 Runtime 边界，未增加业�
 
 ## 验证与证据
 
-本地已完成 183 项交接/更新/路由针对性测试，`t/C5a/unit-b.xml`；另有 30 项 APP_ROOT 写入审计与 static 关联检查，`t/C5a/audit-a.xml`，以及 18 项管理页面提示/文档契约检查，共 231 项定向通过。没有手工重跑 C4 充分证明的完整门禁。新契约模块没有写入操作；审计并不代替运行时或数据保护证据。Runtime 的 CP314 CI 清单补入目标执行器、交接生命周期和接受 gate 测试，既有 Enterprise CI 仍按原规则执行。
+本地已完成 183 项交接/更新/路由针对性测试，`t/C5a/unit-b.xml`；另有 30 项 APP_ROOT 写入审计与 static 关联检查，`t/C5a/audit-a.xml`，以及 18 项管理页面提示/文档契约检查，先完成 231 项定向通过。随后根据准确 PR CI 失败补验 84 项 Runtime 诊断测试，`t/C5a/diagnostics-repair.xml`，合计 315 项不同定向检查通过。没有手工重跑 C4 充分证明的完整门禁。新契约模块没有写入操作；审计并不代替运行时或数据保护证据。Runtime 的 CP314 CI 清单补入目标执行器、交接生命周期和接受 gate 测试，既有 Enterprise CI 仍按原规则执行。
+
+PR #154 的初始 Head `1bb2e9a57b6268a53643a27ddf1cd2e81899094b` 在 Runtime CI 中有 10 failed / 344 passed：旧 Job 故障测试夹具只模拟预留、未模拟新增执行器选择，因缺少真实计划而提前进入 updater 拒绝，没有到达待验证的故障分支。修正只为该来源 worker 夹具声明 legacy selection；目标拒绝由独立契约测试覆盖，没有放宽产品 gate 或修改运行实现。保留 `ci-runtime-a.log`；本地诊断模块 84 passed 后推送同一 Draft PR，最终准确 Head 的 CI 另在集中索引和 PR 中核对。
 
 真实固定 EXE 演练使用独立的完整合成源/目标包、CP314 和新建合成账号、SQLite、画布及素材，证据归 `t/C5a/`，与客户数据、公开 Release 分开。构建来源 `6505d367e9dbdcddecb0bc13fe24b347fdd169c6`；合成目标 Git 提交 `978720c91d7dd20467097f64cabda8de1d699c8d` 同时更新源码 VERSION 和执行器为 5，不伪改 Manifest。协议不兼容目标为独立合成提交 `a780f22e812e98c55ac7bdb0ea337eacfcc13d81`。构建输入、运行观察、终态及目录恢复结果按实际完成情况集中记录，未将仅构建成功写成升级成功。
 
