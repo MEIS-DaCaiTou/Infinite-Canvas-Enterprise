@@ -177,6 +177,8 @@ begin
   Result := '仅查看维护状态';
   if IsLifecycleOperation then begin Result := '保留数据卸载／重装'; exit; end;
   if IsCacheOperation then begin Result := '维护准备包管理（不清理业务数据）'; exit; end;
+  if MaintenanceOperation = 'repair-entry' then begin Result := '修复固定入口与快捷方式'; exit; end;
+  if MaintenanceOperation = 'install' then begin Result := '安装无限画布企业版'; exit; end;
   if MaintenanceOperation = 'repair-program' then Result := '修复当前版本程序与 Python'
   else if MaintenanceOperation = 'recover-program' then Result := '恢复上次中断的程序修复'
   else if MaintenanceOperation = 'recover-entry' then Result := '恢复上次中断的固定入口修复';
@@ -931,7 +933,13 @@ end;
 function UpdateReadyMemo(Space, NewLine, MemoUserInfoInfo, MemoDirInfo,
   MemoTypeInfo, MemoComponentsInfo, MemoGroupInfo, MemoTasksInfo: String): String;
 begin
-  if ExistingEntryRepair and not ShouldMaintainEntry then
+  if IsLifecycleOperation then
+    Result := '操作：' + MaintenanceCaption + NewLine +
+      Space + '原安装目录：' + SelectedInstallRoot + NewLine +
+      Space + '保留原账号、数据库、画布、素材、配置、备份及安装身份。' + NewLine +
+      Space + '只接受同一 Release；恢复已核验的原程序，不创建新账号或升级数据库。' + NewLine +
+      Space + '卸载保留程序恢复副本；服务不会自动启动。'
+  else if ExistingEntryRepair and not ShouldMaintainEntry then
     Result := '操作：' + MaintenanceCaption + NewLine +
       Space + '原安装目录：' + SelectedInstallRoot + NewLine +
       Space + '保留原账号、数据库、画布、素材、配置及当前版本。' + NewLine +
@@ -1280,7 +1288,7 @@ begin
   try
     if IsCacheOperation then RaiseException('INSTALL_CACHE_INSPECTION_ONLY');
     if MaintenanceOperation = 'uninstall-retain' then RaiseException('INSTALL_UNINSTALL_WINDOWS_ENTRY_REQUIRED');
-    if not ShouldMaintainEntry and not TaskConfirmationPage.Values[0] then
+    if (not ShouldMaintainEntry or IsLifecycleOperation) and not TaskConfirmationPage.Values[0] then
       RaiseException('INSTALL_PROGRAM_TASK_CONFIRMATION_REQUIRED');
     PrepareBundle;
     if not ShouldMaintainEntry then SetStage('核验并执行已确认的程序维护', 3)
