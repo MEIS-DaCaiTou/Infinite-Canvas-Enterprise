@@ -489,6 +489,10 @@ def test_github_provider_ignores_installer_exe_and_keeps_three_core_asset_select
         def read_json(self, *_args, **_kwargs):
             return [release]
 
+        def read_json_response(self, *_args, **_kwargs):
+            from enterprise.ops.update.http_client import JsonHttpResponse
+            return JsonHttpResponse(self.read_json())
+
     candidates = GitHubReleasesProvider(http_client=Client()).list_release_v2_candidates()
     assert len(candidates) == 1
     assert candidates[0].manifest_url.endswith("/1")

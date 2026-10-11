@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import socket
 from dataclasses import dataclass
+from http.client import HTTPException as HttpProtocolError
 from typing import Any, Iterator, Mapping
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlparse
@@ -18,6 +19,17 @@ LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 SENSITIVE_REDIRECT_HEADERS = frozenset(
     {"authorization", "cookie", "proxy-authorization", "x-api-key", "x-auth-token", "x-access-token"}
 )
+
+
+@dataclass(frozen=True)
+class JsonHttpResponse:
+    """Only the metadata needed for conditional, repository-bound catalog reads."""
+
+    value: object
+    status: int = 200
+    etag: str | None = None
+    link: str | None = None
+    redirect_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -126,6 +138,7 @@ class SafeHttpClient:
         *,
         maximum_bytes: int,
         headers: Mapping[str, str] | None = None,
+        allow_not_modified: bool = False,
     ) -> Iterator[tuple[Any, int | None, int]]:
         """Yield one bounded response; callers must consume it with a context manager."""
         if type(maximum_bytes) is not int or maximum_bytes < 1:
@@ -145,10 +158,14 @@ class SafeHttpClient:
                 detail_code="RELEASE_READ_TIMEOUT",
             ) from exc
         except HTTPError as exc:
-            raise ReleaseDownloadError(
-                "trusted release source request failed",
-                detail_code="RELEASE_HTTP_REQUEST_FAILED",
-            ) from exc
+            if allow_not_modified and exc.code == 304:
+                response = exc
+            else:
+                exc.close()
+                raise ReleaseDownloadError(
+                    "trusted release source request failed",
+                    detail_code="RELEASE_HTTP_REQUEST_FAILED",
+                ) from exc
         except URLError as exc:
             detail_code = (
                 "RELEASE_READ_TIMEOUT"
@@ -161,13 +178,16 @@ class SafeHttpClient:
                 "trusted release source request failed",
                 detail_code="RELEASE_HTTP_REQUEST_FAILED",
             ) from exc
-        expected_length = _content_length(response.headers)
-        if expected_length is not None and expected_length > maximum_bytes:
+        try:
+            expected_length = _content_length(response.headers)
+            if expected_length is not None and expected_length > maximum_bytes:
+                raise ReleaseDownloadError(
+                    "trusted release response exceeds its size limit",
+                    detail_code="RELEASE_ADVERTISED_SIZE_MISMATCH",
+                )
+        except Exception:
             response.close()
-            raise ReleaseDownloadError(
-                "trusted release response exceeds its size limit",
-                detail_code="RELEASE_ADVERTISED_SIZE_MISMATCH",
-            )
+            raise
 
         class _ResponseIterator:
             def __iter__(self) -> Iterator[tuple[Any, int | None, int]]:
@@ -177,6 +197,68 @@ class SafeHttpClient:
                     response.close()
 
         return iter(_ResponseIterator())
+
+    def read_json_response(
+        self,
+        url: str,
+        *,
+        maximum_bytes: int,
+        headers: Mapping[str, str] | None = None,
+    ) -> JsonHttpResponse:
+        """Expose 304 only to a caller that can prove the corresponding cached page.
+
+        Asset downloads and ordinary read_json retain their existing behavior:
+        they never treat a missing response body as downloaded bytes.
+        """
+        result = None
+        for response, _content_size, redirects in self.stream(
+            url, maximum_bytes=maximum_bytes, headers=headers, allow_not_modified=True,
+        ):
+            status = response.getcode()
+            if status == 304:
+                value = None
+            else:
+                data = self._read_response_bytes(response, maximum_bytes)
+                if _content_size is not None and len(data) != _content_size:
+                    raise ReleaseDownloadError(
+                        "trusted release response length differs from its advertisement",
+                        detail_code="RELEASE_ACTUAL_SIZE_MISMATCH",
+                    )
+                try:
+                    value = json.loads(data.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                    raise ReleaseProviderError("trusted release metadata is invalid JSON") from exc
+            result = JsonHttpResponse(
+                value, status, response.headers.get("ETag"), response.headers.get("Link"), redirects,
+            )
+        if result is None:
+            raise ReleaseProviderError("trusted release metadata response is missing")
+        return result
+
+    @staticmethod
+    def _read_response_bytes(response: Any, maximum_bytes: int) -> bytes:
+        chunks: list[bytes] = []
+        received = 0
+        while True:
+            try:
+                chunk = response.read(min(64 * 1024, maximum_bytes - received + 1))
+            except (socket.timeout, TimeoutError) as exc:
+                raise ReleaseDownloadError(
+                    "trusted release source request failed", detail_code="RELEASE_READ_TIMEOUT",
+                ) from exc
+            except (OSError, HttpProtocolError) as exc:
+                raise ReleaseDownloadError(
+                    "trusted release source request failed", detail_code="RELEASE_HTTP_REQUEST_FAILED",
+                ) from exc
+            if not chunk:
+                return b"".join(chunks)
+            received += len(chunk)
+            if received > maximum_bytes:
+                raise ReleaseDownloadError(
+                    "trusted release response exceeds its size limit",
+                    detail_code="RELEASE_ACTUAL_SIZE_MISMATCH",
+                )
+            chunks.append(chunk)
 
     def read_json(
         self,
@@ -215,30 +297,8 @@ class SafeHttpClient:
         headers: Mapping[str, str] | None = None,
     ) -> tuple[bytes, int]:
         """Read a bounded document and return only its redirect count as evidence."""
-        chunks: list[bytes] = []
-        received = 0
+        data = b""
         redirect_count = 0
         for response, _content_size, redirect_count in self.stream(url, maximum_bytes=maximum_bytes, headers=headers):
-            while True:
-                try:
-                    chunk = response.read(min(64 * 1024, maximum_bytes - received + 1))
-                except (socket.timeout, TimeoutError) as exc:
-                    raise ReleaseDownloadError(
-                        "trusted release source request failed",
-                        detail_code="RELEASE_READ_TIMEOUT",
-                    ) from exc
-                except OSError as exc:
-                    raise ReleaseDownloadError(
-                        "trusted release source request failed",
-                        detail_code="RELEASE_HTTP_REQUEST_FAILED",
-                    ) from exc
-                if not chunk:
-                    break
-                received += len(chunk)
-                if received > maximum_bytes:
-                    raise ReleaseDownloadError(
-                        "trusted release response exceeds its size limit",
-                        detail_code="RELEASE_ACTUAL_SIZE_MISMATCH",
-                    )
-                chunks.append(chunk)
-        return b"".join(chunks), redirect_count
+            data = self._read_response_bytes(response, maximum_bytes)
+        return data, redirect_count

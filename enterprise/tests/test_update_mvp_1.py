@@ -36,6 +36,7 @@ from enterprise.migrations.versioned import (
     schema_snapshot_sha256,
 )
 from enterprise.ops.update.providers import DEFAULT_GITHUB_REPOSITORY, GitHubReleasesProvider
+from enterprise.ops.update.http_client import JsonHttpResponse
 from enterprise.paths import PortableRootInputs, derive_portable_path_roots, prepare_install_state_directories
 from enterprise.release.current_release import (
     CurrentRelease,
@@ -183,6 +184,9 @@ def test_github_v2_provider_requires_the_three_core_assets():
         def read_json(self, *_args, **_kwargs):
             return [incomplete, ambiguous_visibility, complete]
 
+        def read_json_response(self, *_args, **_kwargs):
+            return JsonHttpResponse(self.read_json())
+
     provider = GitHubReleasesProvider(http_client=Client())
     candidates = provider.list_release_v2_candidates()
     assert len(candidates) == 1
@@ -216,6 +220,9 @@ def test_github_v2_provider_accepts_one_digest_bound_route_asset():
         def read_json(self, *_args, **_kwargs):
             return [release]
 
+        def read_json_response(self, *_args, **_kwargs):
+            return JsonHttpResponse(self.read_json())
+
     candidates = GitHubReleasesProvider(http_client=Client()).list_release_v2_candidates(include_prerelease=True)
     assert len(candidates) == 1
     assert candidates[0].upgrade_routes_url.endswith("/42")
@@ -246,6 +253,9 @@ def test_github_v2_provider_exposes_complete_development_release_only_when_reque
     class Client:
         def read_json(self, *_args, **_kwargs):
             return [draft, development]
+
+        def read_json_response(self, *_args, **_kwargs):
+            return JsonHttpResponse(self.read_json())
 
     provider = GitHubReleasesProvider(http_client=Client())
     assert provider.list_release_v2_candidates() == []

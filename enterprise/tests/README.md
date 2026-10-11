@@ -17,6 +17,8 @@ Reviewed: 2026-10-09
 
 Prefer affected-scope tests and existing CI. Rerun full gates only for a concrete risk, required recheck, merge requirement or explicit request. No independent clean Windows device or paid signing prerequisite. Fixture, installed-copy, real Runtime and customer/production claims stay separate.
 
+C4 catalog verification: `py -3.11 -B -m pytest -q enterprise/tests/test_release_catalog.py enterprise/tests/test_update_catalog_ui.py`. The first uses trusted synthetic metadata and real loopback HTTP for pagination/ETag/failure contracts; the second runs the actual admin script against a synthetic DOM, including out-of-order requests. Runtime Python 3.14 CI also runs the catalog contracts. Neither invokes an upgrade or proves installer GUI acceptance. Real GitHub read-only metadata and desktop/mobile rendered results are recorded separately in [the C4 record](../../docs/ops/UPDATE-CATALOG-PAGINATION-2026-10-11.md); no private token, raw metadata body or customer database is committed.
+
 Documentation-only checks use the standard library, no product startup or network. These Windows commands use an installed Python 3.11 launcher; on other development hosts use the known interpreter. A Windows Store alias named python is not evidence that a check executed:
 
 ```powershell

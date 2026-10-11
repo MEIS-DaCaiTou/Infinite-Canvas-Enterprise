@@ -813,7 +813,12 @@
     let detail = '';
     if (payloadData && typeof payloadData === 'object') {
       detail = payloadData.detail || payloadData.error || payloadData.message || '';
-      if (detail && typeof detail === 'object') detail = detail.code || detail.message || '';
+      if (detail && typeof detail === 'object') {
+        if (detail.code === 'RELEASE_CATALOG_INCOMPLETE') {
+          return '历史发布目录未能完整核验，请稍后重新检查；未启动升级。';
+        }
+        detail = detail.code || detail.message || '';
+      }
     }
     if (!detail && payloadText) detail = payloadText.trim();
     if (!detail && res.status === 404) detail = '接口不存在，请确认企业服务已重启';
@@ -1644,11 +1649,11 @@
     const state = _preparedUpdate?.state;
     const ready = state === 'READY';
     button.textContent = ready ? '继续已准备的升级' : '更新到新版本';
-    selector.disabled = !boolFlag(_updateAccess?.can_operate) || _updatePreparing
+    selector.disabled = !boolFlag(_updateAccess?.can_operate) || _updatePreparing || _updateCatalogChecking
       || ready || state === 'RECOVERY_REQUIRED' || UPDATE_ACTIVE_STATES.has(state) || !_availableUpdates.length;
     button.disabled = !boolFlag(_updateAccess?.can_operate) || _updatePreparing
       || state === 'RECOVERY_REQUIRED' || UPDATE_ACTIVE_STATES.has(state)
-      || (!ready && selectedUpdateRelease()?.route_status !== 'direct');
+      || (!ready && (_updateCatalogChecking || selectedUpdateRelease()?.route_status !== 'direct'));
   }
 
   function selectedUpdateRelease() {
@@ -1676,6 +1681,7 @@
     target.textContent = [
       `当前 Release：${_currentUpdateReleaseId}`,
       `当前版本：${_currentUpdateVersion}`,
+      _updateCatalogVerified ? '历史发布目录已完整核验；目标仍须通过升级包和数据库检查。' : '',
       selected ? `目标版本：${selected.version}（${selected.stage === 'development' ? '开发版' : '正式版'}，${selected.tag_name}）` : '当前没有更高版本可更新',
       selected ? `发布时间：${selected.published_at}` : '',
       selected?.stage === 'development' ? '开发版可能不稳定；升级前请确认该版本适用于当前设备。' : '',
@@ -1686,11 +1692,24 @@
     updateStartButton();
   }
 
+  let _updateCatalogRequest = 0;
+  let _updateCatalogChecking = false;
+  let _updateCatalogVerified = false;
+
   async function checkSystemUpdate() {
+    const checkId = ++_updateCatalogRequest;
+    _updateCatalogChecking = true;
+    _updateCatalogVerified = false;
+    updateStartButton();
     const target = document.getElementById('updateReleaseSummary');
     target.textContent = '正在检查…';
     try {
       const data = await apiFetch('/enterprise/api/update-mvp/check');
+      if (checkId !== _updateCatalogRequest) return;
+      if (data.catalog != null && data.catalog.complete !== true) {
+        throw new Error('历史发布目录未能完整核验，请重新检查；未启动升级。');
+      }
+      _updateCatalogVerified = data.catalog?.complete === true;
       _currentUpdateReleaseId = data.current_release_id;
       _currentUpdateVersion = data.current_version;
       _availableUpdates = Array.isArray(data.releases) ? data.releases
@@ -1719,11 +1738,17 @@
       }
       selectUpdateRelease();
     } catch (e) {
+      if (checkId !== _updateCatalogRequest) return;
       _availableUpdates = [];
       document.getElementById('updateReleaseSelect').replaceChildren();
-      target.textContent = '检查失败';
+      target.textContent = '检查失败：' + e.message;
       updateStartButton();
       showToast('检查更新失败: ' + e.message, 'error');
+    } finally {
+      if (checkId === _updateCatalogRequest) {
+        _updateCatalogChecking = false;
+        updateStartButton();
+      }
     }
   }
 
