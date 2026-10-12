@@ -1295,18 +1295,22 @@ def test_update_check_offers_newer_stable_and_development_releases(monkeypatch):
     assert dev_only["releases"][0]["stage"] == "development"
 
 
-def test_execute_reconfirms_current_password_without_persisting_it(tmp_path: Path, monkeypatch):
+@pytest.mark.parametrize("activation_failure", [None, "before-fence", "after-fence"])
+def test_execute_reconfirms_current_password_without_persisting_it(tmp_path: Path, monkeypatch, activation_failure):
     from enterprise import update_api
 
     roots = _roots(tmp_path)
     store = UpdateJobStore(roots)
     job_id, root = store.create("actor-1")
-    store.write_plan(job_id, {
+    plan = {
         "job_id": job_id, "actor_user_id": "actor-1", "source_release_id": "release-A",
         "source_pointer_sha256": "a" * 64, "source_manifest_sha256": "b" * 64,
         "target_release_id": "release-B", "target_manifest_sha256": "c" * 64,
         "target_inventory_sha256": "d" * 64, "target_payload_tree_sha256": "e" * 64,
-    })
+    }
+    if activation_failure:
+        plan["upgrade_sequence"] = {}
+    store.write_plan(job_id, plan)
     store.write_status(job_id, "READY", actor_user_id="actor-1", result_code="SYSTEM_UPDATE_READY")
     current_user = {
         "id": "actor-1", "user_id": "actor-1", "username": "admin-a", "role": "super_admin",
@@ -1326,6 +1330,22 @@ def test_execute_reconfirms_current_password_without_persisting_it(tmp_path: Pat
     )
     principal = {"user_id": "actor-1", "role": "super_admin", "is_admin": True, "auth_version": 7}
     tasks = BackgroundTasks()
+    if activation_failure:
+        from enterprise.install_cache import CacheError
+        from enterprise.ops.update import sequence
+        marker = roots.STATE_ROOT / sequence.ACTIVE_NAME
+        def fail_activation(*_):
+            if activation_failure == "after-fence":
+                marker.write_bytes(b"retain this fixture fence for explicit recovery")
+            raise CacheError()
+        monkeypatch.setattr(sequence, "activate_sequence", fail_activation)
+        with pytest.raises(HTTPException):
+            asyncio.run(update_api.execute_update(job_id,
+                _Request(principal, {"password": "correct-password", "confirm_no_active_tasks": True}), tasks))
+        assert store.read_status(job_id)["state"] == "FAILED"
+        assert not store.lock_path.exists() and not tasks.tasks
+        assert marker.exists() == (activation_failure == "after-fence")
+        return
     result = asyncio.run(update_api.execute_update(job_id, _Request(principal, {"password": "correct-password"}), tasks))
     assert result["state"] == "UPDATING" and len(tasks.tasks) == 1
     persisted = "".join(path.read_text(encoding="utf-8") for path in root.glob("*.json*"))

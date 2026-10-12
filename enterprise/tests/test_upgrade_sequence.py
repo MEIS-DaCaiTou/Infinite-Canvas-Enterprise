@@ -150,6 +150,32 @@ class ProcessInterrupted(BaseException):
     pass
 
 
+@pytest.mark.parametrize("state", ["FAILED", "ROLLED_BACK", "RECOVERY_REQUIRED"])
+def test_terminal_hop_reports_its_failure_instead_of_stale_sequence_start(prepared_path, state):
+    roots, job_id, directory, hops, launch, calls = prepared_path
+    store = mvp.UpdateJobStore(roots)
+    store.write_status(job_id, state, actor_user_id="admin-path-owner", result_code="SYSTEM_UPDATE_HANDOFF_JOB_BLOCKED")
+    status = store.read_status(job_id)
+    public = sequence.public_sequence(roots, job_id)
+    assert public["state"] == state
+    assert public["result_code"] == status["result_code"]
+    assert public["updated_at"] == status["updated_at"]
+    assert not calls
+
+
+def test_explicit_stop_retains_its_result_after_failed_handoff(prepared_path):
+    roots, job_id, directory, hops, launch, calls = prepared_path
+    store = mvp.UpdateJobStore(roots)
+    store.write_status(job_id, "FAILED", actor_user_id="admin-path-owner", result_code="SYSTEM_UPDATE_HANDOFF_JOB_BLOCKED")
+    lock = store.acquire_execution_lock(job_id)
+    store.release_execution_lock(lock, job_id)
+    result = sequence.stop_sequence(roots, job_id, launcher=launch)
+    assert result["state"] == "FAILED"
+    assert result["result_code"] == "SYSTEM_UPDATE_SEQUENCE_STOPPED"
+    assert result["completed_hops"] == 0
+    assert not result["can_stop"]
+
+
 def test_checkpoint_process_interruption_resumes_suffix_without_repeating_success(prepared_path, monkeypatch):
     roots, job_id, directory, hops, launch, calls = prepared_path
     before = business(roots)

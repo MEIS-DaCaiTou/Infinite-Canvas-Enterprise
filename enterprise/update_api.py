@@ -388,8 +388,12 @@ def _launch_handoff(job_id: str, actor_user_id: str) -> None:
             status = store.read_status(job_id)
             if status.get("state") in TERMINAL_STATES or status.get("handoff_committed") is True:
                 return  # A lost ACK cannot cancel an atomically accepted worker.
+            fields = {key: value for key, value in status.items() if key not in {
+                "schema_version", "job_id", "state", "actor_user_id", "result_code", "created_at", "updated_at"}}
+            if uncertain:
+                fields["recovery_required"] = True
             store.write_status(job_id, state, actor_user_id=actor_user_id, result_code=result_code,
-                               **({"recovery_required": True} if uncertain else {}))
+                               created_at=status["created_at"], **fields)
     except HandoffCommitUnavailable:
         # Acceptance is unknown. Keep UPDATING/reservation, never race a commit
         # or advertise an unlocked retry; the source/worker owns the next result.
@@ -457,6 +461,13 @@ async def execute_update(job_id: str, request: Request, background_tasks: Backgr
     except Exception as exc:
         if reservation_created:
             try:
+                # No handoff was queued before this synchronous failure.
+                # Finish the job before releasing its reservation; retain any
+                # sequence fence for explicit recovery rather than removing it.
+                store.write_status(job_id, "FAILED", actor_user_id=actor["id"],
+                    result_code=getattr(exc, "code", "SYSTEM_UPDATE_CONFIRMATION_FAILED"),
+                    source_release_id=plan.get("source_release_id"), target_release_id=plan.get("target_release_id"))
+                store.append_event(job_id, "FAILED", getattr(exc, "code", "SYSTEM_UPDATE_CONFIRMATION_FAILED"))
                 lock = UpdateJobStore(PATH_ROOTS).acquire_execution_lock(job_id)
                 UpdateJobStore(PATH_ROOTS).release_execution_lock(lock, job_id)
             except Exception:

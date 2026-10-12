@@ -179,6 +179,7 @@ def public_sequence(roots, root_job_id):
         effective = hop_status["state"]
     elif effective == "UPDATING" and hop_status["state"] in {"FAILED", "ROLLED_BACK", "RECOVERY_REQUIRED"}:
         effective = hop_status["state"]
+    terminal_failure = state["state"] == "UPDATING" and effective == hop_status["state"] and effective in {"FAILED", "ROLLED_BACK", "RECOVERY_REQUIRED"}
     available = False
     if files._exists(roots.STATE_ROOT / ACTIVE_NAME):
         _assert_active(roots, root_job_id, plan, directory)
@@ -189,8 +190,9 @@ def public_sequence(roots, root_job_id):
         except files.CacheError:
             pass  # The active worker owns continuation until it exits.
     return {"job_id": root_job_id, "state": effective,
-            "result_code": "SYSTEM_UPDATE_SUCCEEDED" if effective == "SUCCEEDED" else state["result_code"],
-            "updated_at": state.get("updated_at", hop_status["updated_at"]),
+            "result_code": "SYSTEM_UPDATE_SUCCEEDED" if effective == "SUCCEEDED" else (
+                hop_status["result_code"] if terminal_failure else state["result_code"]),
+            "updated_at": hop_status["updated_at"] if terminal_failure else state.get("updated_at", hop_status["updated_at"]),
             "current_job_id": state["current_job_id"], "completed_hops": completed,
             "total_hops": len(sequence["hops"]), "source_release_id": plan["source_release_id"],
             "target_release_id": sequence["hops"][-1]["release_id"],
