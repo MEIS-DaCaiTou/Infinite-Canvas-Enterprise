@@ -59,8 +59,8 @@ def _plain_file_identity(path):
         return files._fd_identity(stream)
 
 
-def _database_contract(roots):
-    """Read an offline SQLite identity; never recover or ignore a WAL/journal."""
+def _database_inspection(roots):
+    """Read offline SQLite metadata; never recover or ignore a WAL/journal."""
     database = roots.DATA_ROOT / "enterprise.db"
     files._safe(database)
     info = files._io(database).lstat()
@@ -85,6 +85,11 @@ def _database_contract(roots):
     if (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns) != (
             after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns):
         _fail("INSTALL_LIFECYCLE_CHANGED")
+    return metadata
+
+
+def _database_contract(roots):
+    metadata = _database_inspection(roots)
     return {name: metadata[name] for name in ("schema_version", "schema_sha256", "ledger_sha256")}
 
 

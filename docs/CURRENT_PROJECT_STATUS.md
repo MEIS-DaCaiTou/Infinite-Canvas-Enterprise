@@ -29,7 +29,7 @@
 | 更新与恢复体验 | #124–#127、#129、#131 | 故障演练、恢复核验/审计解除阻断、一次确认进度、正式/开发通道及准确路径检查；不是自动多跳 |
 | 固定入口与安装 | #137–#140 | 文档体系、固定 C# 入口、实例身份、新装与入口修复、安装副本/真实 EXE 启停验证 |
 | 同版程序修复与图形维护 | [#141](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/141)、[#142](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/142) | 同 Release 程序/Python 修复、中断恢复、持久阶段及 v4 图形接线；不升级业务、不接管未知安装 |
-| 安装维护 C2/C3 | [#151](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/151)、[#152](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/152) | 显式归属缓存清理、实例标准卸载、保留数据与程序恢复副本、同版重装和中断恢复；卸载确认按钮点击仍未验收 |
+| 安装维护 C2/C3 | [#151](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/151)、[#152](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/152) | 显式归属缓存清理、实例标准卸载、保留数据与程序恢复副本、同版重装和中断恢复；C3 原记录保留当时的 GUI 限制，标准卸载两项确认按钮已在 C6 本机合成来源补验收 |
 
 历史记录的“未合并”只代表记录时点。#142 于 10-05 合并为 `a54bdbec348c49fa9eed12cac0bf861241ef5c0b`；真实副本/入口验证及 GUI 限制仍见 [DELIVERY-1](./ops/DELIVERY-1-FIXED-NATIVE-ENTRY-2026-10.md)，不能以源码接线冒充客户图形操作验收。
 
@@ -60,8 +60,8 @@
 
 1. 基线已由 #146 收口，诊断/恢复增量 #147/#148 已合并，需求基线 #149 已入档且不授权新业务代码。#148 的早前完整演练失败及受限 Job 停机前阻断证据保留；同一工作包已补齐交接/接受/清理保护，并在开发机普通桌面上下文通过固定 EXE、HTTP 授权、成功升级、自动恢复及持续失败安全阻断三项合成门禁。安装维护 C 的入口持久恢复、缓存清理及同版卸载/重装已由 #150–#152 合入主线，现继续阶段 3 剩余工程能力。不自动发行；不能将开发机复现直接认定为旧现场唯一根因。
 2. 同版入口修复 v2 的 #150 已合并；本机 9 场景、准确源码与限制见 [入口恢复记录](./ops/ENTRY-REPAIR-RECOVERY-2026-10-10.md)。C2 [维护准备包安全清理](./ops/MAINTENANCE-CACHE-LIFECYCLE-2026-10-11.md) 的准确 Head `e1aca8a2acc6f99029e0be2404f1e9e10ec70d78` 经独立技术审查后，以 #151 合并为 `bdace2a35e10e07c268d0ca7eaf6050f2411d5ad`。四项常规 PR CI 成功，opt-in 为 SKIPPED；已有本机完整准备包 4 场景及限定 GUI 证据复用，没有重跑该包全套门禁。
-3. C3 [保留数据卸载/重装](./ops/RETAINED-UNINSTALL-REINSTALL-2026-10-11.md) 的 #152 已调整到 main 基线，经独立技术审查后合并为上述新 main。当前用户/实例的标准 Windows 卸载、同卷程序恢复副本、保留原数据/配置/身份/指针的同 Release 重装及持久 fence/显式恢复进入主线。关联回归 211 passed / 1 skipped、完整副本三场景、最终候选两次一致构建、真实登记卸载器静默退出 0、GUI 同版重装等证据继续复用。**标准卸载确认按钮点击仍未验收**，不把静默执行改写为完整 GUI 验收；跨版本重装、旧 v1/未知锁接管、长期容量治理及完整安装维护 GUI 仍待完成。代码合并未发布新 Release，未授权客户/生产操作。
-4. C4 [发布目录分页、完整性和安全缓存](./ops/UPDATE-CATALOG-PAGINATION-2026-10-11.md) 已经 #153 独立审查并合入上述 main，共用 v1/v2 目录扩为最多 1000 条、每次全页条件核验及失败阻断；不重复开发或重跑充分证据。最多 8 跳仍只是规划上限，没有一次授权自动多跳。[#154](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/154) 的 C5 已验证更新器接管仍 OPEN/Draft，准确 Head `64c2adff3358e7f806d3cf04a26d86639597e573`，未改写成主线或正式发布。C6 [离线保留数据升级](./ops/OFFLINE-RETAINED-UPGRADE-2026-10-12.md) 从 main 独立实现，正在完成真实副本、原生工具及 GUI 验收；未完成范围仍明确保留，完整业务维护态与自动多跳后续落实。
+3. C3 [保留数据卸载/重装](./ops/RETAINED-UNINSTALL-REINSTALL-2026-10-11.md) 的 #152 已调整到 main 基线，经独立技术审查后合并为上述新 main。当前用户/实例的标准 Windows 卸载、同卷程序恢复副本、保留原数据/配置/身份/指针的同 Release 重装及持久 fence/显式恢复进入主线。关联回归 211 passed / 1 skipped、完整副本三场景、最终候选两次一致构建、真实登记卸载器静默退出 0、GUI 同版重装等证据继续复用。标准卸载两项确认按钮已经在 C6 准确合成来源实际点击，日志、成功窗口和后端数据保留核验见 [C6 记录](./ops/OFFLINE-RETAINED-UPGRADE-2026-10-12.md)；不将 C3 历史静默证据改写为 GUI 证据。跨版本能力属于未合并 C6 候选，旧 v1/未知锁接管、长期容量治理及完整安装维护 GUI 仍待完成。代码合并未发布新 Release，未授权客户/生产操作。
+4. C4 [发布目录分页、完整性和安全缓存](./ops/UPDATE-CATALOG-PAGINATION-2026-10-11.md) 已经 #153 独立审查并合入上述 main，共用 v1/v2 目录扩为最多 1000 条、每次全页条件核验及失败阻断；不重复开发或重跑充分证据。最多 8 跳仍只是规划上限，没有一次授权自动多跳。[#154](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/154) 的 C5 已验证更新器接管仍 OPEN/Draft，准确 Head `64c2adff3358e7f806d3cf04a26d86639597e573`，未改写成主线或正式发布。C6 [离线保留数据升级](./ops/OFFLINE-RETAINED-UPGRADE-2026-10-12.md) 从 main 独立实现，准确 C6c 候选已完成标准卸载确认、保留来源跨版本重装及原生工具/登记的实际 GUI 链路，正在收齐其他真实副本恢复证据；尚未合并或发行，完整业务维护态与自动多跳后续落实。
 5. [#123](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/123) 付费提交止损仍 OPEN；回执基础不是统一持久任务、费用账本、预算及对账。
 6. SQLite＋文件/JSON 的 Windows 单机/LAN 仍是当前部署；专业企业服务器和云服务器生产部署、500 名以上员工/200 名以上峰值活跃创作是已确认长期约束，见 [需求决策登记](./decisions/REQUIREMENTS-DECISION-REGISTER.md#6-2026-10-11-专业服务器与云端生产部署定位补充)。Linux/容器/云端支持、PostgreSQL、完整资源 CAS/员工桌面、SSO/Agent 委托、远程采集与长期支持政策未交付。不以部门 Owner 宣称跨企业 SaaS 隔离，不以账号数推算容量。
 7. 没有付费签名或独立干净设备前置预算；未签名风险仍披露。代码/文档收口不修改这些产品边界。

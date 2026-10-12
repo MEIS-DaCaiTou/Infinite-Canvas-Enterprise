@@ -239,6 +239,22 @@ class _Transaction:
             _fail()
         lifecycle.refresh_installed_proof(roots, manifest)
 
+    def inspect_database(self, database):
+        """Supply shared-engine reads only from this proven stopped SQLite.
+
+        Ordinary mode=ro opens of a stopped WAL-mode database can create empty
+        WAL/SHM files. Keep the existing offline immutable inspection and its
+        sidecar rejection; never delete or adopt such files after the fact.
+        """
+        if Path(database) != self.roots.DATA_ROOT / "enterprise.db":
+            _fail("INSTALL_UPGRADE_DATABASE_CHANGED")
+        self.basics()
+        lifecycle._runtime_quiescent(self.roots)
+        metadata = lifecycle._database_inspection(self.roots)
+        if {key: metadata[key] for key in ("schema_version", "schema_sha256", "ledger_sha256")} != self.plan["database_contract"]:
+            _fail("INSTALL_UPGRADE_DATABASE_CHANGED")
+        return metadata
+
     def published_tools(self):
         """Only Inno's proven support-object registration fields may change."""
         self.basics()
@@ -383,7 +399,7 @@ def upgrade_retained(*, install_root, release_dir, native_entry_dir, setup_execu
         tx.state("SOURCE_RESTORED")
         lifecycle._runtime_quiescent(roots)
         _checkpoint("source_fenced")
-        prepared = mvp.UpdateMvpService(roots).prepare_from_artifacts(actor_user_id="local-installation-owner:" + record["installation_id"],
+        prepared = mvp.UpdateMvpService(roots, database_inspector=tx.inspect_database).prepare_from_artifacts(actor_user_id="local-installation-owner:" + record["installation_id"],
             manifest_path=assets.manifest_path, archive_path=assets.archive_path, inventory_path=assets.inventory_path)
         store = mvp.UpdateJobStore(roots)
         if prepared.database_update_mode != "same-schema-no-migration":
@@ -401,7 +417,7 @@ def upgrade_retained(*, install_root, release_dir, native_entry_dir, setup_execu
         tx.state("EXECUTING", job_id=prepared.job_id)
         if notify_progress is not None:
             notify_progress("UPGRADING", operation)
-        mvp.execute_update_job(roots, prepared.job_id, launcher=tx.launcher)
+        mvp.execute_update_job(roots, prepared.job_id, launcher=tx.launcher, database_inspector=tx.inspect_database)
         result = store.read_status(prepared.job_id)
         if result["state"] == "SUCCEEDED":
             tx.state("AWAITING_REGISTRATION", job_id=prepared.job_id)

@@ -653,7 +653,7 @@ def _flow_for_operation(file: str, symbol: str) -> str:
         # same-volume; native handle-bound rename/deletion is manually reviewed
         # (not discovered by this AST scanner). No install/business/backup writes.
         return "W47"
-    if file == "enterprise/install_lifecycle.py" and symbol in {"_database_contract", "uninstall_retaining_data", "refresh_installed_proof"}:
+    if file == "enterprise/install_lifecycle.py" and symbol in {"_database_inspection", "uninstall_retaining_data", "refresh_installed_proof"}:
         # Offline readonly SQLite (sidecars rejected) and immutable lifecycle
         # plans/fences only in STATE_ROOT. Windows object-bound program moves
         # and release_fence are manually reviewed, not discovered by this AST.
@@ -679,7 +679,7 @@ def _flow_for_operation(file: str, symbol: str) -> str:
 # every mapped site as (file, symbol, operation, normalized-call fingerprint,
 # Wxx flow). Line numbers are deliberately excluded, while duplicate identical
 # calls remain duplicate records. Any added/removed/changed call drifts it.
-EXPECTED_SITE_MANIFEST_DIGEST = "1088bc4f35ec84c3ef439eef54175e71075bd66c155c393f6ff4450fa72fd660"
+EXPECTED_SITE_MANIFEST_DIGEST = "9a962eac921a3512f6b5fa6b1a7127b5887671ed27a95b78855679847e13aa9c"
 
 FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W01", "main.py", "startup_event"),

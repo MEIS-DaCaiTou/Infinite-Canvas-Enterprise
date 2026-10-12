@@ -130,6 +130,26 @@ def test_shared_upgrade_changes_program_and_native_tools_preserves_business_and_
     assert protected(f) == before
 
 
+@pytest.mark.parametrize("retained", [False, True])
+@pytest.mark.parametrize("target_failure", [False, True])
+def test_stopped_wal_mode_source_does_not_gain_sidecars_from_shared_reads(installed, monkeypatch, retained, target_failure):
+    f = installed; root = f["roots"].INSTALL_ROOT
+    database = root / "data/enterprise.db"
+    with closing(sqlite3.connect(database)) as conn:
+        assert conn.execute("PRAGMA journal_mode=WAL").fetchone()[0] == "wal"
+    before = protected(f)
+    if target_failure:
+        def launch(app_root, command):
+            return (2, {"code": "SYSTEM_UPDATE_TARGET_HEALTH_FAILED"}) if command == "health" and app_root.name.startswith("ice-2026.07.7-") else (0, {"result": "stopped"})
+        monkeypatch.setattr(upgrade.mvp, "_run_launcher", launch)
+    if retained:
+        lifecycle.uninstall_retaining_data(install_root=root, release_dir=f["source_assets"], local_app_data_base=f["local"], confirm_no_active_tasks=True)
+    result = upgrade.upgrade_retained(**arguments(f))
+    assert result["upgrade_state"] == ("ROLLED_BACK" if target_failure else "AWAITING_REGISTRATION")
+    assert protected(f) == before
+    assert all(not database.with_name(database.name + suffix).exists() for suffix in ("-wal", "-shm", "-journal"))
+
+
 @pytest.mark.parametrize("field", list(upgrade.SLOTS))
 def test_interrupted_native_field_publication_recovers_original_objects_without_db_restore(installed, monkeypatch, field):
     f = installed; root = f["roots"].INSTALL_ROOT

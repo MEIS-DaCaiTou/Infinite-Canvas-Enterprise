@@ -616,7 +616,9 @@ def _database_update_plan(
     database_path: Path,
     registry: tuple[MigrationStep, ...],
     operation_id: str,
+    database_inspector: Callable[[Path], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    inspect_database = database_inspector or inspect_schema_metadata
     mode = _database_contract_mode(source_manifest, target_manifest)
     if mode not in {"same-schema-no-migration", "versioned-forward-migration"}:
         raise UpdateMvpError("SYSTEM_UPDATE_DATABASE_CONTRACT_UNSUPPORTED")
@@ -636,7 +638,7 @@ def _database_update_plan(
                 legacy_schema_sha = schema_snapshot_sha256(conn)
         except sqlite3.Error as exc:
             raise UpdateMvpError("SYSTEM_UPDATE_DATABASE_SOURCE_IDENTITY_MISMATCH") from exc
-        if inspect_schema_metadata(database_path).get("current_state") != STATE_MISSING:
+        if inspect_database(database_path).get("current_state") != STATE_MISSING:
             raise UpdateMvpError("SYSTEM_UPDATE_DATABASE_SOURCE_IDENTITY_MISMATCH")
         if mode == "same-schema-no-migration":
             if (
@@ -686,7 +688,7 @@ def _database_update_plan(
             "migration_registry_sha256": registry_sha,
             "migration_ids": [step.migration_id for step in migration_steps],
         }
-    inspection = inspect_schema_metadata(database_path)
+    inspection = inspect_database(database_path)
     registry_sha = migration_registry_sha256(steps)
     registry_ids = [step.migration_id for step in steps]
     if (
@@ -775,11 +777,13 @@ class UpdateMvpService:
         *,
         database_path: Path | None = None,
         migration_registry: tuple[MigrationStep, ...] = DEFAULT_MIGRATIONS,
+        database_inspector: Callable[[Path], dict[str, Any]] | None = None,
     ) -> None:
         self.roots = roots
         self.store = UpdateJobStore(roots)
         self.database_path = Path(database_path) if database_path is not None else roots.DATA_ROOT / "enterprise.db"
         self.migration_registry = validate_registry(migration_registry)
+        self.database_inspector = database_inspector
 
     def prepare_from_artifacts(self, *, actor_user_id: str, manifest_path: Path, archive_path: Path, inventory_path: Path) -> PreparedUpdate:
         job_id, job_root = self.store.create(actor_user_id)
@@ -837,6 +841,7 @@ class UpdateMvpService:
                 database_path=self.database_path,
                 registry=self.migration_registry,
                 operation_id=job_id,
+                database_inspector=self.database_inspector,
             )
             plan = {
                 "job_id": job_id,
@@ -948,6 +953,7 @@ def execute_update_job(
     launcher: Callable[[Path, str], tuple[int, dict[str, Any]]] = _run_launcher,
     database_path: Path | None = None,
     migration_registry: tuple[MigrationStep, ...] = DEFAULT_MIGRATIONS,
+    database_inspector: Callable[[Path], dict[str, Any]] | None = None,
 ) -> int:
     """Execute one READY job after the source supervisor has handed off."""
     store = UpdateJobStore(roots)
@@ -985,6 +991,7 @@ def execute_update_job(
     database_result_sha: str | None = None
     database_path = Path(database_path) if database_path is not None else roots.DATA_ROOT / "enterprise.db"
     registry = validate_registry(migration_registry)
+    inspect_database = database_inspector or inspect_schema_metadata
     database_update = plan.get("database_update") or {"mode": "same-schema-no-migration"}
     if type(database_update) is not dict:
         raise UpdateMvpError("SYSTEM_UPDATE_DATABASE_MIGRATION_PLAN_INVALID")
@@ -1020,6 +1027,7 @@ def execute_update_job(
             database_path=database_path,
             registry=registry,
             operation_id=job_id,
+            database_inspector=database_inspector,
         )
         if database_update != expected_database_update:
             raise UpdateMvpError("SYSTEM_UPDATE_DATABASE_MIGRATION_PLAN_INVALID")
@@ -1153,7 +1161,7 @@ def execute_update_job(
             if not database_may_have_changed:
                 try:
                     current_pointer = read_current_release_result_from_state_root(roots.STATE_ROOT)
-                    schema = inspect_schema_metadata(database_path)
+                    schema = inspect_database(database_path)
                     pointer_intact = (
                         current_pointer.release.release_id == source_id
                         and current_pointer.raw_sha256 == plan.get("source_pointer_sha256")
