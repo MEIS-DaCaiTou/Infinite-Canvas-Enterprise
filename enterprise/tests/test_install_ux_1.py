@@ -92,6 +92,20 @@ def test_offline_upgrade_requests_are_exact_credential_free_and_no_source_path(o
         _decode_request(b"x" * (MAX_FRAME_BYTES + 1))
 
 
+@pytest.mark.parametrize("operation", ["upgrade-retained", "recover-upgrade", "inspect-upgrade", "finish-upgrade"])
+def test_offline_upgrade_existing_data_directory_is_maintenance_not_greenfield(tmp_path, monkeypatch, operation):
+    from enterprise import install_setup_bridge as bridge
+    target = tmp_path / "existing"; target.mkdir()
+    (target / "customer-data.db").write_bytes(b"must-not-initialize-or-delete")
+    monkeypatch.setattr(bridge, "_drive_type", lambda _path: 3)
+    request = _request(install_mode="custom", install_root=str(target), operation=operation)
+    arguments = dict(raw_app_root=tmp_path / "raw", release_dir=tmp_path / "assets", known_folder=tmp_path / "local")
+    assert _validated_install_root(request, **arguments) == target
+    with pytest.raises(SetupBridgeError, match="NOT_GREENFIELD"):
+        _validated_install_root(request | {"operation": "install"}, **arguments)
+    assert (target / "customer-data.db").read_bytes() == b"must-not-initialize-or-delete"
+
+
 @pytest.mark.parametrize(
     "changes",
     [

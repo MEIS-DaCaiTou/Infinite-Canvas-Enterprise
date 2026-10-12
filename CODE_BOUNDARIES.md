@@ -49,6 +49,7 @@
 - 任务受理、执行、对账和费用记录属于持久业务域，不使用进程内字典作为事实源。
 - 新增表前先定义 schema version、升级、备份、恢复和旧版本兼容。
 - C# 仅薄入口/系统交互，安装器编排；Python 共用业务/更新/迁移，不按应用版本复制实现。
+- C6 `install_upgrade` 的离线维护复用共享单跳引擎；原生文件恢复必须核验原对象和作业，不用进度、锁龄或 PID 缺失授权接管。成功激活后的登记恢复不回退数据库。Windows 登记/包装进程解析在 `runtime/windows_install_registration.py`、`runtime/windows_setup_source.py`，请求暂停在跨平台 `runtime/install_maintenance.py`。
 - Windows Registry、Job Object、KnownFolder、文件 handle 及安装/卸载 GUI 是平台适配能力；业务模型、API、权限、Repository、Storage Adapter 及数据恢复契约应跨部署形态复用。不得给核心业务新增固定盘符或桌面交互前置。Linux/服务器支持须以依赖调查和真实运行验证判断，不能仅凭接口分层宣称完成。
 - `tools/check_docs.py` 是只读开发检查，不是 Runtime；文档整改不夹带产品权限或迁移改动。
 

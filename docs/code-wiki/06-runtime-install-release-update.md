@@ -152,6 +152,8 @@ flowchart TD
 
 ## 7. 在线更新
 
+C6 `enterprise/install_upgrade.py` 在停止来源服务后复用 `UpdateMvpService`/`execute_update_job`；只处理准确安装身份及已知相同 Schema。原程序保留恢复沿用 C3，原生 entry/record/Setup/support 对象有独立不可变计划和发布检查点；成功目标先等待 Windows 登记，不因登记失败回退其业务数据。`install_setup_bridge` v7 不接收凭据或任意 Setup 文件路径，Windows 包装父进程和登记解析在平台适配器。目标等待登记的 HTTP/WS 暂停不代表完整业务维护态。源码、完整副本与 GUI 验收分列，见 [C6 记录](../ops/OFFLINE-RETAINED-UPGRADE-2026-10-12.md)。
+
 ```mermaid
 sequenceDiagram
     participant UI as Update Center

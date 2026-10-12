@@ -1,9 +1,13 @@
 {
   "schema_version": "enterprise-documents-v1",
-  "reviewed_at": "2026-10-11",
+  "reviewed_at": "2026-10-12",
   "audit_base_commit": "a5a6aa10b7882c46f129ec6df854239ee111da18",
   "scope": "All Git-managed or non-ignored new Markdown/text files; roles are not runtime or release approval. Frozen hashes normalize CRLF to LF only.",
   "documents": [
+    {
+      "path": "docs/ops/OFFLINE-RETAINED-UPGRADE-2026-10-12.md",
+      "kind": "record"
+    },
     {
       "path": "docs/ops/UPDATE-CATALOG-PAGINATION-2026-10-11.md",
       "kind": "record"
@@ -138,7 +142,7 @@
       "path": "docs/CURRENT_PROJECT_STATUS.md",
       "kind": "authority",
       "authority": "status",
-      "reviewed_at": "2026-10-11"
+      "reviewed_at": "2026-10-12"
     },
     {
       "path": "docs/data/DATA-MVP-1-INDEPENDENT-REVIEW-2026-09.md",
@@ -462,7 +466,7 @@
       "path": "docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md",
       "kind": "authority",
       "authority": "roadmap",
-      "reviewed_at": "2026-10-11"
+      "reviewed_at": "2026-10-12"
     },
     {
       "path": "docs/runbooks/SEC-1B2-PRODUCTION-ACTIVATION-RUNBOOK-2026-07.md",
