@@ -1,6 +1,6 @@
 # C6：离线升级、跨版本保留数据重装与原生维护工具更新
 
-记录日期：2026-10-12。开发基线 `main@bc33339fd11df4c0303f29257766f0f2e53560fe`，最终运行代码 `9dcbf4ed9f64a0d1cdf4bc5c15c70585e3faa031`；本包的标准卸载确认和限定跨版本保留数据重装 GUI 已在开发机合成安装副本补验收，独立审查尚未完成。正式 Release 仍为 v2026.10.1，没有客户或生产操作。
+记录日期：2026-10-12。开发基线 `main@bc33339fd11df4c0303f29257766f0f2e53560fe`，完整副本/GUI 演练代码 `9dcbf4ed9f64a0d1cdf4bc5c15c70585e3faa031`；后续 CI 指针发布边界收口见下文，不混写为已经重新构建的候选。本包的标准卸载确认和限定跨版本保留数据重装 GUI 已在开发机合成安装副本补验收，独立审查尚未完成。正式 Release 仍为 v2026.10.1，没有客户或生产操作。
 
 ## 实现与恢复边界
 
@@ -63,6 +63,10 @@
 最终原有两处 KnownFolder 目录均按完整树字节/mtime 和原目录身份恢复核验，`ICE-UpdateDrill-Saved-c6-gui-20261012-a/RESTORED.json` 与 `C6b/GUI-SESSION-RESTORED.json` 已落盘，保全驱动退出 0。各嵌套完整副本演练的恢复证明也保留，没有覆盖历史目录。其他工作区及既有未提交修改保留，本地 main 安全同步至上述 GitHub 基点。
 
 集中证据封存于产品 artifact 的 `t/C6e/C6-review-evidence-9dcbf4ed9f64.zip`：118 项原始证据、528141 bytes，SHA256 `5ba4dc182f3740600838e07e2cda4789c727e47e44eb4f7d5201fda1f2e3781f`；`review-evidence-index.json` 为逐文件 SHA/大小索引。包含有效 JUnit、精确构建记录、GUI 截图/验证、真实生命周期阶段、三项早期失败和目录恢复证明；不含客户数据库、配置密钥、业务材料或历史目录详细清单。后续文档提交不改变已冻结运行代码；CI/独立审查/合并结果以本包 PR 的准确 Head 记录为准，不把本机验收当作已合并或生产批准。
+
+Draft [#155](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/155) 的初始 Head `6dfba1ff716cb61f8e33db380b0befb5ac04773a`，Runtime/原生构建/文档 CI 成功，企业套件为 1627 passed / 50 skipped / 1 failed。失败是原指针写入边界门禁：C6 显式恢复直接调用底层 writer。收口将原样的来源指针 CAS 发布移入共享 MVP `restore_source_pointer`，C6 继续先核验目标停止、数据库/来源、指针和对象身份，再调用共享边界；恢复算法、CAS 参数及业务数据行为保持。门禁继续禁止其他 Runtime writer，并改为精确 AST 调用点 `{execute_update_job: 3, restore_source_pointer: 1}`，没有放宽为任意安装器直接写指针。
+
+`C6e/ci-pointer-a.xml` 的 151 项安装升级/共享引擎/真实指针写入契约定向回归通过，477 处写点审计摘要未变。此提交只收口发布边界及其门禁/文档；复用前述真实进程、GUI 和原目录恢复证据，没有重复全套本机演练，也不宣称该收口提交经过新的完整候选构建。封存 ZIP 不覆盖；CI 修复附加证据与最终准确 Head CI 在 PR 单独记录。
 
 自动多跳、在线原生 EXE/Setup 更新、完整业务维护态、未知未来 Schema 迁移、长期恢复副本/资产保留政策及旧 v1/未知锁接管仍是路线图中的独立工程能力。本包的离线原生工具更新不等于这些范围已完成；专业服务器/云部署和 500+/200+ 约束继续适用。
 

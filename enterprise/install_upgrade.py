@@ -21,7 +21,7 @@ from enterprise.ops.update import mvp
 from enterprise.ops.update.versions import compare_versions
 from enterprise.paths import PortableRootInputs, derive_portable_path_roots, validate_path_roots_for_use
 from enterprise.release.current_release import (
-    atomic_write_current_release, read_current_release_result_from_state_root, sync_state_root_directory,
+    read_current_release_result_from_state_root, sync_state_root_directory,
 )
 from enterprise.release.release_manifest_v2 import canonical_json, read_release_manifest_v2, verify_materialized_release
 from enterprise.runtime.windows_owned_move import rename_owned, release_fence
@@ -600,8 +600,8 @@ def recover_upgrade(*, install_root, release_dir, local_app_data_base, confirm_n
         verify_materialized_release(tx.roots.APP_ROOT, inventory_path=tx.roots.APP_ROOT / "release-payload-inventory.json")
         pointer = read_current_release_result_from_state_root(tx.roots.STATE_ROOT)
         if pointer.release.release_id == tx.plan["target_release_id"]:
-            atomic_write_current_release(tx.roots, mvp._pointer_for(source, tx.plan["target_release_id"]),
-                expected_manifest_sha256=source.raw_sha256, expected_existing_raw_sha256=pointer.raw_sha256)
+            mvp.restore_source_pointer(tx.roots, source, tx.plan["target_release_id"],
+                expected_current_raw_sha256=pointer.raw_sha256)
         elif pointer.release.manifest_sha256 != tx.plan["source_manifest_sha256"]:
             _fail()
         tx.restore()

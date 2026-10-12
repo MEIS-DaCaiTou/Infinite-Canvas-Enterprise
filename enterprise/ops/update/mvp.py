@@ -949,6 +949,20 @@ def _database_result_record(roots: PathRoots, result: MigrationResult) -> dict[s
     }
 
 
+def restore_source_pointer(roots: PathRoots, source_manifest: ReleaseManifestV2,
+                           target_release_id: str, *, expected_current_raw_sha256: str):
+    """CAS publication for a caller that has proven target stop/source identity.
+
+    Offline interrupted recovery retains its own lease/object checks, while
+    pointer publication remains inside the shared update-engine boundary.
+    """
+    return atomic_write_current_release(
+        roots, _pointer_for(source_manifest, validate_release_component(target_release_id)),
+        expected_manifest_sha256=source_manifest.raw_sha256,
+        expected_existing_raw_sha256=expected_current_raw_sha256,
+    )
+
+
 def execute_update_job(
     roots: PathRoots,
     job_id: str,
