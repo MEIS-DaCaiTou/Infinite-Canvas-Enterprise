@@ -363,7 +363,8 @@ def _execute_install_request(request, *, assets, verified, target, known_folder,
             result = inspect_upgrade(**arguments)
         elif operation == "finish-upgrade":
             from enterprise.runtime.windows_install_registration import verify_registration
-            result = finish_upgrade(**arguments, verify_registration=verify_registration)
+            result = finish_upgrade(**arguments, verify_registration=lambda root, installation_id:
+                verify_registration(root, installation_id, expected_version=str(verified.manifest.section("identity")["release_version"])))
         else:
             arguments["confirm_no_active_tasks"] = request["confirm_no_active_tasks"]
             if operation == "recover-upgrade":

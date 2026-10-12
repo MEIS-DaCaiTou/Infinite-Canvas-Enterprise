@@ -727,7 +727,7 @@ begin
     ((MaintenanceOperation = 'install') or
      ((MaintenanceOperation = 'repair-entry') and MatchingLifecycleRelease) or
      ((MaintenanceOperation = 'reinstall-retained') and (LifecycleState = 'INSTALLED')) or
-     (IsUpgradeOperation and (UpgradeState = 'AWAITING_REGISTRATION')));
+     (IsUpgradeOperation and ((UpgradeState = 'AWAITING_REGISTRATION') or (UpgradeState = 'COMPLETE'))));
 end;
 
 function ExtractCacheRows(const Response: String): String;

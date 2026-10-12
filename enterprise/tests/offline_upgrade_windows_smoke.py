@@ -26,7 +26,7 @@ from enterprise.paths import PortableRootInputs, derive_portable_path_roots
 from enterprise.release.release_manifest_v2 import materialize_release_fixture
 from enterprise.runtime.portable import windows_local_app_data_known_folder
 from enterprise.tests.fixed_exe_update_windows_smoke import (
-    _asset_view, _configure, _delete_owned_local, _environment, _native, _seed_business,
+    _asset_view, _configure, _remove_owned_local_root, _environment, _native, _seed_business,
     preserved_local_roots, NAMES,
 )
 from enterprise.tests.update_mvp_1_windows_smoke import _create_owned_local_roots, _free_port, _port_open
@@ -90,9 +90,6 @@ def _http(port, path):
 def run(args):
     if os.name != "nt":
         raise RuntimeError("OFFLINE_DRILL_WINDOWS_REQUIRED")
-    from enterprise.tests.fixed_exe_handoff_qualification import qualified_result
-    if not qualified_result(json.loads(args.qualification.read_bytes())):
-        raise RuntimeError("OFFLINE_DRILL_UNQUALIFIED_CONTEXT")
     output = args.evidence_root.absolute()
     files._safe(output, missing=True); output.mkdir(exist_ok=False)
     source = _asset_view(args.source_build, output / "source-assets")
@@ -106,14 +103,22 @@ def run(args):
     local = windows_local_app_data_known_folder()
     report = {"schema_version": "c6-offline-drill-v1", "production_touched": False,
         "source_manifest_sha256": source.manifest.raw_sha256, "target_manifest_sha256": target.manifest.raw_sha256,
-        "windows_registration_gui_verified": False, "scenarios": []}
-    for scenario in args.scenarios:
+        "windows_registration_gui_verified": False, "online_handoff_tested": False, "scenarios": []}
+    # Offline maintenance starts only from a verified stopped source. It does
+    # not spawn an online handoff worker; that package's breakaway prerequisite
+    # cannot substitute for these actual native boot/health/exit checks.
+    from enterprise.runtime.windows import current_job_diagnostics
+    report["runner_context"] = current_job_diagnostics()
+    with preserved_local_roots(local, "c6-suite-" + uuid.uuid4().hex[:10],
+                               explicitly_authorized=args.preserve_existing_local_roots):
+      for scenario in args.scenarios:
         nonce = "c6-" + uuid.uuid4().hex[:10]
         evidence = output / scenario; evidence.mkdir()
         root = evidence / "install"
-        with preserved_local_roots(local, nonce, explicitly_authorized=args.preserve_existing_local_roots):
-            _create_owned_local_roots(local, nonce)
+        with contextlib.ExitStack():
+            _create_owned_local_roots(local, NAMES, nonce)
             ports = (_free_port(), _free_port()); installed = None
+            print("C6 scenario started: " + scenario, flush=True)
             try:
                 installed = fresh.install_greenfield(release_dir=source.manifest_path.parent, install_root=root,
                     username="c6-owned-fixture-admin", password="Fixture-only-C6-Strong-Password-2026!",
@@ -130,6 +135,7 @@ def run(args):
                 code, _ = _native(root, "health", evidence)
                 if code != 0: raise RuntimeError("OFFLINE_DRILL_SOURCE_HEALTH_FAILED")
                 _stop(root, evidence, ports)
+                print("C6 source verified stopped: " + scenario, flush=True)
                 if scenario == "retained":
                     result = _result(_run(app, root, source.manifest_path.parent, args.source_native_entry, args.target_setup, local, "uninstall"), evidence, "uninstall")
                     assert result["lifecycle_state"] == "UNINSTALLED" and not (root / "InfiniteCanvas.exe").exists()
@@ -143,6 +149,7 @@ def run(args):
                     result = _result(process, evidence, "upgraded")
                 expected = "ROLLED_BACK" if scenario in {"interrupted", "rollback"} else "AWAITING_REGISTRATION"
                 assert result["upgrade_state"] == expected and result["installation_id"] == installed.installation_id
+                print("C6 upgrade result: " + scenario + " " + expected, flush=True)
                 for relative, contents in protected.items():
                     assert (root / relative).read_bytes() == contents, relative
                 if expected == "ROLLED_BACK":
@@ -164,14 +171,14 @@ def run(args):
                 if installed and (root / "InfiniteCanvas.exe").exists():
                     _stop(root, evidence, ports)
                 for name in NAMES:
-                    _delete_owned_local(local / name, nonce)
+                    _remove_owned_local_root(local / name, local, nonce)
     (output / "summary.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     return report
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    for field in ("source-build", "source-native-entry", "target-build", "target-native-entry", "target-setup", "qualification", "evidence-root"):
+    for field in ("source-build", "source-native-entry", "target-build", "target-native-entry", "target-setup", "evidence-root"):
         p.add_argument("--" + field, type=Path, required=True)
     p.add_argument("--preserve-existing-local-roots", action="store_true")
     p.add_argument("--scenarios", nargs="+", choices=("in-place", "retained", "interrupted", "rollback"), default=["in-place", "retained", "interrupted", "rollback"])

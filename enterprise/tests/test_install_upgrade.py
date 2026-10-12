@@ -180,7 +180,7 @@ def test_untrusted_setup_and_native_bundle_refuse_before_source_restoration(inst
     assert not (root / "state/install-upgrades").exists()
 
 
-@pytest.mark.parametrize("stage", ["active_published", "fence_published", "source_fenced", "upgrade_ready"])
+@pytest.mark.parametrize("stage", ["active_published", "fence_published", "source_fenced", "job_bound", "upgrade_ready"])
 @pytest.mark.parametrize("retained", [False, True])
 def test_pre_execution_interruption_never_loses_startup_fence_or_original_data(installed, monkeypatch, stage, retained):
     f = installed; root = f["roots"].INSTALL_ROOT
@@ -235,6 +235,17 @@ def test_copied_candidate_same_bytes_has_no_original_object_authority(installed,
         upgrade.recover_upgrade(install_root=root, release_dir=f["target_assets"], local_app_data_base=f["local"], confirm_no_active_tasks=True)
     assert files._file(entry) == copied and displaced.exists()
     assert (root / "state" / upgrade.ACTIVE_NAME).exists()
+
+
+def test_identical_foreign_fence_is_not_adopted_or_deleted(installed, monkeypatch):
+    f = installed; root = f["roots"].INSTALL_ROOT
+    interrupted_at(f, monkeypatch, "fence_published")
+    lock = root / "state/system-update-active.lock"
+    owned = root / "state/displaced-fence"; lock.rename(owned); shutil.copyfile(owned, lock)
+    foreign = files._file(lock)
+    with pytest.raises(upgrade.InstallUpgradeError, match="FENCE_CHANGED"):
+        upgrade.recover_upgrade(install_root=root, release_dir=f["target_assets"], local_app_data_base=f["local"], confirm_no_active_tasks=True)
+    assert files._file(lock) == foreign and owned.exists()
 
 
 @pytest.mark.parametrize("suffix", ["-wal", "-shm", "-journal"])

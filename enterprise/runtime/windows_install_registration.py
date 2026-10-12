@@ -9,7 +9,7 @@ import re
 from enterprise import install_cache as files
 
 
-def verify_registration(root: Path, installation_id: str):
+def verify_registration(root: Path, installation_id: str, *, expected_version: str):
     if os.name != "nt":
         raise files.CacheError("INSTALL_WINDOWS_REQUIRED")
     import winreg
@@ -36,6 +36,8 @@ def verify_registration(root: Path, installation_id: str):
     def same(left, right):
         return os.path.normcase(os.path.abspath(left)) == os.path.normcase(os.path.abspath(right))
     key = "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\InfiniteCanvasEnterprise-" + installation_id + "_is1"
+    if query(key, "DisplayVersion") != expected_version or query(key, "Publisher") != "MEIS-DaCaiTou":
+        raise files.CacheError("INSTALL_UPGRADE_REGISTRATION_UNPROVEN")
     command = query(key, "UninstallString")
     if not command.startswith('"') or '"' not in command[1:]:
         raise files.CacheError("INSTALL_UPGRADE_REGISTRATION_UNPROVEN")

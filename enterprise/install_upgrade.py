@@ -160,6 +160,19 @@ class _Transaction:
                        "installation_id": p["installation_id"], "plan_sha256": hashlib.sha256(canonical_json(p)).hexdigest()}
                 or lifecycle._marker(r.STATE_ROOT / ACTIVE_NAME) != lifecycle._marker(self.directory / "active.json")):
             _fail()
+        common = r.STATE_ROOT / "system-update-active.lock"
+        if files._exists(common):
+            marker = lifecycle._marker(common)
+            if marker["identity"] != p["system_fence"]["identity"]:
+                recovery = self.directory / "recovery-fence.json"
+                if not files._exists(recovery) or marker != lifecycle._marker(recovery):
+                    _fail("INSTALL_UPGRADE_FENCE_CHANGED")
+            if marker != p["system_fence"]:
+                status, _ = _read(self.directory / "state.json")
+                payload, _ = _read(common)
+                if (payload.get("schema_version") != mvp.LOCK_SCHEMA
+                        or "job_id" not in status or payload.get("job_id") != status["job_id"]):
+                    _fail("INSTALL_UPGRADE_FENCE_CHANGED")
 
     def slots(self):
         self.basics()
@@ -375,6 +388,10 @@ def upgrade_retained(*, install_root, release_dir, native_entry_dir, setup_execu
         store = mvp.UpdateJobStore(roots)
         if prepared.database_update_mode != "same-schema-no-migration":
             _fail("INSTALL_UPGRADE_DATABASE_CONTRACT_UNSUPPORTED")
+        files._new_json(directory / "job.json", {"schema_version": "enterprise-offline-upgrade-job-v1",
+            "operation_id": operation, "plan_sha256": hashlib.sha256(canonical_json(plan)).hexdigest(),
+            "job_id": prepared.job_id, "job_plan_sha256": hashlib.sha256(canonical_json(store.read_plan(prepared.job_id))).hexdigest()})
+        _checkpoint("job_bound")
         tx.state("READY", job_id=prepared.job_id)
         _checkpoint("upgrade_ready")
         status = store.read_status(prepared.job_id)
@@ -448,6 +465,21 @@ def _load(install_root, local_app_data_base, assets):
         _fail()
     if "job_id" in state:
         mvp.UpdateJobStore.validate_job_id(state["job_id"])
+    bound = directory / "job.json"
+    if files._exists(bound):
+        receipt, _ = _read(bound)
+        if (set(receipt) != {"schema_version", "operation_id", "plan_sha256", "job_id", "job_plan_sha256"}
+                or receipt["schema_version"] != "enterprise-offline-upgrade-job-v1"
+                or receipt["operation_id"] != plan["operation_id"] or receipt["plan_sha256"] != digest
+                or ("job_id" in state and state["job_id"] != receipt["job_id"])):
+            _fail("INSTALL_UPGRADE_JOB_CHANGED")
+        mvp.UpdateJobStore.validate_job_id(receipt["job_id"])
+        job_plan = mvp.UpdateJobStore(roots).read_plan(receipt["job_id"])
+        if hashlib.sha256(canonical_json(job_plan)).hexdigest() != receipt["job_plan_sha256"]:
+            _fail("INSTALL_UPGRADE_JOB_CHANGED")
+        state = {**state, "job_id": receipt["job_id"]}
+    elif "job_id" in state:
+        _fail("INSTALL_UPGRADE_JOB_CHANGED")
     return tx, state
 
 
@@ -508,7 +540,7 @@ def recover_upgrade(*, install_root, release_dir, local_app_data_base, confirm_n
         if files._exists(lock):
             marker = lifecycle._marker(lock)
             payload, _ = _read(lock)
-            if marker == tx.plan["system_fence"] and state["state"] == "READY":
+            if marker == tx.plan["system_fence"] and state["state"] in {"SOURCE_RESTORED", "READY"}:
                 _transfer_lock(tx.roots, marker, job_id)
                 marker = lifecycle._marker(lock)
             elif (marker["identity"] != tx.plan["system_fence"]["identity"] or payload.get("job_id") != job_id
