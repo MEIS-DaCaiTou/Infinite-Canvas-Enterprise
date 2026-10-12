@@ -817,6 +817,12 @@
         if (detail.code === 'RELEASE_CATALOG_INCOMPLETE') {
           return '历史发布目录未能完整核验，请稍后重新检查；未启动升级。';
         }
+        if (detail.code === 'SYSTEM_UPDATE_UPDATER_INCOMPATIBLE') {
+          return '目标更新工具与当前安装不兼容，已拒绝升级；请使用经审核的中间版本或离线维护。';
+        }
+        if (detail.code === 'SYSTEM_UPDATE_UPDATER_UNVERIFIED') {
+          return '无法核验目标更新工具或维护计划，已拒绝交接；当前服务不会因此停止。';
+        }
         detail = detail.code || detail.message || '';
       }
     }
@@ -1795,7 +1801,7 @@
   function renderUpdateProgress(data) {
     const labels = {
       PREPARING: '正在下载并校验发布包', READY: '发布包已校验，等待切换',
-      UPDATING: '正在安全停止服务', MIGRATING: '正在备份并迁移数据库',
+      UPDATING: '正在核验并交接服务', MIGRATING: '正在备份并迁移数据库',
       RESTARTING: '正在启动新版本', VERIFYING: '正在检查新版本健康状态',
       SUCCEEDED: '升级成功', ROLLING_BACK: '升级未完成，正在恢复原版本',
       ROLLED_BACK: '升级失败，已恢复原版本', FAILED: '升级未完成',
@@ -1807,6 +1813,10 @@
     const detail = [
       data?.job_id ? `作业 ID：${data.job_id}` : '发布包准备期间，当前服务仍可使用。',
       data?.result_code ? `结果代码：${data.result_code}` : '',
+      data?.updater_execution?.mode === 'target-release'
+        ? `更新工具：准备时已核验目标版本 ${data.updater_execution.worker_release_id}` : '',
+      data?.result_code === 'SYSTEM_UPDATE_UPDATER_UNVERIFIED'
+        ? '更新工具或维护计划核验失败，服务交接未执行。请重新检查发布包。' : '',
       state === 'RECOVERY_REQUIRED' ? '请勿重试升级；先核对数据与运行状态，再使用下方人工恢复核验。' : '',
       state === 'SUCCEEDED' ? '请刷新页面，确认已进入新版本。' : '',
     ].filter(Boolean).join('\n');

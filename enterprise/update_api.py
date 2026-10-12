@@ -56,6 +56,8 @@ def _error(exc: Exception) -> None:
     status = int(getattr(exc, "status_code", 400))
     message = {
         "RELEASE_CATALOG_INCOMPLETE": "历史发布目录未能完整核验，请稍后重新检查；未启动升级。",
+        "SYSTEM_UPDATE_UPDATER_INCOMPATIBLE": "目标更新工具与当前安装的交接协议不兼容，已拒绝升级；请使用经审核的中间版本或离线维护。",
+        "SYSTEM_UPDATE_UPDATER_UNVERIFIED": "无法核验目标更新工具或维护计划，已拒绝交接；当前服务不会因此停止。",
         "SYSTEM_UPDATE_DATABASE_CONTRACT_UNSUPPORTED": "无法验证此版本的数据库迁移与恢复契约，已拒绝准备升级。",
         "SYSTEM_UPDATE_RECOVERY_REQUIRED": "上一升级作业仍需人工恢复，已拒绝再次升级。",
         "SYSTEM_UPDATE_RECOVERY_STATE_UNVERIFIED": "无法核验既有升级作业的恢复状态，已拒绝再次升级。",
@@ -369,6 +371,7 @@ def _launch_handoff(job_id: str, actor_user_id: str) -> None:
     uncertain = result.get("result") in {"update_handoff_cleanup_unconfirmed", "control_timeout"}
     result_code = ("SYSTEM_UPDATE_HANDOFF_CLEANUP_UNCONFIRMED" if uncertain else
                    "SYSTEM_UPDATE_HANDOFF_JOB_BLOCKED" if result.get("result") == "update_handoff_job_blocked"
+                   else "SYSTEM_UPDATE_UPDATER_UNVERIFIED" if result.get("result") == "update_handoff_updater_rejected"
                    else "SYSTEM_UPDATE_HANDOFF_FAILED")
     state = "RECOVERY_REQUIRED" if uncertain else "FAILED"
     try:
@@ -420,6 +423,8 @@ async def execute_update(job_id: str, request: Request, background_tasks: Backgr
         plan = store.read_plan(job_id)
         if status.get("state") != "READY" or plan.get("actor_user_id") != actor["id"]:
             raise UpdateMvpError("SYSTEM_UPDATE_JOB_NOT_EXECUTABLE", status_code=409)
+        from enterprise.ops.update.updater import sealed_updater_binding
+        sealed_updater_binding(plan, status)
         current_pointer = read_current_release_result_from_state_root(PATH_ROOTS.STATE_ROOT)
         if current_pointer.raw_sha256 != plan.get("source_pointer_sha256"):
             raise UpdateMvpError("SYSTEM_UPDATE_EXPECTED_CURRENT_MISMATCH", status_code=409)

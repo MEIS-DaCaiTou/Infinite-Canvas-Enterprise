@@ -65,6 +65,7 @@ from enterprise.release.release_manifest_v2 import (
 from enterprise.runtime.logging import redact_value, utc_now
 from enterprise.runtime.error_contract import public_lifecycle_code, public_lifecycle_details
 from enterprise.ops.update.versions import compare_versions
+from enterprise.ops.update.updater import prepared_updater_binding, sealed_updater_binding
 
 
 JOB_SCHEMA = "enterprise-update-mvp-job-v1"
@@ -288,7 +289,9 @@ class UpdateJobStore:
             "created_at": created_at or existing.get("created_at") or utc_now(),
             "updated_at": utc_now(),
             "result_code": result_code,
-            **{key: existing[key] for key in ("runtime_phases", "failure_code", "handoff_committed") if key in existing},
+            **{key: existing[key] for key in (
+                "runtime_phases", "failure_code", "handoff_committed", "plan_sha256", "updater_execution"
+            ) if key in existing},
             **fields,
         }
         _atomic_json(path, payload)
@@ -307,6 +310,7 @@ class UpdateJobStore:
         after the API recorded a terminal/recovery state or lost this lock.
         """
         plan, status = self.read_plan(job_id), self.read_status(job_id)
+        sealed_updater_binding(plan, status)
         if (status.get("state") != "UPDATING"
                 or status.get("actor_user_id") != plan.get("actor_user_id")
                 or plan.get("source_release_id") != source_release_id
@@ -758,8 +762,9 @@ class PreparedUpdate:
     target_manifest_sha256: str
     target_payload_tree_sha256: str
     database_update_mode: str
+    updater_execution: dict[str, Any] | None = None
 
-    def public(self) -> dict[str, str]:
+    def public(self) -> dict[str, Any]:
         return {
             "job_id": self.job_id,
             "source_release_id": self.source_release_id,
@@ -767,6 +772,7 @@ class PreparedUpdate:
             "target_manifest_sha256": self.target_manifest_sha256,
             "target_payload_tree_sha256": self.target_payload_tree_sha256,
             "database_update_mode": self.database_update_mode,
+            **({"updater_execution": self.updater_execution} if self.updater_execution is not None else {}),
         }
 
 
@@ -846,6 +852,8 @@ class UpdateMvpService:
                 operation_id=job_id,
                 database_inspector=self.database_inspector,
             )
+            updater_execution = prepared_updater_binding(
+                target_root, target_manifest.raw_sha256, verification.payload_tree_sha256)
             plan = {
                 "job_id": job_id,
                 "actor_user_id": actor_user_id,
@@ -858,6 +866,7 @@ class UpdateMvpService:
                 "target_payload_tree_sha256": verification.payload_tree_sha256,
                 "database_update": database_update,
                 "created_at": utc_now(),
+                **({"updater_execution": updater_execution} if updater_execution is not None else {}),
             }
             plan_sha = self.store.write_plan(job_id, plan)
             self.store.write_status(
@@ -869,9 +878,12 @@ class UpdateMvpService:
                 target_release_id=target_manifest.release_id,
                 plan_sha256=plan_sha,
                 database_update_mode=database_update["mode"],
+                **({"updater_execution": updater_execution} if updater_execution is not None else {}),
             )
             self.store.append_event(job_id, "READY", "SYSTEM_UPDATE_READY", source_release_id=source_manifest.release_id, target_release_id=target_manifest.release_id)
-            return PreparedUpdate(job_id, source_manifest.release_id, target_manifest.release_id, target_manifest.raw_sha256, verification.payload_tree_sha256, database_update["mode"])
+            return PreparedUpdate(job_id, source_manifest.release_id, target_manifest.release_id,
+                                  target_manifest.raw_sha256, verification.payload_tree_sha256,
+                                  database_update["mode"], updater_execution)
         except Exception as exc:
             if partial is not None:
                 _remove_owned_tree(partial, partial_identity)
@@ -976,6 +988,7 @@ def execute_update_job(
     store = UpdateJobStore(roots)
     plan = store.read_plan(job_id)
     status = store.read_status(job_id)
+    sealed_updater_binding(plan, status)
     actor = str(plan.get("actor_user_id") or "")
     if status.get("state") != "UPDATING" or status.get("actor_user_id") != actor:
         raise UpdateMvpError("SYSTEM_UPDATE_JOB_NOT_EXECUTABLE", status_code=409)

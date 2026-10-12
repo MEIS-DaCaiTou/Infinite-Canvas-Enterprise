@@ -1408,7 +1408,8 @@ def test_controller_rechecks_ownership_before_writing_update_handoff(monkeypatch
     assert submitted == []
 
 
-def test_supervisor_handoff_uses_only_fixed_source_python_and_worker(tmp_path: Path, monkeypatch):
+@pytest.mark.parametrize("target_engine", [False, True])
+def test_supervisor_handoff_uses_only_fixed_verified_python_and_worker(tmp_path: Path, monkeypatch, target_engine):
     from enterprise.runtime.ownership import ProcessIdentity
     from enterprise.runtime.supervisor import RuntimeSupervisor
 
@@ -1419,6 +1420,21 @@ def test_supervisor_handoff_uses_only_fixed_source_python_and_worker(tmp_path: P
     worker.parent.mkdir(parents=True)
     python.write_bytes(b"fixture")
     worker.write_text("# fixture\n", encoding="utf-8")
+    source_python = python
+    worker_root = app_root
+    updater_binding = None
+    updater = None
+    if target_engine:
+        worker_root = tmp_path / "release-B"
+        python = worker_root / "python/python.exe"
+        worker = worker_root / "enterprise/ops/update/handoff.py"
+        python.parent.mkdir(parents=True)
+        worker.parent.mkdir(parents=True)
+        python.write_bytes(b"verified-target")
+        worker.write_bytes(b"verified-target-worker")
+        updater_binding = {"plan_sha256": "c" * 64, "worker_release_id": "release-B", "updater_contract": 4}
+        updater = SimpleNamespace(app_root=worker_root, python=python, worker=worker,
+                                  readiness_binding=updater_binding)
     launched = []
 
     class Process:
@@ -1435,7 +1451,7 @@ def test_supervisor_handoff_uses_only_fixed_source_python_and_worker(tmp_path: P
     supervisor = RuntimeSupervisor.__new__(RuntimeSupervisor)
     supervisor.config = SimpleNamespace(
         app_root=app_root,
-        python_executable=str(python),
+        python_executable=str(source_python),
         runtime_mode="portable-release",
     )
     supervisor._update_handoff_request = {"request_id": "request", "update_job_id": "b" * 32}
@@ -1444,9 +1460,11 @@ def test_supervisor_handoff_uses_only_fixed_source_python_and_worker(tmp_path: P
     supervisor._command_snapshot = lambda: {"state": "healthy"}
     supervisor._ack = lambda request, **fields: acknowledgements.append((request, fields))
     supervisor._log = lambda *_args, **_kwargs: None
-    supervisor.supervisor_identity = ProcessIdentity(999, 1, str(python))
+    supervisor.supervisor_identity = ProcessIdentity(999, 1, str(source_python))
     supervisor._handoff_reservation = lambda *_args: (1, 2)
-    def committed(*_args):
+    supervisor._select_handoff_updater = lambda _job_id: updater
+    supervisor._handoff_binding_matches = lambda job, binding: binding == updater_binding
+    def committed(*_args, **_kwargs):
         supervisor._stopping = True
         return True
     supervisor._commit_update_handoff = committed
@@ -1458,17 +1476,18 @@ def test_supervisor_handoff_uses_only_fixed_source_python_and_worker(tmp_path: P
     monkeypatch.setattr("enterprise.runtime.supervisor.read_worker_ready", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
         "enterprise.runtime.supervisor.process_identity",
-        lambda pid: ProcessIdentity(pid, 1, str(python)),
+        lambda pid: ProcessIdentity(pid, 1, str(source_python if pid == 999 else python)),
     )
     RuntimeSupervisor._perform_update_handoff(supervisor)
     assert launched[0][0] == [str(python), "-I", "-B", str(worker), "--job-id", "b" * 32,
                               "--source-pid", "999", "--source-created-at", "1",
-                              "--source-executable", str(python)]
+                              "--source-executable", str(source_python),
+                              *(["--source-release-id", "release-A"] if target_engine else [])]
     assert launched[0][1]["stdin"] is not None
     assert launched[0][1]["stdout"] is not None
     assert launched[0][1]["stderr"] is not None
     assert launched[0][1]["shell"] is False
-    assert launched[0][1]["cwd"] == str(app_root)
+    assert launched[0][1]["cwd"] == str(worker_root)
     for name in ("PYTHONHOME", "PYTHONPATH", "PYTHONSTARTUP", "PYTHONINSPECT"):
         assert name not in launched[0][1]["env"]
     assert acknowledgements[0][1]["result"] == "update_handoff_started"

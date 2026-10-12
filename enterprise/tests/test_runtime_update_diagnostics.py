@@ -202,6 +202,9 @@ def test_handoff_job_failure_never_stops_source_or_retries_ordinary_creation(tmp
     supervisor.supervisor_identity = ProcessIdentity(999, 1, str(python))
     supervisor._handoff_reservation = Mock(side_effect=[(1, 2), None] if failure == "reservation-cancelled"
                                          else None, return_value=(1, 2))
+    # This fixture exercises legacy source-worker Job failures after selection;
+    # target verification/refusal is covered separately by test_verified_updater.
+    supervisor._select_handoff_updater = Mock(return_value=None)
     supervisor._job = None if failure == "missing-source-job" else Mock()
     if supervisor._job is not None:
         supervisor._job.contains_process.return_value = failure == "source-job"
