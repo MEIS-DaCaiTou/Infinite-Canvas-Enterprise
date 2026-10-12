@@ -141,8 +141,12 @@ def run(args):
                     assert result["lifecycle_state"] == "UNINSTALLED" and not (root / "InfiniteCanvas.exe").exists()
                 fault = "death" if scenario == "interrupted" else "health" if scenario == "rollback" else ""
                 process = _run(app, root, target.manifest_path.parent, args.target_native_entry, args.target_setup, local, "upgrade", fault)
+                (evidence / "upgrade-process.json").write_text(json.dumps({"return_code": process.returncode,
+                    "stdout": process.stdout.decode("utf-8", "replace")[-2048:]}, indent=2), encoding="utf-8")
+                (evidence / "upgrade-process-stderr.log").write_bytes(process.stderr)
                 if fault == "death":
-                    assert process.returncode == 93
+                    if process.returncode != 93:
+                        raise RuntimeError("OFFLINE_INTERRUPT_NOT_REACHED:" + str(process.returncode) + ":" + process.stdout.decode("utf-8", "replace")[-250:])
                     (evidence / "interrupted-stderr.log").write_bytes(process.stderr)
                     result = _result(_run(app, root, target.manifest_path.parent, args.target_native_entry, args.target_setup, local, "recover"), evidence, "recovered")
                 else:

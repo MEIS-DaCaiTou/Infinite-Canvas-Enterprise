@@ -814,7 +814,10 @@ class UpdateMvpService:
             # Publication must be a same-volume rename. Artifacts and job
             # evidence remain in STAGING_ROOT, while the owned partial Release
             # is a hidden sibling of the final target under RELEASE_ROOT.
-            partial = self.roots.RELEASE_ROOT / f".{target_manifest.release_id}.{job_id}.partial"
+            # Target identity is already bound in the job. Repeating it here
+            # needlessly pushes otherwise supported Windows install roots past
+            # the directory-length limit while materializing the same payload.
+            partial = self.roots.RELEASE_ROOT / f".{job_id}.partial"
             assert_no_reparse_ancestors(partial, allow_missing=True)
             materialize_release_fixture(manifest_copy, archive_copy, inventory_copy, partial)
             partial_stat = partial.stat(follow_symlinks=False)
