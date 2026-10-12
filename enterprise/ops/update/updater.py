@@ -118,9 +118,12 @@ def sealed_updater_binding(plan: dict, status: dict) -> dict | None:
     for key in ("worker_manifest_sha256", "worker_payload_tree_sha256", "contract_sha256"):
         if type(binding.get(key)) is not str or _SHA.fullmatch(binding[key]) is None:
             raise UpdaterExecutionError()
-    if (binding.get("worker_release_id") != plan.get("target_release_id")
-            or binding["worker_manifest_sha256"] != plan.get("target_manifest_sha256")
-            or binding["worker_payload_tree_sha256"] != plan.get("target_payload_tree_sha256")):
+    controller = plan.get("sequence_controller", {})
+    if type(controller) is not dict:
+        raise UpdaterExecutionError()
+    if (binding.get("worker_release_id") != controller.get("release_id", plan.get("target_release_id"))
+            or binding["worker_manifest_sha256"] != controller.get("manifest_sha256", plan.get("target_manifest_sha256"))
+            or binding["worker_payload_tree_sha256"] != controller.get("payload_tree_sha256", plan.get("target_payload_tree_sha256"))):
         raise UpdaterExecutionError()
     try:
         validate_release_component(binding["worker_release_id"])
@@ -142,13 +145,16 @@ def select_verified_updater(roots, plan: dict, status: dict) -> VerifiedUpdater 
     if binding is None:
         return None
     try:
+        if "upgrade_sequence" in plan:
+            from enterprise.ops.update.sequence import verify_prepared_sequence
+            verify_prepared_sequence(roots, plan)
         app_root = roots.RELEASE_ROOT / validate_release_component(binding["worker_release_id"])
         manifest = read_release_manifest_v2(app_root / "release-manifest.json")
         verification = verify_materialized_release(
             app_root, inventory_path=app_root / manifest.section("release_payload")["inventory_path"])
         if (manifest.release_id != app_root.name or verification.manifest_sha256 != binding["worker_manifest_sha256"]
                 or verification.payload_tree_sha256 != binding["worker_payload_tree_sha256"]
-                or verification.inventory_sha256 != plan.get("target_inventory_sha256")):
+                or verification.inventory_sha256 != plan.get("sequence_controller", {}).get("inventory_sha256", plan.get("target_inventory_sha256"))):
             raise UpdaterExecutionError()
         actual = prepared_updater_binding(app_root, verification.manifest_sha256, verification.payload_tree_sha256)
         if actual != {key: value for key, value in binding.items() if key != "plan_sha256"}:

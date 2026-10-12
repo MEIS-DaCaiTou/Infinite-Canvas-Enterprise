@@ -589,6 +589,7 @@ def _flow_for_operation(file: str, symbol: str) -> str:
         "tools/build_upgrade_routes.py",
         "tools/build_install_ux_1.py",
         "tools/build_native_entry.py",
+        "tools/build_maintenance_assets.py",
     }:
         # OPS Release Manifest v2 and upgrade-route sidecars write only into
         # caller-owned new build or fixture-materialization roots. INSTALL-UX-1
@@ -601,6 +602,9 @@ def _flow_for_operation(file: str, symbol: str) -> str:
         "enterprise/ops/update/mvp.py",
         "enterprise/ops/update/recovery.py",
         "enterprise/update_api.py",
+        "enterprise/ops/update/online_prepare.py",
+        "enterprise/ops/update/maintenance_assets.py",
+        "enterprise/ops/update/sequence.py",
     }:
         # UPDATE-MVP-1 writes bounded job/clearance evidence only beneath
         # STAGING_ROOT, with active locks in STATE_ROOT and newly materialized
@@ -679,7 +683,7 @@ def _flow_for_operation(file: str, symbol: str) -> str:
 # every mapped site as (file, symbol, operation, normalized-call fingerprint,
 # Wxx flow). Line numbers are deliberately excluded, while duplicate identical
 # calls remain duplicate records. Any added/removed/changed call drifts it.
-EXPECTED_SITE_MANIFEST_DIGEST = "9a962eac921a3512f6b5fa6b1a7127b5887671ed27a95b78855679847e13aa9c"
+EXPECTED_SITE_MANIFEST_DIGEST = "c4a7f22f4980a79562020ac535161f3f067e4553b4b4bcdae5be9d4707c52920"
 
 FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W01", "main.py", "startup_event"),

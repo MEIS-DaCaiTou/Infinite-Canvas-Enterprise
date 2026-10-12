@@ -209,3 +209,5 @@ main 派生的生命周期诊断增量为每个实际执行的 `target_start/tar
 - 完整通知/任务和业务写入隔离、更新器自更新及图形恢复仍待落地；业务写入已开放后不盲目回旧备份。
 - 更新中心只消费完整 Manifest v2 Release，不消费 GitHub 源码 ZIP。
 - 诊断输出有界并脱敏，但仍应按内部运维材料处理。
+
+C7 导航：`ops/update/online_prepare.py` 下载整条路径，`maintenance_assets.py` 验证原生 sidecar，`sequence.py` 管理根授权/逐跳 receipt/检查点/继续/停止；`handoff.py` 由准确目标执行器进入协调器。API 与 admin.html 提供持续状态和恢复操作，`runtime/install_maintenance.py` 在中间版本暂停业务。详见 [C7 实施及证据](../ops/ONLINE-UPGRADE-SEQUENCE-2026-10-12.md)；同一 Draft #155 扩大范围不代表已合并或发行。

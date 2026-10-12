@@ -69,3 +69,5 @@
 4. 现有客户如何升级，失败如何恢复？
 5. 需要哪些自动测试、故障注入和人工验证？
 6. 是否错误地把分支、Release 或单设备结果写成主线/生产事实？
+
+C7 `ops/update/sequence.py` 只协调已声明路径，逐跳消费共享 MVP 与 C6 原生对象事务；数据库操作仍由版本化引擎实施，原生注册表更新只在 `runtime/windows_install_registration.py` 中操作已核验本实例 DisplayVersion。恢复/暂停标记不授权删除客户数据，进度状态不授权跳步或恢复旧快照。源码与限定证据见 [C7 记录](docs/ops/ONLINE-UPGRADE-SEQUENCE-2026-10-12.md)。

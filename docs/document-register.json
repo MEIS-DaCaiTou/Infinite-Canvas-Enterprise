@@ -5,6 +5,10 @@
   "scope": "All Git-managed or non-ignored new Markdown/text files; roles are not runtime or release approval. Frozen hashes normalize CRLF to LF only.",
   "documents": [
     {
+      "path": "docs/ops/ONLINE-UPGRADE-SEQUENCE-2026-10-12.md",
+      "kind": "record"
+    },
+    {
       "path": "docs/ops/OFFLINE-RETAINED-UPGRADE-2026-10-12.md",
       "kind": "record"
     },

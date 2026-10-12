@@ -69,6 +69,12 @@ def _error(exc: Exception) -> None:
         "SYSTEM_UPDATE_ROUTE_INVALID": "升级路径资产或发布包身份不匹配，已拒绝升级。",
         "SYSTEM_UPDATE_ROUTE_NOT_DIRECT": "该版本需要经过中间版本；当前升级作业不支持直接跳过。",
         "SYSTEM_UPDATE_ROUTE_SOURCE_UNVERIFIED": "当前安装版本或数据库结构未通过升级路径核验。",
+        "SYSTEM_UPDATE_SEQUENCE_ACTIVE": "已有升级路径正在执行或等待恢复，请先处理当前作业。",
+        "SYSTEM_UPDATE_SEQUENCE_INCOMPATIBLE": "路径中有版本尚不支持连续升级，请使用对应维护安装包。",
+        "SYSTEM_UPDATE_SEQUENCE_AUTHORIZATION_REVOKED": "原升级授权已失效，剩余步骤已暂停。",
+        "SYSTEM_UPDATE_SEQUENCE_CHECKPOINT_AVAILABLE": "本跳已完成并保存检查点，请使用继续或停止剩余升级。",
+        "SYSTEM_UPDATE_NO_ACTIVE_TASKS_CONFIRMATION_REQUIRED": "请先确认没有活动生成任务，再执行升级。",
+        "SYSTEM_UPDATE_MAINTENANCE_TOOLS_UNVERIFIED": "原生维护工具包未通过身份和完整性检查，未启动升级。",
     }.get(code, "The update operation could not be completed")
     raise HTTPException(status_code=status, detail={"code": code, "message": message}) from exc
 
@@ -233,7 +239,7 @@ def _check_update_sync() -> dict[str, object]:
         previews = _route_previews(provider, available, source_manifest, current)
         latest = next((
             item for item in available
-            if not item.prerelease and previews[item.provider_release_id]["route_status"] == "direct"
+            if not item.prerelease and previews[item.provider_release_id]["route_status"] in {"direct", "requires_intermediate"}
         ), None)
         return {
             "current_release_id": current.release.release_id,
@@ -282,6 +288,8 @@ async def prepare_update(request: Request):
 def _prepare_update_sync(actor_user_id: str, provider_release_id: str) -> dict[str, object]:
     """Complete one prepare workflow outside the Gateway asyncio event loop."""
     UpdateJobStore(PATH_ROOTS).assert_no_unresolved_recovery()
+    if (PATH_ROOTS.STATE_ROOT / "upgrade-sequence-active.json").exists():
+        raise UpdateMvpError("SYSTEM_UPDATE_SEQUENCE_ACTIVE", status_code=409)
     provider = _provider()
     metadata = _metadata_by_id(provider, provider_release_id)
     if getattr(metadata, "upgrade_routes_url", None) is None:
@@ -309,8 +317,9 @@ def _prepare_update_sync(actor_user_id: str, provider_release_id: str) -> dict[s
         installed, declaration.target.release_id, [declaration],
         allow_development=metadata.prerelease,
     )
-    if path is None or len(path) != 1:
-        raise UpdateMvpError("SYSTEM_UPDATE_ROUTE_NOT_DIRECT")
+    if path is None or len(path) != 1 or getattr(metadata, "maintenance_tools_url", None) is not None:
+        from enterprise.ops.update.online_prepare import prepare_online_path
+        return prepare_online_path(PATH_ROOTS, Path(DB_PATH), provider, metadata, installed, actor_user_id)
     incoming = PATH_ROOTS.STAGING_ROOT / "update-mvp" / "incoming" / uuid.uuid4().hex
     incoming.mkdir(parents=True, exist_ok=False)
     try:
@@ -428,6 +437,10 @@ async def execute_update(job_id: str, request: Request, background_tasks: Backgr
         current_pointer = read_current_release_result_from_state_root(PATH_ROOTS.STATE_ROOT)
         if current_pointer.raw_sha256 != plan.get("source_pointer_sha256"):
             raise UpdateMvpError("SYSTEM_UPDATE_EXPECTED_CURRENT_MISMATCH", status_code=409)
+        if "upgrade_sequence" in plan and body.get("confirm_no_active_tasks") is not True:
+            raise UpdateMvpError("SYSTEM_UPDATE_NO_ACTIVE_TASKS_CONFIRMATION_REQUIRED")
+        if (PATH_ROOTS.STATE_ROOT / "upgrade-sequence-active.json").exists():
+            raise UpdateMvpError("SYSTEM_UPDATE_SEQUENCE_ACTIVE", status_code=409)
         store.reserve_execution(job_id)
         reservation_created = True
         store.write_status(
@@ -436,6 +449,9 @@ async def execute_update(job_id: str, request: Request, background_tasks: Backgr
         )
         store.append_event(job_id, "UPDATING", "SYSTEM_UPDATE_STARTED")
         edb.log_action(actor["id"], "system_update_started", json.dumps({"job_id": job_id, "source_release_id": plan.get("source_release_id"), "target_release_id": plan.get("target_release_id")}, ensure_ascii=False))
+        if "upgrade_sequence" in plan:
+            from enterprise.ops.update.sequence import activate_sequence
+            await run_in_threadpool(activate_sequence, PATH_ROOTS, job_id)
         background_tasks.add_task(_launch_handoff, job_id, actor["id"])
         return {"job_id": job_id, "state": "UPDATING", "result_code": "SYSTEM_UPDATE_STARTED"}
     except Exception as exc:
@@ -452,7 +468,49 @@ async def execute_update(job_id: str, request: Request, background_tasks: Backgr
 async def update_job(job_id: str, request: Request):
     _require_update_operator(request)
     try:
-        return UpdateJobStore(PATH_ROOTS).read_status(job_id)
+        store = UpdateJobStore(PATH_ROOTS)
+        if "upgrade_sequence" in store.read_plan(job_id):
+            from enterprise.ops.update.sequence import public_sequence
+            public = await run_in_threadpool(public_sequence, PATH_ROOTS, job_id)
+            if public is not None:
+                return public
+        return store.read_status(job_id)
+    except Exception as exc:
+        _error(exc)
+
+
+@router.post("/api/update-mvp/jobs/{job_id}/sequence-resume", status_code=202)
+async def resume_update_sequence(job_id: str, request: Request, background_tasks: BackgroundTasks):
+    actor = _require_update_operator(request)
+    try:
+        body = await request.json()
+        if type(body) is not dict or body.get("confirm_no_active_tasks") is not True:
+            raise UpdateMvpError("SYSTEM_UPDATE_NO_ACTIVE_TASKS_CONFIRMATION_REQUIRED")
+        from enterprise.ops.update.sequence import resume_sequence
+        child_job = await run_in_threadpool(resume_sequence, PATH_ROOTS, job_id)
+        if child_job is None:
+            from enterprise.ops.update.sequence import public_sequence
+            return await run_in_threadpool(public_sequence, PATH_ROOTS, job_id)
+        background_tasks.add_task(_launch_handoff, child_job, actor["id"])
+        return {"job_id": job_id, "current_job_id": child_job, "state": "UPDATING"}
+    except Exception as exc:
+        _error(exc)
+
+
+@router.post("/api/update-mvp/jobs/{job_id}/sequence-stop")
+async def stop_update_sequence(job_id: str, request: Request):
+    actor = _require_update_operator(request)
+    try:
+        body = await request.json()
+        password = body.get("password") if type(body) is dict else None
+        current = edb.get_user_by_id(actor["id"])
+        if (type(password) is not str or not password or len(password) > MAX_SUPER_ADMIN_PASSWORD_LENGTH
+                or not current or not edb.verify_password(password, str(current.get("password_hash") or ""))):
+            raise UpdateMvpError("SYSTEM_UPDATE_PASSWORD_INVALID", status_code=403)
+        from enterprise.ops.update.sequence import stop_sequence
+        result = await run_in_threadpool(stop_sequence, PATH_ROOTS, job_id)
+        edb.log_action(actor["id"], "system_update_sequence_stopped", json.dumps({"job_id": job_id}, sort_keys=True))
+        return result
     except Exception as exc:
         _error(exc)
 
@@ -462,6 +520,10 @@ async def pending_update_recovery(request: Request):
     _require_update_operator(request)
     try:
         jobs = await run_in_threadpool(UpdateJobStore(PATH_ROOTS).pending_recovery_jobs)
+        from enterprise.ops.update.sequence import active_sequence_id
+        sequence_job = await run_in_threadpool(active_sequence_id, PATH_ROOTS)
+        if sequence_job is not None:
+            jobs = [sequence_job, *[job for job in jobs if job != sequence_job]]
         return {"job_ids": jobs}
     except Exception as exc:
         _error(exc)
@@ -471,7 +533,16 @@ async def pending_update_recovery(request: Request):
 async def update_recovery_assessment(job_id: str, request: Request):
     _require_update_operator(request)
     try:
-        return await run_in_threadpool(assess_recovery, PATH_ROOTS, job_id, database_path=Path(DB_PATH))
+        store = UpdateJobStore(PATH_ROOTS)
+        sequence_job_id = None
+        if "upgrade_sequence" in store.read_plan(job_id):
+            from enterprise.ops.update.sequence import public_sequence
+            public = await run_in_threadpool(public_sequence, PATH_ROOTS, job_id)
+            if public.get("can_resume"):
+                raise UpdateMvpError("SYSTEM_UPDATE_SEQUENCE_CHECKPOINT_AVAILABLE")
+            sequence_job_id, job_id = job_id, public["current_job_id"]
+        result = await run_in_threadpool(assess_recovery, PATH_ROOTS, job_id, database_path=Path(DB_PATH))
+        return {**result, **({"sequence_job_id": sequence_job_id} if sequence_job_id is not None else {})}
     except Exception as exc:
         _error(exc)
 

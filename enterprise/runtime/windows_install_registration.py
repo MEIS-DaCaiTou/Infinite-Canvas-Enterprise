@@ -1,4 +1,4 @@
-"""Read-only, current-user registration attestation for the offline installer."""
+"""Current-user registration attestation and bounded installation-version update."""
 from __future__ import annotations
 
 from configparser import ConfigParser
@@ -47,3 +47,24 @@ def verify_registration(root: Path, installation_id: str, *, expected_version: s
     locator = "Software\\Infinite-Canvas-Enterprise\\Installations\\" + installation_id
     if not same(query(locator, "InstallLocation"), root) or not same(query(locator, "Launcher"), root / "InfiniteCanvas.exe"):
         raise files.CacheError("INSTALL_UPGRADE_REGISTRATION_UNPROVEN")
+
+
+def update_registration_version(root, installation_id, *, source_version, target_version):
+    """Change only the version of this existing, attested current-user install.
+
+    The stable uninstaller continues to call the verified retained Setup.
+    Neither shortcuts, another installation nor machine-level registration is changed.
+    """
+    import winreg
+    try:
+        verify_registration(root, installation_id, expected_version=target_version)
+        return  # Registration succeeded before a result/checkpoint was lost.
+    except files.CacheError:
+        verify_registration(root, installation_id, expected_version=source_version)
+    key = "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\InfiniteCanvasEnterprise-" + installation_id + "_is1"
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key, 0, winreg.KEY_QUERY_VALUE | winreg.KEY_SET_VALUE) as handle:
+        current, kind = winreg.QueryValueEx(handle, "DisplayVersion")
+        if kind != winreg.REG_SZ or current != source_version:
+            raise files.CacheError("INSTALL_UPGRADE_REGISTRATION_UNPROVEN")
+        winreg.SetValueEx(handle, "DisplayVersion", 0, winreg.REG_SZ, target_version)
+    verify_registration(root, installation_id, expected_version=target_version)

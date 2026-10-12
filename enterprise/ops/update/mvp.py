@@ -776,6 +776,34 @@ class PreparedUpdate:
         }
 
 
+def stage_verified_release(roots: PathRoots, *, manifest_path: Path, archive_path: Path, inventory_path: Path):
+    """Materialize a future hop/controller without authorizing its database work."""
+    verification = verify_release_manifest_v2(manifest_path, archive_path, inventory_path)
+    manifest = read_release_manifest_v2(manifest_path)
+    target = roots.RELEASE_ROOT / validate_release_component(manifest.release_id)
+    partial = roots.RELEASE_ROOT / ("." + uuid.uuid4().hex + ".partial")
+    identity = None
+    try:
+        assert_no_reparse_ancestors(target, allow_missing=True)
+        assert_no_reparse_ancestors(partial, allow_missing=True)
+        materialize_release_fixture(manifest_path, archive_path, inventory_path, partial)
+        token = partial.stat(follow_symlinks=False)
+        identity = (token.st_dev, token.st_ino)
+        if target.exists():
+            existing = verify_materialized_release(target, inventory_path=target / manifest.section("release_payload")["inventory_path"])
+            if existing.manifest_sha256 != manifest.raw_sha256 or existing.payload_tree_sha256 != verification.payload_tree_sha256:
+                raise UpdateMvpError("SYSTEM_UPDATE_TARGET_RELEASE_COLLISION")
+            _remove_owned_tree(partial, identity)
+            identity = None
+        else:
+            os.replace(partial, target)
+            identity = None
+        return target, verification
+    finally:
+        if identity is not None:
+            _remove_owned_tree(partial, identity)
+
+
 class UpdateMvpService:
     def __init__(
         self,
@@ -791,7 +819,8 @@ class UpdateMvpService:
         self.migration_registry = validate_registry(migration_registry)
         self.database_inspector = database_inspector
 
-    def prepare_from_artifacts(self, *, actor_user_id: str, manifest_path: Path, archive_path: Path, inventory_path: Path) -> PreparedUpdate:
+    def prepare_from_artifacts(self, *, actor_user_id: str, manifest_path: Path, archive_path: Path, inventory_path: Path,
+                               execution_context: dict | None = None) -> PreparedUpdate:
         job_id, job_root = self.store.create(actor_user_id)
         partial: Path | None = None
         partial_identity: tuple[int, int] | None = None
@@ -852,8 +881,12 @@ class UpdateMvpService:
                 operation_id=job_id,
                 database_inspector=self.database_inspector,
             )
-            updater_execution = prepared_updater_binding(
-                target_root, target_manifest.raw_sha256, verification.payload_tree_sha256)
+            context = execution_context or {}
+            controller = context.get("sequence_controller")
+            worker_root = target_root if controller is None else self.roots.RELEASE_ROOT / validate_release_component(controller["release_id"])
+            updater_execution = prepared_updater_binding(worker_root,
+                target_manifest.raw_sha256 if controller is None else controller["manifest_sha256"],
+                verification.payload_tree_sha256 if controller is None else controller["payload_tree_sha256"])
             plan = {
                 "job_id": job_id,
                 "actor_user_id": actor_user_id,
@@ -867,6 +900,7 @@ class UpdateMvpService:
                 "database_update": database_update,
                 "created_at": utc_now(),
                 **({"updater_execution": updater_execution} if updater_execution is not None else {}),
+                **context,
             }
             plan_sha = self.store.write_plan(job_id, plan)
             self.store.write_status(

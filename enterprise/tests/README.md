@@ -85,3 +85,5 @@ Run scripts from the project root unless a script says otherwise.
 Do not place ad-hoc diagnostic or smoke-test scripts in the project root or product source folders. Keep them here so Release builds and Git reviews stay clean.
 
 For every access-control implementation PR, add or extend a focused test here before changing access behavior. Use temporary SQLite databases and temporary data files only. The minimum regression roles are normal user A, normal user B, and administrator; cover list filtering, direct-ID denial, resource URLs, refresh/re-login persistence, and WebSocket delivery where applicable.
+
+`test_upgrade_sequence.py` covers C7 two-hop execution, immutable checkpoint resumption, current-hop/native-object recovery, revoked authorization and a newly owned HKCU registration. Runtime calls and unit MZ tools are substitutes; existing frozen C5/C6 full native/runtime and GUI evidence is reused within its original scope. Online native asset assembly uses `tools/build_maintenance_assets.py` without publishing a Release. See [C7 evidence](../../docs/ops/ONLINE-UPGRADE-SEQUENCE-2026-10-12.md).

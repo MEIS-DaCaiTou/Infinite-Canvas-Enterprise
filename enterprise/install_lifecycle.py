@@ -132,6 +132,8 @@ def _source_manifest(root, manifest, local):
         _fail("INSTALL_LIFECYCLE_SAME_RELEASE_REQUIRED")
     roots = derive_portable_path_roots(PortableRootInputs(root, local), pointer.release.release_id)
     validate_path_roots_for_use(roots)
+    if files._exists(roots.STATE_ROOT / "upgrade-sequence-active.json"):
+        _fail("INSTALL_LIFECYCLE_UPGRADE_RECOVERY_REQUIRED")
     before = _snapshot(roots.STATE_ROOT / "installation.json", maximum=16384)
     if before is None:
         _fail("INSTALL_LIFECYCLE_IDENTITY_REQUIRED")
@@ -155,6 +157,8 @@ def current_source(*, install_root, local_app_data_base):
     root = files._safe(Path(install_root))
     pointer = read_current_release_result_from_state_root(root / "state")
     roots = derive_portable_path_roots(PortableRootInputs(root, Path(local_app_data_base)), pointer.release.release_id)
+    if files._exists(roots.STATE_ROOT / "upgrade-sequence-active.json"):
+        _fail("INSTALL_LIFECYCLE_UPGRADE_RECOVERY_REQUIRED")
     program = roots.APP_ROOT
     if not files._exists(program):
         directory, plan, state = _active(roots)

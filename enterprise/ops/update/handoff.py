@@ -197,12 +197,23 @@ def main() -> int:
         if status.get("state") != "UPDATING" or status.get("handoff_committed") is not True:
             return 2  # Rejected/late worker cannot overwrite a recovery block.
         from enterprise.config import DB_PATH
-        result = execute_update_job(roots, job_id, database_path=Path(DB_PATH))
+        job_plan = UpdateJobStore(roots).read_plan(job_id)
+        if "upgrade_sequence" in job_plan or "sequence_parent" in job_plan:
+            from enterprise.ops.update.sequence import execute_sequence
+            result = execute_sequence(roots, job_plan.get("sequence_parent", job_id), database_path=Path(DB_PATH))
+        else:
+            result = execute_update_job(roots, job_id, database_path=Path(DB_PATH))
         try:
             from enterprise import db as edb
 
             plan = UpdateJobStore(roots).read_plan(job_id)
             status = UpdateJobStore(roots).read_status(job_id)
+            audit_job_id = job_id
+            if "upgrade_sequence" in plan or "sequence_parent" in plan:
+                from enterprise.ops.update.sequence import public_sequence
+                audit_job_id = plan.get("sequence_parent", job_id)
+                plan = UpdateJobStore(roots).read_plan(audit_job_id)
+                status = public_sequence(roots, audit_job_id)
             action = {
                 "SUCCEEDED": "system_update_succeeded",
                 "ROLLED_BACK": "system_update_rolled_back",
@@ -210,9 +221,9 @@ def main() -> int:
                 "RECOVERY_REQUIRED": "system_update_recovery_required",
             }.get(str(status.get("state")), "system_update_failed")
             detail = {
-                "job_id": job_id,
+                "job_id": audit_job_id,
                 "source_release_id": plan.get("source_release_id"),
-                "target_release_id": plan.get("target_release_id"),
+                "target_release_id": status.get("target_release_id", plan.get("target_release_id")),
                 "result_code": status.get("result_code"),
             }
             edb.log_action(str(plan.get("actor_user_id") or ""), action, json.dumps(detail, ensure_ascii=False))
