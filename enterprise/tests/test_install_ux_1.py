@@ -74,6 +74,20 @@ def test_request_is_bounded_exact_utf8_schema() -> None:
         _decode_request(b"not-json")
     with pytest.raises(SetupBridgeError, match="INSTALL_SETUP_BRIDGE_REQUEST_INVALID"):
         _decode_request(_request_bytes(extra=True))
+
+
+@pytest.mark.parametrize("operation,confirmed", [("upgrade-retained", True), ("recover-upgrade", True),
+    ("inspect-upgrade", False), ("finish-upgrade", False)])
+def test_offline_upgrade_requests_are_exact_credential_free_and_no_source_path(operation, confirmed):
+    from enterprise.install_setup_bridge import UPGRADE_REQUEST_SCHEMA
+    value = _request(schema_version=UPGRADE_REQUEST_SCHEMA, operation=operation, username="", password="",
+        password_confirmation="", confirm_no_active_tasks=confirmed, install_mode="custom", install_root=r"D:\owned-install")
+    raw = lambda item: json.dumps(item).encode("utf-8")
+    assert _decode_request(raw(value)) == value
+    for changes in ({"confirm_no_active_tasks": int(confirmed)}, {"setup_executable": r"D:\arbitrary.exe"},
+                    {"password": "must-not-reset"}, {"username": "must-not-create"}):
+        with pytest.raises(SetupBridgeError):
+            _decode_request(raw(value | changes))
     with pytest.raises(SetupBridgeError, match="INSTALL_SETUP_BRIDGE_REQUEST_TOO_LARGE"):
         _decode_request(b"x" * (MAX_FRAME_BYTES + 1))
 

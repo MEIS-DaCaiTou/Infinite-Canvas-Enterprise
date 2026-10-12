@@ -370,7 +370,8 @@ def _no_recovery_dependency(target, local_base):
     from enterprise.ops.update.mvp import UpdateJobStore
     roots = resolve_portable_path_roots(PortableRootInputs(target, local_base))
     validate_path_roots_for_use(roots)
-    for path in (roots.STATE_ROOT / "system-update-active.lock", roots.RUNTIME_ROOT / "runtime-reconcile.lock"):
+    for path in (roots.STATE_ROOT / "system-update-active.lock", roots.STATE_ROOT / "install-upgrade-active.json",
+                 roots.RUNTIME_ROOT / "runtime-reconcile.lock"):
         _safe(path, missing=True)
         if _exists(path):
             _fail("INSTALL_CACHE_RECOVERY_DEPENDENCY")

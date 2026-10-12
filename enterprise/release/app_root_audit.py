@@ -653,11 +653,17 @@ def _flow_for_operation(file: str, symbol: str) -> str:
         # same-volume; native handle-bound rename/deletion is manually reviewed
         # (not discovered by this AST scanner). No install/business/backup writes.
         return "W47"
-    if file == "enterprise/install_lifecycle.py" and symbol in {"_database_contract", "uninstall_retaining_data"}:
+    if file == "enterprise/install_lifecycle.py" and symbol in {"_database_contract", "uninstall_retaining_data", "refresh_installed_proof"}:
         # Offline readonly SQLite (sidecars rejected) and immutable lifecycle
         # plans/fences only in STATE_ROOT. Windows object-bound program moves
         # and release_fence are manually reviewed, not discovered by this AST.
         # No database initialization, business overwrite or recursive delete.
+        return "W47"
+    if file == "enterprise/install_upgrade.py" and symbol in {"_blob", "_transfer_lock", "upgrade_retained", "recover_upgrade"}:
+        # Offline same-schema upgrade delegates app activation to the existing
+        # MVP engine. Own STATE journal/lease/fences and exact original/candidate
+        # native objects only; Windows owned renames are reviewed separately.
+        # No customer database restore/delete or unidentified file overwrite.
         return "W47"
     if file.startswith("tools/validation/windows/env_1b3/"):
         # ENV-1B3 writes only to explicit test-host roots, isolated tamper
@@ -673,7 +679,7 @@ def _flow_for_operation(file: str, symbol: str) -> str:
 # every mapped site as (file, symbol, operation, normalized-call fingerprint,
 # Wxx flow). Line numbers are deliberately excluded, while duplicate identical
 # calls remain duplicate records. Any added/removed/changed call drifts it.
-EXPECTED_SITE_MANIFEST_DIGEST = "3b2d52dce83b432504481d51550d2412f8c76014787bc7c061d16f12a97275de"
+EXPECTED_SITE_MANIFEST_DIGEST = "1088bc4f35ec84c3ef439eef54175e71075bd66c155c393f6ff4450fa72fd660"
 
 FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W01", "main.py", "startup_event"),

@@ -15,7 +15,7 @@ namespace InfiniteCanvas.Native {
                 if (args.Length == 0) {
                     Application.EnableVisualStyles(); Application.Run(new LauncherForm()); return 0;
                 }
-                var options = Core.Options(args, new[] { "--identity", "--start", "--stop", "--restart", "--status", "--health" }, new[] { "--install-root", "--result-file" });
+                var options = Core.Options(args, new[] { "--identity", "--tool-info", "--start", "--stop", "--restart", "--status", "--health" }, new[] { "--install-root", "--result-file" });
                 var command = options.Keys.Where(k => k != "--install-root" && k != "--result-file").ToArray();
                 if (command.Length != 1) throw Core.Block("NATIVE_ARGUMENT_INVALID");
                 string root = options.ContainsKey("--install-root") ? options["--install-root"] : AppDomain.CurrentDomain.BaseDirectory;
@@ -33,6 +33,7 @@ namespace InfiniteCanvas.Native {
         }
         internal static Dictionary<string, object> Execute(string root, string command) {
             var install = Core.Identify(root); Core.VerifyPayload(install);
+            if (command == "tool-info") return new Dictionary<string, object> { { "result", "verified" }, { "native_tool_contract", 2 }, { "release_id", install.ReleaseId } };
             if (command == "identity") return new Dictionary<string, object> { { "result", "verified" }, { "release_id", install.ReleaseId }, { "manifest_sha256", install.ManifestSha } };
             if (!new[] { "start", "stop", "restart", "status", "health" }.Contains(command)) throw Core.Block("NATIVE_COMMAND_INVALID");
             return Core.RunPython(install, Core.Under(install.AppRoot, "enterprise/runtime/launcher.py"), new[] { "portable", command });
