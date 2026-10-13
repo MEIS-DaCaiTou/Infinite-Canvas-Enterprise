@@ -39,6 +39,8 @@ Windows 创建参数此前在宿主无显式 breakaway 权限时仍请求 `CREAT
 
 浏览器记录含既有 Tailwind CDN 提示和一条没有来源 URL 的 MutationObserver 非 Node 错误；没有把全项目 console 宣称为零错误，也没有扩展本包去改无关创作界面。
 
+候选 `18c476a` 的准确 CI：Runtime、原生固定 EXE 和文档 SUCCESS，Enterprise 仅 `test_runner_qualification_uses_guarded_worker_flags[4096-520]` 失败。该夹具没有提供真实诊断中的 `job_query_ok`，导致被当作未知上下文；补齐已核实诊断字段并同步已知 restrictive Job 的预期参数，四个对应场景定向通过。运行代码未变，原安装副本证据继续有效；新 Head CI 单独核对，不将旧失败写成通过。
+
 本轮是单跳真实运行及目标失败恢复；没有替换在线原生 EXE/Setup 资产，没有重跑 C7 全部多跳、全部历史 Schema、整机重启或所有 GUI 组合。C5/C6/C7 原生工具、多跳及限定卸载/重装证据继续复用，不能将已有成功抹除，也不能外推本次来源覆盖全部已部署设备。未执行付费生成、客户设备操作、新 Release 或生产部署。
 
 ## 后续边界
