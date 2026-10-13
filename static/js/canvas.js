@@ -944,9 +944,10 @@ function apiImageSize(ratioValue, resolutionValue, customRatioValue = '', custom
     if(resolutionValue === 'auto') return 'auto';
     if(resolutionValue === 'custom') return String(customSizeValue || '').trim();
     const resolutionKey = resolutionValue || '1k';
-    if(ratioValue === 'custom' || ratioValue === 'source'){
-        const parsed = parseRatioValue(customRatioValue);
-        const longSide = RES_LONG_SIDE[resolutionKey] || 1024;
+    if(ratioValue === 'custom' || ratioValue === 'source' || String(ratioValue).includes(':') || resolutionKey === '512'){
+        const ratio = window.CanvasModelPicker?.imageParameters({ratio:ratioValue, customRatio:customRatioValue}).aspect_ratio || customRatioValue;
+        const parsed = parseRatioValue(ratio);
+        const longSide = resolutionKey === '512' ? 512 : (RES_LONG_SIDE[resolutionKey] || 1024);
         if(parsed){
             const pixelLimit = RES_PIXEL_LIMIT[resolutionKey] || (longSide * longSide);
             const rawWidth = parsed >= 1 ? longSide : Math.min(longSide * parsed, Math.sqrt(pixelLimit * parsed));
@@ -2511,7 +2512,7 @@ function addLLMNode(point){
 function addGeneratorNode(point){
     const p = point || defaultPoint(120, 0);
     const providerId = imageApiProviders()[0]?.id || '';
-    const model = allImageModels(providerId)[0] || '';
+    const model = window.CanvasModelPicker?.preferredModel('image', providerId, allImageModels(providerId)) || allImageModels(providerId)[0] || '';
     return addNode({id:uid('gen'), type:'generator', x:p.x, y:p.y, apiProvider:providerId, model, ratio:'square', resolution:defaultApiImageResolution(model), customRatio:'', customSize:'', customRatioWidth:'', customRatioHeight:'', customWidth:'', customHeight:'', inputs:[]});
 }
 function addMsGenNode(point){
@@ -2549,7 +2550,7 @@ function addVideoNode(point){
         x:p.x,
         y:p.y,
         apiProvider:providerId,
-        model:models[0] || videoModels[0] || DEFAULT_VIDEO_MODELS[0],
+        model:window.CanvasModelPicker?.preferredModel('video', providerId, models) || models[0] || videoModels[0] || DEFAULT_VIDEO_MODELS[0],
         duration:5,
         aspectRatio:'16:9',
         resolution:'',
@@ -7964,6 +7965,11 @@ function renderLLMBody(node){
         chatPane.style.display = 'none';
         renderLLMNodePane(nodePane, node);
     }
+    window.CanvasModelPicker?.mountSelect(modelSelect, {
+        kind:'chat', providerSelect,
+        getProvider:() => node.llmProvider, getSelected:() => node.model,
+        getModels:() => providerChatModels(node.llmProvider),
+    });
     return wrap;
 }
 function renderLLMNodePane(container, node){
@@ -8302,7 +8308,8 @@ function renderGeneratorBody(node){
     const fitSizeBtn = wrap.querySelector('.fit-size-btn');
     const referenceImages = ordered.flatMap(src => src.refs || []);
     const syncQualityControls = () => {
-        qualitySelect.disabled = false;
+        const profile = window.CanvasModelPicker?.profileFor(apiProviders.find(p => p.id === node.apiProvider), node.model) || {};
+        qualitySelect.disabled = profile.supports_quality === false;
         if(!['auto','low','medium','high'].includes(String(node.quality || 'auto'))) node.quality = 'auto';
         qualitySelect.value = node.quality || 'auto';
     };
@@ -8352,13 +8359,29 @@ function renderGeneratorBody(node){
         const autoOption = resolutionSelect.querySelector('option[value="auto"]');
         if(autoOption) autoOption.disabled = !isGptImageAutoSizeModel(resolveImageModel(node.model));
         const squareOption = ratioSelect.querySelector('option[value="square"]');
+        const profile = window.CanvasModelPicker?.profileFor(apiProviders.find(p => p.id === node.apiProvider), node.model) || {};
+        (profile.ratios || []).forEach(ratio => {
+            if(![...ratioSelect.options].some(option => option.textContent.trim() === ratio)) ratioSelect.add(new Option(ratio, ratio));
+        });
+        if(profile.resolutions?.includes('512') && !resolutionSelect.querySelector('option[value="512"]')) resolutionSelect.add(new Option('512', '512'));
+        [...ratioSelect.options].forEach(option => {
+            const ratio = option.textContent.trim();
+            option.disabled = Boolean(profile.ratios?.length && /^\d+:\d+$/.test(ratio) && !profile.ratios.includes(ratio));
+        });
+        [...resolutionSelect.options].forEach(option => {
+            if(['512','1k','2k','4k'].includes(option.value)) option.disabled = Boolean(profile.resolutions?.length && !profile.resolutions.includes(option.value.toUpperCase()));
+        });
+        resolutionSelect.querySelector('option[value="model-default"]')?.remove();
+        if(profile.supports_image_size === false) resolutionSelect.add(new Option(profile.fixed_resolution ? `模型固定 ${profile.fixed_resolution}` : '模型默认', 'model-default'));
+        resolutionSelect.disabled = profile.supports_image_size === false;
+        resolutionSelect.title = profile.supports_image_size === false ? (profile.fixed_resolution ? `模型固定 ${profile.fixed_resolution}` : '分辨率由模型决定') : '';
         if(squareOption){
             squareOption.disabled = false;
             squareOption.title = '';
         }
         const ratioValue = node.ratio && [...ratioSelect.options].some(opt => opt.value === node.ratio) ? node.ratio : 'square';
         ratioSelect.value = ratioValue;
-        resolutionSelect.value = node.resolution || defaultApiImageResolution(node.model);
+        resolutionSelect.value = profile.supports_image_size === false ? 'model-default' : (node.resolution || defaultApiImageResolution(node.model));
         ratioSelect.disabled = node.resolution === 'custom' || node.resolution === 'auto';
         customRatioRow.style.display = (node.resolution !== 'auto' && (node.ratio === 'custom' || node.ratio === 'source')) ? 'flex' : 'none';
         customSizeRow.style.display = node.resolution === 'custom' ? 'flex' : 'none';
@@ -8495,6 +8518,11 @@ function renderGeneratorBody(node){
     renderPromptPreview(wrap.querySelector('.prompt-list'), promptInputs);
     wrap.querySelector('.gen-btn').onclick = e => { e.stopPropagation(); runCanvasGenerate(node.id); };
     bindCascadeButtons(wrap, node.id);
+    window.CanvasModelPicker?.mountSelect(modelSelect, {
+        kind:'image', providerSelect,
+        getProvider:() => node.apiProvider, getSelected:() => node.model,
+        getModels:() => providerImageModels(node.apiProvider),
+    });
     return wrap;
 }
 function renderVideoBody(node){
@@ -8632,6 +8660,11 @@ function renderVideoBody(node){
     renderPromptPreview(wrap.querySelector('.prompt-list'), promptInputs);
     wrap.querySelector('.gen-btn').onclick = e => { e.stopPropagation(); runCanvasGenerate(node.id); };
     bindCascadeButtons(wrap, node.id);
+    window.CanvasModelPicker?.mountSelect(modelSelect, {
+        kind:'video', providerSelect,
+        getProvider:() => node.apiProvider, getSelected:() => node.model,
+        getModels:() => providerVideoModels(node.apiProvider),
+    });
     return wrap;
 }
 function renderPromptPreview(container, promptInputs){
@@ -10421,7 +10454,8 @@ async function runGenerator(genId, opts={}){
         provider_id:resolveImageProviderId(gen.apiProvider || 'comfly'),
         model:resolveImageModel(gen.model),
         size:await generatorSizeForRun(gen, refs),
-        reference_images:refs.slice(0, CANVAS_REFERENCE_IMAGE_MAX)
+        reference_images:refs.slice(0, CANVAS_REFERENCE_IMAGE_MAX),
+        ...(window.CanvasModelPicker?.imageParameters(gen) || {}),
     };
     const quality = normalizedImageQuality(gen.quality);
     if(quality) payload.quality = quality;
@@ -10517,7 +10551,8 @@ async function runGeneratorLegacy(genId, opts={}){
             provider_id:resolveImageProviderId(gen.apiProvider || 'comfly'),
             model:resolveImageModel(gen.model),
             size:requestSize,
-            reference_images:refs.slice(0, CANVAS_REFERENCE_IMAGE_MAX)
+            reference_images:refs.slice(0, CANVAS_REFERENCE_IMAGE_MAX),
+            ...(window.CanvasModelPicker?.imageParameters(gen) || {}),
         };
         const quality = normalizedImageQuality(gen.quality);
         if(quality) payload.quality = quality;

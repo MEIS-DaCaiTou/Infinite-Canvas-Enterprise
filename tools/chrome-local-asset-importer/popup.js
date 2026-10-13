@@ -558,10 +558,8 @@ async function loadSettings(){
 }
 
 async function loadProviders(){
-  const res = await fetch(`${apiBase()}/api/providers`);
-  if(!res.ok) throw new Error(await res.text());
-  const data = await res.json();
-  providers = Array.isArray(data.providers) ? data.providers : [];
+  const data = await CanvasPlatformClient.request(apiBase(), '/api/config');
+  providers = Array.isArray(data.api_providers) ? data.api_providers : [];
   renderProviders();
 }
 
@@ -1088,13 +1086,11 @@ async function importSelected(){
       return base;
     }),
   };
-  const res = await fetch(`${apiBase()}/api/local-assets/import-urls`, {
+  const data = await CanvasPlatformClient.request(apiBase(), '/api/local-assets/import-urls', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(body),
   });
-  if(!res.ok) throw new Error(await res.text());
-  const data = await res.json();
   const failed = (data.items || []).filter(item => !item.ok).length;
   setStatus(`导入完成：成功 ${data.count || 0} 个${failed ? `，失败 ${failed} 个` : ''}${localFailed ? `，页面读取失败 ${localFailed} 个` : ''}。`);
   els.import.disabled = selected.size === 0;
@@ -1353,7 +1349,7 @@ async function downloadSelected(){
 
 els.test.addEventListener('click', () => testConnection().catch(err => setStatus(err.message || '连接失败')));
 els.github?.addEventListener('click', () => {
-  chrome.tabs.create({url: 'https://github.com/hero8152/Infinite-Canvas'});
+  chrome.tabs.create({url: 'https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise'});
 });
 els.pin.addEventListener('click', () => openSidePanel().catch(err => setStatus(err.message || '固定侧边栏失败')));
 els.settingsToggle.addEventListener('click', () => {

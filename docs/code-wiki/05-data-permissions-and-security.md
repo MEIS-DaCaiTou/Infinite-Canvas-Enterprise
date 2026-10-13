@@ -1,6 +1,6 @@
 # 数据、权限与安全
 
-> 代码参考：结构/函数索引保留各章节的源码快照，不自动覆盖维护线工具；实时模块状态、迁移/发布与现场验收见 CURRENT，任务顺序只认路线图。[现行事实与适用范围](../CURRENT_PROJECT_STATUS.md)。
+> 源码参考快照（2026-10-13）：main@3e0deeae（已合并 #154/#155）与产品候选 #156@4bdd9a1 分列；C5/C6/C7 已合并，构建与验收范围仍引用其准确记录。本文是代码/运行参考，当前 PR/CI、Release 和验收只见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，实施顺序只认路线图。
 
 [返回索引](./README.md)
 
@@ -147,3 +147,9 @@ UPDATE-DATA-1 已把这些原语接入 Update Center 的显式版本化迁移路
 - Gateway 本身不提供公网 TLS 终止；公网/跨网段使用需另有反向代理和网络边界。
 - 备份、日志、更新诊断必须脱敏，不能包含密码、Token、Cookie 或 Provider 密钥。
 - 当前没有 PostgreSQL RLS；跨用户隔离依赖 Gateway/SQLite 归属映射与测试矩阵。
+
+## 12. 候选个人模型存储和扩展边界
+
+#156 的个人模型设置按认证 user_id 存于 DATA_ROOT/user-model-preferences/<user_id>.json，不新增业务数据库表。只覆盖当前账号文件，以自己的同目录临时文件原子替换；5 个写入站点登记为既有 APP_ROOT 审计 W50，不扩张源码目录写权限。
+
+素材扩展复用已登录平台页，在同源 fetch 中发送 Cookie，仅允许公开用户配置与素材导入路径；不提取 Token/读取跨源管理员配置。用户配置含内置图像能力等非秘密元数据，秘密字段仍按 Gateway 规则过滤。原生 PS Connector 的企业认证缺口仍在，不能因插件源码存在宣称跨工具认证完成。

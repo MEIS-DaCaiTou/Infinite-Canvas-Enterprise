@@ -1,8 +1,8 @@
 # Infinite Canvas Enterprise 当前架构
 
-更新时间：2026-10-11
+更新时间：2026-10-13
 
-本文只描述当前运行架构与已确定的演进边界。实现状态以 [docs/CURRENT_PROJECT_STATUS.md](docs/CURRENT_PROJECT_STATUS.md) 为准，未来顺序以 [开发路线图](docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md) 为准。
+本文描述 main 已合并的运行架构、明确标注的开发候选与已确定的演进边界。实现状态以 [docs/CURRENT_PROJECT_STATUS.md](docs/CURRENT_PROJECT_STATUS.md) 为准，未来顺序以 [开发路线图](docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md) 为准。
 
 ## 1. 当前形态
 
@@ -44,11 +44,21 @@ Runtime Supervisor
 | Enterprise data | 用户、角色、归属、审计、版本化 migration/backup/restore | `enterprise/db.py`，`enterprise/migrations/` |
 | Canvas application | 画布、工作流、模型调用、静态前端和原有业务 API | `main.py`，`static/` |
 | Task journal | 两类画布任务持久回执基础 | `enterprise/canvas_task_journal.py` |
+| 供应商图像适配（#156 候选） | 内置 Zhenzhen 已确认模型协议与能力；新模型临时兼容配置；与存储/Windows 生命周期分离 | `enterprise/providers/zhenzhen.py`，`enterprise/provider_image_profiles.py` |
+| 个人模型显示（#156 候选） | 当前登录账号的模型选择列表及持久设置；不授予供应商管理权限 | `enterprise/user_model_api.py`，`enterprise/user_model_preferences.py`，`static/js/model-picker.js` |
 | Runtime | launcher、supervisor、health、ownership、state/log | `enterprise/runtime/` |
 | Release/update | Manifest v2、资产校验、prepare、pointer switch、rollback foundation | `enterprise/release/`，`enterprise/ops/update/`，`enterprise/update_api.py` |
 | Enterprise UI | 登录、管理后台、个人中心、更新中心 | `enterprise-static/` |
 
 Code Wiki 提供更细的文件、类和函数导航：[docs/code-wiki/README.md](docs/code-wiki/README.md)。
+
+以下供应商/个人模型模块存在于 #156 的源码基点 4bdd9a1，尚未合并 main 或正式发布，准确状态回到 CURRENT。模型调用继续复用现有入口、结果归档和任务回执。长期接入供应商的参数差异由项目维护内置适配，普通用户只选择模型、画幅、参考图等创作参数，无需配置请求模板。Zhenzhen 图像模型的已确认协议分组与别名集中在 `enterprise/providers/zhenzhen.py`，按明确供应商身份及实际请求契约选路；文生图和参考图生成使用文档指定的 JSON Generations，不探测多个付费提交入口。前端读取同一内置能力的公开投影，限制不支持的参数；已支持模型优先于历史临时模板。
+
+临时模板默认折叠，仅供管理员在新上线模型尚未内置适配时配置兼容参数，不作为日常接入流程。该实现覆盖已确认的 Nano Banana、Gemini 3.1 图像、GPT Image 2 和 Seedream v5 Pro 图像契约；不等于供应商所有模型、视频协议、层分解输出或原生 Google 协议已经验收。新增同协议别名主要维护集中目录；新的提交/查询协议才增加适配代码。节点保留明确的画幅/分辨率选择，个人显示列表只影响选择体验。
+
+个人模型偏好存于 `DATA_ROOT/user-model-preferences/<user_id>.json`，身份来自认证会话，以同目录临时文件原子替换；只清理本次写入自己的临时文件。该写入边界登记为既有 APP_ROOT 写入审计的 W50，不写安装源码目录，也不改动企业业务数据库 Schema。
+
+`main.py` 中已有供应商调用、画布和工作流仍存在集中实现的技术债。本次将 Zhenzhen 新增图像请求构造与能力目录放在独立模块，主入口只连接现有 HTTP、资源转换和结果处理。其余供应商的模块化、统一持久任务/Attempt 和完整费用对账按唯一路线图阶段 4 落实；本次不构成自动最低价选路或不明状态跨供应商再次付费提交。
 
 ## 3. 安全与权限边界
 
@@ -100,7 +110,7 @@ Runtime Supervisor 分别管理 Gateway 和 Canvas application，并持久化运
 
 本轮统一开发基线接回 `ice_096_security_schema_v2` 登记、v2 snapshot 和构建模式。默认未来构建生成与正式 09.9/10.1 同源的 30 对象/schema v2 证据；Greenfield 按已验证包内 evidence 选择受支持的 v1/v2 初始化并验证元数据/账本/结构，固定入口、密码和 pointer-last 保护保留。普通启动不隐式迁移旧库，28 对象历史变体不默认开放；历史资产须从冻结 refs 重建，不能用当前源码的旧 VERSION 标记伪造旧包。
 
-主要缺口是统一安装维护、更新器接管/自身更新、跨重启自动多跳及任务/业务写入隔离。遵循 [统一交付 ADR](docs/decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md)。下面是目标完整流程，不声称每一步都已落地。
+主要缺口是阶段 3 在线交接收口、准确来源及 GUI 覆盖，以及完整任务/业务写入隔离。目标 Python 执行器、原生工具和连续路径已随 #154/#155 进入主线，在线交接缺口与验收范围仍分别记录。遵循 [统一交付 ADR](docs/decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md)。下面是目标完整流程，不声称每一步都已落地。
 
 C5 开发分支新增 [经验证的目标更新执行器接管](docs/ops/VERIFIED-UPDATER-HANDOFF-2026-10-11.md)：纯读取契约独立声明控制器协议、worker 协议和引擎能力版本；完整包及持久计划核验后，目标代码/目标 Python 运行既有单跳事务，数据和状态仍归同一安装。无契约的不可变旧包沿用来源引擎，有但不可验证的契约拒绝交接；不弱化进程 lease、Job 独立性或恢复阻断。它不是原生 EXE 替换或自动多跳，也不扩展未知 Schema 的迁移授权。Windows 执行路径留在现有平台交付/Runtime 边界，不增加核心业务的桌面或注册表依赖。
 
@@ -120,11 +130,11 @@ authorize
      or restore data + pointer and report recovery state
 ```
 
-单跳已有持久作业和恢复查看基础；C7 开发候选通过最新目标包内的协调器执行整条已授权路径，各跳仍复用单跳事务，不创建另一套数据库迁移引擎。网页、固定 EXE、安装器和恢复界面必须共用引擎：Python 承担业务/迁移，C# 仅做系统交互，安装器编排。
+单跳已有持久作业和恢复查看基础；C7 协调器通过最新目标包内的协调器执行整条已授权路径，各跳仍复用单跳事务，不创建另一套数据库迁移引擎。网页、固定 EXE、安装器和恢复界面必须共用引擎：Python 承担业务/迁移，C# 仅做系统交互，安装器编排。
 
-C6 [离线保留数据升级记录](docs/ops/OFFLINE-RETAINED-UPGRADE-2026-10-12.md) 的开发候选复用上述引擎，在明确停止来源服务、相同 Schema 和可证明安装身份下恢复来源并升级程序、固定 EXE 与保留维护 Setup；分别保存对象身份和检查点。成功目标等待 Windows 登记时暂停其 HTTP/WS 业务，登记核验后完成。成功后的登记故障不触发数据库或来源版本回退；该粗粒度暂停不是持久任务排空、完整业务维护态或自动多跳。Windows 专属登记/文件操作不进入企业业务模型，候选/GUI/合并/正式发行分别记录。
+C6 [离线保留数据升级记录](docs/ops/OFFLINE-RETAINED-UPGRADE-2026-10-12.md) 复用上述引擎，在明确停止来源服务、相同 Schema 和可证明安装身份下恢复来源并升级程序、固定 EXE 与保留维护 Setup；分别保存对象身份和检查点。成功目标等待 Windows 登记时暂停其 HTTP/WS 业务，登记核验后完成。成功后的登记故障不触发数据库或来源版本回退；该粗粒度暂停不是持久任务排空、完整业务维护态或自动多跳。Windows 专属登记/文件操作不进入企业业务模型，候选/GUI/合并/正式发行分别记录。
 
-#151/#152 已将归属缓存清理、实例标准卸载、同 Release 保留数据重装和持久恢复合入 main；C6 开发候选已补证标准卸载确认和限定跨版本 GUI，完整维护矩阵及长期闭环仍未完成。C4 [发布目录工程记录](docs/ops/UPDATE-CATALOG-PAGINATION-2026-10-11.md) 已经 #153 合入 main，将 v1/v2 元数据读取共用到分页目录：临时内存缓存按仓库/凭据身份隔离，每次 HTTP 条件核验全部页面，读取失败不作为升级事实源。路线缓存仅用于不可变声明的页面预览，准备和执行仍重新核验；不新增业务数据库、Windows 核心依赖或缓存 TTL 政策。
+#151/#152 已将归属缓存清理、实例标准卸载、同 Release 保留数据重装和持久恢复合入 main；C6 实现已补证标准卸载确认和限定跨版本 GUI，完整维护矩阵及长期闭环仍未完成。C4 [发布目录工程记录](docs/ops/UPDATE-CATALOG-PAGINATION-2026-10-11.md) 已经 #153 合入 main，将 v1/v2 元数据读取共用到分页目录：临时内存缓存按仓库/凭据身份隔离，每次 HTTP 条件核验全部页面，读取失败不作为升级事实源。路线缓存仅用于不可变声明的页面预览，准备和执行仍重新核验；不新增业务数据库、Windows 核心依赖或缓存 TTL 政策。
 
 失败恢复应在开放业务写入前完成；已经接受新数据后不能还原旧快照。PostgreSQL 及多节点有独立排空、备份/恢复和发布协议，不照搬 SQLite 文件替换。
 
@@ -140,7 +150,7 @@ C6 [离线保留数据升级记录](docs/ops/OFFLINE-RETAINED-UPGRADE-2026-10-12
 
 本地与企业服务器/云端部署复用业务领域模型、API、服务端权限契约和稳定资源身份；员工端消费同一业务契约，不复制业务系统。Windows Registry、Job Object、KnownFolder 和桌面交互留在平台适配层；业务核心不新增固定盘符或必须由桌面启动的依赖。
 
-服务器运行能力随正式工作包建立：先评估 Linux 真实依赖与阻碍，再落实配置外置、无交互启动/停止、健康检查、日志、权限/网络边界及可重复部署。公开入口须核验 TLS、可信反代、网络隔离、访问限制、身份/密钥与审计。跨企业采用共享 SaaS、每客户独立部署还是混合形态尚未确定；部门 Owner 隔离不能替代企业租户边界。
+当前仍按单台 Windows 主机交付；Linux、云部署和规模容量实施待负责人需求，不作为本轮新增任务。后续服务器运行能力随正式工作包建立：先评估 Linux 真实依赖与阻碍，再落实配置外置、无交互启动/停止、健康检查、日志、权限/网络边界及可重复部署。公开入口须核验 TLS、可信反代、网络隔离、访问限制、身份/密钥与审计。跨企业采用共享 SaaS、每客户独立部署还是混合形态尚未确定；部门 Owner 隔离不能替代企业租户边界。
 
 单企业未来 1—2 年的设计目标为 500 名以上员工、200 名以上同时活跃创作；不是现有容量或 200 个同时付费请求的承诺。后续使用 100/200/300 活跃用户的混合负载，观察 API/WebSocket、画布保存、AI 受理与查询、数据库写等待、素材读写和队列积压，再按瓶颈选择 PostgreSQL、独立 Worker、受管理文件/对象存储、传输缓存或多实例协调。高可用按业务可靠性目标演进；RPO/RTO、预算、云供应商及拓扑仍待负责人确认。不预设微服务、Docker、Kubernetes 或 Redis 为前置目标。
 
@@ -154,6 +164,4 @@ C6 [离线保留数据升级记录](docs/ops/OFFLINE-RETAINED-UPGRADE-2026-10-12
 
 ## 9. 尚未实现
 
-统一新装/更新/修复/保留数据卸载、长期更新器接管、自动多跳、完整通知/任务与写入隔离、统一任务/费用、CAS/员工桌面客户端、PostgreSQL/HA、SSO/目录/Agent 与可选远程诊断仍未完整交付。已实现迁移/恢复基础不再笼统写成未实现；具体范围见项目状态。
-
-C7 [工程记录](docs/ops/ONLINE-UPGRADE-SEQUENCE-2026-10-12.md) 区分最新目标执行器、每跳应用和原生工具版本，以不可变检查点与原权限版本恢复剩余步骤；中间版本暂停业务，成功后的登记中断不回旧数据库。Windows 原生文件/登记留在适配边界；业务、API、数据契约继续共用。当前为未合并开发候选，未宣称服务器部署或实际容量已经达标。
+阶段 3 尚未完成所有来源/GUI/在线续接的交付闭环；完整通知/任务与写入隔离、统一任务/费用、CAS/员工桌面客户端、PostgreSQL/HA、SSO/目录/Agent 与可选远程诊断仍未交付。新装/同版修复/保留数据卸载/重装及目录分页已进入 main；目标执行器、原生工具和多跳协调器已合并，在线续接仍有宿主阻断。已实现迁移/恢复基础不再笼统写成未实现；具体范围见项目状态。

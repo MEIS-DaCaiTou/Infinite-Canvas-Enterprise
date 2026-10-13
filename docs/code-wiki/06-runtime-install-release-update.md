@@ -1,8 +1,10 @@
 # Runtime、安装、发布与在线更新
 
+> 源码参考快照（2026-10-13）：main@3e0deeae（已合并 #154/#155）与产品候选 #156@4bdd9a1 分列；C5/C6/C7 已合并，构建与验收范围仍引用其准确记录。本文是代码/运行参考，当前 PR/CI、Release 和验收只见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，实施顺序只认路线图。
+
 [返回索引](./README.md)
 
-更新时间：2026-10-09。主线、维护线和固定入口边界见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，生命周期设计见 [统一交付 ADR](../decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md)。
+更新时间：2026-10-13。主线、维护线和固定入口边界见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，生命周期设计见 [统一交付 ADR](../decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md)。
 
 ## 1. PathRoots
 
@@ -97,11 +99,11 @@ flowchart TD
 
 ### Windows Runtime
 
-`windows_runtime_build.py` 和 `runtime/windows/` 策略固定 CPython 3.14 x64、哈希 requirements、wheelhouse 闭包、pip-check、SBOM、来源与可复现构建证据。源码工作区内另有开发用 Python 3.10.11，不应与正式 portable Runtime 混为同一个信任对象。
+`windows_runtime_build.py` 和 `runtime/windows/` 策略固定 CPython 3.14 x64、哈希 requirements、wheelhouse 闭包、pip-check、SBOM、来源与可复现构建证据。源码开发解释器由当前环境选择，企业 CI 使用 Python 3.11，Runtime 专项使用 3.14；不假定每个工作区都携带历史 3.10.11，也不与固定 portable Runtime 混为一个信任对象。
 
 ## 6. 首次安装
 
-以下为 fresh-install 实现，不是完整更新/修复/卸载产品。主线 #139 已将快捷方式指向 `<INSTALL_ROOT>/InfiniteCanvas.exe`，新装要求与 Release 同 commit/tree 的独立原生构建。`Uninstallable=no` 暂留，标准卸载是后续明确待办；已公开客户包不因主线合并自动变化。
+以下为 fresh-install 实现，不是完整更新/修复/卸载产品。主线 #139 已将快捷方式指向 `<INSTALL_ROOT>/InfiniteCanvas.exe`，新装要求与 Release 同 commit/tree 的独立原生构建。main #152 已使用 `Uninstallable=RegisterLifecycle`、实例卸载登记和保留数据事务实现标准卸载；首次安装不等于完整维护矩阵。已公开客户包不因主线合并自动变化。
 
 `fresh_install.py` 的主要阶段：
 
@@ -145,10 +147,10 @@ flowchart TD
 - `RepairProgress` 在 STATE_ROOT 保存当前操作索引，在该操作的 STAGING_ROOT 保存绑定身份、指针、原树与 runner 的阶段。phase 不代替不可改写的 plan/result，也不能证明修好。
 - `inspect_program_repair()` 只观察已知事务，不执行恢复；OS lease 存活表示仍在运行，执行器退出且维护锁未释放表示需要恢复。只有匹配结果与程序树才能报告成功/已回退；旧 v3 没有进度文件的已知 plan 也能查看与恢复。
 - v4 进度通过同 SID 管道显示 allow-list 阶段；断开只结束查看，不杀后台执行器、不触发回退。重新打开向导可选择只读状态，运行中显示当前阶段，回退明确提示原损坏可能仍在。
-- 向导将外部解释器完整包放在本产品当前用户 `maintenance-payloads` 缓存下，避免关闭 Setup 时删除仍运行的解释器。重解析/空间校验不省略；缓存清理尚待拥有者与活跃任务核验，不能按目录名称自动删除。
+- 向导将外部解释器完整包放在本产品当前用户 `maintenance-payloads` 缓存下，避免关闭 Setup 时删除仍运行的解释器。重解析/空间校验不省略；main #151 的 install_cache.py 已在显式拥有者及运行/恢复引用核验后清理准备副本；不能按目录名称、年龄或未知历史身份自动删除。
 - 程序维护不执行快捷方式、安装登记或数据库写入；只有新装/成功入口维护才进入对应后续步骤。所有维护 operation 的外部解释器包持久保留，不因 Setup 关闭或管道应答而猜测 backend 已退出。图形按钮接入与编译通过不等于真实图形点击验收。
 
-本候选不实现应用升级、数据库迁移、历史无身份接管、入口旧锁接管、多跳/更新器自身更新或标准卸载，也不声称断电/磁盘硬件故障恢复已验收。准确提交和安装副本证据见 DELIVERY-1 第 8–9 节。
+上述同版程序修复本身不执行业务升级/数据迁移或接管历史未知身份。main #151/#152 后续提供缓存清理、保留数据卸载与同版重装；#154/#155 已合并执行器/连续升级实现。断电/磁盘故障及全部 GUI 仍不宣称已验收；准确记录回到 CURRENT 和 DELIVERY-1。
 
 ## 7. 在线更新
 
@@ -204,10 +206,15 @@ main 派生的生命周期诊断增量为每个实际执行的 `target_start/tar
 - `RECOVERY_REQUIRED` 表示无法证明三者已经恢复一致，不能自动重试或伪装成普通失败。
 - 恢复数据库或 source pointer 之前先确认目标停止；非零退出不继续恢复或启动 source，保留恢复阻断。source 启动失败时不虚构后续 health 调用。入口退出 0 但没有有效结果文档仍判为失败。
 - 维护线已发布 09.9 改表目标，并有测试设备受控桥接成功反馈，不外推 main 已统一交付或全部客户批准。
-- #153 合并后的 main 使用 C4 `release_catalog.py` 共用 v1/v2 分页、条件核验和完整性失败阻断，每次最多 1000 条，细节见 [目录记录](../ops/UPDATE-CATALOG-PAGINATION-2026-10-11.md)。`route_catalog.py::RoutePreviewCache` 只优化页面不可变路线预览，prepare/execute 不读该缓存。规划最多 8 跳，没有一次确认自动多跳。09.6 治理激活状态不能由旧更新器直接识别，不删审计对象绕过。
-- C5 的 `updater.py`/固定包内契约在开发分支绑定目标引擎及计划摘要；`supervisor.py` 创建目标 Python，`handoff.py` 用目标代码和来源安装数据根，`handoff_lifecycle.py` 的 READY v2 校验身份。契约缺失的旧包保留来源路径，未知/改动契约拒绝交接；仍执行原有单跳事务，见 [C5 记录](../ops/VERIFIED-UPDATER-HANDOFF-2026-10-11.md)。这不包含原生 EXE/Setup 替换或未知未来迁移授权。
+- main #153 的 `release_catalog.py` 已共用 v1/v2 分页、全页条件核验和完整性失败阻断，最多 1000 条，细节见 [目录记录](../ops/UPDATE-CATALOG-PAGINATION-2026-10-11.md)。`route_catalog.py::RoutePreviewCache` 只优化页面不可变路线预览，prepare/execute 不读该缓存。main 规划最多 8 跳；#155 已合并一次授权连续执行/检查点，在线继续仍有 handoff 资格阻断。09.6 治理激活状态不能由旧更新器直接识别，不删审计对象绕过。
 - 完整通知/任务和业务写入隔离、更新器自更新及图形恢复仍待落地；业务写入已开放后不盲目回旧备份。
 - 更新中心只消费完整 Manifest v2 Release，不消费 GitHub 源码 ZIP。
 - 诊断输出有界并脱敏，但仍应按内部运维材料处理。
 
-C7 导航：`ops/update/online_prepare.py` 下载整条路径，`maintenance_assets.py` 验证原生 sidecar，`sequence.py` 管理根授权/逐跳 receipt/检查点/继续/停止；`handoff.py` 由准确目标执行器进入协调器。API 与 admin.html 提供持续状态和恢复操作，`runtime/install_maintenance.py` 在中间版本暂停业务。详见 [C7 实施及证据](../ops/ONLINE-UPGRADE-SEQUENCE-2026-10-12.md)；同一 Draft #155 扩大范围不代表已合并或发行。
+## 9. 主线安装维护与候选升级边界
+
+main 的 install_lifecycle.py 为已登记实例提供保留数据卸载、同版重装、自己的恢复及 inspect_lifecycle 观察；install_cache.py 只清理可证明的维护准备副本。未知对象、客户数据和恢复依赖保留。
+
+C5 的 updater.py / updater-worker-v1 契约选择目标 Python 执行器并绑定准备/READY/接受过程；C6 install_upgrade.py 复用现有更新引擎处理限定相同 Schema 的离线升级/保留数据跨版本重装；C7 sequence.py 等协调一次授权路径、逐跳权限、检查点、当前跳恢复及原生维护资产。上述新增升级代码已随 #154/#155 进入 main，本 Wiki 所在产品修复分支已整合该主线；参见 C5/C6/C7 实现记录。
+
+限定 GUI 状态：#152 本身的卸载 Yes 点击未验收；C6 后续合成安装副本已有 Yes 与限定跨版本重装点击证据；代码已合并，未正式发行。C7 冻结包完整两跳成功，在线重新继续在本机被 SYSTEM_UPDATE_HANDOFF_JOB_BLOCKED 阻断；不能把冻结构建等同新 Head 或把 HTTP/WS 暂停称为完整任务排空。

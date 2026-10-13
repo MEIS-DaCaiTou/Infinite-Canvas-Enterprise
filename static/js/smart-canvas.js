@@ -2637,9 +2637,10 @@ function apiImageSize(ratioValue, resolutionValue, customRatioValue='', customSi
     if(resolutionValue === 'auto') return 'auto';
     if(resolutionValue === 'custom') return String(customSizeValue || '').trim();
     const resolutionKey = resolutionValue || '1k';
-    if(ratioValue === 'custom' || ratioValue === 'source'){
-        const parsed = parseRatioValue(customRatioValue);
-        const longSide = RES_LONG_SIDE[resolutionKey] || 1024;
+    if(ratioValue === 'custom' || ratioValue === 'source' || String(ratioValue).includes(':') || resolutionKey === '512'){
+        const ratio = window.CanvasModelPicker?.imageParameters({ratio:ratioValue, customRatio:customRatioValue}).aspect_ratio || customRatioValue;
+        const parsed = parseRatioValue(ratio);
+        const longSide = resolutionKey === '512' ? 512 : (RES_LONG_SIDE[resolutionKey] || 1024);
         if(parsed){
             const pixelLimit = RES_PIXEL_LIMIT[resolutionKey] || (longSide * longSide);
             const rawWidth = parsed >= 1 ? longSide : Math.min(longSide * parsed, Math.sqrt(pixelLimit * parsed));
@@ -2774,6 +2775,15 @@ function renderDynamicParams(){
     else if(settings.engine === 'runninghub') renderRunningHubParams();
     else renderComfyParams();
     bindDynamicParams();
+    const modelList = dynamicParams.querySelector('.model-control .model-list');
+    if(modelList && settings.engine === 'api') {
+        const video = settings.apiKind === 'video';
+        window.CanvasModelPicker?.mountList(modelList, {
+            kind:video ? 'video' : 'image',
+            getProvider:() => video ? settings.videoProvider : settings.provider_id,
+            getSelected:() => video ? settings.videoModel : settings.model,
+        });
+    }
     restoreOpenControl(keepOpen);
     restoreDynamicParamsScroll(scrollState);
     updatePromptPlaceholder();
@@ -3038,7 +3048,8 @@ function ratioLabel(prefix=''){
     const customKey = prefix ? `${prefix}CustomRatio` : 'customRatio';
     const sourceLabel = sourceImageRatioLabel(prefix) || tr('smart.imageRatio');
     const map = {square:'1:1', portrait:'2:3', landscape:'3:2', portrait43:'3:4', landscape43:'4:3', story:'9:16', wide:'16:9', ultrawide:'21:9', ultratall:'9:21', source:sourceLabel, custom:settings[customKey] || tr('smart.custom')};
-    return map[settings[ratioKey] || 'square'] || '1:1';
+    const value = settings[ratioKey] || 'square';
+    return map[value] || (/^\d+:\d+$/.test(value) ? value : '1:1');
 }
 function gcdInt(a, b){
     a = Math.abs(Math.round(Number(a) || 0));
@@ -3230,16 +3241,20 @@ function renderSizePickerControl(prefix='', includeSource=false){
     const options = (!prefix && settings.engine === 'api') ? ['auto','1k','2k','4k'] : ['1k','2k','4k'];
     const currentRes = settings[resKey] || ((!prefix && settings.engine === 'api') ? defaultSmartApiResolution(settings.model) : '1k');
     const currentRatio = settings[ratioKey] || 'square';
+    const profile = !prefix && settings.engine === 'api' ? (window.CanvasModelPicker?.profileFor(apiProviderById(settings.provider_id), settings.model) || {}) : {};
+    const displayLabel = profile.supports_image_size === false ? `${ratioLabel(prefix)} · ${profile.fixed_resolution || '模型默认'}` : sizePickerLabel(prefix);
+    if(profile.resolutions?.includes('512')) options.push('512');
     const allowAuto = !prefix && settings.engine === 'api' && settings.apiKind !== 'video' && isGptImageAutoSizeModel(settings.model);
     const ratios = [
         ['square','1:1','正方形'], ['portrait','2:3','竖图'], ['landscape','3:2','横图'], ['portrait43','3:4','竖图'], ['landscape43','4:3','横图'],
         ['story','9:16','竖屏'], ['wide','16:9','宽屏'], ['ultrawide','21:9','超宽'], ['ultratall','9:21','超竖'],
         ...(includeSource ? [['source', sourceImageRatioLabel(prefix) || '原图', '适配输入']] : [])
     ];
+    (profile.ratios || []).forEach(ratio => { if(!ratios.some(([,label]) => label === ratio)) ratios.push([ratio,ratio,'模型支持']); });
     const wKey = prefix ? `${prefix}CustomWidth` : 'customWidth';
     const hKey = prefix ? `${prefix}CustomHeight` : 'customHeight';
     return `<div class="smart-control size-picker-control ${scope === 'auto' ? 'auto-mode' : ''} ${scope === 'custom' ? 'custom-mode' : ''}">
-        <button class="smart-pill size-picker-pill" type="button"><i data-lucide="scan-line"></i><span class="size-picker-label"><span class="size-picker-type">尺寸</span><span class="size-picker-dot"></span><span class="size-picker-value">${escapeHtml(sizePickerLabel(prefix))}</span></span></button>
+        <button class="smart-pill size-picker-pill" type="button"><i data-lucide="scan-line"></i><span class="size-picker-label"><span class="size-picker-type">尺寸</span><span class="size-picker-dot"></span><span class="size-picker-value">${escapeHtml(displayLabel)}</span></span></button>
         <div class="smart-popover size-picker-popover">
             <div class="size-picker-head">
                 <div class="smart-popover-title">尺寸选择</div>
@@ -3252,10 +3267,10 @@ function renderSizePickerControl(prefix='', includeSource=false){
             ${scope === 'auto' ? `<div class="size-picker-pane size-picker-auto"><div class="size-picker-note"><strong>自动尺寸</strong><span>使用模型默认尺寸，或由支持自动尺寸的模型自行决定。</span></div></div>` : ''}
             ${scope === 'preset' ? `<div class="size-picker-pane size-picker-preset">
                 <div class="size-picker-list">
-                    ${ratios.map(([value, label, sub]) => `<button type="button" class="size-picker-option ${value === currentRatio ? 'active' : ''}" data-smart-param="${ratioKey}" data-smart-value="${escapeHtml(value)}"><span>${escapeHtml(label)}</span><small>${escapeHtml(sub)}</small></button>`).join('')}
+                    ${ratios.filter(([,label]) => !profile.ratios?.length || !/^\d+:\d+$/.test(label) || profile.ratios.includes(label)).map(([value, label, sub]) => `<button type="button" class="size-picker-option ${value === currentRatio ? 'active' : ''}" data-smart-param="${ratioKey}" data-smart-value="${escapeHtml(value)}"><span>${escapeHtml(label)}</span><small>${escapeHtml(sub)}</small></button>`).join('')}
                 </div>
                 <div class="size-picker-list">
-                    ${options.filter(v => v !== 'auto').map(value => `<button type="button" class="size-picker-option ${value === currentRes ? 'active' : ''}" data-smart-param="${resKey}" data-smart-value="${value}"><span>${value.toUpperCase()}</span><small>${escapeHtml(apiImageSize(currentRatio === 'source' ? 'square' : currentRatio, value, settings[prefix ? `${prefix}CustomRatio` : 'customRatio'] || '', '') || '')}</small></button>`).join('')}
+                    ${profile.supports_image_size === false ? `<span class="size-picker-note">${profile.fixed_resolution ? `模型固定 ${escapeHtml(profile.fixed_resolution)}` : '分辨率由模型决定'}</span>` : options.filter(v => v !== 'auto' && (!profile.resolutions?.length || profile.resolutions.includes(v.toUpperCase()))).map(value => `<button type="button" class="size-picker-option ${value === currentRes ? 'active' : ''}" data-smart-param="${resKey}" data-smart-value="${value}"><span>${value.toUpperCase()}</span><small>${escapeHtml(apiImageSize(currentRatio === 'source' ? 'square' : currentRatio, value, settings[prefix ? `${prefix}CustomRatio` : 'customRatio'] || '', '') || '')}</small></button>`).join('')}
                 </div>
             </div>` : ''}
             ${scope === 'custom' ? `<div class="size-picker-pane size-picker-custom">
@@ -3293,6 +3308,8 @@ function renderInlineCustomSizeFields(prefix=''){
     </div>`;
 }
 function renderQualityControl(){
+    const profile = settings.engine === 'api' ? (window.CanvasModelPicker?.profileFor(apiProviderById(settings.provider_id), settings.model) || {}) : {};
+    if(profile.supports_quality === false) return '';
     const value = settings.quality || 'auto';
     const labels = {auto:tr('smart.qualityAuto'), low:tr('smart.qualityLow'), medium:tr('smart.qualityMid'), high:tr('smart.qualityHigh')};
     return `<div class="smart-control quality-control">
@@ -3982,7 +3999,7 @@ function bindDynamicParams(){
             } else if(scope === 'custom'){
                 settings[resKey] = 'custom';
             } else {
-                settings[resKey] = ['1k','2k','4k'].includes(settings[resKey]) ? settings[resKey] : sizePickerDefaultResolution(prefix);
+                settings[resKey] = ['512','1k','2k','4k'].includes(settings[resKey]) ? settings[resKey] : sizePickerDefaultResolution(prefix);
                 if(!settings[ratioKey] || settings[ratioKey] === 'custom') settings[ratioKey] = 'square';
             }
             persistActiveSmartSettings();
@@ -14636,6 +14653,7 @@ async function runApiGeneration(prompt, refs, runSettings=settings){
     if(!runSettings.provider_id || !runSettings.model) throw new Error(tr('smart.errNoApiModel'));
     const count = Math.max(1, Math.min(8, Number(runSettings.count || 1)));
     const payload = {prompt, provider_id:runSettings.provider_id, model:runSettings.model, size:sizeForRun(runSettings), quality:runSettings.quality || 'auto', n:1, reference_images:imageRefsOnly(refs).slice(0, SMART_REFERENCE_IMAGE_MAX)};
+    Object.assign(payload, window.CanvasModelPicker?.imageParameters(runSettings) || {});
     const tasks = await Promise.all(Array.from({length:count}, () => fetch('/api/canvas-image-tasks', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)}).then(async r => {
         if(!r.ok) throw new Error(await r.text());
         return r.json();

@@ -1,13 +1,15 @@
 # 运行、测试与开发方式
 
+> 源码参考快照（2026-10-13）：main@3e0deeae（已合并 #154/#155）与产品候选 #156@4bdd9a1 分列；C5/C6/C7 已合并，构建与验收范围仍引用其准确记录。本文是代码/运行参考，当前 PR/CI、Release 和验收只见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，实施顺序只认路线图。
+
 [返回索引](./README.md)
 
-更新时间：2026-10-03。命令为源码/旧安装参考；产品交付和现场状态回到 [CURRENT](../CURRENT_PROJECT_STATUS.md)。
+更新时间：2026-10-13。命令为源码/旧安装参考；产品交付和现场状态回到 [CURRENT](../CURRENT_PROJECT_STATUS.md)。
 
 ## 1. 前置条件
 
 - Windows 10/11 x64。
-- 源码开发可使用仓库自带 `python/python.exe`；正式安装必须使用 Release 内固定 Python。
+- 源码开发使用已确认的解释器，不假设源码目录自带 Python；正式安装必须使用 Release 内固定 Python。
 - 源码首次部署按安全基线配置；新装器负责首次配置，旧安装沿用环境/数据库，不每次复制示例或重置管理员。
 - 不要提交 `enterprise.env`、真实数据库、客户素材、Token 或诊断包。
 
@@ -134,7 +136,7 @@ py -3.11 -B -m unittest discover -s enterprise/tests -p test_documentation_contr
 1. `git fetch --prune origin`，记录 `origin/main`、当前分支和目标 tag。
 2. 阅读 `docs/CURRENT_PROJECT_STATUS.md`、`CODE_BOUNDARIES.md` 和相关 ADR。
 3. 为单一行为创建 `codex/*` 分支。
-4. 先增加聚焦测试，再修改企业层；跨界修改 `main.py/static` 时补浏览器清单。
+4. 完整工程包内复用既有实现和有效证据，按实际风险安排必要定向校验；低影响文档不启动业务全套，画布交互变更核对目标浏览器路径。
 5. 优先聚焦测试，按风险补 smoke/浏览器回归；跨模块风险、必要复核或合并要求才重跑全套并解释原因。
 6. 更新当前状态/实施记录，但不修改历史证据结论。
 7. 审查 diff、确认没有 secret、数据库、客户数据或 Runtime 构建产物。
@@ -156,3 +158,9 @@ py -3.11 -B -m unittest discover -s enterprise/tests -p test_documentation_contr
 | 更新后回滚 | 作业 status/events、target health、source pointer 恢复结果 |
 | 用户看到他人数据 | ownership map、拦截器列表/直接 ID、WebSocket 过滤四处一起检查 |
 | 图片缺失 | 文件是否存在、资源 URL 标准化、owner map、preview/view 路径 |
+
+## 11. 本轮新增模块的定向入口
+
+图像构造：test_model_request_contract.py；个人模型：test_user_model_preferences.py；后台契约：test_product_integration_fixes.py；素材边界：test_sec_p0_browser_boundaries.py 及实际扩展 JS 请求证据。对应 #156 功能提交已有定向/HTTP/Browser 结果，文档变更只运行文档合同、链接和源码索引复核，不重跑这些业务检查。
+
+维护候选的真实安装副本/GUI/CI 采用 C5/C6/C7 各自准确来源，不能把源码 ZIP 当正式 Release 或在普通开发树运行破坏性演练。工作区同步先检查每个工作树和本地提交，只有干净的目标 main 可正常切换/快进；不 reset/clean/stash 用户变更，不改其他候选。

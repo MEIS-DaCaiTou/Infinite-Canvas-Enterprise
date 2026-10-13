@@ -1,6 +1,6 @@
 # 后端类与函数参考
 
-> 代码参考：结构/函数索引保留各章节的源码快照，不自动覆盖维护线工具；实时模块状态、迁移/发布与现场验收见 CURRENT，任务顺序只认路线图。[现行事实与适用范围](../CURRENT_PROJECT_STATUS.md)。
+> 源码参考快照（2026-10-13）：main@3e0deeae（已合并 #154/#155）与产品候选 #156@4bdd9a1 分列；C5/C6/C7 已合并，构建与验收范围仍引用其准确记录。本文是代码/运行参考，当前 PR/CI、Release 和验收只见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，实施顺序只认路线图。
 
 [返回索引](./README.md)
 
@@ -81,7 +81,7 @@ Gateway 还对 Cookie 状态变更请求执行精确同源校验；Bearer CLI �
 
 ### `enterprise/auth.py`
 
-- `create_token(user)`：生成带用户标识、角色和 `auth_version` 的 JWT。
+- `create_token(user_id)`：按当前用户身份生成带角色和 `auth_version` 的 JWT。
 - `verify_token(token)`：验证签名、过期时间与基本 claims。
 - `authenticate(username, password)`：查找用户、验证密码和启用状态。
 
@@ -161,3 +161,18 @@ Gateway 还对 Cookie 状态变更请求执行精确同源校验；Bearer CLI �
 ## 8. 主线收敛分支增量：`enterprise/canvas_task_journal.py`
 
 `CanvasTaskJournal` 使用原子 JSON 回执保存画布任务状态，关键方法负责创建、单次领取、完成和中断恢复；`create_task_receipt()` 在任务被受理时记录最小可恢复信息。该文件已从 `28ad937` 移植到 `codex/mainline-runtime-convergence-20260919`，在 PR 合并前不能描述为 `origin/main` 已有能力。
+
+## 9. 本轮核对的源码规模与候选模块
+
+4bdd9a1 快照：main.py 16993 行、794 个函数/方法节点；经典画布 14829 行，智能画布 17037 行。行数仅作定位，不作为交付成果或不能维护的结论。
+
+| 文件/符号 | 已核对职责与归属 |
+| --- | --- |
+| enterprise/providers/zhenzhen.py：IMAGE_FAMILIES、IMAGE_MODELS | #156 集中模型家族/别名及能力，不散落每模型请求实现 |
+| is_zhenzhen / image_profile / public_image_profiles | 明确供应商选择、内置能力、已选模型的公开投影 |
+| image_body / submit_image | 正确请求字段、现有 client 一次提交；不写客户数据/系统状态 |
+| provider_image_profiles.py：image_profile_for / build_aspect_parameters | 内置优先、未知模型临时配置、明确画幅/档位校验 |
+| user_model_api.py：current_user_id / get_model_preferences / put_model_preferences | 当前认证主体的 GET/PUT；请求不能替换目标账号 |
+| user_model_preferences.py：load_preferences / save_preferences | DATA_ROOT/user-model-preferences，自己的临时文件原子替换；既有写入审计 W50 |
+
+main.py 的 api_headers、generate_ai_image、wait_for_image_task 和结果归档仍参与调用，新增模块不是完整 Provider 体系。完整边界随实际供应商工作包逐步提取。

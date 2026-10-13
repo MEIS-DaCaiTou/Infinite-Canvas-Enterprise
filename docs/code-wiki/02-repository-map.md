@@ -1,6 +1,6 @@
 # 仓库结构与模块职责
 
-> 代码参考：结构/函数索引保留各章节的源码快照，不自动覆盖维护线工具；实时模块状态、迁移/发布与现场验收见 CURRENT，任务顺序只认路线图。[现行事实与适用范围](../CURRENT_PROJECT_STATUS.md)。
+> 源码参考快照（2026-10-13）：main@3e0deeae（已合并 #154/#155）与产品候选 #156@4bdd9a1 分列；C5/C6/C7 已合并，构建与验收范围仍引用其准确记录。本文是代码/运行参考，当前 PR/CI、Release 和验收只见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，实施顺序只认路线图。
 
 [返回索引](./README.md)
 
@@ -49,6 +49,11 @@
 | `fresh_install.py` | Greenfield 首次安装事务 |
 | `install_entry.py` | 主线安装接线：固定 EXE/稳定实例 ID 的发布与入口专用修复；不写业务数据库 |
 | `install_repair.py` / `install_repair_status.py` | 同 Release 程序/Python 修复与自己的中断恢复；候选状态层只观察 plan/result/lease 和展示真实阶段，不代替恢复授权 |
+| `install_lifecycle.py` | main 的保留数据卸载/同版重装、自己的事务恢复与 inspect_lifecycle 观察 |
+| `install_cache.py` | main 的显式归属准备包清理；运行/恢复依赖和未知包保留 |
+| `ops/update/release_catalog.py` | main 的 v1/v2 共用全页目录、条件核验与完整性失败阻断 |
+| `providers/zhenzhen.py`、`provider_image_profiles.py` | #156 候选图像能力目录、请求构造与内置优先选择 |
+| `user_model_api.py`、`user_model_preferences.py` | #156 候选当前账号模型列表 API 与 DATA_ROOT 保存 |
 | `install_cli.py` | 开发/命令行安装入口 |
 | `install_setup_bridge.py` | 安装器与固定 Python 间的受控 named-pipe 桥接 |
 
@@ -96,12 +101,12 @@ flowchart TD
 
 ## 5. 代码边界
 
-默认企业开发范围是 `enterprise/`、`enterprise-static/`、`enterprise/tests/` 和企业文档。`main.py`、`static/`、`workflows/` 等属于旧内核/上游覆盖区；当前已经存在少量经过审查的跨界改动，但这不意味着以后可无约束修改。
+所有产品源码由本项目维护，main.py/static/workflows 是高影响区域，已经不属于永久禁止修改的上游覆盖区。新增规则放对应业务模块，入口只接线；修改既有功能时提取直接相关的完整边界，保持画布体验、权限和数据兼容。不为了避免修改旧内核而把补丁挤进 Gateway。
 
-新增跨界改动前至少回答：
+相关改动前至少回答：
 
-1. 能否在 Gateway/拦截器/路径适配层实现？
+1. 哪个业务模块或 Adapter 应拥有规则，是否复用了现有能力？
 2. 是否会改变旧版前端视觉或交互？
-3. 是否需要同步所有 Provider、画布和素材路径测试？
+3. 哪些 Provider、画布或素材路径受影响，哪些有效证据可复用？
 4. 是否破坏 immutable APP_ROOT 或 portable PathRoots？
 5. 是否需要更新 `CODE_BOUNDARIES.md`、Release/迁移记录和回归清单？

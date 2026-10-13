@@ -1,5 +1,7 @@
 # C7：在线连续升级与原生维护工具更新
 
+> 2026-10-13 合并状态补充：#154 已合并为 `11c9a38c`，#155 已合并为 `3e0deeae`，负责人明确授权后按准确 Head 核查并合并；没有新增独立审查结论。本文原有源码、构建、GUI 与失败证据仍按原采集范围解释，Release 仍为 v2026.10.1；后续状态见 [CURRENT](../CURRENT_PROJECT_STATUS.md)。
+
 2026-10-12，2026-10-13 补充真实副本证据。沿用[唯一开发路线图 3.3](../roadmap/DEVELOPMENT-ROADMAP-2026-2027.md#33-日常更新与长期跨版本)。从 `main@bc33339fd11df4c0303f29257766f0f2e53560fe` 上的 C5/C6 开发候选继续实现；将 C5 的准确 Head `64c2adff3358e7f806d3cf04a26d86639597e573` 合入 C6 开发分支，扩展同一个 Draft [#155](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/155) 供集中独立审查。该开发合并没有合并 GitHub #154 或 main。正式 Release 仍为 `v2026.10.1`。
 
 ## 最终行为

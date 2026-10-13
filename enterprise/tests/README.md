@@ -13,9 +13,13 @@ Before adding or changing scripts, read:
 - `../../ENTERPRISE_DOCS.md`
 - `SMOKE_CHECKLIST.md`
 
-Reviewed: 2026-10-09
+Reviewed: 2026-10-13
 
 ## Verification policy
+
+Candidate product checks: `test_model_request_contract.py` exercises the actual image request builder with MockTransport; `test_user_model_preferences.py` checks account-owned settings. Backend confirmation contracts and browser-origin protection reuse their existing focused evidence. Coverage and unpaid/host limitations are in [the product record](../../docs/ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md). These tests are not the 104 formal business scenarios or a reason to rerun a full suite for documentation.
+
+C5/C6/C7 installed-copy, GUI and interruption evidence stays tied to [C5](../../docs/ops/VERIFIED-UPDATER-HANDOFF-2026-10-11.md), [C6](../../docs/ops/OFFLINE-RETAINED-UPGRADE-2026-10-12.md) and [C7](../../docs/ops/ONLINE-UPGRADE-SEQUENCE-2026-10-12.md). The candidate branches remain unmerged; frozen synthetic builds and new source-only checks must not be combined into an unsupported customer acceptance claim.
 
 Prefer affected-scope tests and existing CI. Rerun full gates only for a concrete risk, required recheck, merge requirement or explicit request. No independent clean Windows device or paid signing prerequisite. Fixture, installed-copy, real Runtime and customer/production claims stay separate.
 
