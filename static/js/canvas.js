@@ -11314,12 +11314,19 @@ async function runComfyNode(nodeId, opts={}){
     const refs = imageRefsOnly(allRefs);
     const mode = node.mode || 'text';
     if(mode === 'custom'){
+        // Claim the existing busy state before cold workflow lookup can yield.
+        if(!opts.cascade){ node.running = true; refreshRunNodes(node, null); }
         try {
             const workflowName = validComfyWorkflowName(node.comfyWorkflow || comfyWorkflows[0]?.name || '');
             const wf = await ensureComfyWorkflow(workflowName);
             if(!wf) throw new Error(tr('canvas.comfyNoWorkflow'));
             ComfyWorkflowFields.requireMedia(wf.config, {image:refs, video:videoRefsOnly(allRefs), audio:audioRefsOnly(allRefs)}, langIsEn());
-        } catch(e){ alert(e.message); return; }
+        } catch(e){
+            node.runStatus = 'failed'; node.runError = e.message || String(e);
+            if(opts.cascade) throw e;
+            node.running = false; refreshRunNodes(node, null);
+            alert(e.message); return;
+        }
     }
     if(mode === 'text' && !prompt){ alert(tr('canvas.needPrompt')); return; }
     if(mode !== 'text' && mode !== 'custom' && !refs.length){ alert(tr('canvas.needImage')); return; }

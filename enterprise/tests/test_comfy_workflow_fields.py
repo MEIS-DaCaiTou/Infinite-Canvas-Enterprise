@@ -13,6 +13,10 @@ def test_shared_frontend_field_contract():
     subprocess.run(['node', str(Path(__file__).with_suffix('.js'))], check=True)
 
 
+def test_actual_canvas_workflow_lookup_concurrency_and_failure():
+    subprocess.run(['node', str(Path(__file__).with_name('test_comfy_workflow_run.js'))], check=True)
+
+
 def test_output_prefix_is_not_synchronized_as_input_media():
     tree = ast.parse((ROOT / 'main.py').read_text(encoding='utf-8'))
     selected = []
