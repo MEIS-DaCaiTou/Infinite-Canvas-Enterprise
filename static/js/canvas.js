@@ -12371,15 +12371,16 @@ async function queryRecoverPendingOutput(pendingId){
     pending.recoverTaskId = taskId;
     refreshNodes([out.id]);
     try {
-        const res = await fetch('/api/image-task-query', {
-            method:'POST',
-            headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({provider_id:providerIdForPending(pending), task_id:taskId})
-        });
-        if(!res.ok) throw new Error(await responseErrorMessage(res, '查询失败'));
-        const data = await res.json();
-        if(data.status === 'succeeded'){
+        const data = await window.CanvasTaskQuery.query({canvasTaskId:pending.canvasTaskId,
+            canReconcile:pending.canReconcile, providerId:providerIdForPending(pending), upstreamTaskId:taskId});
+        if(data.status === 'succeeded' || data.status === 'partial'){
             completeRecoverPendingOutput(out, pending, data);
+            if(data.status === 'partial'){
+                const gen = nodes.find(n => n.id === pending.run?.node?.id);
+                if(gen){ gen.runStatus = 'failed'; gen.runError = data.message; refreshNodes([gen.id]); }
+                showErrorModal(data.message, tr('canvas.apiFailed'));
+                scheduleSave();
+            }
             return;
         }
         if(data.status === 'failed'){
@@ -12482,13 +12483,14 @@ function failCanvasImageTask(taskId, message, taskData={}){
     const {out, pending} = found;
     const run = pending.run || {};
     const runMs = nowMs() - Number(pending.startedAt || nowMs());
-    const recoverTaskId = taskData?.upstream_task_id || taskData?.task_id || extractUpstreamTaskId(message);
+    const recoverTaskId = taskData?.upstream_task_id || taskData?.task_id || extractUpstreamTaskId(message) || (taskData?.can_reconcile ? taskId : '');
     const gen = nodes.find(n => n.id === run?.node?.id);
     if(recoverTaskId){
         pending.failed = true;
         pending.querying = false;
         pending.error = message || tr('canvas.generationFailed');
         pending.recoverTaskId = recoverTaskId;
+        pending.canReconcile = Boolean(taskData?.can_reconcile);
         pending.providerId = taskData?.provider_id || pending.providerId || providerIdForPending(pending);
         pending.canvasTaskStatus = 'failed';
         if(gen){

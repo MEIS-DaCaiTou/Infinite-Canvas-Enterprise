@@ -104,6 +104,7 @@ _TEMPLATE_ROUTES: tuple[tuple[str, str], ...] = (
     ("POST", "api/canvases/{canvas_id}/meta"),
     ("POST", "api/canvases/{canvas_id}/restore"),
     ("POST", "api/canvases/{canvas_id}/touch"),
+    ("POST", "api/canvas-image-tasks/{task_id}/reconcile"),
     ("POST", "api/projects/{project_id}"),
     ("POST", "api/workflows/{name:path}/run"),
     ("PUT", "api/canvases/{canvas_id}"),

@@ -47,6 +47,7 @@ from enterprise.config import PATH_ROOTS as _CONFIG_PATH_ROOTS
 from enterprise.paths import get_path_roots, prepare_application_directories
 from enterprise.app_paths import AppPathLayout
 from enterprise.canvas_task_journal import CanvasTaskJournal, create_task_receipt
+from enterprise.canvas_image_recovery import CanvasImageRecovery, ImageReceiptSink, public_receipt
 from enterprise.providers.submission import (
     image_api_explicitly_rejected, provider_submission_unknown, submission_json,
     httpx_request_with_transient_retries,
@@ -9978,7 +9979,7 @@ async def generate_runninghub_video(payload, provider):
         local_urls = [await save_remote_video_to_output(url, prefix="rh_video_") for url in urls]
         return {"videos": local_urls, "task_id": task_id, "raw": result}
 
-async def generate_ai_image(prompt, size, quality, model, reference_images=None, provider_id="comfly", image_parameters=None):
+async def generate_ai_image(prompt, size, quality, model, reference_images=None, provider_id="comfly", image_parameters=None, receipt_sink=None):
     provider = get_api_provider(provider_id)
     builtin_image_profile = zhenzhen_image_profile(provider, model)
     if provider["id"] == "modelscope":
@@ -10200,6 +10201,10 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
             task_id = extract_task_id(raw)
             if not task_id:
                 raise provider_submission_unknown("图像提交已返回，但没有可核对的任务或图片结果") from exc
+        if receipt_sink is not None:
+            # Persist accepted identity before polling; a restart never submits
+            # it again. Failure to save is not proof the supplier rejected it.
+            await receipt_sink.accepted(task_id, provider)
         try:
             task_result = await wait_for_image_task(client, task_id, provider)
             return extract_image(task_result), task_result
@@ -12657,15 +12662,22 @@ async def fetch_upstream_models(provider_id: str):
         raise HTTPException(status_code=400, detail=f"{provider.get('name') or provider_id} 未配置 API Key")
     return await fetch_models_from_upstream(provider.get("base_url") or "", api_key, provider_protocol(provider), provider.get("image_request_mode") or "openai")
 
-async def build_online_image_result(payload: OnlineImageRequest):
+async def build_online_image_result(payload: OnlineImageRequest, *, receipt_task_id=None):
     provider = get_api_provider(payload.provider_id)
     default_model = (provider.get("image_models") or [IMAGE_MODEL])[0]
     model = selected_model(payload.model, default_model)
     refs = [ref.dict() for ref in payload.reference_images if ref.url]
     image_refs = image_references(refs)
     count = max(1, min(8, int(payload.n or 1)))
-    async def generate_one():
-        image_data, raw_item = await generate_ai_image(payload.prompt, payload.size, payload.quality, model, image_refs, provider["id"], {"aspect_ratio":payload.aspect_ratio, "resolution":payload.resolution})
+    async def generate_one(index):
+        sink = ImageReceiptSink(CANVAS_TASK_JOURNAL, receipt_task_id, index) if receipt_task_id else None
+        try:
+            kwargs = {"receipt_sink": sink} if sink else {}
+            image_data, raw_item = await generate_ai_image(payload.prompt, payload.size, payload.quality, model, image_refs, provider["id"], {"aspect_ratio":payload.aspect_ratio, "resolution":payload.resolution}, **kwargs)
+        except Exception as exc:
+            if sink:
+                await sink.interrupted(exc)
+            raise
         try:
             image_items = extract_images(raw_item) if isinstance(raw_item, dict) else [image_data]
         except HTTPException:
@@ -12677,9 +12689,17 @@ async def build_online_image_result(payload: OnlineImageRequest):
             if local_url:
                 local_urls.append(local_url)
                 local_items.append(image_output_meta(local_url, item))
+        if sink:
+            await sink.completed(local_urls, local_items)
         return local_urls, local_items, raw_item
     try:
-        generated = await asyncio.gather(*(generate_one() for _ in range(count)))
+        generated = await asyncio.gather(*(generate_one(index) for index in range(count)), return_exceptions=bool(receipt_task_id))
+        if receipt_task_id:
+            errors = [item for item in generated if isinstance(item, BaseException)]
+            if errors:
+                # Await all batch members so their accepted IDs/results remain
+                # durable even when one member loses its network response.
+                raise next((error for error in errors if getattr(error, "submission_unknown", False)), errors[0])
     except httpx.HTTPStatusError as exc:
         log_net_error(f"生图 HTTP状态错误 provider={provider.get('id')} model={model} size={payload.size}", exc)
         if exc.response.status_code >= 500:
@@ -12728,7 +12748,10 @@ async def online_image(payload: OnlineImageRequest):
 
 @app.post("/api/image-task-query")
 async def query_image_task(payload: ImageTaskQueryRequest):
-    provider = get_api_provider(payload.provider_id)
+    return await query_image_task_result(payload)
+
+async def query_image_task_result(payload: ImageTaskQueryRequest, *, store_history=True, bound_provider=None):
+    provider = bound_provider if bound_provider is not None else get_api_provider(payload.provider_id)
     task_id = str(payload.task_id or "").strip()
     if is_runninghub_provider(provider):
         api_key = runninghub_api_key(provider)
@@ -12765,8 +12788,9 @@ async def query_image_task(payload: ImageTaskQueryRequest):
                         "params": {"provider_id": provider["id"]},
                         "raw": raw,
                     }
-                    save_to_history(result)
-                    if GLOBAL_LOOP:
+                    if store_history:
+                        save_to_history(result)
+                    if store_history and GLOBAL_LOOP:
                         asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(result), GLOBAL_LOOP)
                     return result
                 if code in (805, "805"):
@@ -12832,8 +12856,9 @@ async def query_image_task(payload: ImageTaskQueryRequest):
             "params": {"provider_id": provider["id"]},
             "raw": raw,
         }
-        save_to_history(result)
-        if GLOBAL_LOOP:
+        if store_history:
+            save_to_history(result)
+        if store_history and GLOBAL_LOOP:
             asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(result), GLOBAL_LOOP)
         return result
     if status in IMAGE_TASK_FAILED_STATUSES:
@@ -12854,11 +12879,23 @@ async def query_image_task(payload: ImageTaskQueryRequest):
         "raw": raw,
     }
 
+async def query_saved_image_task(provider, upstream_task_id):
+    return await query_image_task_result(ImageTaskQueryRequest(provider_id=provider["id"], task_id=upstream_task_id), store_history=False, bound_provider=provider)
+
+CANVAS_IMAGE_RECOVERY = CanvasImageRecovery(CANVAS_TASK_JOURNAL, get_api_provider_exact,
+                                           query_saved_image_task, save_to_history)
+
+@app.post("/api/canvas-image-tasks/{task_id}/reconcile")
+async def reconcile_canvas_image_task(task_id: str):
+    return await CANVAS_IMAGE_RECOVERY.reconcile(task_id)
+
 async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
     if not await asyncio.to_thread(CANVAS_TASK_JOURNAL.mark_running, task_id):
         return
     try:
-        result = await build_online_image_result(payload)
+        receipt = await asyncio.to_thread(CANVAS_TASK_JOURNAL.get, task_id)
+        kwargs = {"receipt_task_id": task_id} if receipt.get("provider_receipts") else {}
+        result = await build_online_image_result(payload, **kwargs)
         changes = {"status": "succeeded", "result": result, "error": ""}
     except JimengPendingError as exc:
         # 即梦云端还在排队：标记为 jimeng_pending，前端据 submit_id 持久续查（任务未丢失）
@@ -12901,6 +12938,7 @@ async def create_canvas_image_task(
         "error": "",
         "provider_id": payload.provider_id,
         "model": payload.model,
+        "provider_receipts": [{"index": index, "state": "started"} for index in range(max(1, min(8, int(payload.n or 1))))],
     }, x_enterprise_user_id)
     schedule_canvas_task(run_canvas_image_task(task_id, payload))
     return {"task_id": task_id, "status": "queued"}
@@ -12910,7 +12948,7 @@ async def get_canvas_image_task(task_id: str):
     task = await asyncio.to_thread(CANVAS_TASK_JOURNAL.get, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="画布任务不存在；此版本启用前的内存任务无法凭空恢复")
-    return task
+    return public_receipt(task)
 
 async def run_canvas_comfy_task(task_id: str, payload: GenerateRequest):
     if not await asyncio.to_thread(CANVAS_TASK_JOURNAL.mark_running, task_id):
