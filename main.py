@@ -51,6 +51,11 @@ from enterprise.provider_image_profiles import (
     IMAGE_PROFILE_TEMPLATES, ImageProfileError, build_aspect_parameters,
     normalize_image_profile, normalize_model_image_profiles, image_profile_for,
 )
+from enterprise.providers.zhenzhen import (
+    image_profile as zhenzhen_image_profile,
+    public_image_profiles as zhenzhen_public_image_profiles,
+    submit_image as submit_zhenzhen_image,
+)
 
 # Do not make `main.py` choose a profile.  The getter only accepts a process
 # root already installed by the caller (or the development compatibility
@@ -1312,6 +1317,7 @@ def public_provider(provider):
         "has_key": bool(key),
         "key_preview": mask_secret(key),
         "key_env": provider_key_env(provider["id"]),
+        "builtin_model_image_profiles": zhenzhen_public_image_profiles(provider),
     }
     if provider.get("id") == "runninghub":
         wallet_key = runninghub_wallet_key_value()
@@ -3533,7 +3539,7 @@ def api_headers(json_body=True, provider=None, model=""):
         api_key = AI_API_KEY
         if not api_key:
             raise HTTPException(status_code=400, detail="未配置 COMFLY_API_KEY，请在 API/.env 中填写。")
-    if provider and effective_protocol(provider, model) == "gemini":
+    if provider and effective_protocol(provider, model) == "gemini" and not zhenzhen_image_profile(provider, model):
         headers = {"Accept": "application/json", "x-goog-api-key": api_key}
     else:
         headers = {"Accept": "application/json", "Authorization": bearer_auth_value(api_key)}
@@ -8790,7 +8796,7 @@ def gemini_image_config(size, model="", provider=None, image_parameters=None):
     profile = image_profile_for(provider, model)
     if profile.get("mode") == "aspect-size":
         params = aspect_image_parameters(size, profile, image_parameters)
-        config = {"imageSize": params["image_size"]}
+        config = {"imageSize": params["image_size"]} if "image_size" in params else {}
         if params["aspect_ratio"] != "auto":
             config["aspectRatio"] = params["aspect_ratio"]
         return config
@@ -9989,6 +9995,7 @@ async def generate_runninghub_video(payload, provider):
 
 async def generate_ai_image(prompt, size, quality, model, reference_images=None, provider_id="comfly", image_parameters=None):
     provider = get_api_provider(provider_id)
+    builtin_image_profile = zhenzhen_image_profile(provider, model)
     if provider["id"] == "modelscope":
         return await generate_modelscope_provider_image(prompt, size, model, reference_images, provider)
     if is_codex_provider(provider):
@@ -9999,7 +10006,7 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
         return await generate_jimeng_provider_image(prompt, size, model, reference_images, provider)
     if is_runninghub_provider(provider):
         return await generate_runninghub_provider_image(prompt, size, model, reference_images, provider)
-    if effective_protocol(provider, model) == "gemini":
+    if effective_protocol(provider, model) == "gemini" and not builtin_image_profile:
         return await generate_gemini_provider_image(prompt, size, model, reference_images, provider, image_parameters)
     if is_volcengine_provider(provider):
         return await generate_volcengine_provider_image(prompt, size, model, reference_images, provider)
@@ -10047,7 +10054,14 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
                 files=edit_files if edit_files is not None else {},
             )
 
-        if is_aspect_image and not image_refs:
+        if builtin_image_profile and not mask_refs:
+            response = await submit_zhenzhen_image(
+                client, gen_url, api_headers(provider=provider, model=model),
+                model=model, prompt=prompt, size=size, quality=quality,
+                references=[reference_to_data_url(ref, max_size=1536) for ref in image_refs],
+                aspect_parameters=aspect_params,
+            )
+        elif is_aspect_image and not image_refs:
             body = {"model": model, "prompt": prompt, "response_format": "url", **aspect_params}
             if quality:
                 body["quality"] = quality
@@ -13008,7 +13022,10 @@ def build_image_param_fields(engine: str, provider: dict, model: str):
     if profile.get("ratios"):
         size_field["ratios"] = [{"value":ratio, "label":ratio} for ratio in profile["ratios"]]
     if profile.get("resolutions"):
-        size_field["resolutions"] = [item for item in image_resolutions if str(item["value"]).upper() in profile["resolutions"]]
+        size_field["resolutions"] = [{"value":value.lower(), "label":value} for value in profile["resolutions"]]
+    if profile.get("supports_image_size") is False:
+        size_field["resolutions"] = []
+        size_field["resolution_note"] = "模型固定 " + profile["fixed_resolution"] if profile.get("fixed_resolution") else "分辨率由模型决定"
     if profile.get("supports_quality") is False:
         fields = [field for field in fields if field["key"] != "quality"]
     refs_field["max"] = profile.get("max_references", ONLINE_IMAGE_REFERENCE_MAX)

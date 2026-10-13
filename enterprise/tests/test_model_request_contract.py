@@ -12,6 +12,11 @@ from enterprise.provider_image_profiles import (
     IMAGE_PROFILE_TEMPLATES, ImageProfileError, build_aspect_parameters,
     normalize_image_profile, image_profile_for,
 )
+from enterprise.providers.zhenzhen import (
+    IMAGE_MODELS, image_profile as zhenzhen_image_profile,
+    public_image_profiles as zhenzhen_public_image_profiles,
+    submit_image as submit_zhenzhen_image,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -22,6 +27,7 @@ def builders():
     names = {
         'parse_size_pair', 'apimart_size_resolution', 'aspect_image_parameters',
         'gemini_image_config', 'gemini_model_name', 'generate_ai_image',
+        'api_headers',
     }
     tree = ast.parse((ROOT / 'main.py').read_text(encoding='utf-8'))
     nodes = [node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in names
@@ -39,6 +45,7 @@ def builders():
         're':re, 'HTTPException':HTTPException,
         'IMAGE_PROFILE_TEMPLATES':IMAGE_PROFILE_TEMPLATES, 'ImageProfileError':ImageProfileError,
         'build_aspect_parameters':build_aspect_parameters, 'normalize_image_profile':normalize_image_profile, 'image_profile_for':image_profile_for,
+        'zhenzhen_image_profile':zhenzhen_image_profile, 'submit_zhenzhen_image':submit_zhenzhen_image,
         'httpx':SimpleNamespace(AsyncClient=lambda **kw: client_type(transport=httpx.MockTransport(transport), **kw), Timeout=httpx.Timeout, HTTPError=httpx.HTTPError),
         'get_api_provider':lambda _:provider,
         'selected_model':lambda model, fallback:model or fallback,
@@ -50,7 +57,10 @@ def builders():
         'ONLINE_IMAGE_REFERENCE_MAX':16,
         'provider_endpoint_url':lambda p, key, default:p['base_url'] + default,
         'api_headers':lambda **kw:{'Content-Type':'application/json'} if kw.get('json_body',True) else {},
+        'provider_env_key_value':lambda _: 'fake-contract-key',
+        'bearer_auth_value':lambda key:'Bearer ' + key,
         'extract_image':lambda raw:{'type':'url', 'value':raw['data'][0]['url']},
+        'reference_to_data_url':lambda ref, **kwargs:ref['url'],
     }
     for name in ('codex', 'gemini_cli', 'jimeng', 'runninghub', 'volcengine'):
         env[f'is_{name}_provider'] = lambda p:False
@@ -81,6 +91,7 @@ def test_nb21_generation_uses_named_parameters(builders):
     body = json.loads(calls[0].content)
     assert body == {'model':'gemini-nano-banana-2.1', 'prompt':'fixture prompt', 'response_format':'url', 'aspect_ratio':'16:9', 'image_size':'4K'}
     assert calls[0].url.path == '/v1/images/generations'
+    assert 'Authorization' in calls[0].headers and 'x-goog-api-key' not in calls[0].headers
 
 
 def test_invalid_aspect_stops_before_provider_request(builders):
@@ -163,3 +174,68 @@ def test_older_provider_settings_do_not_erase_capability_profiles(explicit_clear
     asyncio.run(env['save_providers']([item]))
     for field in ('image_profile','model_image_profiles'):
         assert saved[0][field] == ({} if explicit_clear else existing[field])
+
+
+@pytest.mark.parametrize('model', list(IMAGE_MODELS))
+def test_zhenzhen_builtin_text_and_reference_requests_need_no_template(builders, model):
+    import json
+    env, calls, _ = builders
+    provider = env['fixture_provider']
+    provider.update(base_url='https://ai.t8star.org', image_profile={}, model_image_profiles={})
+    for references in ([], [{'url':'data:image/png;base64,ZmFrZQ=='}]):
+        asyncio.run(env['generate_ai_image']('fixture prompt', '1024x1024', 'high', model, references, 'fixture', {'aspect_ratio':'1:1', 'resolution':'2K'}))
+    assert len(calls) == 2
+    for request in calls:
+        body = json.loads(request.content)
+        assert request.url.path == '/v1/images/generations'
+        profile = IMAGE_MODELS[model]
+        if profile['mode'] == 'aspect-size':
+            assert body['aspect_ratio'] == '1:1' and 'size' not in body
+            assert ('image_size' in body) == profile['supports_image_size']
+            if profile['supports_image_size']:
+                assert body['image_size'] == '2K'
+        else:
+            assert body['size'] == '1024x1024' and 'image_size' not in body
+        assert ('quality' in body) == profile['supports_quality']
+    assert json.loads(calls[1].content)['image'] == ['data:image/png;base64,ZmFrZQ==']
+
+
+def test_builtin_contract_overrides_stale_templates_only_on_verified_supplier(builders):
+    env, calls, _ = builders
+    provider = env['fixture_provider']
+    provider.update(base_url='https://ai.t8star.org', image_profile={'mode':'pixel'}, model_image_profiles={'gemini-nano-banana-2.1':{'mode':'pixel'}})
+    assert image_profile_for(provider, 'gemini-nano-banana-2.1')['mode'] == 'aspect-size'
+    with pytest.raises(HTTPException, match='9:21'):
+        asyncio.run(env['generate_ai_image']('fixture prompt', '9:21', '', 'gemini-nano-banana-2.1', provider_id='fixture'))
+    assert not calls
+    provider['base_url'] = 'https://ai.t8star.org.example.invalid'
+    assert image_profile_for(provider, 'gemini-nano-banana-2.1') == {'mode':'pixel'}
+    provider['id'] = 'zhenzhen'
+    assert image_profile_for(provider, 'gemini-nano-banana-2.1')['mode'] == 'aspect-size'
+
+
+def test_zhenzhen_reference_error_never_retries_paid_submission(builders):
+    env, calls, status = builders
+    env['fixture_provider'].update(base_url='https://ai.t8star.org', image_profile={})
+    status[0] = 400
+    with pytest.raises(httpx.HTTPStatusError):
+        asyncio.run(env['generate_ai_image']('fixture prompt', '16:9', '', 'gemini-nano-banana-2.1', [{'url':'https://media.invalid/input.png'}], 'fixture'))
+    assert len(calls) == 1 and calls[0].url.path == '/v1/images/generations'
+
+
+def test_builtin_projection_contains_only_selected_models_and_no_keys():
+    provider = {'id':'zhenzhen', 'image_models':['nano-banana','gemini-3.1-flash-image','new-model'], 'api_key':'fake-key'}
+    projected = zhenzhen_public_image_profiles(provider)
+    assert set(projected) == {'nano-banana', 'gemini-3.1-flash-image'}
+    assert projected['nano-banana']['supports_image_size'] is False
+    assert '512' in projected['gemini-3.1-flash-image']['resolutions']
+    assert 'fake-key' not in str(projected)
+
+
+def test_builtin_generation_contract_is_independent_of_old_platform_protocol(builders):
+    env, calls, _ = builders
+    env['fixture_provider'].update(base_url='https://ai.t8star.org', image_profile={})
+    env['effective_protocol'] = lambda provider, model:'gemini'
+    asyncio.run(env['generate_ai_image']('fixture prompt', '16:9', '', 'nano-banana', provider_id='fixture'))
+    assert calls[0].url.path == '/v1/images/generations'
+    assert 'Authorization' in calls[0].headers and 'x-goog-api-key' not in calls[0].headers

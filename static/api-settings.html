@@ -316,17 +316,18 @@
                         </div>
                     </section>
 
-                    <div id="imageProfileControls" class="block" style="display:none">
-                        <div class="block-title">图像参数模板</div>
-                        <div class="block-desc">同类模型共用模板，新增模型可继承平台默认；例外按名称匹配批量指定。保存后生效。</div>
+                    <div id="imageAdapterSummary" class="block-desc" role="status"></div>
+                    <details id="imageProfileControls" class="block" style="display:none">
+                        <summary class="block-title">临时兼容新模型（可选）</summary>
+                        <div class="block-desc">已内置适配的模型自动调用，无需设置模板。仅当新模型尚未适配时，由管理员临时指定兼容参数；不覆盖内置适配。</div>
                         <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px">
                             <select id="imageProfileTemplate" class="model-protocol-select" aria-label="图像参数模板"></select>
-                            <button class="action-btn" type="button" onclick="applyImageProfile(true)">设为平台默认</button>
+                            <button class="action-btn" type="button" onclick="applyImageProfile(true)">设为未适配模型默认</button>
                             <input id="imageProfileMatch" placeholder="模型名称包含，例如 banana；留空匹配全部" style="min-width:220px;flex:1" />
-                            <button class="action-btn" type="button" onclick="applyImageProfile(false)">应用到匹配模型</button>
+                            <button class="action-btn" type="button" onclick="applyImageProfile(false)">临时应用到匹配的新模型</button>
                         </div>
                         <div id="imageProfileSummary" class="block-desc"></div>
-                    </div>
+                    </details>
                     <div id="modelsHead" class="block models-toolbar">
                         <div>
                             <div class="block-title" data-i18n="api.modelsTitle">模型列表</div>

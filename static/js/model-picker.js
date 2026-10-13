@@ -165,12 +165,12 @@
         controls.refreshModels();
     }
     function profileFor(provider, model) {
-        return provider?.model_image_profiles?.[model] || provider?.image_profile || {};
+        return provider?.builtin_model_image_profiles?.[model] || provider?.model_image_profiles?.[model] || provider?.image_profile || {};
     }
     function imageParameters(source) {
         const ratios = {square:'1:1', portrait:'2:3', landscape:'3:2', portrait43:'3:4', landscape43:'4:3', story:'9:16', wide:'16:9', ultrawide:'21:9', ultratall:'9:21'};
         const ratio = source.ratio === 'custom' ? source.customRatio : source.ratio === 'source' ? '' : (ratios[source.ratio] || source.ratio);
-        return {aspect_ratio:ratio || '', resolution:['1k','2k','4k'].includes(source.resolution) ? source.resolution.toUpperCase() : ''};
+        return {aspect_ratio:ratio || '', resolution:['512','1k','2k','4k'].includes(source.resolution) ? source.resolution.toUpperCase() : ''};
     }
     function preferredModel(kind, providerId, models) {
         return models.find(model => favorites.has(JSON.stringify([kind,providerId,model]))) || models[0] || '';

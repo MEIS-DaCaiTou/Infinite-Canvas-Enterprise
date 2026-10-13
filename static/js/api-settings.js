@@ -11,13 +11,15 @@ const imageRequestModeInput = document.getElementById('imageRequestModeInput');
 let imageProfileTemplates = {};
 
 function renderImageProfileControls(item){
+    const builtinCount = Object.keys(item.builtin_model_image_profiles || {}).length;
+    document.getElementById('imageAdapterSummary').textContent = builtinCount ? `已选图像模型中 ${builtinCount} 个使用内置供应商适配，无需配置参数模板。` : '';
     const controls = document.getElementById('imageProfileControls');
     if(!controls) return;
     controls.style.display = providerSupportsModelProtocol(item) && Object.keys(imageProfileTemplates).length ? '' : 'none';
     const select = document.getElementById('imageProfileTemplate');
     select.innerHTML = Object.entries(imageProfileTemplates).map(([key, profile]) => `<option value="${escapeAttr(key)}">${escapeHtml(profile.label || key)}</option>`).join('');
     select.value = item.image_profile?.template_id || 'standard';
-    document.getElementById('imageProfileSummary').textContent = `平台默认：${item.image_profile?.label || '沿用现有接口'}；单模型模板：${Object.keys(item.model_image_profiles || {}).length} 个`;
+    document.getElementById('imageProfileSummary').textContent = `未适配模型默认：${item.image_profile?.label || '沿用现有接口'}；临时配置：${Object.keys(item.model_image_profiles || {}).filter(name => !item.builtin_model_image_profiles?.[name]).length} 个`;
 }
 function applyImageProfile(asDefault){
     const item = provider();
@@ -29,10 +31,10 @@ function applyImageProfile(asDefault){
     else {
         const match = document.getElementById('imageProfileMatch').value.trim().toLowerCase();
         item.model_image_profiles = item.model_image_profiles || {};
-        (item.image_models || []).filter(name => name.toLowerCase().includes(match)).forEach(name => {item.model_image_profiles[name] = {...value};});
+        (item.image_models || []).filter(name => name.toLowerCase().includes(match) && !item.builtin_model_image_profiles?.[name]).forEach(name => {item.model_image_profiles[name] = {...value};});
     }
     renderImageProfileControls(item);
-    setStatus('参数模板已应用，请保存平台配置。');
+    setStatus('临时兼容参数已应用，请保存平台配置；已适配模型继续自动调用。');
 }
 const imageEditRouteInput = document.getElementById('imageEditRouteInput');
 const keyInput = document.getElementById('keyInput');

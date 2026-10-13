@@ -44,7 +44,7 @@ Runtime Supervisor
 | Enterprise data | 用户、角色、归属、审计、版本化 migration/backup/restore | `enterprise/db.py`，`enterprise/migrations/` |
 | Canvas application | 画布、工作流、模型调用、静态前端和原有业务 API | `main.py`，`static/` |
 | Task journal | 两类画布任务持久回执基础 | `enterprise/canvas_task_journal.py` |
-| 图像参数能力 | 平台默认模板、模型例外及参数校验；与 HTTP/Windows 生命周期分离 | `enterprise/provider_image_profiles.py` |
+| 供应商图像适配 | 内置 Zhenzhen 已确认模型协议与能力；新模型临时兼容配置；与存储/Windows 生命周期分离 | `enterprise/providers/zhenzhen.py`，`enterprise/provider_image_profiles.py` |
 | 个人模型显示 | 当前登录账号的模型选择列表及持久设置；不授予供应商管理权限 | `enterprise/user_model_api.py`，`enterprise/user_model_preferences.py`，`static/js/model-picker.js` |
 | Runtime | launcher、supervisor、health、ownership、state/log | `enterprise/runtime/` |
 | Release/update | Manifest v2、资产校验、prepare、pointer switch、rollback foundation | `enterprise/release/`，`enterprise/ops/update/`，`enterprise/update_api.py` |
@@ -52,11 +52,13 @@ Runtime Supervisor
 
 Code Wiki 提供更细的文件、类和函数导航：[docs/code-wiki/README.md](docs/code-wiki/README.md)。
 
-模型调用继续复用现有入口和任务回执。图像参数以平台默认模板及模型能力配置驱动，新增同类模型可继承模板，例外通过配置描述；新的提交/查询协议才需要新的适配代码。供应商未提供完整元数据时由管理员指定模板，不从模型名称猜测能力。节点保留明确的画幅/分辨率选择，个人显示列表只影响选择体验。
+模型调用继续复用现有入口、结果归档和任务回执。长期接入供应商的参数差异由项目维护内置适配，普通用户只选择模型、画幅、参考图等创作参数，无需配置请求模板。Zhenzhen 图像模型的已确认协议分组与别名集中在 `enterprise/providers/zhenzhen.py`，按明确供应商身份及实际请求契约选路；文生图和参考图生成使用文档指定的 JSON Generations，不探测多个付费提交入口。前端读取同一内置能力的公开投影，限制不支持的参数；已支持模型优先于历史临时模板。
+
+临时模板默认折叠，仅供管理员在新上线模型尚未内置适配时配置兼容参数，不作为日常接入流程。该实现覆盖已确认的 Nano Banana、Gemini 3.1 图像、GPT Image 2 和 Seedream v5 Pro 图像契约；不等于供应商所有模型、视频协议、层分解输出或原生 Google 协议已经验收。新增同协议别名主要维护集中目录；新的提交/查询协议才增加适配代码。节点保留明确的画幅/分辨率选择，个人显示列表只影响选择体验。
 
 个人模型偏好存于 `DATA_ROOT/user-model-preferences/<user_id>.json`，身份来自认证会话，以同目录临时文件原子替换；只清理本次写入自己的临时文件。该写入边界登记为既有 APP_ROOT 写入审计的 W50，不写安装源码目录，也不改动企业业务数据库 Schema。
 
-`main.py` 中已有供应商调用、画布和工作流仍存在集中实现的技术债。独立供应商 Adapter、统一持久任务/Attempt、完整费用对账按唯一路线图阶段 4 落实；图像模板不等于上述体系已完成，也不构成自动最低价选路或不明状态跨供应商再次付费提交。
+`main.py` 中已有供应商调用、画布和工作流仍存在集中实现的技术债。本次将 Zhenzhen 新增图像请求构造与能力目录放在独立模块，主入口只连接现有 HTTP、资源转换和结果处理。其余供应商的模块化、统一持久任务/Attempt 和完整费用对账按唯一路线图阶段 4 落实；本次不构成自动最低价选路或不明状态跨供应商再次付费提交。
 
 ## 3. 安全与权限边界
 
