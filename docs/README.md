@@ -1,8 +1,8 @@
 # Infinite Canvas Enterprise 文档索引
 
-更新时间：2026-10-09
+更新时间：2026-10-13
 
-本文是唯一导航入口。[文档登记表](./document-register.json) 列出仓库全部受管理 Markdown／文本资料的角色；[本轮审查](./ops/DOC-3-DOCUMENT-SYSTEM-AUDIT-2026-10.md) 记录整改依据。文档数量不等于现行规则数量。
+本文是唯一导航入口。2026-10-13 已核对现行事实源与全部 Code Wiki 章节；main、开发候选和正式发行分别标注。[文档登记表](./document-register.json) 列出仓库全部受管理 Markdown／文本资料的角色；[本轮审查](./ops/DOC-3-DOCUMENT-SYSTEM-AUDIT-2026-10.md) 记录整改依据。文档数量不等于现行规则数量。
 
 ## 1. 每个问题只有一个事实源
 
@@ -43,6 +43,9 @@
 - [旧运维路线](./ops/OPS-ROADMAP-2026-07.md) 和 [旧企业蓝图](./architecture/ENTERPRISE-ARCHITECTURE-BLUEPRINT-2026-07.md) 仅作历史材料；当前顺序只认唯一路线图。
 - [2026-10-09 需求决策登记](./decisions/REQUIREMENTS-DECISION-REGISTER.md)：B01—B27 保留工程方向，N29/N34/N37 核心保留，N30/N31/N33 基础契约承接，其余独立产品范围按负责人决定移出。需求内容回到范围基线，不自行派工。
 - 范围基线下属 [追踪规则](./requirements/TRACEABILITY-CONTRACT.md) 登记 14 BR / 37 历史项 / 104 场景；[N37 草案](./requirements/N37-ASSET-INTEROP-CONTRACT-DRAFT.md) 只提出接口和无正式编号的专项验收方案。追踪完整不是测试通过或新增业务授权。
+
+- [2026-10-13 供应商适配/当前部署补充](./decisions/REQUIREMENTS-DECISION-REGISTER.md#7-2026-10-13-长期供应商适配与临时兼容边界)：长期平台适配由项目维护，模板仅临时兼容新模型；Linux/云/容量实施待实际需求。
+- 最近完整工程包记录：[C4 已合并](./ops/UPDATE-CATALOG-PAGINATION-2026-10-11.md)、[C5 候选](./ops/VERIFIED-UPDATER-HANDOFF-2026-10-11.md)、[C6 候选](./ops/OFFLINE-RETAINED-UPGRADE-2026-10-12.md)、[C7 候选](./ops/ONLINE-UPGRADE-SEQUENCE-2026-10-12.md)、[产品集成修复候选](./ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md)。它们承载实现/验证证据，不形成第二套动态状态或任务队列。
 
 ## 4. 原有重复入口与分支差异
 

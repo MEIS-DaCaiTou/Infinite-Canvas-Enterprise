@@ -51,6 +51,15 @@ from enterprise.providers.submission import (
     image_api_explicitly_rejected, provider_submission_unknown, submission_json,
     httpx_request_with_transient_retries,
 )
+from enterprise.provider_image_profiles import (
+    IMAGE_PROFILE_TEMPLATES, ImageProfileError, build_aspect_parameters,
+    normalize_image_profile, normalize_model_image_profiles, image_profile_for,
+)
+from enterprise.providers.zhenzhen import (
+    image_profile as zhenzhen_image_profile,
+    public_image_profiles as zhenzhen_public_image_profiles,
+    submit_image as submit_zhenzhen_image,
+)
 
 # Do not make `main.py` choose a profile.  The getter only accepts a process
 # root already installed by the caller (or the development compatibility
@@ -1271,6 +1280,8 @@ def normalize_provider(item):
         "chat_models": model_list_from_values(item.get("chat_models") or []),
         "video_models": video_models,
         "model_protocols": normalize_model_protocols(item.get("model_protocols")),
+        "image_profile": normalize_image_profile(item.get("image_profile")),
+        "model_image_profiles": normalize_model_image_profiles(item.get("model_image_profiles")),
         "ms_loras": normalize_ms_loras(item.get("ms_loras") or []),
         "ms_defaults_version": int(item.get("ms_defaults_version") or 0),
         "rh_apps": normalize_runninghub_entries(item.get("rh_apps") or [], "app"),
@@ -1310,6 +1321,7 @@ def public_provider(provider):
         "has_key": bool(key),
         "key_preview": mask_secret(key),
         "key_env": provider_key_env(provider["id"]),
+        "builtin_model_image_profiles": zhenzhen_public_image_profiles(provider),
     }
     if provider.get("id") == "runninghub":
         wallet_key = runninghub_wallet_key_value()
@@ -2419,6 +2431,8 @@ class OnlineImageRequest(BaseModel):
     provider_id: str = "comfly"
     model: str = ""
     size: str = "1024x1024"
+    aspect_ratio: str = ""
+    resolution: str = ""
     quality: str = "auto"
     n: int = 1
     reference_images: List[AIReference] = []
@@ -2540,6 +2554,8 @@ class ApiProviderPayload(BaseModel):
     chat_models: List[str] = []
     video_models: List[str] = []
     model_protocols: Dict[str, str] = {}
+    image_profile: Dict[str, Any] = Field(default_factory=dict)
+    model_image_profiles: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
     ms_loras: List[Dict[str, Any]] = []
     ms_defaults_version: int = 0
     rh_apps: List[Dict[str, Any]] = []
@@ -3527,7 +3543,7 @@ def api_headers(json_body=True, provider=None, model=""):
         api_key = AI_API_KEY
         if not api_key:
             raise HTTPException(status_code=400, detail="未配置 COMFLY_API_KEY，请在 API/.env 中填写。")
-    if provider and effective_protocol(provider, model) == "gemini":
+    if provider and effective_protocol(provider, model) == "gemini" and not zhenzhen_image_profile(provider, model):
         headers = {"Accept": "application/json", "x-goog-api-key": api_key}
     else:
         headers = {"Accept": "application/json", "Authorization": bearer_auth_value(api_key)}
@@ -8754,7 +8770,21 @@ def gemini_endpoint_url(provider, model):
     model_name = urllib.parse.quote(gemini_model_name(model), safe="")
     return provider_endpoint_url(provider, "image_generation_endpoint", f"/v1beta/models/{model_name}:generateContent")
 
-def gemini_image_config(size):
+def aspect_image_parameters(size, profile, requested=None):
+    try:
+        return build_aspect_parameters(size, profile, apimart_size_resolution(size), requested)
+    except ImageProfileError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def gemini_image_config(size, model="", provider=None, image_parameters=None):
+    profile = image_profile_for(provider, model)
+    if profile.get("mode") == "aspect-size":
+        params = aspect_image_parameters(size, profile, image_parameters)
+        config = {"imageSize": params["image_size"]} if "image_size" in params else {}
+        if params["aspect_ratio"] != "auto":
+            config["aspectRatio"] = params["aspect_ratio"]
+        return config
     width, height = parse_size_pair(size)
     if not width or not height:
         raw = str(size or "").strip().upper()
@@ -8778,8 +8808,11 @@ def gemini_reference_part(ref):
         return {"fileData": {"mimeType": "image/png", "fileUri": value}}
     return None
 
-async def generate_gemini_provider_image(prompt, size, model, reference_images=None, provider=None):
+async def generate_gemini_provider_image(prompt, size, model, reference_images=None, provider=None, image_parameters=None):
     model_name = gemini_model_name(model)
+    profile = image_profile_for(provider, model)
+    if len(reference_images or []) > profile.get("max_references", ONLINE_IMAGE_REFERENCE_MAX):
+        raise HTTPException(status_code=400, detail="参考图数量超过当前模型配置上限")
     endpoint = gemini_endpoint_url(provider, model_name)
     parts = [{"text": prompt.strip()}]
     for ref in (reference_images or [])[:ONLINE_IMAGE_REFERENCE_MAX]:
@@ -8790,11 +8823,11 @@ async def generate_gemini_provider_image(prompt, size, model, reference_images=N
         "contents": [{"role": "user", "parts": parts}],
         "generationConfig": {
             "responseModalities": ["TEXT", "IMAGE"],
-            "imageConfig": gemini_image_config(size),
+            "imageConfig": gemini_image_config(size, model, provider, image_parameters),
         },
     }
     async with httpx.AsyncClient(timeout=httpx.Timeout(connect=20.0, read=1800.0, write=120.0, pool=20.0)) as client:
-        response = await client.post(endpoint, headers=api_headers(provider=provider), json=body)
+        response = await client.post(endpoint, headers=api_headers(provider=provider, model=model), json=body)
         response.raise_for_status()
         raw = response.json()
         return extract_image(raw), raw
@@ -9945,8 +9978,9 @@ async def generate_runninghub_video(payload, provider):
         local_urls = [await save_remote_video_to_output(url, prefix="rh_video_") for url in urls]
         return {"videos": local_urls, "task_id": task_id, "raw": result}
 
-async def generate_ai_image(prompt, size, quality, model, reference_images=None, provider_id="comfly"):
+async def generate_ai_image(prompt, size, quality, model, reference_images=None, provider_id="comfly", image_parameters=None):
     provider = get_api_provider(provider_id)
+    builtin_image_profile = zhenzhen_image_profile(provider, model)
     if provider["id"] == "modelscope":
         return await generate_modelscope_provider_image(prompt, size, model, reference_images, provider)
     if is_codex_provider(provider):
@@ -9957,16 +9991,21 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
         return await generate_jimeng_provider_image(prompt, size, model, reference_images, provider)
     if is_runninghub_provider(provider):
         return await generate_runninghub_provider_image(prompt, size, model, reference_images, provider)
-    if effective_protocol(provider, model) == "gemini":
-        return await generate_gemini_provider_image(prompt, size, model, reference_images, provider)
+    if effective_protocol(provider, model) == "gemini" and not builtin_image_profile:
+        return await generate_gemini_provider_image(prompt, size, model, reference_images, provider, image_parameters)
     if is_volcengine_provider(provider):
         return await generate_volcengine_provider_image(prompt, size, model, reference_images, provider)
     is_gpt2 = is_gpt_image_2_model(model)
+    image_profile = image_profile_for(provider, model)
+    is_aspect_image = image_profile.get("mode") == "aspect-size"
+    aspect_params = aspect_image_parameters(size, image_profile, image_parameters) if is_aspect_image else None
     is_apimart = is_apimart_provider(provider)
     # 不对 GPT 尺寸做任何缩小/拦截：用户选什么尺寸就原样发给上游；
     # 若超过 GPT 的最大像素限制被上游拒绝，再由 friendly_image_error_detail 给出友好的像素上限提示。
     quality = str(quality or "").strip().lower()
     if quality not in {"low", "medium", "high"}:
+        quality = ""
+    if image_profile.get("supports_quality") is False:
         quality = ""
     base_url = (provider.get("base_url") or AI_BASE_URL).rstrip("/")
     if not base_url:
@@ -9976,12 +10015,21 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
     refs = [ref for ref in (reference_images or []) if ref.get("url")]
     mask_refs = [ref for ref in refs if str(ref.get("role") or "").strip().lower() == "mask" or str(ref.get("name") or "").lower().endswith("_mask.png")]
     image_refs = [ref for ref in refs if ref not in mask_refs]
+    if len(image_refs) > image_profile.get("max_references", ONLINE_IMAGE_REFERENCE_MAX):
+        raise HTTPException(status_code=400, detail="参考图数量超过当前模型配置上限")
+    if mask_refs and image_profile.get("supports_mask") is False:
+        raise HTTPException(status_code=400, detail="当前模型不支持 mask 参数")
     image_request_mode = effective_image_request_mode(provider, model)
-    request_timeout = httpx.Timeout(connect=20.0, read=1800.0, write=120.0, pool=20.0) if (is_gpt2 or is_apimart or image_request_mode in {"openai-json", "openai-video-proxy", "openai-responses"}) else AI_REQUEST_TIMEOUT
+    if is_aspect_image:
+        image_request_mode = "openai"
+    request_timeout = httpx.Timeout(connect=20.0, read=1800.0, write=120.0, pool=20.0) if (is_aspect_image or is_gpt2 or is_apimart or image_request_mode in {"openai-json", "openai-video-proxy", "openai-responses"}) else AI_REQUEST_TIMEOUT
     async with httpx.AsyncClient(timeout=request_timeout) as client:
         response = None
         async def post_openai_edits(edit_files=None):
             data = {"model": model, "prompt": prompt, "size": size}
+            if is_aspect_image:
+                data.pop("size")
+                data.update(aspect_params)
             if quality:
                 data["quality"] = quality
             return await client.post(
@@ -9991,7 +10039,19 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
                 files=edit_files if edit_files is not None else {},
             )
 
-        if image_request_mode == "openai-video-proxy":
+        if builtin_image_profile and not mask_refs:
+            response = await submit_zhenzhen_image(
+                client, gen_url, api_headers(provider=provider, model=model),
+                model=model, prompt=prompt, size=size, quality=quality,
+                references=[reference_to_data_url(ref, max_size=1536) for ref in image_refs],
+                aspect_parameters=aspect_params,
+            )
+        elif is_aspect_image and not image_refs:
+            body = {"model": model, "prompt": prompt, "response_format": "url", **aspect_params}
+            if quality:
+                body["quality"] = quality
+            response = await client.post(gen_url, headers=api_headers(provider=provider, model=model), json=body)
+        elif image_request_mode == "openai-video-proxy":
             body = {
                 "model": model,
                 "prompt": prompt,
@@ -10092,10 +10152,10 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
                     fh.close()
             # 2) edits 失败 → 非 GPT-Image-2 可回退到 /images/generations + JSON image:[urls/base64]（grsai 风格）
             if response is None:
-                if is_gpt2:
+                if is_gpt2 or is_aspect_image:
                     raise HTTPException(
                         status_code=502,
-                        detail=f"GPT-Image-2 编辑接口 /images/edits 调用失败：{edit_failed_text[:300] or edit_failed_status}。已停止自动重试，避免上游可能已扣费后再次请求。"
+                        detail=f"{model} 编辑接口 /images/edits 调用失败：{edit_failed_text[:300] or edit_failed_status}。已停止自动重试，避免上游可能已扣费后再次请求。"
                     )
                 print(f"/images/edits failed ({edit_failed_status}): {edit_failed_text[:200]!a} -> fallback /images/generations + image:[] JSON")
                 image_payload = [reference_to_data_url(ref, max_size=1536) for ref in image_refs[:ONLINE_IMAGE_REFERENCE_MAX]]
@@ -11870,16 +11930,24 @@ async def ai_models():
 
 @app.get("/api/providers")
 async def api_providers():
-    return {"providers": public_api_providers()}
+    return {"providers": public_api_providers(), "image_profile_templates": IMAGE_PROFILE_TEMPLATES}
 
 @app.put("/api/providers")
 async def save_providers(payload: List[ApiProviderPayload]):
     providers = []
     env_updates = {}
+    previous = {provider["id"]: provider for provider in load_api_providers()}
     # 收集每个 item 的 primary 字段
     raw_primary_flags = [bool(getattr(item, "primary", False)) for item in payload]
     for item in payload:
-        provider = normalize_provider(item.dict(exclude={"api_key"}))
+        values = item.dict(exclude={"api_key"})
+        submitted = item.dict(exclude_unset=True)
+        # Older settings clients do not know capability profiles. Preserve them
+        # when omitted; an explicitly submitted empty mapping still clears one.
+        for field in ("image_profile", "model_image_profiles"):
+            if field not in submitted:
+                values[field] = previous.get(item.id.strip().lower(), {}).get(field, {})
+        provider = normalize_provider(values)
         if provider["id"] == "runninghub":
             provider = preserve_runninghub_hidden_overrides(provider)
         if any(existing["id"] == provider["id"] for existing in providers):
@@ -12597,7 +12665,7 @@ async def build_online_image_result(payload: OnlineImageRequest):
     image_refs = image_references(refs)
     count = max(1, min(8, int(payload.n or 1)))
     async def generate_one():
-        image_data, raw_item = await generate_ai_image(payload.prompt, payload.size, payload.quality, model, image_refs, provider["id"])
+        image_data, raw_item = await generate_ai_image(payload.prompt, payload.size, payload.quality, model, image_refs, provider["id"], {"aspect_ratio":payload.aspect_ratio, "resolution":payload.resolution})
         try:
             image_items = extract_images(raw_item) if isinstance(raw_item, dict) else [image_data]
         except HTTPException:
@@ -12941,6 +13009,17 @@ def build_image_param_fields(engine: str, provider: dict, model: str):
             "default": "auto",
         })
     fields.append(count_field)
+    profile = image_profile_for(provider, model)
+    if profile.get("ratios"):
+        size_field["ratios"] = [{"value":ratio, "label":ratio} for ratio in profile["ratios"]]
+    if profile.get("resolutions"):
+        size_field["resolutions"] = [{"value":value.lower(), "label":value} for value in profile["resolutions"]]
+    if profile.get("supports_image_size") is False:
+        size_field["resolutions"] = []
+        size_field["resolution_note"] = "模型固定 " + profile["fixed_resolution"] if profile.get("fixed_resolution") else "分辨率由模型决定"
+    if profile.get("supports_quality") is False:
+        fields = [field for field in fields if field["key"] != "quality"]
+    refs_field["max"] = profile.get("max_references", ONLINE_IMAGE_REFERENCE_MAX)
     fields.append(refs_field)
     return fields
 

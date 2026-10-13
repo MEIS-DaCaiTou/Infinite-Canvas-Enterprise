@@ -1,8 +1,8 @@
 {
   "schema_version": "enterprise-documents-v1",
   "reviewed_at": "2026-10-13",
-  "audit_base_commit": "a5a6aa10b7882c46f129ec6df854239ee111da18",
-  "scope": "All Git-managed or non-ignored new Markdown/text files; roles are not runtime or release approval. Frozen hashes normalize CRLF to LF only.",
+  "audit_base_commit": "e89a288fe1ce8e5066ebebe1971e69bf5d4c7945",
+  "scope": "All Git-managed/non-ignored Markdown/text; merged main e89a288 (#154/#155/#156) and paid-submit candidate #123 are distinguished. Frozen evidence is unchanged; no Release or production approval.",
   "documents": [
     {
       "path": "docs/ops/ONLINE-UPGRADE-SEQUENCE-2026-10-12.md",
@@ -74,19 +74,19 @@
       "path": "ARCHITECTURE.md",
       "kind": "authority",
       "authority": "architecture",
-      "reviewed_at": "2026-10-11"
+      "reviewed_at": "2026-10-13"
     },
     {
       "path": "CODE_BOUNDARIES.md",
       "kind": "authority",
       "authority": "code-boundaries",
-      "reviewed_at": "2026-10-11"
+      "reviewed_at": "2026-10-13"
     },
     {
       "path": "CODEX_WORKFLOW.md",
       "kind": "authority",
       "authority": "workflow",
-      "reviewed_at": "2026-10-03"
+      "reviewed_at": "2026-10-13"
     },
     {
       "path": "docs/architecture/ARCH-2A-ARCHITECTURE-ASSESSMENT-AND-EVOLUTION-2026-07.md",
@@ -180,7 +180,7 @@
       "path": "docs/decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md",
       "kind": "authority",
       "authority": "delivery",
-      "reviewed_at": "2026-10-03"
+      "reviewed_at": "2026-10-13"
     },
     {
       "path": "docs/decisions/ADR-ENV-001-MODULAR-MONOLITH-MIDTERM-ARCHITECTURE-2026-07.md",
@@ -468,7 +468,7 @@
       "path": "docs/README.md",
       "kind": "authority",
       "authority": "navigation",
-      "reviewed_at": "2026-10-09"
+      "reviewed_at": "2026-10-13"
     },
     {
       "path": "docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md",
@@ -553,7 +553,7 @@
       "path": "enterprise/tests/README.md",
       "kind": "authority",
       "authority": "testing",
-      "reviewed_at": "2026-10-09"
+      "reviewed_at": "2026-10-13"
     },
     {
       "path": "enterprise/tests/SMOKE_CHECKLIST.md",
@@ -574,13 +574,13 @@
       "path": "PROJECT_CHARTER.md",
       "kind": "authority",
       "authority": "charter",
-      "reviewed_at": "2026-10-03"
+      "reviewed_at": "2026-10-13"
     },
     {
       "path": "PROJECT_SCOPE_LOCK.md",
       "kind": "authority",
       "authority": "scope",
-      "reviewed_at": "2026-10-11"
+      "reviewed_at": "2026-10-13"
     },
     {
       "path": "README.md",
@@ -609,7 +609,7 @@
       "path": "SECURITY_BASELINE.md",
       "kind": "authority",
       "authority": "security",
-      "reviewed_at": "2026-10-03"
+      "reviewed_at": "2026-10-13"
     },
     {
       "path": "static/system-prompts/infinite-canvas-prompt-templates.md",
@@ -632,6 +632,10 @@
     {
       "path": "tools/validation/windows/env_1b3/README.md",
       "kind": "reference"
+    },
+    {
+      "path": "docs/ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md",
+      "kind": "record"
     },
     {
       "path": "docs/ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md",

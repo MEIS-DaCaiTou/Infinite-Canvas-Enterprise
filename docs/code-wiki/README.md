@@ -1,14 +1,15 @@
 # Infinite Canvas Enterprise Code Wiki
 
-更新时间：2026-10-03
+更新时间：2026-10-13
 项目：`MEIS-DaCaiTou/Infinite-Canvas-Enterprise`
 
-Wiki 是源码/运行参考，不是第二份状态表、路线图或生产批准。主线核验快照为 `main@7905ecf39efabeb3101d7b63c709d8dcd230c9a0`；部分章节保留较早源码索引，具体函数和规模统计须结合当前 Git 复核。
+Wiki 是源码/运行参考，不是第二份状态表、路线图或生产批准。本轮核验 main@e89a288fe1ce8e5066ebebe1971e69bf5d4c7945（已合并 #154/#155/#156），产品功能基点 #156@4bdd9a16074abac86ce47fc1e81b55bfb12cf63c；新增模块说明明确候选归属，C5/C6/C7 已合并，引用准确实现和验收记录。本轮复核全部九章的源码/运行入口，历史测试结果不改成新跑分。
 
 ## 1. 阅读范围
 
 - 数据迁移/恢复、一次确认与路由检查已接入 main，不能再笼统写“只支持同 Schema 更新”。
-- 09.9 应用与通用 EXE 工具来自维护线；没有整体回归 main，BAT 表格仍是源码/旧安装兼容参考。
+- 正式应用最新为 v2026.10.1，来自冻结维护线；main 已接回固定入口/安装维护及 v2 数据基础。BAT 仍是源码/旧安装兼容参考，未发布候选不能称为正式工具。
+- [候选产品修复](../ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md) 索引图像能力/请求模块、个人模型及扩展；[C5](../ops/VERIFIED-UPDATER-HANDOFF-2026-10-11.md)/[C6](../ops/OFFLINE-RETAINED-UPGRADE-2026-10-12.md)/[C7](../ops/ONLINE-UPGRADE-SEQUENCE-2026-10-12.md) 索引候选生命周期。文档存在不表示运行代码合并。
 - 最新主线、PR/CI、Release 和现场结果只见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，每轮重新核验。
 - 安装更新设计见 [统一交付 ADR](../decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md)，任务只按 [路线图](../roadmap/DEVELOPMENT-ROADMAP-2026-2027.md)。
 

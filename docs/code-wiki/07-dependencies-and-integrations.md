@@ -1,6 +1,6 @@
 # 依赖与外部集成
 
-> 代码参考：结构/函数索引保留各章节的源码快照，不自动覆盖维护线工具；实时模块状态、迁移/发布与现场验收见 CURRENT，任务顺序只认路线图。[现行事实与适用范围](../CURRENT_PROJECT_STATUS.md)。
+> 源码参考快照（2026-10-13）：main@e89a288（已合并 #154/#155/#156）；产品功能源码基点 #156@4bdd9a1 保留；C5/C6/C7 已合并，构建与验收范围仍引用其准确记录。本文是代码/运行参考，当前 PR/CI、Release 和验收只见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，实施顺序只认路线图。
 
 [返回索引](./README.md)
 
@@ -28,7 +28,7 @@
 
 ## 2. Python 版本
 
-- 工作区当前 `python/python.exe`：Python 3.10.11，用于本地开发与测试。
+- 开发解释器依当前工作区环境；企业 CI 为 Python 3.11，Runtime 专项为 3.14，不假定所有源码树自带同一 Python。
 - 正式 Runtime 策略：CPython 3.14.x、Windows x64、固定来源与闭合 wheelhouse。
 
 两者目的不同。测试通过开发 Python 不等于正式固定 Runtime 已验证；反过来，Runtime provenance 测试也不证明业务功能全部通过。
@@ -81,7 +81,7 @@ Provider 凭据存于服务端配置，不应通过设置读取接口回传明�
 - Inno Setup 7 x64 安装器构建。
 - 文件原子替换和目录同步语义。
 
-代码含部分跨平台测试 seams，但正式 portable lifecycle 是 Windows 设计。
+代码含部分跨平台测试 seams，正式 portable lifecycle 仍是 Windows 设计。Linux、云部署和容量实施待负责人需求；新的业务规则不新增 Registry、固定盘符或桌面启动前置。
 
 ## 7. 配置项
 
@@ -111,3 +111,9 @@ Provider 凭据存于服务端配置，不应通过设置读取接口回传明�
 3. 运行离线安装、`pip check`、双构建一致性和 Runtime 生命周期验证。
 4. 将新文件纳入 Manifest/inventory；禁止隐式下载未声明依赖。
 5. Provider SDK/协议升级还要回归超时、代理、重试、未知结果和凭据脱敏。
+
+## 9. 候选供应商及本地工具
+
+Zhenzhen 图像能力/请求构造位于 #156 的 enterprise/providers/zhenzhen.py，使用现有 HTTPX client，不新增 SDK、数据库或 Windows 依赖。12 个已确认 JSON 图像模型/别名的契约及未覆盖协议见[实现记录](../ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md)。Chat 继续复用既有 OpenAI-compatible 路径；不据此宣称全部视频/原生接口可用。
+
+Photoshop UXP 源码 manifest 0.3.0，最低 PS 24，具备浏览/置入/PNG 导出/生成查询等接线，但企业认证与真实宿主未验收。素材 Chrome 扩展源码 1.0.1 包含网页/媒体采集、截图、下载/ZIP 与平台导入；#156 修复同源平台连接，真实扩展宿主矩阵未验收，不推断已安装状态。两者是项目能力，与开发用 Codex Browser 不混同。
