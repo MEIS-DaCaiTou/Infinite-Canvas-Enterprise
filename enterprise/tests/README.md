@@ -93,3 +93,7 @@ For every access-control implementation PR, add or extend a focused test here be
 `test_upgrade_sequence.py` covers C7 two-hop execution, immutable checkpoint resumption, current-hop/native-object recovery, revoked authorization and a newly owned HKCU registration. Runtime calls and unit MZ tools are substitutes; existing frozen C5/C6 full native/runtime and GUI evidence is reused within its original scope. Online native asset assembly uses `tools/build_maintenance_assets.py` without publishing a Release. See [C7 evidence](../../docs/ops/ONLINE-UPGRADE-SEQUENCE-2026-10-12.md).
 
 付费请求止损与持久回执定向验证：`python -m pytest -q enterprise/tests/test_paid_submission_stoploss.py enterprise/tests/test_canvas_task_journal.py`。使用模拟供应商和临时安装根，无真实付费；[工程记录](../../docs/ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md)。
+
+## 原任务持久续查
+
+`test_canvas_image_recovery.py` 使用临时 journal 和只查询的模拟供应商；`test_canvas_image_recovery_main.py` 在真实 main 接受上游 ID 后强退进程，再验证新进程只查询原 ID。`node enterprise/tests/test_canvas_task_query.js` 验证两类画布共用请求分流；已有任务/历史隔离脚本补跨用户续查与管理员保持原资源归属。均无真实付费任务或客户操作，GUI/原件范围见 `docs/ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md`。

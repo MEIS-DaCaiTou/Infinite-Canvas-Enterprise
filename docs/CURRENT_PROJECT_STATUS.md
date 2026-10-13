@@ -1,13 +1,14 @@
 # Infinite Canvas Enterprise 当前项目状态
 
 更新时间：2026-10-13
-核验对象：准确 GitHub main、#154/#155/#156 候选 Head 和最终 CI、正式 Release、本地源码与各工作区，以及已有安装副本/GUI/HTTP 证据。历史客户反馈保留采集时点；本轮只同步文档和 Git，没有重新执行升级、付费请求或生产操作。
+核验对象：准确 GitHub main、#157 最终 CI、#123 原任务续查候选、正式 Release、本地工作区和隔离画布 GUI/HTTP 证据。历史客户反馈保留采集时点；没有付费请求、正式发行或生产操作。
 
 ## 1. 开发基线、发行与现场必须分开
 
 | 层级 | 本次事实 | 不能据此声称 |
 | --- | --- | --- |
-| 主线核验基点 | `main@e89a288fe1ce8e5066ebebe1971e69bf5d4c7945`；#137–#142、#146–#156 已合并；#153 发布目录分页与完整性已进入主线；服务器及 500+/200+ 长期约束随 #152 入主线 | 主线能力已随正式 10.1 全部交付；新 main CI 已全部成功 |
+| 主线核验基点 | `main@e89a288fe1ce8e5066ebebe1971e69bf5d4c7945`；#137–#142、#146–#156 已合并；#153 发布目录分页与完整性已进入主线；服务器及 500+/200+ 长期约束随 #152 入主线 | 主线能力已随正式 10.1 全部交付 |
+| 最新 main CI | 准确 e89a288 的 [Enterprise/Runtime](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/38364640885)、[文档](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/38364640948) 最终 SUCCESS，真实固定 EXE opt-in SKIPPED | PR CI 替代 main CI，跳过等于安装副本验收 |
 | 历史 main CI | 准确 bc33339 的 [Enterprise/Runtime](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/38147727696)、[文档](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/38147727686) 三项检查最终 SUCCESS；真实固定 EXE opt-in SKIPPED，原生编译未触发 | 用 PR CI 替代 main CI；跳过门禁等于已验收 |
 | 开发基线收口 | #146 选择性接回 10.1 同源页面提示和数据库 v2 迁移/构建契约，保留主线安全治理、任务回执、原生入口和恢复保护；准确整合范围与验证见 [收口记录](./ops/DEVELOPMENT-BASELINE-CLOSEOUT-2026-10-09.md) | 整条维护分支已合并；任意历史安装已受支持 |
 | 主线诊断/恢复增量 | #147、#148 已合并。#148 工作包 B 完成精确 Job/READY、源进程 lease、接受竞争和超时恢复保护；310 项关联回归通过。代码 `6002300eff5fd4750f84bfe684b41a739c541120` 的本机固定 EXE 合成三门禁通过、测试进程/端口清理确认；准确最终 Head `fd8303337ea22bab91d4d1eb84606dcaa410f4ca` 三项常规 CI 及独立审查通过，2026-10-10 合并；[实施与验证记录](./ops/RUNTIME-UPDATE-LIFECYCLE-2026-10-09.md) | 已进入正式 10.1、所有安装副本或客户环境已验收、现场旧失败根因已确定 |
@@ -45,6 +46,10 @@
 
 三包均未发布，固定 EXE real gates 的自动 opt-in 为 SKIPPED；已有真实副本证据不因 CI 跳过被抹除，也不因此外推全部客户。
 
+[#157](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/157) `551f433db51444be2c96dec225b6479b8a854f00` 四项常规 CI 最终 SUCCESS，仍 Draft 未审查；固定入口真实单跳及自动恢复已补候选证据，仍保留 C7 历史/GUI 限制。启动使用当前版本、不自动更新，管理员按需单独确认；不能把该候选能力写成当前 main 或正式 10.1。
+
+[#123](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/123) Draft 继续交付付费止损与画布原任务持久续查，功能基点 `1ff8718`。供应商 ID 在轮询前持久化，两类画布共享“查询结果”，恢复写回同一回执和节点；批量部分结果保留、跨用户拒绝。真实 main 钩子强退和本机模拟供应商 GUI 已验证；原 7e6d90b8 CI 不代表新增 Head 已成功。见[完整证据与边界](./ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md)，不是完整任务中心/费用账本。
+
 历史记录的“未合并”只代表记录时点。#142 于 10-05 合并为 `a54bdbec348c49fa9eed12cac0bf861241ef5c0b`；真实副本/入口验证及 GUI 限制仍见 [DELIVERY-1](./ops/DELIVERY-1-FIXED-NATIVE-ENTRY-2026-10.md)，不能以源码接线冒充客户图形操作验收。
 
 ## 3. 10.1 发布与生产反馈
@@ -73,10 +78,10 @@
 当前仍是 **阶段 3：统一安装与在线升级体验收敛**，唯一实施顺序见[路线图](./roadmap/DEVELOPMENT-ROADMAP-2026-2027.md)。
 
 1. #146–#153 的主线基础、固定入口、缓存清理、同版保留数据卸载/重装和目录分页已完成合并；C4 不再重复开发或重跑已有充分证据的测试。#148 的失败与最终合成三门禁、C2/C3 的限定证据继续保留。
-2. #154/#155 已按负责人授权核查准确 Head 并合并，包含目标执行器、离线/在线连续升级、原生工具和检查点恢复；没有将开发端核查称为新增独立审查。下一步优先处理 #155 在线来源交接在本机被 `SYSTEM_UPDATE_HANDOFF_JOB_BLOCKED` 拒绝的真实缺口，并在准确候选中复用已完成证据。合成两跳成功不证明真实整机重启和所有在线续接已通过。
+2. #154/#155 已按负责人授权合并；C8 #157 的已核实 Job 创建参数修正、正式启动方式及真实单跳/自动恢复已形成待审候选，准确 Head CI 已通过。安装只收口影响实际迭代的缺口，使用已有离线后备路径，不扩大任意宿主/历史/GUI 矩阵；启动当前版本不要求更新。合成两跳不证明整机重启和全部在线续接。
 3. GUI 状态按准确来源分列：#152 的历史卸载 Yes 点击仍缺证据；C6 后续合成安装副本已有标准卸载确认和限定跨版本重装 GUI 证据，代码已合入 main。不能把这两者写成全面通过或全部未验证；未知来源、未来 Schema、未列 GUI 和客户设备范围继续保留限制。
 4. #156 处理实际使用问题；管理员创建确认在 main 已有表单，旧正式 10.1 与现行主线契约不同。普通管理员不能因此获得创建管理员的权限。长期供应商适配由项目维护，普通用户在节点设置个人模型列表，不承担接口模板配置。真实付费、Chrome 扩展宿主与 PS 企业登录仍未验收。
-5. [#123](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/123) 仍 OPEN；画布回执和局部止损不是统一 Task/Attempt、费用账本、预算及完整查询恢复。按路线图推进，已受理任务不自动重复付费。
+5. [#123](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/123) OPEN/Draft：在既有止损包中完成通用画布图像的已受理回执与手动原任务续查，业务工作与必要安装审查并行；仍不是统一 Task/Attempt、视频持久任务、费用账本、预算及自动对账。按唯一阶段 4 路线继续，已受理任务不自动重复付费。
 6. 当前企业部署为单台 Windows 主机。专业服务器/云、500+/200+ 保留长期架构约束；Linux、容器、PostgreSQL、多实例和容量实施待负责人后续需求，当前只提前保持可复用业务边界。没有整体重构、新 Release 或生产操作授权。
 7. 安装维护以已有设备正常迭代、数据保护和必要恢复为目标；按完整工程包交付，减少相关技术债，复用有效测试，不以数量、哈希或额外框架作为成果。
 

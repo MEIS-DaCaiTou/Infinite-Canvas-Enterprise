@@ -2,7 +2,7 @@
   "schema_version": "enterprise-documents-v1",
   "reviewed_at": "2026-10-13",
   "audit_base_commit": "e89a288fe1ce8e5066ebebe1971e69bf5d4c7945",
-  "scope": "All Git-managed/non-ignored Markdown/text; merged main e89a288 (#154/#155/#156) and paid-submit candidate #123 are distinguished. Frozen evidence is unchanged; no Release or production approval.",
+  "scope": "All Git-managed/non-ignored Markdown/text; merged main e89a288 and draft #123 paid-submit/original-image-recovery candidate are distinguished; #157 final CI is recorded separately. Frozen evidence is unchanged; no Release or production approval.",
   "documents": [
     {
       "path": "docs/ops/ONLINE-UPGRADE-SEQUENCE-2026-10-12.md",

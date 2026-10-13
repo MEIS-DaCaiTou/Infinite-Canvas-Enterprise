@@ -39,6 +39,8 @@
 
 文件还包含图片/视频节点、选择与拖动、连线、最小地图、Provider 参数、生成轮询、历史和编辑器逻辑。
 
+#123 新候选的 `static/js/canvas-task-query.js` 为经典/智能画布共用原任务查询请求。已绑定回执按本地 ID 调用 `/api/canvas-image-tasks/{task_id}/reconcile`，客户端不指定供应商地址/Key/上游 ID；旧记录保持原查询路径。已有“查询结果”按钮找回后更新原节点并保存；部分结果提示写入现有生成日志，无新增页面或必填设置。准确 GUI 与限制见[工程记录](../ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md)。
+
 ## 3. 智能画布
 
 ### `static/js/smart-canvas.js`

@@ -4,6 +4,8 @@
 
 [返回索引](./README.md)
 
+后续 Windows 交接候选 [#157](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/157) 准确 551f433 四项常规 CI 成功、仍 Draft 待审。正式入口“启动并打开”只用当前已安装版本；更新由管理员在更新中心单独确认，不要求每次启动更新。必要安装审查不扩成任意宿主/历史/GUI 工程，业务原任务恢复可并行推进；候选不改变当前 main 或正式 10.1。
+
 更新时间：2026-10-13。主线、维护线和固定入口边界见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，生命周期设计见 [统一交付 ADR](../decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md)。
 
 ## 1. PathRoots
