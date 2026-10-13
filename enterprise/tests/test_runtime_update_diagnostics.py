@@ -255,7 +255,7 @@ def test_handoff_job_failure_never_stops_source_or_retries_ordinary_creation(tmp
         assert len(rejected) == 1 and rejected[0].kwargs == process.handoff_ready_failure
         assert "private-secret" not in str(rejected)
     if os.name == "nt":
-        assert popen.call_args.kwargs["creationflags"] == 0x01000208
+        assert popen.call_args.kwargs["creationflags"] == 0x208
     if failure not in {"creation-denied", "other-denial"}:
         process.terminate.assert_called_once_with()
         process.wait.assert_called_once_with(timeout=5)
