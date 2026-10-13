@@ -12354,7 +12354,8 @@ function completeRecoverPendingOutput(out, pending, result){
         gen.runError = '';
         gen.running = false;
     }
-    addGenerationLog({run:meta.run, outputs:images, runMs:meta.runMs || 0});
+    addGenerationLog({run:meta.run, outputs:images, runMs:meta.runMs || 0,
+        error:result.status === 'partial' ? result.message : ''});
     refreshRunNodes(gen, out);
     scheduleSave();
 }

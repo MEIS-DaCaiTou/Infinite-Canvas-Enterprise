@@ -15083,7 +15083,12 @@ async function querySmartImageTaskNow(nodeId, localTaskId){
             finalizeSmartPendingTask(node, task.taskId, resultMediaUrls(data.image_items?.length ? data.image_items : (data.images?.length ? data.images : data)), task.kind || 'image');
             render();
             scheduleSave();
-            if(data.status === 'partial') toast(data.message);
+            if(data.status === 'partial'){
+                addSmartGenerationLog({run:{node:{id:node.id}, request:{task_id:task.taskId,
+                    provider_id:data.provider_id, model:data.model}}, outputs:data.images || [], error:data.message});
+                toast(data.message);
+                scheduleSave();
+            }
             return;
         }
         if(data.status === 'failed'){
