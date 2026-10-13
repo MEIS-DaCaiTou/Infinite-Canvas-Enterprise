@@ -12676,18 +12676,24 @@ async def build_online_image_result(payload: OnlineImageRequest, *, receipt_task
                 await sink.interrupted(exc)
             raise
         try:
-            image_items = extract_images(raw_item) if isinstance(raw_item, dict) else [image_data]
-        except HTTPException:
-            image_items = [image_data]
-        local_urls = []
-        local_items = []
-        for item in image_items:
-            local_url = await save_ai_image_to_output(item, prefix="online_")
-            if local_url:
-                local_urls.append(local_url)
-                local_items.append(image_output_meta(local_url, item))
-        if sink:
-            await sink.completed(local_urls, local_items)
+            try:
+                image_items = extract_images(raw_item) if isinstance(raw_item, dict) else [image_data]
+            except HTTPException:
+                image_items = [image_data]
+            local_urls = []
+            local_items = []
+            for item in image_items:
+                local_url = await save_ai_image_to_output(item, prefix="online_")
+                if local_url:
+                    local_urls.append(local_url)
+                    local_items.append(image_output_meta(local_url, item))
+            if sink:
+                require_archived_image_outputs(local_urls)
+                await sink.completed(local_urls, local_items)
+        except Exception as exc:
+            if sink:
+                await sink.interrupted(exc)
+            raise
         return local_urls, local_items, raw_item
     try:
         generated = await asyncio.gather(*(generate_one(index) for index in range(count)), return_exceptions=bool(receipt_task_id))
@@ -12876,16 +12882,23 @@ async def query_image_task_result(payload: ImageTaskQueryRequest, *, store_histo
         "raw": raw,
     }
 
+def image_outputs_are_archived(images):
+    return bool(images) and all(os.path.isfile(output_file_from_url(url) or "") for url in images)
+
+
+def require_archived_image_outputs(images):
+    if not image_outputs_are_archived(images):
+        raise HTTPException(502, "供应商已返回结果，但本地图片归档未完成；请稍后续查原任务，不要重新生成")
+
+
 async def query_saved_image_task(provider, upstream_task_id):
     result = await query_image_task_result(ImageTaskQueryRequest(provider_id=provider["id"], task_id=upstream_task_id), store_history=False, bound_provider=provider)
     if result.get("status") == "succeeded":
-        images = result.get("images") or []
-        if not images or any(not os.path.isfile(output_file_from_url(url) or "") for url in images):
-            raise HTTPException(502, "供应商已返回结果，但本地图片归档未完成；请稍后续查原任务，不要重新生成")
+        require_archived_image_outputs(result.get("images") or [])
     return result
 
 CANVAS_IMAGE_RECOVERY = CanvasImageRecovery(CANVAS_TASK_JOURNAL, get_api_provider_exact,
-                                           query_saved_image_task, save_to_history)
+                                           query_saved_image_task, save_to_history, is_archived=image_outputs_are_archived)
 
 @app.post("/api/canvas-image-tasks/{task_id}/reconcile")
 async def reconcile_canvas_image_task(task_id: str):

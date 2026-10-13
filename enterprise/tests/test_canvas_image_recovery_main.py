@@ -4,6 +4,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[2]
 BOOTSTRAP = r'''
@@ -134,6 +136,75 @@ asyncio.run(run())
 print('archive retry keeps original task and downloads locally before caching success')
 '''
     result = subprocess.run([sys.executable, '-c', script, str(ROOT), str(install), str(tmp_path / 'local')],
+                            cwd=ROOT, env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1', PYTHONUTF8='1'),
+                            capture_output=True, text=True, timeout=40)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize('legacy_partial', [False, True])
+def test_batch_archive_failure_and_legacy_partial_cache_query_original_id(tmp_path, legacy_partial):
+    install = tmp_path / 'install'
+    app = install / 'releases/fixture'
+    (app / 'static').mkdir(parents=True)
+    (app / 'main.py').write_text('# fixture', encoding='utf-8')
+    script = BOOTSTRAP + r'''
+import io
+from PIL import Image
+from fastapi import HTTPException
+from enterprise.canvas_image_recovery import ImageReceiptSink
+buffer = io.BytesIO(); Image.new('RGB', (1, 1), 'white').save(buffer, format='PNG')
+fail_download = True
+def batch_handler(request):
+    calls.append((request.method, request.url.path))
+    assert request.method == 'GET'
+    if request.url.path == '/v1/images/tasks/accepted-before-process-exit':
+        return httpx.Response(200, json={'status':'SUCCESS', 'data':[{'url':'https://supplier.example/result.png'}]}, request=request)
+    assert request.url.path == '/result.png'
+    if fail_download:
+        raise httpx.ReadTimeout('fixture initial batch archive lost', request=request)
+    return httpx.Response(200, content=buffer.getvalue(), headers={'content-type':'image/png'}, request=request)
+main.httpx.AsyncClient = lambda **kwargs: original_client(transport=httpx.MockTransport(batch_handler), **kwargs)
+main.CANVAS_TASK_JOURNAL.create({'id':'canvas_img_batch_archive', 'type':'online-image', 'status':'queued',
+    'provider_id':'zhenzhen', 'model':'nano-banana-2',
+    'provider_receipts':[{'index':i, 'state':'started'} for i in range(2)]})
+async def generate(*args, receipt_sink, **kwargs):
+    if receipt_sink.index == 1:
+        raise HTTPException(400, 'fixture member explicitly rejected')
+    await receipt_sink.accepted('accepted-before-process-exit', provider)
+    image = {'type':'url', 'value':'https://supplier.example/result.png'}
+    return image, {'data':[{'url':image['value']}]}
+main.generate_ai_image = generate
+async def run():
+    global fail_download
+    if sys.argv[4] == 'True':
+        # A persisted partial from the old fallback path must not return early.
+        assert main.CANVAS_TASK_JOURNAL.mark_running('canvas_img_batch_archive')
+        sink = ImageReceiptSink(main.CANVAS_TASK_JOURNAL, 'canvas_img_batch_archive', 0)
+        await sink.accepted('accepted-before-process-exit', provider)
+        await sink.completed(['https://supplier.example/result.png'], [])
+        await ImageReceiptSink(main.CANVAS_TASK_JOURNAL, 'canvas_img_batch_archive', 1).interrupted(HTTPException(400, 'rejected'))
+        main.CANVAS_TASK_JOURNAL.finish('canvas_img_batch_archive', {'status':'failed',
+            'result':{'status':'partial', 'images':['https://supplier.example/result.png']}})
+    else:
+        await main.run_canvas_image_task('canvas_img_batch_archive', main.OnlineImageRequest(
+            prompt='fixture', provider_id='zhenzhen', model='nano-banana-2', n=2))
+        record = main.CANVAS_TASK_JOURNAL.get('canvas_img_batch_archive')
+        assert record['status'] == 'failed' and record['provider_receipts'][0]['state'] == 'unknown'
+        assert record['provider_receipts'][0]['upstream_task_id'] == 'accepted-before-process-exit'
+    first = await main.reconcile_canvas_image_task('canvas_img_batch_archive')
+    assert first['status'] == 'unknown', first
+    fail_download = False
+    second = await main.reconcile_canvas_image_task('canvas_img_batch_archive')
+    assert second['status'] == 'partial' and second['images'], second
+    assert all(Path(main.output_file_from_url(url)).is_file() for url in second['images'])
+    count = len(calls)
+    assert await main.reconcile_canvas_image_task('canvas_img_batch_archive') == second
+    assert len(calls) == count and all(method == 'GET' for method, _ in calls)
+    assert calls.count(('GET', '/v1/images/tasks/accepted-before-process-exit')) == 2
+asyncio.run(run())
+print('batch archive failure and legacy partial retain GET-only recovery')
+'''
+    result = subprocess.run([sys.executable, '-c', script, str(ROOT), str(install), str(tmp_path / 'local'), str(legacy_partial)],
                             cwd=ROOT, env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1', PYTHONUTF8='1'),
                             capture_output=True, text=True, timeout=40)
     assert result.returncode == 0, result.stdout + result.stderr

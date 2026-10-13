@@ -103,6 +103,20 @@ class CanvasTaskJournal:
                 updates["upstream_task_id"] = changes["upstream_task_id"]
             self._write({**record, **updates, "updated_at": time.time()})
 
+    def reopen_image_archives(self, task_id: str, indexes: list[int]) -> None:
+        """Correct completed receipts whose bytes were never archived; never queue work."""
+        with self._lock:
+            record = self.get(task_id)
+            if not record or record.get("type") != "online-image" or record.get("status") not in {"failed", "succeeded"}:
+                raise ValueError("Canvas image archive is not recoverable")
+            receipts = list(record.get("provider_receipts") or [])
+            for index in indexes:
+                if type(index) is not int or not 0 <= index < len(receipts) or receipts[index].get("state") != "succeeded":
+                    raise ValueError("Invalid incomplete archive receipt")
+                receipts[index] = {**receipts[index], "state": "unknown", "result": None}
+            self._write({**record, "provider_receipts": receipts, "status": "failed", "result": None,
+                         "recovery_required": True, "updated_at": time.time()})
+
     def finish_image_recovery(self, task_id: str, result: dict) -> None:
         with self._lock:
             record = self.get(task_id)

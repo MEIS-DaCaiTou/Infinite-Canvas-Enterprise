@@ -66,8 +66,9 @@ class ImageReceiptSink:
 
 
 class CanvasImageRecovery:
-    def __init__(self, journal, resolve_provider, query, publish):
+    def __init__(self, journal, resolve_provider, query, publish, *, is_archived=None):
         self.journal, self.resolve_provider, self.query, self.publish = journal, resolve_provider, query, publish
+        self.is_archived = is_archived
         self._active = {}
 
     async def reconcile(self, task_id):
@@ -87,6 +88,13 @@ class CanvasImageRecovery:
         record = await asyncio.to_thread(self.journal.get, task_id)
         if not record or record.get("type") != "online-image":
             raise HTTPException(404, "画布图像任务不存在")
+        if self.is_archived and record.get("status") in {"failed", "succeeded"}:
+            incomplete = [receipt["index"] for receipt in record.get("provider_receipts") or []
+                          if receipt.get("state") == "succeeded"
+                          and not self.is_archived((receipt.get("result") or {}).get("images") or [])]
+            if incomplete:
+                await asyncio.to_thread(self.journal.reopen_image_archives, task_id, incomplete)
+                record = await asyncio.to_thread(self.journal.get, task_id)
         if record.get("status") == "succeeded":
             return {**record["result"], "status": "succeeded"}
         if (record.get("result") or {}).get("status") == "partial":
