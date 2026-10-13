@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 from pathlib import Path
 from typing import Literal, Mapping, Protocol
@@ -11,10 +12,13 @@ from urllib.parse import urlparse
 from enterprise.ops.update.errors import ReleaseProviderError
 from enterprise.ops.update.http_client import SafeHttpClient, UrlPolicy
 from enterprise.ops.update.models import ReleaseMetadata, ReleaseMetadataV2
+from enterprise.ops.update.release_catalog import CatalogSnapshot, ReleaseCatalogCache, read_catalog
+from enterprise.ops.update.upgrade_routes import MAX_ROUTE_BYTES, ROUTE_ASSET_NAME
 from enterprise.ops.update.versions import parse_version
 
 
 DEFAULT_GITHUB_REPOSITORY = "MEIS-DaCaiTou/Infinite-Canvas-Enterprise"
+DEFAULT_GITHUB_REPOSITORY_ID = 1255587052
 TRUSTED_GITHUB_REPOSITORIES = frozenset({DEFAULT_GITHUB_REPOSITORY})
 GITHUB_ALLOWED_HOSTS = frozenset(
     {
@@ -28,6 +32,7 @@ GITHUB_ALLOWED_HOSTS = frozenset(
 GITHUB_MANIFEST_ASSET = "ops-release-manifest-v1.json"
 GITHUB_MANIFEST_V2_ASSET = "ops-release-manifest-v2.json"
 GITHUB_INVENTORY_V2_ASSET = "release-payload-inventory.json"
+GITHUB_MAINTENANCE_ASSET = "maintenance-tools-v1.json"
 GITHUB_METADATA_ACCEPT = "application/vnd.github+json"
 GITHUB_ASSET_ACCEPT = "application/octet-stream"
 GITHUB_API_VERSION = "2022-11-28"
@@ -202,6 +207,7 @@ class GitHubReleasesProvider:
         *,
         repository: str = DEFAULT_GITHUB_REPOSITORY,
         http_client: SafeHttpClient | None = None,
+        catalog_cache: ReleaseCatalogCache | None = None,
     ) -> None:
         if repository not in TRUSTED_GITHUB_REPOSITORIES:
             raise ReleaseProviderError("GitHub repository is not approved")
@@ -209,11 +215,15 @@ class GitHubReleasesProvider:
         self.http_client = http_client or SafeHttpClient(self.url_policy)
         self.diagnostics: tuple[str, ...] = ()
         self.record_count = 0
+        self.catalog_snapshot: CatalogSnapshot | None = None
+        self._catalog_cache = catalog_cache or ReleaseCatalogCache()
         self._asset_request_headers: dict[str, str] = {}
 
-    def list_releases(self) -> list[ReleaseMetadata]:
-        url = f"https://api.github.com/repos/{self.repository}/releases?per_page=50"
-        headers = {"Accept": GITHUB_METADATA_ACCEPT, "User-Agent": GITHUB_USER_AGENT}
+    def _catalog_records(self) -> tuple[object, ...]:
+        self.catalog_snapshot = None
+        self.record_count = 0
+        self.diagnostics = ()
+        headers = {"Accept": GITHUB_METADATA_ACCEPT, "User-Agent": GITHUB_USER_AGENT, "X-GitHub-Api-Version": GITHUB_API_VERSION}
         token = os.environ.get("GITHUB_TOKEN")
         if token:
             headers["Authorization"] = f"Bearer {token}"
@@ -222,10 +232,17 @@ class GitHubReleasesProvider:
         # logs, URLs, or exceptions. SafeHttpClient strips it on any redirect
         # that crosses an origin boundary.
         self._asset_request_headers = {"Authorization": headers["Authorization"]} if "Authorization" in headers else {}
-        payload = self.http_client.read_json(url, maximum_bytes=MAX_GITHUB_METADATA_BYTES, headers=headers)
-        if type(payload) is not list or len(payload) > 50:
-            raise ReleaseProviderError("GitHub release metadata is invalid")
-        self.record_count = len(payload)
+        snapshot = read_catalog(
+            repository=self.repository, repository_id=DEFAULT_GITHUB_REPOSITORY_ID,
+            client=self.http_client, cache=self._catalog_cache,
+            maximum_bytes=MAX_GITHUB_METADATA_BYTES, headers=headers,
+        )
+        self.catalog_snapshot = snapshot
+        self.record_count = len(snapshot.records)
+        return snapshot.records
+
+    def list_releases(self) -> list[ReleaseMetadata]:
+        payload = self._catalog_records()
         releases: list[ReleaseMetadata] = []
         diagnostics: list[str] = []
 
@@ -281,24 +298,23 @@ class GitHubReleasesProvider:
         self.diagnostics = tuple(diagnostics)
         return releases
 
-    def list_release_v2_candidates(self) -> list[ReleaseMetadataV2]:
-        """Return complete, non-draft Manifest v2 release candidates only."""
-        url = f"https://api.github.com/repos/{self.repository}/releases?per_page=50"
-        headers = {"Accept": GITHUB_METADATA_ACCEPT, "User-Agent": GITHUB_USER_AGENT}
-        token = os.environ.get("GITHUB_TOKEN")
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
-        self._asset_request_headers = {"Authorization": headers["Authorization"]} if "Authorization" in headers else {}
-        payload = self.http_client.read_json(url, maximum_bytes=MAX_GITHUB_METADATA_BYTES, headers=headers)
-        if type(payload) is not list or len(payload) > 50:
-            raise ReleaseProviderError("GitHub release metadata is invalid")
+    def preview_cache_subject(self) -> tuple[str, bytes]:
+        """Credential-isolated advisory cache key; never return the credential."""
+        return self.repository, hashlib.sha256(
+            self._asset_request_headers.get("Authorization", "").encode("utf-8"),
+        ).digest()
+
+    def list_release_v2_candidates(self, *, include_prerelease: bool = False) -> list[ReleaseMetadataV2]:
+        """Return complete, non-draft Manifest v2 releases; opt in to development releases."""
+        payload = self._catalog_records()
         candidates: list[ReleaseMetadataV2] = []
         diagnostics: list[str] = []
         for release in payload:
             if (
                 type(release) is not dict
                 or release.get("draft") is not False
-                or release.get("prerelease") is not False
+                or type(release.get("prerelease")) is not bool
+                or (release["prerelease"] and not include_prerelease)
             ):
                 continue
             try:
@@ -316,6 +332,44 @@ class GitHubReleasesProvider:
                 if len(archives) != 1:
                     raise ReleaseProviderError("GitHub release archive is ambiguous or incomplete")
                 archive = self._release_asset(archives, exact_name=str(archives[0]["name"]))
+                route_assets = [
+                    item for item in assets
+                    if type(item) is dict and item.get("name") == ROUTE_ASSET_NAME
+                ]
+                if len(route_assets) > 1:
+                    raise ReleaseProviderError("GitHub release upgrade route assets are ambiguous")
+                route = self._release_asset(assets, exact_name=ROUTE_ASSET_NAME) if route_assets else None
+                route_digest = None
+                if route is not None:
+                    digest = route_assets[0].get("digest")
+                    if (
+                        not isinstance(digest, str)
+                        or not digest.startswith("sha256:")
+                        or len(digest) != 71
+                        or any(char not in "0123456789abcdef" for char in digest[7:])
+                        or type(route["size_bytes"]) is not int
+                        or route["size_bytes"] > MAX_ROUTE_BYTES
+                    ):
+                        raise ReleaseProviderError("GitHub release upgrade route digest is invalid")
+                    route_digest = digest[7:]
+                tool_assets = [item for item in assets if type(item) is dict
+                               and item.get("name") == GITHUB_MAINTENANCE_ASSET]
+                tools = self._release_asset(assets, exact_name=GITHUB_MAINTENANCE_ASSET) if tool_assets else None
+                tools_digest = None
+                maintenance_assets = ()
+                if tools is not None:
+                    digest = tool_assets[0].get("digest")
+                    if (type(digest) is not str or len(digest) != 71 or not digest.startswith("sha256:")
+                            or any(char not in "0123456789abcdef" for char in digest[7:])
+                            or not 1 <= tools["size_bytes"] <= 16384):
+                        raise ReleaseProviderError("GitHub maintenance asset digest is invalid")
+                    tools_digest = digest[7:]
+                    maintenance_assets = tuple(
+                        (name, str(item["api_url"]), int(item["size_bytes"]))
+                        for name in ("InfiniteCanvas.exe", "native-entry-build-record.json",
+                                     "InfiniteCanvasSetup.exe", "unsigned-installer-build-record.json")
+                        for item in [self._release_asset(assets, exact_name=name)]
+                    )
                 version = _tag_to_version(release.get("tag_name"))
                 parse_version(version)
                 sizes = (manifest.get("size_bytes"), inventory.get("size_bytes"), archive.get("size_bytes"))
@@ -334,6 +388,14 @@ class GitHubReleasesProvider:
                         inventory_size_bytes=int(inventory["size_bytes"]),
                         archive_url=str(archive["api_url"]),
                         archive_size_bytes=int(archive["size_bytes"]),
+                        prerelease=release["prerelease"],
+                        upgrade_routes_url=None if route is None else str(route["api_url"]),
+                        upgrade_routes_size_bytes=None if route is None else int(route["size_bytes"]),
+                        upgrade_routes_sha256=route_digest,
+                        maintenance_tools_url=None if tools is None else str(tools["api_url"]),
+                        maintenance_tools_size_bytes=None if tools is None else int(tools["size_bytes"]),
+                        maintenance_tools_sha256=tools_digest,
+                        maintenance_assets=maintenance_assets,
                     )
                 )
             except (ReleaseProviderError, ValueError):

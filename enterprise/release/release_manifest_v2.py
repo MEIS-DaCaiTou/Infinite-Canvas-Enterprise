@@ -959,6 +959,14 @@ def verify_release_manifest_v2(manifest_path: Path, archive_path: Path, inventor
         "versioned_migration_ids",
     }
     present_versioned_keys = versioned_database_keys.intersection(database_payload)
+    legacy_binding_keys = {"legacy_source_schema_sha256", "legacy_enrolled_schema_sha256"}
+    present_legacy_binding = legacy_binding_keys.intersection(database_payload)
+    if present_legacy_binding and (
+        present_legacy_binding != legacy_binding_keys
+        or not present_versioned_keys
+        or any(not _SHA256.fullmatch(str(database_payload[key])) for key in legacy_binding_keys)
+    ):
+        raise ReleaseManifestV2Error("RELEASE_DATABASE_CONTENT_INVALID")
     if present_versioned_keys:
         versioned_ids = database_payload.get("versioned_migration_ids")
         if (

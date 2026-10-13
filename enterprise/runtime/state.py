@@ -196,7 +196,8 @@ class RuntimeStateStore:
                 handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
                 handle.flush()
                 os.fsync(handle.fileno())
-            return True
+                identity = (os.fstat(handle.fileno()).st_dev, os.fstat(handle.fileno()).st_ino)
+            return self._reservation_survives_reconcile(instance_id, identity)
         except FileExistsError:
             return False
 
@@ -251,6 +252,8 @@ class RuntimeStateStore:
     def acquire_foreground_lock(self, *, instance_id: str, supervisor: ProcessIdentity) -> bool:
         """Foreground owns an already-adopted lock; it never creates reserved locks."""
         self.initialize()
+        if self.reconcile_path.exists():
+            return False
         now = utc_now()
         payload = {
             "schema_version": STATE_SCHEMA,
@@ -270,9 +273,21 @@ class RuntimeStateStore:
                 handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
                 handle.flush()
                 os.fsync(handle.fileno())
-            return True
+                identity = (os.fstat(handle.fileno()).st_dev, os.fstat(handle.fileno()).st_ino)
+            return self._reservation_survives_reconcile(instance_id, identity)
         except FileExistsError:
             return False
+
+    def _reservation_survives_reconcile(self, instance_id: str, identity: tuple[int, int]) -> bool:
+        # A repair/reconcile fence may win between the initial check and our
+        # create-only reservation. Never start a host after losing that race.
+        if not self.reconcile_path.exists():
+            return True
+        current = os.stat(self.lock_path, follow_symlinks=False)
+        if ((current.st_dev, current.st_ino) == identity
+                and (self.read_lock() or {}).get("supervisor_instance_id") == instance_id):
+            self.lock_path.unlink()
+        return False
 
     def release_lock(self, instance_id: str) -> None:
         lock = self.read_lock()

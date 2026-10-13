@@ -1,0 +1,41 @@
+name: Documentation checks
+
+on:
+  pull_request:
+    paths:
+      - '**/*.md'
+      - '**/*.txt'
+      - 'docs/document-register.json'
+      - 'tools/check_docs.py'
+      - 'enterprise/tests/test_documentation_contract.py'
+      - '.github/workflows/documentation-checks.yml'
+  push:
+    branches: [main]
+    paths:
+      - '**/*.md'
+      - '**/*.txt'
+      - 'docs/document-register.json'
+      - 'tools/check_docs.py'
+      - 'enterprise/tests/test_documentation_contract.py'
+      - '.github/workflows/documentation-checks.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  documentation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Documentation contract (read-only)
+        run: python -B tools/check_docs.py
+      - name: Checker negative and positive fixtures
+        run: python -B -m unittest discover -s enterprise/tests -p test_documentation_contract.py
+      - name: Whitespace check
+        run: git diff --check HEAD^ HEAD

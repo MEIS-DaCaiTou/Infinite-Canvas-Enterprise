@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+from contextvars import ContextVar
 import json
 import os
 import re
@@ -22,6 +23,13 @@ from ctypes import wintypes
 
 
 REQUEST_SCHEMA = "install-ux-1-request-v1"
+MAINTENANCE_REQUEST_SCHEMA = "enterprise-install-maintenance-request-v2"
+PROGRAM_MAINTENANCE_REQUEST_SCHEMA = "enterprise-install-maintenance-request-v3"
+GRAPHICAL_MAINTENANCE_REQUEST_SCHEMA = "enterprise-install-maintenance-request-v4"
+CACHE_MAINTENANCE_REQUEST_SCHEMA = "enterprise-install-maintenance-request-v5"
+LIFECYCLE_REQUEST_SCHEMA = "enterprise-install-maintenance-request-v6"
+UPGRADE_REQUEST_SCHEMA = "enterprise-install-maintenance-request-v7"
+_AUTHENTICATED_CLIENT = ContextVar("setup_pipe_client_identity", default=None)
 RESULT_SCHEMA = "install-ux-1-result-v1"
 MAX_FRAME_BYTES = 16 * 1024
 CONNECT_TIMEOUT_SECONDS = 45.0
@@ -84,6 +92,8 @@ def _succeeded(result: object) -> dict[str, object]:
         "manifest_sha256": str(public["manifest_sha256"]),
         "payload_tree_sha256": str(public["payload_tree_sha256"]),
         "pointer_published": bool(public["pointer_published"]),
+        "installation_id": public.get("installation_id"),
+        "launcher_installed": bool(public.get("launcher_installed")),
     }
 
 
@@ -113,7 +123,49 @@ def _decode_request(raw: bytes) -> dict[str, object]:
         "install_mode",
         "install_root",
     }
-    if set(payload) != expected or payload.get("schema_version") != REQUEST_SCHEMA:
+    schema = payload.get("schema_version")
+    if schema == UPGRADE_REQUEST_SCHEMA:
+        expected.update({"operation", "confirm_no_active_tasks"})
+        operation = payload.get("operation")
+        if (operation not in {"inspect-upgrade", "upgrade-retained", "recover-upgrade", "finish-upgrade"}
+                or payload.get("confirm_no_active_tasks") is not (operation in {"upgrade-retained", "recover-upgrade"})):
+            raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
+    elif schema == LIFECYCLE_REQUEST_SCHEMA:
+        expected.update({"operation", "confirm_no_active_tasks"})
+        operation = payload.get("operation")
+        if (operation not in {"inspect-lifecycle", "uninstall-retain", "recover-uninstall", "reinstall-retained"}
+                or payload.get("confirm_no_active_tasks") is not (operation != "inspect-lifecycle")):
+            raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
+    elif schema == CACHE_MAINTENANCE_REQUEST_SCHEMA:
+        expected.update({"operation", "cache_id", "cache_token", "confirm_cache_cleanup"})
+        operation = payload.get("operation")
+        if (operation not in {"inspect-cache", "clean-cache"}
+                or payload.get("confirm_cache_cleanup") is not (operation == "clean-cache")):
+            raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
+        if operation == "inspect-cache":
+            if payload.get("cache_id") != "" or payload.get("cache_token") != "":
+                raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
+        elif (not isinstance(payload.get("cache_id"), str) or not PIPE_SUFFIX_PATTERN.fullmatch(payload["cache_id"])
+              or not isinstance(payload.get("cache_token"), str) or not re.fullmatch(r"[0-9a-f]{64}", payload["cache_token"])):
+            raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
+    elif schema == GRAPHICAL_MAINTENANCE_REQUEST_SCHEMA:
+        expected.update({"operation", "confirm_no_active_tasks"})
+        operation = payload.get("operation")
+        if (operation not in {"repair-program", "recover-program", "inspect-program"}
+                or payload.get("confirm_no_active_tasks") is not (operation != "inspect-program")):
+            raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
+    elif schema == PROGRAM_MAINTENANCE_REQUEST_SCHEMA:
+        expected.update({"operation", "confirm_no_active_tasks"})
+        if (payload.get("operation") not in {"repair-program", "recover-program"}
+                or payload.get("confirm_no_active_tasks") is not True):
+            raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
+    elif schema == MAINTENANCE_REQUEST_SCHEMA:
+        expected.add("operation")
+        if payload.get("operation") not in {"install", "repair-entry", "recover-entry"}:
+            raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
+    elif schema != REQUEST_SCHEMA:
+        raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
+    if set(payload) != expected:
         raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
     if payload.get("install_mode") not in {"quick", "custom"}:
         raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
@@ -126,6 +178,8 @@ def _decode_request(raw: bytes) -> dict[str, object]:
     if payload["install_mode"] == "quick" and install_root is not None:
         raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
     if payload["install_mode"] == "custom" and not install_root:
+        raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
+    if payload.get("operation") in {"repair-entry", "recover-entry", "repair-program", "recover-program", "inspect-program", "inspect-cache", "clean-cache", "inspect-lifecycle", "uninstall-retain", "recover-uninstall", "reinstall-retained", "inspect-upgrade", "upgrade-retained", "recover-upgrade", "finish-upgrade"} and any(payload[field] for field in ("username", "password", "password_confirmation")):
         raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
     return payload
 
@@ -231,13 +285,19 @@ def _validated_install_root(
             raise SetupBridgeError("INSTALL_TARGET_UNSAFE")
         target = candidate
     target = Path(os.path.abspath(os.fspath(target)))
+    if target == Path(target.anchor):
+        raise SetupBridgeError("INSTALL_TARGET_UNSAFE")
     _reject_reparse_ancestors(target)
     if _drive_type(target) != 3:  # DRIVE_FIXED
         raise SetupBridgeError("INSTALL_TARGET_NOT_LOCAL_FIXED_DISK")
-    if _paths_overlap(target, raw_app_root) or _paths_overlap(target, release_dir):
+    if (_paths_overlap(target, raw_app_root) or _paths_overlap(target, release_dir)
+            or _paths_overlap(target, known_folder / "Infinite-Canvas-Enterprise" / "maintenance-payloads")):
         raise SetupBridgeError("INSTALL_TARGET_OVERLAP")
     try:
-        if target.exists() and (not target.is_dir() or any(target.iterdir())):
+        if request.get("operation", "install") in {"repair-entry", "recover-entry", "repair-program", "recover-program", "inspect-program", "inspect-cache", "clean-cache", "inspect-lifecycle", "uninstall-retain", "recover-uninstall", "reinstall-retained", "inspect-upgrade", "upgrade-retained", "recover-upgrade", "finish-upgrade"}:
+            if not target.is_dir():
+                raise SetupBridgeError("INSTALL_ENTRY_SOURCE_INVALID")
+        elif target.exists() and (not target.is_dir() or any(target.iterdir())):
             raise SetupBridgeError("INSTALL_TARGET_NOT_GREENFIELD")
     except SetupBridgeError:
         raise
@@ -262,19 +322,106 @@ def _run_install_request(
     request: dict[str, object],
     *,
     raw_app_root: Path,
+    notify_progress=None,
 ) -> dict[str, object]:
-    from enterprise.fresh_install import install_greenfield, verify_release_assets
+    from enterprise.fresh_install import verify_release_assets
     from enterprise.runtime.portable import windows_local_app_data_known_folder
 
     known_folder = windows_local_app_data_known_folder()
     assets = _release_asset_directory(raw_app_root)
-    verify_release_assets(assets)
+    verified = verify_release_assets(assets)
     target = _validated_install_root(
         request,
         raw_app_root=raw_app_root,
         release_dir=assets,
         known_folder=known_folder,
     )
+    from enterprise.install_cache import CacheError, setup_cache_session, finish_setup_cache
+    response = None
+    try:
+        with setup_cache_session(local_app_data_base=known_folder, assets=assets,
+                                 raw_app_root=raw_app_root, verified=verified, target=target,
+                                 client=_AUTHENTICATED_CLIENT.get()) as session:
+            response = _execute_install_request(request, assets=assets, verified=verified, target=target,
+                                                known_folder=known_folder, notify_progress=notify_progress)
+            finish_setup_cache(session, response)
+    except (CacheError, OSError):
+        if response is None:
+            raise  # Pre-operation/operation failures cannot be disguised as success.
+        response["cache_warning"] = "INSTALL_CACHE_RETAINED"
+    return response
+
+
+def _execute_install_request(request, *, assets, verified, target, known_folder, notify_progress=None):
+    from enterprise.fresh_install import install_greenfield
+    from enterprise.install_entry import repair_fixed_entry, recover_fixed_entry, verify_entry_bundle
+    if request.get("schema_version") == UPGRADE_REQUEST_SCHEMA:
+        from enterprise.install_upgrade import inspect_upgrade, upgrade_retained, recover_upgrade, finish_upgrade
+        arguments = dict(install_root=target, release_dir=assets, local_app_data_base=known_folder)
+        operation = request["operation"]
+        if operation == "inspect-upgrade":
+            result = inspect_upgrade(**arguments)
+        elif operation == "finish-upgrade":
+            from enterprise.runtime.windows_install_registration import verify_registration
+            result = finish_upgrade(**arguments, verify_registration=lambda root, installation_id:
+                verify_registration(root, installation_id, expected_version=str(verified.manifest.section("identity")["release_version"])))
+        else:
+            arguments["confirm_no_active_tasks"] = request["confirm_no_active_tasks"]
+            if operation == "recover-upgrade":
+                result = recover_upgrade(**arguments)
+            else:
+                client = _AUTHENTICATED_CLIENT.get()
+                if client is None:
+                    raise SetupBridgeError("INSTALL_SETUP_BRIDGE_CLIENT_IDENTITY_FAILED")
+                from enterprise.runtime.windows_setup_source import authenticated_setup_executable
+                result = upgrade_retained(**arguments, native_entry_dir=assets / "native-entry",
+                    setup_executable=authenticated_setup_executable(client), notify_progress=notify_progress)
+        return {"schema_version": RESULT_SCHEMA, "status": "succeeded", "code": "INSTALL_UPGRADE_RESULT", **result}
+    if request.get("operation") in {"inspect-lifecycle", "uninstall-retain", "recover-uninstall", "reinstall-retained"}:
+        from enterprise.install_lifecycle import inspect_lifecycle, uninstall_retaining_data, reinstall_retained
+        arguments = dict(install_root=target, release_dir=assets, local_app_data_base=known_folder)
+        operation = request["operation"]
+        if operation == "inspect-lifecycle":
+            result = inspect_lifecycle(**arguments)
+        else:
+            arguments["confirm_no_active_tasks"] = request["confirm_no_active_tasks"]
+            if operation == "reinstall-retained":
+                result = reinstall_retained(**arguments)
+            else:
+                result = uninstall_retaining_data(**arguments, recover=operation == "recover-uninstall")
+        return {"schema_version": RESULT_SCHEMA, "status": "succeeded", "code": "INSTALL_LIFECYCLE_RESULT", **result}
+    if request.get("operation") in {"inspect-cache", "clean-cache"}:
+        from enterprise.install_cache import inspect_cache, clean_cache
+        if request["operation"] == "inspect-cache":
+            result = inspect_cache(local_app_data_base=known_folder)
+            # Fixed, bounded display protocol: no paths, secrets or arbitrary text.
+            rows = [f'{item["cache_id"]},{item["size_bytes"]},{item["token"]},{item["status"]}' for item in result["candidates"]]
+            return {"schema_version": RESULT_SCHEMA, "status": "succeeded", "code": "INSTALL_CACHE_PREVIEW",
+                    "cache_rows": ";".join(rows), "retained_unknown": result["retained_unknown"]}
+        result = clean_cache(local_app_data_base=known_folder, cache_id=request["cache_id"],
+                             token=request["cache_token"], confirmed=request["confirm_cache_cleanup"])
+        return {"schema_version": RESULT_SCHEMA, "status": "succeeded", "code": "INSTALL_CACHE_REMOVED",
+                "cache_id": result["cache_id"], "deleted_bytes": result["deleted_bytes"], "cache_state": result["status"]}
+    if request.get("operation") == "inspect-program":
+        from enterprise.install_repair_status import inspect_program_repair
+        result = inspect_program_repair(install_root=target, release_dir=assets, local_app_data_base=known_folder)
+        return {"schema_version": RESULT_SCHEMA, "status": "succeeded", "code": "INSTALL_PROGRAM_STATUS", **result}
+    if request.get("operation") in {"repair-program", "recover-program"}:
+        from enterprise.install_repair import repair_program, recover_program
+        handler = recover_program if request["operation"] == "recover-program" else repair_program
+        result = handler(install_root=target, release_dir=assets, local_app_data_base=known_folder,
+                         confirm_no_active_tasks=request["confirm_no_active_tasks"], notify_progress=notify_progress)
+        return {"schema_version": RESULT_SCHEMA, "status": "succeeded",
+                "code": "INSTALL_PROGRAM_RECOVERED" if request["operation"] == "recover-program" else "INSTALL_PROGRAM_REPAIRED",
+                **result}
+    if request.get("operation") in {"repair-entry", "recover-entry"}:
+        source = verified.manifest.section("enterprise_source")
+        entry = verify_entry_bundle(assets / "native-entry", commit=str(source["commit"]), tree=str(source["tree"]))
+        handler = recover_fixed_entry if request["operation"] == "recover-entry" else repair_fixed_entry
+        result = handler(install_root=target, entry=entry, local_app_data_base=known_folder)
+        return {"schema_version": RESULT_SCHEMA, "status": "succeeded",
+                "code": "INSTALL_ENTRY_RECOVERED" if request["operation"] == "recover-entry" else "INSTALL_ENTRY_REPAIRED",
+                **result}
     result = install_greenfield(
         release_dir=assets,
         install_root=target,
@@ -282,6 +429,7 @@ def _run_install_request(
         password=str(request["password"]),
         password_confirmation=str(request["password_confirmation"]),
         local_app_data_base=known_folder,
+        native_entry_dir=assets / "native-entry" if request.get("schema_version") == MAINTENANCE_REQUEST_SCHEMA else None,
     )
     return _succeeded(result)
 
@@ -430,7 +578,7 @@ def _write_all(handle: int, raw: bytes) -> None:
         offset += written.value
 
 
-def _validate_client_sid(pipe_handle: int, expected_sid: str) -> None:
+def _validate_client_sid(pipe_handle: int, expected_sid: str):
     client_pid = wintypes.ULONG()
     if not kernel32.GetNamedPipeClientProcessId(pipe_handle, ctypes.byref(client_pid)):
         raise SetupBridgeError("INSTALL_SETUP_BRIDGE_CLIENT_IDENTITY_FAILED")
@@ -442,6 +590,11 @@ def _validate_client_sid(pipe_handle: int, expected_sid: str) -> None:
             raise SetupBridgeError("INSTALL_SETUP_BRIDGE_CLIENT_IDENTITY_MISMATCH")
     finally:
         kernel32.CloseHandle(process)
+    from enterprise.runtime.ownership import process_identity
+    identity = process_identity(int(client_pid.value))
+    if identity is None:
+        raise SetupBridgeError("INSTALL_SETUP_BRIDGE_CLIENT_IDENTITY_FAILED")
+    return identity
 
 
 def _serve_once(
@@ -487,7 +640,9 @@ def _serve_once(
         wait_mode = wintypes.DWORD(0)
         if not kernel32.SetNamedPipeHandleState(handle, ctypes.byref(wait_mode), None, None):
             raise SetupBridgeError("INSTALL_SETUP_BRIDGE_CONNECT_FAILED")
-        _validate_client_sid(handle, expected_sid)
+        client = _validate_client_sid(handle, expected_sid)
+        client_context = _AUTHENTICATED_CLIENT.set(client)
+        graphical = False
         try:
             header = _read_exact(handle, 8)
             try:
@@ -497,14 +652,33 @@ def _serve_once(
             if not 1 <= size <= MAX_FRAME_BYTES:
                 raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_TOO_LARGE")
             request = _decode_request(_read_exact(handle, size))
-            response = handler(request)
+            graphical = request["schema_version"] in {GRAPHICAL_MAINTENANCE_REQUEST_SCHEMA, CACHE_MAINTENANCE_REQUEST_SCHEMA, LIFECYCLE_REQUEST_SCHEMA, UPGRADE_REQUEST_SCHEMA}
+            if graphical:
+                def notify(phase, operation_id):
+                    # The pipe is presentation only. Closing a Setup window
+                    # must not cancel the shared transaction or trigger rollback.
+                    try:
+                        _write_all(handle, _encode_frame({"schema_version": RESULT_SCHEMA, "event": "progress",
+                            "status": "running", "code": "INSTALL_PROGRAM_PROGRESS",
+                            "phase": phase, "operation_id": operation_id}))
+                    except SetupBridgeError:
+                        pass
+                response = handler(request, notify_progress=notify)
+                response = {**response, "event": "result"}
+            else:
+                response = handler(request)
         except BaseException as exc:
             response = _blocked(_stable_code(exc))
         finally:
+            _AUTHENTICATED_CLIENT.reset(client_context)
             if "request" in locals():
                 request.clear()
-        _write_all(handle, _encode_frame(response))
-        kernel32.FlushFileBuffers(handle)
+        try:
+            _write_all(handle, _encode_frame(response))
+            kernel32.FlushFileBuffers(handle)
+        except SetupBridgeError:
+            if not graphical:
+                raise
         return 0 if response["status"] == "succeeded" else 2
     finally:
         if connected:
@@ -533,7 +707,7 @@ def main(argv: list[str] | None = None) -> int:
             raise SetupBridgeError("INSTALL_BOOTSTRAP_INVALID")
         return _serve_once(
             args.pipe_name,
-            lambda request: _run_install_request(request, raw_app_root=raw_app_root),
+            lambda request, **kwargs: _run_install_request(request, raw_app_root=raw_app_root, **kwargs),
         )
     except SetupBridgeError:
         return 2

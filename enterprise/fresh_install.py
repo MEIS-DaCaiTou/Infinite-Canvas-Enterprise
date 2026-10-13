@@ -9,6 +9,7 @@ and the canonical first database are durable.
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import secrets
 import shutil
@@ -20,6 +21,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from enterprise import db
+from enterprise.install_entry import (
+    EntryPublication, publish_fixed_entry, validate_entry_target_paths, verify_entry_bundle,
+)
 from enterprise.migrations.sec_1b1_role_auth import ROLE_AUTH_READY, inspect_role_auth_schema
 from enterprise.migrations.sec_1b2_activation import (
     BOOTSTRAP_READY,
@@ -32,11 +36,14 @@ from enterprise.migrations.sec_1f0_security_audit import (
 )
 from enterprise.migrations.versioned import (
     BASELINE_SCHEMA_VERSION,
+    DEFAULT_MIGRATIONS,
     STATE_READY as VERSIONED_SCHEMA_READY,
+    initialize_current_schema_in_transaction,
     initialize_schema_metadata_in_transaction,
     inspect_schema_metadata,
+    migration_registry_sha256,
 )
-from enterprise.path_safety import PathSafetyError, assert_no_reparse_ancestors, lexical_path_state
+from enterprise.path_safety import PathSafetyError, assert_no_reparse_ancestors, assert_path_within_root, lexical_path_state
 from enterprise.paths import (
     PathRoots,
     PathRootsError,
@@ -122,6 +129,8 @@ class FreshInstallResult:
     bootstrap_audit_event: bool
     sqlite_integrity_check: str
     pointer_published: bool
+    installation_id: str | None = None
+    launcher_installed: bool = False
 
     def public_dict(self) -> dict[str, object]:
         return self.__dict__.copy()
@@ -330,12 +339,45 @@ def _validate_release_database_contract(manifest: ReleaseManifestV2) -> None:
     migrations = set(contract.get("migration_ids") or [])
     if (
         contract.get("schema_id") != "enterprise-database-contract-v1"
-        or contract.get("migration_compatibility") != "same-schema-no-migration"
-        or contract.get("rollback_classification") != "code-release-pointer"
+        or (contract.get("migration_compatibility"), contract.get("rollback_classification")) not in {
+            ("same-schema-no-migration", "code-release-pointer"),
+            ("versioned-forward-migration", "database-backup-restore"),
+        }
         or contract.get("ops3b_activation_eligible") is not True
         or not required_migrations.issubset(migrations)
     ):
         _fail("INSTALL_DATABASE_CONTRACT_UNSUPPORTED")
+
+
+def _release_database_evidence(app_root: Path, manifest: ReleaseManifestV2) -> dict[str, object]:
+    """Bind greenfield enrollment to the verified payload, not a version label."""
+    contract = manifest.section("database_contract")
+    path = app_root / Path(*str(contract["schema_snapshot_path"]).split("/"))
+    try:
+        assert_path_within_root(path, app_root)
+        assert_no_reparse_ancestors(path)
+        if lexical_path_state(path) != "regular" or path.stat().st_size > 128 * 1024:
+            _fail("INSTALL_DATABASE_CONTRACT_UNSUPPORTED")
+        data = path.read_bytes()
+        if hashlib.sha256(data).hexdigest() != contract["schema_snapshot_sha256"]:
+            _fail("INSTALL_DATABASE_CONTRACT_UNSUPPORTED")
+        evidence = json.loads(data)
+        version = evidence.get("schema_version")
+        expected_ids = [] if version == BASELINE_SCHEMA_VERSION else [step.migration_id for step in DEFAULT_MIGRATIONS]
+        expected_registry = () if version == BASELINE_SCHEMA_VERSION else DEFAULT_MIGRATIONS
+        if (
+            type(version) is not int or version not in {BASELINE_SCHEMA_VERSION, DEFAULT_MIGRATIONS[-1].to_version}
+            or evidence.get("schema_id") != contract["schema_id"]
+            or evidence.get("migration_ids") != contract["migration_ids"]
+            or evidence.get("versioned_migration_ids") != expected_ids
+            or evidence.get("migration_registry_sha256") != migration_registry_sha256(expected_registry)
+        ):
+            _fail("INSTALL_DATABASE_CONTRACT_UNSUPPORTED")
+        return evidence
+    except FreshInstallError:
+        raise
+    except (OSError, ValueError, TypeError, AttributeError, KeyError, PathSafetyError) as exc:
+        _fail("INSTALL_DATABASE_CONTRACT_UNSUPPORTED", exc)
 
 
 def _create_greenfield_database(
@@ -345,6 +387,7 @@ def _create_greenfield_database(
     username: str,
     password: str,
     manifest: ReleaseManifestV2,
+    schema_evidence: dict[str, object],
     operation_id: str,
 ) -> dict[str, object]:
     _validate_release_database_contract(manifest)
@@ -391,10 +434,10 @@ def _create_greenfield_database(
         )
         ensure_security_audit_schema_in_transaction(conn)
         ensure_bootstrap_lifecycle_schema_in_transaction(conn)
-        initialize_schema_metadata_in_transaction(
-            conn,
-            schema_version=BASELINE_SCHEMA_VERSION,
-        )
+        if schema_evidence["schema_version"] == BASELINE_SCHEMA_VERSION:
+            initialize_schema_metadata_in_transaction(conn, schema_version=BASELINE_SCHEMA_VERSION)
+        else:
+            initialize_current_schema_in_transaction(conn)
         marker = (
             1,
             now,
@@ -488,8 +531,9 @@ def _create_greenfield_database(
             _fail("INSTALL_BOOTSTRAP_MARKER_INVALID")
         if (
             versioned.get("current_state") != VERSIONED_SCHEMA_READY
-            or versioned.get("schema_version") != BASELINE_SCHEMA_VERSION
-            or versioned.get("migration_ids") != []
+            or versioned.get("schema_version") != schema_evidence["schema_version"]
+            or versioned.get("migration_ids") != schema_evidence["versioned_migration_ids"]
+            or versioned.get("schema_sha256") != schema_evidence["schema_objects_sha256"]
         ):
             _fail("INSTALL_DATABASE_VERSION_METADATA_INVALID")
         with database_path.open("r+b") as handle:
@@ -582,11 +626,16 @@ def install_greenfield(
     password: str,
     password_confirmation: str,
     local_app_data_base: Path,
+    native_entry_dir: Path | None = None,
 ) -> FreshInstallResult:
     """Install one verified Release into a genuinely empty target."""
     normalized_username = _normalized_username(username)
     accepted_password = validate_first_password(password, password_confirmation)
     assets = verify_release_assets(Path(release_dir))
+    native_entry = None
+    if native_entry_dir is not None:
+        source = assets.manifest.section("enterprise_source")
+        native_entry = verify_entry_bundle(native_entry_dir, commit=str(source["commit"]), tree=str(source["tree"]))
     _require_greenfield_install_root(Path(install_root))
 
     inputs = PortableRootInputs(
@@ -596,6 +645,8 @@ def install_greenfield(
     )
     roots = derive_portable_path_roots(inputs, assets.manifest.release_id)
     validate_path_roots_for_use(roots)
+    if native_entry is not None:
+        validate_entry_target_paths(roots.INSTALL_ROOT, assets.manifest.release_id, assets.inventory_path)
 
     release_identity: tuple[int, int] | None = None
     config_temp_identity: tuple[int, int] | None = None
@@ -611,6 +662,7 @@ def install_greenfield(
     pointer_path = roots.STATE_ROOT / "current-release.json"
     operation_id = f"install-{uuid.uuid4().hex}"
     committed = False
+    entry_publication: EntryPublication | None = None
     created_directories: dict[Path, tuple[int, int]] = {}
     try:
         _ensure_operation_directory(roots.INSTALL_ROOT, created_directories, parents=True)
@@ -639,6 +691,7 @@ def install_greenfield(
             roots.APP_ROOT,
         )
         release_identity = _identity(roots.APP_ROOT)
+        schema_evidence = _release_database_evidence(roots.APP_ROOT, assets.manifest)
         jwt_secret, config_temp_identity = _write_config_temp(config_temp)
         _validate_config(config_temp, jwt_secret)
         database_temp_identity = _create_database_temp(database_temp)
@@ -648,10 +701,14 @@ def install_greenfield(
             username=normalized_username,
             password=accepted_password,
             manifest=assets.manifest,
+            schema_evidence=schema_evidence,
             operation_id=operation_id,
         )
         config_identity = _publish_new_file(config_temp, config_final, "INSTALL_CONFIG_PUBLISH_FAILED")
         database_identity = _publish_new_file(database_temp, database_final, "INSTALL_DATABASE_PUBLISH_FAILED")
+
+        if native_entry is not None:
+            entry_publication = publish_fixed_entry(roots, native_entry)
 
         pointer = CurrentRelease(
             schema_version=CURRENT_RELEASE_SCHEMA,
@@ -667,6 +724,8 @@ def install_greenfield(
             expected_manifest_sha256=assets.manifest.raw_sha256,
         )
         committed = True
+        if entry_publication is not None:
+            entry_publication.complete()
         _remove_owned_file(lock_path, lock_identity)
         lock_identity = None
         return FreshInstallResult(
@@ -682,6 +741,8 @@ def install_greenfield(
             bootstrap_audit_event=bool(database["bootstrap_event_id"]),
             sqlite_integrity_check=str(database["integrity"]),
             pointer_published=True,
+            installation_id=entry_publication.installation_id if entry_publication else None,
+            launcher_installed=entry_publication is not None,
         )
     except FreshInstallError:
         raise
@@ -693,6 +754,8 @@ def install_greenfield(
         _remove_owned_file(database_temp, database_temp_identity)
         _remove_owned_file(lock_path, lock_identity)
         if not committed and not pointer_path.exists():
+            if entry_publication is not None:
+                entry_publication.rollback()
             _remove_owned_file(config_final, config_identity)
             _remove_owned_file(database_final, database_identity)
             _remove_owned_directory(roots.APP_ROOT, release_identity)

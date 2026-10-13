@@ -25,7 +25,7 @@ _PATH_METHODS = frozenset(
     {"mkdir", "rename", "replace", "rmdir", "touch", "unlink", "write_bytes", "write_text"}
 )
 _OS_WRITES = frozenset(
-    {"makedirs", "mkdir", "remove", "removedirs", "rename", "replace", "rmdir", "unlink"}
+    {"link", "makedirs", "mkdir", "remove", "removedirs", "rename", "replace", "rmdir", "unlink"}
 )
 _SHUTIL_WRITES = frozenset({"copy", "copy2", "copyfile", "copytree", "move", "rmtree"})
 _TEMP_WRITES = frozenset({"NamedTemporaryFile", "TemporaryDirectory", "mkdtemp", "mkstemp"})
@@ -540,6 +540,7 @@ _OTHER_FLOW_BY_SYMBOL: dict[tuple[str, str], str] = {
     ("enterprise/runtime/state.py", "RuntimeStateStore.remove_ack"): "W26",
     ("enterprise/runtime/state.py", "RuntimeStateStore.reconcile_reboot_stale_state"): "W26",
     ("enterprise/runtime/state.py", "RuntimeStateStore.reserve_lock"): "W26",
+    ("enterprise/runtime/state.py", "RuntimeStateStore._reservation_survives_reconcile"): "W26",
     ("enterprise/runtime/state.py", "_atomic_json_replace"): "W26",
     ("enterprise/runtime/writable_probe.py", "probe_writable_root"): "W42",
     ("get-pip.py", "main"): "W35",
@@ -569,9 +570,11 @@ def _flow_for_operation(file: str, symbol: str) -> str:
         return "W48"
     if file == "enterprise/migrations/versioned.py" and symbol in {
         "_write_new_file", "create_database_backup", "restore_database_backup",
+        "preview_legacy_schema_enrollment",
     }:
-        # DATA-MVP-1 already exists on the base branch. Account for its explicit
-        # database/backup arguments without changing or executing migrations.
+        # The legacy enrollment preview backs up into an in-memory SQLite
+        # connection; it never writes an installed database or APP_ROOT.
+        # Keep its explicit connection under the reviewed DATA-MVP-1 flow.
         return "W49"
     if file == "main.py":
         return _MAIN_FLOW_BY_SYMBOL[symbol]
@@ -583,27 +586,88 @@ def _flow_for_operation(file: str, symbol: str) -> str:
     if file in {
         "enterprise/release/release_builder_v2.py",
         "enterprise/release/release_manifest_v2.py",
+        "tools/build_upgrade_routes.py",
         "tools/build_install_ux_1.py",
+        "tools/build_native_entry.py",
+        "tools/build_maintenance_assets.py",
     }:
-        # OPS Release Manifest v2 writes only into a caller-owned new build or
-        # fixture-materialization root. INSTALL-UX-1 likewise copies verified
-        # Release assets and compiler output only into caller-owned new
-        # artifact roots. Keep both distinct from APP_ROOT runtime writes and
-        # from the Python Runtime builder represented by W43.
+        # OPS Release Manifest v2 and upgrade-route sidecars write only into
+        # caller-owned new build or fixture-materialization roots. INSTALL-UX-1
+        # likewise copies verified Release assets and compiler output only into
+        # caller-owned new artifact roots. The fixed native entry builder has
+        # no customer target and also writes only a new external artifact root.
+        # None writes the running APP_ROOT.
         return "W44"
     if file in {
         "enterprise/ops/update/mvp.py",
+        "enterprise/ops/update/recovery.py",
         "enterprise/update_api.py",
+        "enterprise/ops/update/online_prepare.py",
+        "enterprise/ops/update/maintenance_assets.py",
+        "enterprise/ops/update/sequence.py",
     }:
-        # UPDATE-MVP-1 uses external staging/state/release roots and publishes
-        # only a newly materialized immutable Release plus pointer state. It
-        # never writes the running APP_ROOT in place.
+        # UPDATE-MVP-1 writes bounded job/clearance evidence only beneath
+        # STAGING_ROOT, with active locks in STATE_ROOT and newly materialized
+        # immutable Releases in RELEASE_ROOT. It never writes the running
+        # APP_ROOT in place.
         return "W46"
     if file == "enterprise/fresh_install.py":
         # INSTALL-MVP-1 writes only to a caller-selected new install root. It
         # verifies and materializes an immutable Release, builds a temporary
         # Greenfield database, and publishes the pointer last; APP_ROOT is
         # never treated as mutable application state.
+        return "W47"
+    if file == "enterprise/install_entry.py" and symbol in {
+        "_write_new", "_atomic_publish", "_restore", "EntryPublication.complete", "publish_fixed_entry",
+    }:
+        # DELIVERY-1 publishes only INSTALL_ROOT/InfiniteCanvas.exe and
+        # STATE_ROOT installation identity, lock and owned entry backups.
+        # Create-only link or compare-before-replace + exact ownership tokens
+        # constrain rollback. Existing business data and APP_ROOT are not
+        # writable repair targets; unknown files and recovery locks block.
+        return "W47"
+    if file == "enterprise/install_repair.py" and symbol in {
+        "_runner_lease", "_release_marker", "_rollback", "repair_program", "recover_program",
+    }:
+        # DELIVERY-1 stopped, same-Release maintenance is an explicit exception
+        # to runtime APP_ROOT immutability. A verified external bundle stages a
+        # full directory before a fenced, identity-bound rename; retain the old
+        # tree and immutable plan/result. Only this operation's locks and trees
+        # can be recovered. No database, config, pointer or entry writes.
+        return "W47"
+    if file == "enterprise/install_entry_repair.py" and symbol in {
+        "_runner_lease", "_fill_prepared_marker", "_link_marker", "_publish",
+        "_rollback", "_cleanup", "repair_entry_transaction",
+    }:
+        # Same-Release entry-only maintenance: prepared, identity-bound files
+        # in STAGING/STATE and retained Runtime markers on their own volume.
+        # Publish/restore only the root EXE and installation record; shared
+        # fences and kernel lease prevent concurrent Runtime/maintenance use.
+        # Unknown evidence blocks; DATA/CONFIG/APP_ROOT/pointer are read-only.
+        return "W47"
+    if file == "enterprise/install_repair_status.py" and symbol in {"RepairProgress.__init__", "RepairProgress.emit"}:
+        # Bounded display records in STATE/STAGING only; never recovery authority.
+        return "W47"
+    if file == "enterprise/install_cache.py" and symbol in {
+        "_new_json", "_state", "_lease", "setup_cache_session", "clean_cache",
+    }:
+        # Explicit selected Setup preparation bundles only. The outside ledger
+        # binds closed Release files, directory identities and a kernel lease.
+        # Unknown/active/recovery-dependent bundles are retained. Quarantine is
+        # same-volume; native handle-bound rename/deletion is manually reviewed
+        # (not discovered by this AST scanner). No install/business/backup writes.
+        return "W47"
+    if file == "enterprise/install_lifecycle.py" and symbol in {"_database_inspection", "uninstall_retaining_data", "refresh_installed_proof"}:
+        # Offline readonly SQLite (sidecars rejected) and immutable lifecycle
+        # plans/fences only in STATE_ROOT. Windows object-bound program moves
+        # and release_fence are manually reviewed, not discovered by this AST.
+        # No database initialization, business overwrite or recursive delete.
+        return "W47"
+    if file == "enterprise/install_upgrade.py" and symbol in {"_blob", "_transfer_lock", "upgrade_retained", "recover_upgrade"}:
+        # Offline same-schema upgrade delegates app activation to the existing
+        # MVP engine. Own STATE journal/lease/fences and exact original/candidate
+        # native objects only; Windows owned renames are reviewed separately.
+        # No customer database restore/delete or unidentified file overwrite.
         return "W47"
     if file.startswith("tools/validation/windows/env_1b3/"):
         # ENV-1B3 writes only to explicit test-host roots, isolated tamper
@@ -619,7 +683,7 @@ def _flow_for_operation(file: str, symbol: str) -> str:
 # every mapped site as (file, symbol, operation, normalized-call fingerprint,
 # Wxx flow). Line numbers are deliberately excluded, while duplicate identical
 # calls remain duplicate records. Any added/removed/changed call drifts it.
-EXPECTED_SITE_MANIFEST_DIGEST = "3d6e14852dfe94e55ca3296549ecff4789996c4c5095d415da3249705064e976"
+EXPECTED_SITE_MANIFEST_DIGEST = "c4a7f22f4980a79562020ac535161f3f067e4553b4b4bcdae5be9d4707c52920"
 
 FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W01", "main.py", "startup_event"),

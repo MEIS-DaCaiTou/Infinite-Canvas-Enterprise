@@ -1,5 +1,7 @@
 # Infinite-Canvas-Enterprise 企业架构蓝图（2026-07）
 
+> 2026-10-03：历史蓝图。正文旧生产退役/Greenfield-only、Draft PR 与实施状态为原时点快照；完整生命周期和三种部署角色已采用新决定，本文不是第二份当前架构或路线图。[替代/现行入口](../decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md)。
+
 > **历史蓝图。** 本文保留 2026 年 7 月 ENV/OPS 设计背景，不作为当前路线图或上游同步约束。当前架构见 [`ARCHITECTURE.md`](../../ARCHITECTURE.md)，当前顺序见 [开发路线图](../roadmap/DEVELOPMENT-ROADMAP-2026-2027.md)。
 
 更新时间：2026-07-17

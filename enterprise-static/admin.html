@@ -21,7 +21,8 @@
   <script src="/static/vendor/js/tailwindcss-cdn.js"></script>
   <script src="/static/vendor/js/lucide.js"></script>
   <link rel="stylesheet" href="/static/css/theme.css">
-  <style>
+<style>
+  [hidden] { display: none !important; }
     /* ── CSS 变量（复用上游 api-settings.css 规范）── */
     :root {
       --bg:#f7f8fa; --panel:#fff; --soft:#f1f4f8;
@@ -60,13 +61,13 @@
     .page-head .sub { margin-top: 8px; color: var(--muted); font-size: 12.5px; line-height: 1.55; font-weight: 600; }
 
     /* ── 顶部操作栏 ── */
-    .page-actions { display: flex; gap: 8px; align-items: center; }
+    .page-actions { display: flex; gap: 8px; align-items: center; flex-wrap:wrap; }
     .page-actions form { margin: 0; }
     .action-btn {
       height: 36px; padding: 0 14px; border-radius: 10px;
       font-size: 12.5px; font-weight: 800; display: inline-flex; align-items: center; gap: 6px;
       border: 1px solid var(--line); background: var(--panel); color: var(--text);
-      transition: all .15s ease;
+      transition: all .15s ease; white-space:nowrap;
     }
     .action-btn:hover { border-color: var(--text); }
     .action-btn.primary { background: var(--text); color: var(--bg); border-color: var(--text); }
@@ -91,7 +92,7 @@
     .user-table { min-width: 1080px; table-layout: fixed; }
     .user-table th:nth-child(1) { width: 120px; }
     .user-table th:nth-child(2) { width: 140px; }
-    .user-table th:nth-child(3) { width: 90px; }
+    .user-table th:nth-child(3) { width: 120px; }
     .user-table th:nth-child(4) { width: 86px; }
     .user-table th:nth-child(5) { width: 132px; }
     .user-table th:nth-child(6) { width: 132px; }
@@ -108,6 +109,7 @@
 
     .badge {
       display: inline-flex; align-items: center;
+      white-space: nowrap;
       height: 20px; padding: 0 8px; border-radius: 999px;
       font-size: 10px; font-weight: 900; letter-spacing: .04em;
     }
@@ -248,6 +250,11 @@
       border: 0; background: transparent; color: var(--text);
       outline: none; font-size: 13px; font-weight: 600; font-family: inherit;
     }
+    .field-frame textarea {
+      width: 100%; padding: 8px 10px; resize: vertical;
+      border: 0; background: transparent; color: var(--text);
+      outline: none; font-size: 13px; font-weight: 600; font-family: inherit;
+    }
     .field-frame input::placeholder { color: var(--faint); }
     .checkbox-row { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); font-weight: 700; cursor: pointer; }
     .checkbox-row input[type=checkbox] { width: 15px; height: 15px; cursor: pointer; accent-color: var(--text); }
@@ -267,8 +274,9 @@
     #toast.error   { background: var(--panel); border: 1px solid rgba(239,68,68,.3);  color: #ef4444; box-shadow: 0 8px 24px rgba(15,23,42,.1); }
 
     /* ── Tab 导航 ── */
-    .tabs { display: flex; gap: 4px; margin-bottom: 24px; border-bottom: 1px solid var(--line); padding-bottom: 0; }
+    .tabs { display: flex; gap: 4px; margin-bottom: 24px; border-bottom: 1px solid var(--line); padding-bottom: 0; overflow-x:auto; }
     .tab-btn {
+      flex:0 0 auto; white-space:nowrap;
       padding: 10px 18px; border-radius: 10px 10px 0 0; font-size: 12.5px; font-weight: 800;
       border: 1px solid transparent; border-bottom: none; cursor: pointer;
       color: var(--muted); background: transparent; transition: all .15s;
@@ -292,7 +300,15 @@
     .update-card h3 { margin:0 0 8px; font-size:15px; }
     .update-card p { color:var(--muted); font-size:12px; line-height:1.6; }
     .update-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:14px; }
+    .update-card .action-btn:disabled { opacity:.45; cursor:not-allowed; }
+    .update-card .action-btn:disabled:hover { opacity:.45; border-color:var(--line); }
     .update-kv { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:11px; line-height:1.7; white-space:pre-wrap; overflow-wrap:anywhere; }
+    .update-recovery-notice { margin-top:12px; padding:11px 13px; border:1px solid rgba(239,68,68,.35); border-radius:10px; background:rgba(239,68,68,.07); color:#dc2626; font-size:12px; font-weight:800; line-height:1.6; }
+    .update-progress-stage { margin:12px 0; padding:12px 14px; border:1px solid var(--line); border-radius:10px; background:var(--panel); font-size:13px; font-weight:800; }
+    .update-progress-stage[data-kind="error"] { color:#dc2626; border-color:rgba(239,68,68,.35); }
+    .update-progress-stage[data-kind="success"] { color:#15803d; border-color:rgba(34,197,94,.35); }
+    .update-progress-detail { color:var(--muted); font-size:12px; line-height:1.7; white-space:pre-wrap; overflow-wrap:anywhere; }
+    #closeUpdateProgressBtn:disabled { opacity:.45; cursor:not-allowed; }
     @media(max-width:820px){ .update-grid{grid-template-columns:1fr;} }
   </style>
 </head>
@@ -518,20 +534,28 @@
       <div id="updateAccessNotice" class="update-card" style="display:none;"></div>
       <div class="update-grid">
         <section class="update-card">
-          <h3>版本检查与准备</h3>
-          <p>仅接受固定 GitHub 仓库的完整 Manifest v2 Release；准备阶段会下载、校验并安全物化，不切换当前版本。</p>
+          <h3>在线更新</h3>
+          <p>超级管理员确认一次后，系统依次下载、校验、保护数据、切换版本并检查重启结果。准备失败不会停止当前服务。</p>
+          <label for="updateReleaseSelect" style="display:block;margin:12px 0 6px;font-size:12px;font-weight:700;">选择目标版本</label>
+          <select id="updateReleaseSelect" class="select-user" style="width:100%;max-width:100%;margin-bottom:10px;" aria-label="选择目标版本" onchange="selectUpdateRelease()" disabled>
+            <option value="">请先检查更新</option>
+          </select>
           <div id="updateReleaseSummary" class="update-kv">尚未检查</div>
           <div class="update-actions update-dangerous">
-            <button class="action-btn" onclick="checkSystemUpdate()">检查更新</button>
-            <button class="action-btn primary" id="prepareUpdateBtn" onclick="prepareSystemUpdate()" disabled>下载、校验并准备</button>
+            <button class="action-btn primary" id="startUpdateBtn" onclick="openUpdateConfirm()" disabled>更新到新版本</button>
+            <button class="action-btn" onclick="checkSystemUpdate()">重新检查</button>
           </div>
         </section>
         <section class="update-card">
-          <h3>升级作业</h3>
-          <p>执行后页面连接会暂时断开。可使用 Job ID 重连查询；目标启动或健康检查失败会自动回滚到源 Release。</p>
+          <h3>升级状态</h3>
+          <p>服务切换期间页面可能暂时断开；作业记录会保留，重新打开管理后台可继续查看。只有无法确认恢复结果时才需要人工处理。</p>
           <div id="updateJobSummary" class="update-kv">暂无准备完成的作业</div>
+          <div id="updateRecoveryNotice" class="update-recovery-notice" role="alert" style="display:none;">需要人工恢复：请勿再次执行升级。先核对诊断和实际数据，确认当前版本已经恢复正常后，再由超级管理员发起只读核验。</div>
+          <div class="update-actions update-dangerous" id="updateRecoveryActions" style="display:none;">
+            <select id="updateRecoverySelect" class="select-user" style="max-width:240px;height:36px;" aria-label="选择待恢复升级作业" onchange="selectPendingRecoveryJob()"></select>
+            <button class="action-btn" id="assessRecoveryBtn" onclick="openRecoveryAssessment()">核验并查看证据</button>
+          </div>
           <div class="update-actions update-dangerous">
-            <button class="action-btn primary" id="executeUpdateBtn" onclick="openUpdateConfirm()" disabled>确认切换并重启</button>
             <button class="action-btn" onclick="refreshUpdateJob()">刷新状态</button>
           </div>
         </section>
@@ -552,19 +576,64 @@
   </div>
 </div>
 
+<!-- 恢复核验确认：只解除升级阻断，不修复数据库或切换版本 -->
+<div class="modal-backdrop" id="updateRecoveryModal">
+  <div class="modal">
+    <h3>人工核验后解除升级阻断</h3>
+    <p style="color:var(--muted);font-size:12.5px;font-weight:700;line-height:1.7;">此操作不会修复数据库或切换 Release。请先独立确认故障已经恢复；核验不通过时系统会继续阻断升级。</p>
+    <div id="updateRecoveryEvidence" class="update-kv" style="margin:12px 0;"></div>
+    <div class="field">
+      <span class="label">输入核验报告中的当前 Release ID</span>
+      <div class="field-frame"><input id="updateRecoveryReleaseId" autocomplete="off" /></div>
+    </div>
+    <div class="field">
+      <span class="label">人工核验记录（12–500 字，不要填写密钥）</span>
+      <div class="field-frame"><textarea id="updateRecoveryEvidenceNote" rows="3" maxlength="500" placeholder="说明已核对的业务数据、备份及未完成任务，并填写工单或记录编号"></textarea></div>
+    </div>
+    <div class="field">
+      <span class="label">当前账号密码（仅本次验证，不会保存）</span>
+      <div class="field-frame"><input type="password" id="updateRecoveryPassword" autocomplete="current-password" /></div>
+    </div>
+    <div class="error-inline" id="updateRecoveryError"></div>
+    <div class="modal-actions">
+      <button class="action-btn" onclick="closeRecoveryModal()">取消</button>
+      <button class="action-btn primary" id="clearRecoveryBtn" onclick="confirmClearRecovery()">确认解除阻断</button>
+    </div>
+  </div>
+</div>
+
 <!-- 更新执行确认 -->
 <div class="modal-backdrop" id="updateConfirmModal">
   <div class="modal">
-    <h3>确认执行在线升级</h3>
+    <h3 id="updateConfirmTitle">确认执行在线升级</h3>
     <p id="updateConfirmSummary" style="color:var(--muted);font-size:12.5px;font-weight:700;line-height:1.7;"></p>
     <div class="field">
       <span class="label">当前账号密码（仅本次验证，不会保存）</span>
       <div class="field-frame"><input type="password" id="updateConfirmPassword" autocomplete="current-password" /></div>
     </div>
+    <label class="field" id="updateTaskConfirmation" style="display:flex;gap:8px;align-items:flex-start;">
+      <input type="checkbox" id="updateNoActiveTasks" />
+      <span>已确认没有活动的 AI 生成任务。升级期间业务访问暂停；已受理但结果未知的任务应先完成查询核对。</span>
+    </label>
     <div class="error-inline" id="updateConfirmError"></div>
     <div class="modal-actions">
       <button class="action-btn" onclick="closeUpdateConfirm()">取消</button>
-      <button class="action-btn primary" onclick="executeSystemUpdate()">开始升级</button>
+      <button class="action-btn primary" id="confirmUpdateBtn" onclick="executeSystemUpdate()">确认并开始升级</button>
+    </div>
+  </div>
+</div>
+
+<!-- 作业阶段来自持久化状态；下载阶段无准确字节进度时不显示虚假百分比 -->
+<div class="modal-backdrop" id="updateProgressModal" role="dialog" aria-modal="true" aria-labelledby="updateProgressTitle">
+  <div class="modal">
+    <h3 id="updateProgressTitle">正在升级</h3>
+    <p style="color:var(--muted);font-size:12.5px;line-height:1.7;">请等待当前步骤完成。切换期间页面可能暂时断开，重新打开管理后台可继续查看作业状态。</p>
+    <div id="updateProgressStage" class="update-progress-stage" role="status" aria-live="polite">正在准备…</div>
+    <div id="updateProgressDetail" class="update-progress-detail"></div>
+    <div class="modal-actions">
+      <button class="action-btn" id="closeUpdateProgressBtn" onclick="closeUpdateProgress()">后台继续，关闭窗口</button>
+      <button class="action-btn" id="resumeSequenceBtn" onclick="resumeUpdateSequence()" hidden>继续剩余升级</button>
+      <button class="action-btn" id="stopSequenceBtn" onclick="stopUpdateSequence()" hidden>保留当前版本，停止剩余升级</button>
     </div>
   </div>
 </div>
@@ -704,8 +773,14 @@
   let _memberSearchQuery = '';
   let _memberSortMode = 'last_login';
   let _updateAccess = null;
-  let _latestUpdate = null;
+  let _availableUpdates = [];
+  let _currentUpdateReleaseId = '';
+  let _currentUpdateVersion = '';
+  let _updatePreparing = false;
   let _preparedUpdate = null;
+  let _recoveryAssessment = null;
+  let _updatePollTimer = null;
+  const UPDATE_ACTIVE_STATES = new Set(['PREPARING', 'UPDATING', 'MIGRATING', 'RESTARTING', 'VERIFYING', 'ROLLING_BACK']);
   const _paginationState = {
     member: { page: 1, pageSize: 25 },
     projects: { page: 1, pageSize: 25 },
@@ -745,7 +820,18 @@
     let detail = '';
     if (payloadData && typeof payloadData === 'object') {
       detail = payloadData.detail || payloadData.error || payloadData.message || '';
-      if (detail && typeof detail === 'object') detail = detail.code || detail.message || '';
+      if (detail && typeof detail === 'object') {
+        if (detail.code === 'RELEASE_CATALOG_INCOMPLETE') {
+          return '历史发布目录未能完整核验，请稍后重新检查；未启动升级。';
+        }
+        if (detail.code === 'SYSTEM_UPDATE_UPDATER_INCOMPATIBLE') {
+          return '目标更新工具与当前安装不兼容，已拒绝升级；请使用经审核的中间版本或离线维护。';
+        }
+        if (detail.code === 'SYSTEM_UPDATE_UPDATER_UNVERIFIED') {
+          return '无法核验目标更新工具或维护计划，已拒绝交接；当前服务不会因此停止。';
+        }
+        detail = detail.code || detail.message || '';
+      }
     }
     if (!detail && payloadText) detail = payloadText.trim();
     if (!detail && res.status === 404) detail = '接口不存在，请确认企业服务已重启';
@@ -1512,121 +1598,460 @@
     }
   }
 
+  function updateAccessExplanation(access) {
+    if (!access) return '无法确认更新权限，已禁止操作。请刷新页面或重新登录。';
+    if (access.denial_code === 'SYSTEM_UPDATE_SUPER_ADMIN_REQUIRED' || access.role !== 'super_admin') {
+      return '系统升级仅允许超级管理员操作。当前账号没有该角色；已禁止更新操作。';
+    }
+    if (access.denial_code === 'SYSTEM_UPDATE_EMERGENCY_SWITCH_DISABLED' || access.deployment_update_enabled === false) {
+      return '当前账号已是超级管理员，但此设备的部署配置禁用了更新入口（ENTERPRISE_UPDATE_ENABLED=false）。请在维护窗口受控启用配置；不需要重新初始化账号。';
+    }
+    if (access.feature_update_enabled === false || access.permission_source === 'global_disabled') {
+      return '当前账号已是超级管理员，但“权限开关”中的系统更新全局开关未启用。请由超级管理员在权限开关中启用；部署配置也必须允许更新。';
+    }
+    if (access.denial_code === 'SYSTEM_UPDATE_PERMISSION_DENIED') {
+      return '当前账号的系统更新权限未通过核验，已禁止更新操作。请检查权限开关并刷新登录状态。';
+    }
+    if (boolFlag(access.can_operate)) return '';
+    // An older API exposes only a combined switch. Do not guess which of its
+    // two conditions failed, or tell an authenticated super admin to bootstrap.
+    return '当前账号已是超级管理员，但更新仍被禁用。请分别核对设备部署配置和“权限开关”中的系统更新开关；旧版接口不能区分这两个原因。';
+  }
+
   async function loadUpdateCenter() {
+    // Fail closed before fetching: a stale successful view must not retain
+    // enabled buttons if the authorization refresh fails.
+    _updateAccess = null;
+    document.querySelectorAll('.update-dangerous').forEach(el => { el.style.display = 'none'; });
+    const notice = document.getElementById('updateAccessNotice');
+    notice.style.display = 'block';
+    notice.textContent = '正在核验更新权限…';
+    updateStartButton();
     try {
       _updateAccess = await apiFetch('/enterprise/api/update-mvp/access');
-      const notice = document.getElementById('updateAccessNotice');
       const allowed = boolFlag(_updateAccess.can_operate);
       notice.style.display = allowed ? 'none' : 'block';
-      notice.textContent = allowed
-        ? ''
-        : '系统升级仅允许超级管理员操作，且全局总开关必须开启。危险操作已隐藏；后端同样会返回 403。';
+      notice.textContent = updateAccessExplanation(_updateAccess);
       document.querySelectorAll('.update-dangerous').forEach(el => { el.style.display = allowed ? 'flex' : 'none'; });
+      document.getElementById('updateRecoveryActions').style.display = 'none';
       const rememberedJob = sessionStorage.getItem('enterprise_update_job_id');
-      if (rememberedJob && /^[0-9a-f]{32}$/.test(rememberedJob)) {
+      const pending = allowed ? await loadPendingRecoveryJobs() : [];
+      if (pending.length) {
+        _preparedUpdate = { job_id: pending[0] };
+        sessionStorage.setItem('enterprise_update_job_id', pending[0]);
+        await refreshUpdateJob();
+      } else if (allowed && rememberedJob && /^[0-9a-f]{32}$/.test(rememberedJob)) {
         _preparedUpdate = { job_id: rememberedJob };
         await refreshUpdateJob();
       }
       if (allowed) await checkSystemUpdate();
+      updateStartButton();
     } catch (e) {
+      _updateAccess = null;
+      document.querySelectorAll('.update-dangerous').forEach(el => { el.style.display = 'none'; });
+      updateStartButton();
+      notice.style.display = 'block';
+      notice.textContent = '更新中心状态加载失败，未确认当前权限。请刷新页面重试；未发起升级。';
       showToast('加载更新中心失败: ' + e.message, 'error');
     }
   }
 
+  function updateStartButton() {
+    const button = document.getElementById('startUpdateBtn');
+    const selector = document.getElementById('updateReleaseSelect');
+    const state = _preparedUpdate?.state;
+    const ready = state === 'READY';
+    button.textContent = ready ? '继续已准备的升级' : '更新到新版本';
+    selector.disabled = !boolFlag(_updateAccess?.can_operate) || _updatePreparing || _updateCatalogChecking
+      || ready || state === 'RECOVERY_REQUIRED' || UPDATE_ACTIVE_STATES.has(state) || !_availableUpdates.length;
+    button.disabled = !boolFlag(_updateAccess?.can_operate) || _updatePreparing
+      || state === 'RECOVERY_REQUIRED' || UPDATE_ACTIVE_STATES.has(state)
+      || (!ready && (_updateCatalogChecking || !['direct', 'requires_intermediate'].includes(selectedUpdateRelease()?.route_status)));
+  }
+
+  function selectedUpdateRelease() {
+    const id = document.getElementById('updateReleaseSelect').value;
+    return _availableUpdates.find(item => item.provider_release_id === id) || null;
+  }
+
+  function updateRouteExplanation(release) {
+    if (!release) return '';
+    const status = release.route_status;
+    if (status === 'direct') return '升级路径已声明且当前安装身份匹配；下载后仍会完整校验发布包和数据库。';
+    if (status === 'requires_intermediate') {
+      const steps = Array.isArray(release.upgrade_path) ? release.upgrade_path.map(step => step.version).join(' → ') : '';
+      return `将自动经过已声明的中间版本${steps ? `：${steps}` : ''}。确认一次后逐步执行；中间版本保持维护状态。`;
+    }
+    if (status === 'route_missing') return '该发布包没有可核验的升级路径声明，不能从此设备直接选择。';
+    if (status === 'route_invalid') return '发布包升级路径声明无效，已禁止升级。';
+    if (status === 'source_unverified') return '当前安装版本或数据库结构尚未通过升级路径核验，已禁止升级。';
+    return '没有从当前安装版本到此目标的已声明安全路径，已禁止升级。';
+  }
+
+  function selectUpdateRelease() {
+    const target = document.getElementById('updateReleaseSummary');
+    const selected = selectedUpdateRelease();
+    target.textContent = [
+      `当前 Release：${_currentUpdateReleaseId}`,
+      `当前版本：${_currentUpdateVersion}`,
+      _updateCatalogVerified ? '历史发布目录已完整核验；目标仍须通过升级包和数据库检查。' : '',
+      selected ? `目标版本：${selected.version}（${selected.stage === 'development' ? '开发版' : '正式版'}，${selected.tag_name}）` : '当前没有更高版本可更新',
+      selected ? `发布时间：${selected.published_at}` : '',
+      selected?.stage === 'development' ? '开发版可能不稳定；升级前请确认该版本适用于当前设备。' : '',
+      selected ? updateRouteExplanation(selected) : '',
+      selected?.release_notes ? `更新说明：${selected.release_notes}` : '',
+      selected?.route_status === 'direct' ? '最终能否升级仍以发布包校验和数据库兼容检查结果为准。' : '',
+    ].filter(Boolean).join('\n');
+    updateStartButton();
+  }
+
+  let _updateCatalogRequest = 0;
+  let _updateCatalogChecking = false;
+  let _updateCatalogVerified = false;
+
   async function checkSystemUpdate() {
+    const checkId = ++_updateCatalogRequest;
+    _updateCatalogChecking = true;
+    _updateCatalogVerified = false;
+    updateStartButton();
     const target = document.getElementById('updateReleaseSummary');
     target.textContent = '正在检查…';
     try {
       const data = await apiFetch('/enterprise/api/update-mvp/check');
-      _latestUpdate = data.latest;
-      target.textContent = [
-        `当前 Release：${data.current_release_id}`,
-        `当前版本：${data.current_version}`,
-        _latestUpdate ? `最新版本：${_latestUpdate.version} (${_latestUpdate.tag_name})` : '没有发现完整、稳定的 Manifest v2 Release',
-        _latestUpdate ? `发布时间：${_latestUpdate.published_at}` : '',
-        _latestUpdate && _latestUpdate.release_notes ? `更新说明：${_latestUpdate.release_notes}` : '',
-      ].filter(Boolean).join('\n');
-      document.getElementById('prepareUpdateBtn').disabled = !_latestUpdate;
+      if (checkId !== _updateCatalogRequest) return;
+      if (data.catalog != null && data.catalog.complete !== true) {
+        throw new Error('历史发布目录未能完整核验，请重新检查；未启动升级。');
+      }
+      _updateCatalogVerified = data.catalog?.complete === true;
+      _currentUpdateReleaseId = data.current_release_id;
+      _currentUpdateVersion = data.current_version;
+      _availableUpdates = Array.isArray(data.releases) ? data.releases
+        : (data.update_available && data.latest ? [{ ...data.latest, stage: 'stable' }] : []);
+      const selector = document.getElementById('updateReleaseSelect');
+      const previousId = selector.value;
+      selector.replaceChildren();
+      if (!_availableUpdates.length) {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = '当前没有可升级的版本';
+        selector.appendChild(option);
+      } else {
+        for (const release of _availableUpdates) {
+          const option = document.createElement('option');
+          option.value = release.provider_release_id;
+          const routeLabel = release.route_status === 'direct' ? '可直接升级'
+            : release.route_status === 'requires_intermediate' ? '需中间版本' : '当前不可升级';
+          option.textContent = `${release.version} · ${release.stage === 'development' ? '开发版' : '正式版'} · ${routeLabel}`;
+          selector.appendChild(option);
+        }
+        const preferred = _availableUpdates.find(item => item.provider_release_id === previousId)
+          || _availableUpdates.find(item => item.stage === 'stable' && item.route_status === 'direct')
+          || _availableUpdates.find(item => item.route_status === 'direct') || _availableUpdates[0];
+        selector.value = preferred.provider_release_id;
+      }
+      selectUpdateRelease();
     } catch (e) {
-      target.textContent = '检查失败';
+      if (checkId !== _updateCatalogRequest) return;
+      _availableUpdates = [];
+      document.getElementById('updateReleaseSelect').replaceChildren();
+      target.textContent = '检查失败：' + e.message;
+      updateStartButton();
       showToast('检查更新失败: ' + e.message, 'error');
+    } finally {
+      if (checkId === _updateCatalogRequest) {
+        _updateCatalogChecking = false;
+        updateStartButton();
+      }
     }
   }
 
-  async function prepareSystemUpdate() {
-    if (!_latestUpdate) return;
-    const button = document.getElementById('prepareUpdateBtn');
-    button.disabled = true;
-    try {
-      _preparedUpdate = await apiFetch('/enterprise/api/update-mvp/prepare', {
-        method: 'POST',
-        body: JSON.stringify({ provider_release_id: _latestUpdate.provider_release_id }),
-      });
-      sessionStorage.setItem('enterprise_update_job_id', _preparedUpdate.job_id);
-      document.getElementById('updateJobSummary').textContent = [
-        `Job ID：${_preparedUpdate.job_id}`,
-        `状态：${_preparedUpdate.state}`,
-        `源 Release：${_preparedUpdate.source_release_id}`,
-        `目标 Release：${_preparedUpdate.target_release_id}`,
-        '兼容性：同 Schema / 无迁移（可在线切换）',
-        `Manifest SHA-256：${_preparedUpdate.target_manifest_sha256}`,
-      ].join('\n');
-      document.getElementById('executeUpdateBtn').disabled = false;
-      showToast('候选版本已下载、校验并准备完成');
-    } catch (e) {
-      showToast('准备更新失败: ' + e.message, 'error');
-      button.disabled = false;
-    }
-  }
-
+  let _updateConfirmationMode = 'execute';
   function openUpdateConfirm() {
-    if (!_preparedUpdate) return;
+    _updateConfirmationMode = 'execute';
+    document.getElementById('updateConfirmTitle').textContent = '确认执行在线升级';
+    document.getElementById('updateTaskConfirmation').hidden = false;
+    document.getElementById('confirmUpdateBtn').textContent = '确认并开始升级';
+    if (document.getElementById('startUpdateBtn').disabled) return;
+    const ready = _preparedUpdate?.state === 'READY';
+    const selected = selectedUpdateRelease();
     document.getElementById('updateConfirmSummary').textContent =
-      `将从 ${_preparedUpdate.source_release_id} 切换到 ${_preparedUpdate.target_release_id}。服务会重启；失败时自动回滚。`;
+      ready
+        ? `继续将 ${_preparedUpdate.source_release_id} 更新到 ${_preparedUpdate.target_release_id}。已完成发布包与数据库兼容校验。`
+        : `准备更新到 ${selected.version}（${selected.stage === 'development' ? '开发版：可能不稳定' : '正式版'}）。确认后系统会下载并校验完整发布包；只有校验和数据库兼容检查通过才会停服务。`;
     document.getElementById('updateConfirmPassword').value = '';
+    document.getElementById('updateNoActiveTasks').checked = false;
     document.getElementById('updateConfirmError').textContent = '';
+    document.getElementById('confirmUpdateBtn').disabled = false;
     document.getElementById('updateConfirmModal').classList.add('show');
   }
 
   function closeUpdateConfirm() {
     document.getElementById('updateConfirmPassword').value = '';
     document.getElementById('updateConfirmModal').classList.remove('show');
+    if (_updateConfirmationMode === 'stop' && _preparedUpdate) renderUpdateProgress(_preparedUpdate);
+  }
+
+  function showUpdateProgress(stage, detail, kind = '') {
+    document.getElementById('updateProgressModal').classList.add('show');
+    document.getElementById('updateProgressTitle').textContent = kind === 'success' ? '升级成功' : kind === 'error' ? '升级需要处理' : '正在升级';
+    const target = document.getElementById('updateProgressStage');
+    target.textContent = stage;
+    target.dataset.kind = kind;
+    document.getElementById('updateProgressDetail').textContent = detail || '';
+    const closeButton = document.getElementById('closeUpdateProgressBtn');
+    closeButton.disabled = _updatePreparing && !_preparedUpdate?.job_id;
+    closeButton.textContent = closeButton.disabled ? '准备中，请保持页面打开'
+      : kind === 'success' ? '刷新页面进入新版本' : '后台继续，关闭窗口';
+  }
+
+  function closeUpdateProgress() {
+    if (_preparedUpdate?.state === 'SUCCEEDED') {
+      window.location.reload();
+      return;
+    }
+    document.getElementById('updateProgressModal').classList.remove('show');
+  }
+
+  function renderUpdateProgress(data) {
+    const labels = {
+      PREPARING: '正在下载并校验发布包', READY: '发布包已校验，等待切换',
+      UPDATING: '正在核验并交接服务', MIGRATING: '正在备份并迁移数据库',
+      RESTARTING: '正在启动新版本', VERIFYING: '正在检查新版本健康状态',
+      SUCCEEDED: '升级成功', ROLLING_BACK: '升级未完成，正在恢复原版本',
+      ROLLED_BACK: '升级失败，已恢复原版本', FAILED: '升级未完成',
+      RECOVERY_REQUIRED: '需要人工核验恢复状态', RECOVERY_CLEARED: '人工核验已完成',
+    };
+    const state = data?.state || 'PREPARING';
+    const kind = state === 'SUCCEEDED' ? 'success'
+      : ['ROLLED_BACK', 'FAILED', 'RECOVERY_REQUIRED'].includes(state) ? 'error' : '';
+    const detail = [
+      data?.job_id ? `作业 ID：${data.job_id}` : '发布包准备期间，当前服务仍可使用。',
+      data?.result_code ? `结果代码：${data.result_code}` : '',
+      data?.total_hops ? `升级步骤：已完成 ${data.completed_hops || 0} / ${data.total_hops}` : '',
+      data?.upgrade_path ? `路径：${data.upgrade_path.map(step => step.version).join(' → ')}` : '',
+      data?.updater_execution?.mode === 'target-release'
+        ? `更新工具：准备时已核验目标版本 ${data.updater_execution.worker_release_id}` : '',
+      data?.result_code === 'SYSTEM_UPDATE_UPDATER_UNVERIFIED'
+        ? '更新工具或维护计划核验失败，服务交接未执行。请重新检查发布包。' : '',
+      state === 'RECOVERY_REQUIRED' && !data?.can_resume ? '请勿重试升级；先核对数据与运行状态，再使用下方人工恢复核验。' : '',
+      data?.can_resume ? '检查点已保存，可继续剩余升级。已完成的步骤不会重复执行。' : '',
+      state === 'SUCCEEDED' ? '请刷新页面，确认已进入新版本。' : '',
+    ].filter(Boolean).join('\n');
+    showUpdateProgress(data?.can_resume ? '升级暂停，检查点已保存' : labels[state] || `升级状态：${state}`, detail, kind);
+    document.getElementById('resumeSequenceBtn').hidden = !data?.can_resume;
+    document.getElementById('stopSequenceBtn').hidden = !data?.can_stop;
   }
 
   async function executeSystemUpdate() {
-    if (!_preparedUpdate) return;
-    const password = document.getElementById('updateConfirmPassword').value;
-    try {
-      const data = await apiFetch(`/enterprise/api/update-mvp/jobs/${encodeURIComponent(_preparedUpdate.job_id)}/execute`, {
-        method: 'POST', body: JSON.stringify({ password }),
-      });
-      sessionStorage.setItem('enterprise_update_job_id', data.job_id);
-      document.getElementById('updateConfirmPassword').value = '';
+    if (document.getElementById('confirmUpdateBtn').disabled) return;
+    let password = document.getElementById('updateConfirmPassword').value;
+    if (!password) {
+      document.getElementById('updateConfirmError').textContent = '请输入当前账号密码。';
+      return;
+    }
+    if (_updateConfirmationMode === 'stop') {
       closeUpdateConfirm();
+      try {
+        _preparedUpdate = await apiFetch(`/enterprise/api/update-mvp/jobs/${encodeURIComponent(_preparedUpdate.job_id)}/sequence-stop`, {
+          method: 'POST', body: JSON.stringify({ password }),
+        });
+        renderUpdateProgress(_preparedUpdate);
+      } catch (e) { showToast('停止剩余升级失败：' + e.message, 'error'); }
+      finally { password = ''; }
+      return;
+    }
+    if (!document.getElementById('updateNoActiveTasks').checked) {
+      document.getElementById('updateConfirmError').textContent = '请先确认没有活动生成任务。';
+      return;
+    }
+    document.getElementById('confirmUpdateBtn').disabled = true;
+    const selected = selectedUpdateRelease();
+    document.getElementById('updateConfirmPassword').value = '';
+    closeUpdateConfirm();
+    _updatePreparing = true;
+    updateStartButton();
+    try {
+      if (_preparedUpdate?.state !== 'READY') {
+        _preparedUpdate = null;
+        sessionStorage.removeItem('enterprise_update_job_id');
+        showUpdateProgress('正在下载并校验发布包', '当前版本仍在运行。准备完成前请保持此页面打开；校验不通过时不会切换服务。');
+        _preparedUpdate = await apiFetch('/enterprise/api/update-mvp/prepare', {
+          method: 'POST',
+          body: JSON.stringify({ provider_release_id: selected.provider_release_id }),
+        });
+        sessionStorage.setItem('enterprise_update_job_id', _preparedUpdate.job_id);
+      }
+      renderUpdateProgress(_preparedUpdate);
+      const data = await apiFetch(`/enterprise/api/update-mvp/jobs/${encodeURIComponent(_preparedUpdate.job_id)}/execute`, {
+        method: 'POST', body: JSON.stringify({ password, confirm_no_active_tasks: true }),
+      });
+      password = '';
+      _preparedUpdate = { ..._preparedUpdate, ...data };
+      sessionStorage.setItem('enterprise_update_job_id', data.job_id);
       document.getElementById('updateJobSummary').textContent = `Job ID：${data.job_id}\n状态：${data.state}\n页面连接可能暂时中断，请稍后刷新状态。`;
-      showToast('升级交接已启动');
-      setTimeout(refreshUpdateJob, 5000);
+      renderUpdateProgress(_preparedUpdate);
+      scheduleUpdateJobRefresh();
     } catch (e) {
-      document.getElementById('updateConfirmPassword').value = '';
-      document.getElementById('updateConfirmError').textContent = e.message;
+      password = '';
+      showUpdateProgress('升级未启动或已停止', `当前服务不会因准备失败而切换。原因：${e.message}`, 'error');
+      if (_preparedUpdate?.state === 'READY') await refreshUpdateJob();
+    } finally {
+      password = '';
+      _updatePreparing = false;
+      document.getElementById('closeUpdateProgressBtn').disabled = false;
+      if (_preparedUpdate?.state !== 'SUCCEEDED') document.getElementById('closeUpdateProgressBtn').textContent = '后台继续，关闭窗口';
+      updateStartButton();
+    }
+  }
+
+  async function resumeUpdateSequence() {
+    if (!_preparedUpdate?.job_id) return;
+    try {
+      const result = await apiFetch(`/enterprise/api/update-mvp/jobs/${encodeURIComponent(_preparedUpdate.job_id)}/sequence-resume`, {
+        method: 'POST', body: JSON.stringify({ confirm_no_active_tasks: true }),
+      });
+      _preparedUpdate = { ..._preparedUpdate, can_resume: false, can_stop: false, ...result };
+      renderUpdateProgress(_preparedUpdate);
+      scheduleUpdateJobRefresh();
+    } catch (e) { showToast('继续升级失败：' + e.message, 'error'); }
+  }
+
+  async function stopUpdateSequence() {
+    if (!_preparedUpdate?.job_id) return;
+    _updateConfirmationMode = 'stop';
+    document.getElementById('updateProgressModal').classList.remove('show');
+    document.getElementById('updateConfirmTitle').textContent = '确认停止剩余升级';
+    document.getElementById('updateTaskConfirmation').hidden = true;
+    document.getElementById('updateConfirmSummary').textContent = '停止剩余步骤，保留已经完成升级的版本和现有数据。服务、数据库和版本核验通过后恢复业务访问。';
+    document.getElementById('updateConfirmPassword').value = '';
+    document.getElementById('updateConfirmError').textContent = '';
+    document.getElementById('confirmUpdateBtn').disabled = false;
+    document.getElementById('updateConfirmModal').classList.add('show');
+    document.getElementById('confirmUpdateBtn').textContent = '确认停止剩余升级';
+  }
+
+  function scheduleUpdateJobRefresh() {
+    clearTimeout(_updatePollTimer);
+    _updatePollTimer = setTimeout(refreshUpdateJob, 5000);
+  }
+
+  async function loadPendingRecoveryJobs() {
+    const result = await apiFetch('/enterprise/api/update-mvp/recovery/pending');
+    const jobs = Array.isArray(result.job_ids) ? result.job_ids.filter(id => /^[0-9a-f]{32}$/.test(id)) : [];
+    const select = document.getElementById('updateRecoverySelect');
+    select.replaceChildren();
+    for (const id of jobs) {
+      const option = document.createElement('option');
+      option.value = id;
+      option.textContent = `待恢复：${id}`;
+      select.appendChild(option);
+    }
+    document.getElementById('updateRecoveryActions').style.display = jobs.length ? 'flex' : 'none';
+    return jobs;
+  }
+
+  async function selectPendingRecoveryJob() {
+    const jobId = document.getElementById('updateRecoverySelect').value;
+    if (!/^[0-9a-f]{32}$/.test(jobId)) return;
+    _preparedUpdate = { job_id: jobId };
+    sessionStorage.setItem('enterprise_update_job_id', jobId);
+    await refreshUpdateJob();
+  }
+
+  async function openRecoveryAssessment() {
+    if (_preparedUpdate?.state !== 'RECOVERY_REQUIRED') return;
+    const button = document.getElementById('assessRecoveryBtn');
+    button.disabled = true;
+    try {
+      _recoveryAssessment = await apiFetch(`/enterprise/api/update-mvp/jobs/${encodeURIComponent(_preparedUpdate.job_id)}/recovery-assessment`);
+      document.getElementById('updateRecoveryEvidence').textContent = [
+        `作业 ID：${_recoveryAssessment.job_id}`,
+        `当前 Release：${_recoveryAssessment.current_release_id}`,
+        `数据库核验：${_recoveryAssessment.database?.mode || '未通过'}`,
+        `运行健康：${_recoveryAssessment.health}`,
+        `证据指纹：${_recoveryAssessment.assessment_sha256}`,
+      ].join('\n');
+      document.getElementById('updateRecoveryReleaseId').value = '';
+      document.getElementById('updateRecoveryEvidenceNote').value = '';
+      document.getElementById('updateRecoveryPassword').value = '';
+      document.getElementById('updateRecoveryError').textContent = '';
+      document.getElementById('updateRecoveryModal').classList.add('show');
+    } catch (e) {
+      _recoveryAssessment = null;
+      showToast('恢复核验失败，升级仍被阻断: ' + e.message, 'error');
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  function closeRecoveryModal() {
+    document.getElementById('updateRecoveryPassword').value = '';
+    document.getElementById('updateRecoveryModal').classList.remove('show');
+    _recoveryAssessment = null;
+  }
+
+  async function confirmClearRecovery() {
+    if (!_recoveryAssessment || _preparedUpdate?.job_id !== (_recoveryAssessment.sequence_job_id || _recoveryAssessment.job_id)) return;
+    const sequenceJobId = _recoveryAssessment.sequence_job_id;
+    const expectedReleaseId = document.getElementById('updateRecoveryReleaseId').value.trim();
+    const manualEvidenceNote = document.getElementById('updateRecoveryEvidenceNote').value.trim();
+    const password = document.getElementById('updateRecoveryPassword').value;
+    if (expectedReleaseId !== _recoveryAssessment.current_release_id || !password || manualEvidenceNote.length < 12) {
+      document.getElementById('updateRecoveryError').textContent = '请准确输入当前 Release ID、核验记录和账号密码。';
+      return;
+    }
+    const button = document.getElementById('clearRecoveryBtn');
+    button.disabled = true;
+    try {
+      await apiFetch(`/enterprise/api/update-mvp/jobs/${encodeURIComponent(_recoveryAssessment.job_id)}/recovery-clearance`, {
+        method: 'POST', body: JSON.stringify({
+          password, expected_release_id: expectedReleaseId,
+          expected_assessment_sha256: _recoveryAssessment.assessment_sha256,
+          manual_evidence_note: manualEvidenceNote,
+        }),
+      });
+      closeRecoveryModal();
+      await loadPendingRecoveryJobs();
+      await refreshUpdateJob();
+      await checkSystemUpdate();
+      showToast(sequenceJobId ? '本跳恢复核验已记录，请确认保留当前版本并停止剩余升级。' : '恢复核验已记录，升级阻断已解除');
+    } catch (e) {
+      document.getElementById('updateRecoveryPassword').value = '';
+      document.getElementById('updateRecoveryError').textContent = e.message;
+    } finally {
+      button.disabled = false;
     }
   }
 
   async function refreshUpdateJob() {
     if (!_preparedUpdate) return;
+    clearTimeout(_updatePollTimer);
+    _updatePollTimer = null;
     try {
       const data = await apiFetch(`/enterprise/api/update-mvp/jobs/${encodeURIComponent(_preparedUpdate.job_id)}`);
       _preparedUpdate = { ..._preparedUpdate, ...data };
       document.getElementById('updateJobSummary').textContent = [
         `Job ID：${data.job_id}`, `状态：${data.state}`, `结果代码：${data.result_code}`,
         `源 Release：${data.source_release_id || '—'}`, `目标 Release：${data.target_release_id || '—'}`,
-        `更新时间：${data.updated_at}`,
+        data?.total_hops ? `升级步骤：已完成 ${data.completed_hops || 0} / ${data.total_hops}` : '',
+        `更新时间：${data.updated_at || '—'}`,
       ].join('\n');
-      document.getElementById('executeUpdateBtn').disabled = data.state !== 'READY';
-      if (!['SUCCEEDED','ROLLED_BACK','FAILED'].includes(data.state)) setTimeout(refreshUpdateJob, 5000);
+      document.getElementById('updateRecoveryNotice').style.display = data.state === 'RECOVERY_REQUIRED' && !data.can_resume ? 'block' : 'none';
+      document.getElementById('assessRecoveryBtn').hidden = Boolean(data.can_resume);
+      updateStartButton();
+      if (document.getElementById('updateProgressModal').classList.contains('show') || UPDATE_ACTIVE_STATES.has(data.state) || data.can_resume || data.can_stop) {
+        renderUpdateProgress(data);
+      }
+      if (UPDATE_ACTIVE_STATES.has(data.state)) scheduleUpdateJobRefresh();
     } catch (e) {
-      document.getElementById('updateJobSummary').textContent += '\n连接暂不可用；可稍后重新打开页面并使用同一 Job ID 查询。';
-      setTimeout(refreshUpdateJob, 5000);
+      const summary = document.getElementById('updateJobSummary');
+      if (!summary.textContent.includes('连接暂不可用')) {
+        summary.textContent += '\n连接暂不可用；可稍后重新打开页面并使用同一 Job ID 查询。';
+      }
+      if (document.getElementById('updateProgressModal').classList.contains('show')) {
+        showUpdateProgress('正在等待服务重新连接', '升级可能正在切换服务；系统会继续查询同一作业，不会因此重新提交升级。');
+      }
+      if (!_preparedUpdate.state || UPDATE_ACTIVE_STATES.has(_preparedUpdate.state)) scheduleUpdateJobRefresh();
     }
   }
 

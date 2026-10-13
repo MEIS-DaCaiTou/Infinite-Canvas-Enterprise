@@ -1,0 +1,16 @@
+{
+  "schema_version": "enterprise-install-entry-test-assets-v1",
+  "repository": "MEIS-DaCaiTou/Infinite-Canvas-Enterprise",
+  "releases": {
+    "2026.09.5": {
+      "Infinite-Canvas-Enterprise-ice-2026.09.5-7609bb1b7cfa-win-x64.zip": "10b1ca87d36df1a9c39058658f6aa18a4a3ffc1d83fe71eb9a49c04b82bf4c4b",
+      "ops-release-manifest-v2.json": "88b6837e5a79171ca02d06401894ca16a86b1bd2503a43dcbccbc6a06a221848",
+      "release-payload-inventory.json": "53026163e462e7226c76aec514a9491097250be247be1a0f1faff3d18ea1c173"
+    },
+    "2026.09.9": {
+      "Infinite-Canvas-Enterprise-ice-2026.09.9-54f9e67d1643-win-x64.zip": "1c9133545496121fde4ff57e5de92e5fed971430eda5b1b168cee871b374d58c",
+      "ops-release-manifest-v2.json": "c3d582e98cc1e6504934812102235847069ba714f7aa3f4876eee5fc507ae9ec",
+      "release-payload-inventory.json": "27bf905579fa32eae7e38ed46fc13fd97b621c42aa306ad185429e572dd93b13"
+    }
+  }
+}

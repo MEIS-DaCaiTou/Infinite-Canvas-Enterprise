@@ -435,37 +435,77 @@ def _config_contract() -> bytes:
 
 
 def _database_snapshot(repo: Path, destination: Path) -> bytes:
+    """The unified mainline ships the same v2 contract as official 09.9/10.1.
+
+    Historical unversioned releases must be rebuilt from their frozen refs.
+    Never infer a downgrade from the mainline VERSION marker.
+    """
+    return _versioned_database_snapshot(repo, destination)
+
+
+def _versioned_database_snapshot(repo: Path, destination: Path) -> bytes:
+    """Build real v2 evidence by applying the shipped migration to a fixture.
+
+    The legacy source is pinned to the exact 18-object 09.6/09.8 schema.  This
+    does not claim that the immutable 09.6 updater can migrate a database: the
+    normal online route starts from the 09.8 bridge, while an independent
+    controlled bridge handles the security-activated 09.6 variant.
+    """
     script = r'''import json, os, sqlite3, sys
 from pathlib import Path
 sys.path.insert(0, os.environ["ICE_REPO_ROOT"])
 from enterprise.paths import derive_development_path_roots, resolve_database_path
-import enterprise.config as config
 import enterprise.db as db
-from enterprise.migrations.sec_1b1_role_auth import MIGRATION_ID as ROLE_AUTH_MIGRATION_ID
-from enterprise.migrations.sec_1b2_activation import BOOTSTRAP_MIGRATION_ID, ensure_bootstrap_lifecycle_schema_in_transaction
-from enterprise.migrations.versioned import BASELINE_SCHEMA_VERSION, DEFAULT_MIGRATIONS, initialize_schema_metadata_in_transaction, migration_registry_sha256, schema_objects, schema_snapshot_sha256
-from enterprise.security_audit import SECURITY_AUDIT_MIGRATION_ID, ensure_security_audit_schema_in_transaction
+from enterprise.migrations.versioned import (
+    DEFAULT_MIGRATIONS, _apply_steps_in_transaction,
+    initialize_schema_metadata_in_transaction, migration_registry_sha256,
+    preview_legacy_schema_enrollment, schema_objects, schema_snapshot_sha256,
+)
+from enterprise.security_audit import ensure_security_audit_schema_in_transaction
+from enterprise.migrations.sec_1b2_activation import ensure_bootstrap_lifecycle_schema_in_transaction
 root=Path(os.environ["ICE_DB_SNAPSHOT_ROOT"])
 roots=derive_development_path_roots(root)
 db.PATH_ROOTS=roots; db.DB_PATH=Path("enterprise.db"); db.ADMIN_USERNAME="manifest_fixture_admin"; db.ADMIN_PASSWORD="fixture-only-not-a-secret"
 db.init_db()
 target=resolve_database_path(roots, db.DB_PATH)
 con=sqlite3.connect(target)
+legacy_objects=schema_objects(con)
+legacy_sha=schema_snapshot_sha256(con)
+if len(legacy_objects)!=18 or legacy_sha!="28b7a7d5994303fdfc7a1186cde19aa1d09312c2985b13427317b04af7a97691":
+    raise RuntimeError("VERSIONED_SOURCE_SCHEMA_UNEXPECTED")
+enrolled_sha=preview_legacy_schema_enrollment(target,expected_legacy_schema_sha256=legacy_sha)
+variant_path=target.parent/'enterprise-variant.db'
+variant_conn=sqlite3.connect(variant_path)
+con.backup(variant_conn)
+variant_conn.execute("BEGIN IMMEDIATE")
+ensure_security_audit_schema_in_transaction(variant_conn)
+ensure_bootstrap_lifecycle_schema_in_transaction(variant_conn)
+variant_objects=schema_objects(variant_conn)
+variant_sha=schema_snapshot_sha256(variant_conn)
+variant_conn.commit()
+if len(variant_objects)!=28 or variant_sha!="d7b98ccfca3564895eec64e85cff86532c818f2198a58a73afe3a830ac23fafc":
+    raise RuntimeError("VERSIONED_SECURITY_VARIANT_UNEXPECTED")
+variant_conn.close()
+variant_enrolled_sha=preview_legacy_schema_enrollment(variant_path,expected_legacy_schema_sha256=variant_sha)
 con.execute("BEGIN IMMEDIATE")
-ensure_security_audit_schema_in_transaction(con)
-ensure_bootstrap_lifecycle_schema_in_transaction(con)
-initialize_schema_metadata_in_transaction(con, schema_version=BASELINE_SCHEMA_VERSION)
+enrolled=initialize_schema_metadata_in_transaction(con)
+if enrolled["schema_sha256"]!=enrolled_sha:
+    raise RuntimeError("VERSIONED_ENROLLMENT_UNEXPECTED")
+_apply_steps_in_transaction(con,DEFAULT_MIGRATIONS)
+target_objects=schema_objects(con)
+target_sha=schema_snapshot_sha256(con)
 con.commit()
-objects=schema_objects(con)
-payload={"migration_ids":sorted([ROLE_AUTH_MIGRATION_ID,BOOTSTRAP_MIGRATION_ID,SECURITY_AUDIT_MIGRATION_ID]),"migration_registry_sha256":migration_registry_sha256(DEFAULT_MIGRATIONS),"objects":objects,"schema_id":"enterprise-database-contract-v1","schema_objects_sha256":schema_snapshot_sha256(con),"schema_version":BASELINE_SCHEMA_VERSION,"versioned_migration_ids":[step.migration_id for step in DEFAULT_MIGRATIONS]}
 con.close()
+if len(target_objects)!=30 or len(DEFAULT_MIGRATIONS)!=1:
+    raise RuntimeError("VERSIONED_TARGET_SCHEMA_UNEXPECTED")
+payload={"migration_ids":sorted(p.stem for p in (Path(os.environ["ICE_REPO_ROOT"])/"enterprise"/"migrations").glob("*.py") if p.name not in {"__init__.py","versioned.py"}),"objects":target_objects,"schema_id":"enterprise-database-contract-v1","schema_version":2,"schema_objects_sha256":target_sha,"migration_registry_sha256":migration_registry_sha256(DEFAULT_MIGRATIONS),"versioned_migration_ids":[step.migration_id for step in DEFAULT_MIGRATIONS],"legacy_source_schema_sha256":legacy_sha,"legacy_enrolled_schema_sha256":enrolled_sha,"legacy_security_variant_schema_sha256":variant_sha,"legacy_security_variant_enrolled_schema_sha256":variant_enrolled_sha}
 Path(os.environ["ICE_DB_SNAPSHOT_OUTPUT"]).write_text(json.dumps(payload,ensure_ascii=False,sort_keys=True,separators=(",",":"))+"\n",encoding="utf-8")
 '''
-    temp_root = destination.parent / "database-fixture"
+    temp_root = destination.parent / "database-versioned-fixture"
     env = os.environ.copy(); env.update({"ICE_DB_SNAPSHOT_ROOT": os.fspath(temp_root), "ICE_REPO_ROOT": os.fspath(repo), "ICE_DB_SNAPSHOT_OUTPUT": os.fspath(destination), "PYTHONDONTWRITEBYTECODE": "1", "PYTHONNOUSERSITE": "1", "ENTERPRISE_ENV": "development", "JWT_SECRET": "fixture-jwt-secret-not-production", "ADMIN_PASSWORD": "fixture-only-not-a-secret"})
     result = subprocess.run([sys.executable, "-B", "-c", script], cwd=repo, env=env, capture_output=True, text=True)
     if result.returncode or not destination.is_file():
-        raise ReleaseManifestV2Error("RELEASE_DATABASE_SNAPSHOT_FAILED")
+        raise ReleaseManifestV2Error("RELEASE_VERSIONED_DATABASE_SNAPSHOT_FAILED")
     data = destination.read_bytes(); shutil.rmtree(temp_root, ignore_errors=True); destination.unlink()
     return data
 
@@ -483,7 +523,7 @@ def _deterministic_zip(payload: Path, archive: Path, root_prefix: str, epoch: in
                 shutil.copyfileobj(source, target, 1024 * 1024)
 
 
-def build_release_v2(*, repo: Path, output_root: Path, runtime_root: Path, runtime_evidence_root: Path, commit: str | None = None) -> dict[str, object]:
+def build_release_v2(*, repo: Path, output_root: Path, runtime_root: Path, runtime_evidence_root: Path, commit: str | None = None, database_contract_mode: str = "same-schema-no-migration") -> dict[str, object]:
     repo = Path(repo).resolve(); output_root = Path(output_root).resolve(); runtime_root = Path(runtime_root).resolve(); runtime_evidence_root = Path(runtime_evidence_root).resolve()
     _assert_build_directory(repo); _assert_build_directory(runtime_root); _assert_build_directory(runtime_evidence_root)
     try:
@@ -492,6 +532,13 @@ def build_release_v2(*, repo: Path, output_root: Path, runtime_root: Path, runti
         raise ReleaseManifestV2Error("RELEASE_BUILD_OUTPUT_INVALID") from exc
     assert_non_overlapping_roots(repo, output_root, runtime_root, runtime_evidence_root)
     if output_root.exists(): raise ReleaseManifestV2Error("RELEASE_BUILD_OUTPUT_EXISTS")
+    if database_contract_mode not in {"same-schema-no-migration", "versioned-forward-migration", "same-versioned-schema-no-migration"}:
+        raise ReleaseManifestV2Error("RELEASE_DATABASE_MODE_INVALID")
+    # A maintenance release preserves an already-versioned schema, rather than
+    # silently publishing the legacy unversioned database evidence. This is a
+    # build-time choice; the installed updater keeps its existing wire mode.
+    versioned_snapshot = database_contract_mode in {"versioned-forward-migration", "same-versioned-schema-no-migration"}
+    migration_mode = "same-schema-no-migration" if database_contract_mode == "same-versioned-schema-no-migration" else database_contract_mode
     identity = clean_git_identity(repo, commit); commit = str(identity["commit"]); tree = str(identity["tree"]); epoch = int(identity["source_date_epoch"])
     version_bytes = subprocess.check_output(["git", "-C", os.fspath(repo), "show", f"{commit}:VERSION"])
     version = version_bytes.decode("utf-8").strip(); release_id = derive_release_id(version, commit)
@@ -552,7 +599,8 @@ def build_release_v2(*, repo: Path, output_root: Path, runtime_root: Path, runti
         machine, notice, license_count = _license_documents(sbom_bytes, payload, runtime_root, version, commit, vendor_policy)
         (evidence / "third-party-licenses.json").write_bytes(machine); (payload / "THIRD-PARTY-LICENSES.txt").write_bytes(notice)
         config_bytes = _config_contract(); (evidence / "config-contract.json").write_bytes(config_bytes)
-        db_bytes = _database_snapshot(repo, output_root / ".database-snapshot.tmp"); (evidence / "database-schema.json").write_bytes(db_bytes)
+        snapshot_builder = _versioned_database_snapshot if versioned_snapshot else _database_snapshot
+        db_bytes = snapshot_builder(repo, output_root / ".database-snapshot.tmp"); (evidence / "database-schema.json").write_bytes(db_bytes)
         inventory = build_inventory(payload)
         inventory_path = output_root / "release-payload-inventory.json"; inventory_path.write_bytes(inventory.canonical_bytes)
         (payload / inventory_path.name).write_bytes(inventory.canonical_bytes)
@@ -565,7 +613,7 @@ def build_release_v2(*, repo: Path, output_root: Path, runtime_root: Path, runti
             "archive": {"file_count": len(inventory.entries) + 1, "filename": archive_path.name, "inventory_sha256": inventory.sha256, "payload_excludes": ["release-manifest.json"], "payload_tree_sha256": inventory.tree_sha256, "root_prefix": root_prefix, "sha256": archive_hash, "size_bytes": archive_size, "total_uncompressed_bytes": inventory.total_size_bytes + len(inventory.canonical_bytes)},
             "compatibility": {"minimum_launcher_contract": PORTABLE_RELEASE_CONTRACT_VERSION, "minimum_runtime_contract": PORTABLE_RELEASE_CONTRACT_VERSION, "portable_release_only": True, "supported_architecture": "x64", "supported_platform": "windows"},
             "config_contract": {"schema_id": CONFIG_SCHEMA, "schema_path": "release-evidence/config-contract.json", "schema_sha256": sha256_bytes(config_bytes), "secret_values_embedded": False},
-            "database_contract": {"migration_compatibility": "same-schema-no-migration", "migration_ids": database_payload["migration_ids"], "ops3b_activation_eligible": True, "rollback_classification": "code-release-pointer", "schema_id": DATABASE_SCHEMA, "schema_snapshot_path": "release-evidence/database-schema.json", "schema_snapshot_sha256": sha256_bytes(db_bytes)},
+            "database_contract": {"migration_compatibility": migration_mode, "migration_ids": database_payload["migration_ids"], "ops3b_activation_eligible": True, "rollback_classification": "database-backup-restore" if migration_mode == "versioned-forward-migration" else "code-release-pointer", "schema_id": DATABASE_SCHEMA, "schema_snapshot_path": "release-evidence/database-schema.json", "schema_snapshot_sha256": sha256_bytes(db_bytes)},
             "enterprise_source": {"commit": commit, "repository": ENTERPRISE_REPOSITORY, "tree": tree, "version": version, "version_file_sha256": sha256_bytes(version_bytes)},
             "identity": {"manifest_builder_version": BUILDER_VERSION, "release_channel": "enterprise-portable", "release_id": release_id, "release_version": version, "source_date_epoch": epoch},
             "licenses": {"component_count": license_count, "component_policy_path": "release-evidence/third-party-component-policy.json", "component_policy_sha256": sha256_bytes(vendor_policy_bytes), "human_notice_path": "THIRD-PARTY-LICENSES.txt", "human_notice_sha256": sha256_bytes(notice), "inventory_complete": True, "legal_review_complete": False, "machine_inventory_path": "release-evidence/third-party-licenses.json", "machine_inventory_sha256": sha256_bytes(machine), "unresolved_count": 0},

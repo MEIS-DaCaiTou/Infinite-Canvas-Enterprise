@@ -2,11 +2,13 @@
 
 [返回索引](./README.md)
 
+更新时间：2026-10-03。命令为源码/旧安装参考；产品交付和现场状态回到 [CURRENT](../CURRENT_PROJECT_STATUS.md)。
+
 ## 1. 前置条件
 
 - Windows 10/11 x64。
 - 源码开发可使用仓库自带 `python/python.exe`；正式安装必须使用 Release 内固定 Python。
-- 复制 `enterprise.env.example` 为 `enterprise.env`，修改 JWT secret 与管理员密码。
+- 源码首次部署按安全基线配置；新装器负责首次配置，旧安装沿用环境/数据库，不每次复制示例或重置管理员。
 - 不要提交 `enterprise.env`、真实数据库、客户素材、Token 或诊断包。
 
 ## 2. 企业版开发启动
@@ -57,10 +59,18 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\enterprise\tests\smoke.ps1
 
 ## 5. Python 测试
 
-当前代码树有 53 个 `test_*.py` Python 测试文件。推荐从根目录使用仓库 Python：
+默认选择受影响范围，禁用非必要外部插件；以下是数据库专项示例，不是每轮全套命令：
 
 ```powershell
-.\python\python.exe -m pytest enterprise\tests -q -p no:asyncio
+$env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = '1'
+py -3.11 -B -m pytest enterprise/tests/test_data_mvp_1.py -q
+```
+
+纯文档使用标准库检查：
+
+```powershell
+py -3.11 -B tools/check_docs.py
+py -3.11 -B -m unittest discover -s enterprise/tests -p test_documentation_contract.py
 ```
 
 如果 pytest 不在该开发 Runtime 中，应使用项目已验证的开发环境安装测试依赖；不要为了让测试运行而修改正式 Runtime lock。
@@ -80,9 +90,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\enterprise\tests\smoke.ps1
 | `test_install_*` | 首次安装与 Inno Setup bridge |
 | `test_update_mvp_1.py`、`test_ops_3a_online_update.py` | 更新准备、权限、切换、回滚与诊断 |
 | `test_data_mvp_1.py` | SQLite 版本化迁移和恢复基础 |
-| `test_canvas_task_journal.py` | 本地分支任务回执恢复 |
+| `test_canvas_task_journal.py` | 已合并的两类画布回执基础，不是全部持久任务 |
 
 这些测试大量使用临时 SQLite、临时目录和 fixture；通过它们不等于真实客户设备、正式签名安装器或生产发布已经验收。
+
+以下为历史测试记录，不是本轮新跑分；实时 CI 回到 CURRENT/相关 PR。
 
 2026-09-19 收敛分支初次证据：CPython 3.11 完整企业套件为 `909 passed, 10 skipped, 1 failed`，唯一失败是受限后台子会话创建 service host 时的 `WinError 5`；同机直接 lifecycle 在 CPython 3.11 与 bundled CPython 3.14.6 下均 `3 passed`，可靠性与任务回执专项在两者下均 `33 passed`。这是历史测试结果，不能从计数中删除或写成全绿；后续处理和复跑见下段。
 
@@ -102,7 +114,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\enterprise\tests\smoke.ps1
 6. Provider 设置脱敏与功能开关。
 7. 进程重启后画布、素材、归属和会话语义。
 
-前端无编译步骤，因此浏览器验证是发现资源缓存、脚本错误和行为回归的主要方式。
+现有原生前端无统一 TypeScript 编译流程；Vue 3＋TypeScript 仅试做方向。当前浏览器验证是发现资源缓存、脚本错误和行为回归的主要方式。
 
 ## 7. 发布/安装验证
 
@@ -123,13 +135,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\enterprise\tests\smoke.ps1
 2. 阅读 `docs/CURRENT_PROJECT_STATUS.md`、`CODE_BOUNDARIES.md` 和相关 ADR。
 3. 为单一行为创建 `codex/*` 分支。
 4. 先增加聚焦测试，再修改企业层；跨界修改 `main.py/static` 时补浏览器清单。
-5. 运行聚焦测试、全套企业测试、smoke 和必要的浏览器回归。
+5. 优先聚焦测试，按风险补 smoke/浏览器回归；跨模块风险、必要复核或合并要求才重跑全套并解释原因。
 6. 更新当前状态/实施记录，但不修改历史证据结论。
 7. 审查 diff、确认没有 secret、数据库、客户数据或 Runtime 构建产物。
 
 ## 9. CI 现状
 
-PR #108 已把 `.github/workflows/enterprise-checks.yml` 合并到主线；PR #119 随后把 SEC-P0 合并到 `main@8cdb3c7b7399dbb144dbd828fc2ad876c79ae64a`。工作流在 Windows 上运行 CPython 3.11 完整企业套件和 CPython 3.14 Runtime 专项；两项 PR 的要求检查均核验为 SUCCESS。项目负责人已明确不设置独立 Windows 主机验收门禁；正式 bundled Runtime、签名、Release、客户现场和生产批准仍与普通 pytest/Actions 分开记录。
+主线既有 `.github/workflows/enterprise-checks.yml` 在 Windows 运行 CP311 企业套件及 CP314 Runtime 专项。维护线通用工具有独立定向 CI，不能互换覆盖；文档契约用轻量 `documentation-checks.yml`。结果以准确 PR/提交记录为准，不手动无理由重跑全套，也不要求独立干净设备。
 
 ## 10. 常见故障定位
 
@@ -138,7 +150,8 @@ PR #108 已把 `.github/workflows/enterprise-checks.yml` 合并到主线；PR #1
 | 页面打不开 | `查看企业版状态.bat`、8000/3001 监听、`enterprise/health` |
 | Gateway 正常但业务失败 | Upstream 健康、`main.py` 日志、Provider 超时 |
 | 启动 blocked | JSON `code`、端口监听者身份、current pointer、Manifest/Python identity |
-| 后台更新 403 | 当前角色、`system_update` 全局开关、`ENTERPRISE_UPDATE_ENABLED` |
+| 后台操作 403 | 角色/治理激活、API 契约/审计；更新再查 `system_update` / `ENTERPRISE_UPDATE_ENABLED`，不放宽授权 |
+| 来源身份不匹配 | 精确 Release/Manifest/完整结构；导出脱敏诊断，不删表或改旧证据 |
 | 检查更新失败 | GitHub API/资产 URL、系统与环境代理、Manifest 三件套 |
 | 更新后回滚 | 作业 status/events、target health、source pointer 恢复结果 |
 | 用户看到他人数据 | ownership map、拦截器列表/直接 ID、WebSocket 过滤四处一起检查 |

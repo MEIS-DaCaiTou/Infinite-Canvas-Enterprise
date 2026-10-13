@@ -1110,6 +1110,7 @@ def test_cli_exit_code_contract() -> None:
     assert json.loads(output.getvalue()) == {
         "status": "blocked",
         "code": "RUNTIME_SERVICE_HOST_EARLY_EXIT",
+        "failure_stage": "service_host_readiness_wait",
         "host_exit_code": 2,
         "bootstrap_failure_category": "module_not_found",
     }
@@ -1269,6 +1270,7 @@ def test_lock_cleanup_identity_and_early_failure_paths() -> None:
             except RuntimeServiceHostStartupError as exc:
                 assert exc.code == "RUNTIME_SERVICE_HOST_EARLY_EXIT"
                 assert exc.public_details == {
+                    "failure_stage": "service_host_readiness_wait",
                     "host_exit_code": 1,
                     "bootstrap_failure_category": "module_not_found",
                 }

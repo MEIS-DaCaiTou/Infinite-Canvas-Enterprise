@@ -1,19 +1,21 @@
 # 仓库结构与模块职责
 
+> 代码参考：结构/函数索引保留各章节的源码快照，不自动覆盖维护线工具；实时模块状态、迁移/发布与现场验收见 CURRENT，任务顺序只认路线图。[现行事实与适用范围](../CURRENT_PROJECT_STATUS.md)。
+
 [返回索引](./README.md)
 
 ## 1. 顶层目录
 
 | 路径 | 职责 | 所有权/维护提示 |
 | --- | --- | --- |
-| `main.py` | 旧业务 FastAPI 内核；包含绝大多数 REST 路由、Provider 调用、文件持久化和页面服务 | 上游覆盖区，文件超大，修改需专项回归 |
+| `main.py` | 旧业务 FastAPI 内核；包含绝大多数 REST 路由、Provider 调用、文件持久化和页面服务 | 本项目维护的大型高影响文件，修改需专项回归；不是永久上游覆盖区 |
 | `static/` | 旧版产品 UI：工作台、普通画布、智能画布、素材与设置页 | 必须保留原视觉与交互；无前端构建步骤 |
 | `enterprise/` | 企业认证、权限、Gateway、数据索引、Runtime、发布、安装、更新、安全审计 | 企业自有核心代码 |
 | `enterprise-static/` | 登录、管理后台、操作日志、个人中心 | 由 Gateway 直接提供 |
-| `enterprise/tests/` | Python 单元/集成/契约测试、PowerShell smoke/diagnose、浏览器清单 | 当前共 59 个 Python 测试文件 |
+| `enterprise/tests/` | Python 单元/集成/契约与编译后验证、PowerShell smoke/diagnose、浏览器清单 | 按证据层分组，实际文件数量以目录为准 |
 | `docs/` | ADR、实施记录、证据、路线与当前状态 | 历史记录不等于当前源码事实 |
 | `tools/` | 运维、发布、验证、打包和历史工具 | 使用前阅读对应记录，避免把历史脚本当正式入口 |
-| `installer/windows/` | Inno Setup Windows 安装器定义 | 首次安装分发入口 |
+| `installer/windows/` | Inno Setup 定义；已合入 main 的固定 C# 薄入口及构建策略 | 安装接线与入口修复候选边界见 CURRENT；尚未完成维护闭环 |
 | `runtime/windows/` | 固定 CPython/依赖闭包的来源、哈希锁与构建策略 | 大型二进制通常不直接提交 |
 | `release/windows/` | Windows Release/安装资产相关文件 | 与 Manifest 和 inventory 配套 |
 | `packages/` | 已归档 wheel 等离线依赖素材 | 不是 npm package workspace |
@@ -36,7 +38,7 @@
 | `app_paths.py` | 把旧业务逻辑中的文件位置映射到 PathRoots |
 | `config.py` | `enterprise.env` 读取、端口、JWT、DB、仓库、更新开关 |
 | `resource_index.py` | 从结构化数据中提取本地资源 URL |
-| `canvas_task_journal.py` | 画布任务受理回执的追加日志与恢复；仅本地当前分支新增 |
+| `canvas_task_journal.py` | 画布任务受理回执的追加日志与恢复；已通过 PR #108 合并主线，不等于统一费用任务中心 |
 | `runtime/` | 双进程生命周期、健康、身份、控制、日志、便携启动 |
 | `release/` | current pointer、Manifest v2、确定性静态树与 Windows Runtime 构建 |
 | `ops/update/` | GitHub Release 获取、HTTPS 下载、准备作业、切换和回滚 |
@@ -45,6 +47,8 @@
 | `security_bootstrap.py` | 角色/审计安全能力的计划、激活和恢复 |
 | `security_user_governance.py` | 三角色下的用户变更、CAS、审计与会话失效 |
 | `fresh_install.py` | Greenfield 首次安装事务 |
+| `install_entry.py` | 主线安装接线：固定 EXE/稳定实例 ID 的发布与入口专用修复；不写业务数据库 |
+| `install_repair.py` / `install_repair_status.py` | 同 Release 程序/Python 修复与自己的中断恢复；候选状态层只观察 plan/result/lease 和展示真实阶段，不代替恢复授权 |
 | `install_cli.py` | 开发/命令行安装入口 |
 | `install_setup_bridge.py` | 安装器与固定 Python 间的受控 named-pipe 桥接 |
 

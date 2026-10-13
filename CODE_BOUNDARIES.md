@@ -1,6 +1,6 @@
 # Infinite Canvas Enterprise 代码与数据边界
 
-更新时间：2026-09-21
+更新时间：2026-10-11
 
 项目已独立演进，不再把 `main.py`、`static/` 或 `workflows/` 视为永远禁止修改的“上游覆盖区”。所有产品代码都可在明确需求、测试和迁移计划下修改；风险边界取决于职责、数据兼容性和发布影响。
 
@@ -25,7 +25,7 @@
 | `workflows/`、Provider 适配 | 外部调用、费用、幂等、隐私 | 真实或受控沙箱闭环、超时/未知结果测试 |
 | `enterprise/db.py`、`enterprise/migrations/` | schema、事务、恢复 | migration + backup/restore + failure injection |
 | `enterprise/runtime/` | 进程所有权、重启、停机 | 生命周期、阻塞、断网、重启和状态恢复 |
-| `enterprise/release/`、`enterprise/update_api.py` | 安装和在线升级 | Manifest/哈希、源版本、恢复和权限测试 |
+| `enterprise/release/`、`enterprise/ops/update/`、`enterprise/update_api.py` | 安装和在线升级 | Manifest/哈希、源版本、恢复和权限测试 |
 | `release/`、启动/停止脚本 | 客户安装和运维 | 可复现打包、原位升级、回滚说明 |
 
 这些文件可以修改，但必须小步、可审查、可回滚；不得继续用“等待上游修复”作为阻断本项目演进的理由。
@@ -48,12 +48,20 @@
 - 资源字节与元数据分离；路径通过 Storage Adapter 解析。
 - 任务受理、执行、对账和费用记录属于持久业务域，不使用进程内字典作为事实源。
 - 新增表前先定义 schema version、升级、备份、恢复和旧版本兼容。
+- C# 仅薄入口/系统交互，安装器编排；Python 共用业务/更新/迁移，不按应用版本复制实现。
+- C6 `install_upgrade` 的离线维护复用共享单跳引擎；原生文件恢复必须核验原对象和作业，不用进度、锁龄或 PID 缺失授权接管。成功激活后的登记恢复不回退数据库。Windows 登记/包装进程解析在 `runtime/windows_install_registration.py`、`runtime/windows_setup_source.py`，请求暂停在跨平台 `runtime/install_maintenance.py`。
+- Windows Registry、Job Object、KnownFolder、文件 handle 及安装/卸载 GUI 是平台适配能力；业务模型、API、权限、Repository、Storage Adapter 及数据恢复契约应跨部署形态复用。不得给核心业务新增固定盘符或桌面交互前置。Linux/服务器支持须以依赖调查和真实运行验证判断，不能仅凭接口分层宣称完成。
+- `tools/check_docs.py` 是只读开发检查，不是 Runtime；文档整改不夹带产品权限或迁移改动。
 
-## 5. 历史来源
+## 5. 临时产物与清理
+
+构建、下载资产、安装副本和诊断原件集中到项目 artifact 根或受管工作区，不散落盘符根目录。清理前核验绝对目标、归属、进程/指针/恢复作业引用；只处理本项目拥有且可删除的对象。其他项目、用户素材、真实数据库与有效备份不能因“整理目录”删除。
+
+## 6. 历史来源
 
 `docs/upstream/` 记录截至 2026.07.6 的历史来源和同步审计。它不再规定文件修改权限，也不要求后续 PR 执行上游 merge/rebase/sync。若未来引入第三方代码更新，应作为新的依赖升级任务，明确许可证、差异、测试和回滚。
 
-## 6. 变更前检查
+## 7. 变更前检查
 
 1. 任务属于哪个固定路线阶段？前置阶段是否完成？
 2. 当前 Base/Head/PR 是否与任务一致？
@@ -61,3 +69,5 @@
 4. 现有客户如何升级，失败如何恢复？
 5. 需要哪些自动测试、故障注入和人工验证？
 6. 是否错误地把分支、Release 或单设备结果写成主线/生产事实？
+
+C7 `ops/update/sequence.py` 只协调已声明路径，逐跳消费共享 MVP 与 C6 原生对象事务；数据库操作仍由版本化引擎实施，原生注册表更新只在 `runtime/windows_install_registration.py` 中操作已核验本实例 DisplayVersion。恢复/暂停标记不授权删除客户数据，进度状态不授权跳步或恢复旧快照。源码与限定证据见 [C7 记录](docs/ops/ONLINE-UPGRADE-SEQUENCE-2026-10-12.md)。

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import argparse
 import json
 import os
 import threading
@@ -29,6 +30,25 @@ from enterprise.ops.update.providers import DEFAULT_GITHUB_REPOSITORY, GitHubRel
 from tools.build_install_ux_1 import InstallerBuildError, _inspect_archive, _safe_archive_name
 
 
+def test_setup_build_rejects_dirty_source_before_creating_output(monkeypatch, tmp_path):
+    from tools import build_install_ux_1 as builder
+
+    repo, assets, native, compiler = (tmp_path / name for name in ("repo", "assets", "native", "compiler"))
+    for path in (repo, assets, native, compiler):
+        path.mkdir()
+    iscc, official = compiler / "ISCC.exe", tmp_path / "official.exe"
+    iscc.write_bytes(b"toolchain fixture")
+    official.write_bytes(b"toolchain fixture")
+    output = tmp_path / "new-output"
+    def reject(_repo):
+        raise InstallerBuildError("INSTALL_UX_BUILD_WORKTREE_DIRTY")
+    monkeypatch.setattr(builder, "_require_clean_repo", reject)
+    with pytest.raises(InstallerBuildError, match="INSTALL_UX_BUILD_WORKTREE_DIRTY"):
+        builder.build(argparse.Namespace(repo=repo, release_dir=assets, native_entry_dir=native,
+                                        output_root=output, iscc=iscc, official_installer=official))
+    assert not output.exists()
+
+
 def _request(**changes: object) -> dict[str, object]:
     value: dict[str, object] = {
         "schema_version": REQUEST_SCHEMA,
@@ -54,8 +74,36 @@ def test_request_is_bounded_exact_utf8_schema() -> None:
         _decode_request(b"not-json")
     with pytest.raises(SetupBridgeError, match="INSTALL_SETUP_BRIDGE_REQUEST_INVALID"):
         _decode_request(_request_bytes(extra=True))
+
+
+@pytest.mark.parametrize("operation,confirmed", [("upgrade-retained", True), ("recover-upgrade", True),
+    ("inspect-upgrade", False), ("finish-upgrade", False)])
+def test_offline_upgrade_requests_are_exact_credential_free_and_no_source_path(operation, confirmed):
+    from enterprise.install_setup_bridge import UPGRADE_REQUEST_SCHEMA
+    value = _request(schema_version=UPGRADE_REQUEST_SCHEMA, operation=operation, username="", password="",
+        password_confirmation="", confirm_no_active_tasks=confirmed, install_mode="custom", install_root=r"D:\owned-install")
+    raw = lambda item: json.dumps(item).encode("utf-8")
+    assert _decode_request(raw(value)) == value
+    for changes in ({"confirm_no_active_tasks": int(confirmed)}, {"setup_executable": r"D:\arbitrary.exe"},
+                    {"password": "must-not-reset"}, {"username": "must-not-create"}):
+        with pytest.raises(SetupBridgeError):
+            _decode_request(raw(value | changes))
     with pytest.raises(SetupBridgeError, match="INSTALL_SETUP_BRIDGE_REQUEST_TOO_LARGE"):
         _decode_request(b"x" * (MAX_FRAME_BYTES + 1))
+
+
+@pytest.mark.parametrize("operation", ["upgrade-retained", "recover-upgrade", "inspect-upgrade", "finish-upgrade"])
+def test_offline_upgrade_existing_data_directory_is_maintenance_not_greenfield(tmp_path, monkeypatch, operation):
+    from enterprise import install_setup_bridge as bridge
+    target = tmp_path / "existing"; target.mkdir()
+    (target / "customer-data.db").write_bytes(b"must-not-initialize-or-delete")
+    monkeypatch.setattr(bridge, "_drive_type", lambda _path: 3)
+    request = _request(install_mode="custom", install_root=str(target), operation=operation)
+    arguments = dict(raw_app_root=tmp_path / "raw", release_dir=tmp_path / "assets", known_folder=tmp_path / "local")
+    assert _validated_install_root(request, **arguments) == target
+    with pytest.raises(SetupBridgeError, match="NOT_GREENFIELD"):
+        _validated_install_root(request | {"operation": "install"}, **arguments)
+    assert (target / "customer-data.db").read_bytes() == b"must-not-initialize-or-delete"
 
 
 @pytest.mark.parametrize(
@@ -160,11 +208,11 @@ def test_pipe_security_descriptor_is_current_user_only() -> None:
         bridge.kernel32.LocalFree(descriptor)
 
 
-def _client_exchange(suffix: str, request: dict[str, object]) -> dict[str, object]:
+def _client_exchange(suffix: str, request: dict[str, object], on_progress=None) -> dict[str, object]:
     from enterprise import install_setup_bridge as bridge
 
     name = rf"\\.\pipe\{bridge.PIPE_PREFIX}{suffix}"
-    deadline = time.monotonic() + 5
+    deadline = time.monotonic() + 45
     while not bridge.kernel32.WaitNamedPipeW(name, 100):
         if time.monotonic() >= deadline:
             raise AssertionError("server pipe was not available")
@@ -193,8 +241,14 @@ def _client_exchange(suffix: str, request: dict[str, object]) -> dict[str, objec
                 output.extend(chunk.raw[: received.value])
             return bytes(output)
 
-        size = int(read_exact(8).decode("ascii"), 16)
-        return json.loads(read_exact(size).decode("utf-8"))
+        while True:
+            size = int(read_exact(8).decode("ascii"), 16)
+            assert 1 <= size <= MAX_FRAME_BYTES
+            response = json.loads(read_exact(size).decode("utf-8"))
+            if response.get("event") != "progress":
+                return response
+            if on_progress and on_progress(response) is False:
+                return response  # Close only the view, never the server.
     finally:
         bridge.kernel32.CloseHandle(handle)
 
@@ -307,7 +361,9 @@ def test_installer_source_is_single_user_gui_and_keeps_credentials_off_process_s
     lowered = source.casefold()
     assert "privilegesrequired=lowest" in lowered
     assert "setuparchitecture=x64" in lowered
-    assert "uninstallable=no" in lowered
+    assert "uninstallable=registerlifecycle" in lowered
+    assert "uninstallfilesdir={app}\\state\\windows-uninstaller" in lowered
+    assert "[uninstalldelete]" not in lowered
     assert "createinputquerypage" in lowered
     assert "password\":\"" in source
     parameters_body = source[source.index("Parameters :=") : source.index("if not Exec(")]
@@ -351,8 +407,30 @@ def test_installer_source_is_single_user_gui_and_keeps_credentials_off_process_s
     assert 'DestDir: "install-ux-bundle"' not in files_section
     assert 'DestDir: "install-ux-metadata"' not in files_section
     assert "desktopicon" in source
-    assert "查看企业版状态.bat" in source
-    assert "企业版健康检查.bat" in source
+    assert "InfiniteCanvas.exe" in source
+    assert "启动企业版.bat" not in source
+    assert "查看企业版状态.bat" not in source
+    assert "native-entry-build-record.json" in source
+    assert "enterprise-install-maintenance-request-v2" in source
+    assert "ExistingEntryRepair" in source
+    assert "InstallationId" in source
+    request_body = source[source.index("function RequestJson:") : source.index("function WaitForPipeServer")]
+    assert "and not ExistingEntryRepair and not MultipleInstalls" in request_body
+    assert "RegGetSubkeyNames(HKCU" in source
+
+
+def test_setup_summary_distinguishes_entry_repair_from_new_install_before_confirmation():
+    root = Path(__file__).resolve().parents[2]
+    source = (root / "installer/windows/InfiniteCanvasEnterprise.iss").read_text(encoding="utf-8")
+    assert "TargetPage.Add('安装根目录：')" in source
+    page = source[source.index("procedure CurPageChanged(") : source.index("function UpdateReadyMemo(")]
+    assert "CurPageID = EnvironmentPage.ID" in page
+    assert "ValidateTarget(SelectedInstallRoot, Code) then ShowMaintenanceScope" in page
+    memo = source[source.index("function UpdateReadyMemo(") : source.index("function NextButtonClick(")]
+    assert "只修复固定入口（不是业务升级）" in memo
+    assert "首次安装" in memo and "SelectedInstallRoot" in memo
+    assert "保留原账号、数据库、画布、素材、配置及当前版本" in memo
+    assert "CredentialPage.Values" not in memo
 
 
 def test_bridge_bootstraps_before_product_install_import_and_has_no_credential_cli() -> None:
@@ -371,6 +449,7 @@ def test_bridge_bootstraps_before_product_install_import_and_has_no_credential_c
 
 def test_toolchain_and_build_policies_are_pinned_and_nonsecret() -> None:
     root = Path(__file__).resolve().parents[2]
+    script = (root / "installer/windows/InfiniteCanvasEnterprise.iss").read_text(encoding="utf-8")
     tool = json.loads(
         (root / "installer" / "windows" / "inno-setup-toolchain-policy.json").read_text(
             encoding="utf-8"
@@ -387,7 +466,22 @@ def test_toolchain_and_build_policies_are_pinned_and_nonsecret() -> None:
     assert all(len(value) == 64 for value in tool["compiler_closure"].values())
     assert build["core_asset_count"] == 3
     assert build["security_authority"] == "enterprise.fresh_install.install_greenfield"
-    assert build["uninstaller_created"] is False
+    assert build["credential_channel"]["request_schema"] == "enterprise-install-maintenance-request-v2"
+    assert build["maintenance_operations"] == ["install", "repair-entry", "repair-program", "recover-program", "inspect-program", "recover-entry", "inspect-cache", "clean-cache", "inspect-lifecycle", "uninstall-retain", "recover-uninstall", "reinstall-retained"]
+    assert build["entry_maintenance"] == {
+        "journal_protocol": "enterprise-entry-maintenance-plan-v2",
+        "recovery_requires_runner_lease": True,
+        "unknown_and_legacy_lock_adoption": False,
+        "runtime_must_be_stopped": True,
+    }
+    assert "PersistentBundle := MaintenanceOperation <> 'install';" in script
+    assert build["credential_channel"]["graphical_maintenance_request_schema"] == "enterprise-install-maintenance-request-v4"
+    assert build["program_maintenance"]["progress_is_authority"] is False
+    assert build["native_entry"]["same_commit_and_tree_as_release"] is True
+    assert build["native_entry"]["repair_mutates_business_data"] is False
+    assert build["full_lifecycle_complete"] is False
+    assert build["uninstaller_created"] is True
+    assert build["retained_lifecycle"]["reinstall_initializes_database"] is False
     combined = json.dumps({"tool": tool, "build": build}).casefold()
     assert "private_key" not in combined
     assert "password" not in combined
@@ -422,6 +516,10 @@ def test_github_provider_ignores_installer_exe_and_keeps_three_core_asset_select
     class Client:
         def read_json(self, *_args, **_kwargs):
             return [release]
+
+        def read_json_response(self, *_args, **_kwargs):
+            from enterprise.ops.update.http_client import JsonHttpResponse
+            return JsonHttpResponse(self.read_json())
 
     candidates = GitHubReleasesProvider(http_client=Client()).list_release_v2_candidates()
     assert len(candidates) == 1

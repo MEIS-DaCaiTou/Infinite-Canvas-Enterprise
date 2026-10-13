@@ -17,6 +17,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from enterprise.ops.update.diagnostics import diagnostics_zip, recent_diagnostics
 from enterprise.ops.update.handoff import _emit_terminal_audit, _finalize_terminal_failure
 from enterprise.ops.update.mvp import (
+    PreparedUpdate,
     UpdateJobStore,
     UpdateMvpError,
     _database_contract_compatible,
@@ -26,12 +27,16 @@ from enterprise.ops.update.mvp import (
 from enterprise.migrations.versioned import (
     DataMigrationError,
     MigrationStep,
+    STATE_MISSING,
     initialize_schema_metadata_in_transaction,
     inspect_schema_metadata,
     migration_registry_sha256,
+    preview_legacy_schema_enrollment,
+    schema_objects,
     schema_snapshot_sha256,
 )
 from enterprise.ops.update.providers import DEFAULT_GITHUB_REPOSITORY, GitHubReleasesProvider
+from enterprise.ops.update.http_client import JsonHttpResponse
 from enterprise.paths import PortableRootInputs, derive_portable_path_roots, prepare_install_state_directories
 from enterprise.release.current_release import (
     CurrentRelease,
@@ -118,6 +123,17 @@ def test_prepare_sync_workflow_does_not_block_gateway_event_loop(monkeypatch):
     assert prepared.json() == {"state": "READY", "job_id": "a" * 32}
 
 
+@pytest.mark.parametrize("mode", ["same-schema-no-migration", "versioned-forward-migration"])
+def test_prepared_update_exposes_database_mode_without_plan_details(mode: str):
+    prepared = PreparedUpdate(
+        "a" * 32, "release-A", "release-B", "b" * 64, "c" * 64,
+        mode,
+    )
+    public = prepared.public()
+    assert public["database_update_mode"] == mode
+    assert "migration_ids" not in public
+
+
 def _eligible_manifest():
     payload = release_manifest(release_id="ice-2026.07.6-bbbbbbbbbbbb").data
     payload["database_contract"].update(
@@ -145,7 +161,7 @@ def test_manifest_v2_accepts_only_the_narrow_online_update_database_classificati
             parse_release_manifest_v2_bytes(canonical_json(payload))
 
 
-def test_github_v2_provider_requires_the_closed_three_asset_set():
+def test_github_v2_provider_requires_the_three_core_assets():
     def asset(name: str, asset_id: int):
         return {
             "id": asset_id, "name": name, "state": "uploaded", "size": asset_id,
@@ -168,6 +184,9 @@ def test_github_v2_provider_requires_the_closed_three_asset_set():
         def read_json(self, *_args, **_kwargs):
             return [incomplete, ambiguous_visibility, complete]
 
+        def read_json_response(self, *_args, **_kwargs):
+            return JsonHttpResponse(self.read_json())
+
     provider = GitHubReleasesProvider(http_client=Client())
     candidates = provider.list_release_v2_candidates()
     assert len(candidates) == 1
@@ -175,6 +194,75 @@ def test_github_v2_provider_requires_the_closed_three_asset_set():
     assert candidates[0].manifest_url.endswith("/1")
     assert candidates[0].inventory_url.endswith("/2")
     assert candidates[0].archive_url.endswith("/3")
+    assert candidates[0].upgrade_routes_url is None
+
+
+def test_github_v2_provider_accepts_one_digest_bound_route_asset():
+    def asset(name: str, asset_id: int):
+        return {
+            "id": asset_id, "name": name, "state": "uploaded", "size": asset_id,
+            "url": f"https://api.github.com/repos/{DEFAULT_GITHUB_REPOSITORY}/releases/assets/{asset_id}",
+        }
+
+    route = {**asset("upgrade-routes-v1.json", 42), "digest": "sha256:" + "a" * 64}
+    release = {
+        "id": 93, "tag_name": "2026.09.7", "draft": False, "prerelease": True,
+        "published_at": "2026-09-28T00:00:00Z", "body": "development",
+        "assets": [
+            asset("ops-release-manifest-v2.json", 11),
+            asset("release-payload-inventory.json", 12),
+            asset("Infinite-Canvas-Enterprise-ice-2026.09.7-aabbccddeeff-win-x64.zip", 13),
+            route,
+        ],
+    }
+
+    class Client:
+        def read_json(self, *_args, **_kwargs):
+            return [release]
+
+        def read_json_response(self, *_args, **_kwargs):
+            return JsonHttpResponse(self.read_json())
+
+    candidates = GitHubReleasesProvider(http_client=Client()).list_release_v2_candidates(include_prerelease=True)
+    assert len(candidates) == 1
+    assert candidates[0].upgrade_routes_url.endswith("/42")
+    assert candidates[0].upgrade_routes_sha256 == "a" * 64
+    assert candidates[0].upgrade_routes_size_bytes == 42
+    release["assets"].append(route)
+    assert GitHubReleasesProvider(http_client=Client()).list_release_v2_candidates(include_prerelease=True) == []
+
+
+def test_github_v2_provider_exposes_complete_development_release_only_when_requested():
+    def asset(name: str, asset_id: int):
+        return {
+            "id": asset_id, "name": name, "state": "uploaded", "size": asset_id,
+            "url": f"https://api.github.com/repos/{DEFAULT_GITHUB_REPOSITORY}/releases/assets/{asset_id}",
+        }
+
+    development = {
+        "id": 91, "tag_name": "v2026.09.6", "draft": False, "prerelease": True,
+        "published_at": "2026-09-27T00:00:00Z", "body": "development",
+        "assets": [
+            asset("ops-release-manifest-v2.json", 11),
+            asset("release-payload-inventory.json", 12),
+            asset("Infinite-Canvas-Enterprise-ice-2026.09.6-aabbccddeeff-win-x64.zip", 13),
+        ],
+    }
+    draft = {**development, "id": 92, "draft": True}
+
+    class Client:
+        def read_json(self, *_args, **_kwargs):
+            return [draft, development]
+
+        def read_json_response(self, *_args, **_kwargs):
+            return JsonHttpResponse(self.read_json())
+
+    provider = GitHubReleasesProvider(http_client=Client())
+    assert provider.list_release_v2_candidates() == []
+    candidates = provider.list_release_v2_candidates(include_prerelease=True)
+    assert len(candidates) == 1
+    assert candidates[0].provider_release_id == "91"
+    assert candidates[0].prerelease is True
 
 
 def test_database_contract_allows_signed_evidence_change_but_not_legacy_migration_change():
@@ -247,6 +335,61 @@ def test_one_active_update_reservation_blocks_a_second_job(tmp_path: Path):
     store.release_execution_lock(handle, first)
 
 
+def test_recovery_required_blocks_prepare_and_new_execution(tmp_path: Path, monkeypatch):
+    from enterprise import update_api
+
+    roots = _roots(tmp_path)
+    store = UpdateJobStore(roots)
+    old_job, _ = store.create("actor-1")
+    store.write_status(
+        old_job, "RECOVERY_REQUIRED", actor_user_id="actor-1",
+        result_code="SYSTEM_UPDATE_DATABASE_RESTORE_INCOMPLETE",
+    )
+    new_job, _ = store.create("actor-2")
+    monkeypatch.setattr(update_api, "PATH_ROOTS", roots)
+    monkeypatch.setattr(update_api, "_provider", lambda: pytest.fail("provider must not be called"))
+    with pytest.raises(UpdateMvpError, match="SYSTEM_UPDATE_RECOVERY_REQUIRED") as prepare_error:
+        update_api._prepare_update_sync("actor-2", "fixture-release")
+    assert prepare_error.value.status_code == 409
+    with pytest.raises(UpdateMvpError, match="SYSTEM_UPDATE_RECOVERY_REQUIRED") as execute_error:
+        store.reserve_execution(new_job)
+    assert execute_error.value.status_code == 409
+    assert not store.lock_path.exists()
+
+
+def test_unverifiable_prior_job_state_blocks_new_execution(tmp_path: Path):
+    store = UpdateJobStore(_roots(tmp_path))
+    old_job, old_root = store.create("actor-1")
+    (old_root / "status.json").write_text("{broken", encoding="utf-8")
+    new_job, _ = store.create("actor-2")
+    with pytest.raises(UpdateMvpError, match="SYSTEM_UPDATE_RECOVERY_STATE_UNVERIFIED") as error:
+        store.reserve_execution(new_job)
+    assert error.value.status_code == 409
+    assert not store.lock_path.exists()
+
+
+def test_install_inspection_checks_recovery_without_initializing_directories(tmp_path: Path):
+    roots = _roots(tmp_path)
+    store = UpdateJobStore(roots)
+    assert store.pending_recovery_jobs(initialize=False) == []
+    assert not store.jobs_root.exists()
+    job_id, _ = store.create("actor-1")
+    store.write_status(job_id, "RECOVERY_REQUIRED", actor_user_id="actor-1",
+                       result_code="SYSTEM_UPDATE_DATABASE_RESTORE_INCOMPLETE")
+    before = {str(path): path.read_bytes() for path in store.jobs_root.rglob("*") if path.is_file()}
+    assert store.pending_recovery_jobs(initialize=False) == [job_id]
+    assert {str(path): path.read_bytes() for path in store.jobs_root.rglob("*") if path.is_file()} == before
+
+
+def test_install_inspection_rejects_invalid_recovery_root_without_mutation(tmp_path: Path):
+    store = UpdateJobStore(_roots(tmp_path))
+    store.jobs_root.parent.mkdir(parents=True)
+    store.jobs_root.write_bytes(b"unknown file, never replace")
+    with pytest.raises(UpdateMvpError, match="SYSTEM_UPDATE_RECOVERY_STATE_UNVERIFIED"):
+        store.pending_recovery_jobs(initialize=False)
+    assert store.jobs_root.read_bytes() == b"unknown file, never replace"
+
+
 def _reserved_worker_job(tmp_path: Path):
     roots = _roots(tmp_path)
     store = UpdateJobStore(roots)
@@ -288,6 +431,51 @@ def test_source_stop_timeout_finalizes_evidence_and_releases_matching_reservatio
     store.reserve_execution(subsequent)
     handle = store.acquire_execution_lock(subsequent)
     store.release_execution_lock(handle, subsequent)
+
+
+def test_committed_status_success_does_not_unlink_the_renamed_temporary(tmp_path: Path, monkeypatch):
+    from enterprise.ops.update import mvp
+    roots, store, job_id, root = _reserved_worker_job(tmp_path)
+    store.write_status(job_id, "UPDATING", actor_user_id="actor-1", result_code="SYSTEM_UPDATE_STARTED",
+                       source_release_id="release-A", target_release_id="release-B")
+    reservation = store.active_handoff_reservation(job_id, "release-A")
+    original_lock = store.lock_path.read_bytes()
+    original_unlink = Path.unlink
+    cleanup_calls = []
+    def denied_cleanup(path, *args, **kwargs):
+        if path.name.startswith(".status.json-") and path.suffix == ".tmp":
+            cleanup_calls.append(path)
+            raise PermissionError(13, "private-secret")
+        return original_unlink(path, *args, **kwargs)
+    monkeypatch.setattr(Path, "unlink", denied_cleanup)
+    store.commit_handoff(job_id, "release-A", reservation)
+    assert store.read_status(job_id)["handoff_committed"] is True
+    assert store.lock_path.read_bytes() == original_lock and cleanup_calls == []
+    assert list(root.glob(".status.json-*.tmp")) == []
+
+
+def test_atomic_status_failure_cleanup_keeps_original_write_error(tmp_path: Path, monkeypatch):
+    from enterprise.ops.update import mvp
+    roots, store, job_id, root = _reserved_worker_job(tmp_path)
+    original_status, original_lock = store.read_status(job_id), store.lock_path.read_bytes()
+    original_unlink = Path.unlink
+    original_replace = mvp.os.replace
+    def replace(source, destination):
+        if Path(destination) == root / "status.json":
+            raise PermissionError(13, "replace-private-secret")
+        return original_replace(source, destination)
+    def unlink(path, *args, **kwargs):
+        if path.name.startswith(".status.json-") and path.suffix == ".tmp":
+            raise PermissionError(13, "cleanup-private-secret")
+        return original_unlink(path, *args, **kwargs)
+    monkeypatch.setattr(mvp.os, "replace", replace)
+    monkeypatch.setattr(Path, "unlink", unlink)
+    with pytest.raises(UpdateMvpError) as caught:
+        store.write_status(job_id, "FAILED", actor_user_id="actor-1", result_code="fixture")
+    assert caught.value.code == "SYSTEM_UPDATE_STATE_WRITE_FAILED"
+    assert isinstance(caught.value.__cause__, PermissionError)
+    assert "replace-private-secret" in str(caught.value.__cause__)
+    assert store.read_status(job_id) == original_status and store.lock_path.read_bytes() == original_lock
 
 
 def test_terminal_failure_preserves_foreign_reservation(tmp_path: Path, monkeypatch):
@@ -350,9 +538,10 @@ def test_worker_interruption_after_database_or_pointer_work_requires_recovery(
         result_code="SYSTEM_UPDATE_IN_PROGRESS",
     )
     monkeypatch.setattr("enterprise.ops.update.handoff._emit_terminal_audit", lambda *_args: None)
-    assert _finalize_terminal_failure(roots, job_id, "SYSTEM_UPDATE_WORKER_FAILED") is True
+    assert _finalize_terminal_failure(roots, job_id, "SYSTEM_UPDATE_WORKER_FAILED") is False
     status = store.read_status(job_id)
     assert status["state"] == "RECOVERY_REQUIRED"
+    assert store.lock_path.exists()
     assert status["recovery_required"] is True
     assert status["interrupted_state"] == interrupted_state
     events = [json.loads(line) for line in (root / "events.jsonl").read_text(encoding="utf-8").splitlines()]
@@ -591,6 +780,68 @@ def test_database_update_plan_binds_release_evidence_registry_and_current_databa
         "migration_registry_sha256": registry_sha,
         "migration_ids": [step.migration_id],
     }
+
+
+def test_legacy_database_plan_requires_exact_enrollment_evidence(tmp_path: Path):
+    roots = _roots(tmp_path)
+    database = roots.DATA_ROOT / "enterprise.db"
+    database.parent.mkdir(parents=True, exist_ok=True)
+    with closing(sqlite3.connect(database)) as conn:
+        conn.execute("CREATE TABLE records (id INTEGER PRIMARY KEY, value TEXT NOT NULL)")
+        conn.execute("INSERT INTO records (id, value) VALUES (1, 'preserved')")
+        conn.commit()
+        legacy_objects = schema_objects(conn)
+        legacy_sha = schema_snapshot_sha256(conn)
+    enrolled_sha = preview_legacy_schema_enrollment(
+        database, expected_legacy_schema_sha256=legacy_sha,
+    )
+    step = _update_migration_step()
+    probe = tmp_path / "legacy-target-probe.db"
+    shutil.copyfile(database, probe)
+    with closing(sqlite3.connect(probe)) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        initialize_schema_metadata_in_transaction(conn)
+        step.apply_in_transaction(conn)
+        target_sha = schema_snapshot_sha256(conn)
+        conn.rollback()
+    source_path = roots.RELEASE_ROOT / "release-A" / "release-evidence" / "database-schema.json"
+    target_path = roots.RELEASE_ROOT / "release-B" / "release-evidence" / "database-schema.json"
+    source_path.parent.mkdir(parents=True)
+    target_path.parent.mkdir(parents=True)
+    source_path.write_text(json.dumps({
+        "schema_id": "enterprise-database-contract-v1",
+        "migration_ids": ["base"],
+        "objects": legacy_objects,
+    }), encoding="utf-8")
+    target_evidence = {
+        "schema_version": 2,
+        "schema_objects_sha256": target_sha,
+        "migration_registry_sha256": migration_registry_sha256((step,)),
+        "versioned_migration_ids": [step.migration_id],
+        "legacy_source_schema_sha256": legacy_sha,
+        "legacy_enrolled_schema_sha256": enrolled_sha,
+    }
+    target_path.write_text(json.dumps(target_evidence), encoding="utf-8")
+    kwargs = {
+        "source_root": source_path.parent.parent,
+        "target_root": target_path.parent.parent,
+        "source_manifest": _Manifest("release-A", "1" * 64, True),
+        "target_manifest": _Manifest("release-B", "2" * 64, True),
+        "database_path": database,
+        "registry": (step,),
+        "operation_id": "a" * 32,
+    }
+    plan = _database_update_plan(**kwargs)
+    assert plan["source_schema_format"] == "legacy-exact"
+    assert plan["source_schema_sha256"] == legacy_sha
+    assert plan["enrolled_schema_sha256"] == enrolled_sha
+    assert plan["target_schema_sha256"] == target_sha
+    assert inspect_schema_metadata(database)["current_state"] == STATE_MISSING
+
+    target_evidence["legacy_enrolled_schema_sha256"] = "0" * 64
+    target_path.write_text(json.dumps(target_evidence), encoding="utf-8")
+    with pytest.raises(UpdateMvpError, match="SYSTEM_UPDATE_DATABASE_SOURCE_IDENTITY_MISMATCH"):
+        _database_update_plan(**kwargs)
 
 
 def test_same_schema_update_can_only_stage_an_append_only_future_registry(tmp_path: Path):
@@ -851,7 +1102,8 @@ def test_diagnostics_are_bounded_redacted_and_zip_safe(tmp_path: Path):
 def test_update_center_ui_never_persists_password_and_hides_dangerous_actions():
     html = (Path(__file__).resolve().parents[2] / "enterprise-static" / "admin.html").read_text(encoding="utf-8")
     assert 'type="password" id="updateConfirmPassword"' in html
-    assert "update-dangerous" in html and "SYSTEM_UPDATE" not in html
+    assert "update-dangerous" in html
+    assert "SYSTEM_UPDATE_EMERGENCY_SWITCH_DISABLED" in html
     assert "document.getElementById('updateConfirmPassword').value = ''" in html
     assert "localStorage" not in html[html.index("async function executeSystemUpdate"):html.index("async function refreshUpdateJob")]
 
@@ -910,18 +1162,155 @@ def test_update_api_denies_unprivileged_roles_before_provider_or_filesystem(monk
     assert user_denial.value.status_code == 403
 
 
-def test_execute_reconfirms_current_password_without_persisting_it(tmp_path: Path, monkeypatch):
+@pytest.mark.parametrize("role,deployment_enabled,feature_enabled,denial_code", [
+    ("super_admin", True, True, None),
+    ("super_admin", False, True, "SYSTEM_UPDATE_EMERGENCY_SWITCH_DISABLED"),
+    ("super_admin", True, False, "SYSTEM_UPDATE_PERMISSION_DENIED"),
+    ("super_admin", False, False, "SYSTEM_UPDATE_EMERGENCY_SWITCH_DISABLED"),
+    ("admin", True, True, "SYSTEM_UPDATE_SUPER_ADMIN_REQUIRED"),
+    ("admin", False, False, "SYSTEM_UPDATE_SUPER_ADMIN_REQUIRED"),
+])
+def test_update_access_explains_gates_without_changing_operator_authorization(
+    monkeypatch, role, deployment_enabled, feature_enabled, denial_code,
+):
+    from enterprise import update_api
+
+    current = {
+        "id": "actor", "role": role, "is_active": True, "auth_version": 4,
+    }
+    allowed = feature_enabled and role == "super_admin"
+    effective = {
+        "allowed": allowed, "global_enabled": feature_enabled,
+        "source": "super_admin" if feature_enabled else "global_disabled",
+    }
+    monkeypatch.setattr(update_api, "ENTERPRISE_UPDATE_ENABLED", deployment_enabled)
+    monkeypatch.setattr(update_api.edb, "get_user_by_id", lambda _uid: current)
+    monkeypatch.setattr(update_api.edb, "get_effective_feature_value", lambda *_args: effective)
+    monkeypatch.setattr(update_api.edb, "can_use_feature", lambda *_args: allowed)
+    monkeypatch.setattr(update_api, "_provider", lambda: pytest.fail("no provider/network access"))
+    # A stale role claim must not replace the current persisted role.
+    request = _Request({"user_id": "actor", "auth_version": 4, "role": "super_admin"})
+    result = asyncio.run(update_api.update_access(request))
+    assert result == {
+        "role": role, "can_operate": denial_code is None,
+        "global_update_enabled": deployment_enabled and feature_enabled,
+        "deployment_update_enabled": deployment_enabled,
+        "feature_update_enabled": feature_enabled,
+        "denial_code": denial_code, "permission_source": effective["source"],
+    }
+    if denial_code is None:
+        assert update_api._require_update_operator(request) == current
+    else:
+        with pytest.raises(HTTPException) as denied:
+            update_api._require_update_operator(request)
+        assert denied.value.status_code == 403
+        assert denied.value.detail["code"] == denial_code
+
+
+def test_update_access_does_not_accept_stale_or_inactive_sessions(monkeypatch):
+    from enterprise import update_api
+
+    monkeypatch.setattr(update_api.edb, "get_effective_feature_value", lambda *_args: pytest.fail("stale identity"))
+    request = _Request({"user_id": "actor", "auth_version": 1})
+    for current in (
+        {"id": "actor", "role": "super_admin", "is_active": False, "auth_version": 1},
+        {"id": "actor", "role": "super_admin", "is_active": True, "auth_version": 2},
+    ):
+        monkeypatch.setattr(update_api.edb, "get_user_by_id", lambda _uid: current)
+        with pytest.raises(HTTPException) as denied:
+            asyncio.run(update_api.update_access(request))
+        assert denied.value.status_code == 401
+
+
+@pytest.mark.parametrize("candidate_version,available", [
+    ("2026.09.4", False),
+    ("2026.09.5", True),
+])
+def test_update_check_only_offers_a_newer_version(monkeypatch, candidate_version, available):
+    from enterprise import update_api
+
+    current = {
+        "id": "actor-1", "role": "super_admin", "is_active": True,
+        "auth_version": 1,
+    }
+    release = SimpleNamespace(
+        provider_release_id="candidate-1", tag_name=candidate_version,
+        version=candidate_version, published_at="2026-09-24T00:00:00Z",
+        release_notes="test", prerelease=False,
+    )
+    monkeypatch.setattr(update_api, "ENTERPRISE_UPDATE_ENABLED", True)
+    monkeypatch.setattr(update_api.edb, "get_user_by_id", lambda _uid: current)
+    monkeypatch.setattr(update_api.edb, "can_use_feature", lambda *_args: True)
+    monkeypatch.setattr(update_api, "_provider", lambda: SimpleNamespace(list_release_v2_candidates=lambda **_kwargs: [release]))
+    monkeypatch.setattr(update_api, "_route_previews", lambda _provider, releases, _manifest, _source_release_id: {
+        item.provider_release_id: {"route_status": "direct", "upgrade_path": []} for item in releases
+    })
+    monkeypatch.setattr(update_api, "read_current_release_result_from_state_root", lambda _root: SimpleNamespace(release=SimpleNamespace(release_id="ice-2026.09.4")))
+    monkeypatch.setattr(update_api, "read_release_manifest_v2", lambda _path: SimpleNamespace(section=lambda _key: {"release_version": "2026.09.4"}))
+
+    result = asyncio.run(update_api.check_update(_Request({"user_id": "actor-1", "auth_version": 1})))
+    assert result["update_available"] is available
+    assert (result["latest"] or {}).get("version") == (candidate_version if available else None)
+    assert len(result["releases"]) == int(available)
+
+
+def test_update_check_offers_newer_stable_and_development_releases(monkeypatch):
+    from enterprise import update_api
+
+    current = {"id": "actor-1", "role": "super_admin", "is_active": True, "auth_version": 1}
+    development = SimpleNamespace(
+        provider_release_id="dev-1", tag_name="v2026.09.7", version="2026.09.7",
+        published_at="2026-09-27T00:00:00Z", release_notes="preview", prerelease=True,
+    )
+    stable = SimpleNamespace(
+        provider_release_id="stable-1", tag_name="v2026.09.6", version="2026.09.6",
+        published_at="2026-09-26T00:00:00Z", release_notes="stable", prerelease=False,
+    )
+    old = SimpleNamespace(
+        provider_release_id="old-1", tag_name="v2026.09.4", version="2026.09.4",
+        published_at="2026-09-24T00:00:00Z", release_notes="old", prerelease=False,
+    )
+    monkeypatch.setattr(update_api, "ENTERPRISE_UPDATE_ENABLED", True)
+    monkeypatch.setattr(update_api.edb, "get_user_by_id", lambda _uid: current)
+    monkeypatch.setattr(update_api.edb, "can_use_feature", lambda *_args: True)
+    monkeypatch.setattr(update_api, "_provider", lambda: SimpleNamespace(list_release_v2_candidates=lambda **_kwargs: [development, stable, old]))
+    monkeypatch.setattr(update_api, "_route_previews", lambda _provider, releases, _manifest, _source_release_id: {
+        item.provider_release_id: {"route_status": "direct", "upgrade_path": []} for item in releases
+    })
+    monkeypatch.setattr(update_api, "read_current_release_result_from_state_root", lambda _root: SimpleNamespace(release=SimpleNamespace(release_id="ice-2026.09.5")))
+    monkeypatch.setattr(update_api, "read_release_manifest_v2", lambda _path: SimpleNamespace(section=lambda _key: {"release_version": "2026.09.5"}))
+
+    result = asyncio.run(update_api.check_update(_Request({"user_id": "actor-1", "auth_version": 1})))
+    assert result["update_available"] is True
+    assert result["latest"]["provider_release_id"] == "stable-1"
+    assert [(item["provider_release_id"], item["stage"]) for item in result["releases"]] == [
+        ("dev-1", "development"), ("stable-1", "stable"),
+    ]
+    assert update_api._metadata_by_id(update_api._provider(), "dev-1") is development
+
+    monkeypatch.setattr(update_api, "_provider", lambda: SimpleNamespace(list_release_v2_candidates=lambda **_kwargs: [development]))
+    dev_only = asyncio.run(update_api.check_update(_Request({"user_id": "actor-1", "auth_version": 1})))
+    assert dev_only["latest"] is None
+    assert dev_only["update_available"] is False
+    assert dev_only["releases"][0]["stage"] == "development"
+
+
+@pytest.mark.parametrize("activation_failure", [None, "before-fence", "after-fence"])
+def test_execute_reconfirms_current_password_without_persisting_it(tmp_path: Path, monkeypatch, activation_failure):
     from enterprise import update_api
 
     roots = _roots(tmp_path)
     store = UpdateJobStore(roots)
     job_id, root = store.create("actor-1")
-    store.write_plan(job_id, {
+    plan = {
         "job_id": job_id, "actor_user_id": "actor-1", "source_release_id": "release-A",
         "source_pointer_sha256": "a" * 64, "source_manifest_sha256": "b" * 64,
         "target_release_id": "release-B", "target_manifest_sha256": "c" * 64,
         "target_inventory_sha256": "d" * 64, "target_payload_tree_sha256": "e" * 64,
-    })
+    }
+    if activation_failure:
+        plan["upgrade_sequence"] = {}
+    store.write_plan(job_id, plan)
     store.write_status(job_id, "READY", actor_user_id="actor-1", result_code="SYSTEM_UPDATE_READY")
     current_user = {
         "id": "actor-1", "user_id": "actor-1", "username": "admin-a", "role": "super_admin",
@@ -941,6 +1330,22 @@ def test_execute_reconfirms_current_password_without_persisting_it(tmp_path: Pat
     )
     principal = {"user_id": "actor-1", "role": "super_admin", "is_admin": True, "auth_version": 7}
     tasks = BackgroundTasks()
+    if activation_failure:
+        from enterprise.install_cache import CacheError
+        from enterprise.ops.update import sequence
+        marker = roots.STATE_ROOT / sequence.ACTIVE_NAME
+        def fail_activation(*_):
+            if activation_failure == "after-fence":
+                marker.write_bytes(b"retain this fixture fence for explicit recovery")
+            raise CacheError()
+        monkeypatch.setattr(sequence, "activate_sequence", fail_activation)
+        with pytest.raises(HTTPException):
+            asyncio.run(update_api.execute_update(job_id,
+                _Request(principal, {"password": "correct-password", "confirm_no_active_tasks": True}), tasks))
+        assert store.read_status(job_id)["state"] == "FAILED"
+        assert not store.lock_path.exists() and not tasks.tasks
+        assert marker.exists() == (activation_failure == "after-fence")
+        return
     result = asyncio.run(update_api.execute_update(job_id, _Request(principal, {"password": "correct-password"}), tasks))
     assert result["state"] == "UPDATING" and len(tasks.tasks) == 1
     persisted = "".join(path.read_text(encoding="utf-8") for path in root.glob("*.json*"))
@@ -1023,7 +1428,8 @@ def test_controller_rechecks_ownership_before_writing_update_handoff(monkeypatch
     assert submitted == []
 
 
-def test_supervisor_handoff_uses_only_fixed_source_python_and_worker(tmp_path: Path, monkeypatch):
+@pytest.mark.parametrize("target_engine", [False, True])
+def test_supervisor_handoff_uses_only_fixed_verified_python_and_worker(tmp_path: Path, monkeypatch, target_engine):
     from enterprise.runtime.ownership import ProcessIdentity
     from enterprise.runtime.supervisor import RuntimeSupervisor
 
@@ -1034,6 +1440,21 @@ def test_supervisor_handoff_uses_only_fixed_source_python_and_worker(tmp_path: P
     worker.parent.mkdir(parents=True)
     python.write_bytes(b"fixture")
     worker.write_text("# fixture\n", encoding="utf-8")
+    source_python = python
+    worker_root = app_root
+    updater_binding = None
+    updater = None
+    if target_engine:
+        worker_root = tmp_path / "release-B"
+        python = worker_root / "python/python.exe"
+        worker = worker_root / "enterprise/ops/update/handoff.py"
+        python.parent.mkdir(parents=True)
+        worker.parent.mkdir(parents=True)
+        python.write_bytes(b"verified-target")
+        worker.write_bytes(b"verified-target-worker")
+        updater_binding = {"plan_sha256": "c" * 64, "worker_release_id": "release-B", "updater_contract": 4}
+        updater = SimpleNamespace(app_root=worker_root, python=python, worker=worker,
+                                  readiness_binding=updater_binding)
     launched = []
 
     class Process:
@@ -1050,7 +1471,7 @@ def test_supervisor_handoff_uses_only_fixed_source_python_and_worker(tmp_path: P
     supervisor = RuntimeSupervisor.__new__(RuntimeSupervisor)
     supervisor.config = SimpleNamespace(
         app_root=app_root,
-        python_executable=str(python),
+        python_executable=str(source_python),
         runtime_mode="portable-release",
     )
     supervisor._update_handoff_request = {"request_id": "request", "update_job_id": "b" * 32}
@@ -1059,18 +1480,34 @@ def test_supervisor_handoff_uses_only_fixed_source_python_and_worker(tmp_path: P
     supervisor._command_snapshot = lambda: {"state": "healthy"}
     supervisor._ack = lambda request, **fields: acknowledgements.append((request, fields))
     supervisor._log = lambda *_args, **_kwargs: None
+    supervisor.supervisor_identity = ProcessIdentity(999, 1, str(source_python))
+    supervisor._handoff_reservation = lambda *_args: (1, 2)
+    supervisor._select_handoff_updater = lambda _job_id: updater
+    supervisor._handoff_binding_matches = lambda job, binding: binding == updater_binding
+    def committed(*_args, **_kwargs):
+        supervisor._stopping = True
+        return True
+    supervisor._commit_update_handoff = committed
+    supervisor._job = SimpleNamespace(contains_process=lambda process: False)
     monkeypatch.setattr("enterprise.runtime.supervisor.subprocess.Popen", popen)
+    monkeypatch.setattr("enterprise.runtime.supervisor.current_job_diagnostics", lambda: {"job_query_ok": True})
+    # Being in a foreign enclosing Job is not itself proof of source ownership.
+    monkeypatch.setattr("enterprise.runtime.supervisor.process_in_any_job", lambda process: True)
+    monkeypatch.setattr("enterprise.runtime.supervisor.read_worker_ready", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
         "enterprise.runtime.supervisor.process_identity",
-        lambda pid: ProcessIdentity(pid, 1, str(python)),
+        lambda pid: ProcessIdentity(pid, 1, str(source_python if pid == 999 else python)),
     )
     RuntimeSupervisor._perform_update_handoff(supervisor)
-    assert launched[0][0] == [str(python), "-I", "-B", str(worker), "--job-id", "b" * 32]
+    assert launched[0][0] == [str(python), "-I", "-B", str(worker), "--job-id", "b" * 32,
+                              "--source-pid", "999", "--source-created-at", "1",
+                              "--source-executable", str(source_python),
+                              *(["--source-release-id", "release-A"] if target_engine else [])]
     assert launched[0][1]["stdin"] is not None
     assert launched[0][1]["stdout"] is not None
     assert launched[0][1]["stderr"] is not None
     assert launched[0][1]["shell"] is False
-    assert launched[0][1]["cwd"] == str(app_root)
+    assert launched[0][1]["cwd"] == str(worker_root)
     for name in ("PYTHONHOME", "PYTHONPATH", "PYTHONSTARTUP", "PYTHONINSPECT"):
         assert name not in launched[0][1]["env"]
     assert acknowledgements[0][1]["result"] == "update_handoff_started"

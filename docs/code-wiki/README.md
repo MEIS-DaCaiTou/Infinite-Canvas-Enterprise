@@ -1,31 +1,18 @@
 # Infinite Canvas Enterprise Code Wiki
 
-> 更新日期：2026-09-22
->
-> 核验工作区：`D:\CodeProject\Infinite-Canvas-Enterprise-MAINLINE-CONVERGENCE`
->
-> GitHub：`MEIS-DaCaiTou/Infinite-Canvas-Enterprise`
+更新时间：2026-10-03
+项目：`MEIS-DaCaiTou/Infinite-Canvas-Enterprise`
 
-本 Wiki 面向开发、维护、代码审查与故障排查。内容以源码和 Git 元数据为依据，说明“代码当前是什么”，不替代发布审批、生产验收记录或产品路线图。
+Wiki 是源码/运行参考，不是第二份状态表、路线图或生产批准。主线核验快照为 `main@7905ecf39efabeb3101d7b63c709d8dcd230c9a0`；部分章节保留较早源码索引，具体函数和规模统计须结合当前 Git 复核。
 
-## 1. 基线说明
+## 1. 阅读范围
 
-| 观察面 | 提交 | 说明 |
-| --- | --- | --- |
-| GitHub `origin/main` | `8cdb3c7b7399dbb144dbd828fc2ad876c79ae64a` | 已包含 DATA-MVP-1 foundation（PR #107）、Runtime 主线收敛（PR #108）与 SEC-P0 浏览器边界（PR #119） |
-| 当前实施分支 | `codex/data-mvp1-independent-review` | Issue #109 独立复核；未合并前不属于 `main` |
-| 主线 CI | PR #108 与 PR #119 的要求检查均 SUCCESS | CPython 3.11 企业套件与 CPython 3.14 Runtime 专项；不等于 Release/生产批准 |
-| 发布标签 `2026.09.4` | `a0d1ccf7c2c3ddb5d90c5dc25aea76d5e13dc65a` | 位于独立发布历史，不等同于 `main` 或本地 `HEAD` |
-| 客户恢复工具分支 | `codex/customer-hotfix-2026.08.5-20260911@75da5c8` | 已推送、未合并主线，保存升级恢复执行器后续修复 |
+- 数据迁移/恢复、一次确认与路由检查已接入 main，不能再笼统写“只支持同 Schema 更新”。
+- 09.9 应用与通用 EXE 工具来自维护线；没有整体回归 main，BAT 表格仍是源码/旧安装兼容参考。
+- 最新主线、PR/CI、Release 和现场结果只见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，每轮重新核验。
+- 安装更新设计见 [统一交付 ADR](../decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md)，任务只按 [路线图](../roadmap/DEVELOPMENT-ROADMAP-2026-2027.md)。
 
-因此：
-
-- 通用结构说明以 `origin/main` 为基线；Issue #109 的复核修订明确标注为当前实施分支增量。
-- 分支能力在 PR 合并前不计入 `main`。
-- 标签存在只证明 Git 中存在发布对象，不自动表示已合入主线、已部署或已成为正式生产基线。
-- GitHub 仓库可见性应以实时状态为准，不在本 Wiki 固化。
-
-## 2. 阅读顺序
+## 2. 章节
 
 1. [系统架构](./01-system-architecture.md)
 2. [仓库结构与模块职责](./02-repository-map.md)
@@ -37,30 +24,8 @@
 8. [运行、测试与开发方式](./08-running-testing-and-development.md)
 9. [已知限制、风险与维护建议](./09-known-limitations-and-maintenance.md)
 
-## 3. 一句话架构
+## 3. 维护
 
-这是一个以旧版无限画布 `main.py + static/` 为业务内核、以 `enterprise/` FastAPI Gateway 为认证授权与运维外壳、以 SQLite 和文件目录为事实存储、由 Windows Supervisor 管理 Gateway/Upstream 双进程、并通过不可变 Release 目录和 Manifest v2 实现安装与同 Schema 在线更新的单机企业版模块化单体。
+模块/接口/入口实质变化时更新对应章节，不每个 PR 重写全部 Wiki。历史测试记录保留日期，不改写为本轮跑分；代码路径区分 main、维护线和已安装产品。
 
-## 4. 能力状态速览
-
-| 能力 | 当前代码状态 |
-| --- | --- |
-| 画布、智能画布、素材库、对话、AI/工作流入口 | 已在旧业务内核与静态前端中实现 |
-| 登录、固定三角色、资源归属、功能开关、管理后台 | 已在企业覆盖层实现 |
-| Gateway/Upstream 生命周期与存活/健康检查 | `main` 已合并任务回执、独立探针、单飞、外层截止与启动宽限修复 |
-| Windows 固定 Python、路径根、不可变 Release、安装器 | 已有实现与大量契约测试 |
-| 在线更新 | 仅支持 Manifest v2、同数据库 Schema、无迁移的安全更新 |
-| 版本化 SQLite 迁移/恢复基础 | `origin/main` 已实现基础原语，尚未完整接入 Update Center |
-| PostgreSQL、水平扩展、分布式任务队列 | 未实现 |
-| GitHub Actions | `main` 已包含 Windows 工作流；PR #108 与 PR #119 的要求检查均已通过，当前状态仍需实时核验 |
-
-## 5. 相关事实源
-
-- [项目 README](../../README.md)
-- [当前项目状态](../CURRENT_PROJECT_STATUS.md)
-- [当前架构摘要](../../ARCHITECTURE.md)
-- [代码边界](../../CODE_BOUNDARIES.md)
-- [测试说明](../../enterprise/tests/README.md)
-- [文档索引](../README.md)
-
-历史 ADR、验收记录和阶段性报告用于解释决策与证据，不能覆盖当前 Git 与源码事实。
+原则、边界和任务分别回到 [架构](../../ARCHITECTURE.md)、[范围](../../PROJECT_SCOPE_LOCK.md) 和 [路线图](../roadmap/DEVELOPMENT-ROADMAP-2026-2027.md)。新增/移动资料同步 [登记表](../document-register.json) 并做轻量检查；不把源码快照当永久当前值。

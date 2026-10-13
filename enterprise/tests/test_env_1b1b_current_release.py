@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import ast
 import threading
 import json
 import os
@@ -451,6 +452,14 @@ def test_writer_rejects_untrusted_pathroots_and_has_no_runtime_activation_call_s
     ]
     assert all("atomic_write_current_release(" not in source.read_text(encoding="utf-8") for source in production_sources)
     mvp_source = repository / "enterprise" / "ops" / "update" / "mvp.py"
-    # Activation, ordinary rollback, and migration-aware rollback are the only
-    # update-orchestrator call sites allowed to publish the release pointer.
-    assert mvp_source.read_text(encoding="utf-8").count("atomic_write_current_release(") == 3
+    # The three existing execution paths plus explicit interrupted recovery
+    # publish only from these exact shared-engine functions. No extra runtime
+    # writer is authorized by a file-wide exception or a loose string count.
+    tree = ast.parse(mvp_source.read_text(encoding="utf-8"))
+    calls = {}
+    for function in (node for node in tree.body if isinstance(node, ast.FunctionDef)):
+        count = sum(isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                    and node.func.id == "atomic_write_current_release" for node in ast.walk(function))
+        if count:
+            calls[function.name] = count
+    assert calls == {"restore_source_pointer": 1, "execute_update_job": 3}

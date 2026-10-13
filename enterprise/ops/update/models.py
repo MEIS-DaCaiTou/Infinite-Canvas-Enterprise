@@ -75,3 +75,11 @@ class ReleaseMetadataV2:
     inventory_size_bytes: int
     archive_url: str
     archive_size_bytes: int
+    prerelease: bool = False
+    upgrade_routes_url: str | None = None
+    upgrade_routes_size_bytes: int | None = None
+    upgrade_routes_sha256: str | None = None
+    maintenance_tools_url: str | None = None
+    maintenance_tools_size_bytes: int | None = None
+    maintenance_tools_sha256: str | None = None
+    maintenance_assets: tuple[tuple[str, str, int], ...] = ()

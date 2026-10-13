@@ -1,6 +1,6 @@
 # Infinite Canvas Enterprise 企业层开发指南
 
-更新时间：2026-09-21
+更新时间：2026-10-03
 
 本文是快速开发指南，不是当前状态或路线图。完整导航见 [docs/README.md](docs/README.md)，模块细节见 [Code Wiki](docs/code-wiki/README.md)。
 
@@ -22,7 +22,7 @@
 | 管理后台 API | `enterprise/admin_api.py` 及对应 Application Service |
 | 企业数据库 | `enterprise/db.py`、`enterprise/migrations/`、Repository |
 | Runtime | `enterprise/runtime/` |
-| Release/Update | `enterprise/release/`、`enterprise/update_api.py` |
+| Release/Update | `enterprise/release/`、`enterprise/ops/update/`、`enterprise/update_api.py` |
 | 企业页面 | `enterprise-static/` |
 | 画布/工作流/Provider | `main.py`、`static/`、`workflows/` 及后续领域 Adapter |
 | 测试 | `enterprise/tests/` |
@@ -40,6 +40,8 @@
 
 ## 4. 数据规则
 
+以下是新功能必须满足的约束，旧代码不因此自动具备完整持久任务/费用能力：
+
 - 新增表或字段前先定义 `schema_version`、migration、backup、restore、验证和兼容范围。
 - 大型图片/视频字节不进入普通数据库事务。
 - 文件路径经 PathRoots/Storage Adapter 解析，不把本机绝对路径写进业务对象。
@@ -51,17 +53,20 @@
 - liveness 不访问数据库或 Provider；readiness 与依赖健康分开。
 - 短暂依赖故障降级，真实退出才按退避恢复。
 - 更新流程必须包含：授权、兼容检查、通知/排空、下载校验、备份、迁移、切换、健康、提交或恢复。
-- 更新 Job 必须跨浏览器断开和服务重启持久化。
+- 更新 Job 要持久化；单跳已有恢复查看基础，自动多跳/更新器接管/全部维护态仍待实现，状态回到 CURRENT。
 - Release 资产不可变，具备 Manifest、哈希/签名、源版本范围和回滚说明。
 
 ## 6. 前端规则
 
+- Vue 3＋TypeScript 是局部试做方向，尚未画布迁移或定型桌面框架，不同时扩张多个框架。
 - 旧无限画布的视觉与核心交互是产品基线；改动工作区、画布、拖拽、缩放、上传和任务反馈时做同尺寸对照。
 - 可访问性、键盘操作和响应式变化不能破坏既有高频路径。
 - 大资源使用缩略图、懒加载、虚拟化、ETag/Range；不要每次打开都拉取原文件。
 - 更新期间展示维护通知和持久进度，不允许用户误以为保存/生成仍可用。
 
 ## 7. 本地运行与测试
+
+下面是源码入口，已安装产品不重建配置/数据库。通用工具固定 EXE 的当前验收范围见 CURRENT，不把旧 BAT 当长期客户体验。
 
 ```powershell
 .\启动企业版.bat
@@ -77,4 +82,4 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\enterprise\tests\smoke.ps1
 
 ## 9. 文档
 
-完成实现后更新 CURRENT、路线图、对应实施记录和测试说明；不要再创建新的交接包或重复规划文档。
+只更新受影响事实源、记录及实际变化的测试入口；新增/移动资料同步登记表。安装维护遵循 [统一交付 ADR](docs/decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md)，不另建交接包或路线图。

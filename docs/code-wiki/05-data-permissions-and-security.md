@@ -1,5 +1,7 @@
 # 数据、权限与安全
 
+> 代码参考：结构/函数索引保留各章节的源码快照，不自动覆盖维护线工具；实时模块状态、迁移/发布与现场验收见 CURRENT，任务顺序只认路线图。[现行事实与适用范围](../CURRENT_PROJECT_STATUS.md)。
+
 [返回索引](./README.md)
 
 ## 1. 存储分层
@@ -75,6 +77,8 @@
 - 还要求 `ENTERPRISE_UPDATE_ENABLED=true` 且 `system_update` 有效允许。
 - 执行时重新验证当前密码，密码不写入作业、日志或审计。
 
+更新 access 保留旧组合字段，并独立返回部署开关、功能开关和拒绝码；页面按角色→部署→功能/权限解释拒绝原因，刷新失败先隐藏危险操作。不能靠开启权限表绕过部署禁用，也不为修复标签重新初始化超管。
+
 ## 6. 资源访问裁决
 
 企业层通过拥有者映射包裹旧业务文件：
@@ -134,7 +138,7 @@ DATA-MVP-1 引入：
 
 UPDATE-DATA-1 已把这些原语接入 Update Center 的显式版本化迁移路径：prepare 绑定 source/target 证据与当前数据库身份，execute 在 pointer 切换前迁移，目标启动/健康失败时先恢复数据库，再恢复 pointer 与 source Runtime。执行中断或恢复无法证明时进入 `RECOVERY_REQUIRED`。
 
-该实现并不表示可以执行任意数据库脚本。Migration 必须预先存在于受审 registry，Manifest 必须声明 `versioned-forward-migration` + `database-backup-restore`，且执行阶段会重算计划并精确比对。首个真实 schema-changing Release 和客户数据演练仍属于后续 Release/验收工作。
+该实现并不表示可以执行任意数据库脚本。Migration 必须预先存在于受审 registry，Manifest 必须声明 `versioned-forward-migration` + `database-backup-restore`，且执行阶段会重算计划并精确比对。统一开发基线接回正式维护线的 `ice_096_security_schema_v2`（1→2）登记；09.9/10.1 是同源 30 对象/schema v2。Greenfield 初始化受包内 evidence 约束，旧 v1 evidence 保留明确兼容验证；普通启动不自动登记或迁移，历史 28 对象特定桥接继续需要独立来源核验。准确发布与现场边界回到 CURRENT。
 
 ## 11. 数据安全边界
 

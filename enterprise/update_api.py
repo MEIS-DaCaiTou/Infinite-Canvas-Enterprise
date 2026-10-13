@@ -23,11 +23,18 @@ from enterprise.ops.update.diagnostics import diagnostics_zip, recent_diagnostic
 from enterprise.ops.update.download import atomic_download
 from enterprise.ops.update.mvp import (
     MAX_ARCHIVE_BYTES,
+    TERMINAL_STATES,
     UpdateJobStore,
     UpdateMvpError,
     UpdateMvpService,
 )
 from enterprise.ops.update.providers import GitHubReleasesProvider
+from enterprise.ops.update.release_catalog import ReleaseCatalogCache
+from enterprise.ops.update.route_catalog import RoutePreviewCache, inspect_installed_route_state, read_release_routes, verify_target_route_schema
+from enterprise.ops.update.upgrade_routes import UpgradeRouteError, plan_upgrade_path
+from enterprise.ops.update.versions import compare_versions
+from enterprise.ops.update.recovery import assess_recovery, clear_recovery
+from enterprise.migrations.versioned import SHA256_RE
 from enterprise.release.current_release import read_current_release_result_from_state_root
 from enterprise.release.release_manifest_v2 import (
     INVENTORY_MAX_BYTES,
@@ -40,16 +47,35 @@ from enterprise.runtime.portable import request_portable_update_handoff
 
 
 router = APIRouter()
+_catalog_cache = ReleaseCatalogCache()
+_route_preview_cache = RoutePreviewCache()
 
 
 def _error(exc: Exception) -> None:
     code = str(getattr(exc, "code", getattr(exc, "detail_code", "SYSTEM_UPDATE_FAILED")))
     status = int(getattr(exc, "status_code", 400))
-    message = (
-        "无法验证此版本的数据库迁移与恢复契约，已拒绝准备升级。"
-        if code == "SYSTEM_UPDATE_DATABASE_CONTRACT_UNSUPPORTED"
-        else "The update operation could not be completed"
-    )
+    message = {
+        "RELEASE_CATALOG_INCOMPLETE": "历史发布目录未能完整核验，请稍后重新检查；未启动升级。",
+        "SYSTEM_UPDATE_UPDATER_INCOMPATIBLE": "目标更新工具与当前安装的交接协议不兼容，已拒绝升级；请使用经审核的中间版本或离线维护。",
+        "SYSTEM_UPDATE_UPDATER_UNVERIFIED": "无法核验目标更新工具或维护计划，已拒绝交接；当前服务不会因此停止。",
+        "SYSTEM_UPDATE_DATABASE_CONTRACT_UNSUPPORTED": "无法验证此版本的数据库迁移与恢复契约，已拒绝准备升级。",
+        "SYSTEM_UPDATE_RECOVERY_REQUIRED": "上一升级作业仍需人工恢复，已拒绝再次升级。",
+        "SYSTEM_UPDATE_RECOVERY_STATE_UNVERIFIED": "无法核验既有升级作业的恢复状态，已拒绝再次升级。",
+        "SYSTEM_UPDATE_RECOVERY_DATABASE_UNVERIFIED": "当前数据库未通过完整性与版本结构核验，解除阻断已拒绝。",
+        "SYSTEM_UPDATE_RECOVERY_RELEASE_UNVERIFIED": "当前 Release 身份未通过核验，解除阻断已拒绝。",
+        "SYSTEM_UPDATE_RECOVERY_HEALTH_UNVERIFIED": "当前服务未通过正式健康检查，解除阻断已拒绝。",
+        "SYSTEM_UPDATE_RECOVERY_ASSESSMENT_CHANGED": "恢复核验结果已变化，请重新核验后再确认。",
+        "SYSTEM_UPDATE_ROUTE_UNDECLARED": "该版本未声明可验证的升级路径，不能直接升级。",
+        "SYSTEM_UPDATE_ROUTE_INVALID": "升级路径资产或发布包身份不匹配，已拒绝升级。",
+        "SYSTEM_UPDATE_ROUTE_NOT_DIRECT": "该版本需要经过中间版本；当前升级作业不支持直接跳过。",
+        "SYSTEM_UPDATE_ROUTE_SOURCE_UNVERIFIED": "当前安装版本或数据库结构未通过升级路径核验。",
+        "SYSTEM_UPDATE_SEQUENCE_ACTIVE": "已有升级路径正在执行或等待恢复，请先处理当前作业。",
+        "SYSTEM_UPDATE_SEQUENCE_INCOMPATIBLE": "路径中有版本尚不支持连续升级，请使用对应维护安装包。",
+        "SYSTEM_UPDATE_SEQUENCE_AUTHORIZATION_REVOKED": "原升级授权已失效，剩余步骤已暂停。",
+        "SYSTEM_UPDATE_SEQUENCE_CHECKPOINT_AVAILABLE": "本跳已完成并保存检查点，请使用继续或停止剩余升级。",
+        "SYSTEM_UPDATE_NO_ACTIVE_TASKS_CONFIRMATION_REQUIRED": "请先确认没有活动生成任务，再执行升级。",
+        "SYSTEM_UPDATE_MAINTENANCE_TOOLS_UNVERIFIED": "原生维护工具包未通过身份和完整性检查，未启动升级。",
+    }.get(code, "The update operation could not be completed")
     raise HTTPException(status_code=status, detail={"code": code, "message": message}) from exc
 
 
@@ -92,24 +118,101 @@ def _require_update_operator(request: Request) -> dict:
 
 
 def _provider() -> GitHubReleasesProvider:
-    return GitHubReleasesProvider()
+    return GitHubReleasesProvider(catalog_cache=_catalog_cache)
 
 
 def _metadata_by_id(provider: GitHubReleasesProvider, release_id: str):
-    matches = [item for item in provider.list_release_v2_candidates() if item.provider_release_id == release_id]
+    matches = [item for item in provider.list_release_v2_candidates(include_prerelease=True) if item.provider_release_id == release_id]
     if len(matches) != 1:
         raise UpdateMvpError("SYSTEM_UPDATE_RELEASE_NOT_FOUND", status_code=404)
     return matches[0]
+
+
+def _route_previews(provider, releases, source_manifest, source_pointer) -> dict[str, dict[str, object]]:
+    """Advisory UI paths; prepare and every execution hop must revalidate."""
+    previews: dict[str, dict[str, object]] = {}
+    if (
+        source_manifest.release_id != source_pointer.release.release_id
+        or source_manifest.raw_sha256 != source_pointer.release.manifest_sha256
+    ):
+        return {release.provider_release_id: {
+            "route_status": "source_unverified", "upgrade_path": [],
+        } for release in releases}
+    try:
+        installed = inspect_installed_route_state(
+            app_root=PATH_ROOTS.APP_ROOT,
+            database_path=Path(DB_PATH),
+            manifest=source_manifest,
+        )
+    except Exception:
+        return {release.provider_release_id: {
+            "route_status": "source_unverified", "upgrade_path": [],
+        } for release in releases}
+    documents = []
+    declarations = {}
+    for release in releases:
+        key = release.provider_release_id
+        if getattr(release, "upgrade_routes_url", None) is None:
+            previews[key] = {"route_status": "route_missing", "upgrade_path": []}
+            continue
+        try:
+            declaration = _route_preview_cache.read(provider, release, read_release_routes)
+        except Exception:
+            previews[key] = {"route_status": "route_invalid", "upgrade_path": []}
+            continue
+        if declaration is not None:
+            documents.append(declaration)
+            declarations[key] = declaration
+    for release in releases:
+        key = release.provider_release_id
+        if key in previews:
+            continue
+        declaration = declarations.get(key)
+        if declaration is None:
+            previews[key] = {"route_status": "route_invalid", "upgrade_path": []}
+            continue
+        try:
+            path = plan_upgrade_path(
+                installed, declaration.target.release_id, documents,
+                allow_development=release.prerelease,
+            )
+        except UpgradeRouteError:
+            path = None
+        previews[key] = {
+            "route_status": (
+                "direct" if path and len(path) == 1 else
+                "requires_intermediate" if path else "path_unavailable"
+            ),
+            "upgrade_path": [] if path is None else [
+                {"release_id": step.release_id, "version": step.version, "stage": step.channel}
+                for step in path
+            ],
+        }
+    return previews
 
 
 @router.get("/api/update-mvp/access")
 async def update_access(request: Request):
     current = _require_admin_view(request)
     effective = edb.get_effective_feature_value(current, "system_update")
+    # Describe the same gates enforced by _require_update_operator. Keep the
+    # legacy combined flag for older clients, but expose both switches so a
+    # deployment veto is not reported as a missing super-administrator role.
+    if current.get("role") != ROLE_SUPER_ADMIN:
+        denial_code = "SYSTEM_UPDATE_SUPER_ADMIN_REQUIRED"
+    elif not ENTERPRISE_UPDATE_ENABLED:
+        denial_code = "SYSTEM_UPDATE_EMERGENCY_SWITCH_DISABLED"
+    elif not effective.get("allowed"):
+        denial_code = "SYSTEM_UPDATE_PERMISSION_DENIED"
+    else:
+        denial_code = None
     return {
         "role": current.get("role"),
-        "can_operate": bool(ENTERPRISE_UPDATE_ENABLED and effective.get("allowed")),
+        "can_operate": denial_code is None,
         "global_update_enabled": bool(ENTERPRISE_UPDATE_ENABLED and effective.get("global_enabled")),
+        "deployment_update_enabled": bool(ENTERPRISE_UPDATE_ENABLED),
+        "feature_update_enabled": bool(effective.get("global_enabled")),
+        "denial_code": denial_code,
         "permission_source": effective.get("source"),
     }
 
@@ -118,13 +221,45 @@ async def update_access(request: Request):
 async def check_update(request: Request):
     _require_update_operator(request)
     try:
+        return await run_in_threadpool(_check_update_sync)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        _error(exc)
+
+
+def _check_update_sync() -> dict[str, object]:
+    try:
         current = read_current_release_result_from_state_root(PATH_ROOTS.STATE_ROOT)
         source_manifest = read_release_manifest_v2(PATH_ROOTS.APP_ROOT / "release-manifest.json")
-        releases = _provider().list_release_v2_candidates()
-        latest = releases[0] if releases else None
+        provider = _provider()
+        releases = provider.list_release_v2_candidates(include_prerelease=True)
+        current_version = source_manifest.section("identity")["release_version"]
+        available = [item for item in releases if compare_versions(current_version, item.version) == "newer"]
+        previews = _route_previews(provider, available, source_manifest, current)
+        latest = next((
+            item for item in available
+            if not item.prerelease and previews[item.provider_release_id]["route_status"] in {"direct", "requires_intermediate"}
+        ), None)
         return {
             "current_release_id": current.release.release_id,
-            "current_version": source_manifest.section("identity")["release_version"],
+            "current_version": current_version,
+            "catalog": (
+                provider.catalog_snapshot.public_summary()
+                if getattr(provider, "catalog_snapshot", None) is not None else None
+            ),
+            # A higher version alone is not an offer to upgrade. Keep the
+            # legacy flag stable-only and fail closed without a direct route.
+            "update_available": latest is not None,
+            "releases": [{
+                "provider_release_id": item.provider_release_id,
+                "tag_name": item.tag_name,
+                "version": item.version,
+                "published_at": item.published_at,
+                "release_notes": item.release_notes,
+                "stage": "development" if item.prerelease else "stable",
+                **previews[item.provider_release_id],
+            } for item in available],
             "latest": None if latest is None else {
                 "provider_release_id": latest.provider_release_id,
                 "tag_name": latest.tag_name,
@@ -152,8 +287,39 @@ async def prepare_update(request: Request):
 
 def _prepare_update_sync(actor_user_id: str, provider_release_id: str) -> dict[str, object]:
     """Complete one prepare workflow outside the Gateway asyncio event loop."""
+    UpdateJobStore(PATH_ROOTS).assert_no_unresolved_recovery()
+    if (PATH_ROOTS.STATE_ROOT / "upgrade-sequence-active.json").exists():
+        raise UpdateMvpError("SYSTEM_UPDATE_SEQUENCE_ACTIVE", status_code=409)
     provider = _provider()
     metadata = _metadata_by_id(provider, provider_release_id)
+    if getattr(metadata, "upgrade_routes_url", None) is None:
+        raise UpdateMvpError("SYSTEM_UPDATE_ROUTE_UNDECLARED")
+    source_pointer = read_current_release_result_from_state_root(PATH_ROOTS.STATE_ROOT)
+    source_manifest = read_release_manifest_v2(PATH_ROOTS.APP_ROOT / "release-manifest.json")
+    if (
+        source_pointer.release.release_id != source_manifest.release_id
+        or source_pointer.release.manifest_sha256 != source_manifest.raw_sha256
+    ):
+        raise UpdateMvpError("SYSTEM_UPDATE_ROUTE_SOURCE_UNVERIFIED")
+    try:
+        installed = inspect_installed_route_state(
+            app_root=PATH_ROOTS.APP_ROOT, database_path=Path(DB_PATH), manifest=source_manifest,
+        )
+    except Exception as exc:
+        raise UpdateMvpError("SYSTEM_UPDATE_ROUTE_SOURCE_UNVERIFIED") from exc
+    try:
+        declaration = read_release_routes(provider, metadata)
+    except Exception as exc:
+        raise UpdateMvpError("SYSTEM_UPDATE_ROUTE_INVALID") from exc
+    if declaration is None:
+        raise UpdateMvpError("SYSTEM_UPDATE_ROUTE_UNDECLARED")
+    path = plan_upgrade_path(
+        installed, declaration.target.release_id, [declaration],
+        allow_development=metadata.prerelease,
+    )
+    if path is None or len(path) != 1 or getattr(metadata, "maintenance_tools_url", None) is not None:
+        from enterprise.ops.update.online_prepare import prepare_online_path
+        return prepare_online_path(PATH_ROOTS, Path(DB_PATH), provider, metadata, installed, actor_user_id)
     incoming = PATH_ROOTS.STAGING_ROOT / "update-mvp" / "incoming" / uuid.uuid4().hex
     incoming.mkdir(parents=True, exist_ok=False)
     try:
@@ -163,6 +329,8 @@ def _prepare_update_sync(actor_user_id: str, provider_release_id: str) -> dict[s
         headers = provider.release_v2_asset_request_headers(metadata.manifest_url)
         atomic_download(provider.http_client, url=metadata.manifest_url, destination=manifest_path, maximum_bytes=MANIFEST_MAX_BYTES, expected_size_bytes=metadata.manifest_size_bytes, headers=headers)
         manifest = read_release_manifest_v2(manifest_path)
+        if manifest.raw_sha256 != declaration.target.manifest_sha256:
+            raise UpdateMvpError("SYSTEM_UPDATE_ROUTE_MANIFEST_CHANGED")
         if manifest.section("identity")["release_version"] != metadata.version:
             raise UpdateMvpError("SYSTEM_UPDATE_PROVIDER_MANIFEST_IDENTITY_MISMATCH")
         archive = manifest.section("archive")
@@ -187,6 +355,10 @@ def _prepare_update_sync(actor_user_id: str, provider_release_id: str) -> dict[s
             expected_sha256=str(archive["sha256"]),
             headers=provider.release_v2_asset_request_headers(metadata.archive_url),
         )
+        try:
+            verify_target_route_schema(archive_path=archive_path, manifest=manifest, routes=declaration)
+        except UpgradeRouteError as exc:
+            raise UpdateMvpError("SYSTEM_UPDATE_ROUTE_INVALID") from exc
         prepared = UpdateMvpService(PATH_ROOTS, database_path=Path(DB_PATH)).prepare_from_artifacts(
             actor_user_id=actor_user_id, manifest_path=manifest_path, archive_path=archive_path, inventory_path=inventory_path
         )
@@ -196,26 +368,46 @@ def _prepare_update_sync(actor_user_id: str, provider_release_id: str) -> dict[s
 
 
 def _launch_handoff(job_id: str, actor_user_id: str) -> None:
+    from enterprise.runtime.handoff_commit import HandoffCommitGate, HandoffCommitUnavailable
     store = UpdateJobStore(PATH_ROOTS)
     try:
         result = request_portable_update_handoff(app_root=PATH_ROOTS.APP_ROOT, job_id=job_id)
-        if result.get("result") != "update_handoff_started":
-            store.write_status(job_id, "FAILED", actor_user_id=actor_user_id, result_code="SYSTEM_UPDATE_HANDOFF_FAILED")
-            store.append_event(job_id, "FAILED", "SYSTEM_UPDATE_HANDOFF_FAILED")
-            edb.log_action(actor_user_id, "system_update_failed", json.dumps({"job_id": job_id, "result_code": "SYSTEM_UPDATE_HANDOFF_FAILED"}, ensure_ascii=False))
-            try:
-                lock = store.acquire_execution_lock(job_id)
-                store.release_execution_lock(lock, job_id)
-            except UpdateMvpError:
-                pass
     except Exception:
+        # No acknowledgement means worker creation/cleanup is unknown.
+        result = {"result": "update_handoff_cleanup_unconfirmed"}
+    if result.get("result") == "update_handoff_started":
+        return
+    uncertain = result.get("result") in {"update_handoff_cleanup_unconfirmed", "control_timeout"}
+    result_code = ("SYSTEM_UPDATE_HANDOFF_CLEANUP_UNCONFIRMED" if uncertain else
+                   "SYSTEM_UPDATE_HANDOFF_JOB_BLOCKED" if result.get("result") == "update_handoff_job_blocked"
+                   else "SYSTEM_UPDATE_UPDATER_UNVERIFIED" if result.get("result") == "update_handoff_updater_rejected"
+                   else "SYSTEM_UPDATE_HANDOFF_FAILED")
+    state = "RECOVERY_REQUIRED" if uncertain else "FAILED"
+    try:
+        with HandoffCommitGate(job_id):
+            status = store.read_status(job_id)
+            if status.get("state") in TERMINAL_STATES or status.get("handoff_committed") is True:
+                return  # A lost ACK cannot cancel an atomically accepted worker.
+            fields = {key: value for key, value in status.items() if key not in {
+                "schema_version", "job_id", "state", "actor_user_id", "result_code", "created_at", "updated_at"}}
+            if uncertain:
+                fields["recovery_required"] = True
+            store.write_status(job_id, state, actor_user_id=actor_user_id, result_code=result_code,
+                               created_at=status["created_at"], **fields)
+    except HandoffCommitUnavailable:
+        # Acceptance is unknown. Keep UPDATING/reservation, never race a commit
+        # or advertise an unlocked retry; the source/worker owns the next result.
+        return
+    store.append_event(job_id, state, result_code)
+    try:
+        edb.log_action(actor_user_id, "system_update_failed", json.dumps({"job_id": job_id, "result_code": result_code}, ensure_ascii=False))
+    except Exception:
+        pass  # Audit failure must not downgrade or unlock uncertain cleanup.
+    if not uncertain:
         try:
-            store.write_status(job_id, "FAILED", actor_user_id=actor_user_id, result_code="SYSTEM_UPDATE_HANDOFF_FAILED")
-            store.append_event(job_id, "FAILED", "SYSTEM_UPDATE_HANDOFF_FAILED")
-            edb.log_action(actor_user_id, "system_update_failed", json.dumps({"job_id": job_id, "result_code": "SYSTEM_UPDATE_HANDOFF_FAILED"}, ensure_ascii=False))
             lock = store.acquire_execution_lock(job_id)
             store.release_execution_lock(lock, job_id)
-        except Exception:
+        except UpdateMvpError:
             pass
 
 
@@ -244,9 +436,15 @@ async def execute_update(job_id: str, request: Request, background_tasks: Backgr
         plan = store.read_plan(job_id)
         if status.get("state") != "READY" or plan.get("actor_user_id") != actor["id"]:
             raise UpdateMvpError("SYSTEM_UPDATE_JOB_NOT_EXECUTABLE", status_code=409)
+        from enterprise.ops.update.updater import sealed_updater_binding
+        sealed_updater_binding(plan, status)
         current_pointer = read_current_release_result_from_state_root(PATH_ROOTS.STATE_ROOT)
         if current_pointer.raw_sha256 != plan.get("source_pointer_sha256"):
             raise UpdateMvpError("SYSTEM_UPDATE_EXPECTED_CURRENT_MISMATCH", status_code=409)
+        if "upgrade_sequence" in plan and body.get("confirm_no_active_tasks") is not True:
+            raise UpdateMvpError("SYSTEM_UPDATE_NO_ACTIVE_TASKS_CONFIRMATION_REQUIRED")
+        if (PATH_ROOTS.STATE_ROOT / "upgrade-sequence-active.json").exists():
+            raise UpdateMvpError("SYSTEM_UPDATE_SEQUENCE_ACTIVE", status_code=409)
         store.reserve_execution(job_id)
         reservation_created = True
         store.write_status(
@@ -255,11 +453,21 @@ async def execute_update(job_id: str, request: Request, background_tasks: Backgr
         )
         store.append_event(job_id, "UPDATING", "SYSTEM_UPDATE_STARTED")
         edb.log_action(actor["id"], "system_update_started", json.dumps({"job_id": job_id, "source_release_id": plan.get("source_release_id"), "target_release_id": plan.get("target_release_id")}, ensure_ascii=False))
+        if "upgrade_sequence" in plan:
+            from enterprise.ops.update.sequence import activate_sequence
+            await run_in_threadpool(activate_sequence, PATH_ROOTS, job_id)
         background_tasks.add_task(_launch_handoff, job_id, actor["id"])
         return {"job_id": job_id, "state": "UPDATING", "result_code": "SYSTEM_UPDATE_STARTED"}
     except Exception as exc:
         if reservation_created:
             try:
+                # No handoff was queued before this synchronous failure.
+                # Finish the job before releasing its reservation; retain any
+                # sequence fence for explicit recovery rather than removing it.
+                store.write_status(job_id, "FAILED", actor_user_id=actor["id"],
+                    result_code=getattr(exc, "code", "SYSTEM_UPDATE_CONFIRMATION_FAILED"),
+                    source_release_id=plan.get("source_release_id"), target_release_id=plan.get("target_release_id"))
+                store.append_event(job_id, "FAILED", getattr(exc, "code", "SYSTEM_UPDATE_CONFIRMATION_FAILED"))
                 lock = UpdateJobStore(PATH_ROOTS).acquire_execution_lock(job_id)
                 UpdateJobStore(PATH_ROOTS).release_execution_lock(lock, job_id)
             except Exception:
@@ -271,7 +479,118 @@ async def execute_update(job_id: str, request: Request, background_tasks: Backgr
 async def update_job(job_id: str, request: Request):
     _require_update_operator(request)
     try:
-        return UpdateJobStore(PATH_ROOTS).read_status(job_id)
+        store = UpdateJobStore(PATH_ROOTS)
+        if "upgrade_sequence" in store.read_plan(job_id):
+            from enterprise.ops.update.sequence import public_sequence
+            public = await run_in_threadpool(public_sequence, PATH_ROOTS, job_id)
+            if public is not None:
+                return public
+        return store.read_status(job_id)
+    except Exception as exc:
+        _error(exc)
+
+
+@router.post("/api/update-mvp/jobs/{job_id}/sequence-resume", status_code=202)
+async def resume_update_sequence(job_id: str, request: Request, background_tasks: BackgroundTasks):
+    actor = _require_update_operator(request)
+    try:
+        body = await request.json()
+        if type(body) is not dict or body.get("confirm_no_active_tasks") is not True:
+            raise UpdateMvpError("SYSTEM_UPDATE_NO_ACTIVE_TASKS_CONFIRMATION_REQUIRED")
+        from enterprise.ops.update.sequence import resume_sequence
+        child_job = await run_in_threadpool(resume_sequence, PATH_ROOTS, job_id)
+        if child_job is None:
+            from enterprise.ops.update.sequence import public_sequence
+            return await run_in_threadpool(public_sequence, PATH_ROOTS, job_id)
+        background_tasks.add_task(_launch_handoff, child_job, actor["id"])
+        return {"job_id": job_id, "current_job_id": child_job, "state": "UPDATING"}
+    except Exception as exc:
+        _error(exc)
+
+
+@router.post("/api/update-mvp/jobs/{job_id}/sequence-stop")
+async def stop_update_sequence(job_id: str, request: Request):
+    actor = _require_update_operator(request)
+    try:
+        body = await request.json()
+        password = body.get("password") if type(body) is dict else None
+        current = edb.get_user_by_id(actor["id"])
+        if (type(password) is not str or not password or len(password) > MAX_SUPER_ADMIN_PASSWORD_LENGTH
+                or not current or not edb.verify_password(password, str(current.get("password_hash") or ""))):
+            raise UpdateMvpError("SYSTEM_UPDATE_PASSWORD_INVALID", status_code=403)
+        from enterprise.ops.update.sequence import stop_sequence
+        result = await run_in_threadpool(stop_sequence, PATH_ROOTS, job_id)
+        edb.log_action(actor["id"], "system_update_sequence_stopped", json.dumps({"job_id": job_id}, sort_keys=True))
+        return result
+    except Exception as exc:
+        _error(exc)
+
+
+@router.get("/api/update-mvp/recovery/pending")
+async def pending_update_recovery(request: Request):
+    _require_update_operator(request)
+    try:
+        jobs = await run_in_threadpool(UpdateJobStore(PATH_ROOTS).pending_recovery_jobs)
+        from enterprise.ops.update.sequence import active_sequence_id
+        sequence_job = await run_in_threadpool(active_sequence_id, PATH_ROOTS)
+        if sequence_job is not None:
+            jobs = [sequence_job, *[job for job in jobs if job != sequence_job]]
+        return {"job_ids": jobs}
+    except Exception as exc:
+        _error(exc)
+
+
+@router.get("/api/update-mvp/jobs/{job_id}/recovery-assessment")
+async def update_recovery_assessment(job_id: str, request: Request):
+    _require_update_operator(request)
+    try:
+        store = UpdateJobStore(PATH_ROOTS)
+        sequence_job_id = None
+        if "upgrade_sequence" in store.read_plan(job_id):
+            from enterprise.ops.update.sequence import public_sequence
+            public = await run_in_threadpool(public_sequence, PATH_ROOTS, job_id)
+            if public.get("can_resume"):
+                raise UpdateMvpError("SYSTEM_UPDATE_SEQUENCE_CHECKPOINT_AVAILABLE")
+            sequence_job_id, job_id = job_id, public["current_job_id"]
+        result = await run_in_threadpool(assess_recovery, PATH_ROOTS, job_id, database_path=Path(DB_PATH))
+        return {**result, **({"sequence_job_id": sequence_job_id} if sequence_job_id is not None else {})}
+    except Exception as exc:
+        _error(exc)
+
+
+@router.post("/api/update-mvp/jobs/{job_id}/recovery-clearance")
+async def update_recovery_clearance(job_id: str, request: Request):
+    actor = _require_update_operator(request)
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise UpdateMvpError("SYSTEM_UPDATE_RECOVERY_CONFIRMATION_INVALID")
+        password = body.get("password")
+        expected_release_id = body.get("expected_release_id")
+        expected_assessment_sha256 = body.get("expected_assessment_sha256")
+        manual_evidence_note = body.get("manual_evidence_note")
+        if (
+            not isinstance(password, str) or not password
+            or len(password) > MAX_SUPER_ADMIN_PASSWORD_LENGTH
+            or not isinstance(expected_release_id, str) or len(expected_release_id) > 96
+            or not isinstance(expected_assessment_sha256, str)
+            or not SHA256_RE.fullmatch(expected_assessment_sha256)
+            or not isinstance(manual_evidence_note, str)
+            or not 12 <= len(manual_evidence_note.strip()) <= 500
+        ):
+            raise UpdateMvpError("SYSTEM_UPDATE_RECOVERY_CONFIRMATION_INVALID")
+        current = edb.get_user_by_id(actor["id"])
+        if not current or current.get("auth_version") != actor.get("auth_version") or not edb.verify_password(password, str(current.get("password_hash") or "")):
+            raise UpdateMvpError("SYSTEM_UPDATE_PASSWORD_INVALID", status_code=403)
+        if not ENTERPRISE_UPDATE_ENABLED or not edb.can_use_feature(current, "system_update"):
+            raise UpdateMvpError("SYSTEM_UPDATE_PERMISSION_DENIED", status_code=403)
+        return await run_in_threadpool(
+            clear_recovery, PATH_ROOTS, job_id,
+            database_path=Path(DB_PATH), actor_user_id=actor["id"],
+            expected_release_id=expected_release_id,
+            expected_assessment_sha256=expected_assessment_sha256,
+            manual_evidence_note=manual_evidence_note,
+        )
     except Exception as exc:
         _error(exc)
 

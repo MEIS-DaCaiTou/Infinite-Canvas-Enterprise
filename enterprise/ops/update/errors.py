@@ -29,6 +29,11 @@ class ReleaseProviderError(OnlineUpdateError):
     public_message = "Trusted release metadata could not be obtained"
 
 
+class ReleaseCatalogError(ReleaseProviderError):
+    code = "RELEASE_CATALOG_INCOMPLETE"
+    public_message = "The release catalog could not be completely verified"
+
+
 class ReleaseDownloadError(OnlineUpdateError):
     code = "RELEASE_DOWNLOAD_FAILED"
     public_message = "Release download validation failed"

@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from .control import RuntimeControlError, RuntimeController, default_runtime_root, inspect_runtime, validate_runtime_root
+from .error_contract import public_lifecycle_details
 from .supervisor import RuntimeStartBlocked, RuntimeSupervisor, SupervisorConfig
 
 
@@ -35,8 +36,9 @@ def _configured_secret_values() -> tuple[str, ...]:
 
 
 def _paths(args: argparse.Namespace) -> tuple[Path, Path]:
-    app_root = Path(args.app_root).resolve()
-    runtime_root = validate_runtime_root(app_root, Path(args.runtime_root))
+    portable = getattr(args, "runtime_mode", "development") == "portable-release"
+    app_root = Path(args.app_root).absolute() if portable else Path(args.app_root).resolve()
+    runtime_root = validate_runtime_root(app_root, Path(args.runtime_root), preserve_lexical_roots=portable)
     return app_root, runtime_root
 
 
@@ -164,7 +166,7 @@ def main(argv: list[str] | None = None) -> int:
     except (RuntimeControlError, RuntimeStartBlocked) as exc:
         payload: dict[str, object] = {"status": "blocked", "code": getattr(exc, "code", "RUNTIME_CONTROL_ERROR")}
         if isinstance(exc, RuntimeControlError):
-            payload.update(exc.public_details)
+            payload.update(public_lifecycle_details(exc.public_details))
         _write(payload)
         return 2
     except ValueError:

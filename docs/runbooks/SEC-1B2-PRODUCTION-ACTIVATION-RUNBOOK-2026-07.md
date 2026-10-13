@@ -1,5 +1,7 @@
 # SEC-1B2 生产 Activation Runbook
 
+> 2026-10-03：受限历史操作手册，不是普通客户安装/升级方式。仅在明确设备授权、准确前提及维护计划下引用；旧命令不能向客户批量推广。正常受支持升级目标是图形入口共用引擎，未具备能力不得假装已经自动完成。[替代/现行入口](../decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md)。
+
 ## 适用边界
 
 本 runbook 是项目负责人于生产 Windows 主机本地执行的人工清单。它不是自动部署脚本，不提供远程运行，不授权 Codex/ChatGPT 访问生产，也不代表已完成 activation、bootstrap、restore、rollback 或升级。
