@@ -73,4 +73,3 @@ async function runRace(scenario='race'){
     assert.deepEqual(manualFailure.alerts, ['workflow unavailable']);
     console.log('Comfy cold lookup blocks duplicate clicks and propagates cascade failures');
 })().catch(error=>{console.error(error);process.exitCode=1;});
-
