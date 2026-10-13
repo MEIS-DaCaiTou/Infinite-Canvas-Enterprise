@@ -188,3 +188,14 @@ def test_partial_synchronous_output_is_available_without_inventing_a_query_id(tm
         result = await service.reconcile("canvas_img_a")
         assert result["status"] == "partial" and result["images"] == ["/output/retained.png"]
     asyncio.run(scenario())
+
+
+def test_existing_completed_v1_result_needs_no_provider_access(tmp_path):
+    async def scenario():
+        journal = new_journal(tmp_path)
+        journal.finish("canvas_img_a", {"status": "succeeded", "result": {"images": ["/output/existing.png"]}})
+        async def query(*args): pytest.fail("completed result must not query")
+        service = CanvasImageRecovery(journal, lambda _: pytest.fail("completed result must not resolve supplier"), query, lambda _: None)
+        result = await service.reconcile("canvas_img_a")
+        assert result["status"] == "succeeded" and result["images"] == ["/output/existing.png"]
+    asyncio.run(scenario())

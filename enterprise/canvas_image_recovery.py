@@ -87,7 +87,9 @@ class CanvasImageRecovery:
         record = await asyncio.to_thread(self.journal.get, task_id)
         if not record or record.get("type") != "online-image":
             raise HTTPException(404, "画布图像任务不存在")
-        if record.get("status") == "succeeded" or (record.get("result") or {}).get("status") == "partial":
+        if record.get("status") == "succeeded":
+            return {**record["result"], "status": "succeeded"}
+        if (record.get("result") or {}).get("status") == "partial":
             return record["result"]
         if record.get("status") != "failed":
             return {"status": "running", "message": "原任务仍在跟踪，请稍后查询", "task_id": task_id}
