@@ -148,12 +148,7 @@ const miniCanvasHost = document.getElementById('miniCanvasHost');
 function setStatus(text){ statusEl.textContent = text || ''; }
 function escapeHtml(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function escapeAttr(s){ return escapeHtml(s); }
-function fieldKind(f){
-    if(['image','video','audio'].includes(f.type)) return f.type;
-    const key = `${f.input || ''} ${f.name || ''}`.toLowerCase();
-    if(f.type === 'textarea' || /prompt|text|提示词|正向|负向/.test(key)) return 'prompt';
-    return 'setting';
-}
+function fieldKind(f){ return ComfyWorkflowFields.kind(f); }
 function isMediaField(f){ return ['image','video','audio'].includes(fieldKind(f)); }
 function mediaFieldLabel(kind, count){
     const labels = currentLang() === 'en'
@@ -293,7 +288,8 @@ async function selectWorkflow(name){
     renderList();
     try {
         setStatus(tr('comfy.loading'));
-        const data = await fetch(`/api/workflows/${encodeURIComponent(name)}`).then(r=>r.json());
+        let data = await fetch(`/api/workflows/${encodeURIComponent(name)}`).then(r=>r.json());
+        data = ComfyWorkflowFields.normalizeWorkflow(data);
         currentWorkflow = data.workflow;
         currentConfig = data.config || { title:name.replace('.json',''), fields:[] };
         if(!currentConfig.fields) currentConfig.fields = [];
@@ -377,22 +373,7 @@ function refreshPopupBody(){
     refreshIcons();
 }
 
-function guessType(value, inputName){
-    const lc = (inputName||'').toLowerCase();
-    if(typeof value === 'boolean') return 'boolean';
-    if(typeof value === 'number'){
-        if(/strength|cfg|denoise/.test(lc)) return 'slider';
-        return 'number';
-    }
-    if(typeof value === 'string'){
-        if(/prompt|text|description/.test(lc) || (value && value.length > 60)) return 'textarea';
-        if(/video|movie|mp4|webm|mov|m4v|vhs/.test(lc) || /\.(mp4|webm|mov|m4v|avi|mkv)(\?|$)/i.test(value)) return 'video';
-        if(/audio|sound|music|voice|wav|mp3/.test(lc) || /\.(mp3|wav|m4a|aac|ogg|flac)(\?|$)/i.test(value)) return 'audio';
-        if(/image|img|mask|filename|file/.test(lc) || /\.(png|jpe?g|webp|gif|bmp|tiff?)(\?|$)/i.test(value)) return 'image';
-        return 'text';
-    }
-    return 'text';
-}
+function guessType(value, inputName){ return ComfyWorkflowFields.inferType(value, inputName); }
 
 function updateField(fieldId, key, value){
     const f = currentConfig.fields.find(x => x.id === fieldId);
@@ -1280,6 +1261,9 @@ async function onRun(){
     try {
         const baseFields = workspaceMode === 'canvas' ? fieldsFromMiniCanvas() : {...previewValues};
         const runFields = applyActiveRandomValues(baseFields);
+        const missing = currentConfig.fields.filter(f => isMediaField(f) && !(runFields[f.id] ?? f.default));
+        if(missing.length) throw new Error(ComfyWorkflowFields.missingMessage(missing, currentLang() === 'en'));
+        currentConfig.fields.forEach(f => { runFields[f.id] = ComfyWorkflowFields.coerceValue(f, runFields[f.id]); });
         const res = await fetch(`/api/workflows/${encodeURIComponent(selectedName)}/run`, {
             method:'POST',
             headers:{'Content-Type':'application/json'},
@@ -1287,6 +1271,7 @@ async function onRun(){
         });
         if(!res.ok) throw new Error((await res.json()).detail || tr('comfy.runFailed'));
         const data = await res.json();
+        if(data.error) throw new Error(data.error);
         runResult = data.images?.[0] || null;
         renderPreview();
         renderWorkspaceView();
@@ -1311,8 +1296,8 @@ function fieldsFromMiniCanvas(){
             fields[f.id] = mediaNodes[i]?.value || fields[f.id] || '';
         });
     });
-    promptFields.forEach(f => {
-        fields[f.id] = prompt || fields[f.id] || '';
+    promptFields.forEach((f, i) => {
+        fields[f.id] = (i === 0 ? prompt : '') || fields[f.id] || '';
     });
     return fields;
 }

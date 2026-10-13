@@ -1,9 +1,13 @@
 {
   "schema_version": "enterprise-documents-v1",
-  "reviewed_at": "2026-10-13",
+  "reviewed_at": "2026-10-14",
   "audit_base_commit": "4bdd9a16074abac86ce47fc1e81b55bfb12cf63c",
   "scope": "All Git-managed/non-ignored Markdown/text; merged main 3e0deeae (#154/#155) and product candidate 4bdd9a1 are distinguished. Historical inputs and frozen evidence remain unchanged; documentation is not Release or production approval.",
   "documents": [
+    {
+      "path": "docs/ops/COMFY-WORKFLOW-INPUT-REPAIR-2026-10-14.md",
+      "kind": "record"
+    },
     {
       "path": "docs/ops/ONLINE-UPGRADE-SEQUENCE-2026-10-12.md",
       "kind": "record"
@@ -74,7 +78,7 @@
       "path": "ARCHITECTURE.md",
       "kind": "authority",
       "authority": "architecture",
-      "reviewed_at": "2026-10-13"
+      "reviewed_at": "2026-10-14"
     },
     {
       "path": "CODE_BOUNDARIES.md",
@@ -150,7 +154,7 @@
       "path": "docs/CURRENT_PROJECT_STATUS.md",
       "kind": "authority",
       "authority": "status",
-      "reviewed_at": "2026-10-13"
+      "reviewed_at": "2026-10-14"
     },
     {
       "path": "docs/data/DATA-MVP-1-INDEPENDENT-REVIEW-2026-09.md",
