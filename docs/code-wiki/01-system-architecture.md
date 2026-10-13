@@ -1,12 +1,12 @@
 # 系统架构
 
-> 代码参考：结构/函数索引保留各章节的源码快照，不自动覆盖维护线工具；实时模块状态、迁移/发布与现场验收见 CURRENT，任务顺序只认路线图。[现行事实与适用范围](../CURRENT_PROJECT_STATUS.md)。
+> 源码参考快照（2026-10-13）：main@bc33339 与产品候选 #156@4bdd9a1 分列；C5/C6/C7 只引用其准确候选记录。本文是代码/运行参考，当前 PR/CI、Release 和验收只见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，实施顺序只认路线图。
 
 [返回索引](./README.md)
 
 ## 1. 架构定位
 
-项目采用“企业 Gateway 覆盖旧业务内核”的模块化单体结构：
+项目采用企业 Gateway + Canvas application 的模块化单体结构，两层属于同一产品：
 
 - `main.py` 和 `static/` 保留原有无限画布业务与视觉交互。
 - `enterprise/gateway.py` 是企业用户的唯一 HTTP/WebSocket 入口。
@@ -148,7 +148,13 @@ Supervisor 分别跟踪 Gateway 和 Upstream：进程 PID 只是身份的一部�
 | Runtime → 进程 | 受信 launch context | 固定 Python、进程身份、端口归属、Job Object |
 | APP_ROOT → 写入目录 | 明确 PathRoots | 目录不重叠、同卷约束、reparse/symlink fail-closed |
 
-## 9. 架构性质与适用范围
+## 9. 图像模块与架构性质
+
+#156 候选的 enterprise/providers/zhenzhen.py 维护已确认图像能力及 JSON 请求构造，provider_image_profiles.py 选择内置/临时能力。HTTP 鉴权、部分分派与尺寸推断、异步查询、解析及归档仍在 main.py，尚未完成统一 Provider Adapter。个人模型 API 使用认证身份与 DATA_ROOT；业务模块不依赖 Windows Registry/固定盘符。
+
+当前仍按单台 Windows 主机交付。500+/200+、专业服务器与云保留长期约束，Linux/容器/容量实施待实际需求；不预建复杂插件、多节点或通用参数语言。
+
+### 架构适用范围
 
 当前结构适合：Windows 单机部署、以浏览器访问、需要账号隔离、需要本地素材与 AI 工具接入、需要受控安装更新的团队环境。
 

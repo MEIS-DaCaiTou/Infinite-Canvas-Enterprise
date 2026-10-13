@@ -1,8 +1,8 @@
 {
   "schema_version": "enterprise-documents-v1",
-  "reviewed_at": "2026-10-11",
-  "audit_base_commit": "a5a6aa10b7882c46f129ec6df854239ee111da18",
-  "scope": "All Git-managed or non-ignored new Markdown/text files; roles are not runtime or release approval. Frozen hashes normalize CRLF to LF only.",
+  "reviewed_at": "2026-10-13",
+  "audit_base_commit": "4bdd9a16074abac86ce47fc1e81b55bfb12cf63c",
+  "scope": "All Git-managed/non-ignored Markdown/text; current main bc33339 and candidate source 4bdd9a1 are distinguished. Historical inputs and frozen evidence remain unchanged; documentation is not merge, Release or production approval.",
   "documents": [
     {
       "path": "docs/ops/UPDATE-CATALOG-PAGINATION-2026-10-11.md",
@@ -62,19 +62,19 @@
       "path": "ARCHITECTURE.md",
       "kind": "authority",
       "authority": "architecture",
-      "reviewed_at": "2026-10-11"
+      "reviewed_at": "2026-10-13"
     },
     {
       "path": "CODE_BOUNDARIES.md",
       "kind": "authority",
       "authority": "code-boundaries",
-      "reviewed_at": "2026-10-11"
+      "reviewed_at": "2026-10-13"
     },
     {
       "path": "CODEX_WORKFLOW.md",
       "kind": "authority",
       "authority": "workflow",
-      "reviewed_at": "2026-10-03"
+      "reviewed_at": "2026-10-13"
     },
     {
       "path": "docs/architecture/ARCH-2A-ARCHITECTURE-ASSESSMENT-AND-EVOLUTION-2026-07.md",
@@ -138,7 +138,7 @@
       "path": "docs/CURRENT_PROJECT_STATUS.md",
       "kind": "authority",
       "authority": "status",
-      "reviewed_at": "2026-10-11"
+      "reviewed_at": "2026-10-13"
     },
     {
       "path": "docs/data/DATA-MVP-1-INDEPENDENT-REVIEW-2026-09.md",
@@ -168,7 +168,7 @@
       "path": "docs/decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md",
       "kind": "authority",
       "authority": "delivery",
-      "reviewed_at": "2026-10-03"
+      "reviewed_at": "2026-10-13"
     },
     {
       "path": "docs/decisions/ADR-ENV-001-MODULAR-MONOLITH-MIDTERM-ARCHITECTURE-2026-07.md",
@@ -456,13 +456,13 @@
       "path": "docs/README.md",
       "kind": "authority",
       "authority": "navigation",
-      "reviewed_at": "2026-10-09"
+      "reviewed_at": "2026-10-13"
     },
     {
       "path": "docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md",
       "kind": "authority",
       "authority": "roadmap",
-      "reviewed_at": "2026-10-11"
+      "reviewed_at": "2026-10-13"
     },
     {
       "path": "docs/runbooks/SEC-1B2-PRODUCTION-ACTIVATION-RUNBOOK-2026-07.md",
@@ -541,7 +541,7 @@
       "path": "enterprise/tests/README.md",
       "kind": "authority",
       "authority": "testing",
-      "reviewed_at": "2026-10-09"
+      "reviewed_at": "2026-10-13"
     },
     {
       "path": "enterprise/tests/SMOKE_CHECKLIST.md",
@@ -562,13 +562,13 @@
       "path": "PROJECT_CHARTER.md",
       "kind": "authority",
       "authority": "charter",
-      "reviewed_at": "2026-10-03"
+      "reviewed_at": "2026-10-13"
     },
     {
       "path": "PROJECT_SCOPE_LOCK.md",
       "kind": "authority",
       "authority": "scope",
-      "reviewed_at": "2026-10-11"
+      "reviewed_at": "2026-10-13"
     },
     {
       "path": "README.md",
@@ -597,7 +597,7 @@
       "path": "SECURITY_BASELINE.md",
       "kind": "authority",
       "authority": "security",
-      "reviewed_at": "2026-10-03"
+      "reviewed_at": "2026-10-13"
     },
     {
       "path": "static/system-prompts/infinite-canvas-prompt-templates.md",
@@ -620,6 +620,22 @@
     {
       "path": "tools/validation/windows/env_1b3/README.md",
       "kind": "reference"
+    },
+    {
+      "path": "docs/ops/VERIFIED-UPDATER-HANDOFF-2026-10-11.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/ops/OFFLINE-RETAINED-UPGRADE-2026-10-12.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/ops/ONLINE-UPGRADE-SEQUENCE-2026-10-12.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md",
+      "kind": "record"
     }
   ],
   "tabular_resources": [
