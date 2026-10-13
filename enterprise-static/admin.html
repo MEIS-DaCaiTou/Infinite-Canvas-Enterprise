@@ -704,6 +704,10 @@
       <span class="label">新密码（至少6位）</span>
       <div class="field-frame"><input type="password" id="newPwd" placeholder="请输入新密码" /></div>
     </div>
+    <div class="field">
+      <span class="label">重置原因</span>
+      <div class="field-frame"><input type="text" id="pwdReason" maxlength="2048" placeholder="必填，将写入安全审计" /></div>
+    </div>
     <div class="error-inline" id="pwdError"></div>
     <div class="modal-actions">
       <button class="action-btn" onclick="closePwdModal()">取消</button>
@@ -730,6 +734,21 @@
 </div>
 
 <!-- Delete / cleanup impact preview modal -->
+<div class="modal-backdrop" id="memberStateModal">
+  <div class="modal">
+    <h3 id="memberStateTitle">变更登录状态</h3>
+    <p id="memberStateHint"></p>
+    <div class="field">
+      <span class="label">操作原因</span>
+      <div class="field-frame"><input id="memberStateReason" type="text" maxlength="2048" placeholder="必填，将写入安全审计" /></div>
+    </div>
+    <div id="memberStateError" class="error-inline"></div>
+    <div class="modal-actions">
+      <button class="action-btn" onclick="closeMemberStateModal()">取消</button>
+      <button class="action-btn primary" onclick="submitMemberState()">确认</button>
+    </div>
+  </div>
+</div>
 <div class="modal-backdrop" id="impactModal">
   <div class="modal wide">
     <h3>删除/清理影响预览</h3>
@@ -740,6 +759,14 @@
     <div id="impactCounts" class="impact-summary"></div>
     <div id="impactWarnings" class="impact-warnings" style="display:none;"></div>
     <div id="impactSamples" class="impact-samples"></div>
+    <div class="field">
+      <span class="label">确认用户名</span>
+      <div class="field-frame"><input type="text" id="impactConfirmUsername" autocomplete="off" placeholder="执行操作前输入目标用户名" /></div>
+    </div>
+    <div class="field">
+      <span class="label">操作原因</span>
+      <div class="field-frame"><input type="text" id="impactReason" maxlength="2048" placeholder="执行软删除或清理前填写" /></div>
+    </div>
     <div class="error-inline" id="impactError"></div>
     <div class="modal-actions">
       <button class="action-btn danger" id="impactSoftDeleteBtn" onclick="softDeleteImpactUser()">软删除账号（禁用）</button>
@@ -817,7 +844,16 @@
         if (detail.code === 'RELEASE_CATALOG_INCOMPLETE') {
           return '历史发布目录未能完整核验，请稍后重新检查；未启动升级。';
         }
-        detail = detail.code || detail.message || '';
+        const messages = {
+          CURRENT_PASSWORD_INVALID: '当前超级管理员密码不正确',
+          INVALID_GOVERNANCE_REQUEST: '请检查操作原因、确认用户名和必填字段',
+          TRANSITIONAL_POLICY_DENIED: '当前角色不能操作此账号；只有超级管理员可创建或变更管理员',
+          MANDATORY_AUDIT_UNAVAILABLE: '安全审计或账号结构尚未就绪，请由维护人员核查数据库升级状态',
+          STALE_AUTHENTICATION: '登录已失效，请重新登录',
+          USERNAME_CONFLICT: '用户名已存在，请使用其他用户名',
+          USER_GOVERNANCE_CONFLICT: '账号状态已变化，请刷新成员列表后重试',
+        };
+        detail = messages[detail.code] || detail.message || detail.code || '';
       }
     }
     if (!detail && payloadText) detail = payloadText.trim();
@@ -1160,6 +1196,7 @@
     _pwdTargetId = userId;
     document.getElementById('pwdSubtitle').textContent = `正在重置用户「${username}」的密码`;
     document.getElementById('newPwd').value = '';
+    document.getElementById('pwdReason').value = '';
     document.getElementById('pwdError').textContent = '';
     document.getElementById('pwdModal').classList.add('show');
     setTimeout(() => document.getElementById('newPwd').focus(), 50);
@@ -1167,10 +1204,12 @@
   function closePwdModal() { document.getElementById('pwdModal').classList.remove('show'); _pwdTargetId = null; }
   async function submitPwd() {
     const pwd = document.getElementById('newPwd').value;
+    const reason = document.getElementById('pwdReason').value.trim();
     const errEl = document.getElementById('pwdError');
     if (pwd.length < 6) { errEl.textContent = '密码至少6位'; return; }
+    if (!reason) { errEl.textContent = '请填写重置原因'; return; }
     try {
-      await apiFetch(`/enterprise/api/users/${_pwdTargetId}/password`, { method: 'PUT', body: JSON.stringify({ password: pwd }) });
+      await apiFetch(`/enterprise/api/users/${_pwdTargetId}/password`, { method: 'PUT', body: JSON.stringify({ password: pwd, reason }) });
       closePwdModal();
       showToast('密码重置成功');
     } catch (e) { errEl.textContent = e.message; }
@@ -1237,14 +1276,31 @@
   }
 
   // ── 启用 / 禁用用户
+  let _memberStateTarget = null;
   async function setUserActive(userId, username, isActive) {
     const action = isActive ? '启用' : '禁用';
     const hint = isActive ? '该用户将恢复登录权限。' : '该用户将无法登录，画布数据仍然保留。';
-    if (!confirm(`确认${action}用户「${username}」？\n${hint}`)) return;
+    _memberStateTarget = {userId, username, isActive};
+    document.getElementById('memberStateTitle').textContent = `${action}用户「${username}」`;
+    document.getElementById('memberStateHint').textContent = hint;
+    document.getElementById('memberStateReason').value = '';
+    document.getElementById('memberStateError').textContent = '';
+    document.getElementById('memberStateModal').classList.add('show');
+  }
+  function closeMemberStateModal() {
+    document.getElementById('memberStateModal').classList.remove('show');
+    _memberStateTarget = null;
+  }
+  async function submitMemberState() {
+    if(!_memberStateTarget) return;
+    const {userId, username, isActive} = _memberStateTarget;
+    const action = isActive ? '启用' : '禁用';
+    const reason = document.getElementById('memberStateReason').value.trim();
+    if(!reason) { document.getElementById('memberStateError').textContent = '请填写操作原因'; return; }
     try {
       const result = await apiFetch(`/enterprise/api/users/${userId}/active`, {
         method: 'PUT',
-        body: JSON.stringify({ is_active: isActive }),
+        body: JSON.stringify({ is_active: isActive, reason: reason.trim() }),
       });
       if (!result.success || boolFlag(result.is_active) !== isActive) {
         throw new Error(result.detail || `${action}接口未返回预期状态`);
@@ -1258,6 +1314,7 @@
         throw new Error(`${action}后成员列表状态未刷新，请重新打开管理后台确认`);
       }
       renderUsers();
+      closeMemberStateModal();
       showToast(`用户「${username}」已${action}`);
     } catch (e) { showToast(`${action}失败: ${e.message}`, 'error'); }
   }
@@ -1348,6 +1405,8 @@
     document.getElementById('impactWarnings').style.display = 'none';
     document.getElementById('impactSamples').innerHTML = '';
     document.getElementById('impactError').textContent = '';
+    document.getElementById('impactReason').value = '';
+    document.getElementById('impactConfirmUsername').value = '';
     document.getElementById('impactModal').classList.add('show');
     try {
       const data = await apiFetch(`/enterprise/api/users/${encodeURIComponent(userId)}/delete-impact?sample_limit=10`);
@@ -1362,8 +1421,10 @@
 
   async function softDeleteImpactUser() {
     if (!_impactTarget) return;
+    const reason = document.getElementById('impactReason').value.trim();
+    if (!reason) { document.getElementById('impactError').textContent = '请填写操作原因'; return; }
     const { userId, username } = _impactTarget;
-    const typed = prompt(`软删除账号只会禁用登录，不会删除 assets/、output/、审计日志或 owner 映射。\n\n如确认软删除用户「${username}」，请输入用户名：`);
+    const typed = document.getElementById('impactConfirmUsername').value;
     if (typed !== username) {
       showToast('用户名确认不匹配，已取消', 'error');
       return;
@@ -1371,7 +1432,7 @@
     try {
       await apiFetch(`/enterprise/api/users/${encodeURIComponent(userId)}`, {
         method: 'DELETE',
-        body: JSON.stringify({ confirm_username: typed, reason: '' }),
+        body: JSON.stringify({ confirm_username: typed, reason }),
       });
       showToast(`用户「${username}」已软删除（禁用）`);
       closeImpactModal();
@@ -1384,8 +1445,10 @@
 
   async function purgeImpactOverrides() {
     if (!_impactTarget) return;
+    const reason = document.getElementById('impactReason').value.trim();
+    if (!reason) { document.getElementById('impactError').textContent = '请填写操作原因'; return; }
     const { userId, username } = _impactTarget;
-    const typed = prompt(`清理权限覆盖只会删除 enterprise_user_feature_overrides，不会删除账号、assets/、output/ 或 owner 映射。\n\n如确认清理用户「${username}」的权限覆盖，请输入用户名：`);
+    const typed = document.getElementById('impactConfirmUsername').value;
     if (typed !== username) {
       showToast('用户名确认不匹配，已取消', 'error');
       return;
@@ -1393,7 +1456,7 @@
     try {
       const result = await apiFetch(`/enterprise/api/users/${encodeURIComponent(userId)}/purge-overrides`, {
         method: 'POST',
-        body: JSON.stringify({ confirm_username: typed, reason: '' }),
+        body: JSON.stringify({ confirm_username: typed, reason }),
       });
       showToast(`已清理权限覆盖：${Number(result.cleared_count || 0)} 条`);
       await openImpactModal(userId, username);

@@ -8,6 +8,32 @@ const idInput = document.getElementById('idInput');
 const baseInput = document.getElementById('baseInput');
 const protocolInput = document.getElementById('protocolInput');
 const imageRequestModeInput = document.getElementById('imageRequestModeInput');
+let imageProfileTemplates = {};
+
+function renderImageProfileControls(item){
+    const controls = document.getElementById('imageProfileControls');
+    if(!controls) return;
+    controls.style.display = providerSupportsModelProtocol(item) && Object.keys(imageProfileTemplates).length ? '' : 'none';
+    const select = document.getElementById('imageProfileTemplate');
+    select.innerHTML = Object.entries(imageProfileTemplates).map(([key, profile]) => `<option value="${escapeAttr(key)}">${escapeHtml(profile.label || key)}</option>`).join('');
+    select.value = item.image_profile?.template_id || 'standard';
+    document.getElementById('imageProfileSummary').textContent = `平台默认：${item.image_profile?.label || '沿用现有接口'}；单模型模板：${Object.keys(item.model_image_profiles || {}).length} 个`;
+}
+function applyImageProfile(asDefault){
+    const item = provider();
+    const id = document.getElementById('imageProfileTemplate').value;
+    const profile = imageProfileTemplates[id];
+    if(!item || !profile) return;
+    const value = {...profile, template_id:id};
+    if(asDefault) item.image_profile = value;
+    else {
+        const match = document.getElementById('imageProfileMatch').value.trim().toLowerCase();
+        item.model_image_profiles = item.model_image_profiles || {};
+        (item.image_models || []).filter(name => name.toLowerCase().includes(match)).forEach(name => {item.model_image_profiles[name] = {...value};});
+    }
+    renderImageProfileControls(item);
+    setStatus('参数模板已应用，请保存平台配置。');
+}
 const imageEditRouteInput = document.getElementById('imageEditRouteInput');
 const keyInput = document.getElementById('keyInput');
 const keyHint = document.getElementById('keyHint');
@@ -2423,6 +2449,7 @@ function renderEditor(){
     nameInput.value = item.name || '';
     idInput.value = item.id || '';
     updateIdPreview();
+    renderImageProfileControls(item);
     clearVerifyResult();
     baseInput.placeholder = EXAMPLE_BASE_URL;
     baseInput.value = item.base_url || '';
@@ -3495,6 +3522,10 @@ function updateModel(kind, index, value){
     const key = kind === 'image' ? 'image_models' : kind === 'video' ? 'video_models' : 'chat_models';
     const oldName = String(item[key][index] || '').trim();
     const newName = String(value || '').trim();
+    if(kind === 'image' && oldName !== newName && item.model_image_profiles?.[oldName]) {
+        if(newName) item.model_image_profiles[newName] = item.model_image_profiles[oldName];
+        delete item.model_image_profiles[oldName];
+    }
     item[key][index] = value;
     // 重命名时迁移该模型的协议覆盖
     if(item.model_protocols && typeof item.model_protocols === 'object' && oldName && oldName !== newName){
@@ -3529,6 +3560,7 @@ function removeModel(kind, index){
     const key = kind === 'image' ? 'image_models' : kind === 'video' ? 'video_models' : 'chat_models';
     const removed = String(item[key][index] || '').trim();
     item[key].splice(index, 1);
+    if(kind === 'image' && removed && item.model_image_profiles && !item.image_models.includes(removed)) delete item.model_image_profiles[removed];
     // 清理不再使用的协议覆盖
     if(removed && item.model_protocols && typeof item.model_protocols === 'object' && !modelProtocolStillUsed(item, removed)){
         delete item.model_protocols[removed];
@@ -3540,6 +3572,7 @@ async function loadProviders(){
     setStatus(tr('api.loading'));
     try {
         const data = await fetch('/api/providers').then(r => r.json());
+        imageProfileTemplates = data.image_profile_templates || {};
         providers = data.providers || [];
         selectedId = sortedProviders()[0]?.id || '';
         renderEditor();
@@ -3617,6 +3650,8 @@ async function saveProviders(){
                 chat_models:item.chat_models || [],
                 video_models:item.video_models || [],
                 model_protocols:(item.model_protocols && typeof item.model_protocols === 'object') ? item.model_protocols : {},
+                image_profile:item.image_profile || {},
+                model_image_profiles:item.model_image_profiles || {},
                 ms_loras:item.id === 'modelscope' ? (item.ms_loras || []) : [],
                 ms_defaults_version:item.id === 'modelscope' ? (item.ms_defaults_version || 1) : 0,
                 rh_apps:item.id === 'runninghub' ? (item.rh_apps || []) : [],

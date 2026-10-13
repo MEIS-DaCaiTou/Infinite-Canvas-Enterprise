@@ -44,11 +44,17 @@ Runtime Supervisor
 | Enterprise data | 用户、角色、归属、审计、版本化 migration/backup/restore | `enterprise/db.py`，`enterprise/migrations/` |
 | Canvas application | 画布、工作流、模型调用、静态前端和原有业务 API | `main.py`，`static/` |
 | Task journal | 两类画布任务持久回执基础 | `enterprise/canvas_task_journal.py` |
+| 图像参数能力 | 平台默认模板、模型例外及参数校验；与 HTTP/Windows 生命周期分离 | `enterprise/provider_image_profiles.py` |
+| 个人模型显示 | 当前登录账号的模型选择列表及持久设置；不授予供应商管理权限 | `enterprise/user_model_api.py`，`enterprise/user_model_preferences.py`，`static/js/model-picker.js` |
 | Runtime | launcher、supervisor、health、ownership、state/log | `enterprise/runtime/` |
 | Release/update | Manifest v2、资产校验、prepare、pointer switch、rollback foundation | `enterprise/release/`，`enterprise/ops/update/`，`enterprise/update_api.py` |
 | Enterprise UI | 登录、管理后台、个人中心、更新中心 | `enterprise-static/` |
 
 Code Wiki 提供更细的文件、类和函数导航：[docs/code-wiki/README.md](docs/code-wiki/README.md)。
+
+模型调用继续复用现有入口和任务回执。图像参数以平台默认模板及模型能力配置驱动，新增同类模型可继承模板，例外通过配置描述；新的提交/查询协议才需要新的适配代码。供应商未提供完整元数据时由管理员指定模板，不从模型名称猜测能力。节点保留明确的画幅/分辨率选择，个人显示列表只影响选择体验。
+
+`main.py` 中已有供应商调用、画布和工作流仍存在集中实现的技术债。独立供应商 Adapter、统一持久任务/Attempt、完整费用对账按唯一路线图阶段 4 落实；图像模板不等于上述体系已完成，也不构成自动最低价选路或不明状态跨供应商再次付费提交。
 
 ## 3. 安全与权限边界
 
