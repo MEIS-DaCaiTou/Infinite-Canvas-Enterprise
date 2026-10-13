@@ -101,6 +101,47 @@ async def check():
     assert len(calls) == 1 and calls[0][1].endswith('/videos')
 
     provider['image_request_mode'] = 'openai'
+    for content in ('<html>gateway</html>', '[]', '{}'):
+        use_handler(lambda request: httpx.Response(200, request=request, text=content))
+        try:
+            await main.generate_ai_image('fixture', '1024x1024', '', 'test-model', provider_id='fixture')
+            raise AssertionError('unrecognized image reply must remain unknown')
+        except main.HTTPException as error:
+            assert getattr(error, 'submission_unknown', False)
+        assert len(calls) == 1
+
+    use_handler(lambda request: httpx.Response(503, request=request, text='images api is not supported'))
+    try:
+        await main.build_online_image_result(main.OnlineImageRequest(prompt='fixture', provider_id='fixture', model='test-model'))
+        raise AssertionError('unsupported text on a 5xx is not proof of rejection')
+    except main.HTTPException as error:
+        assert getattr(error, 'submission_unknown', False)
+    assert len(calls) == 1
+
+    original_wait = main.wait_for_image_task
+    async def lost_query(client, task_id, provider):
+        raise httpx.ReadTimeout('query response lost')
+    main.wait_for_image_task = lost_query
+    use_handler(lambda request: httpx.Response(200, request=request, json={'task_id':'accepted-image'}))
+    try:
+        await main.generate_ai_image('fixture', '1024x1024', '', 'test-model', provider_id='fixture')
+        raise AssertionError('accepted task query loss must remain recoverable')
+    except main.HTTPException as error:
+        assert getattr(error, 'submission_unknown', False)
+        assert error.upstream_task_id == 'accepted-image'
+    assert len(calls) == 1
+    main.wait_for_image_task = original_wait
+
+    use_handler(lambda request: httpx.Response(200, request=request, json={'task_id':'failed-image'}) if request.method == 'POST'
+                else httpx.Response(200, request=request, json={'status':'FAILED', 'message':'fixture terminal failure'}))
+    try:
+        await main.generate_ai_image('fixture', '1024x1024', '', 'test-model', provider_id='fixture')
+        raise AssertionError('provider terminal failure must fail')
+    except main.HTTPException as error:
+        assert not getattr(error, 'submission_unknown', False)
+        assert error.upstream_task_id == 'failed-image'
+    assert [method for method, _path in calls] == ['POST', 'GET']
+
     use_handler(lambda request: httpx.Response(200, request=request, text='<html>gateway</html>', headers={'content-type': 'text/html'}))
     try:
         await main.canvas_video(main.CanvasVideoRequest(prompt='fixture', provider_id='fixture', model='test-model'))
@@ -108,6 +149,40 @@ async def check():
     except main.HTTPException as error:
         assert getattr(error, 'submission_unknown', False)
     assert len(calls) == 1
+
+    for reply in ({}, []):
+        use_handler(lambda request: httpx.Response(200, request=request, json=reply))
+        try:
+            await main.canvas_video(main.CanvasVideoRequest(prompt='fixture', provider_id='fixture', model='test-model'))
+            raise AssertionError('unrecognized video reply must remain unknown')
+        except main.HTTPException as error:
+            assert getattr(error, 'submission_unknown', False)
+        assert len(calls) == 1
+
+    original_video_wait = main.wait_for_video_task
+    async def lost_video_query(client, provider, task_id, submit_url):
+        raise httpx.ReadTimeout('video query response lost')
+    main.wait_for_video_task = lost_video_query
+    use_handler(lambda request: httpx.Response(200, request=request, json={'task_id':'accepted-video'}))
+    try:
+        await main.canvas_video(main.CanvasVideoRequest(prompt='fixture', provider_id='fixture', model='test-model'))
+        raise AssertionError('accepted video query loss must retain its original task')
+    except main.HTTPException as error:
+        assert getattr(error, 'submission_unknown', False)
+        assert error.upstream_task_id == 'accepted-video'
+    assert len(calls) == 1
+    main.wait_for_video_task = original_video_wait
+
+    def video_rejected_then_accepted(request):
+        if len(calls) == 1:
+            return httpx.Response(404, request=request)
+        return httpx.Response(200, request=request, json={'videos':['https://example.test/result.mp4']})
+    async def local_video(_url): return '/output/fixture.mp4'
+    main.save_remote_video_to_output = local_video
+    use_handler(video_rejected_then_accepted)
+    video = await main.canvas_video(main.CanvasVideoRequest(prompt='fixture', provider_id='fixture', model='test-model'))
+    assert video['videos'] == ['/output/fixture.mp4']
+    assert len(calls) == 2 and calls[0][1] != calls[1][1]
 
     use_handler(lambda request: httpx.Response(503, request=request, text='unavailable'))
     try:
@@ -121,14 +196,18 @@ async def check():
     journal.create({'id': 'unknown', 'type': 'online-image', 'status': 'queued'})
     main.CANVAS_TASK_JOURNAL = journal
     async def unknown_result(_payload):
-        raise main.provider_submission_unknown('fixture unknown')
+        raise main.provider_submission_unknown('fixture unknown', upstream_task_id='accepted-image')
     main.build_online_image_result = unknown_result
     await main.run_canvas_image_task('unknown', main.OnlineImageRequest(prompt='fixture'))
     record = journal.get('unknown')
     assert record['status'] == 'failed'
     assert record['recovery_required'] is True
     assert record['error_code'] == 'PROVIDER_SUBMISSION_UNKNOWN'
+    assert record['upstream_task_id'] == 'accepted-image'
     assert journal.mark_running('unknown') is False
+    restarted = CanvasTaskJournal(roots.DATA_ROOT / 'stoploss-tasks')
+    assert restarted.recover() == {'interrupted':0, 'corrupt':0}
+    assert restarted.get('unknown')['upstream_task_id'] == 'accepted-image'
 
 asyncio.run(check())
 print('paid submit stop-loss passed')

@@ -632,6 +632,10 @@
     {
       "path": "tools/validation/windows/env_1b3/README.md",
       "kind": "reference"
+    },
+    {
+      "path": "docs/ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md",
+      "kind": "record"
     }
   ],
   "tabular_resources": [

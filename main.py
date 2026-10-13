@@ -47,6 +47,10 @@ from enterprise.config import PATH_ROOTS as _CONFIG_PATH_ROOTS
 from enterprise.paths import get_path_roots, prepare_application_directories
 from enterprise.app_paths import AppPathLayout
 from enterprise.canvas_task_journal import CanvasTaskJournal, create_task_receipt
+from enterprise.providers.submission import (
+    image_api_explicitly_rejected, provider_submission_unknown, submission_json,
+    httpx_request_with_transient_retries,
+)
 
 # Do not make `main.py` choose a profile.  The getter only accepts a process
 # root already installed by the caller (or the development compatibility
@@ -3851,18 +3855,6 @@ def images_api_unsupported(response):
     text = str(getattr(response, "text", "") or "").lower()
     return "images api is not supported" in text or "not supported for this platform" in text
 
-def image_api_explicitly_rejected(response):
-    """Only switch paid endpoints after an explicit client-side rejection."""
-    return getattr(response, "status_code", None) in {400, 404, 405, 415, 422} and images_api_unsupported(response)
-
-def provider_submission_unknown(detail):
-    error = HTTPException(
-        status_code=502,
-        detail=f"PROVIDER_SUBMISSION_UNKNOWN：{detail}；请先核对供应商任务与账单，不要直接重新提交。",
-    )
-    error.submission_unknown = True
-    return error
-
 def responses_image_size_instruction(size: str) -> str:
     """RS 中转多为网页版逆向：结构化 size 参数（tool.size / 顶层 size / --size 尾注）全被无视，
     只有内部模型能“听懂”的自然语言比例要求有效（实测中文明确说横版+比例+禁止正方形可让
@@ -5873,29 +5865,6 @@ def image_task_fail_reason(payload):
     error = task_data.get("error") if isinstance(task_data.get("error"), dict) else {}
     return task_data.get("fail_reason") or task_data.get("message") or error.get("message") or (payload.get("message") if isinstance(payload, dict) else "") or "生图任务失败"
 
-async def httpx_request_with_transient_retries(client, method, url, attempts=2, retry_delay=1.2, **kwargs):
-    attempts = max(1, int(attempts or 1))
-    if attempts > 1 and str(method).upper() not in {"GET", "HEAD"}:
-        raise ValueError("Non-idempotent provider requests must not be retried")
-    last_exc = None
-    retry_statuses = {502, 503, 504, 520, 522, 524}
-    for attempt in range(attempts):
-        try:
-            response = await client.request(method, url, **kwargs)
-            if response.status_code in retry_statuses and attempt + 1 < attempts:
-                await asyncio.sleep(retry_delay * (attempt + 1))
-                continue
-            return response
-        except (httpx.RemoteProtocolError, httpx.ReadError, httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout, httpx.PoolTimeout) as exc:
-            last_exc = exc
-            if attempt + 1 >= attempts:
-                raise
-            print(f"[HTTPX-RETRY] {method} {url} transient error: {exc}; retry {attempt + 2}/{attempts}", flush=True)
-            await asyncio.sleep(retry_delay * (attempt + 1))
-    if last_exc:
-        raise last_exc
-    raise httpx.HTTPError(f"请求失败：{method} {url}")
-
 async def fetch_image_task_payload(client, task_id, provider=None):
     task_url = image_task_url_for_provider(provider, task_id)
     response = await httpx_request_with_transient_retries(
@@ -5932,7 +5901,9 @@ async def wait_for_image_task(client, task_id, provider=None):
         if status in IMAGE_TASK_SUCCESS_STATUSES:
             return last_payload
         if status in IMAGE_TASK_FAILED_STATUSES:
-            raise HTTPException(status_code=502, detail=f"生图任务失败：{image_task_fail_reason(last_payload)}")
+            error = HTTPException(status_code=502, detail=f"生图任务失败：{image_task_fail_reason(last_payload)}")
+            error.provider_task_failed = True
+            raise error
         await asyncio.sleep(min(interval, max(0.0, deadline - time.monotonic())))
     raw_text = json.dumps(last_payload, ensure_ascii=False)[:800] if last_payload else ""
     extra = f"，最后响应：{raw_text}" if raw_text else ""
@@ -10153,7 +10124,7 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
             if image_api_explicitly_rejected(response):
                 response = await post_openai_edits()
         response.raise_for_status()
-        raw = response.json()
+        raw = submission_json(response, kind="图像")
         try:
             return extract_image(raw), raw
         except HTTPException as exc:
@@ -10165,16 +10136,18 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
                     print(f"RS 响应中没有图片，原始返回（截断）：{json.dumps(raw, ensure_ascii=False)[:800]}")
                 except Exception:
                     pass
-                raise HTTPException(status_code=502, detail=responses_no_image_detail(raw) or exc.detail)
+                raise provider_submission_unknown("图像提交已返回，但没有可核对的任务或图片结果") from exc
             task_id = extract_task_id(raw)
             if not task_id:
-                raise
+                raise provider_submission_unknown("图像提交已返回，但没有可核对的任务或图片结果") from exc
         try:
             task_result = await wait_for_image_task(client, task_id, provider)
             return extract_image(task_result), task_result
-        except (HTTPException, httpx.HTTPError) as exc:
-            setattr(exc, "upstream_task_id", task_id)
-            raise
+        except (HTTPException, httpx.HTTPError, ValueError) as exc:
+            if getattr(exc, "provider_task_failed", False):
+                setattr(exc, "upstream_task_id", task_id)
+                raise
+            raise provider_submission_unknown("已受理的图像任务查询未能确认最终结果", upstream_task_id=task_id) from exc
 
 def upstream_message_from_record(item):
     role = item.get("role")
@@ -13186,7 +13159,9 @@ async def wait_for_video_task(client, provider, task_id, submit_url=""):
         if status in VIDEO_TASK_FAILURE_STATUSES:
             error = task_data.get("error") if isinstance(task_data.get("error"), dict) else {}
             reason = task_data.get("fail_reason") or task_data.get("message") or error.get("message") or raw.get("error") or raw.get("message") or str(raw)
-            raise HTTPException(status_code=502, detail=humanize_video_task_failure(reason))
+            error = HTTPException(status_code=502, detail=humanize_video_task_failure(reason))
+            error.provider_task_failed = True
+            raise error
         delay = min(delay * 1.6, 12)
     raise HTTPException(status_code=504, detail=f"视频生成任务超时：{last_payload or task_id}")
 
@@ -13765,15 +13740,11 @@ async def canvas_video(payload: CanvasVideoRequest):
                         body["generate_audio"] = True
             # --- 发起视频生成请求 ---
             raw = None
-            html_response = None
-            last_response = None
-            last_json_error = None
             total_candidates = len(submit_urls)
             for idx, candidate_url in enumerate(submit_urls):
                 submit_url = candidate_url
                 is_last = idx == total_candidates - 1
                 response = await client.post(submit_url, headers=api_headers(provider=provider), json=body)
-                last_response = response
                 endpoint_missing = response.status_code in (404, 405)
                 if response.status_code >= 400:
                     # 只有明确的 404/405 才表示端点不存在，可以尝试下一个候选路径；
@@ -13784,39 +13755,21 @@ async def canvas_video(payload: CanvasVideoRequest):
                     if response.status_code >= 500:
                         raise provider_submission_unknown(f"视频提交接口返回 HTTP {response.status_code}，是否已受理任务尚不确定")
                     response.raise_for_status()
-                try:
-                    raw = response.json()
-                    break
-                except Exception as exc:
-                    last_json_error = exc
-                    if looks_like_html_response(response.text):
-                        html_response = response
-                    if not endpoint_missing:
-                        raise provider_submission_unknown("视频提交接口返回非 JSON 响应，是否已受理任务尚不确定") from exc
-                    if not is_last:
-                        continue
-                    resp_text = response.text[:500]
-                    raise HTTPException(status_code=502, detail=f"上游视频接口返回非 JSON 响应（状态 {response.status_code}）：{resp_text}")
-            if raw is None:
-                resp = html_response or last_response
-                status_code = getattr(resp, "status_code", 200)
-                resp_text = (getattr(resp, "text", "") or "")[:500]
-                raise HTTPException(
-                    status_code=502,
-                    detail=(
-                        f"上游视频接口返回了网页 HTML，而不是 JSON（状态 {status_code}）。\n\n"
-                        f"这通常表示 API 设置里的 Base URL 指到了第三方聚合平台的管理后台/网页入口，"
-                        f"或该平台不支持当前视频接口路径。请确认 Base URL 是接口地址，例如以 /v1 结尾的 OpenAI 兼容地址，"
-                        f"并确认该平台实际支持视频生成端点。\n\n原始响应：{resp_text}"
-                    )
-                ) from last_json_error
+                raw = submission_json(response, kind="视频")
+                break
             task_id = extract_task_id(raw) or raw.get("task_id") or raw.get("id")
             result = raw
             if task_id and not video_output_urls(raw):
-                result = await wait_for_video_task(client, provider, task_id, submit_url)
+                try:
+                    result = await wait_for_video_task(client, provider, task_id, submit_url)
+                except (HTTPException, httpx.HTTPError, ValueError) as exc:
+                    if getattr(exc, "provider_task_failed", False):
+                        setattr(exc, "upstream_task_id", task_id)
+                        raise
+                    raise provider_submission_unknown("已受理的视频任务查询未能确认最终结果", upstream_task_id=task_id) from exc
             urls = video_output_urls(result)
             if not urls:
-                raise HTTPException(status_code=502, detail=f"视频生成成功但没有返回视频：{result}")
+                raise provider_submission_unknown("视频提交已返回，但没有可核对的视频结果", upstream_task_id=task_id or "")
             local_urls = [await save_remote_video_to_output(url) for url in urls]
             return {"videos": local_urls, "task_id": task_id, "raw": result}
     except httpx.HTTPStatusError as exc:

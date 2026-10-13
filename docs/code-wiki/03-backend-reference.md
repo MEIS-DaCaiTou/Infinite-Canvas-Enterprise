@@ -161,3 +161,7 @@ Gateway 还对 Cookie 状态变更请求执行精确同源校验；Bearer CLI �
 ## 8. 主线收敛分支增量：`enterprise/canvas_task_journal.py`
 
 `CanvasTaskJournal` 使用原子 JSON 回执保存画布任务状态，关键方法负责创建、单次领取、完成和中断恢复；`create_task_receipt()` 在任务被受理时记录最小可恢复信息。该文件已从 `28ad937` 移植到 `codex/mainline-runtime-convergence-20260919`，在 PR 合并前不能描述为 `origin/main` 已有能力。
+
+## 付费提交与查询规则（#123 候选）
+
+`enterprise/providers/submission.py` 承担明确 API 拒绝判定、未知结果错误、提交响应结构校验和 GET/HEAD 瞬态重试。入口复用它，不在响应丢失时再次付费生成；已有 ID 在错误和图像持久回执中保留。它不访问业务数据库或文件目录。此包尚未合并，见[工程记录](../ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md)，不等于完整任务中心。
