@@ -155,6 +155,7 @@
                 if(!button.hidden) count++;
             });
             empty.hidden = count > 0;
+            empty.style.display = count > 0 ? 'none' : '';
         });
         const empty = document.createElement('div');
         empty.className = 'muted-note';
