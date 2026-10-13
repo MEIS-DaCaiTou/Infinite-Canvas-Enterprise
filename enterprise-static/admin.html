@@ -1896,6 +1896,10 @@
         ? `更新工具：准备时已核验目标版本 ${data.updater_execution.worker_release_id}` : '',
       data?.result_code === 'SYSTEM_UPDATE_UPDATER_UNVERIFIED'
         ? '更新工具或维护计划核验失败，服务交接未执行。请重新检查发布包。' : '',
+      data?.result_code === 'SYSTEM_UPDATE_HANDOFF_JOB_BLOCKED'
+        ? 'Windows 启动环境阻止了在线交接。请先查看服务状态；从开始菜单或安装目录打开固定入口。若仍无法在线升级，停止服务后使用目标版本维护安装器离线升级。' : '',
+      data?.result_code === 'SYSTEM_UPDATE_HANDOFF_CLEANUP_UNCONFIRMED'
+        ? '更新进程退出尚未确认。请先使用下方恢复核验，不要再次执行升级或清理缓存；必要时使用维护安装器的已有恢复功能。' : '',
       state === 'RECOVERY_REQUIRED' && !data?.can_resume ? '请勿重试升级；先核对数据与运行状态，再使用下方人工恢复核验。' : '',
       data?.can_resume ? '检查点已保存，可继续剩余升级。已完成的步骤不会重复执行。' : '',
       state === 'SUCCEEDED' ? '请刷新页面，确认已进入新版本。' : '',

@@ -28,9 +28,15 @@ def windows(monkeypatch):
     monkeypatch.setattr(lifecycle, "os", SimpleNamespace(name="nt", getpid=lambda: 22))
 
 
-def test_creation_flags_preserve_silent_only_rule(windows):
+def test_creation_flags_follow_known_windows_job_permissions(windows):
     assert lifecycle.host_creation_flags() == 0x01000208
-    assert lifecycle.worker_creation_flags({"process_in_job": True, "job_limit_flags": 0x1000}) == 0x208
+    for flags in (0, 0x1000, 0x2000):
+        context = {"job_query_ok": True, "process_in_job": True, "job_limit_flags": flags}
+        assert lifecycle.host_creation_flags(context) == 0x208
+        assert lifecycle.worker_creation_flags(context) == 0x208
+    assert lifecycle.host_creation_flags({"job_query_ok": True, "process_in_job": False}) == 0x208
+    for flags in (0x0800, 0x1800, 0x2800):
+        assert lifecycle.worker_creation_flags({"job_query_ok": True, "process_in_job": True, "job_limit_flags": flags}) == 0x01000208
     for context in ({}, {"process_in_job": True, "job_limit_flags": 0x2000},
                     {"process_in_job": True, "job_limit_flags": 0x1800},
                     {"process_in_job": True, "job_limit_flags": True}):

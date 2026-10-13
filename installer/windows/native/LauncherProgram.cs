@@ -47,7 +47,7 @@ namespace InfiniteCanvas.Native {
         internal LauncherForm() {
             Text = "无限画布企业版"; ClientSize = new Size(680, 210); StartPosition = FormStartPosition.CenterScreen;
             Font = new Font("Microsoft YaHei UI", 10); FormBorderStyle = FormBorderStyle.FixedDialog; MaximizeBox = false;
-            state = new Label { Left = 24, Top = 24, Width = 635, Height = 75, Text = "入口固定不变。升级或回退后，将自动使用当前生效版本。关闭本窗口不停止服务。" }; Controls.Add(state);
+            state = new Label { Left = 24, Top = 24, Width = 635, Height = 75, Text = "从开始菜单或安装目录打开本入口，点击“启动并打开”。升级后自动使用当前版本；关闭本窗口不停止服务。在线升级受阻时，先查看状态，必要时停止服务后运行目标版本维护安装器。" }; Controls.Add(state);
             buttons = new FlowLayoutPanel { Left = 24, Top = 115, Width = 650, Height = 70 };
             foreach (var pair in new[] { Tuple.Create("启动并打开", "start"), Tuple.Create("停止", "stop"), Tuple.Create("重启", "restart"), Tuple.Create("查看状态", "status") }) {
                 var button = new Button { Text = pair.Item1, Width = 125, Height = 38 };
