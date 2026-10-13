@@ -21,7 +21,8 @@
   <script src="/static/vendor/js/tailwindcss-cdn.js"></script>
   <script src="/static/vendor/js/lucide.js"></script>
   <link rel="stylesheet" href="/static/css/theme.css">
-  <style>
+<style>
+  [hidden] { display: none !important; }
     /* ── CSS 变量（复用上游 api-settings.css 规范）── */
     :root {
       --bg:#f7f8fa; --panel:#fff; --soft:#f1f4f8;
@@ -604,12 +605,16 @@
 <!-- 更新执行确认 -->
 <div class="modal-backdrop" id="updateConfirmModal">
   <div class="modal">
-    <h3>确认执行在线升级</h3>
+    <h3 id="updateConfirmTitle">确认执行在线升级</h3>
     <p id="updateConfirmSummary" style="color:var(--muted);font-size:12.5px;font-weight:700;line-height:1.7;"></p>
     <div class="field">
       <span class="label">当前账号密码（仅本次验证，不会保存）</span>
       <div class="field-frame"><input type="password" id="updateConfirmPassword" autocomplete="current-password" /></div>
     </div>
+    <label class="field" id="updateTaskConfirmation" style="display:flex;gap:8px;align-items:flex-start;">
+      <input type="checkbox" id="updateNoActiveTasks" />
+      <span>已确认没有活动的 AI 生成任务。升级期间业务访问暂停；已受理但结果未知的任务应先完成查询核对。</span>
+    </label>
     <div class="error-inline" id="updateConfirmError"></div>
     <div class="modal-actions">
       <button class="action-btn" onclick="closeUpdateConfirm()">取消</button>
@@ -627,6 +632,8 @@
     <div id="updateProgressDetail" class="update-progress-detail"></div>
     <div class="modal-actions">
       <button class="action-btn" id="closeUpdateProgressBtn" onclick="closeUpdateProgress()">后台继续，关闭窗口</button>
+      <button class="action-btn" id="resumeSequenceBtn" onclick="resumeUpdateSequence()" hidden>继续剩余升级</button>
+      <button class="action-btn" id="stopSequenceBtn" onclick="stopUpdateSequence()" hidden>保留当前版本，停止剩余升级</button>
     </div>
   </div>
 </div>
@@ -843,6 +850,12 @@
       if (detail && typeof detail === 'object') {
         if (detail.code === 'RELEASE_CATALOG_INCOMPLETE') {
           return '历史发布目录未能完整核验，请稍后重新检查；未启动升级。';
+        }
+        if (detail.code === 'SYSTEM_UPDATE_UPDATER_INCOMPATIBLE') {
+          return '目标更新工具与当前安装不兼容，已拒绝升级；请使用经审核的中间版本或离线维护。';
+        }
+        if (detail.code === 'SYSTEM_UPDATE_UPDATER_UNVERIFIED') {
+          return '无法核验目标更新工具或维护计划，已拒绝交接；当前服务不会因此停止。';
         }
         const messages = {
           CURRENT_PASSWORD_INVALID: '当前超级管理员密码不正确',
@@ -1716,7 +1729,7 @@
       || ready || state === 'RECOVERY_REQUIRED' || UPDATE_ACTIVE_STATES.has(state) || !_availableUpdates.length;
     button.disabled = !boolFlag(_updateAccess?.can_operate) || _updatePreparing
       || state === 'RECOVERY_REQUIRED' || UPDATE_ACTIVE_STATES.has(state)
-      || (!ready && (_updateCatalogChecking || selectedUpdateRelease()?.route_status !== 'direct'));
+      || (!ready && (_updateCatalogChecking || !['direct', 'requires_intermediate'].includes(selectedUpdateRelease()?.route_status)));
   }
 
   function selectedUpdateRelease() {
@@ -1730,7 +1743,7 @@
     if (status === 'direct') return '升级路径已声明且当前安装身份匹配；下载后仍会完整校验发布包和数据库。';
     if (status === 'requires_intermediate') {
       const steps = Array.isArray(release.upgrade_path) ? release.upgrade_path.map(step => step.version).join(' → ') : '';
-      return `需要先经过中间版本${steps ? `：${steps}` : ''}。当前版本尚不支持一键多跳，已禁止直接跳过。`;
+      return `将自动经过已声明的中间版本${steps ? `：${steps}` : ''}。确认一次后逐步执行；中间版本保持维护状态。`;
     }
     if (status === 'route_missing') return '该发布包没有可核验的升级路径声明，不能从此设备直接选择。';
     if (status === 'route_invalid') return '发布包升级路径声明无效，已禁止升级。';
@@ -1815,7 +1828,12 @@
     }
   }
 
+  let _updateConfirmationMode = 'execute';
   function openUpdateConfirm() {
+    _updateConfirmationMode = 'execute';
+    document.getElementById('updateConfirmTitle').textContent = '确认执行在线升级';
+    document.getElementById('updateTaskConfirmation').hidden = false;
+    document.getElementById('confirmUpdateBtn').textContent = '确认并开始升级';
     if (document.getElementById('startUpdateBtn').disabled) return;
     const ready = _preparedUpdate?.state === 'READY';
     const selected = selectedUpdateRelease();
@@ -1824,6 +1842,7 @@
         ? `继续将 ${_preparedUpdate.source_release_id} 更新到 ${_preparedUpdate.target_release_id}。已完成发布包与数据库兼容校验。`
         : `准备更新到 ${selected.version}（${selected.stage === 'development' ? '开发版：可能不稳定' : '正式版'}）。确认后系统会下载并校验完整发布包；只有校验和数据库兼容检查通过才会停服务。`;
     document.getElementById('updateConfirmPassword').value = '';
+    document.getElementById('updateNoActiveTasks').checked = false;
     document.getElementById('updateConfirmError').textContent = '';
     document.getElementById('confirmUpdateBtn').disabled = false;
     document.getElementById('updateConfirmModal').classList.add('show');
@@ -1832,6 +1851,7 @@
   function closeUpdateConfirm() {
     document.getElementById('updateConfirmPassword').value = '';
     document.getElementById('updateConfirmModal').classList.remove('show');
+    if (_updateConfirmationMode === 'stop' && _preparedUpdate) renderUpdateProgress(_preparedUpdate);
   }
 
   function showUpdateProgress(stage, detail, kind = '') {
@@ -1858,7 +1878,7 @@
   function renderUpdateProgress(data) {
     const labels = {
       PREPARING: '正在下载并校验发布包', READY: '发布包已校验，等待切换',
-      UPDATING: '正在安全停止服务', MIGRATING: '正在备份并迁移数据库',
+      UPDATING: '正在核验并交接服务', MIGRATING: '正在备份并迁移数据库',
       RESTARTING: '正在启动新版本', VERIFYING: '正在检查新版本健康状态',
       SUCCEEDED: '升级成功', ROLLING_BACK: '升级未完成，正在恢复原版本',
       ROLLED_BACK: '升级失败，已恢复原版本', FAILED: '升级未完成',
@@ -1870,10 +1890,19 @@
     const detail = [
       data?.job_id ? `作业 ID：${data.job_id}` : '发布包准备期间，当前服务仍可使用。',
       data?.result_code ? `结果代码：${data.result_code}` : '',
-      state === 'RECOVERY_REQUIRED' ? '请勿重试升级；先核对数据与运行状态，再使用下方人工恢复核验。' : '',
+      data?.total_hops ? `升级步骤：已完成 ${data.completed_hops || 0} / ${data.total_hops}` : '',
+      data?.upgrade_path ? `路径：${data.upgrade_path.map(step => step.version).join(' → ')}` : '',
+      data?.updater_execution?.mode === 'target-release'
+        ? `更新工具：准备时已核验目标版本 ${data.updater_execution.worker_release_id}` : '',
+      data?.result_code === 'SYSTEM_UPDATE_UPDATER_UNVERIFIED'
+        ? '更新工具或维护计划核验失败，服务交接未执行。请重新检查发布包。' : '',
+      state === 'RECOVERY_REQUIRED' && !data?.can_resume ? '请勿重试升级；先核对数据与运行状态，再使用下方人工恢复核验。' : '',
+      data?.can_resume ? '检查点已保存，可继续剩余升级。已完成的步骤不会重复执行。' : '',
       state === 'SUCCEEDED' ? '请刷新页面，确认已进入新版本。' : '',
     ].filter(Boolean).join('\n');
-    showUpdateProgress(labels[state] || `升级状态：${state}`, detail, kind);
+    showUpdateProgress(data?.can_resume ? '升级暂停，检查点已保存' : labels[state] || `升级状态：${state}`, detail, kind);
+    document.getElementById('resumeSequenceBtn').hidden = !data?.can_resume;
+    document.getElementById('stopSequenceBtn').hidden = !data?.can_stop;
   }
 
   async function executeSystemUpdate() {
@@ -1881,6 +1910,21 @@
     let password = document.getElementById('updateConfirmPassword').value;
     if (!password) {
       document.getElementById('updateConfirmError').textContent = '请输入当前账号密码。';
+      return;
+    }
+    if (_updateConfirmationMode === 'stop') {
+      closeUpdateConfirm();
+      try {
+        _preparedUpdate = await apiFetch(`/enterprise/api/update-mvp/jobs/${encodeURIComponent(_preparedUpdate.job_id)}/sequence-stop`, {
+          method: 'POST', body: JSON.stringify({ password }),
+        });
+        renderUpdateProgress(_preparedUpdate);
+      } catch (e) { showToast('停止剩余升级失败：' + e.message, 'error'); }
+      finally { password = ''; }
+      return;
+    }
+    if (!document.getElementById('updateNoActiveTasks').checked) {
+      document.getElementById('updateConfirmError').textContent = '请先确认没有活动生成任务。';
       return;
     }
     document.getElementById('confirmUpdateBtn').disabled = true;
@@ -1902,7 +1946,7 @@
       }
       renderUpdateProgress(_preparedUpdate);
       const data = await apiFetch(`/enterprise/api/update-mvp/jobs/${encodeURIComponent(_preparedUpdate.job_id)}/execute`, {
-        method: 'POST', body: JSON.stringify({ password }),
+        method: 'POST', body: JSON.stringify({ password, confirm_no_active_tasks: true }),
       });
       password = '';
       _preparedUpdate = { ..._preparedUpdate, ...data };
@@ -1921,6 +1965,32 @@
       if (_preparedUpdate?.state !== 'SUCCEEDED') document.getElementById('closeUpdateProgressBtn').textContent = '后台继续，关闭窗口';
       updateStartButton();
     }
+  }
+
+  async function resumeUpdateSequence() {
+    if (!_preparedUpdate?.job_id) return;
+    try {
+      const result = await apiFetch(`/enterprise/api/update-mvp/jobs/${encodeURIComponent(_preparedUpdate.job_id)}/sequence-resume`, {
+        method: 'POST', body: JSON.stringify({ confirm_no_active_tasks: true }),
+      });
+      _preparedUpdate = { ..._preparedUpdate, can_resume: false, can_stop: false, ...result };
+      renderUpdateProgress(_preparedUpdate);
+      scheduleUpdateJobRefresh();
+    } catch (e) { showToast('继续升级失败：' + e.message, 'error'); }
+  }
+
+  async function stopUpdateSequence() {
+    if (!_preparedUpdate?.job_id) return;
+    _updateConfirmationMode = 'stop';
+    document.getElementById('updateProgressModal').classList.remove('show');
+    document.getElementById('updateConfirmTitle').textContent = '确认停止剩余升级';
+    document.getElementById('updateTaskConfirmation').hidden = true;
+    document.getElementById('updateConfirmSummary').textContent = '停止剩余步骤，保留已经完成升级的版本和现有数据。服务、数据库和版本核验通过后恢复业务访问。';
+    document.getElementById('updateConfirmPassword').value = '';
+    document.getElementById('updateConfirmError').textContent = '';
+    document.getElementById('confirmUpdateBtn').disabled = false;
+    document.getElementById('updateConfirmModal').classList.add('show');
+    document.getElementById('confirmUpdateBtn').textContent = '确认停止剩余升级';
   }
 
   function scheduleUpdateJobRefresh() {
@@ -1984,7 +2054,8 @@
   }
 
   async function confirmClearRecovery() {
-    if (!_recoveryAssessment || _preparedUpdate?.job_id !== _recoveryAssessment.job_id) return;
+    if (!_recoveryAssessment || _preparedUpdate?.job_id !== (_recoveryAssessment.sequence_job_id || _recoveryAssessment.job_id)) return;
+    const sequenceJobId = _recoveryAssessment.sequence_job_id;
     const expectedReleaseId = document.getElementById('updateRecoveryReleaseId').value.trim();
     const manualEvidenceNote = document.getElementById('updateRecoveryEvidenceNote').value.trim();
     const password = document.getElementById('updateRecoveryPassword').value;
@@ -2006,7 +2077,7 @@
       await loadPendingRecoveryJobs();
       await refreshUpdateJob();
       await checkSystemUpdate();
-      showToast('恢复核验已记录，升级阻断已解除');
+      showToast(sequenceJobId ? '本跳恢复核验已记录，请确认保留当前版本并停止剩余升级。' : '恢复核验已记录，升级阻断已解除');
     } catch (e) {
       document.getElementById('updateRecoveryPassword').value = '';
       document.getElementById('updateRecoveryError').textContent = e.message;
@@ -2025,11 +2096,13 @@
       document.getElementById('updateJobSummary').textContent = [
         `Job ID：${data.job_id}`, `状态：${data.state}`, `结果代码：${data.result_code}`,
         `源 Release：${data.source_release_id || '—'}`, `目标 Release：${data.target_release_id || '—'}`,
-        `更新时间：${data.updated_at}`,
+        data?.total_hops ? `升级步骤：已完成 ${data.completed_hops || 0} / ${data.total_hops}` : '',
+        `更新时间：${data.updated_at || '—'}`,
       ].join('\n');
-      document.getElementById('updateRecoveryNotice').style.display = data.state === 'RECOVERY_REQUIRED' ? 'block' : 'none';
+      document.getElementById('updateRecoveryNotice').style.display = data.state === 'RECOVERY_REQUIRED' && !data.can_resume ? 'block' : 'none';
+      document.getElementById('assessRecoveryBtn').hidden = Boolean(data.can_resume);
       updateStartButton();
-      if (document.getElementById('updateProgressModal').classList.contains('show') || UPDATE_ACTIVE_STATES.has(data.state)) {
+      if (document.getElementById('updateProgressModal').classList.contains('show') || UPDATE_ACTIVE_STATES.has(data.state) || data.can_resume || data.can_stop) {
         renderUpdateProgress(data);
       }
       if (UPDATE_ACTIVE_STATES.has(data.state)) scheduleUpdateJobRefresh();

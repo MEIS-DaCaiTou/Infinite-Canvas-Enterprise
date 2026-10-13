@@ -592,6 +592,7 @@ def _flow_for_operation(file: str, symbol: str) -> str:
         "tools/build_upgrade_routes.py",
         "tools/build_install_ux_1.py",
         "tools/build_native_entry.py",
+        "tools/build_maintenance_assets.py",
     }:
         # OPS Release Manifest v2 and upgrade-route sidecars write only into
         # caller-owned new build or fixture-materialization roots. INSTALL-UX-1
@@ -604,6 +605,9 @@ def _flow_for_operation(file: str, symbol: str) -> str:
         "enterprise/ops/update/mvp.py",
         "enterprise/ops/update/recovery.py",
         "enterprise/update_api.py",
+        "enterprise/ops/update/online_prepare.py",
+        "enterprise/ops/update/maintenance_assets.py",
+        "enterprise/ops/update/sequence.py",
     }:
         # UPDATE-MVP-1 writes bounded job/clearance evidence only beneath
         # STAGING_ROOT, with active locks in STATE_ROOT and newly materialized
@@ -656,11 +660,17 @@ def _flow_for_operation(file: str, symbol: str) -> str:
         # same-volume; native handle-bound rename/deletion is manually reviewed
         # (not discovered by this AST scanner). No install/business/backup writes.
         return "W47"
-    if file == "enterprise/install_lifecycle.py" and symbol in {"_database_contract", "uninstall_retaining_data"}:
+    if file == "enterprise/install_lifecycle.py" and symbol in {"_database_inspection", "uninstall_retaining_data", "refresh_installed_proof"}:
         # Offline readonly SQLite (sidecars rejected) and immutable lifecycle
         # plans/fences only in STATE_ROOT. Windows object-bound program moves
         # and release_fence are manually reviewed, not discovered by this AST.
         # No database initialization, business overwrite or recursive delete.
+        return "W47"
+    if file == "enterprise/install_upgrade.py" and symbol in {"_blob", "_transfer_lock", "upgrade_retained", "recover_upgrade"}:
+        # Offline same-schema upgrade delegates app activation to the existing
+        # MVP engine. Own STATE journal/lease/fences and exact original/candidate
+        # native objects only; Windows owned renames are reviewed separately.
+        # No customer database restore/delete or unidentified file overwrite.
         return "W47"
     if file.startswith("tools/validation/windows/env_1b3/"):
         # ENV-1B3 writes only to explicit test-host roots, isolated tamper
@@ -676,7 +686,7 @@ def _flow_for_operation(file: str, symbol: str) -> str:
 # every mapped site as (file, symbol, operation, normalized-call fingerprint,
 # Wxx flow). Line numbers are deliberately excluded, while duplicate identical
 # calls remain duplicate records. Any added/removed/changed call drifts it.
-EXPECTED_SITE_MANIFEST_DIGEST = "90e60bdd4b5f3d413e41266339cc5560b87438e67d7c951daaa60ee04858b1f7"
+EXPECTED_SITE_MANIFEST_DIGEST = "b7392f7a602b6facfa81d89e3abf3be94e5e91451f4cc4d3dd22047aa8ab3370"
 
 FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W01", "main.py", "startup_event"),

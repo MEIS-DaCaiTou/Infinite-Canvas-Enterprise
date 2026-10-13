@@ -2,8 +2,20 @@
   "schema_version": "enterprise-documents-v1",
   "reviewed_at": "2026-10-13",
   "audit_base_commit": "4bdd9a16074abac86ce47fc1e81b55bfb12cf63c",
-  "scope": "All Git-managed/non-ignored Markdown/text; current main bc33339 and candidate source 4bdd9a1 are distinguished. Historical inputs and frozen evidence remain unchanged; documentation is not merge, Release or production approval.",
+  "scope": "All Git-managed/non-ignored Markdown/text; merged main 3e0deeae (#154/#155) and product candidate 4bdd9a1 are distinguished. Historical inputs and frozen evidence remain unchanged; documentation is not Release or production approval.",
   "documents": [
+    {
+      "path": "docs/ops/ONLINE-UPGRADE-SEQUENCE-2026-10-12.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/ops/OFFLINE-RETAINED-UPGRADE-2026-10-12.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/ops/VERIFIED-UPDATER-HANDOFF-2026-10-11.md",
+      "kind": "record"
+    },
     {
       "path": "docs/ops/UPDATE-CATALOG-PAGINATION-2026-10-11.md",
       "kind": "record"
@@ -620,18 +632,6 @@
     {
       "path": "tools/validation/windows/env_1b3/README.md",
       "kind": "reference"
-    },
-    {
-      "path": "docs/ops/VERIFIED-UPDATER-HANDOFF-2026-10-11.md",
-      "kind": "record"
-    },
-    {
-      "path": "docs/ops/OFFLINE-RETAINED-UPGRADE-2026-10-12.md",
-      "kind": "record"
-    },
-    {
-      "path": "docs/ops/ONLINE-UPGRADE-SEQUENCE-2026-10-12.md",
-      "kind": "record"
     },
     {
       "path": "docs/ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md",

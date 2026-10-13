@@ -65,6 +65,7 @@ from enterprise.release.release_manifest_v2 import (
 from enterprise.runtime.logging import redact_value, utc_now
 from enterprise.runtime.error_contract import public_lifecycle_code, public_lifecycle_details
 from enterprise.ops.update.versions import compare_versions
+from enterprise.ops.update.updater import prepared_updater_binding, sealed_updater_binding
 
 
 JOB_SCHEMA = "enterprise-update-mvp-job-v1"
@@ -288,7 +289,9 @@ class UpdateJobStore:
             "created_at": created_at or existing.get("created_at") or utc_now(),
             "updated_at": utc_now(),
             "result_code": result_code,
-            **{key: existing[key] for key in ("runtime_phases", "failure_code", "handoff_committed") if key in existing},
+            **{key: existing[key] for key in (
+                "runtime_phases", "failure_code", "handoff_committed", "plan_sha256", "updater_execution"
+            ) if key in existing},
             **fields,
         }
         _atomic_json(path, payload)
@@ -307,6 +310,7 @@ class UpdateJobStore:
         after the API recorded a terminal/recovery state or lost this lock.
         """
         plan, status = self.read_plan(job_id), self.read_status(job_id)
+        sealed_updater_binding(plan, status)
         if (status.get("state") != "UPDATING"
                 or status.get("actor_user_id") != plan.get("actor_user_id")
                 or plan.get("source_release_id") != source_release_id
@@ -616,7 +620,9 @@ def _database_update_plan(
     database_path: Path,
     registry: tuple[MigrationStep, ...],
     operation_id: str,
+    database_inspector: Callable[[Path], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    inspect_database = database_inspector or inspect_schema_metadata
     mode = _database_contract_mode(source_manifest, target_manifest)
     if mode not in {"same-schema-no-migration", "versioned-forward-migration"}:
         raise UpdateMvpError("SYSTEM_UPDATE_DATABASE_CONTRACT_UNSUPPORTED")
@@ -636,7 +642,7 @@ def _database_update_plan(
                 legacy_schema_sha = schema_snapshot_sha256(conn)
         except sqlite3.Error as exc:
             raise UpdateMvpError("SYSTEM_UPDATE_DATABASE_SOURCE_IDENTITY_MISMATCH") from exc
-        if inspect_schema_metadata(database_path).get("current_state") != STATE_MISSING:
+        if inspect_database(database_path).get("current_state") != STATE_MISSING:
             raise UpdateMvpError("SYSTEM_UPDATE_DATABASE_SOURCE_IDENTITY_MISMATCH")
         if mode == "same-schema-no-migration":
             if (
@@ -686,7 +692,7 @@ def _database_update_plan(
             "migration_registry_sha256": registry_sha,
             "migration_ids": [step.migration_id for step in migration_steps],
         }
-    inspection = inspect_schema_metadata(database_path)
+    inspection = inspect_database(database_path)
     registry_sha = migration_registry_sha256(steps)
     registry_ids = [step.migration_id for step in steps]
     if (
@@ -756,8 +762,9 @@ class PreparedUpdate:
     target_manifest_sha256: str
     target_payload_tree_sha256: str
     database_update_mode: str
+    updater_execution: dict[str, Any] | None = None
 
-    def public(self) -> dict[str, str]:
+    def public(self) -> dict[str, Any]:
         return {
             "job_id": self.job_id,
             "source_release_id": self.source_release_id,
@@ -765,7 +772,36 @@ class PreparedUpdate:
             "target_manifest_sha256": self.target_manifest_sha256,
             "target_payload_tree_sha256": self.target_payload_tree_sha256,
             "database_update_mode": self.database_update_mode,
+            **({"updater_execution": self.updater_execution} if self.updater_execution is not None else {}),
         }
+
+
+def stage_verified_release(roots: PathRoots, *, manifest_path: Path, archive_path: Path, inventory_path: Path):
+    """Materialize a future hop/controller without authorizing its database work."""
+    verification = verify_release_manifest_v2(manifest_path, archive_path, inventory_path)
+    manifest = read_release_manifest_v2(manifest_path)
+    target = roots.RELEASE_ROOT / validate_release_component(manifest.release_id)
+    partial = roots.RELEASE_ROOT / ("." + uuid.uuid4().hex + ".partial")
+    identity = None
+    try:
+        assert_no_reparse_ancestors(target, allow_missing=True)
+        assert_no_reparse_ancestors(partial, allow_missing=True)
+        materialize_release_fixture(manifest_path, archive_path, inventory_path, partial)
+        token = partial.stat(follow_symlinks=False)
+        identity = (token.st_dev, token.st_ino)
+        if target.exists():
+            existing = verify_materialized_release(target, inventory_path=target / manifest.section("release_payload")["inventory_path"])
+            if existing.manifest_sha256 != manifest.raw_sha256 or existing.payload_tree_sha256 != verification.payload_tree_sha256:
+                raise UpdateMvpError("SYSTEM_UPDATE_TARGET_RELEASE_COLLISION")
+            _remove_owned_tree(partial, identity)
+            identity = None
+        else:
+            os.replace(partial, target)
+            identity = None
+        return target, verification
+    finally:
+        if identity is not None:
+            _remove_owned_tree(partial, identity)
 
 
 class UpdateMvpService:
@@ -775,13 +811,16 @@ class UpdateMvpService:
         *,
         database_path: Path | None = None,
         migration_registry: tuple[MigrationStep, ...] = DEFAULT_MIGRATIONS,
+        database_inspector: Callable[[Path], dict[str, Any]] | None = None,
     ) -> None:
         self.roots = roots
         self.store = UpdateJobStore(roots)
         self.database_path = Path(database_path) if database_path is not None else roots.DATA_ROOT / "enterprise.db"
         self.migration_registry = validate_registry(migration_registry)
+        self.database_inspector = database_inspector
 
-    def prepare_from_artifacts(self, *, actor_user_id: str, manifest_path: Path, archive_path: Path, inventory_path: Path) -> PreparedUpdate:
+    def prepare_from_artifacts(self, *, actor_user_id: str, manifest_path: Path, archive_path: Path, inventory_path: Path,
+                               execution_context: dict | None = None) -> PreparedUpdate:
         job_id, job_root = self.store.create(actor_user_id)
         partial: Path | None = None
         partial_identity: tuple[int, int] | None = None
@@ -810,7 +849,10 @@ class UpdateMvpService:
             # Publication must be a same-volume rename. Artifacts and job
             # evidence remain in STAGING_ROOT, while the owned partial Release
             # is a hidden sibling of the final target under RELEASE_ROOT.
-            partial = self.roots.RELEASE_ROOT / f".{target_manifest.release_id}.{job_id}.partial"
+            # Target identity is already bound in the job. Repeating it here
+            # needlessly pushes otherwise supported Windows install roots past
+            # the directory-length limit while materializing the same payload.
+            partial = self.roots.RELEASE_ROOT / f".{job_id}.partial"
             assert_no_reparse_ancestors(partial, allow_missing=True)
             materialize_release_fixture(manifest_copy, archive_copy, inventory_copy, partial)
             partial_stat = partial.stat(follow_symlinks=False)
@@ -837,7 +879,14 @@ class UpdateMvpService:
                 database_path=self.database_path,
                 registry=self.migration_registry,
                 operation_id=job_id,
+                database_inspector=self.database_inspector,
             )
+            context = execution_context or {}
+            controller = context.get("sequence_controller")
+            worker_root = target_root if controller is None else self.roots.RELEASE_ROOT / validate_release_component(controller["release_id"])
+            updater_execution = prepared_updater_binding(worker_root,
+                target_manifest.raw_sha256 if controller is None else controller["manifest_sha256"],
+                verification.payload_tree_sha256 if controller is None else controller["payload_tree_sha256"])
             plan = {
                 "job_id": job_id,
                 "actor_user_id": actor_user_id,
@@ -850,6 +899,8 @@ class UpdateMvpService:
                 "target_payload_tree_sha256": verification.payload_tree_sha256,
                 "database_update": database_update,
                 "created_at": utc_now(),
+                **({"updater_execution": updater_execution} if updater_execution is not None else {}),
+                **context,
             }
             plan_sha = self.store.write_plan(job_id, plan)
             self.store.write_status(
@@ -861,9 +912,12 @@ class UpdateMvpService:
                 target_release_id=target_manifest.release_id,
                 plan_sha256=plan_sha,
                 database_update_mode=database_update["mode"],
+                **({"updater_execution": updater_execution} if updater_execution is not None else {}),
             )
             self.store.append_event(job_id, "READY", "SYSTEM_UPDATE_READY", source_release_id=source_manifest.release_id, target_release_id=target_manifest.release_id)
-            return PreparedUpdate(job_id, source_manifest.release_id, target_manifest.release_id, target_manifest.raw_sha256, verification.payload_tree_sha256, database_update["mode"])
+            return PreparedUpdate(job_id, source_manifest.release_id, target_manifest.release_id,
+                                  target_manifest.raw_sha256, verification.payload_tree_sha256,
+                                  database_update["mode"], updater_execution)
         except Exception as exc:
             if partial is not None:
                 _remove_owned_tree(partial, partial_identity)
@@ -941,6 +995,20 @@ def _database_result_record(roots: PathRoots, result: MigrationResult) -> dict[s
     }
 
 
+def restore_source_pointer(roots: PathRoots, source_manifest: ReleaseManifestV2,
+                           target_release_id: str, *, expected_current_raw_sha256: str):
+    """CAS publication for a caller that has proven target stop/source identity.
+
+    Offline interrupted recovery retains its own lease/object checks, while
+    pointer publication remains inside the shared update-engine boundary.
+    """
+    return atomic_write_current_release(
+        roots, _pointer_for(source_manifest, validate_release_component(target_release_id)),
+        expected_manifest_sha256=source_manifest.raw_sha256,
+        expected_existing_raw_sha256=expected_current_raw_sha256,
+    )
+
+
 def execute_update_job(
     roots: PathRoots,
     job_id: str,
@@ -948,11 +1016,13 @@ def execute_update_job(
     launcher: Callable[[Path, str], tuple[int, dict[str, Any]]] = _run_launcher,
     database_path: Path | None = None,
     migration_registry: tuple[MigrationStep, ...] = DEFAULT_MIGRATIONS,
+    database_inspector: Callable[[Path], dict[str, Any]] | None = None,
 ) -> int:
     """Execute one READY job after the source supervisor has handed off."""
     store = UpdateJobStore(roots)
     plan = store.read_plan(job_id)
     status = store.read_status(job_id)
+    sealed_updater_binding(plan, status)
     actor = str(plan.get("actor_user_id") or "")
     if status.get("state") != "UPDATING" or status.get("actor_user_id") != actor:
         raise UpdateMvpError("SYSTEM_UPDATE_JOB_NOT_EXECUTABLE", status_code=409)
@@ -985,6 +1055,7 @@ def execute_update_job(
     database_result_sha: str | None = None
     database_path = Path(database_path) if database_path is not None else roots.DATA_ROOT / "enterprise.db"
     registry = validate_registry(migration_registry)
+    inspect_database = database_inspector or inspect_schema_metadata
     database_update = plan.get("database_update") or {"mode": "same-schema-no-migration"}
     if type(database_update) is not dict:
         raise UpdateMvpError("SYSTEM_UPDATE_DATABASE_MIGRATION_PLAN_INVALID")
@@ -1020,6 +1091,7 @@ def execute_update_job(
             database_path=database_path,
             registry=registry,
             operation_id=job_id,
+            database_inspector=database_inspector,
         )
         if database_update != expected_database_update:
             raise UpdateMvpError("SYSTEM_UPDATE_DATABASE_MIGRATION_PLAN_INVALID")
@@ -1153,7 +1225,7 @@ def execute_update_job(
             if not database_may_have_changed:
                 try:
                     current_pointer = read_current_release_result_from_state_root(roots.STATE_ROOT)
-                    schema = inspect_schema_metadata(database_path)
+                    schema = inspect_database(database_path)
                     pointer_intact = (
                         current_pointer.release.release_id == source_id
                         and current_pointer.raw_sha256 == plan.get("source_pointer_sha256")

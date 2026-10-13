@@ -49,6 +49,7 @@
 - 任务受理、执行、对账和费用记录属于持久业务域，不使用进程内字典作为事实源。
 - 新增表前先定义 schema version、升级、备份、恢复和旧版本兼容。
 - C# 仅薄入口/系统交互，安装器编排；Python 共用业务/更新/迁移，不按应用版本复制实现。
+- C6 `install_upgrade` 的离线维护复用共享单跳引擎；原生文件恢复必须核验原对象和作业，不用进度、锁龄或 PID 缺失授权接管。成功激活后的登记恢复不回退数据库。Windows 登记/包装进程解析在 `runtime/windows_install_registration.py`、`runtime/windows_setup_source.py`，请求暂停在跨平台 `runtime/install_maintenance.py`。
 - Windows Registry、Job Object、KnownFolder、文件 handle 及安装/卸载 GUI 是平台适配能力；业务模型、API、权限、Repository、Storage Adapter 及数据恢复契约应跨部署形态复用。不得给核心业务新增固定盘符或桌面交互前置。Linux/服务器支持须以依赖调查和真实运行验证判断，不能仅凭接口分层宣称完成。
 - `tools/check_docs.py` 是只读开发检查，不是 Runtime；文档整改不夹带产品权限或迁移改动。
 
@@ -68,3 +69,5 @@
 4. 现有客户如何升级，失败如何恢复？
 5. 需要哪些自动测试、故障注入和人工验证？
 6. 是否错误地把分支、Release 或单设备结果写成主线/生产事实？
+
+C7 `ops/update/sequence.py` 只协调已声明路径，逐跳消费共享 MVP 与 C6 原生对象事务；数据库操作仍由版本化引擎实施，原生注册表更新只在 `runtime/windows_install_registration.py` 中操作已核验本实例 DisplayVersion。恢复/暂停标记不授权删除客户数据，进度状态不授权跳步或恢复旧快照。源码与限定证据见 [C7 记录](docs/ops/ONLINE-UPGRADE-SEQUENCE-2026-10-12.md)。

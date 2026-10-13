@@ -230,6 +230,8 @@ def repair_program(*, install_root: Path, release_dir: Path, local_app_data_base
     root = Path(os.path.abspath(install_root))
     roots, installation_id, record, pointer = _identity_gate(root, assets, local_app_data_base)
     lock_path = roots.STATE_ROOT / "system-update-active.lock"
+    if os.path.lexists(roots.STATE_ROOT / "upgrade-sequence-active.json"):
+        _fail("INSTALL_PROGRAM_MAINTENANCE_BUSY")
     if _snapshot(lock_path, maximum=16384) is not None:
         _fail("INSTALL_PROGRAM_MAINTENANCE_BUSY")
     validate_entry_target_paths(root, assets.manifest.release_id, assets.inventory_path)

@@ -1,6 +1,6 @@
 # Runtime、安装、发布与在线更新
 
-> 源码参考快照（2026-10-13）：main@bc33339 与产品候选 #156@4bdd9a1 分列；C5/C6/C7 只引用其准确候选记录。本文是代码/运行参考，当前 PR/CI、Release 和验收只见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，实施顺序只认路线图。
+> 源码参考快照（2026-10-13）：main@3e0deeae（已合并 #154/#155）与产品候选 #156@4bdd9a1 分列；C5/C6/C7 已合并，构建与验收范围仍引用其准确记录。本文是代码/运行参考，当前 PR/CI、Release 和验收只见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，实施顺序只认路线图。
 
 [返回索引](./README.md)
 
@@ -150,9 +150,11 @@ flowchart TD
 - 向导将外部解释器完整包放在本产品当前用户 `maintenance-payloads` 缓存下，避免关闭 Setup 时删除仍运行的解释器。重解析/空间校验不省略；main #151 的 install_cache.py 已在显式拥有者及运行/恢复引用核验后清理准备副本；不能按目录名称、年龄或未知历史身份自动删除。
 - 程序维护不执行快捷方式、安装登记或数据库写入；只有新装/成功入口维护才进入对应后续步骤。所有维护 operation 的外部解释器包持久保留，不因 Setup 关闭或管道应答而猜测 backend 已退出。图形按钮接入与编译通过不等于真实图形点击验收。
 
-上述同版程序修复本身不执行业务升级/数据迁移或接管历史未知身份。main #151/#152 后续提供缓存清理、保留数据卸载与同版重装；#154/#155 提供待审执行器/连续升级候选。断电/磁盘故障及全部 GUI 仍不宣称已验收；准确记录回到 CURRENT 和 DELIVERY-1。
+上述同版程序修复本身不执行业务升级/数据迁移或接管历史未知身份。main #151/#152 后续提供缓存清理、保留数据卸载与同版重装；#154/#155 已合并执行器/连续升级实现。断电/磁盘故障及全部 GUI 仍不宣称已验收；准确记录回到 CURRENT 和 DELIVERY-1。
 
 ## 7. 在线更新
+
+C6 `enterprise/install_upgrade.py` 在停止来源服务后复用 `UpdateMvpService`/`execute_update_job`；只处理准确安装身份及已知相同 Schema。共享引擎的显式数据库检查器让该离线调用复用经过身份、静止状态和旁路文件核验的 immutable 读取；在线调用仍用原默认读取，不忽略 WAL/SHM/journal。准备副本使用完整 Job ID 的同卷隐藏短目录，目标仍由 Manifest/Job 绑定。原程序保留恢复沿用 C3，原生 entry/record/Setup/support 对象有独立不可变计划和发布检查点；成功目标先等待 Windows 登记，不因登记失败回退其业务数据。`install_setup_bridge` v7 不接收凭据或任意 Setup 文件路径，Windows 包装父进程和登记解析在平台适配器。目标等待登记的 HTTP/WS 暂停不代表完整业务维护态。源码、完整副本与 GUI 验收分列，见 [C6 记录](../ops/OFFLINE-RETAINED-UPGRADE-2026-10-12.md)。
 
 ```mermaid
 sequenceDiagram
@@ -204,7 +206,7 @@ main 派生的生命周期诊断增量为每个实际执行的 `target_start/tar
 - `RECOVERY_REQUIRED` 表示无法证明三者已经恢复一致，不能自动重试或伪装成普通失败。
 - 恢复数据库或 source pointer 之前先确认目标停止；非零退出不继续恢复或启动 source，保留恢复阻断。source 启动失败时不虚构后续 health 调用。入口退出 0 但没有有效结果文档仍判为失败。
 - 维护线已发布 09.9 改表目标，并有测试设备受控桥接成功反馈，不外推 main 已统一交付或全部客户批准。
-- main #153 的 `release_catalog.py` 已共用 v1/v2 分页、全页条件核验和完整性失败阻断，最多 1000 条，细节见 [目录记录](../ops/UPDATE-CATALOG-PAGINATION-2026-10-11.md)。`route_catalog.py::RoutePreviewCache` 只优化页面不可变路线预览，prepare/execute 不读该缓存。main 规划最多 8 跳；#155 候选已有一次授权连续执行/检查点，尚未合并且在线继续仍有 handoff 资格阻断。09.6 治理激活状态不能由旧更新器直接识别，不删审计对象绕过。
+- main #153 的 `release_catalog.py` 已共用 v1/v2 分页、全页条件核验和完整性失败阻断，最多 1000 条，细节见 [目录记录](../ops/UPDATE-CATALOG-PAGINATION-2026-10-11.md)。`route_catalog.py::RoutePreviewCache` 只优化页面不可变路线预览，prepare/execute 不读该缓存。main 规划最多 8 跳；#155 已合并一次授权连续执行/检查点，在线继续仍有 handoff 资格阻断。09.6 治理激活状态不能由旧更新器直接识别，不删审计对象绕过。
 - 完整通知/任务和业务写入隔离、更新器自更新及图形恢复仍待落地；业务写入已开放后不盲目回旧备份。
 - 更新中心只消费完整 Manifest v2 Release，不消费 GitHub 源码 ZIP。
 - 诊断输出有界并脱敏，但仍应按内部运维材料处理。
@@ -213,6 +215,6 @@ main 派生的生命周期诊断增量为每个实际执行的 `target_start/tar
 
 main 的 install_lifecycle.py 为已登记实例提供保留数据卸载、同版重装、自己的恢复及 inspect_lifecycle 观察；install_cache.py 只清理可证明的维护准备副本。未知对象、客户数据和恢复依赖保留。
 
-C5 的 updater.py / updater-worker-v1 契约选择目标 Python 执行器并绑定准备/READY/接受过程；C6 install_upgrade.py 复用现有更新引擎处理限定相同 Schema 的离线升级/保留数据跨版本重装；C7 sequence.py 等协调一次授权路径、逐跳权限、检查点、当前跳恢复及原生维护资产。上述新增升级代码只存在于 #154/#155 候选，不存在于本 Wiki 所在产品修复分支；参见 C5/C6/C7 实现记录。
+C5 的 updater.py / updater-worker-v1 契约选择目标 Python 执行器并绑定准备/READY/接受过程；C6 install_upgrade.py 复用现有更新引擎处理限定相同 Schema 的离线升级/保留数据跨版本重装；C7 sequence.py 等协调一次授权路径、逐跳权限、检查点、当前跳恢复及原生维护资产。上述新增升级代码已随 #154/#155 进入 main，本 Wiki 所在产品修复分支已整合该主线；参见 C5/C6/C7 实现记录。
 
-限定 GUI 状态：#152 本身的卸载 Yes 点击未验收；C6 后续合成安装副本已有 Yes 与限定跨版本重装点击证据，未合并或正式发行。C7 冻结包完整两跳成功，在线重新继续在本机被 SYSTEM_UPDATE_HANDOFF_JOB_BLOCKED 阻断；不能把冻结构建等同新 Head 或把 HTTP/WS 暂停称为完整任务排空。
+限定 GUI 状态：#152 本身的卸载 Yes 点击未验收；C6 后续合成安装副本已有 Yes 与限定跨版本重装点击证据；代码已合并，未正式发行。C7 冻结包完整两跳成功，在线重新继续在本机被 SYSTEM_UPDATE_HANDOFF_JOB_BLOCKED 阻断；不能把冻结构建等同新 Head 或把 HTTP/WS 暂停称为完整任务排空。

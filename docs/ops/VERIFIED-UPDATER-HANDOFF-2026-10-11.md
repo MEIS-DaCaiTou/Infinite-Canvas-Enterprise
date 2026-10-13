@@ -1,6 +1,6 @@
 # 工作包 C5：经验证的目标更新执行器接管
 
-> 2026-10-13 文档同步：本文来自候选 #154@64c2adff3358e7f806d3cf04a26d86639597e573，PR 仍 OPEN/Draft，运行代码尚未合并 main。复制实现记录不改变其源码、构建、GUI 或客户验收范围；后续状态只见 [CURRENT](../CURRENT_PROJECT_STATUS.md)。
+> 2026-10-13 合并状态补充：#154 已合并为 `11c9a38c`，#155 已合并为 `3e0deeae`，负责人明确授权后按准确 Head 核查并合并；没有新增独立审查结论。本文原有源码、构建、GUI 与失败证据仍按原采集范围解释，Release 仍为 v2026.10.1；后续状态见 [CURRENT](../CURRENT_PROJECT_STATUS.md)。
 
 2026-10-11。从 `main@bc33339fd11df4c0303f29257766f0f2e53560fe` 的独立工作区开发，实施顺序继续沿用 [唯一路线图 3.3](../roadmap/DEVELOPMENT-ROADMAP-2026-2027.md#33-日常更新与长期跨版本)。#153 已独立审查并合并，准确 main 的 Enterprise、Runtime、文档三项 CI 最终成功；真实固定 EXE opt-in 跳过，原生编译未触发。正式 Release 仍 v2026.10.1。本记录保存同一完整工程包的实现及证据，不增加路线图。
 

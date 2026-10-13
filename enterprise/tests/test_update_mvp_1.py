@@ -1295,18 +1295,22 @@ def test_update_check_offers_newer_stable_and_development_releases(monkeypatch):
     assert dev_only["releases"][0]["stage"] == "development"
 
 
-def test_execute_reconfirms_current_password_without_persisting_it(tmp_path: Path, monkeypatch):
+@pytest.mark.parametrize("activation_failure", [None, "before-fence", "after-fence"])
+def test_execute_reconfirms_current_password_without_persisting_it(tmp_path: Path, monkeypatch, activation_failure):
     from enterprise import update_api
 
     roots = _roots(tmp_path)
     store = UpdateJobStore(roots)
     job_id, root = store.create("actor-1")
-    store.write_plan(job_id, {
+    plan = {
         "job_id": job_id, "actor_user_id": "actor-1", "source_release_id": "release-A",
         "source_pointer_sha256": "a" * 64, "source_manifest_sha256": "b" * 64,
         "target_release_id": "release-B", "target_manifest_sha256": "c" * 64,
         "target_inventory_sha256": "d" * 64, "target_payload_tree_sha256": "e" * 64,
-    })
+    }
+    if activation_failure:
+        plan["upgrade_sequence"] = {}
+    store.write_plan(job_id, plan)
     store.write_status(job_id, "READY", actor_user_id="actor-1", result_code="SYSTEM_UPDATE_READY")
     current_user = {
         "id": "actor-1", "user_id": "actor-1", "username": "admin-a", "role": "super_admin",
@@ -1326,6 +1330,22 @@ def test_execute_reconfirms_current_password_without_persisting_it(tmp_path: Pat
     )
     principal = {"user_id": "actor-1", "role": "super_admin", "is_admin": True, "auth_version": 7}
     tasks = BackgroundTasks()
+    if activation_failure:
+        from enterprise.install_cache import CacheError
+        from enterprise.ops.update import sequence
+        marker = roots.STATE_ROOT / sequence.ACTIVE_NAME
+        def fail_activation(*_):
+            if activation_failure == "after-fence":
+                marker.write_bytes(b"retain this fixture fence for explicit recovery")
+            raise CacheError()
+        monkeypatch.setattr(sequence, "activate_sequence", fail_activation)
+        with pytest.raises(HTTPException):
+            asyncio.run(update_api.execute_update(job_id,
+                _Request(principal, {"password": "correct-password", "confirm_no_active_tasks": True}), tasks))
+        assert store.read_status(job_id)["state"] == "FAILED"
+        assert not store.lock_path.exists() and not tasks.tasks
+        assert marker.exists() == (activation_failure == "after-fence")
+        return
     result = asyncio.run(update_api.execute_update(job_id, _Request(principal, {"password": "correct-password"}), tasks))
     assert result["state"] == "UPDATING" and len(tasks.tasks) == 1
     persisted = "".join(path.read_text(encoding="utf-8") for path in root.glob("*.json*"))
@@ -1408,7 +1428,8 @@ def test_controller_rechecks_ownership_before_writing_update_handoff(monkeypatch
     assert submitted == []
 
 
-def test_supervisor_handoff_uses_only_fixed_source_python_and_worker(tmp_path: Path, monkeypatch):
+@pytest.mark.parametrize("target_engine", [False, True])
+def test_supervisor_handoff_uses_only_fixed_verified_python_and_worker(tmp_path: Path, monkeypatch, target_engine):
     from enterprise.runtime.ownership import ProcessIdentity
     from enterprise.runtime.supervisor import RuntimeSupervisor
 
@@ -1419,6 +1440,21 @@ def test_supervisor_handoff_uses_only_fixed_source_python_and_worker(tmp_path: P
     worker.parent.mkdir(parents=True)
     python.write_bytes(b"fixture")
     worker.write_text("# fixture\n", encoding="utf-8")
+    source_python = python
+    worker_root = app_root
+    updater_binding = None
+    updater = None
+    if target_engine:
+        worker_root = tmp_path / "release-B"
+        python = worker_root / "python/python.exe"
+        worker = worker_root / "enterprise/ops/update/handoff.py"
+        python.parent.mkdir(parents=True)
+        worker.parent.mkdir(parents=True)
+        python.write_bytes(b"verified-target")
+        worker.write_bytes(b"verified-target-worker")
+        updater_binding = {"plan_sha256": "c" * 64, "worker_release_id": "release-B", "updater_contract": 4}
+        updater = SimpleNamespace(app_root=worker_root, python=python, worker=worker,
+                                  readiness_binding=updater_binding)
     launched = []
 
     class Process:
@@ -1435,7 +1471,7 @@ def test_supervisor_handoff_uses_only_fixed_source_python_and_worker(tmp_path: P
     supervisor = RuntimeSupervisor.__new__(RuntimeSupervisor)
     supervisor.config = SimpleNamespace(
         app_root=app_root,
-        python_executable=str(python),
+        python_executable=str(source_python),
         runtime_mode="portable-release",
     )
     supervisor._update_handoff_request = {"request_id": "request", "update_job_id": "b" * 32}
@@ -1444,9 +1480,11 @@ def test_supervisor_handoff_uses_only_fixed_source_python_and_worker(tmp_path: P
     supervisor._command_snapshot = lambda: {"state": "healthy"}
     supervisor._ack = lambda request, **fields: acknowledgements.append((request, fields))
     supervisor._log = lambda *_args, **_kwargs: None
-    supervisor.supervisor_identity = ProcessIdentity(999, 1, str(python))
+    supervisor.supervisor_identity = ProcessIdentity(999, 1, str(source_python))
     supervisor._handoff_reservation = lambda *_args: (1, 2)
-    def committed(*_args):
+    supervisor._select_handoff_updater = lambda _job_id: updater
+    supervisor._handoff_binding_matches = lambda job, binding: binding == updater_binding
+    def committed(*_args, **_kwargs):
         supervisor._stopping = True
         return True
     supervisor._commit_update_handoff = committed
@@ -1458,17 +1496,18 @@ def test_supervisor_handoff_uses_only_fixed_source_python_and_worker(tmp_path: P
     monkeypatch.setattr("enterprise.runtime.supervisor.read_worker_ready", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
         "enterprise.runtime.supervisor.process_identity",
-        lambda pid: ProcessIdentity(pid, 1, str(python)),
+        lambda pid: ProcessIdentity(pid, 1, str(source_python if pid == 999 else python)),
     )
     RuntimeSupervisor._perform_update_handoff(supervisor)
     assert launched[0][0] == [str(python), "-I", "-B", str(worker), "--job-id", "b" * 32,
                               "--source-pid", "999", "--source-created-at", "1",
-                              "--source-executable", str(python)]
+                              "--source-executable", str(source_python),
+                              *(["--source-release-id", "release-A"] if target_engine else [])]
     assert launched[0][1]["stdin"] is not None
     assert launched[0][1]["stdout"] is not None
     assert launched[0][1]["stderr"] is not None
     assert launched[0][1]["shell"] is False
-    assert launched[0][1]["cwd"] == str(app_root)
+    assert launched[0][1]["cwd"] == str(worker_root)
     for name in ("PYTHONHOME", "PYTHONPATH", "PYTHONSTARTUP", "PYTHONINSPECT"):
         assert name not in launched[0][1]["env"]
     assert acknowledgements[0][1]["result"] == "update_handoff_started"

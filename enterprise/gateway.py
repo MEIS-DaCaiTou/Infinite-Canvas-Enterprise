@@ -272,6 +272,9 @@ class AuthStateMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(AuthStateMiddleware)
+
+from enterprise.runtime.install_maintenance import InstallMaintenanceMiddleware
+app.add_middleware(InstallMaintenanceMiddleware, state_root=PATH_ROOTS.STATE_ROOT)
 app.include_router(admin_router, prefix="/enterprise")
 app.include_router(user_model_router, prefix="/enterprise")
 app.include_router(update_router, prefix="/enterprise")

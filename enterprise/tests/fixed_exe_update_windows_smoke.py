@@ -24,7 +24,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 
-from enterprise.path_safety import assert_no_reparse_ancestors
+from enterprise.path_safety import PathSafetyError, assert_no_reparse_ancestors, has_reparse_point
 from enterprise.tests.update_mvp_1_windows_smoke import (
     _assert_unused_local_roots, _create_owned_local_roots, _free_port,
     _owned_identities_absent, _port_open, _read_status, _runtime_identities,
@@ -55,9 +55,14 @@ def _tree_snapshot(root):
     files = {}
     count = 0
     for folder, directories, names in os.walk(root, followlinks=False):
+        # Check each visited directory's ancestors once, then each child itself.
+        # Rewalking the same ancestors for every file made retained runtime
+        # trees spend most of preparation in repeated Windows attribute calls.
+        assert_no_reparse_ancestors(Path(folder))
         for name in directories + names:
             path = Path(folder) / name
-            assert_no_reparse_ancestors(path)
+            if has_reparse_point(path):
+                raise PathSafetyError("path-reparse-forbidden")
             count += 1
             if count > 40000:
                 raise RuntimeError("FIXED_EXE_SAVED_TREE_TOO_LARGE")

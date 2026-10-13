@@ -191,7 +191,7 @@ def plan_upgrade_path(
     if installed.release_id == target_release_id:
         return ()
     documents = tuple(releases)
-    if len(documents) > 50 or len({doc.target.release_id for doc in documents}) != len(documents):
+    if len(documents) > 1000 or len({doc.target.release_id for doc in documents}) != len(documents):
         raise UpgradeRouteError("UPGRADE_ROUTE_CATALOG_INVALID")
     queue: deque[tuple[ReleaseState, tuple[ReleaseState, ...]]] = deque([(installed, ())])
     seen = {(installed.release_id, installed.manifest_sha256, installed.database_schema_sha256)}

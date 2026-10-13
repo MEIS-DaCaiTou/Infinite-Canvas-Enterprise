@@ -282,6 +282,8 @@ def publish_fixed_entry(roots: PathRoots, entry: NativeEntry) -> EntryPublicatio
         if owner != _sha(previous_entry.data):
             raise InstallEntryError("INSTALL_ENTRY_UNOWNED_FILE")
     lock_path = roots.STATE_ROOT / "system-update-active.lock"
+    if os.path.lexists(roots.STATE_ROOT / "upgrade-sequence-active.json"):
+        raise InstallEntryError("INSTALL_ENTRY_MAINTENANCE_BUSY")
     operation = uuid.uuid4().hex
     # The common update lock also prevents an online update from racing Setup.
     # Existing/abandoned locks are never deleted or adopted by entry repair.
