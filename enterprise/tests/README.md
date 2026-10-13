@@ -1,5 +1,7 @@
 # Enterprise Test Scripts
 
+`test_install_upgrade.py`, `test_install_maintenance.py` and `test_windows_install_registration.py` cover the C6 offline transaction, object ownership, interrupted recovery, stopped WAL-mode SQLite reads, successful target finalization and HTTP/WS pause. Their Runtime/registration substitutes are bounded unit evidence. `offline_upgrade_windows_smoke.py` runs frozen complete source/target payloads, real native entry and Runtime on newly owned synthetic installations; only an owned hard process exit or target service stop is injected. It records the runner return code/stdout/stderr before checking the injected exit, stops at AWAITING_REGISTRATION and does not imply Windows registration or clicked GUI acceptance. Pass explicit source/target build/native directories, target Setup and a NEW evidence root; `--preserve-existing-local-roots` requires stopped historical KnownFolder roots and verifies their exact restoration. Reuse sufficient existing C2/C3/C4 evidence. Actual scope/results are in [C6 record](../../docs/ops/OFFLINE-RETAINED-UPGRADE-2026-10-12.md).
+
 This folder is the only place for project diagnostic and smoke-test scripts.
 
 Before adding or changing scripts, read:
@@ -83,3 +85,5 @@ Run scripts from the project root unless a script says otherwise.
 Do not place ad-hoc diagnostic or smoke-test scripts in the project root or product source folders. Keep them here so Release builds and Git reviews stay clean.
 
 For every access-control implementation PR, add or extend a focused test here before changing access behavior. Use temporary SQLite databases and temporary data files only. The minimum regression roles are normal user A, normal user B, and administrator; cover list filtering, direct-ID denial, resource URLs, refresh/re-login persistence, and WebSocket delivery where applicable.
+
+`test_upgrade_sequence.py` covers C7 two-hop execution, immutable checkpoint resumption, current-hop/native-object recovery, revoked authorization and a newly owned HKCU registration. Runtime calls and unit MZ tools are substitutes; existing frozen C5/C6 full native/runtime and GUI evidence is reused within its original scope. Online native asset assembly uses `tools/build_maintenance_assets.py` without publishing a Release. See [C7 evidence](../../docs/ops/ONLINE-UPGRADE-SEQUENCE-2026-10-12.md).

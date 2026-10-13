@@ -152,6 +152,8 @@ flowchart TD
 
 ## 7. 在线更新
 
+C6 `enterprise/install_upgrade.py` 在停止来源服务后复用 `UpdateMvpService`/`execute_update_job`；只处理准确安装身份及已知相同 Schema。共享引擎的显式数据库检查器让该离线调用复用经过身份、静止状态和旁路文件核验的 immutable 读取；在线调用仍用原默认读取，不忽略 WAL/SHM/journal。准备副本使用完整 Job ID 的同卷隐藏短目录，目标仍由 Manifest/Job 绑定。原程序保留恢复沿用 C3，原生 entry/record/Setup/support 对象有独立不可变计划和发布检查点；成功目标先等待 Windows 登记，不因登记失败回退其业务数据。`install_setup_bridge` v7 不接收凭据或任意 Setup 文件路径，Windows 包装父进程和登记解析在平台适配器。目标等待登记的 HTTP/WS 暂停不代表完整业务维护态。源码、完整副本与 GUI 验收分列，见 [C6 记录](../ops/OFFLINE-RETAINED-UPGRADE-2026-10-12.md)。
+
 ```mermaid
 sequenceDiagram
     participant UI as Update Center
@@ -202,8 +204,10 @@ main 派生的生命周期诊断增量为每个实际执行的 `target_start/tar
 - `RECOVERY_REQUIRED` 表示无法证明三者已经恢复一致，不能自动重试或伪装成普通失败。
 - 恢复数据库或 source pointer 之前先确认目标停止；非零退出不继续恢复或启动 source，保留恢复阻断。source 启动失败时不虚构后续 health 调用。入口退出 0 但没有有效结果文档仍判为失败。
 - 维护线已发布 09.9 改表目标，并有测试设备受控桥接成功反馈，不外推 main 已统一交付或全部客户批准。
-- C4 的 `release_catalog.py` 已随 #153 合并，共用 v1/v2 分页、条件核验和完整性失败阻断，最多 1000 条，细节见 [目录记录](../ops/UPDATE-CATALOG-PAGINATION-2026-10-11.md)。`route_catalog.py::RoutePreviewCache` 只优化页面不可变路线预览，prepare/execute 不读该缓存。规划最多 8 跳，没有一次确认自动多跳。09.6 治理激活状态不能由旧更新器直接识别，不删审计对象绕过。
+- #153 合并后的 main 使用 C4 `release_catalog.py` 共用 v1/v2 分页、条件核验和完整性失败阻断，每次最多 1000 条，细节见 [目录记录](../ops/UPDATE-CATALOG-PAGINATION-2026-10-11.md)。`route_catalog.py::RoutePreviewCache` 只优化页面不可变路线预览，prepare/execute 不读该缓存。规划最多 8 跳，没有一次确认自动多跳。09.6 治理激活状态不能由旧更新器直接识别，不删审计对象绕过。
 - C5 的 `updater.py`/固定包内契约在开发分支绑定目标引擎及计划摘要；`supervisor.py` 创建目标 Python，`handoff.py` 用目标代码和来源安装数据根，`handoff_lifecycle.py` 的 READY v2 校验身份。契约缺失的旧包保留来源路径，未知/改动契约拒绝交接；仍执行原有单跳事务，见 [C5 记录](../ops/VERIFIED-UPDATER-HANDOFF-2026-10-11.md)。这不包含原生 EXE/Setup 替换或未知未来迁移授权。
 - 完整通知/任务和业务写入隔离、更新器自更新及图形恢复仍待落地；业务写入已开放后不盲目回旧备份。
 - 更新中心只消费完整 Manifest v2 Release，不消费 GitHub 源码 ZIP。
 - 诊断输出有界并脱敏，但仍应按内部运维材料处理。
+
+C7 导航：`ops/update/online_prepare.py` 下载整条路径，`maintenance_assets.py` 验证原生 sidecar，`sequence.py` 管理根授权/逐跳 receipt/检查点/继续/停止；`handoff.py` 由准确目标执行器进入协调器。API 与 admin.html 提供持续状态和恢复操作，`runtime/install_maintenance.py` 在中间版本暂停业务。详见 [C7 实施及证据](../ops/ONLINE-UPGRADE-SEQUENCE-2026-10-12.md)；同一 Draft #155 扩大范围不代表已合并或发行。

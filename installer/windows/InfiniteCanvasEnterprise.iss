@@ -110,7 +110,8 @@ var
   CacheRows, SelectedCacheId, SelectedCacheToken: String;
   CacheRefreshButton: TNewButton;
   HeadlessLifecycle, LifecycleSupportReady, MatchingLifecycleRelease: Boolean;
-  HeadlessOperation, HeadlessRoot, LifecycleState: String;
+  HeadlessOperation, HeadlessRoot, LifecycleState, UpgradeState: String;
+  FinalizingUpgrade: Boolean;
 
 procedure ExitProcess(ExitCode: Cardinal);
   external 'ExitProcess@kernel32.dll stdcall';
@@ -135,6 +136,7 @@ function PeekNamedPipe(hNamedPipe: THandle; lpBuffer, nBufferSize, lpBytesRead: 
 
 function MaintenanceOperation: String;
 begin
+  if FinalizingUpgrade then begin Result := 'finish-upgrade'; exit; end;
   if HeadlessLifecycle then begin Result := HeadlessOperation; exit; end;
   if CacheCleaning then begin Result := 'clean-cache'; exit; end;
   Result := 'install';
@@ -150,7 +152,18 @@ begin
     7: Result := 'recover-uninstall';
     8: Result := 'reinstall-retained';
     9: Result := 'inspect-lifecycle';
+    10: Result := 'upgrade-retained';
+    11: Result := 'recover-upgrade';
+    12: Result := 'inspect-upgrade';
   end;
+end;
+
+function IsUpgradeOperation: Boolean;
+begin
+  Result := (MaintenanceOperation = 'upgrade-retained') or
+    (MaintenanceOperation = 'recover-upgrade') or
+    (MaintenanceOperation = 'inspect-upgrade') or
+    (MaintenanceOperation = 'finish-upgrade');
 end;
 
 function IsLifecycleOperation: Boolean;
@@ -169,12 +182,14 @@ end;
 function ShouldMaintainEntry: Boolean;
 begin
   Result := (MaintenanceOperation = 'install') or (MaintenanceOperation = 'repair-entry') or
-    (MaintenanceOperation = 'recover-entry') or (MaintenanceOperation = 'reinstall-retained');
+    (MaintenanceOperation = 'recover-entry') or (MaintenanceOperation = 'reinstall-retained') or
+    (MaintenanceOperation = 'upgrade-retained') or (MaintenanceOperation = 'recover-upgrade');
 end;
 
 function MaintenanceCaption: String;
 begin
   Result := '仅查看维护状态';
+  if IsUpgradeOperation then begin Result := '离线跨版本升级／保留数据重装'; exit; end;
   if IsLifecycleOperation then begin Result := '保留数据卸载／重装'; exit; end;
   if IsCacheOperation then begin Result := '维护准备包管理（不清理业务数据）'; exit; end;
   if MaintenanceOperation = 'repair-entry' then begin Result := '修复固定入口与快捷方式'; exit; end;
@@ -274,7 +289,12 @@ begin
   end;
   Schema := 'enterprise-install-maintenance-request-v2';
   Confirmation := '';
-  if IsLifecycleOperation then begin
+  if IsUpgradeOperation then begin
+    Schema := 'enterprise-install-maintenance-request-v7';
+    if (Operation = 'upgrade-retained') or (Operation = 'recover-upgrade') then
+      Confirmation := ',"confirm_no_active_tasks":true'
+    else Confirmation := ',"confirm_no_active_tasks":false';
+  end else if IsLifecycleOperation then begin
     Schema := 'enterprise-install-maintenance-request-v6';
     if Operation = 'inspect-lifecycle' then Confirmation := ',"confirm_no_active_tasks":false'
     else Confirmation := ',"confirm_no_active_tasks":true';
@@ -595,6 +615,7 @@ begin
   ObservedPhase := '';
   RepairState := '';
   LifecycleState := '';
+  UpgradeState := '';
   MatchingLifecycleRelease := False;
   InstallationId := '';
   RawRoot := BundleRoot + '\raw\{#ArchiveRootPrefix}';
@@ -615,8 +636,8 @@ begin
   Request := RequestJson;
   CredentialPage.Values[1] := '';
   CredentialPage.Values[2] := '';
-  GraphicalPipeActive := not ShouldMaintainEntry;
-  DetachButton.Visible := GraphicalPipeActive and (MaintenanceOperation <> 'inspect-program') and not IsCacheOperation and not IsLifecycleOperation;
+  GraphicalPipeActive := not ShouldMaintainEntry or IsUpgradeOperation;
+  DetachButton.Visible := GraphicalPipeActive and (MaintenanceOperation <> 'inspect-program') and not IsCacheOperation and not IsLifecycleOperation and not IsUpgradeOperation;
   try
     if not PipeExchange(PipeSuffix, Request, Response) then begin
       Request := '';
@@ -641,7 +662,14 @@ begin
       LastStableCode := 'INSTALL_IDENTITY_INVALID';
       Result := False;
     end;
-    if IsLifecycleOperation then begin
+    if IsUpgradeOperation then begin
+      if Pos('"upgrade_state":"ELIGIBLE"', Response) > 0 then UpgradeState := 'ELIGIBLE'
+      else if Pos('"upgrade_state":"AWAITING_REGISTRATION"', Response) > 0 then UpgradeState := 'AWAITING_REGISTRATION'
+      else if Pos('"upgrade_state":"COMPLETE"', Response) > 0 then UpgradeState := 'COMPLETE'
+      else if Pos('"upgrade_state":"ROLLED_BACK"', Response) > 0 then UpgradeState := 'ROLLED_BACK'
+      else if Pos('"upgrade_state":"RECOVERY_REQUIRED"', Response) > 0 then UpgradeState := 'RECOVERY_REQUIRED'
+      else begin Result := False; LastStableCode := 'INSTALL_SETUP_BRIDGE_RESPONSE_INVALID'; end;
+    end else if IsLifecycleOperation then begin
       if Pos('"lifecycle_state":"UNINSTALLED"', Response) > 0 then LifecycleState := 'UNINSTALLED'
       else if Pos('"lifecycle_state":"INSTALLED"', Response) > 0 then LifecycleState := 'INSTALLED'
       else if Pos('"lifecycle_state":"UNINSTALLING"', Response) > 0 then LifecycleState := 'UNINSTALLING'
@@ -698,7 +726,8 @@ begin
   Result := LifecycleSupportReady and HexValue(InstallationId, 32) and
     ((MaintenanceOperation = 'install') or
      ((MaintenanceOperation = 'repair-entry') and MatchingLifecycleRelease) or
-     ((MaintenanceOperation = 'reinstall-retained') and (LifecycleState = 'INSTALLED')));
+     ((MaintenanceOperation = 'reinstall-retained') and (LifecycleState = 'INSTALLED')) or
+     (IsUpgradeOperation and ((UpgradeState = 'AWAITING_REGISTRATION') or (UpgradeState = 'COMPLETE'))));
 end;
 
 function ExtractCacheRows(const Response: String): String;
@@ -801,7 +830,7 @@ begin
     '安装包已包含独立 Python 运行环境，无需安装 Python。';
 
   ModePage := CreateInputOptionPage(wpWelcome, '选择安装或维护位置',
-    '已有安装优先使用原位置', '维护不重置账号、数据库、配置或当前版本；后续页面明确选择入口修复、程序修复、恢复或查看状态。业务升级仍由更新中心执行。', True, False);
+    '已有安装优先使用原位置', '已有数据不作为新安装重建；可选择入口修复、同版本维护、保留数据卸载重装或本包支持的离线升级。', True, False);
   ModePage.Add('使用推荐位置（已有安装优先）');
   ModePage.Add('选择安装位置');
   ModePage.SelectedValueIndex := 0;
@@ -822,8 +851,8 @@ begin
     '内嵌 Release 身份和三个核心资产');
 
   OperationPage := CreateInputOptionPage(EnvironmentPage.ID, '选择维护操作',
-    '保留原账号、数据库、画布、素材、配置及当前版本',
-    '程序修复需要与当前 Release 完全相同的安装包，且服务已停止。未知升级或恢复记录不能由这里解除。', True, False);
+    '保留原账号、数据库、画布、素材、配置和安装身份',
+    '同版本修复使用原包；离线升级只接受本包证明兼容的较新版本。服务须已停止，未知升级或数据库 Schema 会被阻断。', True, False);
   OperationPage.Add('只修复固定入口与快捷方式');
   OperationPage.Add('修复当前版本程序与 Python（不是业务升级）');
   OperationPage.Add('恢复上次中断的程序修复');
@@ -834,6 +863,9 @@ begin
   OperationPage.Add('完成上次中断的保留数据卸载（需本包证明原事务）');
   OperationPage.Add('恢复保留数据安装／上次中断的重装（只接受同一 Release）');
   OperationPage.Add('仅检查卸载／重装状态（不执行恢复）');
+  OperationPage.Add('升级到本包版本／跨版本保留数据重装（包含固定入口与维护安装器）');
+  OperationPage.Add('显式恢复本包上次中断的离线升级／继续完成 Windows 登记');
+  OperationPage.Add('仅检查本包离线升级资格或恢复状态（不执行升级）');
   OperationPage.SelectedValueIndex := 0;
   StatusButton := TNewButton.Create(WizardForm);
   StatusButton.Parent := OperationPage.Surface;
@@ -899,7 +931,7 @@ begin
     ((PageID = CredentialPage.ID) and ExistingEntryRepair) or
     ((PageID = OperationPage.ID) and not ExistingEntryRepair) or
     ((PageID = CachePage.ID) and not IsCacheOperation) or
-    ((PageID = TaskConfirmationPage.ID) and ((ShouldMaintainEntry and not IsLifecycleOperation) or (MaintenanceOperation = 'inspect-program') or (MaintenanceOperation = 'inspect-lifecycle') or IsCacheOperation)) or
+    ((PageID = TaskConfirmationPage.ID) and ((ShouldMaintainEntry and not IsLifecycleOperation and not IsUpgradeOperation) or (MaintenanceOperation = 'inspect-program') or (MaintenanceOperation = 'inspect-lifecycle') or (MaintenanceOperation = 'inspect-upgrade') or IsCacheOperation)) or
     ((PageID = wpSelectTasks) and not ShouldMaintainEntry);
 end;
 
@@ -910,7 +942,7 @@ begin
       '原安装目录：' + SelectedInstallRoot + #13#10 + #13#10 +
       '已发现已有安装候选，执行时仍需完整核验其当前 Release。' + #13#10 +
       '只修复固定 EXE、实例登记和快捷方式。不会初始化或迁移数据库，不会改变当前版本。' + #13#10 +
-      '下一页明确选择入口修复、同版本程序/Python 修复、上次中断恢复或只读进度查看。'
+      '下一页明确选择入口修复、同版本维护、保留数据卸载重装或本包支持的离线升级。'
   else
     EnvironmentPage.RichEditViewer.Text := '操作：首次安装' + #13#10 +
       '安装根目录：' + SelectedInstallRoot + #13#10 + #13#10 +
@@ -933,7 +965,13 @@ end;
 function UpdateReadyMemo(Space, NewLine, MemoUserInfoInfo, MemoDirInfo,
   MemoTypeInfo, MemoComponentsInfo, MemoGroupInfo, MemoTasksInfo: String): String;
 begin
-  if IsLifecycleOperation then
+  if IsUpgradeOperation then
+    Result := '操作：' + MaintenanceCaption + NewLine +
+      Space + '原安装目录：' + SelectedInstallRoot + NewLine +
+      Space + '目标版本：{#AppVersion}；账号、数据库、画布、素材、配置和安装身份保持。' + NewLine +
+      Space + '仅接受已证明兼容的相同 Schema；分别核验程序、固定入口、维护安装器和 Windows 登记。' + NewLine +
+      Space + '目标失败恢复来源版本；成功后完成登记才开放业务访问。'
+  else if IsLifecycleOperation then
     Result := '操作：' + MaintenanceCaption + NewLine +
       Space + '原安装目录：' + SelectedInstallRoot + NewLine +
       Space + '保留原账号、数据库、画布、素材、配置、备份及安装身份。' + NewLine +
@@ -1012,6 +1050,16 @@ begin
       if RunBridge then MsgBox('已核验的卸载／重装状态：' + LifecycleState + #13#10 +
         '没有执行恢复或初始化业务数据。', mbInformation, MB_OK)
       else MsgBox('状态未通过核验，请保留原记录。' + #13#10 + LastStableCode, mbError, MB_OK);
+    finally InstallProgress.Hide; end;
+  end;
+  if (CurPageID = OperationPage.ID) and (MaintenanceOperation = 'inspect-upgrade') then begin
+    Result := False;
+    InstallProgress.Show;
+    try
+      PrepareBundle;
+      if RunBridge then MsgBox('本包核验的离线升级状态：' + UpgradeState + #13#10 +
+        '未执行升级或恢复，也未初始化业务数据。', mbInformation, MB_OK)
+      else MsgBox('资格或恢复状态未通过核验；请保留原记录。' + #13#10 + LastStableCode, mbError, MB_OK);
     finally InstallProgress.Hide; end;
   end;
   if (CurPageID = OperationPage.ID) and (MaintenanceOperation = 'inspect-program') then begin
@@ -1102,7 +1150,8 @@ var
 begin
   if not ((MaintenanceOperation = 'install') or
       ((MaintenanceOperation = 'repair-entry') and MatchingLifecycleRelease) or
-      ((MaintenanceOperation = 'reinstall-retained') and (LifecycleState = 'INSTALLED'))) then exit;
+      ((MaintenanceOperation = 'reinstall-retained') and (LifecycleState = 'INSTALLED')) or
+      (IsUpgradeOperation and (UpgradeState = 'AWAITING_REGISTRATION'))) then exit;
   Directory := AddBackslash(SelectedInstallRoot) + 'state\windows-maintenance';
   Info := SupportInfo(SelectedInstallRoot);
   Target := AddBackslash(Directory) + 'maintenance-setup.exe';
@@ -1126,7 +1175,8 @@ var
 begin
   if not ((MaintenanceOperation = 'install') or
       ((MaintenanceOperation = 'repair-entry') and MatchingLifecycleRelease) or
-      ((MaintenanceOperation = 'reinstall-retained') and (LifecycleState = 'INSTALLED'))) then exit;
+      ((MaintenanceOperation = 'reinstall-retained') and (LifecycleState = 'INSTALLED')) or
+      (IsUpgradeOperation and (UpgradeState = 'AWAITING_REGISTRATION'))) then exit;
   Directory := AddBackslash(SelectedInstallRoot) + 'state\windows-maintenance';
   if HasReparseAncestors(Directory) then RaiseException('INSTALL_UNINSTALL_SUPPORT_UNPROVEN');
   Info := SupportInfo(SelectedInstallRoot);
@@ -1312,10 +1362,11 @@ begin
   try
     if IsCacheOperation then RaiseException('INSTALL_CACHE_INSPECTION_ONLY');
     if MaintenanceOperation = 'uninstall-retain' then RaiseException('INSTALL_UNINSTALL_WINDOWS_ENTRY_REQUIRED');
-    if (not ShouldMaintainEntry or IsLifecycleOperation) and not TaskConfirmationPage.Values[0] then
+    if (not ShouldMaintainEntry or IsLifecycleOperation or IsUpgradeOperation) and not TaskConfirmationPage.Values[0] then
       RaiseException('INSTALL_PROGRAM_TASK_CONFIRMATION_REQUIRED');
     PrepareBundle;
-    if not ShouldMaintainEntry then SetStage('核验并执行已确认的程序维护', 3)
+    if IsUpgradeOperation then SetStage('核验并执行保留数据升级／恢复', 3)
+    else if not ShouldMaintainEntry then SetStage('核验并执行已确认的程序维护', 3)
     else if ExistingEntryRepair then SetStage('核验并修复固定入口（不修改业务数据）', 3)
     else SetStage('初始化企业数据库', 3);
     LastStableCode := 'INSTALL_SETUP_BRIDGE_FAILED';
@@ -1328,6 +1379,19 @@ begin
       Result := Result +
         '错误代码：' + LastStableCode;
       exit;
+    end;
+    if IsUpgradeOperation then begin
+      if UpgradeState = 'AWAITING_REGISTRATION' then begin
+        PrepareLifecycleSupport;
+        WizardForm.FinishedLabel.Caption := '程序、固定入口和维护安装器已升级；正在完成 Windows 登记，业务访问暂时暂停。原业务数据和安装身份保持。';
+        SetStage('等待 Windows 登记与最终核验', 6);
+        exit;
+      end;
+      if UpgradeState = 'ROLLED_BACK' then begin
+        Result := '离线升级已恢复来源版本和原工具；业务数据未恢复旧备份。请检查原入口后再决定升级，不会登记目标版本。';
+        exit;
+      end;
+      RaiseException('INSTALL_UPGRADE_RECOVERY_REQUIRED');
     end;
     if IsLifecycleOperation then begin
       if (MaintenanceOperation = 'reinstall-retained') and (LifecycleState = 'INSTALLED') then begin
@@ -1412,6 +1476,17 @@ begin
     if not SetIniString('Lifecycle', 'Uninstaller', ExtractFileName(Uninstaller), Info) or
        not SetIniString('Lifecycle', 'UninstallerSha256', GetSHA256OfFile(Uninstaller), Info) then
       MsgBox('安装已完成，但卸载入口登记未完成；请保留同版本安装包进行检查。业务数据未重建。', mbInformation, MB_OK);
+    if IsUpgradeOperation then begin
+      FinalizingUpgrade := True;
+      try
+        if RunBridge and (UpgradeState = 'COMPLETE') then
+          WizardForm.FinishedLabel.Caption := '离线升级／跨版本保留数据重装已完成。程序、固定入口、维护安装器及 Windows 登记已核验；原账号、数据库、素材、配置和安装身份保留。'
+        else begin
+          WizardForm.FinishedLabel.Caption := '目标版本运行检查已通过，但 Windows 登记尚未完成，业务访问仍暂停。请重开本安装包并选择显式恢复；不会自动回退已成功运行的新版本。';
+          MsgBox(WizardForm.FinishedLabel.Caption + #13#10 + LastStableCode, mbInformation, MB_OK);
+        end;
+      finally FinalizingUpgrade := False; end;
+    end;
   end;
 end;
 

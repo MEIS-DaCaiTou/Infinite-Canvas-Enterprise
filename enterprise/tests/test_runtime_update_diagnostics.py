@@ -564,6 +564,26 @@ def test_lost_ack_cannot_cancel_committed_handoff_or_later_phase(tmp_path, monke
     assert calls == [] and pointer.release.release_id == "release-A"
 
 
+@pytest.mark.parametrize("result,expected", [("control_timeout", "RECOVERY_REQUIRED"), ("update_handoff_job_blocked", "FAILED")])
+def test_handoff_failure_keeps_release_identity_for_recovery(tmp_path, monkeypatch, result, expected):
+    from enterprise import update_api
+    roots, store, job_id, pointer, calls, launcher = _execution_fixture(tmp_path, monkeypatch)
+    store.reserve_execution(job_id)
+    store.write_status(job_id, "UPDATING", actor_user_id="actor-1", result_code="SYSTEM_UPDATE_STARTED",
+                       source_release_id="release-A", target_release_id="release-B")
+    before = store.read_status(job_id)
+    monkeypatch.setattr(update_api, "PATH_ROOTS", roots)
+    monkeypatch.setattr(update_api, "request_portable_update_handoff", lambda **_kw: {"result": result})
+    monkeypatch.setattr(update_api.edb, "log_action", lambda *_: None)
+    update_api._launch_handoff(job_id, "actor-1")
+    after = store.read_status(job_id)
+    assert after["state"] == expected
+    for key in ("source_release_id", "target_release_id", "created_at", "plan_sha256"):
+        assert after.get(key) == before.get(key)
+    assert store.lock_path.exists() == (expected == "RECOVERY_REQUIRED")
+    assert not calls and pointer.release.release_id == "release-A"
+
+
 def test_api_commit_mutex_timeout_keeps_acceptance_unknown_and_reserved(tmp_path, monkeypatch):
     from enterprise import update_api
     from enterprise.runtime import handoff_commit

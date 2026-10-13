@@ -22,7 +22,7 @@ from enterprise.migrations.versioned import inspect_schema_metadata_connection
 from enterprise.ops.update.mvp import UpdateJobStore
 from enterprise.paths import PortableRootInputs, derive_portable_path_roots, validate_path_roots_for_use
 from enterprise.release.current_release import read_current_release_result_from_state_root, sync_state_root_directory
-from enterprise.release.release_manifest_v2 import canonical_json, verify_materialized_release
+from enterprise.release.release_manifest_v2 import canonical_json, read_release_manifest_v2, verify_materialized_release
 from enterprise.runtime.windows_owned_move import rename_owned, release_fence
 
 PLAN_SCHEMA = "enterprise-retained-lifecycle-plan-v1"
@@ -59,8 +59,8 @@ def _plain_file_identity(path):
         return files._fd_identity(stream)
 
 
-def _database_contract(roots):
-    """Read an offline SQLite identity; never recover or ignore a WAL/journal."""
+def _database_inspection(roots):
+    """Read offline SQLite metadata; never recover or ignore a WAL/journal."""
     database = roots.DATA_ROOT / "enterprise.db"
     files._safe(database)
     info = files._io(database).lstat()
@@ -85,6 +85,11 @@ def _database_contract(roots):
     if (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns) != (
             after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns):
         _fail("INSTALL_LIFECYCLE_CHANGED")
+    return metadata
+
+
+def _database_contract(roots):
+    metadata = _database_inspection(roots)
     return {name: metadata[name] for name in ("schema_version", "schema_sha256", "ledger_sha256")}
 
 
@@ -116,23 +121,60 @@ def _read_fence(path):
 
 
 def _source(root, assets, local):
+    return _source_manifest(root, assets.manifest, local)
+
+
+def _source_manifest(root, manifest, local):
     root = files._safe(root)
     pointer = read_current_release_result_from_state_root(root / "state")
-    if (pointer.release.release_id != assets.manifest.release_id
-            or pointer.release.manifest_sha256 != assets.manifest.raw_sha256):
+    if (pointer.release.release_id != manifest.release_id
+            or pointer.release.manifest_sha256 != manifest.raw_sha256):
         _fail("INSTALL_LIFECYCLE_SAME_RELEASE_REQUIRED")
     roots = derive_portable_path_roots(PortableRootInputs(root, local), pointer.release.release_id)
     validate_path_roots_for_use(roots)
+    if files._exists(roots.STATE_ROOT / "upgrade-sequence-active.json"):
+        _fail("INSTALL_LIFECYCLE_UPGRADE_RECOVERY_REQUIRED")
     before = _snapshot(roots.STATE_ROOT / "installation.json", maximum=16384)
     if before is None:
         _fail("INSTALL_LIFECYCLE_IDENTITY_REQUIRED")
     record = validate_installation_record(root, before)
+    if files._exists(roots.STATE_ROOT / "install-upgrade-active.json"):
+        _fail("INSTALL_LIFECYCLE_UPGRADE_RECOVERY_REQUIRED")
     if UpdateJobStore(roots).pending_recovery_jobs(initialize=False):
         _fail("INSTALL_LIFECYCLE_UPDATE_RECOVERY_REQUIRED")
     if files._exists(roots.RUNTIME_ROOT / "runtime-reconcile.lock"):
         _fail("INSTALL_LIFECYCLE_RUNTIME_BUSY")
     _runtime_quiescent(roots)
     return roots, record
+
+
+def current_source(*, install_root, local_app_data_base):
+    """Verify the installed/retained source, independently of the tool's version.
+
+    An absent program is accepted only through the existing immutable lifecycle
+    plan and its exact object placement. This never adopts an unknown layout.
+    """
+    root = files._safe(Path(install_root))
+    pointer = read_current_release_result_from_state_root(root / "state")
+    roots = derive_portable_path_roots(PortableRootInputs(root, Path(local_app_data_base)), pointer.release.release_id)
+    if files._exists(roots.STATE_ROOT / "upgrade-sequence-active.json"):
+        _fail("INSTALL_LIFECYCLE_UPGRADE_RECOVERY_REQUIRED")
+    program = roots.APP_ROOT
+    if not files._exists(program):
+        directory, plan, state = _active(roots)
+        if state is None or state["status"] not in {"UNINSTALLED", "REINSTALLING", "UNINSTALLING"}:
+            _fail()
+        program, _entry = _placements(roots, directory, plan)
+    manifest = read_release_manifest_v2(program / "release-manifest.json")
+    roots, record = _source_manifest(root, manifest, Path(local_app_data_base))
+    verify_materialized_release(program, inventory_path=program / "release-payload-inventory.json")
+    if files._exists(roots.STATE_ROOT / STATE_NAME):
+        directory, plan, state = _active(roots)
+        if state is not None and state["status"] != "INSTALLED":
+            with files._lease(directory / "runner.lock", plan["lease"]):
+                _unchanged(roots, record, plan)
+                _placements(roots, directory, plan)
+    return roots, record, manifest
 
 
 def _state(directory, plan, status):
@@ -325,6 +367,10 @@ def reinstall_retained(*, install_root, release_dir, local_app_data_base, confir
         _fail("INSTALL_LIFECYCLE_TASK_CONFIRMATION_REQUIRED")
     assets = verify_release_assets(Path(release_dir))
     roots, record = _source(Path(install_root), assets, Path(local_app_data_base))
+    return _reinstall(roots, record)
+
+
+def _reinstall(roots, record, *, keep_fence=False):
     directory, plan, state = _active(roots)
     lock = roots.STATE_ROOT / "system-update-active.lock"
     if state is not None and state["status"] == "INSTALLED" and not files._exists(lock):
@@ -352,10 +398,47 @@ def reinstall_retained(*, install_root, release_dir, local_app_data_base, confir
         _state(directory, plan, "INSTALLED")
         if _marker(lock) != plan["fence"]:
             _fail()
-        release_fence(lock, plan["fence"])
-        sync_state_root_directory(roots.STATE_ROOT)
-        _checkpoint("fence_released")
+        if not keep_fence:
+            release_fence(lock, plan["fence"])
+            sync_state_root_directory(roots.STATE_ROOT)
+            _checkpoint("fence_released")
         return _public(plan, "INSTALLED")
+
+
+def refresh_installed_proof(roots, manifest):
+    """Record a new installed baseline under the offline updater's own lease.
+
+    Called before any Runtime start. Old immutable lifecycle histories remain
+    intact; the new pointer/native objects cannot reuse their old fingerprints.
+    """
+    _runtime_quiescent(roots)
+    record = validate_installation_record(roots.INSTALL_ROOT, _snapshot(roots.STATE_ROOT / "installation.json"))
+    verify_materialized_release(roots.APP_ROOT, inventory_path=roots.APP_ROOT / "release-payload-inventory.json")
+    operation = uuid.uuid4().hex
+    directory = roots.STATE_ROOT / "install-lifecycle" / operation
+    files._safe(directory, missing=True)
+    files._io(directory).mkdir(parents=True, exist_ok=False)
+    files._new_json(directory / "fence.json", {"schema_version": FENCE_SCHEMA,
+        "operation_id": operation, "installation_id": record["installation_id"]})
+    with files._io(directory / "runner.lock").open("xb") as stream:
+        stream.write(b"C"); stream.flush(); os.fsync(stream.fileno())
+    plan = {"schema_version": PLAN_SCHEMA, "operation_id": operation,
+        "installation_id": record["installation_id"], "release_id": roots.APP_ROOT.name,
+        "manifest_sha256": manifest.raw_sha256, "install_root": str(roots.INSTALL_ROOT),
+        "root_identity": files._identity(roots.INSTALL_ROOT),
+        "record": files._file(roots.STATE_ROOT / "installation.json"),
+        "pointer": files._file(roots.STATE_ROOT / "current-release.json"),
+        "data_identity": files._identity(roots.DATA_ROOT), "config_identity": files._identity(roots.CONFIG_ROOT),
+        "database_identity": _plain_file_identity(roots.DATA_ROOT / "enterprise.db"),
+        "config": files._file(roots.CONFIG_ROOT / "enterprise.env"),
+        "database_contract": _database_contract(roots), "program": files._tree(roots.APP_ROOT),
+        "entry": files._file(roots.INSTALL_ROOT / ENTRY_NAME), "fence": _marker(directory / "fence.json"),
+        "lease": files._file(directory / "runner.lock")["identity"]}
+    if plan["entry"]["sha256"] != record["native_entry"]["sha256"]:
+        _fail("INSTALL_LIFECYCLE_ENTRY_UNPROVEN")
+    files._new_json(directory / "plan.json", plan)
+    sync_state_root_directory(directory)
+    _state(directory, plan, "INSTALLED")
 
 
 def inspect_lifecycle(*, install_root, release_dir, local_app_data_base):

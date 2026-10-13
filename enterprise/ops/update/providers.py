@@ -32,6 +32,7 @@ GITHUB_ALLOWED_HOSTS = frozenset(
 GITHUB_MANIFEST_ASSET = "ops-release-manifest-v1.json"
 GITHUB_MANIFEST_V2_ASSET = "ops-release-manifest-v2.json"
 GITHUB_INVENTORY_V2_ASSET = "release-payload-inventory.json"
+GITHUB_MAINTENANCE_ASSET = "maintenance-tools-v1.json"
 GITHUB_METADATA_ACCEPT = "application/vnd.github+json"
 GITHUB_ASSET_ACCEPT = "application/octet-stream"
 GITHUB_API_VERSION = "2022-11-28"
@@ -351,6 +352,24 @@ class GitHubReleasesProvider:
                     ):
                         raise ReleaseProviderError("GitHub release upgrade route digest is invalid")
                     route_digest = digest[7:]
+                tool_assets = [item for item in assets if type(item) is dict
+                               and item.get("name") == GITHUB_MAINTENANCE_ASSET]
+                tools = self._release_asset(assets, exact_name=GITHUB_MAINTENANCE_ASSET) if tool_assets else None
+                tools_digest = None
+                maintenance_assets = ()
+                if tools is not None:
+                    digest = tool_assets[0].get("digest")
+                    if (type(digest) is not str or len(digest) != 71 or not digest.startswith("sha256:")
+                            or any(char not in "0123456789abcdef" for char in digest[7:])
+                            or not 1 <= tools["size_bytes"] <= 16384):
+                        raise ReleaseProviderError("GitHub maintenance asset digest is invalid")
+                    tools_digest = digest[7:]
+                    maintenance_assets = tuple(
+                        (name, str(item["api_url"]), int(item["size_bytes"]))
+                        for name in ("InfiniteCanvas.exe", "native-entry-build-record.json",
+                                     "InfiniteCanvasSetup.exe", "unsigned-installer-build-record.json")
+                        for item in [self._release_asset(assets, exact_name=name)]
+                    )
                 version = _tag_to_version(release.get("tag_name"))
                 parse_version(version)
                 sizes = (manifest.get("size_bytes"), inventory.get("size_bytes"), archive.get("size_bytes"))
@@ -373,6 +392,10 @@ class GitHubReleasesProvider:
                         upgrade_routes_url=None if route is None else str(route["api_url"]),
                         upgrade_routes_size_bytes=None if route is None else int(route["size_bytes"]),
                         upgrade_routes_sha256=route_digest,
+                        maintenance_tools_url=None if tools is None else str(tools["api_url"]),
+                        maintenance_tools_size_bytes=None if tools is None else int(tools["size_bytes"]),
+                        maintenance_tools_sha256=tools_digest,
+                        maintenance_assets=maintenance_assets,
                     )
                 )
             except (ReleaseProviderError, ValueError):
