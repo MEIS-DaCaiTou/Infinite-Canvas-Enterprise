@@ -3,7 +3,7 @@
 The scanner is deliberately a conservative maintenance control, not a proof
 that static analysis can discover every possible write. It combines Python AST
 inspection, focused script inspection, stable call fingerprints, frozen
-operation counts, and W01-W49 flow anchors.
+operation counts, and W01-W50 flow anchors.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Iterable, Sequence
 
 
-_FLOW_IDS = frozenset(f"W{number:02d}" for number in range(1, 50))
+_FLOW_IDS = frozenset(f"W{number:02d}" for number in range(1, 51))
 _SCANNED_SUFFIXES = frozenset({".bat", ".cmd", ".js", ".ps1", ".py"})
 _EXCLUDED_PREFIXES = ("enterprise/tests/", "enterprise-static/", "static/")
 _PATH_METHODS = frozenset(
@@ -493,6 +493,9 @@ _MAIN_FLOW_BY_SYMBOL.update(
 )
 
 _OTHER_FLOW_BY_SYMBOL: dict[tuple[str, str], str] = {
+    # Personal UI preferences live under DATA_ROOT, never APP_ROOT. Replacement
+    # is atomic within the account directory; cleanup unlinks only its own temp.
+    ("enterprise/user_model_preferences.py", "save_preferences"): "W50",
     ("enterprise/db.py", "get_db"): "W18",
     ("enterprise/db.py", "set_canvas_project"): "W09",
     ("enterprise/interceptors.py", "_write_history_records"): "W07",
@@ -673,7 +676,7 @@ def _flow_for_operation(file: str, symbol: str) -> str:
 # every mapped site as (file, symbol, operation, normalized-call fingerprint,
 # Wxx flow). Line numbers are deliberately excluded, while duplicate identical
 # calls remain duplicate records. Any added/removed/changed call drifts it.
-EXPECTED_SITE_MANIFEST_DIGEST = "3b2d52dce83b432504481d51550d2412f8c76014787bc7c061d16f12a97275de"
+EXPECTED_SITE_MANIFEST_DIGEST = "90e60bdd4b5f3d413e41266339cc5560b87438e67d7c951daaa60ee04858b1f7"
 
 FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W01", "main.py", "startup_event"),
@@ -725,6 +728,7 @@ FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W47", "enterprise/fresh_install.py", "install_greenfield"),
     FlowAnchor("W48", "enterprise/canvas_task_journal.py", "CanvasTaskJournal._write"),
     FlowAnchor("W49", "enterprise/migrations/versioned.py", "create_database_backup"),
+    FlowAnchor("W50", "enterprise/user_model_preferences.py", "save_preferences"),
 )
 
 
