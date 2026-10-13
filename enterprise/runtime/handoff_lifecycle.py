@@ -84,21 +84,27 @@ def _received_failure(message: dict[str, object], fallback: str) -> HandoffLifec
     return failure
 
 
-def host_creation_flags() -> int:
-    return 0x01000208 if os.name == "nt" else 0
+def host_creation_flags(context: dict[str, object] | None = None) -> int:
+    if os.name != "nt":
+        return 0
+    # Windows can retain a process in an ambient Job even after Explorer starts
+    # it. Only request explicit breakaway when the observed Job allows it.
+    # Ordinary detached creation keeps ambient limits; the runtime's own Job,
+    # worker independence and readiness proofs remain separate requirements.
+    context = context or {}
+    if context.get("job_query_ok") is True:
+        if context.get("process_in_job") is False:
+            return 0x208
+        flags = context.get("job_limit_flags")
+        if context.get("process_in_job") is True and type(flags) is int and not flags & 0x0800:
+            return 0x208
+    return 0x01000208
 
 
 def worker_creation_flags(context: dict[str, object]) -> int:
     if os.name != "nt":
         return 0
-    flags = context.get("job_limit_flags")
-    silent_only = (
-        context.get("process_in_job") is True
-        and type(flags) is int
-        and bool(flags & 0x1000)
-        and not bool(flags & 0x0800)
-    )
-    return 0x208 if silent_only else host_creation_flags()
+    return host_creation_flags(context)
 
 
 def _kernel32():
@@ -351,9 +357,10 @@ def _probe_launcher() -> int:
     stage = "probe_host_job"
     try:
         cleanup_job = ProcessJob()
-        # Never retry WinError 5 with ordinary flags.
+        # Choose once from the same context contract as the real launcher.
+        # A denied creation is never retried with weaker flags.
         stage = "probe_host_create"
-        host = _spawn_probe("--probe-host", host_creation_flags())
+        host = _spawn_probe("--probe-host", host_creation_flags(current_job_diagnostics()))
         # Enclose it immediately. Only this newly owned host is assigned; the
         # source, worker and ordinary launcher remain untouched.
         stage = "probe_host_assign"

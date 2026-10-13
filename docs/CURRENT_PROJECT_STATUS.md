@@ -1,13 +1,14 @@
 # Infinite Canvas Enterprise 当前项目状态
 
 更新时间：2026-10-13
-核验对象：准确 GitHub main、#154/#155/#156 候选 Head 和最终 CI、正式 Release、本地源码与各工作区，以及已有安装副本/GUI/HTTP 证据。历史客户反馈保留采集时点；本轮只同步文档和 Git，没有重新执行升级、付费请求或生产操作。
+核验对象：准确 GitHub main、#154/#155/#156 合并及最终 CI、正式 Release、本地工作区和 C8 固定 Windows 启动/在线升级副本证据。历史客户反馈保留采集时点；没有付费请求、正式发行或生产操作。
 
 ## 1. 开发基线、发行与现场必须分开
 
 | 层级 | 本次事实 | 不能据此声称 |
 | --- | --- | --- |
-| 主线核验基点 | `main@3e0deeae1d737d01300708a5783c303b8d496351`；#137–#142、#146–#155 已合并；#153 发布目录分页与完整性已进入主线；服务器及 500+/200+ 长期约束随 #152 入主线 | #156 已合并；主线能力已随正式 10.1 全部交付 |
+| 主线核验基点 | `main@e89a288fe1ce8e5066ebebe1971e69bf5d4c7945`；#137–#142、#146–#156 已合并；#153 分页已进入主线；服务器及 500+/200+ 长期约束随 #152 入主线 | 主线新增能力已随正式 10.1 全部交付 |
+| 最新 main CI | 准确 e89a288 的 [Enterprise/Runtime](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/38364640885)、[文档](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/38364640948) 最终 SUCCESS；固定 EXE opt-in SKIPPED | PR CI 替代 main CI，或跳过等于真实副本验收 |
 | 历史 main CI | 准确 bc33339 的 [Enterprise/Runtime](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/38147727696)、[文档](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/38147727686) 三项检查最终 SUCCESS；真实固定 EXE opt-in SKIPPED，原生编译未触发 | 用 PR CI 替代 main CI；跳过门禁等于已验收 |
 | 开发基线收口 | #146 选择性接回 10.1 同源页面提示和数据库 v2 迁移/构建契约，保留主线安全治理、任务回执、原生入口和恢复保护；准确整合范围与验证见 [收口记录](./ops/DEVELOPMENT-BASELINE-CLOSEOUT-2026-10-09.md) | 整条维护分支已合并；任意历史安装已受支持 |
 | 主线诊断/恢复增量 | #147、#148 已合并。#148 工作包 B 完成精确 Job/READY、源进程 lease、接受竞争和超时恢复保护；310 项关联回归通过。代码 `6002300eff5fd4750f84bfe684b41a739c541120` 的本机固定 EXE 合成三门禁通过、测试进程/端口清理确认；准确最终 Head `fd8303337ea22bab91d4d1eb84606dcaa410f4ca` 三项常规 CI 及独立审查通过，2026-10-10 合并；[实施与验证记录](./ops/RUNTIME-UPDATE-LIFECYCLE-2026-10-09.md) | 已进入正式 10.1、所有安装副本或客户环境已验收、现场旧失败根因已确定 |
@@ -35,13 +36,14 @@
 
 ### 最新完整工作包的合并与候选状态
 
-以下是 2026-10-13 核验快照；#154/#155 已合并，#156 尚待整合后的 CI。合并源码不等于正式 Release 或客户验收。
+以下是 2026-10-13 核验快照；#154/#155/#156 已合并，准确 e89a288 主线 CI 已成功。合并源码不等于正式 Release 或客户验收。
 
 | 候选 | 准确功能提交与 CI | 实现及限制 |
 | --- | --- | --- |
 | [#154 C5](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/154)，MERGED | `64c2adff3358e7f806d3cf04a26d86639597e573`；Enterprise/Runtime/文档三项 SUCCESS | 经核验的目标 Python 更新执行器接管、旧来源兼容和失败恢复；完整副本四类证据见 [C5](./ops/VERIFIED-UPDATER-HANDOFF-2026-10-11.md)，不包含原生工具替换和自动多跳 |
 | [#155 C6/C7](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/155)，MERGED | `7029e1d1fdda7ecf962cf9e9a4f15cadf5dcc16c`；Enterprise/Runtime/原生 EXE/Setup/文档四项 SUCCESS | 离线升级、保留数据跨版本重装、原生工具及最多 8 跳连续执行/检查点；已合并为 `3e0deeae`，C5 前置已合并为 `11c9a38c`。限定 GUI 已有合成副本证据；在线检查点继续在本机仍被 handoff Job 资格阻断，见 [C6](./ops/OFFLINE-RETAINED-UPGRADE-2026-10-12.md)、[C7](./ops/ONLINE-UPGRADE-SEQUENCE-2026-10-12.md) |
-| [#156 产品集成修复](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/156)，OPEN/Draft | 功能基点 `4bdd9a16074abac86ce47fc1e81b55bfb12cf63c`；Enterprise/Runtime/文档三项 SUCCESS。后续纯文档提交须另看对应 CI | 12 个已确认 Zhenzhen JSON 图像模型/别名内置能力与请求构造、个人模型列表、后台操作确认、素材扩展同源接线；范围见 [实现记录](./ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md) |
+| [#156 产品集成修复](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/156)，MERGED | 最终 Head `5b90391f30e0cfde4e15dd4d4b23c3ca2f5d13f5` 三项 CI SUCCESS，合并 `e89a288`；原功能基点 `4bdd9a1` 保留 | 12 个已确认 Zhenzhen JSON 图像模型/别名内置能力与请求构造、个人模型列表、后台操作确认、素材扩展同源接线；范围见 [实现记录](./ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md) |
+| C8 Windows 启动/在线交接，开发候选 | 核心修正 `69048021`；明确非自动更新文案 `955e319c`；受影响检查和真实单跳/恢复见记录，候选 CI 与合并另行核对 | Explorer 固定入口实际启动，关闭窗口后业务可用；单跳在线成功、目标端口受阻自动恢复。启动不自动更新；更新由管理员单独确认。见 [C8](./ops/WINDOWS-START-UPDATE-CLOSEOUT-2026-10-13.md)，不外推在线原生替换、所有多跳/历史/GUI |
 
 三包均未发布，固定 EXE real gates 的自动 opt-in 为 SKIPPED；已有真实副本证据不因 CI 跳过被抹除，也不因此外推全部客户。
 
@@ -73,10 +75,10 @@
 当前仍是 **阶段 3：统一安装与在线升级体验收敛**，唯一实施顺序见[路线图](./roadmap/DEVELOPMENT-ROADMAP-2026-2027.md)。
 
 1. #146–#153 的主线基础、固定入口、缓存清理、同版保留数据卸载/重装和目录分页已完成合并；C4 不再重复开发或重跑已有充分证据的测试。#148 的失败与最终合成三门禁、C2/C3 的限定证据继续保留。
-2. #154/#155 已按负责人授权核查准确 Head 并合并，包含目标执行器、离线/在线连续升级、原生工具和检查点恢复；没有将开发端核查称为新增独立审查。下一步优先处理 #155 在线来源交接在本机被 `SYSTEM_UPDATE_HANDOFF_JOB_BLOCKED` 拒绝的真实缺口，并在准确候选中复用已完成证据。合成两跳成功不证明真实整机重启和所有在线续接已通过。
+2. #154/#155 已按负责人授权合并，包含目标执行器、离线/在线连续升级、原生工具和检查点恢复。C8 修正本机已核实 Job 权限与创建参数不匹配，真实固定入口单跳/自动恢复已通过，仍待候选独立审查。采用一种正式 Windows 固定入口及已有停服离线后备路径，不扩大任意宿主/历史/GUI 矩阵；启动当前版本不要求更新。原合成两跳不证明整机重启和全部在线续接。
 3. GUI 状态按准确来源分列：#152 的历史卸载 Yes 点击仍缺证据；C6 后续合成安装副本已有标准卸载确认和限定跨版本重装 GUI 证据，代码已合入 main。不能把这两者写成全面通过或全部未验证；未知来源、未来 Schema、未列 GUI 和客户设备范围继续保留限制。
 4. #156 处理实际使用问题；管理员创建确认在 main 已有表单，旧正式 10.1 与现行主线契约不同。普通管理员不能因此获得创建管理员的权限。长期供应商适配由项目维护，普通用户在节点设置个人模型列表，不承担接口模板配置。真实付费、Chrome 扩展宿主与 PS 企业登录仍未验收。
-5. [#123](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/123) 仍 OPEN；画布回执和局部止损不是统一 Task/Attempt、费用账本、预算及完整查询恢复。按路线图推进，已受理任务不自动重复付费。
+5. [#123](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/123) 仍 OPEN/Draft，Head `7e6d90b8`；画布回执和局部止损不是统一 Task/Attempt、费用账本、预算及完整查询恢复。按路线图推进，已受理任务不自动重复付费。
 6. 当前企业部署为单台 Windows 主机。专业服务器/云、500+/200+ 保留长期架构约束；Linux、容器、PostgreSQL、多实例和容量实施待负责人后续需求，当前只提前保持可复用业务边界。没有整体重构、新 Release 或生产操作授权。
 7. 安装维护以已有设备正常迭代、数据保护和必要恢复为目标；按完整工程包交付，减少相关技术债，复用有效测试，不以数量、哈希或额外框架作为成果。
 
