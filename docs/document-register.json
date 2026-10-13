@@ -1,9 +1,13 @@
 {
   "schema_version": "enterprise-documents-v1",
   "reviewed_at": "2026-10-13",
-  "audit_base_commit": "4bdd9a16074abac86ce47fc1e81b55bfb12cf63c",
-  "scope": "All Git-managed/non-ignored Markdown/text; merged main 3e0deeae (#154/#155) and product candidate 4bdd9a1 are distinguished. Historical inputs and frozen evidence remain unchanged; documentation is not Release or production approval.",
+  "audit_base_commit": "955e319c27d4d60fac6dc3ea110206bf855a318b",
+  "scope": "All Git-managed/non-ignored Markdown/text; merged main e89a288 (#154/#155/#156) and Windows C8 candidate are distinguished. Historical inputs and frozen evidence remain unchanged; documentation is not Release or production approval.",
   "documents": [
+    {
+      "path": "docs/ops/WINDOWS-START-UPDATE-CLOSEOUT-2026-10-13.md",
+      "kind": "record"
+    },
     {
       "path": "docs/ops/ONLINE-UPGRADE-SEQUENCE-2026-10-12.md",
       "kind": "record"
