@@ -62,3 +62,11 @@
 [#157](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/157) 准确 Head `551f433db51444be2c96dec225b6479b8a854f00` 四项常规 CI 最终 SUCCESS，仍 OPEN/Draft、未获独立审查。其修正、实际固定入口单跳/恢复证据只按该候选解释；当前原有 main 与正式 10.1 不因候选更新。安装继续使用一种正式固定入口、启动不自动更新、管理员单独确认更新及已有停服离线后备路径；不扩大维护范围。本轮业务工作不操作安装副本。
 
 阶段 3 在线接管的宿主资格阻断继续保留：C7 既有日志一处在创建更新进程时 WinError 5，另一处在来源 Job 已排除后创建服务宿主的探针时 WinError 5；未证明全部祖先 Job 或客户唯一根因。[Microsoft 的嵌套 Job 契约](https://learn.microsoft.com/en-us/windows/win32/procthread/nested-jobs)说明进程脱离受沿途 Job 权限限制。没有修改外层宿主、关闭所有权保护或将此范围写成已验收。已交付的限定离线升级与显式恢复可复用，未知未来 Schema 不授权。
+
+## 2026-10-14 独立审查收口
+
+原 Head 5384a2a 的独立审查发现两项需修正缺口：Responses 的 background/SSE 传输异常仍会再次 POST；原任务查询下载失败时，旧 helper 的远程 URL fallback 被新持久回执缓存为成功。现已让 Responses 传输异常原样上抛，仅保留明确 4xx 拒绝的协议协商；新持久续查 callback 只接受存在的本地图片文件，未归档时返回 unknown 并保留原供应商 ID，可再次仅 GET 查询/下载。旧 `/api/image-task-query` fallback 契约保留，不扩大成整个供应商体系重构。
+
+补充实际函数的无网络回归：background 丢响应 1 POST；明确拒绝后 SSE 丢响应 2 POST，无第三次；明确两次拒绝可协商；5xx 不换协议；结果下载超时不缓存成功，再次 GET 后真实本地归档并缓存，不再提交生成。
+
+Responses 后台/SSE、专属 CLI 等尚未接入通用持久原任务续查，后台响应 ID 的长期恢复不在本包冒称完成；本轮修正的是未知响应后的重复付费风险。已有受控 Browser/硬退出证据继续按原来源保留，新 Head 的审查及 CI 单独核对。

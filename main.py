@@ -4017,11 +4017,8 @@ async def post_openai_responses(client, url, headers, body):
     5xx/超时一律不自动重试，避免上游已开始生成后重复扣费。"""
     bg_body = dict(body)
     bg_body["background"] = True
-    try:
-        resp = await client.post(url, headers=headers, json=bg_body)
-    except httpx.HTTPError as e:
-        print(f"RS background 请求传输失败，改走流式：{e}")
-        return await post_openai_responses_stream(client, url, headers, body)
+    # A lost response may already have incurred a paid generation.
+    resp = await client.post(url, headers=headers, json=bg_body)
     if resp.status_code in RESPONSES_REJECT_STATUSES:
         print(f"RS background 模式被拒（{resp.status_code}），改走流式：{resp.text[:200]}")
         return await post_openai_responses_stream(client, url, headers, body)
@@ -4125,9 +4122,9 @@ async def post_openai_responses_stream(client, url, headers, body):
             if completed is not None:
                 return wrap(200, completed)
             return wrap(502, error_payload or {"error": {"message": "RS 流式响应结束但没有 response.completed 事件"}})
-    except httpx.HTTPError as e:
-        print(f"RS 流式请求传输失败，回退非流式：{e}")
-        return await client.post(url, headers=headers, json=body)
+    except httpx.HTTPError:
+        # Keep the ambiguous submission with its original caller; do not POST again.
+        raise
 
 def provider_protocol(provider):
     return str((provider or {}).get("protocol") or "openai").strip().lower()
@@ -12880,7 +12877,12 @@ async def query_image_task_result(payload: ImageTaskQueryRequest, *, store_histo
     }
 
 async def query_saved_image_task(provider, upstream_task_id):
-    return await query_image_task_result(ImageTaskQueryRequest(provider_id=provider["id"], task_id=upstream_task_id), store_history=False, bound_provider=provider)
+    result = await query_image_task_result(ImageTaskQueryRequest(provider_id=provider["id"], task_id=upstream_task_id), store_history=False, bound_provider=provider)
+    if result.get("status") == "succeeded":
+        images = result.get("images") or []
+        if not images or any(not os.path.isfile(output_file_from_url(url) or "") for url in images):
+            raise HTTPException(502, "供应商已返回结果，但本地图片归档未完成；请稍后续查原任务，不要重新生成")
+    return result
 
 CANVAS_IMAGE_RECOVERY = CanvasImageRecovery(CANVAS_TASK_JOURNAL, get_api_provider_exact,
                                            query_saved_image_task, save_to_history)

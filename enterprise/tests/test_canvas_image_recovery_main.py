@@ -63,6 +63,8 @@ asyncio.run(create())
     reader = BOOTSTRAP + r'''
 async def save_image(image, prefix=''):
     assert image['value'] == 'https://supplier.example/result.png'
+    from PIL import Image
+    Image.new('RGB', (1, 1), 'white').save(Path(main.OUTPUT_DIR) / 'recovered-original.png')
     return '/output/recovered-original.png'
 main.save_ai_image_to_output = save_image
 assert main.CANVAS_TASK_JOURNAL.recover()['interrupted'] == 1
@@ -84,3 +86,54 @@ print('hard-exit original task reconciled without another POST')
                             capture_output=True, text=True, timeout=40)
     assert second.returncode == 0, second.stdout + second.stderr
     assert "hard-exit original task reconciled without another POST" in second.stdout
+
+
+def test_archive_failure_keeps_original_receipt_available_for_get_only_retry(tmp_path):
+    install = tmp_path / 'install'
+    app = install / 'releases/fixture'
+    (app / 'static').mkdir(parents=True)
+    (app / 'main.py').write_text('# fixture', encoding='utf-8')
+    script = BOOTSTRAP + r'''
+import io
+from PIL import Image
+from enterprise.canvas_image_recovery import ImageReceiptSink
+buffer = io.BytesIO(); Image.new('RGB', (1, 1), 'white').save(buffer, format='PNG')
+fail_download = True
+def archive_handler(request):
+    calls.append((request.method, request.url.path))
+    assert request.method == 'GET'
+    if request.url.path == '/v1/images/tasks/accepted-before-process-exit':
+        return httpx.Response(200, json={'status':'SUCCESS', 'data':[{'url':'https://supplier.example/result.png'}]}, request=request)
+    assert request.url.path == '/result.png'
+    if fail_download:
+        raise httpx.ReadTimeout('fixture result download lost', request=request)
+    return httpx.Response(200, content=buffer.getvalue(), headers={'content-type':'image/png'}, request=request)
+main.httpx.AsyncClient = lambda **kwargs: original_client(transport=httpx.MockTransport(archive_handler), **kwargs)
+main.CANVAS_TASK_JOURNAL.create({'id':'canvas_img_archive_retry', 'type':'online-image', 'status':'queued',
+    'provider_id':'zhenzhen','model':'nano-banana-2','provider_receipts':[{'index':0,'state':'started'}]})
+assert main.CANVAS_TASK_JOURNAL.mark_running('canvas_img_archive_retry')
+async def run():
+    global fail_download
+    await ImageReceiptSink(main.CANVAS_TASK_JOURNAL, 'canvas_img_archive_retry', 0).accepted('accepted-before-process-exit', provider)
+    assert main.CANVAS_TASK_JOURNAL.recover()['interrupted'] == 1
+    first = await main.reconcile_canvas_image_task('canvas_img_archive_retry')
+    assert first['status'] == 'unknown'
+    record = main.CANVAS_TASK_JOURNAL.get('canvas_img_archive_retry')
+    assert record['status'] == 'failed' and record['provider_receipts'][0]['state'] == 'accepted'
+    assert record['provider_receipts'][0]['upstream_task_id'] == 'accepted-before-process-exit'
+    assert not list(Path(main.OUTPUT_DIR).glob('online_*.png'))
+    fail_download = False
+    second = await main.reconcile_canvas_image_task('canvas_img_archive_retry')
+    assert second['status'] == 'succeeded'
+    assert all(Path(main.output_file_from_url(url)).is_file() for url in second['images'])
+    count = len(calls)
+    assert await main.reconcile_canvas_image_task('canvas_img_archive_retry') == second
+    assert len(calls) == count == 4
+    assert all(method == 'GET' for method, _ in calls)
+asyncio.run(run())
+print('archive retry keeps original task and downloads locally before caching success')
+'''
+    result = subprocess.run([sys.executable, '-c', script, str(ROOT), str(install), str(tmp_path / 'local')],
+                            cwd=ROOT, env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1', PYTHONUTF8='1'),
+                            capture_output=True, text=True, timeout=40)
+    assert result.returncode == 0, result.stdout + result.stderr
