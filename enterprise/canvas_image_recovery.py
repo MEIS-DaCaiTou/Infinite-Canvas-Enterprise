@@ -104,15 +104,17 @@ class CanvasImageRecovery:
                     raise HTTPException(409, "供应商地址或查询协议已改变；请核对原任务，不会向新地址发送旧任务 ID")
                 providers[receipt["index"]] = provider
 
-        pending, query_unknown = False, False
+        pending, query_unknown, query_http_status = False, False, None
         for receipt in record["provider_receipts"]:
             index = receipt["index"]
             if index not in providers:
                 continue
             try:
                 result = await self.query(providers[index], receipt["upstream_task_id"])
-            except (HTTPException, httpx.HTTPError, ValueError, OSError):
+            except (HTTPException, httpx.HTTPError, ValueError, OSError) as exc:
                 query_unknown = True
+                if isinstance(exc, HTTPException):
+                    query_http_status = exc.status_code
                 continue
             if result.get("status") == "succeeded" and result.get("images"):
                 await asyncio.to_thread(self.journal.record_image_request, task_id, index,
@@ -124,8 +126,9 @@ class CanvasImageRecovery:
             else:
                 pending = True
         if query_unknown or pending:
+            reason = f"（HTTP {query_http_status}，请检查平台配置或供应商状态）" if query_http_status else ""
             return {"status": "unknown" if query_unknown else "running", "task_id": task_id,
-                    "message": "原任务查询暂未确认，请稍后再查；没有重新生成" if query_unknown else "原任务仍在生成中，请稍后再查询"}
+                    "message": f"原任务查询暂未确认{reason}，请稍后再查；没有重新生成" if query_unknown else "原任务仍在生成中，请稍后再查询"}
 
         record = await asyncio.to_thread(self.journal.get, task_id)
         receipts = record["provider_receipts"]

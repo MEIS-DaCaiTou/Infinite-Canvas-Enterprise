@@ -162,3 +162,29 @@ def test_local_empty_output_and_history_failure_do_not_lose_accepted_identity(tm
         assert (await service.reconcile("canvas_img_a"))["status"] == "succeeded"
         assert journal.get("canvas_img_a")["result"]["images"] == ["/output/result.png"]
     asyncio.run(scenario())
+
+
+def test_query_auth_failure_preserves_unknown_and_explains_configuration(tmp_path):
+    async def scenario():
+        journal = new_journal(tmp_path)
+        await ImageReceiptSink(journal, "canvas_img_a", 0).accepted("original", PROVIDER)
+        journal.recover()
+        async def query(*args): raise HTTPException(400, "do not expose raw secret or upstream body")
+        service = CanvasImageRecovery(journal, lambda _: PROVIDER, query, lambda _: None)
+        result = await service.reconcile("canvas_img_a")
+        assert result["status"] == "unknown" and "HTTP 400" in result["message"]
+        assert "secret" not in str(result) and journal.get("canvas_img_a")["upstream_task_id"] == "original"
+    asyncio.run(scenario())
+
+
+def test_partial_synchronous_output_is_available_without_inventing_a_query_id(tmp_path):
+    async def scenario():
+        journal = new_journal(tmp_path, 2)
+        await ImageReceiptSink(journal, "canvas_img_a", 0).completed(["/output/retained.png"], [])
+        journal.recover()
+        async def query(*args): pytest.fail("synchronous result needs no supplier query")
+        service = CanvasImageRecovery(journal, lambda _: pytest.fail("no accepted supplier identity"), query, lambda _: None)
+        assert public_receipt(journal.get("canvas_img_a"))["can_reconcile"]
+        result = await service.reconcile("canvas_img_a")
+        assert result["status"] == "partial" and result["images"] == ["/output/retained.png"]
+    asyncio.run(scenario())
