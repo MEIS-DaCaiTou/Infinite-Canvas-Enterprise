@@ -1,6 +1,6 @@
 # Infinite Canvas Enterprise Code Wiki
 
-更新时间：2026-10-13
+更新时间：2026-10-14
 项目：`MEIS-DaCaiTou/Infinite-Canvas-Enterprise`
 
 Wiki 是源码/运行参考，不是第二份状态表、路线图或生产批准。本轮核验 main@3e0deeae1d737d01300708a5783c303b8d496351 和产品候选 #156@4bdd9a16074abac86ce47fc1e81b55bfb12cf63c；新增模块说明明确候选归属，C5/C6/C7 已合并，引用准确实现和验收记录。本轮复核全部九章的源码/运行入口，历史测试结果不改成新跑分。
@@ -30,3 +30,5 @@ Wiki 是源码/运行参考，不是第二份状态表、路线图或生产批�
 模块/接口/入口实质变化时更新对应章节，不每个 PR 重写全部 Wiki。历史测试记录保留日期，不改写为本轮跑分；代码路径区分 main、维护线和已安装产品。
 
 原则、边界和任务分别回到 [架构](../../ARCHITECTURE.md)、[范围](../../PROJECT_SCOPE_LOCK.md) 和 [路线图](../roadmap/DEVELOPMENT-ROADMAP-2026-2027.md)。新增/移动资料同步 [登记表](../document-register.json) 并做轻量检查；不把源码快照当永久当前值。
+
+2026-10-14 增量：main 已是 e89a288fe（#156 已合并）；本轮 ComfyUI 修复候选的共用字段模块见 [前端/API 章节](./04-frontend-api-and-websocket.md#9-comfyui-输入修复候选) 和 [完整记录](../ops/COMFY-WORKFLOW-INPUT-REPAIR-2026-10-14.md)。前述 10-13 九章快照保留采集时点，PR/CI/发行仍以 CURRENT 为准。

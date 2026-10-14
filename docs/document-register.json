@@ -1,11 +1,11 @@
 {
   "schema_version": "enterprise-documents-v1",
-  "reviewed_at": "2026-10-13",
-  "audit_base_commit": "955e319c27d4d60fac6dc3ea110206bf855a318b",
-  "scope": "All Git-managed/non-ignored Markdown/text; merged main e89a288 (#154/#155/#156) and Windows C8 candidate are distinguished. Historical inputs and frozen evidence remain unchanged; documentation is not Release or production approval.",
+  "reviewed_at": "2026-10-14",
+  "audit_base_commit": "519b1da0fd859310b104eb4e8e58398cbe83317c",
+  "scope": "All Git-managed/non-ignored Markdown/text; main 519b1da (#157 merged) and ComfyUI candidate are distinguished. Historical/frozen evidence is retained; release and production validation are separate.",
   "documents": [
     {
-      "path": "docs/ops/WINDOWS-START-UPDATE-CLOSEOUT-2026-10-13.md",
+      "path": "docs/ops/COMFY-WORKFLOW-INPUT-REPAIR-2026-10-14.md",
       "kind": "record"
     },
     {
@@ -78,7 +78,7 @@
       "path": "ARCHITECTURE.md",
       "kind": "authority",
       "authority": "architecture",
-      "reviewed_at": "2026-10-13"
+      "reviewed_at": "2026-10-14"
     },
     {
       "path": "CODE_BOUNDARIES.md",
@@ -154,7 +154,7 @@
       "path": "docs/CURRENT_PROJECT_STATUS.md",
       "kind": "authority",
       "authority": "status",
-      "reviewed_at": "2026-10-13"
+      "reviewed_at": "2026-10-14"
     },
     {
       "path": "docs/data/DATA-MVP-1-INDEPENDENT-REVIEW-2026-09.md",
@@ -639,6 +639,10 @@
     },
     {
       "path": "docs/ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/ops/WINDOWS-START-UPDATE-CLOSEOUT-2026-10-13.md",
       "kind": "record"
     }
   ],

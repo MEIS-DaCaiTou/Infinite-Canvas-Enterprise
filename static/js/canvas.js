@@ -8767,8 +8767,8 @@ async function ensureComfyWorkflow(name){
         return null;
     }
     const data = await res.json();
-    comfyWorkflowCache[name] = data;
-    return data;
+    comfyWorkflowCache[name] = ComfyWorkflowFields.normalizeWorkflow(data);
+    return comfyWorkflowCache[name];
 }
 function validRunningHubWorkflowId(workflowId){
     return String(workflowId || '').trim();
@@ -8790,12 +8790,7 @@ async function ensureRunningHubWorkflow(workflowId){
     runningHubWorkflowCache[workflowId] = data.workflow || null;
     return runningHubWorkflowCache[workflowId];
 }
-function comfyFieldKind(f){
-    if(['image','video','audio'].includes(f?.type)) return f.type;
-    const key = `${f.input || ''} ${f.name || ''}`.toLowerCase();
-    if(f.type === 'textarea' || /prompt|text|提示词|正向|负向/.test(key)) return 'prompt';
-    return 'setting';
-}
+function comfyFieldKind(f){ return ComfyWorkflowFields.kind(f); }
 function comfyFields(node, kind='all'){
     const data = currentComfyWorkflow(node);
     const fields = data?.config?.fields || [];
@@ -11318,14 +11313,23 @@ async function runComfyNode(nodeId, opts={}){
     const allRefs = sources.flatMap(s => s.refs || []);
     const refs = imageRefsOnly(allRefs);
     const mode = node.mode || 'text';
-    const customImageFields = mode === 'custom' ? comfyFields(node, 'image') : [];
-    const customVideoFields = mode === 'custom' ? comfyFields(node, 'video') : [];
-    const customAudioFields = mode === 'custom' ? comfyFields(node, 'audio') : [];
-    const customPromptFields = mode === 'custom' ? comfyFields(node, 'prompt') : [];
-    if((mode === 'text' || (mode === 'custom' && customPromptFields.length)) && !prompt){ alert(tr('canvas.needPrompt')); return; }
-    if((mode !== 'text' && mode !== 'custom' && !refs.length) || (mode === 'custom' && refs.length < customImageFields.length)){ alert(tr('canvas.needImage')); return; }
-    if(mode === 'custom' && videoRefsOnly(allRefs).length < customVideoFields.length){ alert(langIsEn() ? 'Please connect enough video inputs for this ComfyUI workflow.' : '请为这个 ComfyUI 工作流连接足够的视频输入'); return; }
-    if(mode === 'custom' && audioRefsOnly(allRefs).length < customAudioFields.length){ alert(langIsEn() ? 'Please connect enough audio inputs for this ComfyUI workflow.' : '请为这个 ComfyUI 工作流连接足够的音频输入'); return; }
+    if(mode === 'custom'){
+        // Claim the existing busy state before cold workflow lookup can yield.
+        if(!opts.cascade){ node.running = true; refreshRunNodes(node, null); }
+        try {
+            const workflowName = validComfyWorkflowName(node.comfyWorkflow || comfyWorkflows[0]?.name || '');
+            const wf = await ensureComfyWorkflow(workflowName);
+            if(!wf) throw new Error(tr('canvas.comfyNoWorkflow'));
+            ComfyWorkflowFields.requireMedia(wf.config, {image:refs, video:videoRefsOnly(allRefs), audio:audioRefsOnly(allRefs)}, langIsEn());
+        } catch(e){
+            node.runStatus = 'failed'; node.runError = e.message || String(e);
+            if(opts.cascade) throw e;
+            node.running = false; refreshRunNodes(node, null);
+            alert(e.message); return;
+        }
+    }
+    if(mode === 'text' && !prompt){ alert(tr('canvas.needPrompt')); return; }
+    if(mode !== 'text' && mode !== 'custom' && !refs.length){ alert(tr('canvas.needImage')); return; }
     let out = outputForNode(node, 480);
     const pendingId = uid('p');
     const run = runSnapshot(node, prompt, refs);
@@ -11378,39 +11382,16 @@ async function runComfyNode(nodeId, opts={}){
             if(node.comfyWorkflow && node.comfyWorkflow !== workflowName) node.comfyWorkflow = workflowName;
             const wf = await ensureComfyWorkflow(workflowName);
             if(!workflowName || !wf) throw new Error(tr('canvas.comfyNoWorkflow'));
-            const fields = wf?.config?.fields || [];
-            const params = {};
-            const imageFields = fields.filter(f => comfyFieldKind(f) === 'image');
-            const videoFields = fields.filter(f => comfyFieldKind(f) === 'video');
-            const audioFields = fields.filter(f => comfyFieldKind(f) === 'audio');
-            const promptFields = fields.filter(f => comfyFieldKind(f) === 'prompt');
-            const settingFields = fields.filter(f => comfyFieldKind(f) === 'setting');
-            const assignMediaFields = async (mediaFields, mediaRefs) => {
-                const names = [];
-                for(const ref of mediaRefs.slice(0, mediaFields.length)) names.push(await comfyNameForRef(ref));
-                mediaFields.forEach((f, i) => {
-                    if(!f.node || !f.input) return;
-                    params[f.node] = params[f.node] || {};
-                    params[f.node][f.input] = names[i] || '';
-                });
-            };
-            await assignMediaFields(imageFields, refs);
-            await assignMediaFields(videoFields, videoRefsOnly(allRefs));
-            await assignMediaFields(audioFields, audioRefsOnly(allRefs));
-            promptFields.forEach(f => {
-                if(!f.node || !f.input) return;
-                params[f.node] = params[f.node] || {};
-                params[f.node][f.input] = prompt;
-            });
-            settingFields.forEach(f => {
-                if(!f.node || !f.input) return;
-                params[f.node] = params[f.node] || {};
-                if(comfyRandomEnabled(f) && comfyRandomActive(node, f.id)){
-                    node.comfyParams = node.comfyParams || {};
-                    node.comfyParams[f.id] = comfyRandomValue(f);
+            const values = await ComfyWorkflowFields.canvasValues(wf.config, {
+                prompt, media:{image:refs, video:videoRefsOnly(allRefs), audio:audioRefsOnly(allRefs)},
+                parameters:node.comfyParams || {}, mediaName:comfyNameForRef, english:langIsEn(),
+                randomValue:f => {
+                    if(!comfyRandomEnabled(f) || !comfyRandomActive(node, f.id)) return undefined;
+                    (node.comfyParams ||= {})[f.id] = comfyRandomValue(f);
+                    return node.comfyParams[f.id];
                 }
-                params[f.node][f.input] = comfyParamValue(node, f);
             });
+            const params = ComfyWorkflowFields.paramsFromValues(wf.config, values);
             const result = await runQueuedComfyGenerate({
                 prompt,
                 workflow_json:workflowName,
