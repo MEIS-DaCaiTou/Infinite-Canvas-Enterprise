@@ -118,5 +118,9 @@ Browser 为已启用 Codex 内置浏览器，无需安装或 Playwright 回退�
 
 - 定向验证覆盖 1/10 张图片、双分支对应、超限/缺图、原图不变、未知依赖拒绝、提示词用途、SaveText 去重、原任务查询、旧 params 和工作流 overlay。新增测试最初发现一个历史非节点元数据读取回归，已修复；既有只读写入审计通过，无新写入清单或新哈希机制。
 - Browser 使用本机 loopback 真实应用入口和受控 Comfy 协议夹具：设置页三图→两图、双视图同步、两次文本保留；经典画布混合输出→选定正文→生成 Prompt→下游单图调用→再次运行/重开；智能画布混合输出、正文/Prompt、选定文本→下游单图调用和重开。曾定位混合输出缩略图仍使用旧文件控件、文本被列作图片引用及重复提示词拼接，已修正。
-- 复制按钮在 Browser 显示“已复制”；内置 Browser 的 clipboard/read/download-event 调用出现超时，不把该事件跟踪限制写成已完成文件下载验收。文本附件内容和实际 HTTP 返回另行核对。窄视口只验证文本弹窗，不宣称整个画布移动端矩阵完成。
+- 复制按钮在 Browser 显示“已复制”；内置 Browser 的 clipboard/read/download-event 调用出现超时，不把该事件跟踪限制写成已完成文件下载验收。另经真实 HTTP 取回两类画布共 7 个文本附件，正文与已归档文本逐项一致。窄视口只验证文本弹窗，不宣称整个画布移动端矩阵完成。
 - 集中证据：D:/CodeProject/Infinite-Canvas-Enterprise-Artifacts/comfy-io-20261015。用户提供 Qwen API 文件仅作本地只读拓扑核对，不提交私人文件/提示词。没有调用用户 GPU、LAN/公网 ComfyUI、认证穿透或客户设备；自定义节点/模型清单并未全部实机验收。
+
+最终补核：17 项影响范围测试通过；用户提供的 Qwen API 图在本地只读构造 1/3/10 张输入，编辑与增强两分支插槽数量一致。经典画布重跑后 io-3/io-10 文本同时保存，原选定正文快照不变；智能画布续跑保留 io-6 至 io-9，最终下游正文没有重复拼接。初次 io-7 重复正文的失败观察仍留在夹具记录，不改称通过。结构、附件及选定快照结果见 delivery-check.json；text-dialog-aligned.png 为实际调整后的弹层截图。
+
+96095ef 的 Enterprise 与 Runtime CI 最终 SUCCESS；Documentation 的文档契约和夹具已通过，但 Linux whitespace 步骤发现两份原有混合换行脚本的新增 CRLF 行。随后仅将 PR 新增/修改行规范为 LF，保留历史行，按相同 whitespace 规则检查通过；不因格式修正重跑本地全套业务测试。最终候选以 Draft #161 最新准确 Head 的 CI 为准。
