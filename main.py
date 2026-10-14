@@ -13020,11 +13020,11 @@ async def resume_canvas_comfy_task(task_id, receipt):
 
 
 @app.get("/api/canvas-comfy-tasks/{task_id}")
-async def get_canvas_comfy_task(task_id: str):
+async def get_canvas_comfy_task(task_id: str, resume: bool = False):
     task = await asyncio.to_thread(CANVAS_TASK_JOURNAL.get, task_id)
     if not task or task.get("type") != "comfy":
         raise HTTPException(status_code=404, detail="ComfyUI 任务不存在；此版本启用前的内存任务无法凭空恢复")
-    if task.get("status") == "failed" and task.get("recovery_required"):
+    if task.get("status") == "failed" and task.get("recovery_required") and (resume or task.get("error_code") == "runtime_interrupted"):
         receipt = await asyncio.to_thread(CANVAS_TASK_JOURNAL.claim_comfy_query, task_id)
         if receipt:
             schedule_canvas_task(resume_canvas_comfy_task(task_id, receipt))

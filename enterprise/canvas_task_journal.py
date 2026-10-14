@@ -103,7 +103,7 @@ class CanvasTaskJournal:
             receipt = record.get("comfy_receipt") or {}
             if not receipt.get("prompt_id"):
                 return None
-            self._write({**record, "status": "running", "error": "", "updated_at": time.time()})
+            self._write({**record, "status": "running", "error": "", "error_code": "", "updated_at": time.time()})
             return receipt
 
     def record_image_request(self, task_id: str, index: int, changes: dict, *, recovering=False) -> None:

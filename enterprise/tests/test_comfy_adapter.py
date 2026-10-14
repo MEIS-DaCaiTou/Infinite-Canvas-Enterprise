@@ -109,6 +109,7 @@ def test_accepted_task_survives_restart_without_replay_or_identity_change(tmp_pa
     journal = CanvasTaskJournal(tmp_path)
     assert journal.recover()["interrupted"] == 1
     assert journal.claim_comfy_query("accepted")["prompt_id"] == "original"
+    assert journal.get("accepted")["error_code"] == ""
     assert journal.claim_comfy_query("accepted") is None
     journal.create({"id": "uncertain", "type": "comfy", "status": "queued"})
     journal.mark_running("uncertain")
