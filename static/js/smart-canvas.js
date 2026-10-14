@@ -2345,7 +2345,7 @@ function runningHubRunNeedsPrompt(sourceSettings=settings){
 function smartRunNeedsPrompt(sourceSettings=settings){
     sourceSettings = sourceSettings || settings;
     if(sourceSettings.engine === 'runninghub') return runningHubRunNeedsPrompt(sourceSettings);
-    if(sourceSettings.engine === 'comfy' && sourceSettings.comfyMode === 'enhance') return false;
+    if(sourceSettings.engine === 'comfy' && ['enhance','custom'].includes(sourceSettings.comfyMode)) return false;
     return true;
 }
 function sortRunningHubFields(fields){
@@ -2665,8 +2665,8 @@ async function ensureComfyWorkflow(name){
     if(!name) return null;
     if(comfyWorkflowCache[name]) return comfyWorkflowCache[name];
     const data = await fetch(`/api/workflows/${encodeURIComponent(name)}`).then(r => r.ok ? r.json() : null).catch(() => null);
-    if(data) comfyWorkflowCache[name] = data;
-    return data;
+    if(data) comfyWorkflowCache[name] = ComfyWorkflowFields.normalizeWorkflow(data);
+    return comfyWorkflowCache[name];
 }
 function currentComfyFields(){
     return comfyWorkflowCache[settings.comfyWorkflow]?.config?.fields || [];
@@ -13798,26 +13798,7 @@ async function runQueuedSmartComfyGenerate(payload){
     const task = await createSmartComfyTask(payload);
     return waitSmartComfyTaskResult(task.task_id);
 }
-function comfyParamsFromWorkflowValues(config, values={}){
-    const params = {};
-    (config?.fields || []).forEach(field => {
-        if(!field?.node || !field?.input) return;
-        let value = values[field.id];
-        if(value === undefined) value = field.default;
-        if(field.type === 'number' || field.type === 'slider'){
-            const n = Number(value);
-            if(Number.isFinite(n)) value = field.step && Number(field.step) < 1 ? n : Math.round(n);
-        } else if(field.type === 'boolean'){
-            value = Boolean(value);
-        } else if(field.type === 'dropdown' && typeof value === 'string'){
-            const s = value.trim();
-            if(s && /^-?\d+(?:\.\d+)?(?:e-?\d+)?$/i.test(s)) value = s.includes('.') || /e/i.test(s) ? Number(s) : parseInt(s, 10);
-        }
-        params[field.node] = params[field.node] || {};
-        params[field.node][field.input] = value;
-    });
-    return params;
-}
+function comfyParamsFromWorkflowValues(config, values={}){ return ComfyWorkflowFields.paramsFromValues(config, values); }
 function buildPromptRequestForNode(node, defaultImages, ctx=smartLoopContext){
     const oldHtml = promptInput.innerHTML;
     loadNodePromptDraftToInput(node);
@@ -13890,27 +13871,12 @@ async function generateComfyUrlsWithSettings(runSettings, prompt, refs){
     if(!workflowName) throw new Error(tr('smart.errNeedWorkflow'));
     const wf = await fetch(`/api/workflows/${encodeURIComponent(workflowName)}`).then(async r => {
         if(!r.ok) throw new Error(await r.text());
-        return r.json();
+        return r.json().then(ComfyWorkflowFields.normalizeWorkflow);
     });
-    const fields = wf.config?.fields || [];
-    const values = {};
-    fields.filter(f => comfyFieldKind(f) === 'prompt').forEach((field, index) => {
-        values[field.id] = index === 0 ? prompt : (field.default ?? '');
-    });
-    const assignMediaFields = async (mediaFields, mediaRefs) => {
-        for(let i = 0; i < mediaFields.length && i < mediaRefs.length; i++){
-            values[mediaFields[i].id] = await comfyNameForRef(mediaRefs[i]);
-        }
-    };
-    await assignMediaFields(fields.filter(f => comfyFieldKind(f) === 'image'), imageRefs);
-    await assignMediaFields(fields.filter(f => comfyFieldKind(f) === 'video'), videoRefsOnly(allRefs));
-    await assignMediaFields(fields.filter(f => comfyFieldKind(f) === 'audio'), audioRefsOnly(allRefs));
-    fields.filter(f => comfyFieldKind(f) === 'setting').forEach(field => {
-        if(comfyRandomEnabledField(field) && smartComfyRandomActiveFor(runSettings, field.id)){
-            values[field.id] = smartComfyRandomValue(field);
-        } else {
-            values[field.id] = runSettings.comfyParams?.[field.id] ?? field.default;
-        }
+    const values = await ComfyWorkflowFields.canvasValues(wf.config, {
+        prompt, media:{image:imageRefs, video:videoRefsOnly(allRefs), audio:audioRefsOnly(allRefs)},
+        parameters:runSettings.comfyParams || {}, mediaName:comfyNameForRef, english:window.StudioI18n?.lang?.() === 'en',
+        randomValue:field => comfyRandomEnabledField(field) && smartComfyRandomActiveFor(runSettings, field.id) ? smartComfyRandomValue(field) : undefined
     });
     const result = await runQueuedSmartComfyGenerate({prompt, workflow_json:workflowName, params:comfyParamsFromWorkflowValues(wf.config || {fields:[]}, values), type:'workflow-custom', client_id:smartClientId});
     const urls = resultMediaUrls(result);
@@ -14643,12 +14609,7 @@ async function runPromptLLMNode(nodeId){
         render();
     }
 }
-function comfyFieldKind(field){
-    if(['image','video','audio'].includes(field?.type)) return field.type;
-    const key = `${field?.input || ''} ${field?.name || ''}`.toLowerCase();
-    if(field?.type === 'textarea' || /prompt|text|提示词|正向|负向/.test(key)) return 'prompt';
-    return 'setting';
-}
+function comfyFieldKind(field){ return ComfyWorkflowFields.kind(field); }
 async function runApiGeneration(prompt, refs, runSettings=settings){
     if(!runSettings.provider_id || !runSettings.model) throw new Error(tr('smart.errNoApiModel'));
     const count = Math.max(1, Math.min(8, Number(runSettings.count || 1)));
@@ -14814,27 +14775,12 @@ async function runComfyGeneration(node, prompt, refs, pendingNode, meta){
     if(!workflowName) throw new Error(tr('smart.errNeedWorkflow'));
     const wf = await fetch(`/api/workflows/${encodeURIComponent(workflowName)}`).then(async r => {
         if(!r.ok) throw new Error(await r.text());
-        return r.json();
+        return r.json().then(ComfyWorkflowFields.normalizeWorkflow);
     });
-    const fields = wf.config?.fields || [];
-    const values = {};
-    fields.filter(f => comfyFieldKind(f) === 'prompt').forEach((field, index) => {
-        values[field.id] = index === 0 ? prompt : (field.default ?? '');
-    });
-    const assignMediaFields = async (mediaFields, mediaRefs) => {
-        for(let i = 0; i < mediaFields.length && i < mediaRefs.length; i++){
-            values[mediaFields[i].id] = await comfyNameForRef(mediaRefs[i]);
-        }
-    };
-    await assignMediaFields(fields.filter(f => comfyFieldKind(f) === 'image'), refs);
-    await assignMediaFields(fields.filter(f => comfyFieldKind(f) === 'video'), videoRefsOnly(allRefs));
-    await assignMediaFields(fields.filter(f => comfyFieldKind(f) === 'audio'), audioRefsOnly(allRefs));
-    fields.filter(f => comfyFieldKind(f) === 'setting').forEach(field => {
-        if(comfyRandomEnabledField(field) && smartComfyRandomActive(field.id)){
-            values[field.id] = smartComfyRandomValue(field);
-        } else {
-            values[field.id] = settings.comfyParams?.[field.id] ?? field.default;
-        }
+    const values = await ComfyWorkflowFields.canvasValues(wf.config, {
+        prompt, media:{image:refs, video:videoRefsOnly(allRefs), audio:audioRefsOnly(allRefs)},
+        parameters:settings.comfyParams || {}, mediaName:comfyNameForRef, english:window.StudioI18n?.lang?.() === 'en',
+        randomValue:field => comfyRandomEnabledField(field) && smartComfyRandomActive(field.id) ? smartComfyRandomValue(field) : undefined
     });
     const result = await runQueuedSmartComfyGenerate({prompt, workflow_json:workflowName, params:comfyParamsFromWorkflowValues(wf.config || {fields:[]}, values), type:'workflow-custom', client_id:smartClientId});
     const urls = resultMediaUrls(result);

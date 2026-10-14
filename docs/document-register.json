@@ -1,8 +1,8 @@
 {
   "schema_version": "enterprise-documents-v1",
-  "reviewed_at": "2026-10-13",
-  "audit_base_commit": "e89a288fe1ce8e5066ebebe1971e69bf5d4c7945",
-  "scope": "All Git-managed/non-ignored Markdown/text; merged main e89a288 and draft #123 paid-submit/original-image-recovery candidate are distinguished; #157 final CI is recorded separately. Frozen evidence is unchanged; no Release or production approval.",
+  "reviewed_at": "2026-10-14",
+  "audit_base_commit": "b41dd3b4c7a867fcbda3aac598f0a197336e0b73",
+  "scope": "Git-managed Markdown/text; main b41dd3b (#157/#158 merged), independently reviewed image recovery integration, and approved 10.2 release preparation. Frozen evidence retained; publication and production validation remain separate.",
   "documents": [
     {
       "path": "docs/ops/ONLINE-UPGRADE-SEQUENCE-2026-10-12.md",
@@ -74,7 +74,7 @@
       "path": "ARCHITECTURE.md",
       "kind": "authority",
       "authority": "architecture",
-      "reviewed_at": "2026-10-13"
+      "reviewed_at": "2026-10-14"
     },
     {
       "path": "CODE_BOUNDARIES.md",
@@ -150,7 +150,7 @@
       "path": "docs/CURRENT_PROJECT_STATUS.md",
       "kind": "authority",
       "authority": "status",
-      "reviewed_at": "2026-10-13"
+      "reviewed_at": "2026-10-14"
     },
     {
       "path": "docs/data/DATA-MVP-1-INDEPENDENT-REVIEW-2026-09.md",
@@ -639,6 +639,14 @@
     },
     {
       "path": "docs/ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/ops/COMFY-WORKFLOW-INPUT-REPAIR-2026-10-14.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/ops/WINDOWS-START-UPDATE-CLOSEOUT-2026-10-13.md",
       "kind": "record"
     }
   ],

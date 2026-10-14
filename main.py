@@ -2828,6 +2828,8 @@ def is_comfy_input_media_value(input_name: str, value: Any) -> bool:
     if not isinstance(value, str) or not value.strip():
         return False
     key = str(input_name or "").lower()
+    if key == "filename_prefix":
+        return False
     if any(token in key for token in MEDIA_INPUT_KEYS):
         return True
     return bool(MEDIA_INPUT_EXT_RE.search(value))

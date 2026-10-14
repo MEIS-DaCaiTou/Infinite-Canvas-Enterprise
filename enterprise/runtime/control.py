@@ -638,10 +638,11 @@ class RuntimeController:
             if self.config.fixture_child_wrapper:
                 arguments.append("--fixture-child-wrapper")
             # The pre-stop handoff capability check uses this same contract.
-            # No ordinary-creation fallback can hide a breakaway denial.
-            flags = host_creation_flags()
+            # Select once; no retry can hide a Windows creation denial.
+            creation_context = current_job_diagnostics()
+            flags = host_creation_flags(creation_context)
             failure_stage = "service_host_create"
-            creation_details = public_lifecycle_details({"creation_flags": flags, **current_job_diagnostics()})
+            creation_details = public_lifecycle_details({"creation_flags": flags, **creation_context})
             try:
                 logs.write("launcher.log", "service_host_create_context", supervisor_instance_id=instance_id,
                            **creation_details)

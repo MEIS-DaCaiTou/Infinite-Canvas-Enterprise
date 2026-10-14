@@ -65,6 +65,7 @@
 | `asset-manager.js` | 本地素材树、上传、批量选择、移动删除、标签/描述、预览 |
 | `api-settings.js` | Provider CRUD、协议识别、密钥输入、模型获取、连接测试、CLI 状态 |
 | `comfyui-settings.js` | ComfyUI 实例与工作流配置 |
+| `comfy-workflow-fields.js`（本轮候选） | 设置页/两类画布共用的字段推断、旧配置修正、输入检查与参数映射 |
 | `image-preview.js` | 图片预览通用逻辑 |
 | `history-bulk-manager.js` | 历史记录批量操作 |
 | `theme.js`、`i18n.js` | 主题和文本本地化 |
@@ -135,3 +136,7 @@ Gateway 不应透明广播所有 Upstream 事件。事件过滤至少考虑：
 SEC-P0 额外固定传输边界：只接受同源 `/ws/stats`，浏览器到 Upstream 只转发精确字符串 `ping`；服务端事件类型必须进入显式已知集合，未知类型、缺失类型和非 JSON 消息对普通用户与管理员都默认拒绝。管理员身份不会把未知协议变成可见协议。
 
 新增异步业务时，应同时实现 HTTP 受理归属、查询权限、结果资源归属和 WebSocket 事件过滤四个环节。
+
+## 9. ComfyUI 输入修复候选
+
+基于 main@e89a288fe 的 [修复记录](../ops/COMFY-WORKFLOW-INPUT-REPAIR-2026-10-14.md)：`normalizeWorkflow()` 在读取时纠正旧 `filename_prefix` 媒体类型，保留稳定字段 ID；`inferType()` 识别新字段；`kind()`、`requireMedia()`、`canvasValues()` 与 `paramsFromValues()` 服务设置页、普通/智能画布和级联。缺少素材按名称及节点定位，前缀是文本。HTML 先加载共用脚本再加载对应页面脚本。后端继续原上传/任务/归档入口，素材同步明确排除前缀；没有新 API 或 Schema。

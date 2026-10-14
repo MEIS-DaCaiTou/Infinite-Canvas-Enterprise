@@ -1,6 +1,6 @@
 # Infinite Canvas Enterprise 当前架构
 
-更新时间：2026-10-13
+更新时间：2026-10-14
 
 本文描述 main 已合并的运行架构、明确标注的开发候选与已确定的演进边界。实现状态以 [docs/CURRENT_PROJECT_STATUS.md](docs/CURRENT_PROJECT_STATUS.md) 为准，未来顺序以 [开发路线图](docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md) 为准。
 
@@ -166,3 +166,5 @@ C6 [离线保留数据升级记录](docs/ops/OFFLINE-RETAINED-UPGRADE-2026-10-12
 ## 9. 尚未实现
 
 阶段 3 尚未完成所有来源/GUI/在线续接的交付闭环；完整通知/任务与写入隔离、统一任务/费用、CAS/员工桌面客户端、PostgreSQL/HA、SSO/目录/Agent 与可选远程诊断仍未交付。新装/同版修复/保留数据卸载/重装及目录分页已进入 main；目标执行器、原生工具和多跳协调器已合并，在线续接仍有宿主阻断。已实现迁移/恢复基础不再笼统写成未实现；具体范围见项目状态。
+
+ComfyUI 输入修复候选将三处字段识别、旧配置读取修正、缺少素材检查和参数映射集中在 `static/js/comfy-workflow-fields.js`；设置页和两类画布复用，不建立新的任务/插件框架。修复不改工作流节点、数据库 Schema 或服务端权限，细节与受控验证边界见 [实施记录](docs/ops/COMFY-WORKFLOW-INPUT-REPAIR-2026-10-14.md)。

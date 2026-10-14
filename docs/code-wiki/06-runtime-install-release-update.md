@@ -4,7 +4,7 @@
 
 [返回索引](./README.md)
 
-后续 Windows 交接候选 [#157](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/157) 准确 551f433 四项常规 CI 成功、仍 Draft 待审。正式入口“启动并打开”只用当前已安装版本；更新由管理员在更新中心单独确认，不要求每次启动更新。必要安装审查不扩成任意宿主/历史/GUI 工程，业务原任务恢复可并行推进；候选不改变当前 main 或正式 10.1。
+后续 Windows 交接候选 [#157](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/157) 准确 551f433 四项常规 CI 成功、独立审查后已随 `519b1da0` 合并。正式入口“启动并打开”只用当前已安装版本；更新由管理员在更新中心单独确认，不要求每次启动更新。必要安装审查不扩成任意宿主/历史/GUI 工程，业务原任务恢复可并行推进；正式 10.1 资产未改变，新发行另行验证。
 
 更新时间：2026-10-13。主线、维护线和固定入口边界见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，生命周期设计见 [统一交付 ADR](../decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md)。
 
@@ -44,6 +44,8 @@
 下图为源码/旧安装 BAT 兼容链路。固定原生入口 #138、安装接线及入口专用修复 #139 已选择性回归 main，不绑定应用目标，不另写 Runtime；这不是完整安装维护产品交付。
 
 `installer/windows/native/` 用 C# 处理固定入口、Windows UI 和受限进程调用：读取 `state/current-release.json`，校验 Manifest 与完整 inventory，再调用该 Release 内 `python/python.exe -I -B enterprise/runtime/launcher.py portable <command>`。`tools/build_native_entry.py` 使用外置固定编译器双构建，仅生成全新 artifact 根，不写客户安装、不迁移数据库。构建、安装器接线和真实 Runtime 验收必须区分，见 [实施记录](../ops/DELIVERY-1-FIXED-NATIVE-ENTRY-2026-10.md)。
+
+正式 Windows 入口从开始菜单或安装目录打开该 EXE，点击“启动并打开”只启动当前已安装版本，不查询/下载新版本，不强制更新。管理员按需在更新中心单独确认更新；关闭启动窗口不停止服务。C8 候选依据已知 Job 权限一次选择进程创建参数，保留独立性/READY/清理核验；在线受阻使用既有停服离线维护，不新增服务/计划任务。单跳实际证据、失败恢复、界面及历史覆盖边界见 [C8 记录](../ops/WINDOWS-START-UPDATE-CLOSEOUT-2026-10-13.md)。
 
 ```mermaid
 flowchart TD
@@ -219,4 +221,4 @@ main 的 install_lifecycle.py 为已登记实例提供保留数据卸载、同�
 
 C5 的 updater.py / updater-worker-v1 契约选择目标 Python 执行器并绑定准备/READY/接受过程；C6 install_upgrade.py 复用现有更新引擎处理限定相同 Schema 的离线升级/保留数据跨版本重装；C7 sequence.py 等协调一次授权路径、逐跳权限、检查点、当前跳恢复及原生维护资产。上述新增升级代码已随 #154/#155 进入 main，本 Wiki 所在产品修复分支已整合该主线；参见 C5/C6/C7 实现记录。
 
-限定 GUI 状态：#152 本身的卸载 Yes 点击未验收；C6 后续合成安装副本已有 Yes 与限定跨版本重装点击证据；代码已合并，未正式发行。C7 冻结包完整两跳成功，在线重新继续在本机被 SYSTEM_UPDATE_HANDOFF_JOB_BLOCKED 阻断；不能把冻结构建等同新 Head 或把 HTTP/WS 暂停称为完整任务排空。
+限定 GUI 状态：#152 本身的卸载 Yes 点击未验收；C6 后续合成安装副本已有 Yes 与限定跨版本重装点击证据；代码已合并，未正式发行。C7 冻结包完整两跳成功，原在线继续曾被 SYSTEM_UPDATE_HANDOFF_JOB_BLOCKED 阻断；C8 新候选的真实单跳/恢复成功不覆盖全部 C7 在线路径。不能把冻结构建等同新 Head 或把 HTTP/WS 暂停称为完整任务排空。

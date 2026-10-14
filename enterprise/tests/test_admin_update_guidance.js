@@ -10,7 +10,7 @@ assert.equal((script.match(/\n  initializeAdmin\(\);/g) || []).length, 1);
 const elements = new Map();
 const dangerous = [{style: {}}, {style: {}}, {style: {}}];
 function element(id) {
-  if (!elements.has(id)) elements.set(id, {value: '', innerHTML: '', textContent: '', disabled: false, style: {}});
+  if (!elements.has(id)) elements.set(id, {value: '', innerHTML: '', textContent: '', disabled: false, style: {}, dataset: {}, classList:{add(){}}});
   return elements.get(id);
 }
 const context = vm.createContext({
@@ -58,6 +58,10 @@ assert.match(explanation({role: 'super_admin', can_operate: false, deployment_up
 assert.match(explanation({role: 'admin', can_operate: false, deployment_update_enabled: false}), /当前账号没有该角色/);
 assert.match(explanation({role: 'super_admin', can_operate: false, global_update_enabled: false}), /旧版接口不能区分/);
 assert.equal(explanation({role: 'super_admin', can_operate: true}), '');
+vm.runInContext("renderUpdateProgress({state:'FAILED',result_code:'SYSTEM_UPDATE_HANDOFF_JOB_BLOCKED'})", context);
+assert.match(element('updateProgressDetail').textContent, /停止服务后使用目标版本维护安装器离线升级/);
+vm.runInContext("renderUpdateProgress({state:'RECOVERY_REQUIRED',result_code:'SYSTEM_UPDATE_HANDOFF_CLEANUP_UNCONFIRMED'})", context);
+assert.match(element('updateProgressDetail').textContent, /不要再次执行升级或清理缓存/);
 assert.match(explanation(null), /无法确认更新权限/);
 
 (async () => {
