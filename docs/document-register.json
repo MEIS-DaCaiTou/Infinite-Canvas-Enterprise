@@ -2,7 +2,7 @@
   "schema_version": "enterprise-documents-v1",
   "reviewed_at": "2026-10-14",
   "audit_base_commit": "01c2977359ffdf2751711f151ef91ad634e0fd75",
-  "scope": "Git-managed Markdown/text at main01c29773, merged independent reviews #123/#157/#158 and #159 release metadata; exact source7da593b v2026.10.2 published with real 10.1 v2 upgrade/recovery, public asset readback and direct-route verification. Historical failures and unvalidated customer/GUI/provider scopes retained. Post-release documentation only; runtime source remains immutable.",
+  "scope": "Git-managed Markdown/text at main01c29773, merged independent reviews #123/#157/#158 and #159 release metadata; exact source7da593b v2026.10.2 published with real 10.1 v2 upgrade/recovery, public asset readback and direct-route verification. Historical failures and unvalidated customer/GUI/provider scopes retained. Post-release documentation only; runtime source remains immutable. ComfyUI 10.2 feedback follow-up candidate documented separately from the immutable formal release; existing operation record and Code Wiki updated.",
   "documents": [
     {
       "path": "docs/ops/ONLINE-UPGRADE-SEQUENCE-2026-10-12.md",

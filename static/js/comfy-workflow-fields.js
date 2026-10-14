@@ -17,6 +17,19 @@
         return value.length > 60 ? 'textarea' : 'text';
     }
 
+    function definitionField(value, inputName, definition){
+        const spec = definition?.input?.required?.[inputName] || definition?.input?.optional?.[inputName];
+        const options = spec?.[1] || {};
+        if(inputName === 'filename_prefix') return {type:'text'};
+        if(options.image_upload) return {type:'image'};
+        if(options.video_upload) return {type:'video'};
+        if(options.audio_upload) return {type:'audio'};
+        if(Array.isArray(spec?.[0])) return {type:'dropdown',options:spec[0].map(String)};
+        if(spec?.[0] === 'BOOLEAN') return {type:'boolean'};
+        if(['INT','FLOAT'].includes(spec?.[0])) return {type:'number',min:options.min,max:options.max,step:options.step || (spec[0]==='FLOAT' ? 0.01 : 1)};
+        return {type:options.multiline ? 'textarea' : inferType(value,inputName)};
+    }
+
     function normalizeWorkflow(data){
         const config = data.config || {fields:[]};
         return {...data, config:{...config, fields:(config.fields || []).map(field => {
@@ -83,5 +96,5 @@
         return values;
     }
 
-    root.ComfyWorkflowFields = {inferType, normalizeWorkflow, kind, missingMessage, requireMedia, coerceValue, paramsFromValues, canvasValues};
+    root.ComfyWorkflowFields = {inferType, definitionField, normalizeWorkflow, kind, missingMessage, requireMedia, coerceValue, paramsFromValues, canvasValues};
 })(typeof window === 'undefined' ? globalThis : window);

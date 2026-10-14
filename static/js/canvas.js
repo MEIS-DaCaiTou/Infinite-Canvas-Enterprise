@@ -10651,7 +10651,7 @@ async function runVideoNode(nodeId, opts={}){
         refreshRunNodes(node, out);
     }
 }
-async function uploadCanvasUrlToComfy(url){
+async function uploadCanvasUrlToComfy(url, workflow="", backend=""){
     const blob = await fetch(url).then(r => {
         if(!r.ok) throw new Error(langIsEn() ? 'Image read failed' : '图片读取失败');
         return r.blob();
@@ -10659,20 +10659,20 @@ async function uploadCanvasUrlToComfy(url){
     const filename = (url || '').split('/').pop()?.split('?')[0] || `canvas_${Date.now()}.png`;
     const form = new FormData();
     form.append('files', blob, filename);
-    const data = await fetch('/api/upload', {method:'POST', body:form}).then(async r => {
+    const data = await fetch('/api/upload?' + new URLSearchParams({workflow:workflow || 'Z-Image.json',backend}), {method:'POST', body:form}).then(async r => {
         if(!r.ok) throw new Error(await responseErrorMessage(r, langIsEn() ? 'Image upload to ComfyUI failed' : '图片上传到 ComfyUI 失败'));
         return r.json();
     });
     return data.files?.[0]?.comfy_name || filename;
 }
-async function comfyNameForRef(ref){
-    if(ref.comfy_name) return ref.comfy_name;
+async function comfyNameForRef(ref, workflow="", backend=""){
+    if(!workflow && ref.comfy_name) return ref.comfy_name;
     if(!ref.url) throw new Error(langIsEn() ? 'Missing input image' : '缺少输入图片');
-    return uploadCanvasUrlToComfy(ref.url);
+    return uploadCanvasUrlToComfy(ref.url,workflow,backend);
 }
 async function runComfyUpscale(imageUrl, resolution, options={}){
     if(!imageUrl) throw new Error(actionFailed('studio.superResolution', langIsEn() ? 'missing input image' : '缺少输入图片'));
-    const nextInput = await uploadCanvasUrlToComfy(imageUrl);
+    const nextInput = await uploadCanvasUrlToComfy(imageUrl,'upscale.json');
     const upscale = await runQueuedComfyGenerate({
         workflow_json:'upscale.json',
         params:{
@@ -11358,7 +11358,7 @@ async function runComfyNode(nodeId, opts={}){
             images = comfyResultOutputs(result);
         } else if(mode === 'enhance'){
             run.taskLabel = tr('canvas.comfyEnhance');
-            const inputName = await comfyNameForRef(refs[0]);
+            const inputName = await comfyNameForRef(refs[0],'Z-Image-Enhance.json');
             const enhance = await runQueuedComfyGenerate({
                 workflow_json:'Z-Image-Enhance.json',
                 params:{
@@ -11384,7 +11384,7 @@ async function runComfyNode(nodeId, opts={}){
             if(!workflowName || !wf) throw new Error(tr('canvas.comfyNoWorkflow'));
             const values = await ComfyWorkflowFields.canvasValues(wf.config, {
                 prompt, media:{image:refs, video:videoRefsOnly(allRefs), audio:audioRefsOnly(allRefs)},
-                parameters:node.comfyParams || {}, mediaName:comfyNameForRef, english:langIsEn(),
+                parameters:node.comfyParams || {}, mediaName:ref=>comfyNameForRef(ref,workflowName,wf.config.backend), english:langIsEn(),
                 randomValue:f => {
                     if(!comfyRandomEnabled(f) || !comfyRandomActive(node, f.id)) return undefined;
                     (node.comfyParams ||= {})[f.id] = comfyRandomValue(f);
@@ -11395,6 +11395,7 @@ async function runComfyNode(nodeId, opts={}){
             const result = await runQueuedComfyGenerate({
                 prompt,
                 workflow_json:workflowName,
+                backend:wf.config.backend,
                 params,
                 type:'workflow-custom',
                 client_id:CLIENT_ID
@@ -11406,7 +11407,7 @@ async function runComfyNode(nodeId, opts={}){
         } else {
             run.taskLabel = tr('canvas.comfyEdit');
             const names = [];
-            for (const ref of refs.slice(0, 3)) names.push(await comfyNameForRef(ref));
+            for (const ref of refs.slice(0, 3)) names.push(await comfyNameForRef(ref,'Flux2-Klein.json'));
             const result = await runQueuedComfyGenerate({
                 prompt,
                 workflow_json:'Flux2-Klein.json',

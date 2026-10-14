@@ -203,6 +203,10 @@ body.studio-theme-dark .pfield-bool-track:not(.on) .pfield-bool-thumb { backgrou
 .run-btn:disabled { opacity:.6; cursor:not-allowed; transform:none; box-shadow:none; }
 .run-result { padding:14px; background:var(--soft); border:1px solid var(--line); border-radius:12px; }
 .run-result img { width:100%; border-radius:10px; display:block; cursor:zoom-in; }
+.run-result img, .run-result video { max-height:320px; object-fit:contain; }
+.run-result a { display:block; overflow-wrap:anywhere; font-size:11px; }
+.run-result > div + div { margin-top:10px; }
+.mini-card .run-result { max-height:320px; overflow:auto; padding:6px; }
 .run-status { font-size:11px; font-weight:700; color:var(--muted); margin-top:8px; text-align:center; }
 .title-edit-row { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
 .workflow-title-input { width:min(420px, 100%); height:30px; border:0; border-bottom:1px dashed var(--line-strong); border-radius:0; background:transparent; color:var(--text); outline:none; padding:0 2px 2px; font-size:20px; line-height:1.1; font-weight:900; letter-spacing:-.01em; }

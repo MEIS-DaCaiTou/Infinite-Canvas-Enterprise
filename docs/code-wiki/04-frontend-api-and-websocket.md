@@ -140,3 +140,7 @@ SEC-P0 额外固定传输边界：只接受同源 `/ws/stats`，浏览器到 Ups
 ## 9. ComfyUI 输入修复候选
 
 基于 main@e89a288fe 的 [修复记录](../ops/COMFY-WORKFLOW-INPUT-REPAIR-2026-10-14.md)：`normalizeWorkflow()` 在读取时纠正旧 `filename_prefix` 媒体类型，保留稳定字段 ID；`inferType()` 识别新字段；`kind()`、`requireMedia()`、`canvasValues()` 与 `paramsFromValues()` 服务设置页、普通/智能画布和级联。缺少素材按名称及节点定位，前缀是文本。HTML 先加载共用脚本再加载对应页面脚本。后端继续原上传/任务/归档入口，素材同步明确排除前缀；没有新 API 或 Schema。
+
+## ComfyUI 双视图与指定后端候选
+
+static/js/comfy-workflow-session.js 提供共享输入、上传互斥、运行快照和结果身份；设置页两处视图按字段 ID 读取它，输入修改后旧结果标记。/api/workflows/{name}/run 的 async_task=true 返回既有 canvas-comfy-tasks 回执，省略时保持同步结果契约。/api/upload 的 workflow/backend 可选参数将上传绑定到已配置后端，返回真实 comfy_name（含 subfolder）；两类画布自定义路径携带相同后端提交。GET workflow 的 include_definitions=true 为设置页读取目标 object_info，普通画布只使用保存的字段配置。多图/视频/音频/文件按实际 items 呈现，视频不会被当第一张图片丢弃。候选未发布；细节和未验收范围见 ComfyUI 修复记录。

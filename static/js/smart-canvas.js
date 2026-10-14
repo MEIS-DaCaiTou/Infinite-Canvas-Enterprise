@@ -13854,7 +13854,7 @@ async function generateComfyUrlsWithSettings(runSettings, prompt, refs){
     }
     if(mode === 'enhance'){
         if(!imageRefs.length) throw new Error(tr('smart.errEnhanceNeedRefs'));
-        const inputName = await comfyNameForRef(imageRefs[0]);
+        const inputName = await comfyNameForRef(imageRefs[0],'Z-Image-Enhance.json');
         const data = await runQueuedSmartComfyGenerate({workflow_json:'Z-Image-Enhance.json', type:'enhance', params:{"15":{image:inputName},"204":{value:Number(runSettings.enhanceStrength ?? 0.5)}}, client_id:smartClientId});
         const urls = resultMediaUrls(data);
         return {urls, kind:mediaKindForUrls(urls, 'image')};
@@ -13862,7 +13862,7 @@ async function generateComfyUrlsWithSettings(runSettings, prompt, refs){
     if(mode === 'edit'){
         if(!imageRefs.length) throw new Error(tr('smart.errEditNeedRefs'));
         const names = [];
-        for(const ref of imageRefs.slice(0, 3)) names.push(await comfyNameForRef(ref));
+        for(const ref of imageRefs.slice(0, 3)) names.push(await comfyNameForRef(ref,'Flux2-Klein.json'));
         const data = await runQueuedSmartComfyGenerate({prompt, workflow_json:'Flux2-Klein.json', type:'klein', params:{"168":{text:prompt},"158":{noise_seed:Math.floor(Math.random()*1000000)},"278":{image:names[0] || ""},"270":{image:names[1] || ""},"292":{image:names[2] || ""},"313":{value:Boolean(names[1])},"314":{value:Boolean(names[2])}}, client_id:smartClientId});
         const urls = resultMediaUrls(data);
         return {urls, kind:mediaKindForUrls(urls, 'image')};
@@ -13875,10 +13875,10 @@ async function generateComfyUrlsWithSettings(runSettings, prompt, refs){
     });
     const values = await ComfyWorkflowFields.canvasValues(wf.config, {
         prompt, media:{image:imageRefs, video:videoRefsOnly(allRefs), audio:audioRefsOnly(allRefs)},
-        parameters:runSettings.comfyParams || {}, mediaName:comfyNameForRef, english:window.StudioI18n?.lang?.() === 'en',
+        parameters:runSettings.comfyParams || {}, mediaName:ref=>comfyNameForRef(ref,workflowName,wf.config.backend), english:window.StudioI18n?.lang?.() === 'en',
         randomValue:field => comfyRandomEnabledField(field) && smartComfyRandomActiveFor(runSettings, field.id) ? smartComfyRandomValue(field) : undefined
     });
-    const result = await runQueuedSmartComfyGenerate({prompt, workflow_json:workflowName, params:comfyParamsFromWorkflowValues(wf.config || {fields:[]}, values), type:'workflow-custom', client_id:smartClientId});
+    const result = await runQueuedSmartComfyGenerate({prompt, workflow_json:workflowName, backend:wf.config.backend, params:comfyParamsFromWorkflowValues(wf.config || {fields:[]}, values), type:'workflow-custom', client_id:smartClientId});
     const urls = resultMediaUrls(result);
     const fallbackKind = result.videos?.length ? 'video' : result.audios?.length ? 'audio' : result.texts?.length ? 'text' : 'image';
     return {urls, kind:mediaKindForUrls(urls, fallbackKind)};
@@ -14779,10 +14779,10 @@ async function runComfyGeneration(node, prompt, refs, pendingNode, meta){
     });
     const values = await ComfyWorkflowFields.canvasValues(wf.config, {
         prompt, media:{image:refs, video:videoRefsOnly(allRefs), audio:audioRefsOnly(allRefs)},
-        parameters:settings.comfyParams || {}, mediaName:comfyNameForRef, english:window.StudioI18n?.lang?.() === 'en',
+        parameters:settings.comfyParams || {}, mediaName:ref=>comfyNameForRef(ref,workflowName,wf.config.backend), english:window.StudioI18n?.lang?.() === 'en',
         randomValue:field => comfyRandomEnabledField(field) && smartComfyRandomActive(field.id) ? smartComfyRandomValue(field) : undefined
     });
-    const result = await runQueuedSmartComfyGenerate({prompt, workflow_json:workflowName, params:comfyParamsFromWorkflowValues(wf.config || {fields:[]}, values), type:'workflow-custom', client_id:smartClientId});
+    const result = await runQueuedSmartComfyGenerate({prompt, workflow_json:workflowName, backend:wf.config.backend, params:comfyParamsFromWorkflowValues(wf.config || {fields:[]}, values), type:'workflow-custom', client_id:smartClientId});
     const urls = resultMediaUrls(result);
     if(!urls.length) throw new Error(tr('smart.errComfyNoImages'));
     const kind = mediaKindForUrls(urls, result.videos?.length ? 'video' : result.audios?.length ? 'audio' : result.texts?.length ? 'text' : 'image');
@@ -14816,7 +14816,7 @@ async function runComfyText(node, prompt, pendingNode, meta){
 }
 async function runComfyEnhance(node, refs, pendingNode, meta){
     if(!refs.length) throw new Error(tr('smart.errEnhanceNeedRefs'));
-    const inputName = await comfyNameForRef(refs[0]);
+    const inputName = await comfyNameForRef(refs[0],'Z-Image-Enhance.json');
     const data = await runQueuedSmartComfyGenerate({workflow_json:'Z-Image-Enhance.json', type:'enhance', params:{"15":{image:inputName},"204":{value:Number(settings.enhanceStrength ?? 0.5)}}, client_id:smartClientId});
     const out = data.outputs || data.images || [];
     if(!out.length) throw new Error(tr('smart.errComfyNoImages'));
@@ -14832,7 +14832,7 @@ async function runComfyEnhance(node, refs, pendingNode, meta){
 async function runComfyEdit(node, prompt, refs, pendingNode, meta){
     if(!refs.length) throw new Error(tr('smart.errEditNeedRefs'));
     const names = [];
-    for(const ref of refs.slice(0, 3)) names.push(await comfyNameForRef(ref));
+    for(const ref of refs.slice(0, 3)) names.push(await comfyNameForRef(ref,'Flux2-Klein.json'));
     const data = await runQueuedSmartComfyGenerate({prompt, workflow_json:'Flux2-Klein.json', type:'klein', params:{"168":{text:prompt},"158":{noise_seed:Math.floor(Math.random()*1000000)},"278":{image:names[0] || ""},"270":{image:names[1] || ""},"292":{image:names[2] || ""},"313":{value:Boolean(names[1])},"314":{value:Boolean(names[2])}}, client_id:smartClientId});
     const out = data.outputs || data.images || [];
     if(!out.length) throw new Error(tr('smart.errComfyNoImages'));
@@ -14846,14 +14846,14 @@ async function runComfyEdit(node, prompt, refs, pendingNode, meta){
     clearPromptInput({preserveDraft:true});
     scheduleSave();
 }
-async function comfyNameForRef(ref){
-    if(ref.comfy_name) return ref.comfy_name;
+async function comfyNameForRef(ref, workflow="", backend=""){
+    if(!workflow && ref.comfy_name) return ref.comfy_name;
     const response = await fetch(ref.url);
-    if(!response.ok) return ref.name || ref.url;
+    if(!response.ok) throw new Error('读取 ComfyUI 输入素材失败');
     const blob = await response.blob();
     const form = new FormData();
     form.append('files', blob, ref.name || 'smart-ref.png');
-    const data = await fetch('/api/upload', {method:'POST', body:form}).then(async r => {
+    const data = await fetch('/api/upload?' + new URLSearchParams({workflow:workflow || 'Z-Image.json',backend}), {method:'POST', body:form}).then(async r => {
         if(!r.ok) throw new Error(await r.text());
         return r.json();
     });

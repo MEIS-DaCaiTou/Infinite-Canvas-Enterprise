@@ -136,11 +136,11 @@ calls = []
 async def fake_provider(payload, **kwargs):
     calls.append('image')
     return {'images': ['/output/fake.png']}
-def fake_comfy(payload):
+def fake_comfy(payload, journal_id=None):
     calls.append('comfy')
     return {'images': ['/output/comfy.png']}
 main.build_online_image_result = fake_provider
-main.generate = fake_comfy
+main.execute_comfy_generation = fake_comfy
 async def run():
     request = main.OnlineImageRequest(prompt='private fixture prompt')
     reply = await main.create_canvas_image_task(request)
@@ -152,7 +152,15 @@ async def run():
     main.CANVAS_TASK_JOURNAL = CanvasTaskJournal(roots.DATA_ROOT / 'canvas-tasks')
     assert (await main.get_canvas_image_task(task_id))['result']['images'] == ['/output/fake.png']
     assert 'private fixture prompt' not in (roots.DATA_ROOT / 'canvas-tasks' / (task_id + '.json')).read_text(encoding='utf-8')
-    comfy = await main.create_canvas_comfy_task(main.GenerateRequest())
+    payload = main.GenerateRequest(request_id='01564c5d-b264-42cb-83c3-7463ca1ed404')
+    comfy = await main.create_canvas_comfy_task(payload)
+    same = await main.create_canvas_comfy_task(payload)
+    assert same['task_id'] == comfy['task_id']
+    try:
+        await main.create_canvas_comfy_task(payload, 'other-user')
+        raise AssertionError('task identity collision disclosed another owner receipt')
+    except main.HTTPException as exc:
+        assert exc.status_code == 403
     await asyncio.gather(*main.CANVAS_TASK_RUNNERS)
     assert (await main.get_canvas_comfy_task(comfy['task_id']))['status'] == 'succeeded'
     assert (await main.get_canvas_comfy_task(comfy['task_id']))['workflow_json'] == 'Z-Image.json'

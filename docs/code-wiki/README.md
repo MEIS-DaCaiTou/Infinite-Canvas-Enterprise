@@ -34,3 +34,5 @@ Wiki 是源码/运行参考，不是第二份状态表、路线图或生产批�
 2026-10-14 ComfyUI 修复定位时的快照：main@e89a288fe（#156 已合并）；本轮 ComfyUI 修复候选的共用字段模块见 [前端/API 章节](./04-frontend-api-and-websocket.md#9-comfyui-输入修复候选) 和 [完整记录](../ops/COMFY-WORKFLOW-INPUT-REPAIR-2026-10-14.md)。前述 10-13 九章快照保留采集时点，PR/CI/发行仍以 CURRENT 为准。
 
 2026-10-14 发行收口：#123/#157/#158 独立审查后已合并，10.2 准确构建源码随 #159 进入 main；上述 10-13 快照与早期“候选”指采集时点。包级真实单跳及失败恢复、10.1 裸库限制见 [Runtime 章节](./06-runtime-install-release-update.md#102-发行包的准确升级边界) 与 CURRENT。正式 Release 与源码合并分别核验。
+
+10.2 测试设备反馈续修候选已补充到后端、前端/API 与限制章节：ComfyUI HTTP 适配、双视图共享状态、指定后端和原任务查询；目前为独立分支开发，未合并/发布。正式状态仍见 CURRENT。
