@@ -82,6 +82,51 @@ class CanvasTaskJournal:
                 raise ValueError("Canvas task is not running")
             self._write({**record, **changes, "id": task_id, "updated_at": time.time()})
 
+    def record_image_request(self, task_id: str, index: int, changes: dict, *, recovering=False) -> None:
+        """Additive v1 receipt fields; no payloads or credentials are recorded."""
+        with self._lock:
+            record = self.get(task_id)
+            required = "failed" if recovering else "running"
+            if not record or record.get("type") != "online-image" or record.get("status") != required:
+                raise ValueError("Canvas image receipt is not writable")
+            receipts = list(record.get("provider_receipts") or [])
+            if type(index) is not int or not 0 <= index < len(receipts):
+                raise ValueError("Invalid image request index")
+            previous = receipts[index]
+            if previous.get("state") in {"succeeded", "failed"}:
+                raise ValueError("Provider result is already terminal")
+            if previous.get("upstream_task_id") and changes.get("upstream_task_id", previous["upstream_task_id"]) != previous["upstream_task_id"]:
+                raise ValueError("Provider task identity cannot change")
+            receipts[index] = {**previous, **changes, "index": index}
+            updates = {"provider_receipts": receipts}
+            if changes.get("upstream_task_id") and not record.get("upstream_task_id"):
+                updates["upstream_task_id"] = changes["upstream_task_id"]
+            self._write({**record, **updates, "updated_at": time.time()})
+
+    def reopen_image_archives(self, task_id: str, indexes: list[int]) -> None:
+        """Correct completed receipts whose bytes were never archived; never queue work."""
+        with self._lock:
+            record = self.get(task_id)
+            if not record or record.get("type") != "online-image" or record.get("status") not in {"failed", "succeeded"}:
+                raise ValueError("Canvas image archive is not recoverable")
+            receipts = list(record.get("provider_receipts") or [])
+            for index in indexes:
+                if type(index) is not int or not 0 <= index < len(receipts) or receipts[index].get("state") != "succeeded":
+                    raise ValueError("Invalid incomplete archive receipt")
+                receipts[index] = {**receipts[index], "state": "unknown", "result": None}
+            self._write({**record, "provider_receipts": receipts, "status": "failed", "result": None,
+                         "recovery_required": True, "updated_at": time.time()})
+
+    def finish_image_recovery(self, task_id: str, result: dict) -> None:
+        with self._lock:
+            record = self.get(task_id)
+            if not record or record.get("type") != "online-image" or record.get("status") != "failed":
+                raise ValueError("Canvas image task is not recoverable")
+            succeeded = result["status"] == "succeeded"
+            self._write({**record, "status": "succeeded" if succeeded else "failed",
+                         "result": result, "error": "" if succeeded else result["message"],
+                         "recovery_required": not succeeded, "updated_at": time.time()})
+
     def recover(self) -> dict:
         """Startup-only, before accepting traffic; no provider/network calls."""
         counts = {"interrupted": 0, "corrupt": 0}

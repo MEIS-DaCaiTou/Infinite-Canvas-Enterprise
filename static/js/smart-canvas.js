@@ -14886,6 +14886,7 @@ class ImageTaskRecoverSignal extends Error {
         this.taskId = data.taskId || data.task_id || '';
         this.recoverTaskId = data.recoverTaskId || data.upstream_task_id || data.task_id || '';
         this.providerId = data.providerId || data.provider_id || '';
+        this.canReconcile = Boolean(data.canReconcile || data.can_reconcile);
         this.kind = data.kind || 'image';
     }
 }
@@ -15006,16 +15007,6 @@ async function queryJimengNow(nodeId){
 function providerIdForSmartTask(node, task){
     return task?.providerId || node?.runSettings?.provider_id || settings.provider_id || 'comfly';
 }
-async function fetchImageTaskQuery(providerId, taskId){
-    return fetch('/api/image-task-query', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({provider_id:providerId || 'comfly', task_id:taskId})
-    }).then(async r => {
-        if(!r.ok) throw new Error(await r.text());
-        return r.json();
-    });
-}
 async function querySmartImageTaskNow(nodeId, localTaskId){
     const node = nodes.find(n => n.id === nodeId);
     if(!node) return;
@@ -15030,13 +15021,20 @@ async function querySmartImageTaskNow(nodeId, localTaskId){
     task.recoverTaskId = recoverTaskId;
     render();
     try {
-        const data = await fetchImageTaskQuery(providerIdForSmartTask(node, task), recoverTaskId);
-        if(data.status === 'succeeded'){
+        const data = await window.CanvasTaskQuery.query({canvasTaskId:task.taskId,
+            canReconcile:task.canReconcile, providerId:providerIdForSmartTask(node, task), upstreamTaskId:recoverTaskId});
+        if(data.status === 'succeeded' || data.status === 'partial'){
             task.failed = false;
             task.querying = false;
             finalizeSmartPendingTask(node, task.taskId, resultMediaUrls(data.image_items?.length ? data.image_items : (data.images?.length ? data.images : data)), task.kind || 'image');
             render();
             scheduleSave();
+            if(data.status === 'partial'){
+                addSmartGenerationLog({run:{node:{id:node.id}, request:{task_id:task.taskId,
+                    provider_id:data.provider_id, model:data.model}}, outputs:data.images || [], error:data.message});
+                toast(data.message);
+                scheduleSave();
+            }
             return;
         }
         if(data.status === 'failed'){
@@ -15102,8 +15100,8 @@ async function pollSmartCanvasTask(taskId){
             if(task.status === 'succeeded') return task.result || {};
             if(task.status === 'jimeng_pending') throw new JimengPendingSignal({submitId:task.submit_id, kind:task.kind, queueInfo:task.queue_info, message:task.message});
             if(task.status === 'failed'){
-                const recoverTaskId = task.upstream_task_id || extractUpstreamTaskId(task.error || '');
-                if(recoverTaskId) throw new ImageTaskRecoverSignal({taskId, recoverTaskId, providerId:task.provider_id, kind:'image', message:task.error || tr('smart.errRunFailed')});
+                const recoverTaskId = task.upstream_task_id || extractUpstreamTaskId(task.error || '') || (task.can_reconcile ? taskId : '');
+                if(recoverTaskId) throw new ImageTaskRecoverSignal({taskId, recoverTaskId, providerId:task.provider_id, canReconcile:task.can_reconcile, kind:'image', message:task.error || tr('smart.errRunFailed')});
                 throw new Error(task.error || tr('smart.errRunFailed'));
             }
         }
@@ -15238,6 +15236,7 @@ async function resumeSmartPendingNode(node, logContext={}){
                 task.failed = true;
                 task.querying = false;
                 task.recoverTaskId = e.recoverTaskId;
+                task.canReconcile = e.canReconcile;
                 task.providerId = e.providerId || task.providerId || providerIdForSmartTask(node, task);
                 task.error = e.message || tr('smart.errRunFailed');
                 node.running = false;

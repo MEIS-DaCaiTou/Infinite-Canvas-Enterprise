@@ -1,13 +1,9 @@
 {
   "schema_version": "enterprise-documents-v1",
   "reviewed_at": "2026-10-14",
-  "audit_base_commit": "519b1da0fd859310b104eb4e8e58398cbe83317c",
-  "scope": "All Git-managed/non-ignored Markdown/text; main 519b1da (#157 merged) and ComfyUI candidate are distinguished. Historical/frozen evidence is retained; release and production validation are separate.",
+  "audit_base_commit": "b41dd3b4c7a867fcbda3aac598f0a197336e0b73",
+  "scope": "Git-managed Markdown/text; main b41dd3b (#157/#158 merged), independently reviewed image recovery integration, and approved 10.2 release preparation. Frozen evidence retained; publication and production validation remain separate.",
   "documents": [
-    {
-      "path": "docs/ops/COMFY-WORKFLOW-INPUT-REPAIR-2026-10-14.md",
-      "kind": "record"
-    },
     {
       "path": "docs/ops/ONLINE-UPGRADE-SEQUENCE-2026-10-12.md",
       "kind": "record"
@@ -639,6 +635,14 @@
     },
     {
       "path": "docs/ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/ops/COMFY-WORKFLOW-INPUT-REPAIR-2026-10-14.md",
       "kind": "record"
     },
     {

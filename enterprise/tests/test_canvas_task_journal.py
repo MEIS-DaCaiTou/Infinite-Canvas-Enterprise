@@ -133,7 +133,7 @@ install_path_roots_for_process(roots)
 prepare_application_directories(roots)
 import main
 calls = []
-async def fake_provider(payload):
+async def fake_provider(payload, **kwargs):
     calls.append('image')
     return {'images': ['/output/fake.png']}
 def fake_comfy(payload):

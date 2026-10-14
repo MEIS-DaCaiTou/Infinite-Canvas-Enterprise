@@ -1,6 +1,6 @@
 # 前端、API 与 WebSocket
 
-> 源码参考快照（2026-10-13）：main@3e0deeae（已合并 #154/#155）与产品候选 #156@4bdd9a1 分列；C5/C6/C7 已合并，构建与验收范围仍引用其准确记录。本文是代码/运行参考，当前 PR/CI、Release 和验收只见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，实施顺序只认路线图。
+> 源码参考快照（2026-10-13）：main@e89a288（已合并 #154/#155/#156）；产品功能源码基点 #156@4bdd9a1 保留；C5/C6/C7 已合并，构建与验收范围仍引用其准确记录。本文是代码/运行参考，当前 PR/CI、Release 和验收只见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，实施顺序只认路线图。
 
 [返回索引](./README.md)
 
@@ -38,6 +38,8 @@
 | `returnToCanvasManager()` | 返回工作台 |
 
 文件还包含图片/视频节点、选择与拖动、连线、最小地图、Provider 参数、生成轮询、历史和编辑器逻辑。
+
+#123 新候选的 `static/js/canvas-task-query.js` 为经典/智能画布共用原任务查询请求。已绑定回执按本地 ID 调用 `/api/canvas-image-tasks/{task_id}/reconcile`，客户端不指定供应商地址/Key/上游 ID；旧记录保持原查询路径。已有“查询结果”按钮找回后更新原节点并保存；部分结果提示写入现有生成日志，无新增页面或必填设置。准确 GUI 与限制见[工程记录](../ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md)。
 
 ## 3. 智能画布
 

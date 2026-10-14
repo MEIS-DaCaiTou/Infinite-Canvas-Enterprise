@@ -1,6 +1,6 @@
 # 后端类与函数参考
 
-> 源码参考快照（2026-10-13）：main@3e0deeae（已合并 #154/#155）与产品候选 #156@4bdd9a1 分列；C5/C6/C7 已合并，构建与验收范围仍引用其准确记录。本文是代码/运行参考，当前 PR/CI、Release 和验收只见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，实施顺序只认路线图。
+> 源码参考快照（2026-10-13）：main@e89a288（已合并 #154/#155/#156）；产品功能源码基点 #156@4bdd9a1 保留；C5/C6/C7 已合并，构建与验收范围仍引用其准确记录。本文是代码/运行参考，当前 PR/CI、Release 和验收只见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，实施顺序只认路线图。
 
 [返回索引](./README.md)
 
@@ -160,7 +160,7 @@ Gateway 还对 Cookie 状态变更请求执行精确同源校验；Bearer CLI �
 
 ## 8. 主线收敛分支增量：`enterprise/canvas_task_journal.py`
 
-`CanvasTaskJournal` 使用原子 JSON 回执保存画布任务状态，关键方法负责创建、单次领取、完成和中断恢复；`create_task_receipt()` 在任务被受理时记录最小可恢复信息。该文件已从 `28ad937` 移植到 `codex/mainline-runtime-convergence-20260919`，在 PR 合并前不能描述为 `origin/main` 已有能力。
+`CanvasTaskJournal` 的原子回执、单次领取、完成和中断恢复已在当前 main；`create_task_receipt()` 在受理前写回执及归属。#123 新候选在既有 v1 JSON 上增加可选供应商成员回执与恢复结果，仍使用同一根目录和写入者，不增加数据库 Schema。
 
 ## 9. 本轮核对的源码规模与候选模块
 
@@ -176,3 +176,9 @@ Gateway 还对 Cookie 状态变更请求执行精确同源校验；Bearer CLI �
 | user_model_preferences.py：load_preferences / save_preferences | DATA_ROOT/user-model-preferences，自己的临时文件原子替换；既有写入审计 W50 |
 
 main.py 的 api_headers、generate_ai_image、wait_for_image_task 和结果归档仍参与调用，新增模块不是完整 Provider 体系。完整边界随实际供应商工作包逐步提取。
+
+## 付费提交与查询规则（#123 候选）
+
+`enterprise/providers/submission.py` 承担明确 API 拒绝判定、未知结果错误、提交响应结构校验和 GET/HEAD 瞬态重试。入口复用它，不在响应丢失时再次付费生成；已有 ID 在错误和图像持久回执中保留。它不访问业务数据库或文件目录。此包尚未合并，见[工程记录](../ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md)，不等于完整任务中心。
+
+`enterprise/canvas_image_recovery.py` 的 `ImageReceiptSink` 在通用上游接受后、第一次轮询前保存 ID/查询绑定；`CanvasImageRecovery` 只查询原任务并回写原回执，单飞协调只保留活动查询，不作为任务事实源。已有结果缓存、批量成员结果、供应商配置变更拒绝及部分结果提示在此边界。`main.py` 的 `POST /api/canvas-image-tasks/{task_id}/reconcile` 只接线；Gateway 复用任务归属，结果仍归原用户。旧回执及旧查询路由保留，不意味着全 Provider/视频/自动对账已完成。

@@ -209,6 +209,15 @@ async def _run_checks() -> None:
         denied = await interceptors.pre_process("api/canvas-image-tasks/canvas-img-a", "GET", actor_b)
         assert denied is not None and denied.status_code == 404
 
+        reconcile_path = "api/canvas-image-tasks/canvas-img-a/reconcile"
+        assert await interceptors.pre_process(reconcile_path, "POST", actor_a, body=b"{}") is None
+        denied = await interceptors.pre_process(reconcile_path, "POST", actor_b, body=b"{}")
+        assert denied is not None and denied.status_code == 404
+        await _post_process_json(interceptors, reconcile_path, "POST", actor_admin,
+                                 {"task_id": "canvas-img-a", "status": "succeeded", "images": ["/output/reconciled-a.png"]})
+        assert edb.get_resource_owner("/output/reconciled-a.png") == user_a["id"]
+        assert not interceptors.can_access_resource(actor_b, "/output/reconciled-a.png")
+
         await _post_process_json(
             interceptors,
             "api/canvas-image-tasks/canvas-img-a",

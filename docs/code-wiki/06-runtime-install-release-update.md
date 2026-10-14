@@ -1,8 +1,10 @@
 # Runtime、安装、发布与在线更新
 
-> 源码参考快照（2026-10-13）：main@e89a288（已合并 #154/#155/#156）；C8 Windows 交接为待审候选，构建与验收仍按准确记录。本文是代码/运行参考，当前 PR/CI、Release 和验收只见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，实施顺序只认路线图。
+> 源码参考快照（2026-10-13）：main@e89a288（已合并 #154/#155/#156）；产品功能源码基点 #156@4bdd9a1 保留；C5/C6/C7 已合并，构建与验收范围仍引用其准确记录。本文是代码/运行参考，当前 PR/CI、Release 和验收只见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，实施顺序只认路线图。
 
 [返回索引](./README.md)
+
+后续 Windows 交接候选 [#157](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/157) 准确 551f433 四项常规 CI 成功、独立审查后已随 `519b1da0` 合并。正式入口“启动并打开”只用当前已安装版本；更新由管理员在更新中心单独确认，不要求每次启动更新。必要安装审查不扩成任意宿主/历史/GUI 工程，业务原任务恢复可并行推进；正式 10.1 资产未改变，新发行另行验证。
 
 更新时间：2026-10-13。主线、维护线和固定入口边界见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，生命周期设计见 [统一交付 ADR](../decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md)。
 

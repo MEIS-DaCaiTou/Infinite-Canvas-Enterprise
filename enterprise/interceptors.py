@@ -2892,6 +2892,10 @@ def _record_query_task_response_resources(
 
 
 def record_resources_from_data(user: dict, path: str, method: str, data: Any, request_body: bytes | None = None) -> None:
+    if method.upper() == "POST" and path.startswith("api/canvas-image-tasks/") and path.endswith("/reconcile"):
+        # Admin inspection preserves the original task owner's output rights.
+        _record_task_response_resources(user, "api/image-task-query", TASK_TYPE_CANVAS_IMAGE, _canvas_task_id_from_path(path), data)
+        return
     if (
         method.upper() in {"POST", "PUT", "PATCH", "DELETE"}
         and _record_asset_library_response_resources(user, path, method, request_body, data)

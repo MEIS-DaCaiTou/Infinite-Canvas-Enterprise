@@ -47,6 +47,11 @@ from enterprise.config import PATH_ROOTS as _CONFIG_PATH_ROOTS
 from enterprise.paths import get_path_roots, prepare_application_directories
 from enterprise.app_paths import AppPathLayout
 from enterprise.canvas_task_journal import CanvasTaskJournal, create_task_receipt
+from enterprise.canvas_image_recovery import CanvasImageRecovery, ImageReceiptSink, public_receipt
+from enterprise.providers.submission import (
+    image_api_explicitly_rejected, provider_submission_unknown, submission_json,
+    httpx_request_with_transient_retries,
+)
 from enterprise.provider_image_profiles import (
     IMAGE_PROFILE_TEMPLATES, ImageProfileError, build_aspect_parameters,
     normalize_image_profile, normalize_model_image_profiles, image_profile_for,
@@ -4014,11 +4019,8 @@ async def post_openai_responses(client, url, headers, body):
     5xx/超时一律不自动重试，避免上游已开始生成后重复扣费。"""
     bg_body = dict(body)
     bg_body["background"] = True
-    try:
-        resp = await client.post(url, headers=headers, json=bg_body)
-    except httpx.HTTPError as e:
-        print(f"RS background 请求传输失败，改走流式：{e}")
-        return await post_openai_responses_stream(client, url, headers, body)
+    # A lost response may already have incurred a paid generation.
+    resp = await client.post(url, headers=headers, json=bg_body)
     if resp.status_code in RESPONSES_REJECT_STATUSES:
         print(f"RS background 模式被拒（{resp.status_code}），改走流式：{resp.text[:200]}")
         return await post_openai_responses_stream(client, url, headers, body)
@@ -4122,9 +4124,9 @@ async def post_openai_responses_stream(client, url, headers, body):
             if completed is not None:
                 return wrap(200, completed)
             return wrap(502, error_payload or {"error": {"message": "RS 流式响应结束但没有 response.completed 事件"}})
-    except httpx.HTTPError as e:
-        print(f"RS 流式请求传输失败，回退非流式：{e}")
-        return await client.post(url, headers=headers, json=body)
+    except httpx.HTTPError:
+        # Keep the ambiguous submission with its original caller; do not POST again.
+        raise
 
 def provider_protocol(provider):
     return str((provider or {}).get("protocol") or "openai").strip().lower()
@@ -5879,27 +5881,6 @@ def image_task_fail_reason(payload):
     error = task_data.get("error") if isinstance(task_data.get("error"), dict) else {}
     return task_data.get("fail_reason") or task_data.get("message") or error.get("message") or (payload.get("message") if isinstance(payload, dict) else "") or "生图任务失败"
 
-async def httpx_request_with_transient_retries(client, method, url, attempts=2, retry_delay=1.2, **kwargs):
-    attempts = max(1, int(attempts or 1))
-    last_exc = None
-    retry_statuses = {502, 503, 504, 520, 522, 524}
-    for attempt in range(attempts):
-        try:
-            response = await client.request(method, url, **kwargs)
-            if response.status_code in retry_statuses and attempt + 1 < attempts:
-                await asyncio.sleep(retry_delay * (attempt + 1))
-                continue
-            return response
-        except (httpx.RemoteProtocolError, httpx.ReadError, httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout, httpx.PoolTimeout) as exc:
-            last_exc = exc
-            if attempt + 1 >= attempts:
-                raise
-            print(f"[HTTPX-RETRY] {method} {url} transient error: {exc}; retry {attempt + 2}/{attempts}", flush=True)
-            await asyncio.sleep(retry_delay * (attempt + 1))
-    if last_exc:
-        raise last_exc
-    raise httpx.HTTPError(f"请求失败：{method} {url}")
-
 async def fetch_image_task_payload(client, task_id, provider=None):
     task_url = image_task_url_for_provider(provider, task_id)
     response = await httpx_request_with_transient_retries(
@@ -5936,7 +5917,9 @@ async def wait_for_image_task(client, task_id, provider=None):
         if status in IMAGE_TASK_SUCCESS_STATUSES:
             return last_payload
         if status in IMAGE_TASK_FAILED_STATUSES:
-            raise HTTPException(status_code=502, detail=f"生图任务失败：{image_task_fail_reason(last_payload)}")
+            error = HTTPException(status_code=502, detail=f"生图任务失败：{image_task_fail_reason(last_payload)}")
+            error.provider_task_failed = True
+            raise error
         await asyncio.sleep(min(interval, max(0.0, deadline - time.monotonic())))
     raw_text = json.dumps(last_payload, ensure_ascii=False)[:800] if last_payload else ""
     extra = f"，最后响应：{raw_text}" if raw_text else ""
@@ -9995,7 +9978,7 @@ async def generate_runninghub_video(payload, provider):
         local_urls = [await save_remote_video_to_output(url, prefix="rh_video_") for url in urls]
         return {"videos": local_urls, "task_id": task_id, "raw": result}
 
-async def generate_ai_image(prompt, size, quality, model, reference_images=None, provider_id="comfly", image_parameters=None):
+async def generate_ai_image(prompt, size, quality, model, reference_images=None, provider_id="comfly", image_parameters=None, receipt_sink=None):
     provider = get_api_provider(provider_id)
     builtin_image_profile = zhenzhen_image_profile(provider, model)
     if provider["id"] == "modelscope":
@@ -10077,11 +10060,8 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
             if image_refs:
                 body["images"] = [await openai_video_proxy_public_reference_url(ref) for ref in image_refs[:6]]
             video_url = f"{base_url}/videos" if base_url.endswith("/v1") else f"{base_url}/v1/videos"
-            response = await httpx_request_with_transient_retries(
-                client,
-                "POST",
+            response = await client.post(
                 video_url,
-                attempts=2,
                 headers=api_headers(provider=provider, model=model),
                 json=body,
             )
@@ -10135,7 +10115,7 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
             if quality:
                 body["quality"] = quality
             response = await client.post(gen_url, headers=api_headers(provider=provider, model=model), json=body)
-            if response.status_code >= 400 and images_api_unsupported(response):
+            if image_api_explicitly_rejected(response):
                 response = await post_openai_edits()
         elif image_refs:
             # 1) OpenAI 协议的图生图/编辑用 multipart 提交到 /images/edits；
@@ -10163,11 +10143,10 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
                     if response.status_code >= 400:
                         edit_failed_status = response.status_code
                         edit_failed_text = response.text[:500]
-                        response = None
+                        if image_api_explicitly_rejected(response):
+                            response = None
                 except httpx.HTTPError as e:
-                    edit_failed_status = -1
-                    edit_failed_text = str(e)
-                    response = None
+                    raise provider_submission_unknown("图像编辑请求的响应中断，是否已被供应商受理尚不确定") from e
             finally:
                 for fh in opened:
                     fh.close()
@@ -10178,7 +10157,7 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
                         status_code=502,
                         detail=f"{model} 编辑接口 /images/edits 调用失败：{edit_failed_text[:300] or edit_failed_status}。已停止自动重试，避免上游可能已扣费后再次请求。"
                     )
-                print(f"/images/edits failed ({edit_failed_status}): {edit_failed_text[:200]} → 回退到 /images/generations + image:[] JSON")
+                print(f"/images/edits failed ({edit_failed_status}): {edit_failed_text[:200]!a} -> fallback /images/generations + image:[] JSON")
                 image_payload = [reference_to_data_url(ref, max_size=1536) for ref in image_refs[:ONLINE_IMAGE_REFERENCE_MAX]]
                 body = {
                     "model": model, "prompt": prompt, "size": size,
@@ -10188,7 +10167,7 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
                 if quality:
                     body["quality"] = quality
                 response = await client.post(gen_url, headers=api_headers(provider=provider, model=model), json=body)
-                if response.status_code >= 400 and images_api_unsupported(response):
+                if image_api_explicitly_rejected(response):
                     raise HTTPException(
                         status_code=502,
                         detail=f"编辑接口 /images/edits 调用失败，且该平台不支持 /images/generations：{edit_failed_text[:300] or edit_failed_status}"
@@ -10202,10 +10181,10 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
                 headers=api_headers(provider=provider, model=model),
                 json=body,
             )
-            if response.status_code >= 400 and images_api_unsupported(response):
+            if image_api_explicitly_rejected(response):
                 response = await post_openai_edits()
         response.raise_for_status()
-        raw = response.json()
+        raw = submission_json(response, kind="图像")
         try:
             return extract_image(raw), raw
         except HTTPException as exc:
@@ -10217,16 +10196,22 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
                     print(f"RS 响应中没有图片，原始返回（截断）：{json.dumps(raw, ensure_ascii=False)[:800]}")
                 except Exception:
                     pass
-                raise HTTPException(status_code=502, detail=responses_no_image_detail(raw) or exc.detail)
+                raise provider_submission_unknown("图像提交已返回，但没有可核对的任务或图片结果") from exc
             task_id = extract_task_id(raw)
             if not task_id:
-                raise
+                raise provider_submission_unknown("图像提交已返回，但没有可核对的任务或图片结果") from exc
+        if receipt_sink is not None:
+            # Persist accepted identity before polling; a restart never submits
+            # it again. Failure to save is not proof the supplier rejected it.
+            await receipt_sink.accepted(task_id, provider)
         try:
             task_result = await wait_for_image_task(client, task_id, provider)
             return extract_image(task_result), task_result
-        except HTTPException as exc:
-            setattr(exc, "upstream_task_id", task_id)
-            raise
+        except (HTTPException, httpx.HTTPError, ValueError) as exc:
+            if getattr(exc, "provider_task_failed", False):
+                setattr(exc, "upstream_task_id", task_id)
+                raise
+            raise provider_submission_unknown("已受理的图像任务查询未能确认最终结果", upstream_task_id=task_id) from exc
 
 def upstream_message_from_record(item):
     role = item.get("role")
@@ -12676,38 +12661,65 @@ async def fetch_upstream_models(provider_id: str):
         raise HTTPException(status_code=400, detail=f"{provider.get('name') or provider_id} 未配置 API Key")
     return await fetch_models_from_upstream(provider.get("base_url") or "", api_key, provider_protocol(provider), provider.get("image_request_mode") or "openai")
 
-async def build_online_image_result(payload: OnlineImageRequest):
+async def build_online_image_result(payload: OnlineImageRequest, *, receipt_task_id=None):
     provider = get_api_provider(payload.provider_id)
     default_model = (provider.get("image_models") or [IMAGE_MODEL])[0]
     model = selected_model(payload.model, default_model)
     refs = [ref.dict() for ref in payload.reference_images if ref.url]
     image_refs = image_references(refs)
     count = max(1, min(8, int(payload.n or 1)))
-    async def generate_one():
-        image_data, raw_item = await generate_ai_image(payload.prompt, payload.size, payload.quality, model, image_refs, provider["id"], {"aspect_ratio":payload.aspect_ratio, "resolution":payload.resolution})
+    async def generate_one(index):
+        sink = ImageReceiptSink(CANVAS_TASK_JOURNAL, receipt_task_id, index) if receipt_task_id else None
         try:
-            image_items = extract_images(raw_item) if isinstance(raw_item, dict) else [image_data]
-        except HTTPException:
-            image_items = [image_data]
-        local_urls = []
-        local_items = []
-        for item in image_items:
-            local_url = await save_ai_image_to_output(item, prefix="online_")
-            if local_url:
-                local_urls.append(local_url)
-                local_items.append(image_output_meta(local_url, item))
+            kwargs = {"receipt_sink": sink} if sink else {}
+            image_data, raw_item = await generate_ai_image(payload.prompt, payload.size, payload.quality, model, image_refs, provider["id"], {"aspect_ratio":payload.aspect_ratio, "resolution":payload.resolution}, **kwargs)
+        except Exception as exc:
+            if sink:
+                await sink.interrupted(exc)
+            raise
+        try:
+            try:
+                image_items = extract_images(raw_item) if isinstance(raw_item, dict) else [image_data]
+            except HTTPException:
+                image_items = [image_data]
+            local_urls = []
+            local_items = []
+            for item in image_items:
+                local_url = await save_ai_image_to_output(item, prefix="online_")
+                if local_url:
+                    local_urls.append(local_url)
+                    local_items.append(image_output_meta(local_url, item))
+            if sink:
+                require_archived_image_outputs(local_urls)
+                await sink.completed(local_urls, local_items)
+        except Exception as exc:
+            if sink:
+                await sink.interrupted(exc)
+            raise
         return local_urls, local_items, raw_item
     try:
-        generated = await asyncio.gather(*(generate_one() for _ in range(count)))
+        generated = await asyncio.gather(*(generate_one(index) for index in range(count)), return_exceptions=bool(receipt_task_id))
+        if receipt_task_id:
+            errors = [item for item in generated if isinstance(item, BaseException)]
+            if errors:
+                # Await all batch members so their accepted IDs/results remain
+                # durable even when one member loses its network response.
+                raise next((error for error in errors if getattr(error, "submission_unknown", False)), errors[0])
     except httpx.HTTPStatusError as exc:
         log_net_error(f"生图 HTTP状态错误 provider={provider.get('id')} model={model} size={payload.size}", exc)
+        if exc.response.status_code >= 500:
+            error = provider_submission_unknown(f"供应商返回 HTTP {exc.response.status_code}，是否已受理生成请求尚不确定")
+            error.upstream_task_id = getattr(exc, "upstream_task_id", "")
+            raise error from exc
         text = exc.response.text or ''
         friendly = friendly_image_error_detail(text, payload.size, model)
         detail = friendly or f"上游生图接口错误：{text[:300]}"
         raise HTTPException(status_code=exc.response.status_code, detail=detail) from exc
     except httpx.HTTPError as exc:
         log_net_error(f"生图 网络/TLS错误 provider={provider.get('id')} model={model}", exc)
-        raise HTTPException(status_code=502, detail=f"请求上游生图接口失败：{exc}") from exc
+        error = provider_submission_unknown("生成请求的网络响应中断，是否已被供应商受理尚不确定")
+        error.upstream_task_id = getattr(exc, "upstream_task_id", "")
+        raise error from exc
 
     local_urls = [url for urls, _items, _raw in generated for url in (urls or []) if url]
     local_items = [item for _urls, items, _raw in generated for item in (items or []) if item.get("url")]
@@ -12741,7 +12753,10 @@ async def online_image(payload: OnlineImageRequest):
 
 @app.post("/api/image-task-query")
 async def query_image_task(payload: ImageTaskQueryRequest):
-    provider = get_api_provider(payload.provider_id)
+    return await query_image_task_result(payload)
+
+async def query_image_task_result(payload: ImageTaskQueryRequest, *, store_history=True, bound_provider=None):
+    provider = bound_provider if bound_provider is not None else get_api_provider(payload.provider_id)
     task_id = str(payload.task_id or "").strip()
     if is_runninghub_provider(provider):
         api_key = runninghub_api_key(provider)
@@ -12778,8 +12793,9 @@ async def query_image_task(payload: ImageTaskQueryRequest):
                         "params": {"provider_id": provider["id"]},
                         "raw": raw,
                     }
-                    save_to_history(result)
-                    if GLOBAL_LOOP:
+                    if store_history:
+                        save_to_history(result)
+                    if store_history and GLOBAL_LOOP:
                         asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(result), GLOBAL_LOOP)
                     return result
                 if code in (805, "805"):
@@ -12845,8 +12861,9 @@ async def query_image_task(payload: ImageTaskQueryRequest):
             "params": {"provider_id": provider["id"]},
             "raw": raw,
         }
-        save_to_history(result)
-        if GLOBAL_LOOP:
+        if store_history:
+            save_to_history(result)
+        if store_history and GLOBAL_LOOP:
             asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(result), GLOBAL_LOOP)
         return result
     if status in IMAGE_TASK_FAILED_STATUSES:
@@ -12867,11 +12884,35 @@ async def query_image_task(payload: ImageTaskQueryRequest):
         "raw": raw,
     }
 
+def image_outputs_are_archived(images):
+    return bool(images) and all(os.path.isfile(output_file_from_url(url) or "") for url in images)
+
+
+def require_archived_image_outputs(images):
+    if not image_outputs_are_archived(images):
+        raise HTTPException(502, "供应商已返回结果，但本地图片归档未完成；请稍后续查原任务，不要重新生成")
+
+
+async def query_saved_image_task(provider, upstream_task_id):
+    result = await query_image_task_result(ImageTaskQueryRequest(provider_id=provider["id"], task_id=upstream_task_id), store_history=False, bound_provider=provider)
+    if result.get("status") == "succeeded":
+        require_archived_image_outputs(result.get("images") or [])
+    return result
+
+CANVAS_IMAGE_RECOVERY = CanvasImageRecovery(CANVAS_TASK_JOURNAL, get_api_provider_exact,
+                                           query_saved_image_task, save_to_history, is_archived=image_outputs_are_archived)
+
+@app.post("/api/canvas-image-tasks/{task_id}/reconcile")
+async def reconcile_canvas_image_task(task_id: str):
+    return await CANVAS_IMAGE_RECOVERY.reconcile(task_id)
+
 async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
     if not await asyncio.to_thread(CANVAS_TASK_JOURNAL.mark_running, task_id):
         return
     try:
-        result = await build_online_image_result(payload)
+        receipt = await asyncio.to_thread(CANVAS_TASK_JOURNAL.get, task_id)
+        kwargs = {"receipt_task_id": task_id} if receipt.get("provider_receipts") else {}
+        result = await build_online_image_result(payload, **kwargs)
         changes = {"status": "succeeded", "result": result, "error": ""}
     except JimengPendingError as exc:
         # 即梦云端还在排队：标记为 jimeng_pending，前端据 submit_id 持久续查（任务未丢失）
@@ -12895,6 +12936,8 @@ async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
             "status_code": status_code,
             "upstream_task_id": upstream_task_id,
         }
+        if getattr(exc, "submission_unknown", False):
+            changes.update(recovery_required=True, error_code="PROVIDER_SUBMISSION_UNKNOWN")
     await asyncio.to_thread(CANVAS_TASK_JOURNAL.finish, task_id, changes)
 
 @app.post("/api/canvas-image-tasks")
@@ -12912,6 +12955,7 @@ async def create_canvas_image_task(
         "error": "",
         "provider_id": payload.provider_id,
         "model": payload.model,
+        "provider_receipts": [{"index": index, "state": "started"} for index in range(max(1, min(8, int(payload.n or 1))))],
     }, x_enterprise_user_id)
     schedule_canvas_task(run_canvas_image_task(task_id, payload))
     return {"task_id": task_id, "status": "queued"}
@@ -12921,7 +12965,7 @@ async def get_canvas_image_task(task_id: str):
     task = await asyncio.to_thread(CANVAS_TASK_JOURNAL.get, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="画布任务不存在；此版本启用前的内存任务无法凭空恢复")
-    return task
+    return public_receipt(task)
 
 async def run_canvas_comfy_task(task_id: str, payload: GenerateRequest):
     if not await asyncio.to_thread(CANVAS_TASK_JOURNAL.mark_running, task_id):
@@ -13249,7 +13293,9 @@ async def wait_for_video_task(client, provider, task_id, submit_url=""):
         if status in VIDEO_TASK_FAILURE_STATUSES:
             error = task_data.get("error") if isinstance(task_data.get("error"), dict) else {}
             reason = task_data.get("fail_reason") or task_data.get("message") or error.get("message") or raw.get("error") or raw.get("message") or str(raw)
-            raise HTTPException(status_code=502, detail=humanize_video_task_failure(reason))
+            error = HTTPException(status_code=502, detail=humanize_video_task_failure(reason))
+            error.provider_task_failed = True
+            raise error
         delay = min(delay * 1.6, 12)
     raise HTTPException(status_code=504, detail=f"视频生成任务超时：{last_payload or task_id}")
 
@@ -13828,57 +13874,36 @@ async def canvas_video(payload: CanvasVideoRequest):
                         body["generate_audio"] = True
             # --- 发起视频生成请求 ---
             raw = None
-            html_response = None
-            last_response = None
-            last_json_error = None
             total_candidates = len(submit_urls)
             for idx, candidate_url in enumerate(submit_urls):
                 submit_url = candidate_url
                 is_last = idx == total_candidates - 1
                 response = await client.post(submit_url, headers=api_headers(provider=provider), json=body)
-                last_response = response
+                endpoint_missing = response.status_code in (404, 405)
                 if response.status_code >= 400:
-                    # 404/405（或直接返回网页 HTML）通常表示该平台不支持这个端点路径——
+                    # 只有明确的 404/405 才表示端点不存在，可以尝试下一个候选路径；
                     # 例如有的站点只实现了统一格式的 /v2/videos/generations，而我们先试了 /v1。
-                    # 这种情况要继续尝试下一个候选端点（关键修复：以前在这里直接 raise_for_status，
-                    # 第一个 /v1 报错就抛出，永远轮不到 /v2，表现为“接口错误”）。
-                    # 其它错误（模型不支持/时长/额度等请求被拒）说明端点是存在的，直接抛出交给外层友好提示。
-                    endpoint_missing = response.status_code in (404, 405) or looks_like_html_response(response.text)
+                    # HTML、5xx 和网络中断都不能证明请求未被受理，不得再提交。
                     if endpoint_missing and not is_last:
                         continue
+                    if response.status_code >= 500:
+                        raise provider_submission_unknown(f"视频提交接口返回 HTTP {response.status_code}，是否已受理任务尚不确定")
                     response.raise_for_status()
-                try:
-                    raw = response.json()
-                    break
-                except Exception as exc:
-                    last_json_error = exc
-                    if looks_like_html_response(response.text):
-                        html_response = response
-                        continue
-                    if not is_last:
-                        continue
-                    resp_text = response.text[:500]
-                    raise HTTPException(status_code=502, detail=f"上游视频接口返回非 JSON 响应（状态 {response.status_code}）：{resp_text}")
-            if raw is None:
-                resp = html_response or last_response
-                status_code = getattr(resp, "status_code", 200)
-                resp_text = (getattr(resp, "text", "") or "")[:500]
-                raise HTTPException(
-                    status_code=502,
-                    detail=(
-                        f"上游视频接口返回了网页 HTML，而不是 JSON（状态 {status_code}）。\n\n"
-                        f"这通常表示 API 设置里的 Base URL 指到了第三方聚合平台的管理后台/网页入口，"
-                        f"或该平台不支持当前视频接口路径。请确认 Base URL 是接口地址，例如以 /v1 结尾的 OpenAI 兼容地址，"
-                        f"并确认该平台实际支持视频生成端点。\n\n原始响应：{resp_text}"
-                    )
-                ) from last_json_error
+                raw = submission_json(response, kind="视频")
+                break
             task_id = extract_task_id(raw) or raw.get("task_id") or raw.get("id")
             result = raw
             if task_id and not video_output_urls(raw):
-                result = await wait_for_video_task(client, provider, task_id, submit_url)
+                try:
+                    result = await wait_for_video_task(client, provider, task_id, submit_url)
+                except (HTTPException, httpx.HTTPError, ValueError) as exc:
+                    if getattr(exc, "provider_task_failed", False):
+                        setattr(exc, "upstream_task_id", task_id)
+                        raise
+                    raise provider_submission_unknown("已受理的视频任务查询未能确认最终结果", upstream_task_id=task_id) from exc
             urls = video_output_urls(result)
             if not urls:
-                raise HTTPException(status_code=502, detail=f"视频生成成功但没有返回视频：{result}")
+                raise provider_submission_unknown("视频提交已返回，但没有可核对的视频结果", upstream_task_id=task_id or "")
             local_urls = [await save_remote_video_to_output(url) for url in urls]
             return {"videos": local_urls, "task_id": task_id, "raw": result}
     except httpx.HTTPStatusError as exc:
@@ -13940,7 +13965,7 @@ async def canvas_video(payload: CanvasVideoRequest):
         raise HTTPException(status_code=exc.response.status_code, detail=f"上游视频接口错误：{text}") from exc
     except httpx.HTTPError as exc:
         log_net_error(f"视频 网络/TLS错误 provider={provider.get('id')} model={payload.model}", exc)
-        raise HTTPException(status_code=502, detail=f"请求上游视频接口失败：{exc}") from exc
+        raise provider_submission_unknown("视频提交或任务查询的网络响应中断，是否已被供应商受理尚不确定") from exc
 
 # --- Canvas LLM ---
 

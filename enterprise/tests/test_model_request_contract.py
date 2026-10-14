@@ -17,6 +17,9 @@ from enterprise.providers.zhenzhen import (
     public_image_profiles as zhenzhen_public_image_profiles,
     submit_image as submit_zhenzhen_image,
 )
+from enterprise.providers.submission import (
+    submission_json, image_api_explicitly_rejected, provider_submission_unknown,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -46,6 +49,8 @@ def builders():
         'IMAGE_PROFILE_TEMPLATES':IMAGE_PROFILE_TEMPLATES, 'ImageProfileError':ImageProfileError,
         'build_aspect_parameters':build_aspect_parameters, 'normalize_image_profile':normalize_image_profile, 'image_profile_for':image_profile_for,
         'zhenzhen_image_profile':zhenzhen_image_profile, 'submit_zhenzhen_image':submit_zhenzhen_image,
+        'submission_json':submission_json, 'image_api_explicitly_rejected':image_api_explicitly_rejected,
+        'provider_submission_unknown':provider_submission_unknown,
         'httpx':SimpleNamespace(AsyncClient=lambda **kw: client_type(transport=httpx.MockTransport(transport), **kw), Timeout=httpx.Timeout, HTTPError=httpx.HTTPError),
         'get_api_provider':lambda _:provider,
         'selected_model':lambda model, fallback:model or fallback,
@@ -110,8 +115,9 @@ def test_edit_uses_multipart_contract_and_never_resubmits_on_failure(builders, t
     import os
     env['os'] = os
     status[0] = 400
-    with pytest.raises(HTTPException):
+    with pytest.raises(httpx.HTTPStatusError) as failure:
         asyncio.run(env['generate_ai_image']('fixture edit', '4:5', 'high', 'gemini-nano-banana-2.1', [{'url':'/assets/fixture.png'}], 'fixture'))
+    assert failure.value.response.status_code == 400
     assert len(calls) == 1
     assert calls[0].url.path == '/v1/images/edits'
     body = calls[0].content
@@ -124,7 +130,6 @@ def test_other_image_model_keeps_existing_request(builders):
     import json
     env, calls, _ = builders
     env['fixture_provider']['model_image_profiles'] = {'another-model':{'mode':'pixel'}}
-    env['images_api_unsupported'] = lambda response:False
     asyncio.run(env['generate_ai_image']('fixture prompt', '1024x1024', 'high', 'another-model', provider_id='fixture'))
     body = json.loads(calls[0].content)
     assert body['size'] == '1024x1024' and body['quality'] == 'high'
