@@ -3,12 +3,13 @@ import json
 import ast
 import os
 import random
+import io
 import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
-from urllib.parse import parse_qs, urlsplit
+import urllib.parse
 
 import pytest
 import requests
@@ -149,3 +150,26 @@ def test_imported_graph_keeps_original_nodes_and_rejects_obsolete_field_mapping(
         request.params = params
         with pytest.raises(ComfyExecutionError, match="映射已失效"):
             scope["prepare_comfy_workflow"](request)
+
+
+def test_failed_download_cleans_only_exclusively_created_output(tmp_path):
+    source = Path(__file__).resolve().parents[2] / "main.py"
+    function = next(node for node in ast.parse(source.read_text(encoding="utf-8")).body
+                    if isinstance(node, ast.FunctionDef) and node.name == "download_comfy_output")
+    target = tmp_path / "output.png"
+    def failed_copy(response, stream):
+        stream.write(b"partial")
+        raise OSError("interrupted download")
+    scope = {"uuid": SimpleNamespace(uuid4=lambda: SimpleNamespace(hex="fixture")), "os": os,
+             "comfy_output_extension": lambda _: ".png", "comfy_endpoint": endpoint,
+             "output_path_for": lambda *args: str(target), "output_url_for": lambda *args: "/output/fixture.png",
+             "urllib": SimpleNamespace(parse=urllib.parse, request=SimpleNamespace(urlopen=lambda *a, **k: io.BytesIO(b"result"))),
+             "shutil": SimpleNamespace(copyfileobj=failed_copy), "COMFYUI_DOWNLOAD_TIMEOUT": 30}
+    exec(compile(ast.Module(body=[function], type_ignores=[]), str(source), "exec"), scope)
+    download = lambda: scope["download_comfy_output"]("localhost:8188", {"filename": "result.png"})
+    target.write_bytes(b"existing-customer-output")
+    with pytest.raises(RuntimeError): download()
+    assert target.read_bytes() == b"existing-customer-output"
+    target.unlink()  # test-owned fixture only
+    with pytest.raises(RuntimeError): download()
+    assert not target.exists()

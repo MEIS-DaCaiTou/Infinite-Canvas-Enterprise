@@ -2978,13 +2978,19 @@ def download_comfy_output(comfy_address, item, prefix="studio_"):
     file_type = urllib.parse.quote(str(item.get("type") or "output"))
     comfy_url_path = f"/view?filename={urllib.parse.quote(str(item['filename']))}&subfolder={subfolder}&type={file_type}"
     full_url = comfy_endpoint(comfy_address, comfy_url_path)
+    created = False
     try:
-        with urllib.request.urlopen(full_url, timeout=COMFYUI_DOWNLOAD_TIMEOUT) as response, open(local_path, 'wb') as out_file:
-            shutil.copyfileobj(response, out_file)
+        with urllib.request.urlopen(full_url, timeout=COMFYUI_DOWNLOAD_TIMEOUT) as response:
+            with open(local_path, 'xb') as out_file:
+                created = True
+                shutil.copyfileobj(response, out_file)
         return output_url_for(filename, "output")
     except Exception:
-        if os.path.isfile(local_path):
-            os.remove(local_path)
+        if created:
+            try:
+                os.remove(local_path)
+            except FileNotFoundError:
+                pass
         raise RuntimeError("ComfyUI 结果下载未完成；保留原任务供继续查询")
 
 def save_comfy_text_output(value, prefix="studio_", name=""):
