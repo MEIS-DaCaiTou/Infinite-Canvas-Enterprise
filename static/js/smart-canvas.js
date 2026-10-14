@@ -12982,7 +12982,6 @@ function originalPromptTextFromParts(parts){
     return text.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 function buildPromptRequest(node, overrideDefaultImages=null, consumeDefault=false, ctx=smartLoopContext){
-    for(const source of workflowInputNodesFor(node))ComfyOutputs.validateSource(source,source.images || []);
     const parts = collectPromptParts();
     const originalPrompt = originalPromptTextFromParts(parts);
     const blockedRefs = blockedInputRefKeys(node);
@@ -13812,7 +13811,11 @@ async function runQueuedSmartComfyGenerate(payload){
     return waitSmartComfyTaskResult(task.task_id);
 }
 function comfyParamsFromWorkflowValues(config, values={}){ return ComfyWorkflowFields.paramsFromValues(config, values); }
+function validateSmartTextInputs(node){
+    for(const source of workflowInputNodesFor(node))ComfyOutputs.validateSource(source,source.images || []);
+}
 function buildPromptRequestForNode(node, defaultImages, ctx=smartLoopContext){
+    validateSmartTextInputs(node);
     const oldHtml = promptInput.innerHTML;
     loadNodePromptDraftToInput(node);
     try {
@@ -14404,9 +14407,11 @@ function runSmartCascadeFromLoop(loopId){
 }
 async function runGeneration(){
     const node = selectedNode();
+    if(!node) return;
+    try { validateSmartTextInputs(node); }
+    catch(error){ toast(error.message); return; }
     const request = buildPromptRequest(node, null, true, smartLoopContext);
     const prompt = request.prompt.trim();
-    if(!node) return;
     if(smartNodeInFlight(node)) return;
     const refs = request.refs;
     const previousSettings = cloneSmartSettings(settings);

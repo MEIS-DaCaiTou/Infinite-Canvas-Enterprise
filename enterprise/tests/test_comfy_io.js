@@ -51,7 +51,12 @@ const plain=value=>JSON.parse(JSON.stringify(value));
     smartContext.nodes[0].selectedResultId='';delete smartContext.nodes[0].selectedResult;
     assert.equal(smartContext.inputPromptTextFor({id:'downstream'}),''); // Rendering an unselected group remains safe.
     smartContext.workflowInputNodesFor=()=>smartContext.nodes;
-    vm.runInContext(extract('smart-canvas.js','buildPromptRequest'),smartContext);
-    assert.throws(()=>smartContext.buildPromptRequest({id:'downstream'}),/多条结果/);
+    vm.runInContext(extract('smart-canvas.js','validateSmartTextInputs'),smartContext);
+    assert.throws(()=>smartContext.validateSmartTextInputs({id:'downstream'}),/多条结果/);
+    smartContext.selectedNode=()=>({id:'downstream'});
+    let warning='';smartContext.toast=value=>warning=value;
+    smartContext.buildPromptRequest=()=>{throw new Error('must not execute an ambiguous request');};
+    vm.runInContext('async '+extract('smart-canvas.js','runGeneration'),smartContext);
+    await smartContext.runGeneration();assert.match(warning,/多条结果/);
     console.log('variable image groups, prompt roles and pinned typed results passed');
 })().catch(error=>{console.error(error);process.exitCode=1;});
