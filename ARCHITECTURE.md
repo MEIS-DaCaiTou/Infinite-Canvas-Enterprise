@@ -170,3 +170,5 @@ C6 [离线保留数据升级记录](docs/ops/OFFLINE-RETAINED-UPGRADE-2026-10-12
 ComfyUI 输入修复候选将三处字段识别、旧配置读取修正、缺少素材检查和参数映射集中在 `static/js/comfy-workflow-fields.js`；设置页和两类画布复用，不建立新的任务/插件框架。修复不改工作流节点、数据库 Schema 或服务端权限，细节与受控验证边界见 [实施记录](docs/ops/COMFY-WORKFLOW-INPUT-REPAIR-2026-10-14.md)。
 
 ComfyUI 10.2 反馈续修候选从 ef4c1e4 开发：协议边界在 enterprise/providers/comfyui.py，前端双视图共用 static/js/comfy-workflow-session.js；既有 journal 增加受理后端/prompt_id 与查询阶段，旧任务记录按有无真实受理身份区分恢复。本包只指定后端、复用原生队列及现有归档，不新增分布式队列/业务表。main 保留入口编排、内置图预处理和既有结果归档；尚未合并或正式发行。详见 [续修记录](docs/ops/COMFY-WORKFLOW-INPUT-REPAIR-2026-10-14.md)。
+
+2026-10-15 ComfyUI 已批准增量继续放在 #161：图输入组和结果选择进入 enterprise/providers/comfy_workflow.py，文本使用进入共用 comfy-outputs.js/CSS，入口复用既有请求、归档、回执和画布持久化。动态扩展只采用已确认的 core 插槽契约；未知图依赖不进行通用推断。输出同时携带类型、正文、文件引用和运行/结果身份，选定下游文本保存快照。无新表/队列/平台依赖，尚未合并或发布。

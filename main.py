@@ -40,7 +40,10 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Uplo
 from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response, StreamingResponse, JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
+from enterprise.providers.comfy_workflow import (
+    image_group_candidates, validate_image_groups, apply_workflow_values, field_role, select_history_outputs,
+)
 from fastapi.middleware.cors import CORSMiddleware
 
 # ENV-1B1B compatibility seam: main keeps legacy string constants below, but
@@ -2392,6 +2395,8 @@ class GenerateRequest(BaseModel):
     client_id: str = ""
     convert_to_jpg: bool = False
     backend: str = ""
+    workflow_values: Optional[Dict[str, Any]] = None
+    _workflow_config: Dict[str, Any] = PrivateAttr(default_factory=dict)
 
 class DeleteHistoryRequest(BaseModel):
     timestamp: float
@@ -12989,6 +12994,8 @@ async def create_canvas_comfy_task(
     payload: GenerateRequest, x_enterprise_user_id: Optional[str] = Header(default=None),
 ):
     payload.backend = workflow_backend(payload.workflow_json, payload.backend)
+    if payload.workflow_values is not None and not payload._workflow_config:
+        payload._workflow_config = get_workflow(payload.workflow_json)["config"]
     try:
         nonce = uuid.UUID(payload.request_id).hex if payload.request_id else uuid.uuid4().hex
     except ValueError as exc:
@@ -16209,6 +16216,14 @@ def prepare_comfy_workflow(req):
         if "14" in workflow and "inputs" in workflow["14"] and "seed" in workflow["14"]["inputs"]:
             workflow["14"]["inputs"]["seed"] = seed
 
+    if getattr(req, "workflow_values", None) is not None:
+        config = getattr(req, "_workflow_config", None) or get_workflow(req.workflow_json)["config"]
+        try:
+            workflow = apply_workflow_values(workflow, config, req.workflow_values)
+        except (ValueError, TypeError) as exc:
+            raise ComfyExecutionError(str(exc)) from exc
+        return workflow, seed
+
     for node_id, node_inputs in req.params.items():
         if req.workflow_json not in BUILTIN_WORKFLOWS:
             actual_inputs = (workflow.get(node_id) or {}).get("inputs", {})
@@ -16236,27 +16251,19 @@ def archive_comfy_history(history_data, workflow, req, prompt_id, target_backend
         # 先把所有节点的输出收集为候选（带上 class_type），再决定下载哪些，
         # 避免把冗余的预览/对比图、调试文本一起下载进结果（后端层过滤，历史记录也更干净）。
         workflow_nodes = workflow if isinstance(workflow, dict) else {}
-        def _class_type_of(nid):
-            node_def = workflow_nodes.get(str(nid))
-            return str(node_def.get("class_type") or "") if isinstance(node_def, dict) else ""
-        file_candidates = []   # (node_id, class_type, output_key, item, kind)
-        text_candidates = []   # (node_id, class_type, text, name)
-        for node_id in history_data['outputs']:
-            node_output = history_data['outputs'][node_id]
-            class_type = _class_type_of(node_id)
-            for output_key, item in collect_comfy_file_items(node_output):
-                file_candidates.append((node_id, class_type, output_key, item, comfy_output_kind(item)))
-            for text, name in comfy_text_values_from_output(node_output):
-                text_candidates.append((node_id, class_type, text, name))
+        file_candidates, text_candidates = select_history_outputs(
+            history_data, workflow_nodes, is_preview=comfy_class_is_preview, is_debug=comfy_class_is_debug_text)
 
         # 只要存在“非预览节点”产出的图片，就把 PreviewImage/对比节点的图片视为冗余丢弃；
         # 若整个工作流只有预览图（没有 SaveImage 等），则保留预览图作为唯一结果，避免零输出。
         has_primary_image = any(
-            kind == "image" and not comfy_class_is_preview(ct)
-            for (_nid, ct, _ok, _it, kind) in file_candidates
+            comfy_output_kind(entry["file"]) == "image" and not comfy_class_is_preview(entry["class_type"])
+            for entry in file_candidates
         )
         prefix = f"{req.type}_{int(current_timestamp)}_"
-        for node_id, class_type, output_key, item, kind in file_candidates:
+        for selected in file_candidates:
+            node_id, class_type, output_key, item = (selected[key] for key in ("node_id", "class_type", "output_key", "file"))
+            kind = comfy_output_kind(item)
             if kind == "image" and has_primary_image and comfy_class_is_preview(class_type):
                 continue  # 跳过冗余的预览/对比图
             local_path = download_comfy_output(target_backend, item, prefix=prefix)
@@ -16270,7 +16277,12 @@ def archive_comfy_history(history_data, workflow, req, prompt_id, target_backend
                 "node_id": str(node_id),
                 "output_key": str(output_key),
                 "class_type": class_type,
+                "result_id": f"{task_id}:{node_id}:{output_key}:{selected['index']}",
+                "run_id": task_id,
+                "created_at": current_timestamp,
             }
+            if "text" in selected:
+                entry["text"] = selected["text"]
             if kind == "image":
                 local_images.append(local_path)
             elif kind == "video":
@@ -16284,18 +16296,22 @@ def archive_comfy_history(history_data, workflow, req, prompt_id, target_backend
             local_items.append(entry)
             local_urls.append(local_path)
 
-        # 默认抑制 show/utility 类节点的调试文本，避免 .txt 噪声混入结果。
-        for node_id, class_type, text, name in text_candidates:
-            if comfy_class_is_debug_text(class_type):
-                continue
+        # Preview text is retained when it is the only text result of a workflow.
+        for selected in text_candidates:
+            node_id, class_type, text = (selected[key] for key in ("node_id", "class_type", "text"))
+            name = selected["output_key"] + ".txt"
             local_path = save_comfy_text_output(text, prefix=prefix, name=name)
             entry = {
                 "url": local_path,
                 "kind": "text",
                 "name": os.path.basename(str(local_path).split("?", 1)[0]),
                 "node_id": str(node_id),
-                "output_key": "text",
+                "output_key": selected["output_key"],
                 "class_type": class_type,
+                "text": text,
+                "result_id": f"{task_id}:{node_id}:{selected['output_key']}:{selected['index']}",
+                "run_id": task_id,
+                "created_at": current_timestamp,
             }
             local_texts.append(local_path)
             local_items.append(entry)
@@ -16397,12 +16413,21 @@ class WorkflowField(BaseModel):
     step: Optional[float] = None
     options: List[str] = []
     random_enabled: bool = False
+    role: str = ""
+
+class WorkflowImageGroup(BaseModel):
+    id: str
+    name: str = "主体图与参考图"
+    source_nodes: List[str]
+    min_images: int = 1
+    max_images: int = 10
 
 class WorkflowConfig(BaseModel):
     backend: str = ""
     title: str = ""
     fields: List[WorkflowField] = []
     mini_cards: Dict[str, Any] = {}
+    image_groups: List[WorkflowImageGroup] = Field(default_factory=list)
 
 class WorkflowUploadRequest(BaseModel):
     name: str
@@ -16927,7 +16952,11 @@ def get_workflow(name: str, include_definitions: bool = False):
         except Exception:
             pass
     cfg = {**cfg, "backend": cfg.get("backend") or COMFYUI_INSTANCES[0]}
+    cfg["fields"] = [{**field, "role": field_role(workflow, field)} for field in cfg.get("fields", [])]
     result = {"name": name, "workflow": workflow, "config": cfg, "builtin": is_builtin_workflow(name)}
+    result["image_group_candidates"] = image_group_candidates(workflow)
+    result["field_roles"] = {f"{nid}.{key}": field_role(workflow, {"node": nid, "input": key})
+                             for nid, node in workflow.items() if isinstance(node, dict) for key in node.get("inputs", {})}
     if include_definitions:
         try:
             response = requests.get(comfy_endpoint(workflow_backend(name), "/object_info"), timeout=(5, 15))
@@ -16970,6 +16999,12 @@ def save_workflow_config(name: str, payload: WorkflowConfig):
         raise HTTPException(status_code=404, detail="Workflow not found")
     if payload.backend:
         workflow_backend(name, payload.backend)
+    with open(workflow_path, encoding="utf-8") as stream:
+        graph = json.load(stream)
+    try:
+        validate_image_groups(graph, [group.dict() for group in payload.image_groups])
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     cfg_path = workflow_config_path(name)
     with open(cfg_path, "w", encoding="utf-8") as f:
         json.dump(payload.dict(), f, ensure_ascii=False, indent=2)
@@ -17031,7 +17066,9 @@ async def run_workflow(name: str, payload: WorkflowRunRequest, x_enterprise_user
         backend=payload.config.backend,
         request_id=payload.request_id,
         client_id=payload.client_id or str(uuid.uuid4()),
+        workflow_values=payload.fields,
     )
+    req._workflow_config = payload.config.dict()
     if payload.async_task:
         return await create_canvas_comfy_task(req, x_enterprise_user_id)
     return await asyncio.to_thread(generate, req)

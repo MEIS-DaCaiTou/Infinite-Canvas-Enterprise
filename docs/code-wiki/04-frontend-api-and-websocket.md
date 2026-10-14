@@ -146,3 +146,5 @@ SEC-P0 额外固定传输边界：只接受同源 `/ws/stats`，浏览器到 Ups
 static/js/comfy-workflow-session.js 提供共享输入、上传互斥、运行快照和结果身份；设置页两处视图按字段 ID 读取它，输入修改后旧结果标记。/api/workflows/{name}/run 的 async_task=true 返回既有 canvas-comfy-tasks 回执，省略时保持同步结果契约。/api/upload 的 workflow/backend 可选参数将上传绑定到已配置后端，返回真实 comfy_name（含 subfolder）；两类画布自定义路径携带相同后端提交。GET workflow 的 include_definitions=true 为设置页读取目标 object_info，普通画布只使用保存的字段配置。多图/视频/音频/文件按实际 items 呈现，视频不会被当第一张图片丢弃。候选未发布；细节和未验收范围见 ComfyUI 修复记录。
 
 候选任务 GET 的 resume=true 只领取已有受理 ID 的查询；普通轮询不自动无限重开超时跟踪，服务重启中断允许恢复一次。未知提交没有上游 ID 时不重新生成。
+
+2026-10-15 #161 增量：runtimeFields 合并配置图片输入组，范围校验/上传顺序由 comfy-workflow-fields.js 共用。comfy-outputs.js/CSS 提供文本摘要、统一正文弹窗、复制/下载及 Prompt 节点复用，沿用日志面板的主题变量和按钮层级。经典 generatedOutputs/Output 和智能媒体列表保留类型、文本及结果身份，selectedResult 存储明确选择的快照；普通连线把文本送入提示词，不列作图片。已有画布 JSON 存储，无新页面/用户模板。GUI 是 loopback 协议夹具证据，真实 GPU 和内置 Browser 下载事件限制见实施记录。

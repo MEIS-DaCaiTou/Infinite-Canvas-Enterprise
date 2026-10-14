@@ -42,7 +42,9 @@
 
     function kind(field){
         if(isOutputPrefix(field)) return 'setting';
+        if(field?.type === 'image_group') return 'image';
         if(mediaKinds.includes(field?.type)) return field.type;
+        if(field?.role) return field.role === 'prompt' ? 'prompt' : 'setting';
         const key = `${field?.input || ''} ${field?.name || ''}`.toLowerCase();
         return field?.type === 'textarea' || /prompt|text|提示词|正向|负向/.test(key) ? 'prompt' : 'setting';
     }
@@ -53,8 +55,34 @@
     }
 
     function requireMedia(config, media, english=false){
-        const missing = mediaKinds.flatMap(type => (config.fields || []).filter(f => kind(f) === type).slice((media[type] || []).length));
+        const missing = mediaKinds.flatMap(type => {
+            let available = (media[type] || []).length;
+            return runtimeFields(config).filter(f=>kind(f)===type).filter(f=>{
+                const count = f.type==='image_group' ? f.min_images : 1;
+                available -= count;
+                return available < 0;
+            });
+        });
         if(missing.length) throw new Error(missingMessage(missing, english));
+        const groups = config.image_groups || [];
+        if(groups.length){
+            const maximum = runtimeFields(config).filter(f=>kind(f)==='image').reduce((n,f)=>n+(f.type==='image_group'?f.max_images:1),0);
+            if((media.image || []).length > maximum) throw new Error(english ? `At most ${maximum} images are accepted` : `此工作流最多接收 ${maximum} 张图片；请移除多余连接`);
+        }
+    }
+
+    function runtimeFields(config){
+        const groups = config.image_groups || [];
+        const used = new Set();
+        const fields = [];
+        for(const field of config.fields || []){
+            const group = groups.find(g=>g.source_nodes.includes(field.node) && field.input==='image');
+            if(!group){fields.push(field);continue;}
+            if(!used.has(group.id)) fields.push({...group,type:'image_group',default:[]});
+            used.add(group.id);
+        }
+        groups.filter(g=>!used.has(g.id)).forEach(g=>fields.push({...g,type:'image_group',default:[]}));
+        return fields;
     }
 
     function coerceValue(field, value){
@@ -86,8 +114,17 @@
         if(promptFields.length && !prompt && !promptFields[0].default) throw new Error(missingMessage([promptFields[0]], english));
         promptFields.forEach((f, i) => { values[f.id] = i === 0 ? (prompt || f.default || '') : (parameters[f.id] ?? f.default ?? ''); });
         for(const type of mediaKinds){
-            const fields = (config.fields || []).filter(f => kind(f) === type);
-            for(let i=0; i<fields.length; i++) values[fields[i].id] = await mediaName(media[type][i]);
+            const fields = runtimeFields(config).filter(f => kind(f) === type);
+            let offset=0;
+            for(let i=0; i<fields.length; i++){
+                const field=fields[i];
+                if(field.type==='image_group'){
+                    const remaining=fields.slice(i+1).reduce((n,f)=>n+(f.type==='image_group'?f.min_images:1),0);
+                    const count=Math.min(field.max_images,(media[type] || []).length-offset-remaining);
+                    values[field.id]=await Promise.all(media[type].slice(offset,offset+count).map(ref=>mediaName(ref)));
+                    offset+=count;
+                } else values[field.id] = await mediaName(media[type][offset++]);
+            }
         }
         (config.fields || []).filter(f => kind(f) === 'setting').forEach(f => {
             const random = randomValue?.(f);
@@ -96,5 +133,5 @@
         return values;
     }
 
-    root.ComfyWorkflowFields = {inferType, definitionField, normalizeWorkflow, kind, missingMessage, requireMedia, coerceValue, paramsFromValues, canvasValues};
+    root.ComfyWorkflowFields = {inferType, definitionField, normalizeWorkflow, kind, missingMessage, requireMedia, coerceValue, paramsFromValues, canvasValues, runtimeFields};
 })(typeof window === 'undefined' ? globalThis : window);

@@ -24,7 +24,7 @@ async function runRace(scenario='race'){
     let submissions = 0, uploads = 0, pendingSeq = 0;
     const alerts = [];
     const context = vm.createContext({
-        nodes:[node], comfyWorkflows:[{name:'custom/review.json'}], CLIENT_ID:'review', ComfyWorkflowFields:fields,
+        checkTextSelection:()=>true, nodes:[node], comfyWorkflows:[{name:'custom/review.json'}], CLIENT_ID:'review', ComfyWorkflowFields:fields,
         cascadeTargetIdFromOptions:()=>'', orderedSources:(_node,sources)=>sources,
         generatorSources:()=>[{prompt:'connected prompt',refs:[{url:'synthetic.png'}]}],
         imageRefsOnly:refs=>refs, videoRefsOnly:()=>[], audioRefsOnly:()=>[],

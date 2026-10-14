@@ -124,6 +124,8 @@ let workflows = [];
 let selectedName = '';
 let currentWorkflow = null;
 let currentDefinitions = {};
+let imageGroupCandidates = [];
+let currentFieldRoles = {};
 let currentDefinitionWarning = "";     // 原始 JSON
 let currentConfig = null;       // { title, fields:[...] }
 let isBuiltin = false;
@@ -191,7 +193,7 @@ function defaultMiniCards(){
     };
 }
 function defaultMiniTestNodes(){
-    const inputs = (currentConfig?.fields || []).filter(f => fieldKind(f) !== 'setting').map((f, i) => ({
+    const inputs = ComfyWorkflowFields.runtimeFields(currentConfig || {}).filter(f => fieldKind(f) !== 'setting').map((f, i) => ({
         id:f.id, fieldId:f.id, type:fieldKind(f), x:36, y:60+i*205
     }));
     return [...inputs, {id:'comfy_1',type:'comfy',x:330,y:150}, {id:'output_1',type:'output',x:670,y:190}];
@@ -313,6 +315,8 @@ async function selectWorkflow(name){
         data = ComfyWorkflowFields.normalizeWorkflow(data);
         if(selectedName !== name) return;
         currentDefinitions = data.definitions || {};
+        imageGroupCandidates = data.image_group_candidates || [];
+        currentFieldRoles = data.field_roles || {};
         currentDefinitionWarning = data.definition_warning || (data.missing_classes?.length ? "后端缺少节点："+data.missing_classes.join("、") : "");
         currentWorkflow = data.workflow;
         currentConfig = data.config || { title:name.replace('.json',''), fields:[] };
@@ -322,7 +326,7 @@ async function selectWorkflow(name){
         miniCards = {...defaultMiniCards(), ...currentConfig.mini_cards};
         currentConfig.mini_cards = miniCards;
         // 释放上一次的图片 blob URL
-        Object.values(previewImageUrls).forEach(u => { try { URL.revokeObjectURL(u); } catch(e){} });
+        Object.values(previewImageUrls).flat().forEach(u => { try { URL.revokeObjectURL(u); } catch(e){} });
         previewImageUrls = {};
         previewValues = {};
         currentConfig.fields.forEach(f => {
@@ -366,6 +370,7 @@ function toggleField(node, input){
             id: makeFieldId(),
             node, input,
             name: inputLabel(input),
+            role: currentFieldRoles[node+'.'+input] || '',
             type,
             default: typeof rawValue === 'object' ? null : rawValue,
             options: [],
@@ -458,6 +463,7 @@ function renderEditor(){
     }
     document.getElementById('nodesToggle').style.display = workspaceMode === 'graph' ? 'flex' : 'none';
     renderBackendChoice();
+    renderImageGroupOptions();
     workflowTitleInput.value = currentConfig.title || selectedName.replace('.json','');
     subEl.textContent = tf('comfy.nodeStats', {nodes:Object.keys(currentWorkflow).length, fields:currentConfig.fields.length}) + (isBuiltin ? ` · ${tr('comfy.builtin')}` : '');
     deleteBtn.style.display = isBuiltin ? 'none' : 'inline-flex';
@@ -768,7 +774,7 @@ document.addEventListener('keydown', e => {
 function renderInputRow(nodeId, inputKey, rawValue){
     const f = fieldFor(nodeId, inputKey);
     const active = !!f;
-    const showExtras = active && (f.type === 'slider' || f.type === 'number' || f.type === 'dropdown');
+    const showExtras = active && (['slider','number','dropdown'].includes(f.type) || (['text','textarea'].includes(f.type) && f.input!=='filename_prefix'));
     // 原始值类型徽章
     let valueBadge = '';
     const typeOf = typeof rawValue;
@@ -803,6 +809,7 @@ function renderInputRow(nodeId, inputKey, rawValue){
 }
 
 function renderExtras(f){
+    if(['text','textarea'].includes(f.type) && f.input!=='filename_prefix') return `<div class="extras-row"><label>输入用途 <select class="small-select" onchange="updateField('${f.id}','role',this.value)">${[['prompt','创作提示词'],['negative','负面提示词'],['system','系统提示词'],['parameter','普通参数']].map(([value,label])=>`<option value="${value}" ${f.role===value?'selected':''}>${label}</option>`).join('')}</select></label></div>`;
     if(f.type === 'slider' || f.type === 'number'){
         const randomToggle = f.type === 'number'
             ? `<label class="random-toggle" onclick="event.stopPropagation()"><input type="checkbox" ${f.random_enabled === true ? 'checked' : ''} onchange="updateField('${f.id}','random_enabled',this.checked)">随机数</label>`
@@ -951,7 +958,7 @@ function closeImagePreview(){
 }
 
 function renderPreview(){
-    const fields = currentConfig?.fields || [];
+    const fields = ComfyWorkflowFields.runtimeFields(currentConfig || {});
     if(!fields.length){
         previewCard.innerHTML = `<div class="preview-empty">${tr('comfy.previewEmpty')}</div>`;
         return;
@@ -973,6 +980,7 @@ function renderPreview(){
 function renderPreviewField(f){
     const label = `<div class="pfield-label">${escapeHtml(f.name || f.input)}</div>`;
     const v = previewValues[f.id] ?? f.default ?? (f.type==='boolean'?false:(f.type==='number'||f.type==='slider'?0:''));
+    if(f.type === 'image_group') return renderImageGroupInput(f);
     if(f.type === 'textarea'){
         return `<div class="pfield" data-comfy-field="${escapeAttr(f.id)}">${label}<textarea class="pfield-textarea" oninput="setPreviewValue('${f.id}',this.value)">${escapeHtml(v)}</textarea></div>`;
     }
@@ -1046,11 +1054,11 @@ function renderWorkspaceView(){
 
 function renderMiniCanvasPreview(target = previewCard, large = false){
     if(!target) return;
-    const promptFields = currentConfig.fields.filter(f => fieldKind(f) === 'prompt');
-    const imageFields = currentConfig.fields.filter(f => fieldKind(f) === 'image');
-    const videoFields = currentConfig.fields.filter(f => fieldKind(f) === 'video');
-    const audioFields = currentConfig.fields.filter(f => fieldKind(f) === 'audio');
-    const settingFields = currentConfig.fields.filter(f => fieldKind(f) === 'setting');
+    const promptFields = ComfyWorkflowFields.runtimeFields(currentConfig).filter(f => fieldKind(f) === 'prompt');
+    const imageFields = ComfyWorkflowFields.runtimeFields(currentConfig).filter(f => fieldKind(f) === 'image');
+    const videoFields = ComfyWorkflowFields.runtimeFields(currentConfig).filter(f => fieldKind(f) === 'video');
+    const audioFields = ComfyWorkflowFields.runtimeFields(currentConfig).filter(f => fieldKind(f) === 'audio');
+    const settingFields = ComfyWorkflowFields.runtimeFields(currentConfig).filter(f => fieldKind(f) === 'setting');
     syncMiniFields();
     const prompts = miniTestNodes.filter(n => n.type === 'prompt');
     const mediaNodes = miniTestNodes.filter(n => ['image','video','audio'].includes(n.type));
@@ -1074,7 +1082,7 @@ function renderMiniCanvasPreview(target = previewCard, large = false){
                     <div class="mini-card" data-node="${n.id}" style="left:${n.x}px;top:${n.y}px">
                         <span class="mini-port out"></span>
                         <div class="mini-card-head"><i data-lucide="${n.type === 'video' ? 'file-video' : n.type === 'audio' ? 'file-audio' : 'image'}" class="w-3.5 h-3.5"></i><span class="mini-node-title">${escapeHtml(currentConfig.fields.find(f=>f.id===n.fieldId)?.name || typeLabel(n.type))}</span></div>
-                        <div class="mini-card-body"><div class="mini-image-drop" onclick="pickMiniImage('${n.id}')">${mediaPreviewHtml(n.type, n.url, n.name || n.value, true)}</div></div>
+                        <div class="mini-card-body">${(currentConfig.image_groups || []).some(g=>g.id===n.id)?renderImageGroupInput(currentConfig.image_groups.find(g=>g.id===n.id)):`<div class="mini-image-drop" onclick="pickMiniImage('${n.id}')">${mediaPreviewHtml(n.type, n.url, n.name || n.value, true)}</div>`}</div>
                     </div>`).join('')}
                 <div class="mini-card comfy-card" data-node="${comfy.id}" style="left:${comfy.x}px;top:${comfy.y}px">
                     <span class="mini-port in"></span><span class="mini-port out"></span>
@@ -1112,6 +1120,7 @@ function renderMiniField(f){
         const displayUrl = previewImageUrls[f.id] || (typeof v === 'string' && /^(\/|https?:|blob:|data:)/.test(v) ? v : '');
         return `<div class="pfield" data-comfy-field="${escapeAttr(f.id)}">${label}<div class="mini-image-drop" onclick="pickImage('${f.id}')">${mediaPreviewHtml(fieldKind(f), displayUrl, v, true)}</div></div>`;
     }
+    if(f.type === 'image_group') return renderImageGroupInput(f);
     if(f.type === 'textarea'){
         return `<div class="pfield" data-comfy-field="${escapeAttr(f.id)}">${label}<textarea class="mini-textarea" oninput="setPreviewValue('${f.id}',this.value)">${escapeHtml(v)}</textarea></div>`;
     }
@@ -1238,17 +1247,17 @@ function resultStatus(){
     return testSession.resultRevision === testSession.revision ? tr('comfy.runSuccess') : '上次结果（输入已更改或重新打开）';
 }
 function renderTestResult(){
-    const items = ComfyWorkflowResultItems(testSession.result);
+    const items = (testSession.results?.length ? testSession.results.flatMap(run=>ComfyOutputs.items(run.result)) : ComfyOutputs.items(testSession.result));
     if(!items.length) return '';
     return `<div class="run-result">${items.map(item => {
         const url = escapeAttr(item.url);
         // Only platform result URLs are rendered; workflow metadata cannot inject schemes.
         if(!String(item.url || '').startsWith('/')) return '';
         const name = escapeHtml(item.name || item.kind);
-        const media = item.kind === 'image' ? `<img src="${url}" onclick="openImagePreview(this.src)">`
+        const media = item.kind === 'text' ? `<button type="button" data-test-text="${url}" style="width:100%;background:inherit;border:1px solid var(--line);border-radius:10px;color:inherit">${ComfyOutputs.card(item)}</button>` : item.kind === 'image' ? `<img src="${url}" onclick="openImagePreview(this.src)">`
             : item.kind === 'video' ? `<video src="${url}" controls preload="metadata" style="max-width:100%"></video>`
             : item.kind === 'audio' ? `<audio src="${url}" controls style="max-width:100%"></audio>` : '';
-        return `<div>${media}<a href="${url}" target="_blank" rel="noopener">${name}</a></div>`;
+        return `<div>${media}<a href="${url}" download>${item.kind==='text'?'下载':name}</a></div>`;
     }).join('')}<div class="run-status" data-comfy-result-status>${resultStatus()}</div></div>`;
 }
 function refreshTestState(){
@@ -1263,7 +1272,8 @@ function refreshTestViews(){ renderPreview(); renderWorkspaceView(); refreshTest
 async function pickImage(fieldId){
     const input = document.createElement('input');
     input.type = 'file';
-    const field = currentConfig.fields.find(f => f.id === fieldId);
+    const field = ComfyWorkflowFields.runtimeFields(currentConfig).find(f => f.id === fieldId);
+    if(field?.type==='image_group')return pickGroupImages(fieldId);
     if(!field) return;
     input.accept = mediaAccept(fieldKind(field));
     const session = testSession, workflowName = selectedName, backend = currentConfig.backend || '';
@@ -1323,7 +1333,8 @@ async function onRun(){
     }
     await session.execute(async values => {
         const runFields = applyActiveRandomValues(values);
-        const missing = config.fields.filter(f => isMediaField(f) && !runFields[f.id]);
+        const runtimeFields=ComfyWorkflowFields.runtimeFields(config);
+        const missing = runtimeFields.filter(f => isMediaField(f) && (f.type==='image_group' ? !Array.isArray(runFields[f.id]) || runFields[f.id].length<f.min_images || runFields[f.id].length>f.max_images : !runFields[f.id]));
         if(missing.length) throw new Error(ComfyWorkflowFields.missingMessage(missing,currentLang()==='en'));
         config.fields.forEach(f => {runFields[f.id]=ComfyWorkflowFields.coerceValue(f,runFields[f.id]);});
         const requestId=crypto.randomUUID().replaceAll('-','');
@@ -1417,3 +1428,64 @@ document.addEventListener('DOMContentLoaded', () => {
     loadComfyInstances();
 });
 
+
+
+function renderImageGroupOptions(){
+    let panel=document.getElementById('imageGroupOptions');
+    if(!panel){panel=document.createElement('div');panel.id='imageGroupOptions';subEl.after(panel);}
+    panel.className='comfy-group-config';
+    panel.innerHTML=imageGroupCandidates.map((candidate,index)=>{
+        const active=(currentConfig.image_groups || []).find(g=>g.id===candidate.id);
+        return `<div><label><input type="checkbox" ${active?'checked':''} onchange="toggleImageGroup(${index},this.checked)"> 可变图片输入（首张主体，其余参考）</label>${active?`<label> 最少 <input aria-label="最少图片" type="number" min="1" max="${candidate.supported_max}" value="${active.min_images}" class="small-input comfy-count-input" onchange="updateImageGroup(${index},'min_images',this.value)"></label><label> 最多 <input aria-label="最多图片" type="number" min="1" max="${candidate.supported_max}" value="${active.max_images}" class="small-input comfy-count-input" onchange="updateImageGroup(${index},'max_images',this.value)"></label>`:''}</div>`;
+    }).join('');
+}
+function toggleImageGroup(index,enabled){
+    const candidate=imageGroupCandidates[index];
+    currentConfig.image_groups=(currentConfig.image_groups || []).filter(g=>g.id!==candidate.id);
+    if(enabled){currentConfig.image_groups.push({...candidate});testSession.set(candidate.id,[]);}
+    testSession.revision++;renderEditor();refreshTestViews();
+}
+function updateImageGroup(index,key,value){
+    const group=currentConfig.image_groups.find(g=>g.id===imageGroupCandidates[index].id);
+    group[key]=Number(value);testSession.revision++;renderImageGroupOptions();refreshTestViews();
+}
+function renderImageGroupInput(group){
+    const names=previewValues[group.id] || [], urls=previewImageUrls[group.id] || [];
+    const id=escapeAttr(group.id);
+    return `<div class="pfield comfy-image-group"><div class="pfield-label">${escapeHtml(group.name)} · ${names.length}/${group.max_images} 张（至少 ${group.min_images} 张）</div><div class="comfy-group-images">${urls.map((url,i)=>`<div class="comfy-group-image"><img src="${escapeAttr(url)}"><small>${i===0?'1 主体图':(i+1)+' 参考图'}</small><div class="comfy-group-actions"><button type="button" aria-label="前移图片 ${i+1}" data-group-id="${id}" onclick="moveGroupImage(this.dataset.groupId,${i},-1)" ${i===0?'disabled':''}><i data-lucide="arrow-left"></i></button><button type="button" aria-label="移除图片 ${i+1}" data-group-id="${id}" onclick="removeGroupImage(this.dataset.groupId,${i})"><i data-lucide="x"></i></button></div></div>`).join('')}</div><button type="button" class="comfy-group-pick" data-group-id="${id}" onclick="pickGroupImages(this.dataset.groupId)"><i data-lucide="image-plus"></i><span>选择图片（替换本组）</span></button></div>`;
+}
+
+function moveGroupImage(id,index,delta){
+    if(testSession.uploads.has(id))return;
+    for(const values of [previewValues[id],previewImageUrls[id]]){const target=index+delta;if(values && target>=0 && target<values.length)[values[index],values[target]]=[values[target],values[index]];}
+    testSession.revision++;refreshTestViews();
+}
+function removeGroupImage(id,index){
+    if(testSession.uploads.has(id))return;
+    const url=previewImageUrls[id]?.splice(index,1)[0];if(url?.startsWith('blob:'))URL.revokeObjectURL(url);
+    previewValues[id]?.splice(index,1);testSession.revision++;refreshTestViews();
+}
+function pickGroupImages(id){
+    const group=currentConfig.image_groups.find(g=>g.id===id),session=testSession,name=selectedName,backend=currentConfig.backend || '';
+    const input=document.createElement('input');input.type='file';input.accept='image/*';input.multiple=true;input.hidden=true;document.body.append(input);
+    input.addEventListener('cancel',()=>input.remove(),{once:true});
+    input.onchange=async()=>{
+        const files=Array.from(input.files || []);input.remove();if(!files.length)return;
+        if(files.length>group.max_images){setStatus(`最多选择 ${group.max_images} 张图片`);return;}
+        (session.urls[id] || []).forEach(url=>URL.revokeObjectURL(url));session.urls[id]=files.map(file=>URL.createObjectURL(file));
+        await session.uploadMany(id,files,async file=>{
+            const form=new FormData();form.append('files',file);
+            const response=await fetch('/api/upload?'+new URLSearchParams({workflow:name,backend}),{method:'POST',body:form});
+            const data=await response.json();if(!response.ok)throw new Error(data.detail || '上传失败');return data.files?.[0];
+        },()=>{if(testSession===session)refreshTestViews();});
+    };input.click();
+}
+document.addEventListener('click',event=>{
+    const target=event.target.closest('[data-test-text]');if(!target)return;event.preventDefault();event.stopPropagation();
+    const result=(testSession.results || []).flatMap(run=>ComfyOutputs.items(run.result)).concat(ComfyOutputs.items(testSession.result)).find(item=>item.url===target.dataset.testText);
+    if(result)ComfyOutputs.open(result,{promptLabel:'填入测试提示词',createPrompt:value=>{
+        const field=ComfyWorkflowFields.runtimeFields(currentConfig).find(f=>fieldKind(f)==='prompt');
+        if(!field)throw new Error('请先在工作流设置指定创作提示词字段');
+        setPreviewValue(field.id,value);refreshTestViews();
+    }});
+});

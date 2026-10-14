@@ -242,3 +242,19 @@ body.studio-theme-dark .pfield-bool-track:not(.on) .pfield-bool-thumb { backgrou
 .mini-port.out { right:-5px; }
 .mini-run { margin-top:10px; }
 @media (max-width:1100px) { .layout { grid-template-columns:1fr; } .sidebar, .preview { position:static; } }
+/* Reuse the existing field/control surfaces for variable image groups. */
+.comfy-group-config { display:flex; flex-direction:column; gap:8px; padding:10px 0; color:var(--muted); font-size:11px; }
+.comfy-group-config>div { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.comfy-group-config label { display:inline-flex; align-items:center; gap:5px; }
+.comfy-group-config input[type=checkbox] { accent-color:var(--text); }
+.comfy-group-config .comfy-count-input { width:55px; }
+.comfy-group-images { display:flex; gap:7px; flex-wrap:wrap; margin-bottom:7px; }
+.comfy-group-image { width:78px; padding:5px; border:1px solid var(--line); border-radius:12px; background:var(--bg,var(--panel)); }
+.comfy-group-image img { display:block; width:66px; height:66px; object-fit:contain; border-radius:8px; }
+.comfy-group-image small { display:block; padding:4px 0; text-align:center; color:var(--muted); font-size:9px; }
+.comfy-group-actions { display:flex; justify-content:center; gap:4px; }
+.comfy-group-actions button { width:24px; height:22px; display:grid; place-items:center; border:1px solid var(--line); border-radius:7px; background:var(--panel); color:var(--muted); cursor:pointer; }
+.comfy-group-actions button:disabled { opacity:.35; cursor:default; }
+.comfy-group-actions svg,.comfy-group-pick svg { width:12px; height:12px; }
+.comfy-group-pick { width:100%; min-height:42px; display:flex; align-items:center; justify-content:center; gap:7px; border:1px dashed var(--line); border-radius:12px; background:var(--bg,var(--panel)); color:var(--muted); font-family:inherit; font-size:11px; font-weight:700; cursor:pointer; }
+.comfy-group-pick:hover { border-color:var(--muted); color:var(--text); }

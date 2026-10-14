@@ -15,6 +15,20 @@
             this.error = '';
         }
         set(id, value){ this.values[id] = value; this.revision++; }
+        async uploadMany(id, files, uploader, changed=()=>{}){
+            const token={};this.uploads.set(id,token);this.set(id,[]);this.error='';changed();
+            try{
+                const names=[];
+                for(const file of files){
+                    const uploaded=await uploader(file);
+                    if(this.uploads.get(id)!==token)return;
+                    if(!uploaded?.comfy_name)throw new Error('ComfyUI 未返回上传文件名');
+                    names.push(uploaded.comfy_name);
+                }
+                if(this.uploads.get(id)===token)this.set(id,names);
+            }catch(error){if(this.uploads.get(id)===token)this.error=error.message;}
+            finally{if(this.uploads.get(id)===token)this.uploads.delete(id);changed();}
+        }
         async upload(id, file, uploader, changed=()=>{}){
             const token = {};
             this.uploads.set(id, token);
@@ -59,6 +73,8 @@
                 throw new Error(task.error || 'ComfyUI 任务尚未完成');
             }
             this.result = task.result;
+            this.results ||= [];
+            if(!this.results.some(result=>result.task_id===this.taskId)) this.results.push({task_id:this.taskId,result:task.result});
             this.resultRevision = revision;
             this.taskId = '';
             this.phase = 'succeeded';

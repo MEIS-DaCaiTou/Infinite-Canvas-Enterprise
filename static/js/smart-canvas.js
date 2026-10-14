@@ -1665,6 +1665,7 @@ function mediaLayoutSize(img){
 }
 function copyMediaSizeFields(source, target={}){
     if(!source || typeof source !== 'object') return target;
+    for(const key of ['text','result_id','run_id','created_at','node_id','output_key','class_type'])if(source[key]!==undefined)target[key]=source[key];
     ['natural_w','natural_h','width','height','w','h','layout_w','layout_h'].forEach(key => {
         const n = Number(source[key]);
         if(Number.isFinite(n) && n > 0) target[key] = n;
@@ -2985,6 +2986,7 @@ function renderComfyParams(){
         const wf = comfyWorkflowCache[settings.comfyWorkflow];
         const fields = (wf?.config?.fields || []).filter(f => comfyFieldKind(f) === 'setting');
         html += renderComfyWorkflowControl();
+        if(wf?.config?.image_groups?.length)html+=`<div class="muted-note">图片组 ${wf.config.image_groups.map(group=>`${group.min_images}–${group.max_images} 张`).join('、')} · 首张主体，其余参考</div>`;
         html += fields.length ? fields.map(renderComfySettingField).join('') : (settings.comfyWorkflow ? '' : `<div class="muted-note">${escapeHtml(tr('smart.noWorkflow'))}</div>`);
     }
     dynamicParams.innerHTML = `
@@ -6400,7 +6402,7 @@ function resultMediaUrls(result){
             if(value.url || value.path || value.src || value.uri){
                 const url = value.url || value.path || value.src || value.uri;
                 if(url){
-                    const item = {url, kind:value.kind || value.type || value.mediaKind || '', name:value.name || value.filename || ''};
+                    const item = {...value, url, kind:value.kind || value.type || value.mediaKind || '', name:value.name || value.filename || ''};
                     ['natural_w','natural_h','width','height','w','h','layout_w','layout_h'].forEach(key => {
                         const n = Number(value[key]);
                         if(Number.isFinite(n) && n > 0) item[key] = n;
@@ -6453,6 +6455,7 @@ function audioRefsOnly(refs){
     return (refs || []).filter(ref => ref?.url && mediaKindForItem(ref) === 'audio');
 }
 function thumbMediaHtml(img){
+    if(isTextMediaItem(img))return `<div class="media-thumb file-thumb" data-comfy-text-url="${escapeAttr(img.url)}">${ComfyOutputs.card(img)}</div>`;
     if(isFileMediaItem(img) || isTextMediaItem(img)) return `<div class="media-thumb file-thumb" data-media-url="${escapeAttr(img.url || '')}" data-media-kind="${escapeAttr(mediaKindForItem(img))}"><i data-lucide="${isTextMediaItem(img) ? 'file-text' : 'file'}"></i><span>${escapeHtml(img.name || (isTextMediaItem(img) ? 'Text' : 'File'))}</span></div>`;
     if(isAudioMediaItem(img)) return `<div class="media-thumb audio-thumb" data-media-url="${escapeAttr(img.url || '')}" data-media-kind="audio"><i data-lucide="file-audio"></i><span>${escapeHtml(img.name || 'Audio')}</span></div>`;
     if(isVideoMediaItem(img)) return `<div class="media-thumb video-thumb">${isInlineVideoActive(img) ? smartVideoPlayerHtml(img.url || '') : `${smartVideoPreviewHtml(img, 512, 'alt=""')}<button class="smart-video-play thumb-video-play" type="button" title="播放"><i data-lucide="play"></i></button>`}</div>`;
@@ -6524,7 +6527,8 @@ function updateImageResolutionBadgeElement(itemEl, img){
     badge.textContent = label;
 }
 function singleMediaHtml(img, w, h){
-    if(isFileMediaItem(img) || isTextMediaItem(img)) return `<div class="node-img media-card media-file-card" style="width:${w}px;height:${h}px"><div class="media-card-icon"><i data-lucide="${isTextMediaItem(img) ? 'file-text' : 'file'}"></i></div><div class="media-card-title">${escapeHtml(img.name || (isTextMediaItem(img) ? 'Text' : 'File'))}</div><div class="media-card-sub">${isTextMediaItem(img) ? 'TEXT' : 'FILE'}</div></div>`;
+    if(isTextMediaItem(img))return `<div class="node-img media-card media-file-card" data-comfy-text-url="${escapeAttr(img.url)}" style="width:${w}px;height:${h}px;cursor:pointer">${ComfyOutputs.card(img)}</div>`;
+    if(isFileMediaItem(img)) return `<div class="node-img media-card media-file-card" style="width:${w}px;height:${h}px"><div class="media-card-icon"><i data-lucide="${isTextMediaItem(img) ? 'file-text' : 'file'}"></i></div><div class="media-card-title">${escapeHtml(img.name || (isTextMediaItem(img) ? 'Text' : 'File'))}</div><div class="media-card-sub">${isTextMediaItem(img) ? 'TEXT' : 'FILE'}</div></div>`;
     if(isAudioMediaItem(img)) return `<div class="node-img media-card media-audio-card" style="width:${w}px;height:${h}px"><div class="media-card-icon"><i data-lucide="file-audio"></i></div><div class="media-card-title">${escapeHtml(img.name || 'Audio')}</div><div class="media-card-sub">AUDIO</div><audio src="${escapeAttr(img.url || '')}" data-url="${escapeAttr(img.url || '')}" controls preload="metadata"></audio></div>`;
     if(isVideoMediaItem(img)) return `<div class="node-img media-card media-video-card" style="width:${w}px;height:${h}px">${isInlineVideoActive(img) ? smartVideoPlayerHtml(img.url || '') : `${smartVideoPreviewHtml(img, 768, 'alt=""')}<button class="smart-video-play" type="button" title="播放"><i data-lucide="play"></i></button>`}</div>`;
     return smartPreviewImgHtml(img, 768, `class="node-img" draggable="false" style="width:${w}px;height:${h}px"`);
@@ -8629,6 +8633,7 @@ function deleteImage(id, imageIndex){
     const node = nodes.find(n => n.id === id);
     if(!node || imageIndex < 0) return;
     pushUndo();
+    if(node.selectedResult?.url===node.images?.[imageIndex]?.url){delete node.selectedResult;delete node.selectedResultId;}
     node.images = (node.images || []).filter((_, index) => index !== imageIndex);
     if(node.images.length <= 1) node.title = 'Image';
     if(selectedImage.nodeId === id) selectedImage = {nodeId:id, index:Math.min(selectedImage.index, node.images.length - 1)};
@@ -12399,6 +12404,7 @@ function smartLoopPreviewImages(node){
     }).filter(img => img?.url);
 }
 function outputImagesForNode(node, consume=false, ctx=smartLoopContext){
+    if(ComfyOutputs.selected(node,node?.images || [])?.kind==='text')return [];
     if(node?.type === 'smart-group') return imagesForNode(node).filter(img => img?.url);
     if(node?.type === 'smart-loop') return smartLoopInputImages(node, ctx);
     const roundOutputs = ctx?.roundOutputs;
@@ -12422,6 +12428,12 @@ function promptInputNodesFor(node){
 }
 function inputPromptTextFor(node, ctx=smartLoopContext){
     const directText = promptInputNodesFor(node).map(input => textForNode(input, ctx)).filter(Boolean);
+    for(const edge of canvas?.connections || []){
+        if(edge.to!==node.id || (edge.kind || 'flow')==='history')continue;
+        const source=nodes.find(item=>item.id===edge.from);
+        const value=ComfyOutputs.prompt(source,source?.images || []);
+        if(value)directText.push(value);
+    }
     const relayText = Array.isArray(ctx?.relayPromptNodeIds)
         ? ctx.relayPromptNodeIds.map(id => nodes.find(n => n.id === id)).map(input => textForNode(input, ctx)).filter(Boolean)
         : [];
@@ -12494,7 +12506,7 @@ function defaultReferenceImagesFor(node, consume=false, ctx=smartLoopContext){
     const upstream = (smartImageUsesWorkflowInput(node, ctx) ? workflowInputImagesFor(node, consume, ctx) : inputImagesFor(node, consume, ctx))
         .filter(img => img?.url);
     const manual = manualReferenceImagesFor(node);
-    if(smartImageUsesWorkflowInput(node, ctx)) return uniqueReferenceImages([...upstream, ...manual]);
+    if(smartImageUsesWorkflowInput(node, ctx) || ((node.runSettings?.engine || settings.engine)==='comfy' && (node.runSettings?.comfyMode || settings.comfyMode)==='custom' && upstream.length)) return uniqueReferenceImages([...upstream, ...manual]);
     if(self.length) return uniqueReferenceImages([...self, ...upstream, ...manual]);
     return uniqueReferenceImages([...upstream, ...manual]);
 }
@@ -12566,7 +12578,7 @@ function uniqueReferenceImages(images){
     const refs = [];
     const seen = new Set();
     (images || []).forEach((img, index) => {
-        if(!img?.url || seen.has(img.url)) return;
+        if(!img?.url || isTextMediaItem(img) || isFileMediaItem(img) || seen.has(img.url)) return;
         seen.add(img.url);
         if(refs.length >= SMART_REFERENCE_IMAGE_MAX) return;
         refs.push({
@@ -12970,12 +12982,13 @@ function originalPromptTextFromParts(parts){
     return text.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 function buildPromptRequest(node, overrideDefaultImages=null, consumeDefault=false, ctx=smartLoopContext){
+    for(const source of workflowInputNodesFor(node))ComfyOutputs.validateSource(source,source.images || []);
     const parts = collectPromptParts();
     const originalPrompt = originalPromptTextFromParts(parts);
     const blockedRefs = blockedInputRefKeys(node);
     const hasOverrideImages = Array.isArray(overrideDefaultImages);
     const filteredDefaultImages = (hasOverrideImages ? overrideDefaultImages : defaultReferenceImagesFor(node, consumeDefault, ctx))
-        .filter(img => !blockedRefs.has(inputRefKey(img)));
+        .filter(img => !blockedRefs.has(inputRefKey(img)) && !isTextMediaItem(img) && !isFileMediaItem(img));
     const defaultRefs = uniqueReferenceImages(filteredDefaultImages);
     const refs = defaultRefs.map((img, index) => ({...img, role:`image_${index + 1}`}));
     let hasMentionToken = false;
@@ -13007,7 +13020,7 @@ function buildPromptRequest(node, overrideDefaultImages=null, consumeDefault=fal
     body = body.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
     const groupPrompt = isSmartGroupNode(node) ? textForNode(node, ctx).trim() : '';
     const inputPrompt = inputPromptTextFor(node, ctx).trim();
-    if(groupPrompt || inputPrompt) body = [groupPrompt, inputPrompt, body].filter(Boolean).join('\n\n');
+    if(groupPrompt || inputPrompt) body = [groupPrompt, inputPrompt, body].filter((value,index,all)=>value && all.indexOf(value)===index).join('\n\n');
     if(!body && settings.engine === 'runninghub'){
         body = rhDefaultPromptSuggestion();
     }
@@ -13224,7 +13237,7 @@ function finalizePendingNode(pendingNode, urls, meta, kind='image'){
     const imgs = cleanHistoryImages(urls.map((item, i) => {
         const url = typeof item === 'string' ? item : item?.url || '';
         const itemKind = (typeof item === 'object' && item.kind) || kind;
-        return copyMediaSizeFields(item, {url, name:(typeof item === 'object' && item.name) || `output-${i + 1}.${ext}`, kind:itemKind, generatedResult:true});
+        return copyMediaSizeFields(item, {...(typeof item==='object'?item:{}),url, name:(typeof item === 'object' && item.name) || `output-${i + 1}.${ext}`, kind:itemKind, generatedResult:true});
     }).filter(img => img.url));
     pendingNode.images = imgs;
     markSmartNodeComplete(pendingNode, meta);
@@ -13878,8 +13891,8 @@ async function generateComfyUrlsWithSettings(runSettings, prompt, refs){
         parameters:runSettings.comfyParams || {}, mediaName:ref=>comfyNameForRef(ref,workflowName,wf.config.backend), english:window.StudioI18n?.lang?.() === 'en',
         randomValue:field => comfyRandomEnabledField(field) && smartComfyRandomActiveFor(runSettings, field.id) ? smartComfyRandomValue(field) : undefined
     });
-    const result = await runQueuedSmartComfyGenerate({prompt, workflow_json:workflowName, backend:wf.config.backend, params:comfyParamsFromWorkflowValues(wf.config || {fields:[]}, values), type:'workflow-custom', client_id:smartClientId});
-    const urls = resultMediaUrls(result);
+    const result = await runQueuedSmartComfyGenerate({prompt, workflow_json:workflowName, backend:wf.config.backend, params:comfyParamsFromWorkflowValues(wf.config || {fields:[]}, values), workflow_values:values, type:'workflow-custom', client_id:smartClientId});
+    const urls = ComfyOutputs.items(result);
     const fallbackKind = result.videos?.length ? 'video' : result.audios?.length ? 'audio' : result.texts?.length ? 'text' : 'image';
     return {urls, kind:mediaKindForUrls(urls, fallbackKind)};
 }
@@ -14782,14 +14795,14 @@ async function runComfyGeneration(node, prompt, refs, pendingNode, meta){
         parameters:settings.comfyParams || {}, mediaName:ref=>comfyNameForRef(ref,workflowName,wf.config.backend), english:window.StudioI18n?.lang?.() === 'en',
         randomValue:field => comfyRandomEnabledField(field) && smartComfyRandomActive(field.id) ? smartComfyRandomValue(field) : undefined
     });
-    const result = await runQueuedSmartComfyGenerate({prompt, workflow_json:workflowName, backend:wf.config.backend, params:comfyParamsFromWorkflowValues(wf.config || {fields:[]}, values), type:'workflow-custom', client_id:smartClientId});
-    const urls = resultMediaUrls(result);
+    const result = await runQueuedSmartComfyGenerate({prompt, workflow_json:workflowName, backend:wf.config.backend, params:comfyParamsFromWorkflowValues(wf.config || {fields:[]}, values), workflow_values:values, type:'workflow-custom', client_id:smartClientId});
+    const urls = ComfyOutputs.items(result);
     if(!urls.length) throw new Error(tr('smart.errComfyNoImages'));
     const kind = mediaKindForUrls(urls, result.videos?.length ? 'video' : result.audios?.length ? 'audio' : result.texts?.length ? 'text' : 'image');
     const ext = kind === 'video' ? 'mp4' : kind === 'audio' ? 'mp3' : 'png';
-    const out = urls.map((url, i) => ({url, name:`comfy-${i + 1}.${ext}`, kind})).filter(x => x.url);
+    const out = urls.map((item,i)=>typeof item==='string'?{url:item,name:`comfy-${i+1}.${ext}`,kind}:{...item}).filter(x=>x.url);
     if(!out.length) throw new Error(tr('smart.errComfyEmpty'));
-    const outputUrls = out.map(o => o.url);
+    const outputUrls = out;
     if(pendingNode){
         finalizePendingNode(pendingNode, outputUrls, meta, kind);
     } else {
@@ -16980,3 +16993,15 @@ window.onload = async () => {
     syncApiKindToggleVisibility();
     render();
 };
+
+
+document.addEventListener('click',event=>{
+    const target=event.target.closest('[data-comfy-text-url]');if(!target)return;
+    event.preventDefault();event.stopImmediatePropagation();
+    const source=nodes.find(node=>(node.images || []).some(item=>item.url===target.dataset.comfyTextUrl));
+    const result=ComfyOutputs.items(source?.images || []).find(item=>item.url===target.dataset.comfyTextUrl);
+    if(result)ComfyOutputs.open(result,{
+        createPrompt:(text,item)=>{const prompt=createPromptNode((source.x || 0)+360,source.y || 0);prompt.text=text;prompt.sourceResultId=item.result_id;prompt.sourceRunId=item.run_id || '';render();scheduleSave();},
+        select:item=>{const stored=source.images.find(value=>value.url===item.url);Object.assign(stored,item);source.selectedResultId=item.result_id;source.selectedResult={...item};render();scheduleSave();}
+    });
+},true);
