@@ -1,9 +1,13 @@
 """ComfyUI contract tests, real HTTP on loopback; no GPU, customer files or paid APIs."""
 import json
+import ast
+import os
+import random
 import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -120,3 +124,28 @@ def test_accepted_task_survives_restart_without_replay_or_identity_change(tmp_pa
 
 def test_shared_browser_session_contract():
     subprocess.run(["node", str(Path(__file__).with_name("test_comfy_session.js"))], check=True)
+
+
+def test_imported_graph_keeps_original_nodes_and_rejects_obsolete_field_mapping(tmp_path):
+    source = Path(__file__).resolve().parents[2] / "main.py"
+    prepare = next(node for node in ast.parse(source.read_text(encoding="utf-8")).body
+                   if isinstance(node, ast.FunctionDef) and node.name == "prepare_comfy_workflow")
+    path = tmp_path / "workflow.json"
+    path.write_text(json.dumps({
+        "14": {"class_type": "LoadImage", "inputs": {"image": "original.png"}},
+        "23": {"class_type": "Text", "inputs": {"text": "original prompt"}},
+        "144": {"class_type": "SaveImage", "inputs": {"filename_prefix": "output"}},
+    }), encoding="utf-8")
+    scope = {"os": os, "json": json, "random": random, "BUILTIN_WORKFLOWS": set(),
+             "workflow_path_from_name": lambda _: str(path), "ComfyExecutionError": ComfyExecutionError}
+    exec(compile(ast.Module(body=[prepare], type_ignores=[]), str(source), "exec"), scope)
+    request = SimpleNamespace(workflow_json="custom/tool.json", prompt="do not overwrite unrelated node",
+                              width=1024, height=1024, params={"14": {"image": "bound/selected.png"}})
+    graph, _ = scope["prepare_comfy_workflow"](request)
+    assert graph["14"]["inputs"]["image"] == "bound/selected.png"
+    assert graph["23"]["inputs"]["text"] == "original prompt"
+    assert "width" not in graph["144"]["inputs"]
+    for params in [{"old-node": {"image": "bound/selected.png"}}, {"14": {"obsolete_input": "bound/selected.png"}}]:
+        request.params = params
+        with pytest.raises(ComfyExecutionError, match="映射已失效"):
+            scope["prepare_comfy_workflow"](request)

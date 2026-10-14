@@ -1,4 +1,7 @@
-from enterprise.providers.comfyui import ComfyClient, ComfyExecutionError, base_url as comfy_base_url, endpoint as comfy_endpoint, view_path as comfy_view_path
+from enterprise.providers.comfyui import (
+    ComfyClient, ComfyExecutionError, base_url as comfy_base_url,
+    endpoint as comfy_endpoint, view_path as comfy_view_path,
+)
 import json
 import uuid
 import base64
@@ -16201,6 +16204,11 @@ def prepare_comfy_workflow(req):
             workflow["14"]["inputs"]["seed"] = seed
 
     for node_id, node_inputs in req.params.items():
+        if req.workflow_json not in BUILTIN_WORKFLOWS:
+            actual_inputs = (workflow.get(node_id) or {}).get("inputs", {})
+            missing = [key for key in node_inputs if key not in actual_inputs]
+            if node_id not in workflow or missing:
+                raise ComfyExecutionError(f"工作流参数映射已失效：#{node_id} {', '.join(missing)}；请管理员更新该工作流的暴露字段配置")
         if node_id in workflow:
             if "inputs" not in workflow[node_id]:
                 workflow[node_id]["inputs"] = {}
