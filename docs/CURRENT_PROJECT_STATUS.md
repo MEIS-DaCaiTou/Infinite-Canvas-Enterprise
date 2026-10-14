@@ -1,21 +1,21 @@
 # Infinite Canvas Enterprise 当前项目状态
 
 更新时间：2026-10-14
-核验对象：GitHub main@b41dd3b4、#157/#158 已合并与 #123 独立审查/整合候选、正式 v2026.10.1，以及本轮 ComfyUI 修复候选和隔离回环 Browser/HTTP 证据。未发布新 Release 或操作客户部署。
+核验对象：main@01c29773（#123/#157/#158/#159 均已合并）、准确 10.2 发行包及正式 10.1 → 10.2 的真实进程升级/失败恢复。v2026.10.2 已正式发布为 Latest，10.1 保持不可变；本轮未操作客户/生产设备。
 
 ## 1. 开发基线、发行与现场必须分开
 
 | 层级 | 本次事实 | 不能据此声称 |
 | --- | --- | --- |
-| 主线核验基点 | `main@b41dd3b4c7a867fcbda3aac598f0a197336e0b73`；#137–#142、#146–#158 已合并；#153 发布目录分页与完整性已进入主线；服务器及 500+/200+ 长期约束随 #152 入主线 | #123 已合并；主线能力已随正式 10.1 全部交付 |
-| 最近已完成 main CI | 准确 519b1da0 的 [Enterprise/Runtime](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/38433978677)、[文档](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/38433978679) 三项检查最终 SUCCESS；真实固定 EXE opt-in SKIPPED；原生检查 38433978817 SUCCESS | 用 PR CI 替代 main CI；跳过门禁等于已验收 |
+| 主线核验基点 | `main@01c2977359ffdf2751711f151ef91ad634e0fd75`；#123、#137–#142、#146–#159 已合并；#153 发布目录分页与完整性已进入主线；服务器及 500+/200+ 长期约束随 #152 入主线 | 主线能力已随正式 10.1 全部交付、所有历史来源均兼容 |
+| 最近已完成 main CI | 发行源码 7da593b 的 Enterprise/Runtime 38497837123、文档 38497837116 SUCCESS；main01c 的 [Enterprise/Runtime 38499949781](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/38499949781) 失败作业唯一重试后最终 SUCCESS，文档 38499949813 SUCCESS；opt-in SKIPPED。旧 main32c 与 main01c 的首次失败及各自唯一失败作业重试保留，不能改称首次通过 | 用 PR CI 替代 main CI；跳过门禁等于已验收 |
 | 开发基线收口 | #146 选择性接回 10.1 同源页面提示和数据库 v2 迁移/构建契约，保留主线安全治理、任务回执、原生入口和恢复保护；准确整合范围与验证见 [收口记录](./ops/DEVELOPMENT-BASELINE-CLOSEOUT-2026-10-09.md) | 整条维护分支已合并；任意历史安装已受支持 |
 | 主线诊断/恢复增量 | #147、#148 已合并。#148 工作包 B 完成精确 Job/READY、源进程 lease、接受竞争和超时恢复保护；310 项关联回归通过。代码 `6002300eff5fd4750f84bfe684b41a739c541120` 的本机固定 EXE 合成三门禁通过、测试进程/端口清理确认；准确最终 Head `fd8303337ea22bab91d4d1eb84606dcaa410f4ca` 三项常规 CI 及独立审查通过，2026-10-10 合并；[实施与验证记录](./ops/RUNTIME-UPDATE-LIFECYCLE-2026-10-09.md) | 已进入正式 10.1、所有安装副本或客户环境已验收、现场旧失败根因已确定 |
-| 正式 Release | [v2026.10.1](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.10.1)，Latest、非预发布；`ice-2026.10.1-bf1143a7bc54`，提交 `bf1143a7bc54ac24d53b9e7d7db5a9b50da8b57c`，2026-10-08 发布 | 将该不可变包覆盖为新的 main 源码 |
+| 正式 Release | [v2026.10.2](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.10.2)，Latest、非预发布；`ice-2026.10.2-7da593b52f3d`，准确 source `7da593b52f3d487033e3ab1771142bfed891f316`，2026-10-14 发布，共 10 项资产 | 10.2 已部署客户、所有来源均兼容；覆盖旧 10.1 资产 |
 | 生产单设备 | 负责人在固定 EXE 停止/重新启动 09.9 后，通过更新中心升级成功；导出日志确认 2026-10-09 北京时间 01:46:41 作业成功、目标 10.1、01:49 时 Runtime healthy | 所有设备都可升级、历史崩溃彻底解决或零停机 |
 | 测试单设备 | 负责人确认固定 EXE 启动 09.9 并运行一段时间后，更新中心升级 10.1 成功；截图显示正确超管标签 | 等同于生产全量数据和持续运行验收 |
 | 10.2 诊断候选 | [PR #145](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/145) OPEN/Draft，基于维护线；提交 `83e18c44357ec491dced0d6ba70bc4e691e420e1` | 已合并 main、正式发布或修复了现场失败根因 |
-| 开发/候选版本 | `VERSION=2026.10.2` 已由负责人批准用于本轮修复版；准确 source/tree、构建与正式 10.1 升级/恢复结果另行记录，见 [发行记录](./ops/RELEASE-2026.10.2-RECORD.md) | 仅修改版本号等于已经发布、客户验收或获准生产操作 |
+| 开发/候选版本 | `VERSION=2026.10.2` 对应本轮已发布修复版；准确 source/tree、构建与正式 10.1 升级/恢复结果已记录，见 [发行记录](./ops/RELEASE-2026.10.2-RECORD.md) | 仅修改版本号等于已经发布、客户验收或获准生产操作 |
 
 后续通用开发以 main 为唯一来源；维护线的已发布 refs/资产只作不可变发行来源及历史兼容证据。新版本构建、路由、发布与生产升级分别授权，不因本轮收口自动发生。
 
@@ -35,7 +35,7 @@
 
 ### 最新完整工作包的合并与候选状态
 
-以下是 2026-10-14 核验快照；#154/#155/#156 已合并，#123 为独立审查后的整合候选，#157/#158 已合并。合并源码不等于正式 Release 或客户验收。
+以下是 2026-10-14 核验快照；#154/#155/#156 已合并，#123/#157/#158 及发行元数据 #159 已分别合并。合并源码不等于正式 Release 或客户验收。
 
 | 候选 | 准确功能提交与 CI | 实现及限制 |
 | --- | --- | --- |
@@ -43,15 +43,15 @@
 | [#155 C6/C7](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/155)，MERGED | `7029e1d1fdda7ecf962cf9e9a4f15cadf5dcc16c`；Enterprise/Runtime/原生 EXE/Setup/文档四项 SUCCESS | 离线升级、保留数据跨版本重装、原生工具及最多 8 跳连续执行/检查点；已合并为 `3e0deeae`，C5 前置已合并为 `11c9a38c`。限定 GUI 已有合成副本证据；在线检查点继续在本机仍被 handoff Job 资格阻断，见 [C6](./ops/OFFLINE-RETAINED-UPGRADE-2026-10-12.md)、[C7](./ops/ONLINE-UPGRADE-SEQUENCE-2026-10-12.md) |
 | [#156 产品集成修复](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/156)，MERGED | 功能基点 `4bdd9a16074abac86ce47fc1e81b55bfb12cf63c`；Enterprise/Runtime/文档三项 SUCCESS。最终 Head `5b90391f30e0cfde4e15dd4d4b23c3ca2f5d13f5` 合并为 `e89a288fe`，对应 main 常规 CI 已成功 | 12 个已确认 Zhenzhen JSON 图像模型/别名内置能力与请求构造、个人模型列表、后台操作确认、素材扩展同源接线；范围见 [实现记录](./ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md) |
 
-| [#123 付费止损与原任务续查](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/123)，OPEN/Draft | 功能 Head `3d0400e7dc18f4af63ca8ad70b7edb87b54bf96c` 独立审查通过，Enterprise/Runtime/文档 SUCCESS；与 main 整合后的证据分列 | 画布保存重开后查询已受理的原图像任务，不重新付费提交；独立审查已完成，合并整合仍待收口；不等于统一任务中心/费用账本 |
+| [#123 付费止损与原任务续查](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/123)，MERGED | 整合 Head `fe4e5493d29925a7ee9231cd75826cf95f7c4f4d` 独立审查通过，合并 `32c67400`；PR Enterprise 失败作业唯一重试后 SUCCESS，首次失败记录保留；Runtime/文档 SUCCESS | 画布保存重开后查询已受理的原图像任务，不重新付费提交；归档失败保留原 ID 可续查，不等于统一任务中心/费用账本 |
 | [#157 正式 Windows 启动与在线更新](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/157)，MERGED | Head `551f433db51444be2c96dec225b6479b8a854f00`；Enterprise/Runtime/原生 EXE/文档四项 SUCCESS | 现有固定入口正式启动方式的更新交接与失败恢复提示；启动不强制升级，更新需管理员确认；未覆盖 GUI 范围继续保留 |
 | [ComfyUI 单图输入修复（#158 已合并）](./ops/COMFY-WORKFLOW-INPUT-REPAIR-2026-10-14.md) | 合并 `b41dd3b4`；独立审查通过，定向字段/实际级联调用者、静态闭包与受控 Browser/HTTP 证据；整合运行字节等价，main CI 仍单独核对 | 纠正 filename_prefix、直接兼容旧配置、两类画布共用映射和准确缺图提醒；受控协议闭环，客户 GPU/自定义节点尚未验证 |
 
-三包均未发布，固定 EXE real gates 的自动 opt-in 为 SKIPPED；已有真实副本证据不因 CI 跳过被抹除，也不因此外推全部客户。
+三包已随准确 v2026.10.2 正式发行；固定 EXE real gates 的自动 opt-in 为 SKIPPED；已有真实副本证据不因 CI 跳过被抹除，也不因此外推全部客户。
 
-[#157](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/157) `551f433db51444be2c96dec225b6479b8a854f00` 四项常规 CI 最终 SUCCESS，独立审查后已合并为 `519b1da0`；固定入口真实单跳及自动恢复证据保留，仍保留 C7 历史/GUI 限制。启动使用当前版本、不自动更新，管理员按需单独确认；该能力已进入 main，尚未正式发布，不能写成正式 10.1 能力。
+[#157](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/157) `551f433db51444be2c96dec225b6479b8a854f00` 四项常规 CI 最终 SUCCESS，独立审查后已合并为 `519b1da0`；固定入口真实单跳及自动恢复证据保留，仍保留 C7 历史/GUI 限制。启动使用当前版本、不自动更新，管理员按需单独确认；该能力已进入准确 10.2 正式包；不能写成正式 10.1 原包能力。
 
-[#123](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/123) Draft 继续交付付费止损与画布原任务持久续查，功能基点 `1ff8718`。供应商 ID 在轮询前持久化，两类画布共享“查询结果”，恢复写回同一回执和节点；批量部分结果保留、跨用户拒绝。真实 main 钩子强退和本机模拟供应商 GUI 已验证；原 7e6d90b8 CI 不代表新增 Head 已成功。见[完整证据与边界](./ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md)，不是完整任务中心/费用账本。
+[#123](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/123) 已独立审查并合并，最终整合 Head `fe4e549`。供应商 ID 在轮询前持久化，两类画布共享“查询结果”；批量成员和旧部分缓存通过本地归档核验，归档失败不伪报成功。实际 main 钩子与模拟供应商 GUI、独立审查修正及准确 CI 见[完整证据](./ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md)。尚未保存供应商 ID 的受理窗口、完整任务中心/费用账本及 Responses 后台 ID 长期恢复仍有边界。
 
 历史记录的“未合并”只代表记录时点。#142 于 10-05 合并为 `a54bdbec348c49fa9eed12cac0bf861241ef5c0b`；真实副本/入口验证及 GUI 限制仍见 [DELIVERY-1](./ops/DELIVERY-1-FIXED-NATIVE-ENTRY-2026-10.md)，不能以源码接线冒充客户图形操作验收。
 
@@ -84,11 +84,11 @@
 2. #154/#155 已按负责人授权核查准确 Head 并合并，包含目标执行器、离线/在线连续升级、原生工具和检查点恢复；没有将开发端核查称为新增独立审查。main 的 #155 历史在线交接阻断仍保留原证据；#157 已按一种正式固定入口启动方式完成候选收口及必要恢复提示，独立审查后已合并，不继续扩展任意受限宿主矩阵。合成两跳成功不证明真实整机重启和所有在线续接已通过。
 3. GUI 状态按准确来源分列：#152 的历史卸载 Yes 点击仍缺证据；C6 后续合成安装副本已有标准卸载确认和限定跨版本重装 GUI 证据，代码已合入 main。不能把这两者写成全面通过或全部未验证；未知来源、未来 Schema、未列 GUI 和客户设备范围继续保留限制。
 4. #156 处理实际使用问题；管理员创建确认在 main 已有表单，旧正式 10.1 与现行主线契约不同。普通管理员不能因此获得创建管理员的权限。长期供应商适配由项目维护，普通用户在节点设置个人模型列表，不承担接口模板配置。真实付费、Chrome 扩展宿主与 PS 企业登录仍未验收。
-5. [#123](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/123) 仍 OPEN/Draft，当前 Head、修正与独立审查以该 PR 记录为准；画布回执和局部止损不是统一 Task/Attempt、费用账本、预算及完整查询恢复。按路线图推进，已受理任务不自动重复付费。
+5. [#123](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/123) 已合并；画布回执和局部止损不是统一 Task/Attempt、费用账本、预算及完整查询恢复。按路线图推进，已受理任务不自动重复付费。
 6. 当前企业部署为单台 Windows 主机。专业服务器/云、500+/200+ 保留长期架构约束；Linux、容器、PostgreSQL、多实例和容量实施待负责人后续需求，当前只提前保持可复用业务边界。负责人已批准 v2026.10.2 修复版的审查合并、准确发行包与正式 10.1 升级/恢复验证后发布；没有整体重构或客户生产操作授权。
 7. 安装维护以已有设备正常迭代、数据保护和必要恢复为目标；按完整工程包交付，减少相关技术债，复用有效测试，不以数量、哈希或额外框架作为成果。
 
-负责人于 2026-10-14 将 ComfyUI 画布无法运行列为当前优先完整工作包：按现有交互解除创作阻断，证据与边界见 [修复记录](./ops/COMFY-WORKFLOW-INPUT-REPAIR-2026-10-14.md)。#157/#158 已分别独立审查并合并；#123 独立审查后整合，完成已批准发行验证后按唯一路线图推进可靠任务与供应商工作。
+负责人于 2026-10-14 将 ComfyUI 画布无法运行列为当前优先完整工作包：按现有交互解除创作阻断，证据与边界见 [修复记录](./ops/COMFY-WORKFLOW-INPUT-REPAIR-2026-10-14.md)。#123/#157/#158 均已分别独立审查并合并，准确 10.2 包成功升级与必要失败回退均通过。本轮发行已完成，目录回验结果见第 7 节；后续按唯一路线图进入可靠任务与供应商工作，不继续扩展安装矩阵。
 
 ## 6. 本轮证据来源与限制
 
@@ -108,3 +108,13 @@
 - 2026-10-13 按负责人要求继续阶段 4.1：现有 #123 重新同步 main，转为 Draft，提取付费提交规则到独立供应商模块，补齐异常成功响应、已受理查询中断和原任务身份保留；[工程记录](./ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md)。关联模拟/回执 13 项通过。该候选未合并，完整任务中心与费用账本尚未完成。
 
 - #156 的整合 Head `5b90391` 三项常规 CI 最终 SUCCESS，按负责人授权合并为 `e89a288fe1ce8e5066ebebe1971e69bf5d4c7945`；本地主目录 main 安全快进到该点，历史分支/其他工作区保留。#154 与 #155 各合并点的自动 CI 已最终 SUCCESS。最新 e89a288 的 main CI 在运行，不能以 PR 通过替代；最终结果更新在 PR 证据/集中交付中。
+
+## 7. 2026-10-14 准确发行验收补记
+
+发行 source `7da593b52f3d487033e3ab1771142bfed891f316`、tree `46fe3ba334e6b4ec4437746dd0c2c51848fb9f7a`，Release ID `ice-2026.10.2-7da593b52f3d`。#159 合并 `01c29773` 与该 source 树完全相同，source 已可达 main；不是用后续文档提交冒充包来源。
+
+开发机普通 Windows 桌面使用正式 10.1 BAT 和包内 Python/launcher，认证更新 HTTP 执行真实 worker。成功作业 `d3c3b910f5bc47929d9794fd2319f63d` SUCCEEDED，准确 10.2 healthy；独立副本目标端口冲突作业 `ac800cb3641b447bb660a9134cb59d37` ROLLED_BACK，准确 10.1 healthy。两者原账号登录、后台、业务行以及 5 个配置/画布/素材文件保持一致。没有将启动/健康结果替换成 mock。
+
+来源数据库使用正式 10.1 已发布的准确旧库备份/登记 API 预置为 READY v2/30 对象，备份验证与业务行保留通过，对应正式 09.9 → 10.1 的已登记契约。10.1 裸新装 API 缺账本的数据库直接准备被拒绝，**不宣称裸库可直接在线升级**，不手工补账本或绕过身份检查。原生/Setup 同源双构建一致、未签名；发行路由仅允许准确 10.1 v2 来源，不外推其他历史版本、完整 GUI、GPU/真实付费或客户设备。详细结果见[发行记录](./ops/RELEASE-2026.10.2-RECORD.md)。
+
+2026-10-14 公开回验：10.2 Latest、非预发布，10 项准确资产均已上传/回验，10.1 四资产身份未变。仍运行正式 10.1 的隔离更新中心已返回 `update_available=true` / `direct` / 最新稳定 10.2。首次目录读取 `route_invalid` 的记录保留，具体读取异常未确认，重新读取通过且未修改包/路由。该结果不代表已在客户生产执行升级。

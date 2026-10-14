@@ -24,3 +24,34 @@
 真实付费供应商/GPU、自定义 ComfyUI 节点、PS 企业登录与 Chrome 扩展宿主、完整 GUI/历史版本矩阵、未知未来 Schema、全部在线多跳续接和客户生产设备仍按各实施记录的边界解释。普通异步图像续查不是完整任务中心、Provider Attempt/费用账本、视频或所有专属协议恢复；Responses 后台 ID 的长期恢复尚未覆盖。
 
 EXE/Setup 的签名状态以构建记录为准；未签名资产不要求关闭 Windows 安全保护。当前仍是单台 Windows 主机部署，Linux/云和 500+/200+ 容量是长期约束，不在本版宣称已支持或已验证。
+
+## 准确包与实际验收（正式发行）
+
+准确 source `7da593b52f3d487033e3ab1771142bfed891f316`，tree `46fe3ba334e6b4ec4437746dd0c2c51848fb9f7a`，Release ID `ice-2026.10.2-7da593b52f3d`。#159 合并 `01c2977359ffdf2751711f151ef91ad634e0fd75`，合并树与 source 完全相同且 source 已可达 main。后续文档维护不是包来源。
+
+ZIP、Manifest、Inventory、EXE、Setup 及维护工具均从该干净 source 构建，固定 CPython 3.14.6 未重建。ZIP 30,574,713 字节、2144 文件；原生/Setup 各双构建一致，签名状态 unsigned。Manifest SHA `23c50d621231d7c78f318957231e94248ae022c32a0f3faf5d0c6925cb8b91c2`，ZIP SHA `d71b40af3e0edd065d1576672ac57ca3798a7305673c0ba091c94be9d27651de`；其余逐资产身份以构建记录及公开验证摘要为准。
+
+开发机两套独立合成副本来自准确正式 10.1 ZIP。Windows 普通桌面通过正式 BAT / bundled portable launcher 启动，真实登录后认证更新 HTTP 执行实际 worker，不模拟启停/健康结果。
+
+| 场景 | 准确结果 |
+| --- | --- |
+| 10.1 → 10.2 | 作业 `d3c3b910f5bc47929d9794fd2319f63d`，SUCCEEDED，目标 Runtime release 身份正确且 healthy |
+| 目标启动失败 | 作业 `ac800cb3641b447bb660a9134cb59d37`，仅目标 RESTARTING 阶段占用合成上游端口，ROLLING_BACK 时释放；ROLLED_BACK，原 10.1 healthy |
+| 两条路径数据保留 | 账号登录/后台可用；所选 users/user_canvas_map/feature flags 业务行、5 个配置/画布/素材文件保持一致 |
+| 来源登记 | 采用正式 10.1 已发布的准确旧库备份/登记 API 建立 READY v2/30 对象；备份可验证、业务行保持一致，对应既有 09.9 → 10.1 已登记部署契约 |
+
+**10.1 裸新装兼容限制**：旧 fresh-install API 可能创建缺少版本账本的数据库，准确包准备因 `SYSTEM_UPDATE_DATABASE_SOURCE_IDENTITY_MISMATCH` 拒绝；没有执行切换。不能用本次 v2 成功证据声称裸库直接在线升级可用。该来源需先备份、核验身份并按已有明确维护/登记流程处理，禁止手工伪造账本；本版不扩展历史兼容矩阵。
+
+本地受限工具宿主的 MSIX 路径虚拟化尝试曾失败，已验证归还其原停止态 Runtime。正式桌面路径独立演练通过；不能将受限宿主失败笼统归因于产品 Job，也不宣称支持任意工具宿主。
+
+准确 source 的 Enterprise/Runtime 38497837123、文档 38497837116 SUCCESS。旧 main32c 的 38498705795 首次 Enterprise 两项失败（崩溃循环重启等待、后续 Popen mock 调用），保留完整日志，根因未确认，仅失败作业重试一次。新 main01c 的 38499949781 / 38499949813 最终结果在发行前核对，不能用 PR CI 替代。
+
+公开发行与资产回读已完成；旧更新中心回验结果与拥有者测试 Runtime 清理见本节后续结果。原始合成证据位于开发机 `D:/CodeProject/Infinite-Canvas-Enterprise-Artifacts/t/R102`；公开摘要不含账号密码、客户数据或本机敏感状态。
+
+main01c 的 38499949781 首次 Enterprise 因既有 PowerShell 预检测试 20 秒超时失败（1755 passed / 50 skipped），同一测试本机定向控制 1 passed / 2.05s。没有据此确定 CI 根因；仅失败作业重试一次，其他成功作业保留。发行资产已从 GitHub 草稿完整下载回验，9 项大小与既有发行契约摘要均匹配；初次代理大文件上传慢，改用任务进程直连完成，不修改系统代理。
+
+正式发行 [v2026.10.2](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.10.2) 已于 2026-10-14 发布为 Latest、非预发布，精确 tag 指向上述 source，共 10 项资产。9 项核心资产从草稿下载回验，脱敏 [公开验证摘要](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/download/v2026.10.2/release-validation-v2026.10.2.json) 另行上传并逐字节回验；原 10.1 四项资产身份重新确认未变。main01c 的 Enterprise 仅失败作业重试后最终 SUCCESS，Runtime/文档原成功结果保留；首次失败不删除或改称首次通过。
+
+发布后使用仍运行正式 10.1 的隔离副本真实认证 GET `/enterprise/api/update-mvp/check`：首次返回 `route_invalid` 并安全阻止，完整保留该次结果；同一正式 10.1 解析器读取公开资产通过，再次 HTTP 读取返回 `update_available=true`、最新 `v2026.10.2`、`route_status=direct`、`stage=stable`。首次读取异常的具体根因未确认，不改称首次成功；没有修改公开包/路由或在客户设备执行升级。只重试失败的目录读取，没有重做已通过的包级升级。
+
+两套演练副本最终均通过准确当前 launcher 停止，拥有者标记、根目录身份和端口释放核验通过；仅移除本次创建且初始不存在的测试 Runtime。安装副本、备份及失败/成功证据保留，未操作客户或生产设备。后续发布状态文档只运行文档门禁，运行字节复用 main01c 最终成功与准确包验收，不重复全量 Enterprise。

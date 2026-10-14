@@ -160,7 +160,7 @@ Gateway 还对 Cookie 状态变更请求执行精确同源校验；Bearer CLI �
 
 ## 8. 主线收敛分支增量：`enterprise/canvas_task_journal.py`
 
-`CanvasTaskJournal` 的原子回执、单次领取、完成和中断恢复已在当前 main；`create_task_receipt()` 在受理前写回执及归属。#123 新候选在既有 v1 JSON 上增加可选供应商成员回执与恢复结果，仍使用同一根目录和写入者，不增加数据库 Schema。
+`CanvasTaskJournal` 的原子回执、单次领取、完成和中断恢复已在当前 main；`create_task_receipt()` 在受理前写回执及归属。#123 已合并实现在既有 v1 JSON 上增加可选供应商成员回执与恢复结果，仍使用同一根目录和写入者，不增加数据库 Schema。
 
 ## 9. 本轮核对的源码规模与候选模块
 
@@ -177,7 +177,7 @@ Gateway 还对 Cookie 状态变更请求执行精确同源校验；Bearer CLI �
 
 main.py 的 api_headers、generate_ai_image、wait_for_image_task 和结果归档仍参与调用，新增模块不是完整 Provider 体系。完整边界随实际供应商工作包逐步提取。
 
-## 付费提交与查询规则（#123 候选）
+## 付费提交与查询规则（#123 已合并）
 
 `enterprise/providers/submission.py` 承担明确 API 拒绝判定、未知结果错误、提交响应结构校验和 GET/HEAD 瞬态重试。入口复用它，不在响应丢失时再次付费生成；已有 ID 在错误和图像持久回执中保留。它不访问业务数据库或文件目录。此包尚未合并，见[工程记录](../ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md)，不等于完整任务中心。
 

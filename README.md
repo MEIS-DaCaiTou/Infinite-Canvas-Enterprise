@@ -17,7 +17,7 @@
 | 完整文档导航与维护规则 | [文档索引](docs/README.md) / [登记表](docs/document-register.json) |
 | 开发、代码边界和安全 | [工作流](CODEX_WORKFLOW.md) / [代码边界](CODE_BOUNDARIES.md) / [安全基线](SECURITY_BASELINE.md) |
 
-当前主线已接入 Runtime、安全、数据升级/恢复、固定入口、同版维护、保留数据卸载/重装和发布目录分页；阶段 3 仍在收口。最新正式应用为 v2026.10.1，主线与待审开发成果尚未形成新的正式发行；准确 PR/CI、GUI 限制和现场范围只见当前状态。
+当前主线已接入 Runtime、安全、数据升级/恢复、固定入口、同版维护、保留数据卸载/重装和发布目录分页；阶段 3 仍在收口。最新正式应用为 [v2026.10.2](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.10.2)，准确 source 为 `7da593b`；正式 10.1 已登记 v2 来源的本机准确包升级与必要失败恢复通过，客户部署尚未操作；准确 PR/CI、GUI 限制和现场范围只见当前状态。
 
 当前企业部署仍采用单台 Windows 主机、SQLite 和本地文件。专业服务器/云部署、500+ 员工与 200+ 活跃创作保留为长期约束；Linux、容器和容量扩展待负责人实际需求再实施，业务核心保持可演进边界。方案 Accepted 不等于已经实现。
 

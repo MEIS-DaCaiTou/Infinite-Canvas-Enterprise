@@ -52,8 +52,8 @@
 | `install_lifecycle.py` | main 的保留数据卸载/同版重装、自己的事务恢复与 inspect_lifecycle 观察 |
 | `install_cache.py` | main 的显式归属准备包清理；运行/恢复依赖和未知包保留 |
 | `ops/update/release_catalog.py` | main 的 v1/v2 共用全页目录、条件核验与完整性失败阻断 |
-| `providers/zhenzhen.py`、`provider_image_profiles.py` | #156 候选图像能力目录、请求构造与内置优先选择 |
-| `user_model_api.py`、`user_model_preferences.py` | #156 候选当前账号模型列表 API 与 DATA_ROOT 保存 |
+| `providers/zhenzhen.py`、`provider_image_profiles.py` | #156 已合并的图像能力目录、请求构造与内置优先选择 |
+| `user_model_api.py`、`user_model_preferences.py` | #156 已合并的当前账号模型列表 API 与 DATA_ROOT 保存 |
 | `install_cli.py` | 开发/命令行安装入口 |
 | `install_setup_bridge.py` | 安装器与固定 Python 间的受控 named-pipe 桥接 |
 
