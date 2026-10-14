@@ -150,7 +150,7 @@ Supervisor 分别跟踪 Gateway 和 Upstream：进程 PID 只是身份的一部�
 
 ## 9. 图像模块与架构性质
 
-#156 候选的 enterprise/providers/zhenzhen.py 维护已确认图像能力及 JSON 请求构造，provider_image_profiles.py 选择内置/临时能力。HTTP 鉴权、部分分派与尺寸推断、异步查询、解析及归档仍在 main.py，尚未完成统一 Provider Adapter。个人模型 API 使用认证身份与 DATA_ROOT；业务模块不依赖 Windows Registry/固定盘符。
+#156 已合并的 enterprise/providers/zhenzhen.py 维护已确认图像能力及 JSON 请求构造，provider_image_profiles.py 选择内置/临时能力。HTTP 鉴权、部分分派与尺寸推断、异步查询、解析及归档仍在 main.py，尚未完成统一 Provider Adapter。个人模型 API 使用认证身份与 DATA_ROOT；业务模块不依赖 Windows Registry/固定盘符。
 
 当前仍按单台 Windows 主机交付。500+/200+、专业服务器与云保留长期约束，Linux/容器/容量实施待实际需求；不预建复杂插件、多节点或通用参数语言。
 

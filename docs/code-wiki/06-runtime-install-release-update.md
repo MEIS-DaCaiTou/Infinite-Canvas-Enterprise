@@ -4,7 +4,7 @@
 
 [返回索引](./README.md)
 
-后续 Windows 交接候选 [#157](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/157) 准确 551f433 四项常规 CI 成功、独立审查后已随 `519b1da0` 合并。正式入口“启动并打开”只用当前已安装版本；更新由管理员在更新中心单独确认，不要求每次启动更新。必要安装审查不扩成任意宿主/历史/GUI 工程，业务原任务恢复可并行推进；正式 10.1 资产未改变，新发行另行验证。
+Windows 交接实现 [#157](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/157) 准确 551f433 四项常规 CI 成功、独立审查后已随 `519b1da0` 合并。正式入口“启动并打开”只用当前已安装版本；更新由管理员在更新中心单独确认，不要求每次启动更新。必要安装审查不扩成任意宿主/历史/GUI 工程，业务原任务恢复可并行推进；正式 10.1 资产未改变，新发行另行验证。
 
 更新时间：2026-10-13。主线、维护线和固定入口边界见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，生命周期设计见 [统一交付 ADR](../decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md)。
 
@@ -45,7 +45,7 @@
 
 `installer/windows/native/` 用 C# 处理固定入口、Windows UI 和受限进程调用：读取 `state/current-release.json`，校验 Manifest 与完整 inventory，再调用该 Release 内 `python/python.exe -I -B enterprise/runtime/launcher.py portable <command>`。`tools/build_native_entry.py` 使用外置固定编译器双构建，仅生成全新 artifact 根，不写客户安装、不迁移数据库。构建、安装器接线和真实 Runtime 验收必须区分，见 [实施记录](../ops/DELIVERY-1-FIXED-NATIVE-ENTRY-2026-10.md)。
 
-正式 Windows 入口从开始菜单或安装目录打开该 EXE，点击“启动并打开”只启动当前已安装版本，不查询/下载新版本，不强制更新。管理员按需在更新中心单独确认更新；关闭启动窗口不停止服务。C8 候选依据已知 Job 权限一次选择进程创建参数，保留独立性/READY/清理核验；在线受阻使用既有停服离线维护，不新增服务/计划任务。单跳实际证据、失败恢复、界面及历史覆盖边界见 [C8 记录](../ops/WINDOWS-START-UPDATE-CLOSEOUT-2026-10-13.md)。
+正式 Windows 入口从开始菜单或安装目录打开该 EXE，点击“启动并打开”只启动当前已安装版本，不查询/下载新版本，不强制更新。管理员按需在更新中心单独确认更新；关闭启动窗口不停止服务。C8 已合并实现依据已知 Job 权限一次选择进程创建参数，保留独立性/READY/清理核验；在线受阻使用既有停服离线维护，不新增服务/计划任务。单跳实际证据、失败恢复、界面及历史覆盖边界见 [C8 记录](../ops/WINDOWS-START-UPDATE-CLOSEOUT-2026-10-13.md)。
 
 ```mermaid
 flowchart TD
@@ -221,8 +221,14 @@ main 的 install_lifecycle.py 为已登记实例提供保留数据卸载、同�
 
 C5 的 updater.py / updater-worker-v1 契约选择目标 Python 执行器并绑定准备/READY/接受过程；C6 install_upgrade.py 复用现有更新引擎处理限定相同 Schema 的离线升级/保留数据跨版本重装；C7 sequence.py 等协调一次授权路径、逐跳权限、检查点、当前跳恢复及原生维护资产。上述新增升级代码已随 #154/#155 进入 main，本 Wiki 所在产品修复分支已整合该主线；参见 C5/C6/C7 实现记录。
 
-限定 GUI 状态：#152 本身的卸载 Yes 点击未验收；C6 后续合成安装副本已有 Yes 与限定跨版本重装点击证据；代码已合并，未正式发行。C7 冻结包完整两跳成功，原在线继续曾被 SYSTEM_UPDATE_HANDOFF_JOB_BLOCKED 阻断；C8 新候选的真实单跳/恢复成功不覆盖全部 C7 在线路径。不能把冻结构建等同新 Head 或把 HTTP/WS 暂停称为完整任务排空。
+限定 GUI 状态：#152 本身的卸载 Yes 点击未验收；C6 后续合成安装副本已有 Yes 与限定跨版本重装点击证据；代码已随准确 10.2 正式发行，限定 GUI 证据不外推。C7 冻结包完整两跳成功，原在线继续曾被 SYSTEM_UPDATE_HANDOFF_JOB_BLOCKED 阻断；C8 的真实单跳/恢复成功不覆盖全部 C7 在线路径。不能把冻结构建等同新 Head 或把 HTTP/WS 暂停称为完整任务排空。
 
 ## 2026.10.2 发行源码与资产身份
 
 负责人已批准本轮修复版构建和验证后发布，`VERSION=2026.10.2` 用于准确 Git 提交的同源 ZIP、EXE 与 Setup；见 [发行记录](../ops/RELEASE-2026.10.2-RECORD.md)。源码/PR/CI、准确包验收、正式 Release 与客户更新分别记录，构建完成不能直接写成已上线。10.1 公开资产保持不可变；发布前使用正式 10.1 合成安装副本验证，不将测试版本改名冒充来源。启动现版本不强制升级，管理员选择是否更新。
+
+## 10.2 发行包的准确升级边界
+
+正式发行 source `7da593b52f3d487033e3ab1771142bfed891f316`，已随 #159 合并，ZIP/固定入口/Setup/维护工具同源。正式 10.1 普通桌面 BAT、包内 Python 和真实更新 worker 已完成准确包单跳成功及目标失败回退：目标 10.2 / 恢复 10.1 各自 healthy，原账号、业务行和配置/画布/素材保持一致。正式发布/CI/回读状态只见 CURRENT 与发行记录。
+
+来源必须匹配正式 10.1 的 READY v2/30 对象身份；10.1 裸新装缺版本账本会被安全拒绝，本次不宣称该来源直接在线升级。验证副本通过正式 10.1 已发布的准确备份/旧库登记 API 建立已登记来源，并保留备份与业务行对照；不手工伪造账本。在线不可用时仍走已有停服离线维护，不能直接覆盖目录。启动当前版本与确认更新分开，界面没有强制升级步骤。

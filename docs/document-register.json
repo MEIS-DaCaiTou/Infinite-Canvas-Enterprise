@@ -1,8 +1,8 @@
 {
   "schema_version": "enterprise-documents-v1",
   "reviewed_at": "2026-10-14",
-  "audit_base_commit": "b41dd3b4c7a867fcbda3aac598f0a197336e0b73",
-  "scope": "Git-managed Markdown/text; main b41dd3b (#157/#158 merged), independently reviewed image recovery integration, and approved 10.2 release preparation. Frozen evidence retained; publication and production validation remain separate. Approved 10.2 release metadata is a candidate until exact-package acceptance and publication.",
+  "audit_base_commit": "01c2977359ffdf2751711f151ef91ad634e0fd75",
+  "scope": "Git-managed Markdown/text at main01c29773, merged independent reviews #123/#157/#158 and #159 release metadata; exact source7da593b v2026.10.2 published with real 10.1 v2 upgrade/recovery, public asset readback and direct-route verification. Historical failures and unvalidated customer/GUI/provider scopes retained. Post-release documentation only; runtime source remains immutable.",
   "documents": [
     {
       "path": "docs/ops/ONLINE-UPGRADE-SEQUENCE-2026-10-12.md",
