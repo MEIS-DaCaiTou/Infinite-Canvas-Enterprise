@@ -43,7 +43,7 @@
 | [#155 C6/C7](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/155)，MERGED | `7029e1d1fdda7ecf962cf9e9a4f15cadf5dcc16c`；Enterprise/Runtime/原生 EXE/Setup/文档四项 SUCCESS | 离线升级、保留数据跨版本重装、原生工具及最多 8 跳连续执行/检查点；已合并为 `3e0deeae`，C5 前置已合并为 `11c9a38c`。限定 GUI 已有合成副本证据；在线检查点继续在本机仍被 handoff Job 资格阻断，见 [C6](./ops/OFFLINE-RETAINED-UPGRADE-2026-10-12.md)、[C7](./ops/ONLINE-UPGRADE-SEQUENCE-2026-10-12.md) |
 | [#156 产品集成修复](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/156)，MERGED | 功能基点 `4bdd9a16074abac86ce47fc1e81b55bfb12cf63c`；Enterprise/Runtime/文档三项 SUCCESS。最终 Head `5b90391f30e0cfde4e15dd4d4b23c3ca2f5d13f5` 合并为 `e89a288fe`，对应 main 常规 CI 已成功 | 12 个已确认 Zhenzhen JSON 图像模型/别名内置能力与请求构造、个人模型列表、后台操作确认、素材扩展同源接线；范围见 [实现记录](./ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md) |
 
-| [#123 付费止损与原任务续查](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/123)，OPEN/Draft | Head `5384a2ac9801d69a95264ceeb2626fc3115c946f`；Enterprise/Runtime/文档三项 SUCCESS | 画布保存重开后查询已受理的原图像任务，不重新付费提交；仍待独立审查，不等于统一任务中心/费用账本 |
+| [#123 付费止损与原任务续查](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/123)，OPEN/Draft | 历史验证 Head `5384a2ac9801d69a95264ceeb2626fc3115c946f` 的三项 CI SUCCESS；当前修正 Head、审查与 CI 以该 PR 独立记录为准 | 画布保存重开后查询已受理的原图像任务，不重新付费提交；仍待独立审查，不等于统一任务中心/费用账本 |
 | [#157 正式 Windows 启动与在线更新](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/157)，MERGED | Head `551f433db51444be2c96dec225b6479b8a854f00`；Enterprise/Runtime/原生 EXE/文档四项 SUCCESS | 现有固定入口正式启动方式的更新交接与失败恢复提示；启动不强制升级，更新需管理员确认；未覆盖 GUI 范围继续保留 |
 | [ComfyUI 单图输入修复候选](./ops/COMFY-WORKFLOW-INPUT-REPAIR-2026-10-14.md) | 分支 `codex/comfy-workflow-input-fix-20261013`；定向字段/后端、静态闭包及本机 Browser/HTTP 验证；GitHub 候选 CI 单列 | 纠正 filename_prefix、直接兼容旧配置、两类画布共用映射和准确缺图提醒；受控协议闭环，客户 GPU/自定义节点尚未验证 |
 
