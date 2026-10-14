@@ -159,10 +159,11 @@ def test_owned_cleanup_retains_unverified_or_active_roots(tmp_path, reason):
 
 
 @pytest.mark.skipif(drill.os.name != "nt", reason="Windows creation flags")
-@pytest.mark.parametrize("limits,expected", [(0x2000, 0x01000208), (0x1000, 0x208),
+@pytest.mark.parametrize("limits,expected", [(0x2000, 0x208), (0x1000, 0x208),
                                             (0x1800, 0x01000208), (None, 0x01000208)])
 def test_runner_qualification_uses_guarded_worker_flags(limits, expected):
-    assert qualification.worker_flags({"process_in_job": True, "job_limit_flags": limits}) == expected
+    assert qualification.worker_flags({"job_query_ok": True, "process_in_job": True,
+                                       "job_limit_flags": limits}) == expected
 
 
 def _qualification_mocks(monkeypatch):
