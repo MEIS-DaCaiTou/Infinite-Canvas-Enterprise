@@ -98,3 +98,23 @@ Responses 后台/SSE、专属 CLI 等尚未接入通用持久原任务续查，�
 准确 Head 72e6ffb 的三项常规 CI 已最终成功，但实现者以外的独立复核确认三项需修正问题：详情资源归属投影误扫描正文/错误字段、初始 started 占位使本地未提交的失败误显示待核对、音频链接进入图片预览。现集中修正为仅投影已筛选结果 URL；started 不证明实际提交，submitting/accepted/generated/unknown 及重启恢复标记仍保护未知结果；音频保留原文件链接，两类画布图片/视频继续使用原预览。
 
 9 项任务目录定向检查通过，包括真实内部详情路由不把正文/错误/name 内的路径登记为资源，以及占位/受理/中断状态区分。Browser 分别从两类画布任务详情点击合成 WAV，均打开原生音频页，智能画布没有破图弹窗；不据此宣称全部音频格式/真实工作流验收。已有图文/重启/供应商 GET-only 证据继续复用，不重跑无关门禁。修正后新准确提交仍须独立复核和 CI，不把旧 Head 成功外推。
+
+## 2026-10-15 任务中心独立审查交付
+
+#162 初审绑定 72e6ffb，发现资源投影误扫正文/错误/名称、未提交占位误报未知、音频进入图片预览三项问题；均在 b61b564 修正并由原独立代理增量复审关闭。审查 COMMENT 已发布，不冒充另一个 GitHub 账号的 Approval。准确 b61b564 文档/Enterprise/Runtime CI SUCCESS、原生 opt-in SKIPPED 后，合并为 main6d9d77dc07c5a2b655e2002536a653e285033d69。合并后 [主线 Enterprise/Runtime](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/38694777075) 与 [主线文档](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/38694777090) 最终 SUCCESS。主目录干净快进同步，其他工作区/分支保留，正式 Release 仍为 v2026.10.2。
+
+## 2026-10-15 已受理任务自动恢复候选
+
+负责人要求先交付任务中心再推进本包；独立分支 codex/task-auto-recovery-20261015 从 main6d9d77d 开发，不在主目录继续堆改动。交互方案在实施时已告知：日志 → 生成任务不变，仅原详情补自动状态/下次查询/暂停原因，没有新页面/模板。事实源仍是已有 owner 映射和同一个 v1 journal。
+
+- 新 `AcceptedTaskRecovery` 启动时重建可恢复索引，运行失败用已有完成钩子通知；每次调用原查询/归档。并发最多 2，正常间隔 5 秒，查询网络/429/5xx 按失败次数退避至最多 300 秒；没有自动生成函数。只开通已维护的 Zhenzhen 图像及 ComfyUI，其他供应商保留原手动入口。
+- `CanvasComfyRecovery` 接入原 backend/prompt_id、claim 和单飞，后台/手动共享异步单次 GET 查询；状态解析与原同步 ComfyClient 复用，初次生成路径不被改写。文本/图片/视频/音频仍复用已有归档，不创建第二套业务实现。
+- 原地址/协议变化、无有效 owner/启用用户、认证/配置拒绝、成功无可确认结果及未知回包，保持原 ID 并提示人工核对；Comfy 队列/历史均无原 ID 时不自动重建任务。已完成成员和本地结果保留，带有尚未确认的受理成员的旧 partial 不能挡住后续原 ID 查询。
+- 维护标记存在时不领取新后台查询；关机取消可取消的 GET、保留原 ID，已开始的归档写入先收束。它不是完整业务维护态/写入屏障，也没有独立 Worker 进程、多实例或费用账本。
+- Zhenzhen 状态解释依据 [现行异步查询文档](https://gpt-best.apifox.cn/api-356258956)，接口 GET /v1/images/tasks/{task_id}、IN_PROGRESS/FAILURE/SUCCESS；保留现有终态别名。异步 data.data 报告用量继续只按供应商实际返回白名单记录，不估算币种/结算。
+
+首轮相关定向检查 103 项通过；增量覆盖中断留下 next_query_at=null、Comfy 归档取消收束与新旧任务状态后，21 项定向检查通过，最终启动/图像恢复 18 项通过。后续实际 main 检查曾出现完成后停止超时，改为显式退出标记与事件唤醒后，恢复/Comfy/实际 main（含 4 项子进程用例）15 项通过；范围有重叠不相加。实际 main 启动/停止的隔离子进程证明无浏览器也可查询原图像 ID/Comfy prompt_id，落地图片和文本，再次启动不重复查询；认证入口和跨用户检查复用并通过任务目录关联检查。无全量安装回归。
+
+loopback 实际 HTTP/Browser 演练复用隔离临时 SQLite owner 与固定测试 actor（不是 Browser 真实登录），关闭页面后终止拥有的测试进程、保留数据重启。首次演练发现 querying 状态 next_query_at=null 导致调度循环退出；已修正并增加启动回归，再以相同原回执演练成功找回图片和文本。配置变更原 ID 未向新地址发送，供应商夹具日志生成 POST 为 0。QA 用 .5 秒加速间隔，不能外推正式默认频率、真实 GPU/付费供应商或客户容量。证据集中于 D:/CodeProject/Infinite-Canvas-Enterprise-Artifacts/task-auto-recovery-20261015/。
+
+候选以 Draft PR 供独立审查，准确 CI 单独核对，不等于发布。正式 v2026.10.2 未重打包，没有客户/生产操作。

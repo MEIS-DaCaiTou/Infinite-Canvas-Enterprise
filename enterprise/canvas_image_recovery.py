@@ -86,6 +86,11 @@ class CanvasImageRecovery:
         self.is_archived = is_archived
         self._active = {}
 
+    async def shutdown(self):
+        for task in self._active.values():
+            task.cancel()
+        await asyncio.gather(*self._active.values(), return_exceptions=True)
+
     async def reconcile(self, task_id):
         # Single flight only for active read queries; no in-memory task facts.
         task = self._active.get(task_id)
@@ -125,7 +130,10 @@ class CanvasImageRecovery:
                 record = await asyncio.to_thread(self.journal.get, task_id)
         if record.get("status") == "succeeded":
             return {**record["result"], "status": "succeeded"}
-        if (record.get("result") or {}).get("status") == "partial":
+        if (record.get("result") or {}).get("status") == "partial" and not any(
+            item.get("upstream_task_id") and item.get("state") not in {"succeeded", "failed"}
+            for item in record.get("provider_receipts") or []
+        ):
             return record["result"]
         if record.get("status") != "failed":
             return {"status": "running", "message": "原任务仍在跟踪，请稍后查询", "task_id": task_id}
@@ -142,7 +150,7 @@ class CanvasImageRecovery:
                     raise HTTPException(409, "供应商地址或查询协议已改变；请核对原任务，不会向新地址发送旧任务 ID")
                 providers[receipt["index"]] = provider
 
-        pending, query_unknown, query_http_status = False, False, None
+        pending, query_unknown, query_http_status, manual_reason = False, False, None, ""
         for receipt in record["provider_receipts"]:
             index = receipt["index"]
             if index not in providers:
@@ -160,12 +168,17 @@ class CanvasImageRecovery:
                                             "images": result["images"], "image_items": result.get("image_items") or []}}, recovering=True)
             elif result.get("status") == "failed":
                 await asyncio.to_thread(self.journal.record_image_request, task_id, index,
-                                        {"state": "failed", "finished_at": time.time(), "error": redact_text(result.get("message") or "供应商报告原任务失败")[:1200]}, recovering=True)
+                                        {"state": "failed", "finished_at": time.time(), "error": redact_text(result.get("message") or result.get("error") or "供应商报告原任务失败")[:1200]}, recovering=True)
+            elif result.get("status") == "manual":
+                manual_reason = result.get("message") or "原任务回包需要人工核对"
             else:
                 pending = True
+        if manual_reason:
+            return {"status": "manual", "task_id": task_id, "message": manual_reason}
         if query_unknown or pending:
             reason = f"（HTTP {query_http_status}，请检查平台配置或供应商状态）" if query_http_status else ""
             return {"status": "unknown" if query_unknown else "running", "task_id": task_id,
+                    "http_status": query_http_status,
                     "message": f"原任务查询暂未确认{reason}，请稍后再查；没有重新生成" if query_unknown else "原任务仍在生成中，请稍后再查询"}
 
         record = await asyncio.to_thread(self.journal.get, task_id)

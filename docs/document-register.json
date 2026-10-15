@@ -1,8 +1,8 @@
 {
   "schema_version": "enterprise-documents-v1",
   "reviewed_at": "2026-10-15",
-  "audit_base_commit": "6603550c4ad367b031de34e53cc9b488bd207140",
-  "scope": "Main6603550: #161 independently re-reviewed and merged, main Enterprise/Runtime/docs CI SUCCESS; release remains immutable v2026.10.2. Approved personal durable generation-task center and common image-provider boundary candidate documented in the existing operation record and Code Wiki, not yet independently reviewed, merged or released. No new production operation, schema, release or architecture roadmap.",
+  "audit_base_commit": "6d9d77dc07c5a2b655e2002536a653e285033d69",
+  "scope": "Main6d9d77d: #162 independently reviewed and merged; exact PR and main Enterprise/Runtime/docs CI SUCCESS. Release remains v2026.10.2. Subsequent accepted Zhenzhen image/Comfy task automatic-query recovery candidate documented in the same roadmap and operation record plus Code Wiki; not independently reviewed, merged or released. No new business schema, production operation or overall refactor.",
   "documents": [
     {
       "path": "docs/ops/ONLINE-UPGRADE-SEQUENCE-2026-10-12.md",

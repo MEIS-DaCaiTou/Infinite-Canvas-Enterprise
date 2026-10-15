@@ -124,6 +124,33 @@ class CanvasTaskJournal:
                 query["finished_at"] = time.time()
             self._write({**record, "reconciliation": query, "updated_at": time.time()})
 
+    def record_auto_recovery(self, task_id: str, changes: dict) -> None:
+        """Additive scheduling facts; never alter accepted identity or task status."""
+        from enterprise.runtime.logging import redact_text
+        with self._lock:
+            record = self.get(task_id)
+            if record is None:
+                raise ValueError("Canvas task unavailable")
+            changes = {**changes, "updated_at": time.time()}
+            if "reason" in changes:
+                changes["reason"] = redact_text(changes["reason"])[:1200]
+            self._write({**record, "auto_recovery": {**(record.get("auto_recovery") or {}), **changes}})
+
+    def recovery_candidates(self) -> list[dict]:
+        """Startup-only index rebuild; normal queries do not rescan the directory."""
+        from enterprise.accepted_task_recovery import recovery_candidate
+        records = []
+        with self._lock:
+            _assert_no_reparse(self.root, "CANVAS_TASK_ROOT")
+            for path in self.root.glob("*.json"):
+                try:
+                    record = self.get(path.stem)
+                except (ValueError, UnicodeError):
+                    continue
+                if recovery_candidate(record):
+                    records.append(record)
+        return records
+
     def record_image_request(self, task_id: str, index: int, changes: dict, *, recovering=False) -> None:
         """Additive v1 receipt fields; no payloads or credentials are recorded."""
         with self._lock:

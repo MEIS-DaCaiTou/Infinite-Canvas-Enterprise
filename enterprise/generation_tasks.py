@@ -7,6 +7,7 @@ from urllib.parse import unquote, urlsplit
 from enterprise import db
 from enterprise.canvas_image_recovery import can_reconcile
 from enterprise.canvas_task_journal import CanvasTaskJournal
+from enterprise.accepted_task_recovery import recovery_candidate
 from enterprise.runtime.logging import redact_text
 
 TYPES = {"canvas_image": "online-image", "canvas_comfy": "comfy"}
@@ -24,6 +25,11 @@ def task_state(record):
         return "partial"
     if receipts and all(item.get("state") == "failed" for item in receipts):
         return "failed"
+    query, automatic = record.get("reconciliation") or {}, record.get("auto_recovery") or {}
+    if (recovery_candidate(record) and automatic.get("status") in {"waiting", "querying"}
+            and query.get("started_at", 0) >= automatic.get("last_query_at", float("inf"))
+            and query.get("status") in {"queued", "running"}):
+        return query["status"]
     if record.get("recovery_required") or any(item.get("state") in {"accepted", "unknown", "generated", "submitting"} for item in receipts):
         return "unknown"
     return "failed"
@@ -68,6 +74,12 @@ def describe_task(record, *, detail=False):
             "model": record.get("model") or first.get("model") or "", "workflow": record.get("workflow_json") or "",
             "output_count": len(items), "can_query": can_query,
             "error": redact_text(record.get("error") or "")[:1200]}
+    automatic = record.get("auto_recovery") or {}
+    if automatic:
+        data["auto_recovery"] = {key: automatic[key] for key in (
+            "status", "count", "last_query_at", "next_query_at", "reason") if key in automatic}
+        if state in {"succeeded", "failed", "partial"} and not recovery_candidate(record):
+            data["auto_recovery"].update(status="complete", next_query_at=None, reason="")
     if detail:
         receipts = record.get("provider_receipts") or ([comfy] if comfy else [])
         data["attempts"] = [{"id": f"{record['id']}:{index}", "index": index,
