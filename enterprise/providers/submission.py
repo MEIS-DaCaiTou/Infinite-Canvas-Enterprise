@@ -53,3 +53,26 @@ async def httpx_request_with_transient_retries(client, method, url, attempts=2, 
             if attempt + 1 == attempts:
                 raise
         await asyncio.sleep(retry_delay * (attempt + 1))
+def reported_usage(raw):
+    """Whitelisted supplier-reported facts; no estimates, credentials or inferred currency."""
+    from decimal import Decimal, InvalidOperation
+    if not isinstance(raw, dict):
+        return {}
+    data = raw.get("data") if isinstance(raw.get("data"), dict) else raw
+    usage = raw.get("usage") or data.get("usage") or {}
+    result = {}
+    if isinstance(usage, dict):
+        for key in ("input_tokens", "output_tokens", "total_tokens", "prompt_tokens", "completion_tokens", "billed_units"):
+            value = usage.get(key)
+            if type(value) in {int, float} and value >= 0 and value < 10**18:
+                result[key] = value
+    cost = raw.get("cost", data.get("cost"))
+    try:
+        number = Decimal(str(cost))
+        if number.is_finite() and number >= 0:
+            result["reported_cost"] = str(number)
+            currency = raw.get("currency") or data.get("currency")
+            result["currency"] = currency if isinstance(currency, str) and len(currency) == 3 and currency.isalpha() else None
+    except (InvalidOperation, ValueError):
+        pass
+    return result

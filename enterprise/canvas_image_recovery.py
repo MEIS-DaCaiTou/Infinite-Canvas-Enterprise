@@ -14,6 +14,8 @@ from urllib.parse import urlsplit
 
 import httpx
 from fastapi import HTTPException
+from enterprise.providers.submission import reported_usage
+from enterprise.runtime.logging import redact_text
 
 
 def provider_scope(provider):
@@ -43,26 +45,39 @@ class ImageReceiptSink:
     def __init__(self, journal, task_id, index):
         self.journal, self.task_id, self.index = journal, task_id, index
 
+    async def started(self, provider, model):
+        await asyncio.to_thread(self.journal.record_image_request, self.task_id, self.index,
+                                {"provider_id": provider["id"], "model": model, "state": "submitting", "started_at": time.time()})
+
     async def accepted(self, upstream_task_id, provider):
         if not isinstance(upstream_task_id, str) or not 1 <= len(upstream_task_id) <= 240:
             raise ValueError("Invalid provider task identity")
         await asyncio.to_thread(self.journal.record_image_request, self.task_id, self.index,
-                                {**provider_scope(provider), "state": "accepted", "upstream_task_id": upstream_task_id})
+                                {**provider_scope(provider), "state": "accepted", "upstream_task_id": upstream_task_id, "accepted_at": time.time()})
+
+    async def generated(self, raw):
+        await asyncio.to_thread(self.journal.record_image_request, self.task_id, self.index,
+                                {"state": "generated", "reported_usage": reported_usage(raw), "generated_at": time.time()})
 
     async def completed(self, images, image_items):
         if not images:
             raise HTTPException(502, "未取得可保存的图片结果；请核对原任务")
         await asyncio.to_thread(self.journal.record_image_request, self.task_id, self.index,
-                                {"state": "succeeded", "result": {"images": images, "image_items": image_items}})
+                                {"state": "succeeded", "finished_at": time.time(), "error": "", "result": {"images": images, "image_items": image_items}})
 
     async def interrupted(self, exc):
         ambiguous = getattr(exc, "submission_unknown", False) or getattr(exc, "status_code", 0) >= 500 or isinstance(exc, httpx.HTTPError)
         if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code < 500:
             ambiguous = False
+        record = await asyncio.to_thread(self.journal.get, self.task_id)
+        previous = (record.get("provider_receipts") or [])[self.index]
+        if previous.get("upstream_task_id") or previous.get("state") == "generated":
+            ambiguous = True  # Local query/archiving failure does not mean the supplier failed.
         if getattr(exc, "provider_task_failed", False):
             ambiguous = False
         await asyncio.to_thread(self.journal.record_image_request, self.task_id, self.index,
-                                {"state": "unknown" if ambiguous else "failed"})
+                                {"state": "unknown" if ambiguous else "failed", "finished_at": None if ambiguous else time.time(),
+                                 "error": redact_text(getattr(exc, "detail", None) or str(exc))[:1200]})
 
 
 class CanvasImageRecovery:
@@ -75,7 +90,7 @@ class CanvasImageRecovery:
         # Single flight only for active read queries; no in-memory task facts.
         task = self._active.get(task_id)
         if task is None:
-            task = asyncio.create_task(self._reconcile(task_id))
+            task = asyncio.create_task(self._recorded_reconcile(task_id))
             self._active[task_id] = task
             def completed(future):
                 self._active.pop(task_id, None)
@@ -83,6 +98,19 @@ class CanvasImageRecovery:
                     future.exception()
             task.add_done_callback(completed)
         return await asyncio.shield(task)
+
+    async def _recorded_reconcile(self, task_id):
+        record = await asyncio.to_thread(self.journal.get, task_id)
+        if not record or record.get("type") != "online-image":
+            raise HTTPException(404, "画布图像任务不存在")
+        await asyncio.to_thread(self.journal.record_reconciliation, task_id, "querying")
+        try:
+            result = await self._reconcile(task_id)
+        except Exception as exc:
+            await asyncio.to_thread(self.journal.record_reconciliation, task_id, "unknown", getattr(exc, "detail", None) or str(exc))
+            raise
+        await asyncio.to_thread(self.journal.record_reconciliation, task_id, result.get("status", "unknown"), result.get("message", ""))
+        return result
 
     async def _reconcile(self, task_id):
         record = await asyncio.to_thread(self.journal.get, task_id)
@@ -128,11 +156,11 @@ class CanvasImageRecovery:
                 continue
             if result.get("status") == "succeeded" and result.get("images"):
                 await asyncio.to_thread(self.journal.record_image_request, task_id, index,
-                                        {"state": "succeeded", "result": {
+                                        {"state": "succeeded", "error": "", "finished_at": time.time(), "reported_usage": {**(receipt.get("reported_usage") or {}), **reported_usage(result.get("raw") or {})}, "result": {
                                             "images": result["images"], "image_items": result.get("image_items") or []}}, recovering=True)
             elif result.get("status") == "failed":
                 await asyncio.to_thread(self.journal.record_image_request, task_id, index,
-                                        {"state": "failed"}, recovering=True)
+                                        {"state": "failed", "finished_at": time.time(), "error": redact_text(result.get("message") or "供应商报告原任务失败")[:1200]}, recovering=True)
             else:
                 pending = True
         if query_unknown or pending:

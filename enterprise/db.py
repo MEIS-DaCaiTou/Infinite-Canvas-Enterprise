@@ -1562,6 +1562,28 @@ def get_task(task_type: str, task_id: str) -> Optional[dict]:
         conn.close()
 
 
+def list_owned_canvas_tasks(user_id: str, *, before=None, limit=100, task_type="") -> list[dict]:
+    """Owner-first keyset lookup; journal records remain the task state source."""
+    clauses = ["user_id = ?", "task_type IN ('canvas_image', 'canvas_comfy')"]
+    values = [user_id]
+    if task_type:
+        clauses.append("task_type = ?")
+        values.append(task_type)
+    if before:
+        clauses.append("(created_at, task_type, task_id) < (?, ?, ?)")
+        values.extend(before)
+    values.append(max(1, min(200, int(limit))))
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT task_type, task_id, created_at FROM user_task_map WHERE " + " AND ".join(clauses)
+            + " ORDER BY created_at DESC, task_type DESC, task_id DESC LIMIT ?", values,
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
 def get_all_task_owner_map() -> dict[tuple[str, str], str]:
     conn = get_db()
     try:

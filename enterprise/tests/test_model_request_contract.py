@@ -16,6 +16,7 @@ from enterprise.providers.zhenzhen import (
     IMAGE_MODELS, image_profile as zhenzhen_image_profile,
     public_image_profiles as zhenzhen_public_image_profiles,
     submit_image as submit_zhenzhen_image,
+    image_headers as zhenzhen_image_headers,
 )
 from enterprise.providers.submission import (
     submission_json, image_api_explicitly_rejected, provider_submission_unknown,
@@ -49,6 +50,7 @@ def builders():
         'IMAGE_PROFILE_TEMPLATES':IMAGE_PROFILE_TEMPLATES, 'ImageProfileError':ImageProfileError,
         'build_aspect_parameters':build_aspect_parameters, 'normalize_image_profile':normalize_image_profile, 'image_profile_for':image_profile_for,
         'zhenzhen_image_profile':zhenzhen_image_profile, 'submit_zhenzhen_image':submit_zhenzhen_image,
+        'zhenzhen_image_headers':zhenzhen_image_headers,
         'submission_json':submission_json, 'image_api_explicitly_rejected':image_api_explicitly_rejected,
         'provider_submission_unknown':provider_submission_unknown,
         'httpx':SimpleNamespace(AsyncClient=lambda **kw: client_type(transport=httpx.MockTransport(transport), **kw), Timeout=httpx.Timeout, HTTPError=httpx.HTTPError),

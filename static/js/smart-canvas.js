@@ -17013,3 +17013,13 @@ document.addEventListener('click',event=>{
         select:item=>{const stored=source.images.find(value=>value.url===item.url);Object.assign(stored,item);source.selectedResultId=item.result_id;source.selectedResult={...item};render();scheduleSave();}
     });
 },true);
+
+GenerationTaskCenter.attach({
+    modalId:'smartLogModal',listId:'smartLogList',
+    previewMedia:item=>smartLogPreviewNode(item.url,item.kind),
+    createPrompt:(text,result)=>{
+        const point=viewportCenter(),node=createPromptNode(point.x,point.y);
+        Object.assign(node,{text,sourceResultId:result.result_id || result.url,sourceRunId:result.run_id || ''});
+        render();scheduleSave();
+    }
+});

@@ -14866,3 +14866,13 @@ function checkTextSelection(node,options={}){
         return true;
     }catch(error){if(options.cascade)throw error;alert(error.message);return false;}
 }
+
+GenerationTaskCenter.attach({
+    modalId:'logModal',listId:'logList',
+    previewMedia:item=>openOutputLightbox(item.url,null),
+    createPrompt:(text,result)=>{
+        const node=addPromptNode();if(!node)return;
+        Object.assign(node,{text,sourceResultId:result.result_id || result.url,sourceRunId:result.run_id || ''});
+        render();scheduleSave();
+    }
+});

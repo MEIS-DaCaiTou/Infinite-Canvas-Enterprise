@@ -64,6 +64,7 @@ from enterprise.route_policy import (
 )
 from enterprise.admin_api import router as admin_router
 from enterprise.user_model_api import router as user_model_router
+from enterprise.generation_task_api import router as generation_task_router
 from enterprise.update_api import router as update_router
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.concurrency import run_in_threadpool
@@ -277,6 +278,7 @@ from enterprise.runtime.install_maintenance import InstallMaintenanceMiddleware
 app.add_middleware(InstallMaintenanceMiddleware, state_root=PATH_ROOTS.STATE_ROOT)
 app.include_router(admin_router, prefix="/enterprise")
 app.include_router(user_model_router, prefix="/enterprise")
+app.include_router(generation_task_router, prefix="/enterprise")
 app.include_router(update_router, prefix="/enterprise")
 
 # 共享业务代理客户端（保持连接池）。健康探测不复用该连接池，避免长请求或
@@ -301,6 +303,7 @@ async def startup() -> None:
         limits=httpx.Limits(max_connections=200, max_keepalive_connections=50),
     )
     _health_probe_lock = asyncio.Lock()
+    app.state.upstream_client = _http_client
     _health_probe_task = None
     print(f"[企业版] 网关启动，监听 0.0.0.0:{GATEWAY_PORT}")
     print(f"[企业版] 上游服务地址: {UPSTREAM_URL}")
@@ -311,6 +314,7 @@ async def shutdown() -> None:
     global _health_probe_task
     if _http_client:
         await _http_client.aclose()
+    app.state.upstream_client = None
     if _health_probe_task is not None and not _health_probe_task.done():
         _health_probe_task.cancel()
         try:
@@ -1287,6 +1291,8 @@ async def ws_proxy(websocket: WebSocket, path: str):
 async def reverse_proxy(path: str, request: Request):
     # ── 1. 企业专用路径已由上方路由处理，此处跳过 ──────────
     if path.startswith("enterprise"):
+        return Response(status_code=404)
+    if path.startswith("_enterprise_internal/"):
         return Response(status_code=404)
 
     # ── 2. 上游设置管理页：企业层先做角色门禁，再决定是否透传 ─────
