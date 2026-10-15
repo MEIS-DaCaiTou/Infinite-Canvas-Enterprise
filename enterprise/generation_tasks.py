@@ -24,7 +24,7 @@ def task_state(record):
         return "partial"
     if receipts and all(item.get("state") == "failed" for item in receipts):
         return "failed"
-    if record.get("recovery_required") or any(item.get("state") in {"accepted", "unknown", "started", "submitting"} for item in receipts):
+    if record.get("recovery_required") or any(item.get("state") in {"accepted", "unknown", "generated", "submitting"} for item in receipts):
         return "unknown"
     return "failed"
 

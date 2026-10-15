@@ -146,6 +146,36 @@ def test_existing_resource_owner_is_never_reassigned_by_task_detail(catalog):
     assert db.get_resource_owner('/output/existing.png')=='bob'
 
 
+def test_detail_projects_only_output_urls_not_paths_in_other_fields(catalog):
+    from fastapi import FastAPI
+    repository,add,_=catalog
+    add('text-path',type='comfy',status='succeeded',error='/output/error-reference.png',
+        result={'items':[{'url':'/output/actual-result.txt','kind':'text',
+                          'text':'/output/unclaimed.png','name':'/output/name-reference.png'}]})
+    application=FastAPI();application.include_router(create_router(repository.journal))
+    async def scenario():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=application),base_url='http://upstream') as client:
+            response=await client.get('/_enterprise_internal/generation-tasks/text-path',headers={'X-Enterprise-User-ID':'alice'})
+            assert response.status_code==200 and response.json()['items'][0]['text']=='/output/unclaimed.png'
+    asyncio.run(scenario())
+    assert db.get_resource_owner('/output/actual-result.txt')=='alice'
+    for name in ('unclaimed.png','error-reference.png','name-reference.png'):
+        assert db.get_resource_owner('/output/'+name) is None
+
+
+def test_placeholder_does_not_mean_submitted_but_interrupted_and_accepted_still_unknown():
+    record={'id':'local-validation','type':'online-image','status':'failed','status_code':400,
+            'provider_receipts':[{'index':0,'state':'started'}],'error':'API platform disabled'}
+    assert describe_task(record)['status']=='failed'
+    assert not describe_task(record)['can_query']
+    record['recovery_required']=True
+    assert describe_task(record)['status']=='unknown'
+    record.pop('recovery_required')
+    for stage in ('submitting','accepted','generated','unknown'):
+        record['provider_receipts'][0]['state']=stage
+        assert describe_task(record)['status']=='unknown'
+
+
 def test_new_receipt_fields_remain_readable_by_v1_journal_after_restart(tmp_path):
     journal=CanvasTaskJournal(tmp_path)
     journal.create({'id':'accepted','type':'online-image','status':'queued','provider_receipts':[]})

@@ -39,7 +39,10 @@ def create_router(journal):
         if value is None:
             raise HTTPException(404, "任务不存在或不可访问")
         from enterprise.interceptors import record_resource_urls_for_user
-        await run_in_threadpool(record_resource_urls_for_user, user_id, "generation_task_detail", value)
+        # Only verified output references grant ownership. Text, errors and
+        # names may themselves contain paths; they are never authorizations.
+        output_urls = [item["url"] for item in value["items"]]
+        await run_in_threadpool(record_resource_urls_for_user, user_id, "generation_task_detail", output_urls)
         return JSONResponse(value, headers={"Cache-Control": "no-store"})
 
     return router

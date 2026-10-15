@@ -74,7 +74,7 @@
                     const link=document.createElement('a');link.href=item.url;link.target='_blank';link.rel='noopener';link.className='generation-task-media';
                     if(item.kind==='image') {const image=document.createElement('img');image.src=item.url;image.alt=item.name || '生成结果';link.append(image);}
                     else link.textContent=item.name || item.kind || '查看结果';
-                    if(previewMedia && ['image','video','audio'].includes(item.kind))link.onclick=event=>{event.preventDefault();previewMedia(item);};
+                    if(previewMedia && ['image','video'].includes(item.kind))link.onclick=event=>{event.preventDefault();previewMedia(item);};
                     results.append(link);
                 }
             }
