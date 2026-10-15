@@ -1,8 +1,8 @@
 {
   "schema_version": "enterprise-documents-v1",
   "reviewed_at": "2026-10-15",
-  "audit_base_commit": "01c2977359ffdf2751711f151ef91ad634e0fd75",
-  "scope": "Git-managed Markdown/text at main01c29773, merged independent reviews #123/#157/#158 and #159 release metadata; exact source7da593b v2026.10.2 published with real 10.1 v2 upgrade/recovery, public asset readback and direct-route verification. Historical failures and unvalidated customer/GUI/provider scopes retained. Formal release source/assets remain immutable; candidate runtime development is separate. ComfyUI 10.2 feedback follow-up candidate documented separately from the immutable formal release; existing operation record and Code Wiki updated. Approved Comfy input/output candidate, shared UI, variable image groups and text reuse documented on 2026-10-15; not merged or released.",
+  "audit_base_commit": "6603550c4ad367b031de34e53cc9b488bd207140",
+  "scope": "Main6603550: #161 independently re-reviewed and merged, main Enterprise/Runtime/docs CI SUCCESS; release remains immutable v2026.10.2. Approved personal durable generation-task center and common image-provider boundary candidate documented in the existing operation record and Code Wiki, not yet independently reviewed, merged or released. No new production operation, schema, release or architecture roadmap.",
   "documents": [
     {
       "path": "docs/ops/ONLINE-UPGRADE-SEQUENCE-2026-10-12.md",
@@ -150,7 +150,7 @@
       "path": "docs/CURRENT_PROJECT_STATUS.md",
       "kind": "authority",
       "authority": "status",
-      "reviewed_at": "2026-10-14"
+      "reviewed_at": "2026-10-15"
     },
     {
       "path": "docs/data/DATA-MVP-1-INDEPENDENT-REVIEW-2026-09.md",

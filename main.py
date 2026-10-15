@@ -67,6 +67,12 @@ from enterprise.providers.zhenzhen import (
     image_profile as zhenzhen_image_profile,
     public_image_profiles as zhenzhen_public_image_profiles,
     submit_image as submit_zhenzhen_image,
+    is_zhenzhen, image_headers as zhenzhen_image_headers,
+    image_task_endpoint as zhenzhen_image_task_endpoint, query_image as query_zhenzhen_image,
+)
+from enterprise.providers.image_task_protocol import (
+    SUCCESS_STATUSES as IMAGE_TASK_SUCCESS_STATUSES, FAILED_STATUSES as IMAGE_TASK_FAILED_STATUSES,
+    task_data as image_task_data, task_status as image_task_status, failure_reason as image_task_fail_reason,
 )
 
 # Do not make `main.py` choose a profile.  The getter only accepts a process
@@ -3564,6 +3570,8 @@ def api_headers(json_body=True, provider=None, model=""):
         api_key = AI_API_KEY
         if not api_key:
             raise HTTPException(status_code=400, detail="未配置 COMFLY_API_KEY，请在 API/.env 中填写。")
+    if provider and zhenzhen_image_profile(provider, model):
+        return zhenzhen_image_headers(bearer_auth_value(api_key), json_body=json_body)
     if provider and effective_protocol(provider, model) == "gemini" and not zhenzhen_image_profile(provider, model):
         headers = {"Accept": "application/json", "x-goog-api-key": api_key}
     else:
@@ -5872,8 +5880,6 @@ async def generate_jimeng_video(payload: CanvasVideoRequest, provider):
             except Exception:
                 pass
 
-IMAGE_TASK_SUCCESS_STATUSES = {"SUCCESS", "SUCCESSFUL", "SUCCEED", "SUCCEEDED", "COMPLETED", "COMPLETE", "DONE", "FINISHED", "OK", "READY"}
-IMAGE_TASK_FAILED_STATUSES = {"FAILURE", "FAILED", "FAIL", "ERROR", "ERRORED", "CANCELED", "CANCELLED", "TIMEOUT", "REJECTED", "EXPIRED"}
 
 def image_task_url_for_provider(provider, task_id):
     base_url = (provider.get("base_url") if provider else AI_BASE_URL).rstrip("/")
@@ -5883,24 +5889,14 @@ def image_task_url_for_provider(provider, task_id):
         return f"{base_url}/videos/{task_id}" if base_url.endswith("/v1") else f"{base_url}/v1/videos/{task_id}"
     if is_apimart_provider(provider):
         return f"{base_url}/tasks/{task_id}" if base_url.endswith("/v1") else f"{base_url}/v1/tasks/{task_id}"
+    if is_zhenzhen(provider):
+        return zhenzhen_image_task_endpoint(base_url, task_id)
     return f"{base_url}/images/tasks/{task_id}" if base_url.endswith("/v1") else f"{base_url}/v1/images/tasks/{task_id}"
-
-def image_task_data(payload):
-    if isinstance(payload, dict) and isinstance(payload.get("data"), dict):
-        return payload["data"]
-    return payload if isinstance(payload, dict) else {}
-
-def image_task_status(payload):
-    task_data = image_task_data(payload)
-    return str(task_data.get("status") or task_data.get("task_status") or "").upper()
-
-def image_task_fail_reason(payload):
-    task_data = image_task_data(payload)
-    error = task_data.get("error") if isinstance(task_data.get("error"), dict) else {}
-    return task_data.get("fail_reason") or task_data.get("message") or error.get("message") or (payload.get("message") if isinstance(payload, dict) else "") or "生图任务失败"
 
 async def fetch_image_task_payload(client, task_id, provider=None):
     task_url = image_task_url_for_provider(provider, task_id)
+    if is_zhenzhen(provider):
+        return await query_zhenzhen_image(client, task_url, api_headers(provider=provider), httpx_request_with_transient_retries)
     response = await httpx_request_with_transient_retries(
         client,
         "GET",
@@ -12671,6 +12667,8 @@ async def build_online_image_result(payload: OnlineImageRequest, *, receipt_task
     async def generate_one(index):
         sink = ImageReceiptSink(CANVAS_TASK_JOURNAL, receipt_task_id, index) if receipt_task_id else None
         try:
+            if sink:
+                await sink.started(provider, model)
             kwargs = {"receipt_sink": sink} if sink else {}
             image_data, raw_item = await generate_ai_image(payload.prompt, payload.size, payload.quality, model, image_refs, provider["id"], {"aspect_ratio":payload.aspect_ratio, "resolution":payload.resolution}, **kwargs)
         except Exception as exc:
@@ -12678,6 +12676,8 @@ async def build_online_image_result(payload: OnlineImageRequest, *, receipt_task
                 await sink.interrupted(exc)
             raise
         try:
+            if sink:
+                await sink.generated(raw_item)
             try:
                 image_items = extract_images(raw_item) if isinstance(raw_item, dict) else [image_data]
             except HTTPException:
@@ -13035,6 +13035,7 @@ async def resume_canvas_comfy_task(task_id, receipt):
     except Exception as exc:
         changes = {"status": "failed", "error": str(exc), "recovery_required": not isinstance(exc, ComfyExecutionError)}
     await asyncio.to_thread(CANVAS_TASK_JOURNAL.finish, task_id, changes)
+    await asyncio.to_thread(CANVAS_TASK_JOURNAL.record_reconciliation, task_id, changes["status"], changes.get("error", ""))
 
 
 @app.get("/api/canvas-comfy-tasks/{task_id}")

@@ -6,7 +6,7 @@ Native Gemini, multipart masked editing and advanced layer outputs retain their
 existing routes; this module does not speculate about unknown model names.
 """
 from copy import deepcopy
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, quote
 
 
 RATIOS = ["4:3", "3:4", "16:9", "9:16", "2:3", "3:2", "1:1", "4:5", "5:4", "21:9"]
@@ -74,3 +74,23 @@ def image_body(model, prompt, size, quality, references, aspect_parameters):
 async def submit_image(client, endpoint, headers, *, model, prompt, size, quality, references, aspect_parameters):
     # One chosen endpoint, one paid submission. No edits/generations probing.
     return await client.post(endpoint, headers=headers, json=image_body(model, prompt, size, quality, references, aspect_parameters))
+
+
+def image_headers(authorization, *, json_body=True):
+    """Credentials are resolved by the application, never read or persisted here."""
+    headers = {"Accept": "application/json", "Authorization": authorization}
+    if json_body:
+        headers["Content-Type"] = "application/json"
+    return headers
+
+
+def image_task_endpoint(base_url, task_id):
+    base = base_url.rstrip("/")
+    return f"{base if base.endswith('/v1') else base + '/v1'}/images/tasks/{quote(str(task_id), safe='')}"
+
+
+async def query_image(client, endpoint, headers, request):
+    """Query the original accepted identity; safe GET retries reuse shared policy."""
+    response = await request(client, "GET", endpoint, attempts=3, headers=headers)
+    response.raise_for_status()
+    return response.json()

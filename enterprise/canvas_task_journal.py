@@ -103,8 +103,26 @@ class CanvasTaskJournal:
             receipt = record.get("comfy_receipt") or {}
             if not receipt.get("prompt_id"):
                 return None
-            self._write({**record, "status": "running", "error": "", "error_code": "", "updated_at": time.time()})
+            now = time.time()
+            self._write({**record, "status": "running", "error": "", "error_code": "", "updated_at": now,
+                         "reconciliation": {"count": (record.get("reconciliation") or {}).get("count", 0) + 1,
+                                            "status": "querying", "started_at": now}})
             return receipt
+
+    def record_reconciliation(self, task_id: str, status: str, error="") -> None:
+        """Latest reconciliation fact and count; not a new generation attempt."""
+        from enterprise.runtime.logging import redact_text
+        with self._lock:
+            record = self.get(task_id)
+            if record is None:
+                raise ValueError("Canvas task unavailable")
+            previous = record.get("reconciliation") or {}
+            query = {**previous, "status": status, "error": redact_text(error)[:1200]}
+            if status == "querying":
+                query = {"count": previous.get("count", 0) + 1, "status": status, "started_at": time.time()}
+            else:
+                query["finished_at"] = time.time()
+            self._write({**record, "reconciliation": query, "updated_at": time.time()})
 
     def record_image_request(self, task_id: str, index: int, changes: dict, *, recovering=False) -> None:
         """Additive v1 receipt fields; no payloads or credentials are recorded."""

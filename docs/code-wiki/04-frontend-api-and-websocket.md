@@ -148,3 +148,9 @@ static/js/comfy-workflow-session.js 提供共享输入、上传互斥、运行�
 候选任务 GET 的 resume=true 只领取已有受理 ID 的查询；普通轮询不自动无限重开超时跟踪，服务重启中断允许恢复一次。未知提交没有上游 ID 时不重新生成。
 
 2026-10-15 #161 增量：runtimeFields 合并配置图片输入组，范围校验/上传顺序由 comfy-workflow-fields.js 共用。comfy-outputs.js/CSS 提供文本摘要、统一正文弹窗、复制/下载及 Prompt 节点复用，沿用日志面板的主题变量和按钮层级。经典 generatedOutputs/Output 和智能媒体列表保留类型、文本及结果身份，selectedResult 存储明确选择的快照；普通连线把文本送入提示词，不列作图片。已有画布 JSON 存储，无新页面/用户模板。GUI 是 loopback 协议夹具证据，真实 GPU 和内置 Browser 下载事件限制见实施记录。
+
+## 2026-10-15 本人生成任务候选
+
+#161 已合并 main6603550，未进入正式 Release。其共用文本视图/Prompt 复用作为本包依赖，沿用原主题变量和操作层级。
+
+`static/js/generation-task-center.js`/CSS 在经典 `logModal/logList` 和智能 `smartLogModal/smartLogList` 中增加任务页签，入口脚本只提供已有预览与创建 Prompt 回调。读取 `GET /enterprise/api/me/generation-tasks`（cursor/status/kind/limit）及 `GET /enterprise/api/me/generation-tasks/{id}`；默认仍显示原生成日志，关闭后停止列表刷新。只有明确点击续查才调用原 `/api/canvas-image-tasks/{id}/reconcile` 或 Comfy GET `resume=true`，不调用生成端点。切换筛选期间旧响应不能覆盖新列表，未完成请求结束后补读当前筛选。本人目录不等于管理员全员任务/费用视图，尚待本包独立审查合并。
