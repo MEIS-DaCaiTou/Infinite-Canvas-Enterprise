@@ -17,9 +17,41 @@ permissions:
   contents: read
 
 jobs:
+  change-scope:
+    name: Change scope and advisory (non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 5
+    outputs:
+      full_suite: ${{ steps.scope.outputs.full_suite }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Scope fail-safe regression (standard library only)
+        run: python -B -m unittest discover -s enterprise/tests -p test_ci_scope.py
+      - name: Select suites from the complete local Git diff
+        id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.sha }}
+        run: python -B tools/check_ci_scope.py --event "$EVENT" --base "$BASE" --head "$HEAD" --plan "$RUNNER_TEMP/ci-scope.json"
+      - name: Install the isolated lint trial (development only)
+        if: steps.scope.outputs.has_python == 'true'
+        continue-on-error: true
+        run: python -m pip install ruff==0.14.14
+      - name: Changed-file syntax and undefined-name advisory
+        continue-on-error: true
+        run: python -B tools/check_ci_scope.py --advisory --plan "$RUNNER_TEMP/ci-scope.json"
+
   enterprise-python-311:
     name: Enterprise suite (Windows, Python 3.11)
-    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.fixed_exe_gates }}
+    needs: change-scope
+    if: ${{ always() && !cancelled() && (github.event_name != 'workflow_dispatch' || !inputs.fixed_exe_gates) && (needs.change-scope.result != 'success' || needs.change-scope.outputs.full_suite != 'false') }}
     runs-on: windows-latest
     timeout-minutes: 25
     env:
@@ -43,7 +75,8 @@ jobs:
 
   runtime-python-314:
     name: Runtime reliability (Windows, Python 3.14)
-    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.fixed_exe_gates }}
+    needs: change-scope
+    if: ${{ always() && !cancelled() && (github.event_name != 'workflow_dispatch' || !inputs.fixed_exe_gates) && (needs.change-scope.result != 'success' || needs.change-scope.outputs.full_suite != 'false') }}
     runs-on: windows-latest
     timeout-minutes: 15
     env:
