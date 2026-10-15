@@ -82,6 +82,30 @@ class CanvasTaskJournal:
                 raise ValueError("Canvas task is not running")
             self._write({**record, **changes, "id": task_id, "updated_at": time.time()})
 
+    def record_comfy(self, task_id: str, changes: dict) -> None:
+        """Additive v1 receipt; immutable backend/prompt identity, no credentials or prompt text."""
+        with self._lock:
+            record = self.get(task_id)
+            if not record or record.get("type") != "comfy" or record.get("status") != "running":
+                raise ValueError("ComfyUI receipt is not writable")
+            receipt = record.get("comfy_receipt") or {}
+            for key in ("backend", "prompt_id"):
+                if receipt.get(key) and changes.get(key, receipt[key]) != receipt[key]:
+                    raise ValueError("ComfyUI task identity cannot change")
+            self._write({**record, "comfy_receipt": {**receipt, **changes}, "updated_at": time.time()})
+
+    def claim_comfy_query(self, task_id: str) -> dict | None:
+        """Only resume accepted work; never turn a lost acceptance into a new POST."""
+        with self._lock:
+            record = self.get(task_id)
+            if not record or record.get("type") != "comfy" or record.get("status") != "failed" or not record.get("recovery_required"):
+                return None
+            receipt = record.get("comfy_receipt") or {}
+            if not receipt.get("prompt_id"):
+                return None
+            self._write({**record, "status": "running", "error": "", "error_code": "", "updated_at": time.time()})
+            return receipt
+
     def record_image_request(self, task_id: str, index: int, changes: dict, *, recovering=False) -> None:
         """Additive v1 receipt fields; no payloads or credentials are recorded."""
         with self._lock:

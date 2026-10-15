@@ -122,13 +122,18 @@ function inputLabel(name){
 
 let workflows = [];
 let selectedName = '';
-let currentWorkflow = null;     // 原始 JSON
+let currentWorkflow = null;
+let currentDefinitions = {};
+let imageGroupCandidates = [];
+let currentFieldRoles = {};
+let currentDefinitionWarning = "";     // 原始 JSON
 let currentConfig = null;       // { title, fields:[...] }
 let isBuiltin = false;
 let previewValues = {};         // field_id -> 发给后端的值（图片：comfy 文件名）
 let previewRandomActive = {};   // field_id -> 筛子运行时是否激活；未设置时默认激活
 let previewImageUrls = {};      // field_id -> 浏览器可显示的本地 URL（仅图片字段）
-let runResult = null;           // url 或 null
+let testSession = new ComfyWorkflowSession();
+
 let workspaceMode = 'graph';
 let miniView = { k: 1, x: 0, y: 0 };
 let miniCards = {};
@@ -188,12 +193,15 @@ function defaultMiniCards(){
     };
 }
 function defaultMiniTestNodes(){
-    return [
-        { id:'prompt_1', type:'prompt', x:36, y:96, text:'' },
-        { id:'image_1', type:'image', x:36, y:286, url:'', value:'' },
-        { id:'comfy_1', type:'comfy', x:330, y:150 },
-        { id:'output_1', type:'output', x:670, y:190 }
-    ];
+    const inputs = ComfyWorkflowFields.runtimeFields(currentConfig || {}).filter(f => fieldKind(f) !== 'setting').map((f, i) => ({
+        id:f.id, fieldId:f.id, type:fieldKind(f), x:36, y:60+i*205
+    }));
+    return [...inputs, {id:'comfy_1',type:'comfy',x:330,y:150}, {id:'output_1',type:'output',x:670,y:190}];
+}
+function syncMiniFields(){
+    const previous = new Map(miniTestNodes.map(n => [n.id,n]));
+    miniTestNodes = defaultMiniTestNodes().map(n => ({...n,x:previous.get(n.id)?.x ?? n.x,y:previous.get(n.id)?.y ?? n.y,
+        text:previewValues[n.fieldId] || '', value:previewValues[n.fieldId] || '', url:previewImageUrls[n.fieldId] || ''}));
 }
 
 // —— ComfyUI 后端地址管理 ——
@@ -203,6 +211,7 @@ async function loadComfyInstances(){
         const data = await fetch('/api/comfyui/instances').then(r => r.json());
         comfyInstances = Array.isArray(data.instances) ? data.instances : [];
         renderComfyInstances();
+        if(currentConfig) renderBackendChoice();
     } catch(e){ console.error(e); }
 }
 function renderComfyInstances(){
@@ -211,11 +220,29 @@ function renderComfyInstances(){
     el.innerHTML = comfyInstances.map((addr, i) => `
         <div style="display:flex;align-items:center;gap:6px;padding:4px;border:1px solid var(--line);border-radius:9px;background:var(--soft)">
             <span style="width:18px;text-align:center;font-size:10.5px;color:var(--faint);font-weight:800">${i + 1}</span>
-            <input class="small-input" type="text" value="${escapeAttr(addr)}" placeholder="host:port" oninput="updateComfyInstance(${i}, this.value)" style="flex:1;height:28px;padding:0 8px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--text);font-size:12px;font-family:ui-monospace,Menlo,monospace">
+            <input class="small-input" type="text" value="${escapeAttr(addr)}" placeholder="host:port 或 https://host/comfy" oninput="updateComfyInstance(${i}, this.value)" style="flex:1;height:28px;padding:0 8px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--text);font-size:12px;font-family:ui-monospace,Menlo,monospace">
             <button class="opt-del" type="button" onclick="removeComfyInstance(${i})" title="删除"><i data-lucide="x" class="w-3 h-3"></i></button>
         </div>
     `).join('');
     refreshIcons();
+}
+function renderBackendChoice(){
+    let box=document.getElementById('workflowBackendChoice');
+    if(!box){box=document.createElement('div');box.id='workflowBackendChoice';subEl.after(box);}
+    const normalize=addr=>{try{return new URL(addr.includes('://')?addr:'http://'+addr).href.replace(/\/$/,'');}catch{return addr;}};
+    const selected=normalize(currentConfig.backend || comfyInstances[0] || '');
+    box.innerHTML=`<label>执行后端 <select aria-label="工作流执行后端" onchange="changeWorkflowBackend(this.value)">${comfyInstances.map(addr=>`<option value="${escapeAttr(addr)}" ${normalize(addr)===selected?'selected':''}>${escapeHtml(addr)}</option>`).join('')}</select></label><div>${escapeHtml(currentDefinitionWarning)}</div>`;
+}
+function changeWorkflowBackend(value){
+    currentConfig.backend=value;
+    testSession.uploads.clear();
+    ComfyWorkflowFields.runtimeFields(currentConfig).filter(isMediaField).forEach(f=>{
+        testSession.set(f.id,f.type==='image_group'?[]:'');
+        for(const url of [testSession.urls[f.id]].flat())if(typeof url==='string' && url.startsWith('blob:'))URL.revokeObjectURL(url);
+        delete testSession.urls[f.id];
+    });
+    refreshTestViews();
+    setStatus('执行后端已更改，请重新上传测试素材并保存配置');
 }
 function addComfyInstance(){
     comfyInstances = [...comfyInstances, ''];
@@ -288,8 +315,13 @@ async function selectWorkflow(name){
     renderList();
     try {
         setStatus(tr('comfy.loading'));
-        let data = await fetch(`/api/workflows/${encodeURIComponent(name)}`).then(r=>r.json());
+        let data = await fetch(`/api/workflows/${encodeURIComponent(name)}?include_definitions=true`).then(r=>r.json());
         data = ComfyWorkflowFields.normalizeWorkflow(data);
+        if(selectedName !== name) return;
+        currentDefinitions = data.definitions || {};
+        imageGroupCandidates = data.image_group_candidates || [];
+        currentFieldRoles = data.field_roles || {};
+        currentDefinitionWarning = data.definition_warning || (data.missing_classes?.length ? "后端缺少节点："+data.missing_classes.join("、") : "");
         currentWorkflow = data.workflow;
         currentConfig = data.config || { title:name.replace('.json',''), fields:[] };
         if(!currentConfig.fields) currentConfig.fields = [];
@@ -298,14 +330,17 @@ async function selectWorkflow(name){
         miniCards = {...defaultMiniCards(), ...currentConfig.mini_cards};
         currentConfig.mini_cards = miniCards;
         // 释放上一次的图片 blob URL
-        Object.values(previewImageUrls).forEach(u => { try { URL.revokeObjectURL(u); } catch(e){} });
+        Object.values(previewImageUrls).flat().forEach(u => { try { URL.revokeObjectURL(u); } catch(e){} });
         previewImageUrls = {};
         previewValues = {};
         currentConfig.fields.forEach(f => {
             if(f.default !== undefined && f.default !== null) previewValues[f.id] = f.default;
         });
+        testSession = new ComfyWorkflowSession(currentConfig.fields);
+        previewValues = testSession.values;
+        previewImageUrls = testSession.urls;
         previewRandomActive = {};
-        runResult = null;
+
         graphView = { k: 1, x: 0, y: 0 };
         miniView = { k: 1, x: 0, y: 0 };
         miniTestNodes = defaultMiniTestNodes();
@@ -313,6 +348,7 @@ async function selectWorkflow(name){
         renderPreview();
         // 新工作流加载后自动适配窗口
         setTimeout(() => graphFit(), 50);
+        restoreTestTask();
         setStatus('');
     } catch(e){ setStatus(tr('comfy.openFailed')); console.error(e); }
 }
@@ -323,6 +359,7 @@ function fieldFor(node, input){
 function makeFieldId(){ return 'f_' + Math.random().toString(36).slice(2,9); }
 
 function toggleField(node, input){
+    testSession.revision++;
     const existing = fieldFor(node, input);
     if(existing){
         currentConfig.fields = currentConfig.fields.filter(f => f !== existing);
@@ -331,11 +368,13 @@ function toggleField(node, input){
     } else {
         const nodeData = currentWorkflow[node];
         const rawValue = nodeData?.inputs?.[input];
-        const type = guessType(rawValue, input);
+        const profile = ComfyWorkflowFields.definitionField(rawValue,input,currentDefinitions[nodeData?.class_type]);
+        const type = profile.type;
         const f = {
             id: makeFieldId(),
             node, input,
             name: inputLabel(input),
+            role: currentFieldRoles[node+'.'+input] || '',
             type,
             default: typeof rawValue === 'object' ? null : rawValue,
             options: [],
@@ -348,6 +387,7 @@ function toggleField(node, input){
             }
             if(type === 'number') f.random_enabled = false;
         }
+        Object.assign(f,profile);
         currentConfig.fields.push(f);
         if(f.default !== undefined && f.default !== null) previewValues[f.id] = f.default;
     }
@@ -376,6 +416,7 @@ function refreshPopupBody(){
 function guessType(value, inputName){ return ComfyWorkflowFields.inferType(value, inputName); }
 
 function updateField(fieldId, key, value){
+    testSession.revision++;
     const f = currentConfig.fields.find(x => x.id === fieldId);
     if(!f) return;
     f[key] = value;
@@ -425,6 +466,8 @@ function renderEditor(){
         return;
     }
     document.getElementById('nodesToggle').style.display = workspaceMode === 'graph' ? 'flex' : 'none';
+    renderBackendChoice();
+    renderImageGroupOptions();
     workflowTitleInput.value = currentConfig.title || selectedName.replace('.json','');
     subEl.textContent = tf('comfy.nodeStats', {nodes:Object.keys(currentWorkflow).length, fields:currentConfig.fields.length}) + (isBuiltin ? ` · ${tr('comfy.builtin')}` : '');
     deleteBtn.style.display = isBuiltin ? 'none' : 'inline-flex';
@@ -735,7 +778,7 @@ document.addEventListener('keydown', e => {
 function renderInputRow(nodeId, inputKey, rawValue){
     const f = fieldFor(nodeId, inputKey);
     const active = !!f;
-    const showExtras = active && (f.type === 'slider' || f.type === 'number' || f.type === 'dropdown');
+    const showExtras = active && (['slider','number','dropdown'].includes(f.type) || (['text','textarea'].includes(f.type) && f.input!=='filename_prefix'));
     // 原始值类型徽章
     let valueBadge = '';
     const typeOf = typeof rawValue;
@@ -770,6 +813,7 @@ function renderInputRow(nodeId, inputKey, rawValue){
 }
 
 function renderExtras(f){
+    if(['text','textarea'].includes(f.type) && f.input!=='filename_prefix') return `<div class="extras-row"><label>输入用途 <select class="small-select" onchange="updateField('${f.id}','role',this.value)">${[['prompt','创作提示词'],['negative','负面提示词'],['system','系统提示词'],['parameter','普通参数']].map(([value,label])=>`<option value="${value}" ${f.role===value?'selected':''}>${label}</option>`).join('')}</select></label></div>`;
     if(f.type === 'slider' || f.type === 'number'){
         const randomToggle = f.type === 'number'
             ? `<label class="random-toggle" onclick="event.stopPropagation()"><input type="checkbox" ${f.random_enabled === true ? 'checked' : ''} onchange="updateField('${f.id}','random_enabled',this.checked)">随机数</label>`
@@ -841,10 +885,13 @@ function removeDropdownOption(fieldId, index){
 
 // --- 右侧实时预览 ---
 function setPreviewValue(fieldId, value){
-    previewValues[fieldId] = value;
-    // 更新滑块旁边的数值显示
-    const valSpan = document.querySelector(`[data-slider-val="${fieldId}"]`);
-    if(valSpan) valSpan.textContent = value;
+    testSession.set(fieldId, value);
+    document.querySelectorAll(`[data-comfy-field="${CSS.escape(fieldId)}"] input, [data-comfy-field="${CSS.escape(fieldId)}"] textarea, [data-comfy-field="${CSS.escape(fieldId)}"] select`).forEach(el => {
+        if(el !== document.activeElement) el.value = value;
+    });
+    document.querySelectorAll(`[data-slider-val="${CSS.escape(fieldId)}"]`).forEach(el => {el.textContent=value;});
+    document.querySelectorAll(`[data-comfy-field="${CSS.escape(fieldId)}"] .pfield-bool-track`).forEach(el=>el.classList.toggle('on',!!value));
+    document.querySelectorAll('[data-comfy-result-status]').forEach(el => {el.textContent=resultStatus();});
 }
 function randomValueForField(f){
     const isFloat = Number(f.step) > 0 && Number(f.step) < 1;
@@ -915,16 +962,14 @@ function closeImagePreview(){
 }
 
 function renderPreview(){
-    const fields = currentConfig?.fields || [];
+    const fields = ComfyWorkflowFields.runtimeFields(currentConfig || {});
     if(!fields.length){
         previewCard.innerHTML = `<div class="preview-empty">${tr('comfy.previewEmpty')}</div>`;
         return;
     }
     const fieldsHtml = fields.map(f => renderPreviewField(f)).join('');
-    const resultHtml = runResult
-        ? `<div class="run-result"><img src="${escapeAttr(runResult)}" onclick="openImagePreview('${escapeAttr(runResult)}')"><div class="run-status">${tr('comfy.runSuccess')}</div></div>`
-        : '';
-    const runButton = `<button id="runBtn" class="run-btn" type="button" onclick="onRun()">
+    const resultHtml = renderTestResult();
+    const runButton = `<button data-comfy-run class="run-btn" type="button" onclick="onRun()">
             <i data-lucide="play" class="w-4 h-4"></i><span>${tr('comfy.runTest')}</span>
         </button>`;
     previewCard.innerHTML = `
@@ -933,44 +978,46 @@ function renderPreview(){
         ${resultHtml}
     `;
     refreshIcons();
+    refreshTestState();
 }
 
 function renderPreviewField(f){
     const label = `<div class="pfield-label">${escapeHtml(f.name || f.input)}</div>`;
     const v = previewValues[f.id] ?? f.default ?? (f.type==='boolean'?false:(f.type==='number'||f.type==='slider'?0:''));
+    if(f.type === 'image_group') return renderImageGroupInput(f);
     if(f.type === 'textarea'){
-        return `<div class="pfield">${label}<textarea class="pfield-textarea" oninput="setPreviewValue('${f.id}',this.value)">${escapeHtml(v)}</textarea></div>`;
+        return `<div class="pfield" data-comfy-field="${escapeAttr(f.id)}">${label}<textarea class="pfield-textarea" oninput="setPreviewValue('${f.id}',this.value)">${escapeHtml(v)}</textarea></div>`;
     }
     if(f.type === 'number'){
         const randomBtn = randomButtonHtml(f);
-        return `<div class="pfield">${label}<div class="pfield-random-row" style="${randomBtn ? '' : 'grid-template-columns:1fr'}"><input class="pfield-input" type="number" value="${escapeAttr(v)}" oninput="setPreviewValue('${f.id}',parseFloat(this.value)||0)">${randomBtn}</div></div>`;
+        return `<div class="pfield" data-comfy-field="${escapeAttr(f.id)}">${label}<div class="pfield-random-row" style="${randomBtn ? '' : 'grid-template-columns:1fr'}"><input class="pfield-input" type="number" value="${escapeAttr(v)}" oninput="setPreviewValue('${f.id}',parseFloat(this.value)||0)">${randomBtn}</div></div>`;
     }
     if(f.type === 'slider'){
         const min = f.min ?? 0, max = f.max ?? 10, step = f.step ?? 1;
-        return `<div class="pfield">${label}<div class="pfield-random-row" style="grid-template-columns:1fr"><div class="pfield-slider">
+        return `<div class="pfield" data-comfy-field="${escapeAttr(f.id)}">${label}<div class="pfield-random-row" style="grid-template-columns:1fr"><div class="pfield-slider">
             <input type="range" min="${min}" max="${max}" step="${step}" value="${escapeAttr(v)}" oninput="setPreviewValue('${f.id}',parseFloat(this.value))">
             <span class="pfield-slider-val" data-slider-val="${f.id}">${v}</span>
         </div></div></div>`;
     }
     if(f.type === 'dropdown'){
         const opts = (f.options || []).map(o => `<option value="${escapeAttr(o)}" ${String(v)===String(o)?'selected':''}>${escapeHtml(o)}</option>`).join('');
-        return `<div class="pfield">${label}<select class="pfield-select" onchange="setPreviewValue('${f.id}',this.value)">${opts || `<option value="">${tr('comfy.noOptions')}</option>`}</select></div>`;
+        return `<div class="pfield" data-comfy-field="${escapeAttr(f.id)}">${label}<select class="pfield-select" onchange="setPreviewValue('${f.id}',this.value)">${opts || `<option value="">${tr('comfy.noOptions')}</option>`}</select></div>`;
     }
     if(isMediaField(f)){
         // 浏览器显示用本地 blob URL；如果没有就尝试用 /output/ 之类的可访问 URL；都没有显示占位文字
         const displayUrl = previewImageUrls[f.id] || (typeof v === 'string' && /^(\/|https?:|blob:|data:)/.test(v) ? v : '');
-        return `<div class="pfield">${label}<div class="pfield-image-drop ${displayUrl?'has-image':''}" onclick="pickImage('${f.id}')">
+        return `<div class="pfield" data-comfy-field="${escapeAttr(f.id)}">${label}<div class="pfield-image-drop ${displayUrl?'has-image':''}" onclick="pickImage('${f.id}')">
             ${mediaPreviewHtml(fieldKind(f), displayUrl, v)}
         </div></div>`;
     }
     if(f.type === 'boolean'){
-        return `<div class="pfield">${label}<div class="pfield-bool">
-            <div class="pfield-bool-track ${v?'on':''}" onclick="setPreviewValue('${f.id}',!${!!v});this.classList.toggle('on')">
+        return `<div class="pfield" data-comfy-field="${escapeAttr(f.id)}">${label}<div class="pfield-bool">
+            <div class="pfield-bool-track ${v?'on':''}" onclick="setPreviewValue('${f.id}',!previewValues['${f.id}'])">
                 <div class="pfield-bool-thumb"></div>
             </div>
         </div></div>`;
     }
-    return `<div class="pfield">${label}<input class="pfield-input" type="text" value="${escapeAttr(v)}" oninput="setPreviewValue('${f.id}',this.value)"></div>`;
+    return `<div class="pfield" data-comfy-field="${escapeAttr(f.id)}">${label}<input class="pfield-input" type="text" value="${escapeAttr(v)}" oninput="setPreviewValue('${f.id}',this.value)"></div>`;
 }
 
 function miniCardStyle(key){
@@ -1011,41 +1058,35 @@ function renderWorkspaceView(){
 
 function renderMiniCanvasPreview(target = previewCard, large = false){
     if(!target) return;
-    const promptFields = currentConfig.fields.filter(f => fieldKind(f) === 'prompt');
-    const imageFields = currentConfig.fields.filter(f => fieldKind(f) === 'image');
-    const videoFields = currentConfig.fields.filter(f => fieldKind(f) === 'video');
-    const audioFields = currentConfig.fields.filter(f => fieldKind(f) === 'audio');
-    const settingFields = currentConfig.fields.filter(f => fieldKind(f) === 'setting');
+    const promptFields = ComfyWorkflowFields.runtimeFields(currentConfig).filter(f => fieldKind(f) === 'prompt');
+    const imageFields = ComfyWorkflowFields.runtimeFields(currentConfig).filter(f => fieldKind(f) === 'image');
+    const videoFields = ComfyWorkflowFields.runtimeFields(currentConfig).filter(f => fieldKind(f) === 'video');
+    const audioFields = ComfyWorkflowFields.runtimeFields(currentConfig).filter(f => fieldKind(f) === 'audio');
+    const settingFields = ComfyWorkflowFields.runtimeFields(currentConfig).filter(f => fieldKind(f) === 'setting');
+    syncMiniFields();
     const prompts = miniTestNodes.filter(n => n.type === 'prompt');
     const mediaNodes = miniTestNodes.filter(n => ['image','video','audio'].includes(n.type));
     const comfy = miniTestNodes.find(n => n.type === 'comfy') || defaultMiniTestNodes().find(n => n.type === 'comfy');
     const output = miniTestNodes.find(n => n.type === 'output') || defaultMiniTestNodes().find(n => n.type === 'output');
-    const resultHtml = runResult
-        ? `<div class="mini-result"><img src="${escapeAttr(runResult)}" onclick="openImagePreview('${escapeAttr(runResult)}')"><div class="run-status">${tr('comfy.runSuccess')}</div></div>`
-        : `<div class="preview-empty" style="padding:18px 10px">${tr('comfy.resultHere')}</div>`;
+    const resultHtml = renderTestResult();
     target.style.display = 'block';
     target.innerHTML = `
         <div id="miniCanvas" class="mini-canvas ${large ? 'large' : ''}">
-            <div class="mini-toolbar">
-                <button class="mini-tool" type="button" onclick="addMiniNode('prompt')"><i data-lucide="text-cursor-input" class="w-3.5 h-3.5"></i>${tr('comfy.addPrompt')}</button>
-                <button class="mini-tool" type="button" onclick="addMiniNode('image')"><i data-lucide="image-plus" class="w-3.5 h-3.5"></i>${tr('comfy.addImage')}</button>
-                <button class="mini-tool" type="button" onclick="addMiniNode('video')"><i data-lucide="file-video" class="w-3.5 h-3.5"></i>${typeLabel('video')}</button>
-                <button class="mini-tool" type="button" onclick="addMiniNode('audio')"><i data-lucide="file-audio" class="w-3.5 h-3.5"></i>${typeLabel('audio')}</button>
-            </div>
+            <div class="mini-toolbar"><span>与左侧共用输入；按字段名称对应素材</span></div>
             <div id="miniWorld" class="mini-world" style="transform:translate(${miniView.x}px,${miniView.y}px) scale(${miniView.k})">
                 ${[...prompts, ...mediaNodes].map(n => miniLineBetween(n, comfy)).join('')}
                 ${miniLineBetween(comfy, output)}
                 ${prompts.map((n,i) => `
                     <div class="mini-card" data-node="${n.id}" style="left:${n.x}px;top:${n.y}px">
                         <span class="mini-port out"></span>
-                        <div class="mini-card-head"><i data-lucide="text-cursor-input" class="w-3.5 h-3.5"></i><span class="mini-node-title">${tr('comfy.promptNode')} ${i+1}</span>${miniDeleteButton(n)}</div>
-                        <div class="mini-card-body"><textarea class="mini-textarea" oninput="updateMiniNode('${n.id}','text',this.value)" placeholder="${escapeAttr(tr('comfy.promptPlaceholder'))}">${escapeHtml(n.text || '')}</textarea></div>
+                        <div class="mini-card-head"><i data-lucide="text-cursor-input" class="w-3.5 h-3.5"></i><span class="mini-node-title">${escapeHtml(currentConfig.fields.find(f=>f.id===n.fieldId)?.name || '提示词')}</span></div>
+                        <div class="mini-card-body" data-comfy-field="${escapeAttr(n.fieldId)}"><textarea class="mini-textarea" oninput="updateMiniNode('${n.id}','text',this.value)" placeholder="${escapeAttr(tr('comfy.promptPlaceholder'))}">${escapeHtml(n.text || '')}</textarea></div>
                     </div>`).join('')}
                 ${mediaNodes.map((n,i) => `
                     <div class="mini-card" data-node="${n.id}" style="left:${n.x}px;top:${n.y}px">
                         <span class="mini-port out"></span>
-                        <div class="mini-card-head"><i data-lucide="${n.type === 'video' ? 'file-video' : n.type === 'audio' ? 'file-audio' : 'image'}" class="w-3.5 h-3.5"></i><span class="mini-node-title">${typeLabel(n.type)} ${i+1}</span>${miniDeleteButton(n)}</div>
-                        <div class="mini-card-body"><div class="mini-image-drop" onclick="pickMiniImage('${n.id}')">${mediaPreviewHtml(n.type, n.url, n.name || n.value, true)}</div></div>
+                        <div class="mini-card-head"><i data-lucide="${n.type === 'video' ? 'file-video' : n.type === 'audio' ? 'file-audio' : 'image'}" class="w-3.5 h-3.5"></i><span class="mini-node-title">${escapeHtml(currentConfig.fields.find(f=>f.id===n.fieldId)?.name || typeLabel(n.type))}</span></div>
+                        <div class="mini-card-body">${(currentConfig.image_groups || []).some(g=>g.id===n.id)?renderImageGroupInput(currentConfig.image_groups.find(g=>g.id===n.id)):`<div class="mini-image-drop" onclick="pickMiniImage('${n.id}')">${mediaPreviewHtml(n.type, n.url, n.name || n.value, true)}</div>`}</div>
                     </div>`).join('')}
                 <div class="mini-card comfy-card" data-node="${comfy.id}" style="left:${comfy.x}px;top:${comfy.y}px">
                     <span class="mini-port in"></span><span class="mini-port out"></span>
@@ -1058,7 +1099,7 @@ function renderMiniCanvasPreview(target = previewCard, large = false){
                         <div class="mini-settings-list">
                             ${settingFields.length ? settingFields.map(f => renderMiniField(f)).join('') : `<div class="preview-empty" style="padding:16px 10px">${tr('comfy.otherParamsHere')}</div>`}
                         </div>
-                        <button id="runBtn" class="run-btn mini-run" type="button" onclick="onRun()">
+                        <button data-comfy-run class="run-btn mini-run" type="button" onclick="onRun()">
                             <i data-lucide="play" class="w-4 h-4"></i><span>${tr('comfy.runTest')}</span>
                         </button>
                     </div>
@@ -1073,6 +1114,7 @@ function renderMiniCanvasPreview(target = previewCard, large = false){
     `;
     bindMiniCanvas();
     refreshIcons();
+    refreshTestState();
 }
 
 function renderMiniField(f){
@@ -1080,30 +1122,31 @@ function renderMiniField(f){
     const v = previewValues[f.id] ?? f.default ?? (f.type==='boolean'?false:(f.type==='number'||f.type==='slider'?0:''));
     if(isMediaField(f)){
         const displayUrl = previewImageUrls[f.id] || (typeof v === 'string' && /^(\/|https?:|blob:|data:)/.test(v) ? v : '');
-        return `<div class="pfield">${label}<div class="mini-image-drop" onclick="pickImage('${f.id}')">${mediaPreviewHtml(fieldKind(f), displayUrl, v, true)}</div></div>`;
+        return `<div class="pfield" data-comfy-field="${escapeAttr(f.id)}">${label}<div class="mini-image-drop" onclick="pickImage('${f.id}')">${mediaPreviewHtml(fieldKind(f), displayUrl, v, true)}</div></div>`;
     }
+    if(f.type === 'image_group') return renderImageGroupInput(f);
     if(f.type === 'textarea'){
-        return `<div class="pfield">${label}<textarea class="mini-textarea" oninput="setPreviewValue('${f.id}',this.value)">${escapeHtml(v)}</textarea></div>`;
+        return `<div class="pfield" data-comfy-field="${escapeAttr(f.id)}">${label}<textarea class="mini-textarea" oninput="setPreviewValue('${f.id}',this.value)">${escapeHtml(v)}</textarea></div>`;
     }
     if(f.type === 'number'){
         const randomBtn = randomButtonHtml(f);
-        return `<div class="pfield">${label}<div class="pfield-random-row" style="${randomBtn ? '' : 'grid-template-columns:1fr'}"><input class="mini-input" type="number" value="${escapeAttr(v)}" oninput="setPreviewValue('${f.id}',parseFloat(this.value)||0)">${randomBtn}</div></div>`;
+        return `<div class="pfield" data-comfy-field="${escapeAttr(f.id)}">${label}<div class="pfield-random-row" style="${randomBtn ? '' : 'grid-template-columns:1fr'}"><input class="mini-input" type="number" value="${escapeAttr(v)}" oninput="setPreviewValue('${f.id}',parseFloat(this.value)||0)">${randomBtn}</div></div>`;
     }
     if(f.type === 'slider'){
         const min = f.min ?? 0, max = f.max ?? 10, step = f.step ?? 1;
-        return `<div class="pfield">${label}<div class="pfield-random-row" style="grid-template-columns:1fr"><div class="pfield-slider">
+        return `<div class="pfield" data-comfy-field="${escapeAttr(f.id)}">${label}<div class="pfield-random-row" style="grid-template-columns:1fr"><div class="pfield-slider">
             <input type="range" min="${min}" max="${max}" step="${step}" value="${escapeAttr(v)}" oninput="setPreviewValue('${f.id}',parseFloat(this.value))">
             <span class="pfield-slider-val" data-slider-val="${f.id}">${v}</span>
         </div></div></div>`;
     }
     if(f.type === 'dropdown'){
         const opts = (f.options || []).map(o => `<option value="${escapeAttr(o)}" ${String(v)===String(o)?'selected':''}>${escapeHtml(o)}</option>`).join('');
-        return `<div class="pfield">${label}<select class="pfield-select" onchange="setPreviewValue('${f.id}',this.value)">${opts || `<option value="">${tr('comfy.noOptions')}</option>`}</select></div>`;
+        return `<div class="pfield" data-comfy-field="${escapeAttr(f.id)}">${label}<select class="pfield-select" onchange="setPreviewValue('${f.id}',this.value)">${opts || `<option value="">${tr('comfy.noOptions')}</option>`}</select></div>`;
     }
     if(f.type === 'boolean'){
-        return `<div class="pfield">${label}<div class="pfield-bool"><div class="pfield-bool-track ${v?'on':''}" onclick="setPreviewValue('${f.id}',!${!!v});this.classList.toggle('on')"><div class="pfield-bool-thumb"></div></div></div></div>`;
+        return `<div class="pfield" data-comfy-field="${escapeAttr(f.id)}">${label}<div class="pfield-bool"><div class="pfield-bool-track ${v?'on':''}" onclick="setPreviewValue('${f.id}',!previewValues['${f.id}'])"><div class="pfield-bool-thumb"></div></div></div></div>`;
     }
-    return `<div class="pfield">${label}<input class="mini-input" type="text" value="${escapeAttr(v)}" oninput="setPreviewValue('${f.id}',this.value)"></div>`;
+    return `<div class="pfield" data-comfy-field="${escapeAttr(f.id)}">${label}<input class="mini-input" type="text" value="${escapeAttr(v)}" oninput="setPreviewValue('${f.id}',this.value)"></div>`;
 }
 
 function miniDeleteButton(node){
@@ -1138,33 +1181,8 @@ function removeMiniNode(id){
     renderWorkspaceView();
 }
 
-function updateMiniNode(id, key, value){
-    const node = miniTestNodes.find(n => n.id === id);
-    if(node) node[key] = value;
-}
-
-async function pickMiniImage(nodeId){
-    const input = document.createElement('input');
-    input.type = 'file';
-    const node = miniTestNodes.find(n => n.id === nodeId);
-    input.accept = mediaAccept(node?.type || 'image');
-    input.onchange = async () => {
-        const file = input.files[0];
-        if(!file) return;
-        if(!node) return;
-        if(node.url && node.url.startsWith('blob:')) URL.revokeObjectURL(node.url);
-        node.url = URL.createObjectURL(file);
-        node.name = file.name;
-        renderWorkspaceView();
-        const form = new FormData();
-        form.append('files', file);
-        try {
-            const data = await fetch('/api/upload', { method:'POST', body:form }).then(r=>r.json());
-            node.value = data.files?.[0]?.comfy_name || data.files?.[0]?.filename || file.name;
-        } catch(e){ alert(mediaUploadFailedText(node.type)); }
-    };
-    input.click();
-}
+function updateMiniNode(id, key, value){ setPreviewValue(id, value); }
+async function pickMiniImage(nodeId){ return pickImage(nodeId); }
 
 function bindMiniCanvas(){
     const canvas = document.getElementById('miniCanvas');
@@ -1228,79 +1246,113 @@ function bindMiniCanvas(){
     };
 }
 
+function resultStatus(){
+    if(testSession.running) return '上次结果（本次任务进行中）';
+    return testSession.resultRevision === testSession.revision ? tr('comfy.runSuccess') : '上次结果（输入已更改或重新打开）';
+}
+function renderTestResult(){
+    const items = (testSession.results?.length ? testSession.results.flatMap(run=>ComfyOutputs.items(run.result)) : ComfyOutputs.items(testSession.result));
+    if(!items.length) return '';
+    return `<div class="run-result">${items.map(item => {
+        const url = escapeAttr(item.url);
+        // Only platform result URLs are rendered; workflow metadata cannot inject schemes.
+        if(!String(item.url || '').startsWith('/')) return '';
+        const name = escapeHtml(item.name || item.kind);
+        const media = item.kind === 'text' ? `<button type="button" data-test-text="${url}" style="width:100%;background:inherit;border:1px solid var(--line);border-radius:10px;color:inherit">${ComfyOutputs.card(item)}</button>` : item.kind === 'image' ? `<img src="${url}" onclick="openImagePreview(this.src)">`
+            : item.kind === 'video' ? `<video src="${url}" controls preload="metadata" style="max-width:100%"></video>`
+            : item.kind === 'audio' ? `<audio src="${url}" controls style="max-width:100%"></audio>` : '';
+        return `<div>${media}<a href="${url}" download>${item.kind==='text'?'下载':name}</a></div>`;
+    }).join('')}<div class="run-status" data-comfy-result-status>${resultStatus()}</div></div>`;
+}
+function refreshTestState(){
+    const labels = {preparing:'准备中',submitting:'正在提交',queued:'排队中',running:'生成中',retrieving:'接收结果',reconnecting:'连接中断，正在查询原任务',unknown:'正在核对原任务'};
+    document.querySelectorAll('[data-comfy-run]').forEach(btn => {
+        btn.disabled = testSession.running || testSession.uploads.size > 0;
+        btn.querySelector('span').textContent = testSession.uploads.size ? '上传中…' : testSession.running ? (labels[testSession.phase] || '查询中…') : testSession.taskId ? '继续查询原任务' : tr('comfy.runTest');
+    });
+    setStatus(testSession.error || (testSession.running ? labels[testSession.phase] : '') || '');
+}
+function refreshTestViews(){ renderPreview(); renderWorkspaceView(); refreshTestState(); }
 async function pickImage(fieldId){
     const input = document.createElement('input');
     input.type = 'file';
-    const field = currentConfig.fields.find(f => f.id === fieldId);
-    const kind = fieldKind(field || {type:'image'});
-    input.accept = mediaAccept(kind);
+    const field = ComfyWorkflowFields.runtimeFields(currentConfig).find(f => f.id === fieldId);
+    if(field?.type==='image_group')return pickGroupImages(fieldId);
+    if(!field) return;
+    input.accept = mediaAccept(fieldKind(field));
+    const session = testSession, workflowName = selectedName, backend = currentConfig.backend || '';
     input.onchange = async () => {
         const file = input.files[0];
-        if(!file) return;
-        // 先用本地 blob URL 立即显示缩略图
-        if(previewImageUrls[fieldId]) URL.revokeObjectURL(previewImageUrls[fieldId]);
-        previewImageUrls[fieldId] = URL.createObjectURL(file);
-        renderPreview();
-        // 再上传到 ComfyUI 拿到 comfy_name 作为运行时的实际值
-        const form = new FormData();
-        form.append('files', file);
-        try {
-            const data = await fetch('/api/upload', { method:'POST', body:form }).then(r=>r.json());
-            const filename = data.files?.[0]?.comfy_name || data.files?.[0]?.filename || file.name;
-            previewValues[fieldId] = filename;
-        } catch(e){ alert(mediaUploadFailedText(kind)); }
+        if(!file){input.remove();return;}
+        if(session.urls[fieldId]?.startsWith('blob:')) URL.revokeObjectURL(session.urls[fieldId]);
+        session.urls[fieldId] = URL.createObjectURL(file);
+        const changed = () => {if(testSession === session) refreshTestViews();};
+        await session.upload(fieldId, file, async chosen => {
+            const form = new FormData(); form.append('files', chosen);
+            const res = await fetch('/api/upload?' + new URLSearchParams({workflow:workflowName,backend}), {method:'POST',body:form});
+            const data = await res.json();
+            if(!res.ok) throw new Error(data.detail || mediaUploadFailedText(fieldKind(field)));
+            return data.files?.[0];
+        }, changed);
+        input.remove();
     };
+    input.hidden=true;
+    document.body.append(input);
+    input.addEventListener('cancel',()=>input.remove(),{once:true});
     input.click();
 }
-
-async function onRun(){
-    if(!selectedName || !currentConfig) return;
-    const btn = document.getElementById('runBtn');
-    if(btn){ btn.disabled = true; btn.querySelector('span').textContent = tr('comfy.runningTest'); }
-    setStatus(tr('comfy.runningTest'));
-    try {
-        const baseFields = workspaceMode === 'canvas' ? fieldsFromMiniCanvas() : {...previewValues};
-        const runFields = applyActiveRandomValues(baseFields);
-        const missing = currentConfig.fields.filter(f => isMediaField(f) && !(runFields[f.id] ?? f.default));
-        if(missing.length) throw new Error(ComfyWorkflowFields.missingMessage(missing, currentLang() === 'en'));
-        currentConfig.fields.forEach(f => { runFields[f.id] = ComfyWorkflowFields.coerceValue(f, runFields[f.id]); });
-        const res = await fetch(`/api/workflows/${encodeURIComponent(selectedName)}/run`, {
-            method:'POST',
-            headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({ fields:runFields, config:currentConfig, client_id:'workflow-test' })
-        });
-        if(!res.ok) throw new Error((await res.json()).detail || tr('comfy.runFailed'));
-        const data = await res.json();
-        if(data.error) throw new Error(data.error);
-        runResult = data.images?.[0] || null;
-        renderPreview();
-        renderWorkspaceView();
-        setStatus(tr('comfy.runSuccess'));
-    } catch(e){
-        alert(e.message || tr('comfy.runFailed'));
-        setStatus(tr('comfy.runFailed'));
-    } finally {
-        if(btn){ btn.disabled = false; btn.querySelector('span').textContent = tr('comfy.runTest'); }
+function testStorageKey(name=selectedName){ return 'comfy-test-task:' + name; }
+async function pollTestTask(id, phase){
+    let resume=true;
+    while(true){
+        const res = await fetch('/api/canvas-comfy-tasks/' + encodeURIComponent(id) + (resume ? '?resume=true' : ''));
+        resume=false;
+        if(!res.ok) throw new Error('原任务查询失败，请稍后继续查询');
+        const task = await res.json();
+        phase(task.phase || task.status);
+        if(['succeeded','failed'].includes(task.status)) return task;
+        await new Promise(resolve => setTimeout(resolve,1600));
     }
 }
-
-function fieldsFromMiniCanvas(){
-    const fields = {...previewValues};
-    const mediaKinds = ['image','video','audio'];
-    const promptFields = currentConfig.fields.filter(f => fieldKind(f) === 'prompt');
-    const prompt = miniTestNodes.filter(n => n.type === 'prompt').map(n => n.text || '').filter(Boolean).join('\n\n');
-    mediaKinds.forEach(kind => {
-        const mediaFields = currentConfig.fields.filter(f => fieldKind(f) === kind);
-        const mediaNodes = miniTestNodes.filter(n => n.type === kind && n.value);
-        mediaFields.forEach((f, i) => {
-            fields[f.id] = mediaNodes[i]?.value || fields[f.id] || '';
-        });
-    });
-    promptFields.forEach((f, i) => {
-        fields[f.id] = (i === 0 ? prompt : '') || fields[f.id] || '';
-    });
-    return fields;
+async function restoreTestTask(){
+    const id = sessionStorage.getItem(testStorageKey());
+    if(!id || testSession.running) return;
+    testSession.taskId = id;
+    await onRun();
 }
+async function onRun(){
+    if(!selectedName || !currentConfig || testSession.running || testSession.uploads.size) return;
+    const session = testSession, name=selectedName, config=structuredClone(currentConfig);
+    const changed = () => {
+        if(session.taskId) sessionStorage.setItem(testStorageKey(name),session.taskId);
+        else sessionStorage.removeItem(testStorageKey(name));
+        if(testSession === session) refreshTestViews();
+    };
+    if(session.taskId){
+        session.running = true; session.error=''; changed();
+        try { await session.follow(pollTestTask,changed); }
+        catch(error){session.error=error.message;}
+        finally {session.running=false;changed();}
+        return;
+    }
+    await session.execute(async values => {
+        const runFields = applyActiveRandomValues(values);
+        const runtimeFields=ComfyWorkflowFields.runtimeFields(config);
+        const missing = runtimeFields.filter(f => isMediaField(f) && (f.type==='image_group' ? !Array.isArray(runFields[f.id]) || runFields[f.id].length<f.min_images || runFields[f.id].length>f.max_images : !runFields[f.id]));
+        if(missing.length) throw new Error(ComfyWorkflowFields.missingMessage(missing,currentLang()==='en'));
+        config.fields.forEach(f => {runFields[f.id]=ComfyWorkflowFields.coerceValue(f,runFields[f.id]);});
+        const requestId=ComfyWorkflowSession.requestId();
+        session.taskId='canvas_comfy_'+requestId; changed();
+        const res = await fetch(`/api/workflows/${encodeURIComponent(name)}/run`,{
+            method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({request_id:requestId,fields:runFields,config,async_task:true,client_id:'workflow-test'})
+        });
+        const data=await res.json();
+        if(!res.ok){session.taskId='';throw new Error(data.detail || tr('comfy.runFailed'));}
+        return data;
+    },pollTestTask,changed);
+}
+function fieldsFromMiniCanvas(){ return {...previewValues}; }
 
 async function onUpload(event){
     const file = event.target.files[0];
@@ -1380,3 +1432,64 @@ document.addEventListener('DOMContentLoaded', () => {
     loadComfyInstances();
 });
 
+
+
+function renderImageGroupOptions(){
+    let panel=document.getElementById('imageGroupOptions');
+    if(!panel){panel=document.createElement('div');panel.id='imageGroupOptions';subEl.after(panel);}
+    panel.className='comfy-group-config';
+    panel.innerHTML=imageGroupCandidates.map((candidate,index)=>{
+        const active=(currentConfig.image_groups || []).find(g=>g.id===candidate.id);
+        return `<div><label><input type="checkbox" ${active?'checked':''} onchange="toggleImageGroup(${index},this.checked)"> 可变图片输入（首张主体，其余参考）</label>${active?`<label> 最少 <input aria-label="最少图片" type="number" min="1" max="${candidate.supported_max}" value="${active.min_images}" class="small-input comfy-count-input" onchange="updateImageGroup(${index},'min_images',this.value)"></label><label> 最多 <input aria-label="最多图片" type="number" min="1" max="${candidate.supported_max}" value="${active.max_images}" class="small-input comfy-count-input" onchange="updateImageGroup(${index},'max_images',this.value)"></label>`:''}</div>`;
+    }).join('');
+}
+function toggleImageGroup(index,enabled){
+    const candidate=imageGroupCandidates[index];
+    currentConfig.image_groups=(currentConfig.image_groups || []).filter(g=>g.id!==candidate.id);
+    if(enabled){currentConfig.image_groups.push({...candidate});testSession.set(candidate.id,[]);}
+    testSession.revision++;renderEditor();refreshTestViews();
+}
+function updateImageGroup(index,key,value){
+    const group=currentConfig.image_groups.find(g=>g.id===imageGroupCandidates[index].id);
+    group[key]=Number(value);testSession.revision++;renderImageGroupOptions();refreshTestViews();
+}
+function renderImageGroupInput(group){
+    const names=previewValues[group.id] || [], urls=previewImageUrls[group.id] || [];
+    const id=escapeAttr(group.id);
+    return `<div class="pfield comfy-image-group"><div class="pfield-label">${escapeHtml(group.name)} · ${names.length}/${group.max_images} 张（至少 ${group.min_images} 张）</div><div class="comfy-group-images">${urls.map((url,i)=>`<div class="comfy-group-image"><img src="${escapeAttr(url)}"><small>${i===0?'1 主体图':(i+1)+' 参考图'}</small><div class="comfy-group-actions"><button type="button" aria-label="前移图片 ${i+1}" data-group-id="${id}" onclick="moveGroupImage(this.dataset.groupId,${i},-1)" ${i===0?'disabled':''}><i data-lucide="arrow-left"></i></button><button type="button" aria-label="移除图片 ${i+1}" data-group-id="${id}" onclick="removeGroupImage(this.dataset.groupId,${i})"><i data-lucide="x"></i></button></div></div>`).join('')}</div><button type="button" class="comfy-group-pick" data-group-id="${id}" onclick="pickGroupImages(this.dataset.groupId)"><i data-lucide="image-plus"></i><span>选择图片（替换本组）</span></button></div>`;
+}
+
+function moveGroupImage(id,index,delta){
+    if(testSession.uploads.has(id))return;
+    for(const values of [previewValues[id],previewImageUrls[id]]){const target=index+delta;if(values && target>=0 && target<values.length)[values[index],values[target]]=[values[target],values[index]];}
+    testSession.revision++;refreshTestViews();
+}
+function removeGroupImage(id,index){
+    if(testSession.uploads.has(id))return;
+    const url=previewImageUrls[id]?.splice(index,1)[0];if(url?.startsWith('blob:'))URL.revokeObjectURL(url);
+    previewValues[id]?.splice(index,1);testSession.revision++;refreshTestViews();
+}
+function pickGroupImages(id){
+    const group=currentConfig.image_groups.find(g=>g.id===id),session=testSession,name=selectedName,backend=currentConfig.backend || '';
+    const input=document.createElement('input');input.type='file';input.accept='image/*';input.multiple=true;input.hidden=true;document.body.append(input);
+    input.addEventListener('cancel',()=>input.remove(),{once:true});
+    input.onchange=async()=>{
+        const files=Array.from(input.files || []);input.remove();if(!files.length)return;
+        if(files.length>group.max_images){setStatus(`最多选择 ${group.max_images} 张图片`);return;}
+        (session.urls[id] || []).forEach(url=>URL.revokeObjectURL(url));session.urls[id]=files.map(file=>URL.createObjectURL(file));
+        await session.uploadMany(id,files,async file=>{
+            const form=new FormData();form.append('files',file);
+            const response=await fetch('/api/upload?'+new URLSearchParams({workflow:name,backend}),{method:'POST',body:form});
+            const data=await response.json();if(!response.ok)throw new Error(data.detail || '上传失败');return data.files?.[0];
+        },()=>{if(testSession===session)refreshTestViews();});
+    };input.click();
+}
+document.addEventListener('click',event=>{
+    const target=event.target.closest('[data-test-text]');if(!target)return;event.preventDefault();event.stopPropagation();
+    const result=(testSession.results || []).flatMap(run=>ComfyOutputs.items(run.result)).concat(ComfyOutputs.items(testSession.result)).find(item=>item.url===target.dataset.testText);
+    if(result)ComfyOutputs.open(result,{promptLabel:'填入测试提示词',createPrompt:value=>{
+        const field=ComfyWorkflowFields.runtimeFields(currentConfig).find(f=>fieldKind(f)==='prompt');
+        if(!field)throw new Error('请先在工作流设置指定创作提示词字段');
+        setPreviewValue(field.id,value);refreshTestViews();
+    }});
+});

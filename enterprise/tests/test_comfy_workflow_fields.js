@@ -56,5 +56,10 @@ const legacy = {
     assert.equal(withDefault.positive, 'positive default');
     const missingPrompt = {fields:[{id:'prompt', node:'1', input:'text', name:'提示词', type:'textarea', default:''}]};
     await assert.rejects(fields.canvasValues(missingPrompt, {}), /提示词 \(#1\.text\)/);
+    const definition = {input:{required:{image:[['sample.png'],{image_upload:true}],model:[['model-a','model-b'],{}],denoise:['FLOAT',{min:0,max:1,step:0.01}]}}};
+    assert.equal(fields.definitionField('sample.png','image',definition).type,'image');
+    assert.deepEqual(fields.definitionField('model-a','model',definition),{type:'dropdown',options:['model-a','model-b']});
+    assert.equal(fields.definitionField(0.35,'denoise',definition).step,0.01);
+    assert.equal(fields.definitionField('result.png','filename_prefix',definition).type,'text');
     console.log('Comfy field inference, legacy compatibility, named missing inputs and shared mapping passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });

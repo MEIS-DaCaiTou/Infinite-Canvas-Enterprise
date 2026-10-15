@@ -2991,6 +2991,7 @@ function renderMsGenBody(node){
 async function runMsGenNode(nodeId, opts={}){
     const node = nodes.find(n => n.id === nodeId);
     if(!node || (node.running && !opts.cascade)) return;
+    if(!checkTextSelection(node,opts))return;
     const cascadeTargetId = cascadeTargetIdFromOptions(opts);
     const sources = orderedSources(node, generatorSources(node));
     const prompt = sources.map(s => s.prompt).filter(Boolean).join('\n\n');
@@ -6300,7 +6301,7 @@ function bindOutputWrap(wrap, node){
         fileCard.onclick = e => {
             e.stopPropagation();
             const url = wrap.dataset.outputUrl;
-            if(url) downloadUrl(url, outputDownloadName(url)).catch(err => alert(err.message || '下载失败'));
+            if(url){const item=ComfyOutputs.items(node.images || []).find(item=>item.url===url);if(item?.kind==='text')openCanvasText(item,node);else downloadUrl(url, outputDownloadName(url)).catch(err => alert(err.message || '下载失败'));}
         };
     }
     if(del){
@@ -6312,6 +6313,7 @@ function bindOutputWrap(wrap, node){
                 node._pending = (node._pending || []).filter(p => p.id !== pid);
             } else {
                 const url = img?.dataset.url || video?.dataset.url || audio?.dataset.url || wrap.dataset.outputUrl || wrap.dataset.missingUrl || '';
+                if(node.selectedResult?.url===url || node.selectedResultId===url){delete node.selectedResult;delete node.selectedResultId;}
                 node.images = (node.images || []).filter(item => outputUrlValue(item) !== url);
                 if(node.imageComparisons) delete node.imageComparisons[url];
                 scheduleSave();
@@ -8153,6 +8155,7 @@ function onLLMPaneResize(e){
 }
 function llmInputText(node){
     return connections.filter(c => c.to === node.id).map(c => nodes.find(n => n.id === c.from)).filter(Boolean).map(n => {
+        if(n.type==='output' || n.type==='comfy')return ComfyOutputs.prompt(n,n.type==='output'?n.images:n.generatedOutputs);
         if(n.type === 'prompt') return n.text || '';
         if(n.type === 'loop') return renderLoopPrompt(n);
         if(n.type === 'promptGroup') return (n.items || []).map(id => nodes.find(x => x.id === id)).filter(Boolean).map(p => p.text || '').filter(Boolean).join('\n\n');
@@ -8164,6 +8167,10 @@ function llmInputImages(node){
     const urls = [];
     connections.filter(c => c.to === node.id).map(c => nodes.find(n => n.id === c.from)).filter(Boolean).forEach(n => {
         if(n.type === 'image' && n.url && mediaKindForNode(n) === 'image') urls.push(n.url);
+        if((n.type==='output' && (n.images || []).length) || (n.type==='comfy' && (n.generatedOutputs || []).length)){
+            const selected=ComfyOutputs.selected(n,n.type==='output'?n.images:n.generatedOutputs);
+            if(selected?.kind==='text')return;
+        }
         if(n.type === 'output' && (n.images||[]).length){
             const last = [...n.images].reverse().map(outputUrlValue).find(url => url && !isVideoUrl(url) && !isAudioUrl(url));
             if(last) urls.push(last);
@@ -8178,6 +8185,10 @@ function llmInputVideos(node){
     const urls = [];
     connections.filter(c => c.to === node.id).map(c => nodes.find(n => n.id === c.from)).filter(Boolean).forEach(n => {
         if(n.type === 'image' && n.url && mediaKindForNode(n) === 'video') urls.push(n.url);
+        if((n.type==='output' || n.type==='comfy') && (n.images || n.generatedOutputs || []).length){
+            const selected=ComfyOutputs.selected(n,n.type==='output'?n.images:n.generatedOutputs);
+            if(selected?.kind==='text')return;
+        }
         if(n.type === 'output' && (n.images||[]).length){
             const last = [...n.images].reverse().map(outputUrlValue).find(url => url && isVideoUrl(url));
             if(last) urls.push(last);
@@ -8846,6 +8857,8 @@ function renderComfyBody(node){
     const promptInputs = ordered.filter(src => src.prompt && !src.refs?.length);
     const mode = node.mode || 'text';
     const imageFieldCount = mode === 'custom' ? comfyFields(node, 'image').length : 0;
+    const imageGroups=currentComfyWorkflow(node)?.config?.image_groups || [];
+    const imageRange=imageGroups.map(group=>`${group.min_images}–${group.max_images}`).join('、');
     const videoFieldCount = mode === 'custom' ? comfyFields(node, 'video').length : 0;
     const audioFieldCount = mode === 'custom' ? comfyFields(node, 'audio').length : 0;
     const mediaFieldCount = imageFieldCount + videoFieldCount + audioFieldCount;
@@ -8864,7 +8877,7 @@ function renderComfyBody(node){
         <div class="comfy-content">
             <div class="prompt-list"></div>
             <div class="comfy-images ${(mode === 'text' || (mode === 'custom' && !mediaFieldCount)) ? 'hidden' : ''}">
-                <div class="text-[10px] font-bold text-gray-400 uppercase tracking-widest">${mode === 'custom' ? `Media · Images ${imageFieldCount} · Videos ${videoFieldCount} · Audio ${audioFieldCount}` : 'Images'}</div>
+                <div class="text-[10px] font-bold text-gray-400 uppercase tracking-widest">${mode === 'custom' ? (imageRange?`图片 ${imageInputs.reduce((n,source)=>n+source.refs.length,0)} 张 · 图片组允许 ${imageRange} 张 · 首张主体`:`Media · Images ${imageFieldCount} · Videos ${videoFieldCount} · Audio ${audioFieldCount}`) : 'Images'}</div>
                 <div class="input-list mt-2"></div>
             </div>
         </div>
@@ -9825,6 +9838,7 @@ async function rhBuildNodeInfoList(node, media){
 async function runRhNode(nodeId, opts={}){
     const node = nodes.find(n => n.id === nodeId);
     if(!node || (node.running && !opts.cascade)) return;
+    if(!checkTextSelection(node,opts))return;
     const cascadeTargetId = cascadeTargetIdFromOptions(opts);
     ensureRhNodeSelection(node);
     const mode = rhCurrentKind(node);
@@ -9916,6 +9930,7 @@ async function runRhNode(nodeId, opts={}){
 }
 async function runRhModelNode(node, opts={}){
     if(!node || (node.running && !opts.cascade)) return;
+    if(!checkTextSelection(node,opts))return;
     const cascadeTargetId = cascadeTargetIdFromOptions(opts);
     const selectedRef = rhSelectedEntryRef(node);
     const model = selectedRef?.id || node.rhModel || node.model || '';
@@ -10289,6 +10304,10 @@ function mediaRefsFromNode(node){
 }
 function generatorSources(gen){
     return connections.filter(c => c.to === gen.id).map(c => nodes.find(n => n.id === c.from)).filter(Boolean).map(n => {
+        if((n.type==='output' || n.type==='comfy') && (n.images || n.generatedOutputs || []).length){
+            const selected=ComfyOutputs.selected(n,n.type==='output'?n.images:n.generatedOutputs);
+            if(selected?.kind==='text')return {id:n.id,type:'outputText',label:'上游文本',refs:[],prompt:ComfyOutputs.prompt(n,[selected])};
+        }
         if(n.type === 'output' && (n.images||[]).length){
             // 从 output 节点取最新一张图当作 reference 给下游
             const reversed = [...n.images].map((item, index) => ({item, index})).reverse();
@@ -10436,6 +10455,7 @@ function refreshGeneratorInputViews(){
 async function runGenerator(genId, opts={}){
     const gen = nodes.find(n => n.id === genId);
     if(!gen || (gen.running && !opts.cascade)) return;
+    if(!checkTextSelection(gen,opts))return;
     const cascadeTargetId = cascadeTargetIdFromOptions(opts);
     const sources = orderedSources(gen, generatorSources(gen));
     const prompt = sources.map(s => s.prompt).filter(Boolean).join('\n\n');
@@ -10524,6 +10544,7 @@ async function runGenerator(genId, opts={}){
 async function runGeneratorLegacy(genId, opts={}){
     const gen = nodes.find(n => n.id === genId);
     if(!gen || (gen.running && !opts.cascade)) return;
+    if(!checkTextSelection(gen,opts))return;
     const sources = orderedSources(gen, generatorSources(gen));
     const prompt = sources.map(s => s.prompt).filter(Boolean).join('\n\n');
     const refs = imageRefsOnly(sources.flatMap(s => s.refs || []));
@@ -10579,6 +10600,7 @@ async function runGeneratorLegacy(genId, opts={}){
 async function runVideoNode(nodeId, opts={}){
     const node = nodes.find(n => n.id === nodeId);
     if(!node || (node.running && !opts.cascade)) return;
+    if(!checkTextSelection(node,opts))return;
     const cascadeTargetId = cascadeTargetIdFromOptions(opts);
     const sources = orderedSources(node, generatorSources(node));
     const prompt = sources.map(s => s.prompt).filter(Boolean).join('\n\n');
@@ -10651,7 +10673,7 @@ async function runVideoNode(nodeId, opts={}){
         refreshRunNodes(node, out);
     }
 }
-async function uploadCanvasUrlToComfy(url){
+async function uploadCanvasUrlToComfy(url, workflow="", backend=""){
     const blob = await fetch(url).then(r => {
         if(!r.ok) throw new Error(langIsEn() ? 'Image read failed' : '图片读取失败');
         return r.blob();
@@ -10659,20 +10681,20 @@ async function uploadCanvasUrlToComfy(url){
     const filename = (url || '').split('/').pop()?.split('?')[0] || `canvas_${Date.now()}.png`;
     const form = new FormData();
     form.append('files', blob, filename);
-    const data = await fetch('/api/upload', {method:'POST', body:form}).then(async r => {
+    const data = await fetch('/api/upload?' + new URLSearchParams({workflow:workflow || 'Z-Image.json',backend}), {method:'POST', body:form}).then(async r => {
         if(!r.ok) throw new Error(await responseErrorMessage(r, langIsEn() ? 'Image upload to ComfyUI failed' : '图片上传到 ComfyUI 失败'));
         return r.json();
     });
     return data.files?.[0]?.comfy_name || filename;
 }
-async function comfyNameForRef(ref){
-    if(ref.comfy_name) return ref.comfy_name;
+async function comfyNameForRef(ref, workflow="", backend=""){
+    if(!workflow && ref.comfy_name) return ref.comfy_name;
     if(!ref.url) throw new Error(langIsEn() ? 'Missing input image' : '缺少输入图片');
-    return uploadCanvasUrlToComfy(ref.url);
+    return uploadCanvasUrlToComfy(ref.url,workflow,backend);
 }
 async function runComfyUpscale(imageUrl, resolution, options={}){
     if(!imageUrl) throw new Error(actionFailed('studio.superResolution', langIsEn() ? 'missing input image' : '缺少输入图片'));
-    const nextInput = await uploadCanvasUrlToComfy(imageUrl);
+    const nextInput = await uploadCanvasUrlToComfy(imageUrl,'upscale.json');
     const upscale = await runQueuedComfyGenerate({
         workflow_json:'upscale.json',
         params:{
@@ -10687,7 +10709,7 @@ async function runComfyUpscale(imageUrl, resolution, options={}){
     return upscale.images || [];
 }
 function comfyResultOutputs(result){
-    return resultMediaUrls(result);
+    return ComfyOutputs.items(result);
 }
 function resultMediaUrls(result){
     const urls = [];
@@ -11222,6 +11244,7 @@ function renderLTXDirectorBody(node){
 async function runLTXDirectorNode(nodeId, opts={}){
     const node = nodes.find(n => n.id === nodeId);
     if(!node || node.type !== 'ltxDirector') return;
+    if(!checkTextSelection(node,opts))return;
     const cascadeTargetId = cascadeTargetIdFromOptions(opts);
     clearStuckGeneratorRunning(node);
     if(node.running && !opts.cascade) return;
@@ -11307,6 +11330,7 @@ async function runLTXDirectorNode(nodeId, opts={}){
 async function runComfyNode(nodeId, opts={}){
     const node = nodes.find(n => n.id === nodeId);
     if(!node || (node.running && !opts.cascade)) return;
+    if(!checkTextSelection(node,opts))return;
     const cascadeTargetId = cascadeTargetIdFromOptions(opts);
     const sources = orderedSources(node, generatorSources(node));
     const prompt = sources.map(s => s.prompt).filter(Boolean).join('\n\n');
@@ -11358,7 +11382,7 @@ async function runComfyNode(nodeId, opts={}){
             images = comfyResultOutputs(result);
         } else if(mode === 'enhance'){
             run.taskLabel = tr('canvas.comfyEnhance');
-            const inputName = await comfyNameForRef(refs[0]);
+            const inputName = await comfyNameForRef(refs[0],'Z-Image-Enhance.json');
             const enhance = await runQueuedComfyGenerate({
                 workflow_json:'Z-Image-Enhance.json',
                 params:{
@@ -11384,7 +11408,7 @@ async function runComfyNode(nodeId, opts={}){
             if(!workflowName || !wf) throw new Error(tr('canvas.comfyNoWorkflow'));
             const values = await ComfyWorkflowFields.canvasValues(wf.config, {
                 prompt, media:{image:refs, video:videoRefsOnly(allRefs), audio:audioRefsOnly(allRefs)},
-                parameters:node.comfyParams || {}, mediaName:comfyNameForRef, english:langIsEn(),
+                parameters:node.comfyParams || {}, mediaName:ref=>comfyNameForRef(ref,workflowName,wf.config.backend), english:langIsEn(),
                 randomValue:f => {
                     if(!comfyRandomEnabled(f) || !comfyRandomActive(node, f.id)) return undefined;
                     (node.comfyParams ||= {})[f.id] = comfyRandomValue(f);
@@ -11395,7 +11419,9 @@ async function runComfyNode(nodeId, opts={}){
             const result = await runQueuedComfyGenerate({
                 prompt,
                 workflow_json:workflowName,
+                backend:wf.config.backend,
                 params,
+                workflow_values:values,
                 type:'workflow-custom',
                 client_id:CLIENT_ID
             }, {cascadeTargetId});
@@ -11406,7 +11432,7 @@ async function runComfyNode(nodeId, opts={}){
         } else {
             run.taskLabel = tr('canvas.comfyEdit');
             const names = [];
-            for (const ref of refs.slice(0, 3)) names.push(await comfyNameForRef(ref));
+            for (const ref of refs.slice(0, 3)) names.push(await comfyNameForRef(ref,'Flux2-Klein.json'));
             const result = await runQueuedComfyGenerate({
                 prompt,
                 workflow_json:'Flux2-Klein.json',
@@ -11479,6 +11505,7 @@ async function callCanvasLLM(node, message, messages=[], options={}){
 async function runLLMNode(nodeId, opts={}){
     const node = nodes.find(n => n.id === nodeId);
     if(!node || (node.running && !opts.cascade)) return;
+    if(!checkTextSelection(node,opts))return;
     const cascadeTargetId = cascadeTargetIdFromOptions(opts);
     const input = llmInputText(node) || node.userInput || '';
     if(!input){
@@ -12221,7 +12248,7 @@ function makePendingForRun(id, run, node, options={}, task={}){
 }
 function mergeGeneratedOutputs(node, outputs, append=false){
     if(!node) return;
-    const keepGeneratedMedia = ['rh','ltxDirector','video'].includes(node.type);
+    const keepGeneratedMedia = ['rh','ltxDirector','video','comfy'].includes(node.type);
     const clean = (outputs || []).map(item => {
         const url = outputUrlValue(item);
         if(!url) return null;
@@ -12231,7 +12258,7 @@ function mergeGeneratedOutputs(node, outputs, append=false){
                 ? 'video'
                 : mediaKindForOutputItem(item);
         if(!keepGeneratedMedia && kind !== 'image') return null;
-        return kind === 'image' ? url : {url, kind};
+        return typeof item==='object' ? {...item,url,kind} : kind === 'image' ? url : {url, kind};
     }).filter(Boolean);
     if(!append){
         node.generatedOutputs = clean;
@@ -12521,7 +12548,8 @@ function renderOutputMedia(item, useGridLayout=false){
     if(kind === 'audio'){
         return `<div class="output-img-wrap output-audio-wrap" data-output-url="${safe}"${gridStyle}><div class="output-audio-card"><i data-lucide="file-audio" class="w-7 h-7"></i><span>${escapeHtml(outputImageName(url))}</span><audio src="${safe}" data-url="${safe}" controls preload="metadata"></audio></div>${timePill}<button class="output-del" title="${tr('common.delete')}">×</button></div>`;
     }
-    if(kind === 'text' || kind === 'file'){
+    if(kind==='text')return `<div class="output-img-wrap output-file-wrap" data-output-url="${safe}"${gridStyle}><div class="output-file-card">${ComfyOutputs.card({...meta,url,kind})}</div>${timePill}<button class="output-del" title="${tr('common.delete')}">×</button></div>`;
+    if(kind === 'file'){
         const icon = kind === 'text' ? 'file-text' : 'file';
         const label = kind === 'text' ? 'TEXT' : 'FILE';
         return `<div class="output-img-wrap output-file-wrap" data-output-url="${safe}"${gridStyle}><div class="output-file-card"><i data-lucide="${icon}" class="w-7 h-7"></i><span>${escapeHtml(meta.name || outputImageName(url))}</span><small>${label}</small></div>${timePill}<button class="output-del" title="${tr('common.delete')}">×</button></div>`;
@@ -12571,7 +12599,7 @@ function appendOutputImages(out, images, compareRef, metas=[], layout=null){
     out.images = [...(out.images || []), ...list.map((url, i) => {
         const meta = metas[i] || metas[0] || {};
         const source = url && typeof url === 'object' ? url : {};
-        const item = {url:outputUrlValue(url), viewed:false, runMs:meta.runMs || 0, run:meta.run || null};
+        const item = {...source, url:outputUrlValue(url), viewed:false, runMs:meta.runMs || 0, run:meta.run || null};
         if(source.name) item.name = source.name;
         if(source.kind || source.mediaKind) item.kind = source.kind || source.mediaKind;
         if(meta.kind) item.kind = meta.kind;
@@ -13265,6 +13293,8 @@ function initOutputCompareEvents(){
 }
 function openOutputLightbox(url, out){
     if(!url) return;
+    const textItem=ComfyOutputs.items(out?.images || []).find(item=>item.url===url);
+    if(textItem?.kind==='text')return openCanvasText(textItem,out);
     resetOutputPreviewZoom();
     currentOutputLightboxOutId = out?.id || '';
     currentOutputLightboxUrl = url;
@@ -14811,3 +14841,28 @@ window.onload = async () => {
         window.location.replace(canvasListUrlForProject(rememberedCanvasListProject()));
     }
 };
+
+
+function openCanvasText(item,source){
+    return ComfyOutputs.open(item,{
+        createPrompt:(text,result)=>{
+            nodes.push({id:uid('prompt'),type:'prompt',x:(source?.x || 0)+360,y:source?.y || 0,text,
+                sourceResultId:result.result_id,sourceRunId:result.run_id || ''});render();scheduleSave();
+        },
+        select:result=>{
+            const stored=(source.images || source.generatedOutputs || []).find(value=>outputUrlValue(value)===result.url);
+            if(stored && typeof stored==='object')Object.assign(stored,result);
+            source.selectedResultId=result.result_id;source.selectedResult={...result};render();scheduleSave();
+        }
+    });
+}
+
+function checkTextSelection(node,options={}){
+    try{
+        for(const edge of connections.filter(edge=>edge.to===node.id)){
+            const source=nodes.find(value=>value.id===edge.from);
+            if(source)ComfyOutputs.validateSource(source,source.type==='output'?source.images || []:source.generatedOutputs || []);
+        }
+        return true;
+    }catch(error){if(options.cascade)throw error;alert(error.message);return false;}
+}

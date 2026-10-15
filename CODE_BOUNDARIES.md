@@ -71,3 +71,5 @@
 6. 是否错误地把分支、Release 或单设备结果写成主线/生产事实？
 
 C7 `ops/update/sequence.py` 只协调已声明路径，逐跳消费共享 MVP 与 C6 原生对象事务；数据库操作仍由版本化引擎实施，原生注册表更新只在 `runtime/windows_install_registration.py` 中操作已核验本实例 DisplayVersion。恢复/暂停标记不授权删除客户数据，进度状态不授权跳步或恢复旧快照。源码与限定证据见 [C7 记录](docs/ops/ONLINE-UPGRADE-SEQUENCE-2026-10-12.md)。
+
+2026-10-15 前端增量约束：沿用当前页面的主题变量、字体、圆角、面板、按钮和交互层级。新的文本结果视图与已有日志/错误详情保持一致，设置页和两类画布共用 static/css/comfy-outputs.css；不得以临时原生控件、散落硬编码样式另立视觉体系。页面/交互变更先告知负责人方案，再按实际页面路径验收。

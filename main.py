@@ -1,3 +1,7 @@
+from enterprise.providers.comfyui import (
+    ComfyClient, ComfyExecutionError, base_url as comfy_base_url,
+    endpoint as comfy_endpoint, view_path as comfy_view_path,
+)
 import json
 import uuid
 import base64
@@ -36,7 +40,10 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Uplo
 from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response, StreamingResponse, JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
+from enterprise.providers.comfy_workflow import (
+    image_group_candidates, validate_image_groups, apply_workflow_values, field_role, select_history_outputs,
+)
 from fastapi.middleware.cors import CORSMiddleware
 
 # ENV-1B1B compatibility seam: main keeps legacy string constants below, but
@@ -2378,6 +2385,7 @@ def rollback_update(req: RollbackRequest):
         UPDATE_LOCK.release()
 
 class GenerateRequest(BaseModel):
+    request_id: str = ""
     prompt: str = ""
     width: int = 1024
     height: int = 1024
@@ -2386,6 +2394,10 @@ class GenerateRequest(BaseModel):
     type: str = "zimage"
     client_id: str = ""
     convert_to_jpg: bool = False
+    backend: str = ""
+    workflow_values: Optional[Dict[str, Any]] = None
+    _workflow_config: Dict[str, Any] = PrivateAttr(default_factory=dict)
+    _enterprise_user_id: str = PrivateAttr(default="")
 
 class DeleteHistoryRequest(BaseModel):
     timestamp: float
@@ -2444,6 +2456,7 @@ class ImageTaskQueryRequest(BaseModel):
 
 CANVAS_TASK_JOURNAL = CanvasTaskJournal(PATH_ROOTS.DATA_ROOT / "canvas-tasks")
 CANVAS_TASK_RUNNERS: set = set()
+CANVAS_COMFY_ACCEPT_LOCK = asyncio.Lock()
 
 
 def schedule_canvas_task(coroutine):
@@ -2814,7 +2827,7 @@ def check_images_exist(backend_addr, images):
     if not images: return True
     for img in images:
         try:
-            url = f"http://{backend_addr}/view?filename={urllib.parse.quote(img)}&type=input"
+            url = comfy_endpoint(backend_addr, comfy_view_path(img))
             r = requests.get(url, stream=True, timeout=0.5)
             r.close()
             if r.status_code != 200: return False
@@ -2851,7 +2864,7 @@ def get_best_backend(required_images: List[str] = None):
 
     for addr in COMFYUI_INSTANCES:
         try:
-            with urllib.request.urlopen(f"http://{addr}/queue", timeout=1) as response:
+            with urllib.request.urlopen(comfy_endpoint(addr, f"/queue"), timeout=1) as response:
                 data = json.loads(response.read())
                 remote_load = len(data.get('queue_running', [])) + len(data.get('queue_pending', []))
                 with LOAD_LOCK:
@@ -2878,7 +2891,7 @@ def reserve_best_backend(required_images: List[str] = None):
     backend_stats = {}
     for addr in COMFYUI_INSTANCES:
         try:
-            with urllib.request.urlopen(f"http://{addr}/queue", timeout=1) as response:
+            with urllib.request.urlopen(comfy_endpoint(addr, f"/queue"), timeout=1) as response:
                 data = json.loads(response.read())
                 remote_load = len(data.get('queue_running', [])) + len(data.get('queue_pending', []))
                 has_images = check_images_exist(addr, required_images)
@@ -2903,7 +2916,7 @@ def reserve_best_backend(required_images: List[str] = None):
 def download_image(comfy_address, comfy_url_path, prefix="studio_"):
     filename = f"{prefix}{uuid.uuid4().hex[:10]}.png"
     local_path = output_path_for(filename, "output")
-    full_url = f"http://{comfy_address}{comfy_url_path}"
+    full_url = comfy_endpoint(comfy_address, comfy_url_path)
     try:
         with urllib.request.urlopen(full_url, timeout=COMFYUI_DOWNLOAD_TIMEOUT) as response, open(local_path, 'wb') as out_file:
             shutil.copyfileobj(response, out_file)
@@ -2970,16 +2983,21 @@ def download_comfy_output(comfy_address, item, prefix="studio_"):
     subfolder = urllib.parse.quote(str(item.get("subfolder") or ""))
     file_type = urllib.parse.quote(str(item.get("type") or "output"))
     comfy_url_path = f"/view?filename={urllib.parse.quote(str(item['filename']))}&subfolder={subfolder}&type={file_type}"
-    full_url = f"http://{comfy_address}{comfy_url_path}"
+    full_url = comfy_endpoint(comfy_address, comfy_url_path)
+    created = False
     try:
-        with urllib.request.urlopen(full_url, timeout=COMFYUI_DOWNLOAD_TIMEOUT) as response, open(local_path, 'wb') as out_file:
-            shutil.copyfileobj(response, out_file)
+        with urllib.request.urlopen(full_url, timeout=COMFYUI_DOWNLOAD_TIMEOUT) as response:
+            with open(local_path, 'xb') as out_file:
+                created = True
+                shutil.copyfileobj(response, out_file)
         return output_url_for(filename, "output")
-    except Exception as e:
-        print(f"下载 ComfyUI 输出失败: {e}")
-        if comfy_url_path.startswith("/view"):
-            return comfy_url_path.replace("/view", "/api/view", 1)
-        return full_url
+    except Exception:
+        if created:
+            try:
+                os.remove(local_path)
+            except FileNotFoundError:
+                pass
+        raise RuntimeError("ComfyUI 结果下载未完成；保留原任务供继续查询")
 
 def save_comfy_text_output(value, prefix="studio_", name=""):
     text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, indent=2)
@@ -3062,7 +3080,7 @@ def save_to_history(record):
 
 def get_comfy_history(comfy_address, prompt_id):
     try:
-        with urllib.request.urlopen(f"http://{comfy_address}/history/{prompt_id}") as response:
+        with urllib.request.urlopen(comfy_endpoint(comfy_address, f"/history/{prompt_id}"), timeout=30) as response:
             return json.loads(response.read())
     except Exception as e:
         return {}
@@ -10477,7 +10495,7 @@ def view_image(filename: str, type: str = "input", subfolder: str = ""):
     # 先按原逻辑去各 ComfyUI 后端找
     for addr in COMFYUI_INSTANCES:
         try:
-            url = f"http://{addr}/view"
+            url = comfy_endpoint(addr, f"/view")
             params = {"filename": filename, "type": type, "subfolder": subfolder}
             r = requests.get(url, params=params, timeout=1)
             if r.status_code == 200:
@@ -10544,32 +10562,20 @@ def download_output(request: Request, url: str, name: str = "", inline: bool = F
     return StreamingResponse(stream_remote(), media_type=content_type, headers=headers, status_code=upstream.status_code)
 
 @app.post("/api/upload")
-async def upload_image(files: List[UploadFile] = File(...)):
-    uploaded_files = []
-    files_content = []
+async def upload_image(files: List[UploadFile] = File(...), workflow: str = "Z-Image.json", backend: str = ""):
+    target = workflow_backend(workflow, backend)
+    client = ComfyClient(target)
+    uploaded = []
     for file in files:
         content = await file.read()
-        files_content.append((file, content))
-
-    for file, content in files_content:
-        success_count = 0
-        last_result = None
-        for addr in COMFYUI_INSTANCES:
-            try:
-                files_data = {'image': (file.filename, content, file.content_type)}
-                response = requests.post(f"http://{addr}/upload/image", files=files_data, timeout=5)
-                if response.status_code == 200:
-                    last_result = response.json()
-                    success_count += 1
-            except Exception as e:
-                print(f"Upload error for {addr}: {e}")
-
-        if success_count > 0 and last_result:
-            uploaded_files.append({"comfy_name": last_result.get("name", file.filename)})
-        else:
-            raise HTTPException(status_code=500, detail="Failed to upload to any backend")
-
-    return {"files": uploaded_files}
+        # Unique input name, preserving extension; unrelated users' filenames cannot collide.
+        name = f"canvas_{uuid.uuid4().hex}{os.path.splitext(file.filename or '')[1]}"
+        try:
+            reference = await asyncio.to_thread(client.upload, name, content, file.content_type)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail="上传到指定 ComfyUI 后端失败，请检查连接后重试") from exc
+        uploaded.append({"comfy_name": reference, "backend": target})
+    return {"files": uploaded}
 
 @app.post("/api/ai/upload")
 async def upload_ai_reference(files: List[UploadFile] = File(...)):
@@ -10649,7 +10655,7 @@ async def upload_ai_base64(payload: Base64UploadRequest):
 
 @app.post("/api/comfyui/upload-base64")
 async def upload_comfyui_base64(payload: Base64UploadRequest):
-    """base64 方式把图片传到 ComfyUI 各后端的 input 目录，返回 comfy 用文件名（供 UXP 做 ComfyUI 图生图）。"""
+    """把 UXP 图片传到默认指定后端，保留上传返回的实际文件引用。"""
     raw = (payload.data or "").strip()
     ct = (payload.content_type or "").split(";", 1)[0].strip().lower()
     if raw.startswith("data:"):
@@ -10664,18 +10670,12 @@ async def upload_comfyui_base64(payload: Base64UploadRequest):
         raise HTTPException(status_code=400, detail="内容为空")
     _, ext = _local_upload_kind_ext(payload.name or "", ct or "image/png")
     filename = f"dx_{uuid.uuid4().hex[:12]}{ext or '.png'}"
-    comfy_name = None
-    for addr in COMFYUI_INSTANCES:
-        try:
-            resp = requests.post(f"http://{addr}/upload/image",
-                                 files={'image': (filename, content, ct or 'image/png')}, timeout=10)
-            if resp.status_code == 200:
-                comfy_name = resp.json().get("name", filename)
-        except Exception as exc:
-            print(f"ComfyUI base64 upload error for {addr}: {exc}")
-    if not comfy_name:
-        raise HTTPException(status_code=502, detail="上传到 ComfyUI 失败")
-    return {"name": comfy_name}
+    try:
+        name = await asyncio.to_thread(ComfyClient(COMFYUI_INSTANCES[0]).upload, filename, content, ct or "image/png")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="上传到指定 ComfyUI 失败") from exc
+    return {"name": name}
+
 
 def _local_upload_kind_ext(filename, content_type):
     image_exts = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
@@ -12971,7 +12971,7 @@ async def run_canvas_comfy_task(task_id: str, payload: GenerateRequest):
     if not await asyncio.to_thread(CANVAS_TASK_JOURNAL.mark_running, task_id):
         return
     try:
-        result = await asyncio.to_thread(generate, payload)
+        result = await asyncio.to_thread(execute_comfy_generation, payload, task_id)
         if isinstance(result, dict) and result.get("error"):
             raise RuntimeError(str(result.get("error") or "ComfyUI 生成失败"))
         changes = {
@@ -12986,6 +12986,7 @@ async def run_canvas_comfy_task(task_id: str, payload: GenerateRequest):
             "status": "failed",
             "error": str(detail),
             "status_code": status_code,
+            "recovery_required": bool((CANVAS_TASK_JOURNAL.get(task_id) or {}).get("comfy_receipt")) and not isinstance(exc, ComfyExecutionError),
         }
     await asyncio.to_thread(CANVAS_TASK_JOURNAL.finish, task_id, changes)
 
@@ -12993,26 +12994,63 @@ async def run_canvas_comfy_task(task_id: str, payload: GenerateRequest):
 async def create_canvas_comfy_task(
     payload: GenerateRequest, x_enterprise_user_id: Optional[str] = Header(default=None),
 ):
-    task_id = f"canvas_comfy_{uuid.uuid4().hex}"
-    await asyncio.to_thread(create_task_receipt, CANVAS_TASK_JOURNAL, {
-        "id": task_id,
-        "type": "comfy",
-        "status": "queued",
-        "created_at": time.time(),
-        "updated_at": time.time(),
-        "result": None,
-        "error": "",
-        "workflow_json": payload.workflow_json,
-    }, x_enterprise_user_id)
-    schedule_canvas_task(run_canvas_comfy_task(task_id, payload))
-    return {"task_id": task_id, "status": "queued"}
+    payload._enterprise_user_id = x_enterprise_user_id if isinstance(x_enterprise_user_id, str) else ""
+    payload.backend = workflow_backend(payload.workflow_json, payload.backend)
+    if payload.workflow_values is not None and not payload._workflow_config:
+        payload._workflow_config = get_workflow(payload.workflow_json)["config"]
+    try:
+        nonce = uuid.UUID(payload.request_id).hex if payload.request_id else uuid.uuid4().hex
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid ComfyUI request identity") from exc
+    task_id = f"canvas_comfy_{nonce}"
+    async with CANVAS_COMFY_ACCEPT_LOCK:
+        existing = await asyncio.to_thread(CANVAS_TASK_JOURNAL.get, task_id)
+        if existing:
+            user_id = x_enterprise_user_id if isinstance(x_enterprise_user_id, str) else ""
+            if existing.get("type") != "comfy" or existing.get("enterprise_user_id", "") != user_id:
+                raise HTTPException(status_code=403, detail="Task owner mismatch")
+            return {"task_id": task_id, "status": existing["status"]}
+        await asyncio.to_thread(create_task_receipt, CANVAS_TASK_JOURNAL, {
+            "id": task_id,
+            "type": "comfy",
+            "status": "queued",
+            "created_at": time.time(),
+            "updated_at": time.time(),
+            "result": None,
+            "error": "",
+            "workflow_json": payload.workflow_json,
+        }, x_enterprise_user_id)
+        schedule_canvas_task(run_canvas_comfy_task(task_id, payload))
+        return {"task_id": task_id, "status": "queued"}
+
+async def resume_canvas_comfy_task(task_id, receipt):
+    try:
+        client = ComfyClient(receipt["backend"])
+        history = await asyncio.to_thread(client.wait, receipt["prompt_id"], timeout=COMFYUI_HISTORY_TIMEOUT,
+            progress=lambda phase: CANVAS_TASK_JOURNAL.record_comfy(task_id, {"phase": phase}))
+        req = GenerateRequest(type=receipt["output_type"], workflow_json=receipt.get("workflow_json", "Z-Image.json"), convert_to_jpg=receipt.get("convert_to_jpg", False))
+        result = await asyncio.to_thread(archive_comfy_history, history, receipt["workflow_classes"], req,
+                                        receipt["prompt_id"], receipt["backend"], task_id, receipt["seed"])
+        changes = {"status": "succeeded", "result": result, "error": "", "recovery_required": False}
+    except Exception as exc:
+        changes = {"status": "failed", "error": str(exc), "recovery_required": not isinstance(exc, ComfyExecutionError)}
+    await asyncio.to_thread(CANVAS_TASK_JOURNAL.finish, task_id, changes)
+
 
 @app.get("/api/canvas-comfy-tasks/{task_id}")
-async def get_canvas_comfy_task(task_id: str):
+async def get_canvas_comfy_task(task_id: str, resume: bool = False):
     task = await asyncio.to_thread(CANVAS_TASK_JOURNAL.get, task_id)
-    if not task:
+    if not task or task.get("type") != "comfy":
         raise HTTPException(status_code=404, detail="ComfyUI 任务不存在；此版本启用前的内存任务无法凭空恢复")
-    return task
+    if task.get("status") == "failed" and task.get("recovery_required") and (resume or task.get("error_code") == "runtime_interrupted"):
+        receipt = await asyncio.to_thread(CANVAS_TASK_JOURNAL.claim_comfy_query, task_id)
+        if receipt:
+            schedule_canvas_task(resume_canvas_comfy_task(task_id, receipt))
+            task = await asyncio.to_thread(CANVAS_TASK_JOURNAL.get, task_id)
+    # Internal backend/class metadata stays in the journal, not the polling response.
+    public = {key: value for key, value in task.items() if key != "comfy_receipt"}
+    public["phase"] = (task.get("comfy_receipt") or {}).get("phase", "preparing" if task["status"] == "running" else task["status"])
+    return public
 
 # --- 图像生成参数 schema（供客户端动态渲染参数表单，避免把参数写死在前端） ---
 IMAGE_PARAM_RATIOS = [
@@ -16148,65 +16186,19 @@ async def ms_generate(req: MsGenerateRequest):
 
 # --- 本地 ComfyUI 生图 ---
 
-@app.post("/api/generate")
-def generate(req: GenerateRequest):
-    global NEXT_TASK_ID
-    current_task = None
-    target_backend = None
-    with QUEUE_LOCK:
-        task_id = NEXT_TASK_ID
-        NEXT_TASK_ID += 1
-        current_task = {"task_id": task_id, "client_id": req.client_id}
-        QUEUE.append(current_task)
+def prepare_comfy_workflow(req):
+    workflow_path = workflow_path_from_name(req.workflow_json)
+    if not os.path.exists(workflow_path) and req.workflow_json == "Z-Image.json":
+        workflow_path = WORKFLOW_PATH
+    if not os.path.exists(workflow_path):
+        raise Exception(f"Workflow file not found: {req.workflow_json}")
 
-    try:
-        required_images = collect_required_comfy_media(req.params)
+    with open(workflow_path, 'r', encoding='utf-8') as f:
+        workflow = json.load(f)
 
-        target_backend = reserve_best_backend(required_images)
+    seed = random.randint(1, 4294967295)
 
-        for image_name in required_images:
-            need_sync = False
-            try:
-                check_url = f"http://{target_backend}/view?filename={urllib.parse.quote(image_name)}&type=input"
-                resp = requests.get(check_url, stream=True, timeout=0.5)
-                resp.close()
-                if resp.status_code != 200:
-                    need_sync = True
-            except:
-                need_sync = True
-
-            if need_sync:
-                image_content = None
-                image_type = "image/png"
-                for addr in COMFYUI_INSTANCES:
-                    if addr == target_backend: continue
-                    try:
-                        src_url = f"http://{addr}/view?filename={urllib.parse.quote(image_name)}&type=input"
-                        r = requests.get(src_url, timeout=5)
-                        if r.status_code == 200:
-                            image_content = r.content
-                            image_type = r.headers.get("Content-Type", "image/png")
-                            break
-                    except: continue
-
-                if image_content:
-                    try:
-                        files = {'image': (image_name, image_content, image_type)}
-                        requests.post(f"http://{target_backend}/upload/image", files=files, timeout=10)
-                    except Exception as e:
-                        print(f"Sync upload failed: {e}")
-
-        workflow_path = os.path.join(WORKFLOW_DIR, req.workflow_json)
-        if not os.path.exists(workflow_path) and req.workflow_json == "Z-Image.json":
-            workflow_path = WORKFLOW_PATH
-        if not os.path.exists(workflow_path):
-            raise Exception(f"Workflow file not found: {req.workflow_json}")
-
-        with open(workflow_path, 'r', encoding='utf-8') as f:
-            workflow = json.load(f)
-
-        seed = random.randint(1, 4294967295)
-
+    if req.workflow_json in BUILTIN_WORKFLOWS:
         if "23" in workflow and req.prompt:
             workflow["23"]["inputs"]["text"] = req.prompt
         if "144" in workflow:
@@ -16226,147 +16218,188 @@ def generate(req: GenerateRequest):
         if "14" in workflow and "inputs" in workflow["14"] and "seed" in workflow["14"]["inputs"]:
             workflow["14"]["inputs"]["seed"] = seed
 
-        for node_id, node_inputs in req.params.items():
-            if node_id in workflow:
-                if "inputs" not in workflow[node_id]:
-                    workflow[node_id]["inputs"] = {}
-                for input_name, value in node_inputs.items():
-                    workflow[node_id]["inputs"][input_name] = value
-
-        p = {"prompt": workflow, "client_id": CLIENT_ID}
-        data = json.dumps(p).encode('utf-8')
+    if getattr(req, "workflow_values", None) is not None:
+        config = getattr(req, "_workflow_config", None) or get_workflow(req.workflow_json)["config"]
         try:
-            post_req = urllib.request.Request(f"http://{target_backend}/prompt", data=data)
-            prompt_id = json.loads(urllib.request.urlopen(post_req, timeout=10).read())['prompt_id']
-        except urllib.error.HTTPError as e:
-            error_body = e.read().decode('utf-8')
-            raise Exception(f"HTTP Error {e.code}: {error_body}")
+            workflow = apply_workflow_values(workflow, config, req.workflow_values)
+            from enterprise.comfy_input_policy import authorize_workflow_media
+            authorize_workflow_media(getattr(req, "_enterprise_user_id", ""), workflow, config, req.workflow_values)
+        except (ValueError, TypeError) as exc:
+            raise ComfyExecutionError(str(exc)) from exc
+        return workflow, seed
 
-        history_data = None
-        for i in range(COMFYUI_HISTORY_TIMEOUT):
-            try:
-                res = get_comfy_history(target_backend, prompt_id)
-                if prompt_id in res:
-                    history_data = res[prompt_id]
-                    break
-            except Exception:
-                pass
-            time.sleep(1)
+    for node_id, node_inputs in req.params.items():
+        if req.workflow_json not in BUILTIN_WORKFLOWS:
+            actual_inputs = (workflow.get(node_id) or {}).get("inputs", {})
+            missing = [key for key in node_inputs if key not in actual_inputs]
+            if node_id not in workflow or missing:
+                raise ComfyExecutionError(f"工作流参数映射已失效：#{node_id} {', '.join(missing)}；请管理员更新该工作流的暴露字段配置")
+        if node_id in workflow:
+            if "inputs" not in workflow[node_id]:
+                workflow[node_id]["inputs"] = {}
+            for input_name, value in node_inputs.items():
+                workflow[node_id]["inputs"][input_name] = value
+    return workflow, seed
 
-        if not history_data:
-            raise Exception("ComfyUI 渲染超时")
 
-        local_images = []
-        local_videos = []
-        local_audios = []
-        local_texts = []
-        local_files = []
-        local_items = []
-        local_urls = []
-        current_timestamp = time.time()
-        if 'outputs' in history_data:
-            # 先把所有节点的输出收集为候选（带上 class_type），再决定下载哪些，
-            # 避免把冗余的预览/对比图、调试文本一起下载进结果（后端层过滤，历史记录也更干净）。
-            workflow_nodes = workflow if isinstance(workflow, dict) else {}
-            def _class_type_of(nid):
-                node_def = workflow_nodes.get(str(nid))
-                return str(node_def.get("class_type") or "") if isinstance(node_def, dict) else ""
-            file_candidates = []   # (node_id, class_type, output_key, item, kind)
-            text_candidates = []   # (node_id, class_type, text, name)
-            for node_id in history_data['outputs']:
-                node_output = history_data['outputs'][node_id]
-                class_type = _class_type_of(node_id)
-                for output_key, item in collect_comfy_file_items(node_output):
-                    file_candidates.append((node_id, class_type, output_key, item, comfy_output_kind(item)))
-                for text, name in comfy_text_values_from_output(node_output):
-                    text_candidates.append((node_id, class_type, text, name))
+def archive_comfy_history(history_data, workflow, req, prompt_id, target_backend, task_id, seed):
+    local_images = []
+    local_videos = []
+    local_audios = []
+    local_texts = []
+    local_files = []
+    local_items = []
+    local_urls = []
+    current_timestamp = time.time()
+    if 'outputs' in history_data:
+        # 先把所有节点的输出收集为候选（带上 class_type），再决定下载哪些，
+        # 避免把冗余的预览/对比图、调试文本一起下载进结果（后端层过滤，历史记录也更干净）。
+        workflow_nodes = workflow if isinstance(workflow, dict) else {}
+        file_candidates, text_candidates = select_history_outputs(
+            history_data, workflow_nodes, is_preview=comfy_class_is_preview, is_debug=comfy_class_is_debug_text)
 
-            # 只要存在“非预览节点”产出的图片，就把 PreviewImage/对比节点的图片视为冗余丢弃；
-            # 若整个工作流只有预览图（没有 SaveImage 等），则保留预览图作为唯一结果，避免零输出。
-            has_primary_image = any(
-                kind == "image" and not comfy_class_is_preview(ct)
-                for (_nid, ct, _ok, _it, kind) in file_candidates
-            )
-            prefix = f"{req.type}_{int(current_timestamp)}_"
-            for node_id, class_type, output_key, item, kind in file_candidates:
-                if kind == "image" and has_primary_image and comfy_class_is_preview(class_type):
-                    continue  # 跳过冗余的预览/对比图
-                local_path = download_comfy_output(target_backend, item, prefix=prefix)
-                if kind == "image" and req.convert_to_jpg:
-                    local_path = convert_output_to_jpg(local_path)
-                name = os.path.basename(str(item.get("filename") or "")) or os.path.basename(str(local_path).split("?", 1)[0])
-                entry = {
-                    "url": local_path,
-                    "kind": kind,
-                    "name": name,
-                    "node_id": str(node_id),
-                    "output_key": str(output_key),
-                    "class_type": class_type,
-                }
-                if kind == "image":
-                    local_images.append(local_path)
-                elif kind == "video":
-                    local_videos.append(local_path)
-                elif kind == "audio":
-                    local_audios.append(local_path)
-                elif kind == "text":
-                    local_texts.append(local_path)
-                else:
-                    local_files.append(local_path)
-                local_items.append(entry)
-                local_urls.append(local_path)
-
-            # 默认抑制 show/utility 类节点的调试文本，避免 .txt 噪声混入结果。
-            for node_id, class_type, text, name in text_candidates:
-                if comfy_class_is_debug_text(class_type):
-                    continue
-                local_path = save_comfy_text_output(text, prefix=prefix, name=name)
-                entry = {
-                    "url": local_path,
-                    "kind": "text",
-                    "name": os.path.basename(str(local_path).split("?", 1)[0]),
-                    "node_id": str(node_id),
-                    "output_key": "text",
-                    "class_type": class_type,
-                }
+        # 只要存在“非预览节点”产出的图片，就把 PreviewImage/对比节点的图片视为冗余丢弃；
+        # 若整个工作流只有预览图（没有 SaveImage 等），则保留预览图作为唯一结果，避免零输出。
+        has_primary_image = any(
+            comfy_output_kind(entry["file"]) == "image" and not comfy_class_is_preview(entry["class_type"])
+            for entry in file_candidates
+        )
+        prefix = f"{req.type}_{int(current_timestamp)}_"
+        for selected in file_candidates:
+            node_id, class_type, output_key, item = (selected[key] for key in ("node_id", "class_type", "output_key", "file"))
+            kind = comfy_output_kind(item)
+            if kind == "image" and has_primary_image and comfy_class_is_preview(class_type):
+                continue  # 跳过冗余的预览/对比图
+            local_path = download_comfy_output(target_backend, item, prefix=prefix)
+            if kind == "image" and req.convert_to_jpg:
+                local_path = convert_output_to_jpg(local_path)
+            name = os.path.basename(str(item.get("filename") or "")) or os.path.basename(str(local_path).split("?", 1)[0])
+            entry = {
+                "url": local_path,
+                "kind": kind,
+                "name": name,
+                "node_id": str(node_id),
+                "output_key": str(output_key),
+                "class_type": class_type,
+                "result_id": f"{task_id}:{node_id}:{output_key}:{selected['index']}",
+                "run_id": task_id,
+                "created_at": current_timestamp,
+            }
+            if "text" in selected:
+                entry["text"] = selected["text"]
+            if kind == "image":
+                local_images.append(local_path)
+            elif kind == "video":
+                local_videos.append(local_path)
+            elif kind == "audio":
+                local_audios.append(local_path)
+            elif kind == "text":
                 local_texts.append(local_path)
-                local_items.append(entry)
-                local_urls.append(local_path)
+            else:
+                local_files.append(local_path)
+            local_items.append(entry)
+            local_urls.append(local_path)
 
-        result = {
-            "prompt": req.prompt if req.prompt else "Detail Enhance",
-            "images": local_images,
-            "videos": local_videos,
-            "audios": local_audios,
-            "texts": local_texts,
-            "files": local_files,
-            "items": local_items,
-            "outputs": local_urls,
-            "seed": seed,
-            "timestamp": current_timestamp,
-            "type": req.type,
-            "workflow_json": req.workflow_json,
-            "task_id": task_id,
-            "prompt_id": prompt_id,
-            "backend": target_backend,
-            "params": req.params
-        }
-        save_to_history(result)
-        if GLOBAL_LOOP:
-            asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(result), GLOBAL_LOOP)
-        return result
+        # Preview text is retained when it is the only text result of a workflow.
+        for selected in text_candidates:
+            node_id, class_type, text = (selected[key] for key in ("node_id", "class_type", "text"))
+            name = selected["output_key"] + ".txt"
+            local_path = save_comfy_text_output(text, prefix=prefix, name=name)
+            entry = {
+                "url": local_path,
+                "kind": "text",
+                "name": os.path.basename(str(local_path).split("?", 1)[0]),
+                "node_id": str(node_id),
+                "output_key": selected["output_key"],
+                "class_type": class_type,
+                "text": text,
+                "result_id": f"{task_id}:{node_id}:{selected['output_key']}:{selected['index']}",
+                "run_id": task_id,
+                "created_at": current_timestamp,
+            }
+            local_texts.append(local_path)
+            local_items.append(entry)
+            local_urls.append(local_path)
 
-    except Exception as e:
-        return {"images": [], "error": str(e)}
+    if not local_urls:
+        raise ComfyExecutionError("ComfyUI 已结束，但工作流未返回可归档的输出；请检查输出节点")
+    result = {
+        "prompt": req.prompt if req.prompt else "Detail Enhance",
+        "images": local_images,
+        "videos": local_videos,
+        "audios": local_audios,
+        "texts": local_texts,
+        "files": local_files,
+        "items": local_items,
+        "outputs": local_urls,
+        "seed": seed,
+        "timestamp": current_timestamp,
+        "type": req.type,
+        "workflow_json": req.workflow_json,
+        "task_id": task_id,
+        "prompt_id": prompt_id,
+        "backend": target_backend,
+        "params": req.params
+    }
+    save_to_history(result)
+    if GLOBAL_LOOP:
+        asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(result), GLOBAL_LOOP)
+    return result
+
+
+def workflow_backend(name, override=""):
+    config = {}
+    path = workflow_config_path(name)
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as stream:
+            config = json.load(stream)
+    selected = override or config.get("backend") or COMFYUI_INSTANCES[0]
+    normalized = comfy_base_url(selected)
+    if normalized not in {comfy_base_url(addr) for addr in COMFYUI_INSTANCES}:
+        raise HTTPException(status_code=400, detail="工作流后端已移除，请在工作流设置重新选择并上传素材")
+    return next(addr for addr in COMFYUI_INSTANCES if comfy_base_url(addr) == normalized)
+
+
+def _execute_comfy_generation(req, journal_id=None):
+    workflow, seed = prepare_comfy_workflow(req)
+    backend = workflow_backend(req.workflow_json, req.backend)
+    client = ComfyClient(backend)
+    receipt = {"backend": backend, "seed": seed, "output_type": req.type,
+               "convert_to_jpg": req.convert_to_jpg, "workflow_json": req.workflow_json,
+               "workflow_classes": {nid: {"class_type": node.get("class_type", "")} for nid, node in workflow.items()}}
+    if journal_id:
+        # Persist intent before POST. A lost acceptance response must never replay submission.
+        CANVAS_TASK_JOURNAL.record_comfy(journal_id, {**receipt, "phase": "submitting"})
+    prompt_id = client.submit(workflow, journal_id or req.client_id or str(uuid.uuid4()))
+    if journal_id:
+        CANVAS_TASK_JOURNAL.record_comfy(journal_id, {"prompt_id": prompt_id, "phase": "queued"})
+    history = client.wait(prompt_id, timeout=COMFYUI_HISTORY_TIMEOUT,
+                          progress=lambda phase: CANVAS_TASK_JOURNAL.record_comfy(journal_id, {"phase": phase}) if journal_id else None)
+    return archive_comfy_history(history, workflow, req, prompt_id, backend, journal_id or prompt_id, seed)
+
+
+def execute_comfy_generation(req, journal_id=None):
+    global NEXT_TASK_ID
+    with QUEUE_LOCK:
+        entry = {"task_id": NEXT_TASK_ID, "client_id": req.client_id}
+        NEXT_TASK_ID += 1
+        QUEUE.append(entry)
+    try:
+        return _execute_comfy_generation(req, journal_id)
     finally:
-        if target_backend:
-            with LOAD_LOCK:
-                if BACKEND_LOCAL_LOAD.get(target_backend, 0) > 0:
-                    BACKEND_LOCAL_LOAD[target_backend] -= 1
-        if current_task:
-            with QUEUE_LOCK:
-                if current_task in QUEUE:
-                    QUEUE.remove(current_task)
+        with QUEUE_LOCK:
+            QUEUE.remove(entry)
+
+
+@app.post("/api/generate")
+def generate(req: GenerateRequest, x_enterprise_user_id: Optional[str] = Header(default=None)):
+    req._enterprise_user_id = x_enterprise_user_id if isinstance(x_enterprise_user_id, str) else ""
+    try:
+        return execute_comfy_generation(req)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        return {"images": [], "error": str(exc)}
 
 # --- ComfyUI 工作流管理 ---
 
@@ -16387,17 +16420,29 @@ class WorkflowField(BaseModel):
     step: Optional[float] = None
     options: List[str] = []
     random_enabled: bool = False
+    role: str = ""
+
+class WorkflowImageGroup(BaseModel):
+    id: str
+    name: str = "主体图与参考图"
+    source_nodes: List[str]
+    min_images: int = 1
+    max_images: int = 10
 
 class WorkflowConfig(BaseModel):
+    backend: str = ""
     title: str = ""
     fields: List[WorkflowField] = []
     mini_cards: Dict[str, Any] = {}
+    image_groups: List[WorkflowImageGroup] = Field(default_factory=list)
 
 class WorkflowUploadRequest(BaseModel):
     name: str
     workflow: Dict[str, Any]
 
 class WorkflowRunRequest(BaseModel):
+    request_id: str = ""
+    async_task: bool = False
     fields: Dict[str, Any] = {}
     config: WorkflowConfig
     client_id: str = ""
@@ -16837,22 +16882,16 @@ def get_comfyui_instances():
 
 @app.put("/api/comfyui/instances")
 def save_comfyui_instances(payload: ComfyInstancesPayload):
-    # 宽容校验：去前后空白、去 http(s):// 前缀、去尾部斜杠；要求形如 host:port
     cleaned = []
     for item in payload.instances:
-        s = str(item or "").strip()
-        if not s:
+        if not str(item or "").strip():
             continue
-        s = re.sub(r"^https?://", "", s)
-        s = s.rstrip("/")
-        if ":" not in s:
-            raise HTTPException(status_code=400, detail=f"地址缺少端口号：{item}（应为 host:port，例如 127.0.0.1:8188）")
-        host, _, port = s.rpartition(":")
-        if not host or not port.isdigit():
-            raise HTTPException(status_code=400, detail=f"地址不合法：{item}（应为 host:port，例如 127.0.0.1:8188）")
-        if s in cleaned:
-            continue
-        cleaned.append(s)
+        try:
+            value = comfy_base_url(item)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if value not in cleaned:
+            cleaned.append(value)
     if not cleaned:
         raise HTTPException(status_code=400, detail="至少保留一个 ComfyUI 后端地址")
     # 写入 env 文件
@@ -16903,7 +16942,7 @@ def list_workflows():
     return {"workflows": items}
 
 @app.get("/api/workflows/{name:path}")
-def get_workflow(name: str):
+def get_workflow(name: str, include_definitions: bool = False):
     if not WORKFLOW_NAME_RE.match(name):
         raise HTTPException(status_code=400, detail="Invalid workflow name")
     workflow_path = workflow_path_from_name(name)
@@ -16919,7 +16958,23 @@ def get_workflow(name: str):
                 cfg = json.load(f) or cfg
         except Exception:
             pass
-    return {"name": name, "workflow": workflow, "config": cfg, "builtin": is_builtin_workflow(name)}
+    cfg = {**cfg, "backend": cfg.get("backend") or COMFYUI_INSTANCES[0]}
+    cfg["fields"] = [{**field, "role": field_role(workflow, field)} for field in cfg.get("fields", [])]
+    result = {"name": name, "workflow": workflow, "config": cfg, "builtin": is_builtin_workflow(name)}
+    result["image_group_candidates"] = image_group_candidates(workflow)
+    result["field_roles"] = {f"{nid}.{key}": field_role(workflow, {"node": nid, "input": key})
+                             for nid, node in workflow.items() if isinstance(node, dict) for key in node.get("inputs", {})}
+    if include_definitions:
+        try:
+            response = requests.get(comfy_endpoint(workflow_backend(name), "/object_info"), timeout=(5, 15))
+            response.raise_for_status()
+            definitions = response.json()
+            classes = {node.get("class_type") for node in workflow.values()}
+            result["definitions"] = {key: value for key, value in definitions.items() if key in classes}
+            result["missing_classes"] = sorted(classes - definitions.keys())
+        except (requests.RequestException, ValueError, HTTPException):
+            result["definition_warning"] = "无法读取后端节点定义，已保留原配置；运行前请确认连接、节点和模型"
+    return result
 
 @app.post("/api/workflows")
 def upload_workflow(payload: WorkflowUploadRequest):
@@ -16949,6 +17004,14 @@ def save_workflow_config(name: str, payload: WorkflowConfig):
     workflow_path = _copy_shipped_workflow_to_user(name)
     if not os.path.exists(workflow_path):
         raise HTTPException(status_code=404, detail="Workflow not found")
+    if payload.backend:
+        workflow_backend(name, payload.backend)
+    with open(workflow_path, encoding="utf-8") as stream:
+        graph = json.load(stream)
+    try:
+        validate_image_groups(graph, [group.dict() for group in payload.image_groups])
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     cfg_path = workflow_config_path(name)
     with open(cfg_path, "w", encoding="utf-8") as f:
         json.dump(payload.dict(), f, ensure_ascii=False, indent=2)
@@ -16970,7 +17033,7 @@ def delete_workflow(name: str):
     return {"ok": True}
 
 @app.post("/api/workflows/{name:path}/run")
-def run_workflow(name: str, payload: WorkflowRunRequest):
+async def run_workflow(name: str, payload: WorkflowRunRequest, x_enterprise_user_id: Optional[str] = Header(default=None)):
     if not WORKFLOW_NAME_RE.match(name):
         raise HTTPException(status_code=400, detail="Invalid workflow name")
     if not os.path.exists(workflow_path_from_name(name)):
@@ -17007,9 +17070,15 @@ def run_workflow(name: str, payload: WorkflowRunRequest):
         workflow_json=name,
         params=params,
         type="workflow-test",
+        backend=payload.config.backend,
+        request_id=payload.request_id,
         client_id=payload.client_id or str(uuid.uuid4()),
+        workflow_values=payload.fields,
     )
-    return generate(req)
+    req._workflow_config = payload.config.dict()
+    if payload.async_task:
+        return await create_canvas_comfy_task(req, x_enterprise_user_id)
+    return await asyncio.to_thread(generate, req, x_enterprise_user_id)
 
 if __name__ == "__main__":
     import uvicorn

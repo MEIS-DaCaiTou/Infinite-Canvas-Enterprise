@@ -1,0 +1,43 @@
+/* Match the canvas log/error panels and prompt fields; shared by all Comfy surfaces. */
+.comfy-text-dialog {
+    --comfy-strong:var(--strong,#111827); --comfy-strong-text:var(--strong-text,#fff);
+    box-sizing:border-box; width:min(720px,calc(100vw - 40px)); max-height:86vh;
+    padding:0; border:1px solid var(--line,#e8edf3); border-radius:22px;
+    background:var(--card-solid,var(--card,#fff)); color:var(--text,#111827);
+    box-shadow:0 30px 90px rgba(15,23,42,.22); overflow:hidden;
+    font-family:inherit;
+}
+.theme-dark .comfy-text-dialog,.studio-theme-dark .comfy-text-dialog { --comfy-strong:var(--strong,#f8fafc); --comfy-strong-text:var(--strong-text,#0f172a); }
+.comfy-text-dialog::backdrop { background:rgba(248,250,252,.42); backdrop-filter:blur(18px); }
+.theme-dark .comfy-text-dialog::backdrop,.studio-theme-dark .comfy-text-dialog::backdrop { background:rgba(2,6,23,.66); }
+.comfy-text-head { min-height:68px; padding:15px 20px; display:flex; align-items:center; justify-content:space-between; gap:16px; border-bottom:1px solid var(--line,#e8edf3); }
+.comfy-text-heading { display:flex; align-items:center; gap:11px; min-width:0; }
+.comfy-text-heading-icon { width:36px; height:36px; flex:none; display:grid; place-items:center; border-radius:12px; background:var(--soft,#f8fafc); border:1px solid var(--line,#e8edf3); color:var(--muted,#64748b); }
+.comfy-text-title { margin:0; font-size:14px; font-weight:900; line-height:1.5; }
+.comfy-text-subtitle { margin-top:3px; max-width:440px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted,#64748b); font-size:11px; }
+.comfy-text-close { width:32px; height:32px; flex:none; border:1px solid var(--line,#e8edf3); border-radius:999px; background:var(--soft,#f8fafc); color:var(--muted,#64748b); display:grid; place-items:center; cursor:pointer; }
+.comfy-text-close:hover { color:var(--comfy-strong-text); background:var(--comfy-strong); }
+.comfy-text-content { padding:18px 20px; }
+.comfy-text-body { display:block; box-sizing:border-box; width:100%; min-height:132px; max-height:52vh; padding:14px 16px; border:1px solid var(--line,#e8edf3); border-radius:14px; outline:none; resize:vertical; background:var(--soft,#f8fafc); color:var(--text,#111827); font-family:inherit; font-size:12px; font-weight:500; line-height:1.85; white-space:pre-wrap; overflow-wrap:anywhere; }
+.comfy-text-body:focus-visible { border-color:var(--line-2,#cbd5e1); }
+.comfy-text-footer { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; padding:0 20px 18px; }
+.comfy-text-actions { display:flex; align-items:center; gap:7px; flex-wrap:wrap; }
+.comfy-text-btn { height:34px; padding:0 13px; border:1px solid var(--line,#e8edf3); border-radius:999px; display:inline-flex; align-items:center; justify-content:center; gap:6px; background:var(--card-solid,var(--card,#fff)); color:var(--muted,#64748b); font-family:inherit; font-size:11px; font-weight:800; cursor:pointer; }
+.comfy-text-btn:hover { background:var(--soft,#f8fafc); color:var(--text,#111827); }
+.comfy-text-btn.primary { color:var(--comfy-strong-text); background:var(--comfy-strong); border-color:var(--comfy-strong); }
+.comfy-text-btn.primary:hover { opacity:.88; }
+.comfy-text-dialog svg { width:14px; height:14px; stroke-width:1.8; }
+.comfy-text-status { margin:0; padding:0 20px; color:var(--muted,#64748b); font-size:11px; line-height:1.6; }
+.comfy-text-status:not(:empty) { padding-bottom:16px; }
+.comfy-text-card { box-sizing:border-box; width:100%; min-width:0; padding:12px; text-align:left; display:flex; flex-direction:column; gap:8px; overflow:hidden; color:var(--text,#111827); }
+.comfy-text-card-label { display:flex; align-items:center; gap:5px; color:var(--faint,#94a3b8); font-size:9px; font-weight:800; letter-spacing:.06em; }
+.comfy-text-card-body { display:-webkit-box; -webkit-line-clamp:4; -webkit-box-orient:vertical; overflow:hidden; white-space:pre-wrap; overflow-wrap:anywhere; font-size:11px; font-weight:500; line-height:1.65; }
+.comfy-text-card-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted,#64748b); font-size:9px; }
+@media(max-width:600px) {
+    .comfy-text-dialog { width:calc(100vw - 24px); }
+    .comfy-text-head { padding:14px; }
+    .comfy-text-content { padding:14px; }
+    .comfy-text-footer { padding:0 14px 14px; }
+    .comfy-text-actions { flex-wrap:wrap; }
+    .comfy-text-subtitle { max-width:calc(100vw - 160px); }
+}
