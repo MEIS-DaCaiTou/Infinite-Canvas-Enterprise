@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
-SPEC = importlib.util.spec_from_file_location("ci_scope", ROOT / "tools/check_ci_scope.py")
+SPEC = importlib.util.spec_from_file_location("ci_scope", ROOT / "enterprise/tests/check_ci_scope.py")
 SCOPE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(SCOPE)
 

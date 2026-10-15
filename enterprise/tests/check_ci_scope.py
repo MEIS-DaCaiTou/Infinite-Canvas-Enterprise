@@ -99,7 +99,7 @@ def main() -> int:
     parser.add_argument("--base", default="")
     parser.add_argument("--head", default="")
     args = parser.parse_args()
-    repo = Path(__file__).resolve().parents[1]
+    repo = Path(__file__).resolve().parents[2]
     if args.advisory:
         result = changed_code(repo, json.loads(args.plan.read_text(encoding="utf-8"))["files"])
     else:
