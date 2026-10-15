@@ -1,0 +1,65 @@
+name: 缺陷反馈
+description: 报告已有功能的问题，帮助定位影响和复现路径。
+title: "[缺陷] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请先查看是否已有相同问题，有则补充原 Issue。
+        本仓库公开：只填写脱敏摘要，不提交凭据、环境配置、日志原件或客户数据库、画布和素材。
+        无法安全公开的内容先省略；安全问题不要公开利用细节，由负责人确认受控沟通方式。
+  - type: textarea
+    id: version_environment
+    attributes:
+      label: 版本与使用环境
+      description: 写应用版本、安装包或源码来源，以及 Windows、浏览器和访问方式；不清楚的可写“未知”，无需设备名或真实地址。
+      placeholder: 正式 v2026.10.2，Windows 11，Edge，局域网访问
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 如何复现
+      description: 从哪个页面开始，进行了哪些操作；偶发问题请说明频率，不能稳定复现也可提交。
+      placeholder: |
+        1. 打开……
+        2. 选择……
+        3. 点击后出现……
+    validations:
+      required: true
+  - type: textarea
+    id: expected_actual
+    attributes:
+      label: 预期与实际结果
+      placeholder: |
+        预期：
+        实际：
+    validations:
+      required: true
+  - type: dropdown
+    id: impact
+    attributes:
+      label: 业务影响
+      description: 选择最接近的情况；影响分级不代表响应时限或实施顺序。
+      options:
+        - 阻断：无法继续关键操作，或可能涉及数据、权限、重复费用风险
+        - 受限：部分功能不可用，但有可行替代路径
+        - 一般：显示、操作体验或其他非阻断问题
+        - 暂不能判断
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 脱敏证据（可选）
+      description: 可贴简短错误文字、已有公开 CI/PR 链接或合成截图；不要求上传日志或附件，无法脱敏则省略。
+    validations:
+      required: false
+  - type: input
+    id: related_refs
+    attributes:
+      label: 已有 Issue 或需求编号（可选）
+      description: 已知时填写 Issue、BR 或 T 场景编号；不清楚可留空，不必先建立新编号。
+    validations:
+      required: false

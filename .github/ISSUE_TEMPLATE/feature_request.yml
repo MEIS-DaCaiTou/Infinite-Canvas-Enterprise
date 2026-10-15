@@ -1,0 +1,38 @@
+name: 功能建议
+description: 说明业务问题、期望效果和验收方式。
+title: "[建议] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请优先补充已有相同建议。提交建议不等于实施授权，开发顺序仍以项目唯一路线图为准。
+        本仓库公开：使用脱敏或合成例子，不提交凭据、日志原件或客户数据库、画布和素材。
+  - type: textarea
+    id: business_problem
+    attributes:
+      label: 要解决什么业务问题
+      description: 谁在什么操作中遇到困难，目前怎样处理。
+    validations:
+      required: true
+  - type: textarea
+    id: desired_outcome
+    attributes:
+      label: 希望获得什么效果
+      description: 描述使用效果即可，不必先设计技术方案。
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 怎样判断达到预期
+      description: 给出一两个可观察的操作和结果。
+    validations:
+      required: true
+  - type: input
+    id: related_refs
+    attributes:
+      label: 已有 Issue、需求或路线图条目（可选）
+      description: 已知时填写链接或原 BR、T 编号；没有对应项可写“未映射”或留空，不自行新增正式编号。
+    validations:
+      required: false
