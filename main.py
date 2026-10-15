@@ -54,6 +54,7 @@ from enterprise.config import PATH_ROOTS as _CONFIG_PATH_ROOTS
 from enterprise.paths import get_path_roots, prepare_application_directories
 from enterprise.app_paths import AppPathLayout
 from enterprise.canvas_task_journal import CanvasTaskJournal, create_task_receipt
+from enterprise.generation_task_routes import create_router as create_generation_task_router
 from enterprise.canvas_image_recovery import CanvasImageRecovery, ImageReceiptSink, public_receipt
 from enterprise.providers.submission import (
     image_api_explicitly_rejected, provider_submission_unknown, submission_json,
@@ -2461,6 +2462,7 @@ class ImageTaskQueryRequest(BaseModel):
     task_id: str = Field(min_length=1, max_length=240)
 
 CANVAS_TASK_JOURNAL = CanvasTaskJournal(PATH_ROOTS.DATA_ROOT / "canvas-tasks")
+app.include_router(create_generation_task_router(CANVAS_TASK_JOURNAL))
 CANVAS_TASK_RUNNERS: set = set()
 CANVAS_COMFY_ACCEPT_LOCK = asyncio.Lock()
 

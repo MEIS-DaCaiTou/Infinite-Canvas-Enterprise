@@ -90,3 +90,5 @@ Responses 后台/SSE、专属 CLI 等尚未接入通用持久原任务续查，�
 原件根：`D:/CodeProject/Infinite-Canvas-Enterprise-Artifacts/task-center-20261015/`，设计说明、定向检查输出、`supplier-requests.jsonl`、浏览器截图/console、重启后 HTTP 记录与清理记录。图像/用量为受控夹具；未调用真实付费供应商/GPU、客户实例或全部工作流。该候选没有后台自主查询调度、GPT/视频/专有 CLI 的完整持久跟踪、部门归属快照/计价版本/费用结算与预算，旧无持久回执历史不能凭空补录。升级包/客户验收和大规模容量仍未执行，不更改正式 Release。
 
 最终相关增量复查：任务目录/回执/图像恢复/模型请求与付费止损 63 项通过；APP_ROOT 写入结构审计 1 项通过，文档契约 141 文档/356 本地链接通过；三份画布 JS 语法及 Linux 空白检查通过。此前硬退出和 journal 的首轮证据继续有效，没有重复全量门禁。
+
+任务目录读写协调补记：生产路径由 Gateway 的 generation_task_api 认证并覆盖身份，通过既有回环 HTTP 连接池读取 generation_task_routes 的内部路由；Repository 注入上游同一个 CANVAS_TASK_JOURNAL，共用既有互斥锁，Gateway 不直接打开回执文件。Windows 普通读取句柄阻止 os.replace 的对照已复现；改为同一对象协调后，并发读取/30 次回执写入通过。公开 Gateway 拒绝整个 /_enterprise_internal/ 命名空间，客户端伪造身份无效；业务进程不可用时返回 503，不自动生成。原生文件接口试验未保留，无新平台适配/数据库结构。

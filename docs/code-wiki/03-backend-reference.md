@@ -194,3 +194,5 @@ enterprise/providers/comfyui.py 的 ComfyClient 分离 upload/submit/inspect/wai
 前述 #161“未合并”均为审查前快照：现已合并 main6603550，尚未发布。独立复审修正的 `comfy_input_policy.authorize_workflow_media` 在实际调用前校验工作流图引用的素材，不只信任前端参数名。
 
 新任务中心候选：`generation_tasks.GenerationTaskRepository.page/detail` 用 `db.list_owned_canvas_tasks` 的 owner-first SQL 读取既有 journal；`generation_task_api` 提供两个本人读取路由，不接受客户端 owner、供应商地址或凭据。详情在本人归属核实后复用资源投影，不替换原 owner。`ImageReceiptSink.started/generated/interrupted` 补充提交阶段/报告用量/脱敏错误，`CanvasTaskJournal.record_reconciliation` 保存最近核对及次数；仍是单上游写入者。`providers/zhenzhen.image_headers/image_task_endpoint/query_image` 与 `image_task_protocol` 复用现有 HTTP/状态语义。详见 [工程记录](../ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md#2026-10-15-持久任务中心与供应商边界续包)。本包尚待审查合并，未完成全供应商/后台调度或费用结算。
+
+任务目录读写协调补记：生产路径由 Gateway 的 generation_task_api 认证并覆盖身份，通过既有回环 HTTP 连接池读取 generation_task_routes 的内部路由；Repository 注入上游同一个 CANVAS_TASK_JOURNAL，共用既有互斥锁，Gateway 不直接打开回执文件。Windows 普通读取句柄阻止 os.replace 的对照已复现；改为同一对象协调后，并发读取/30 次回执写入通过。公开 Gateway 拒绝整个 /_enterprise_internal/ 命名空间，客户端伪造身份无效；业务进程不可用时返回 503，不自动生成。原生文件接口试验未保留，无新平台适配/数据库结构。

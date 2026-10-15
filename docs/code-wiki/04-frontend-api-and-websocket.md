@@ -154,3 +154,5 @@ static/js/comfy-workflow-session.js 提供共享输入、上传互斥、运行�
 #161 已合并 main6603550，未进入正式 Release。其共用文本视图/Prompt 复用作为本包依赖，沿用原主题变量和操作层级。
 
 `static/js/generation-task-center.js`/CSS 在经典 `logModal/logList` 和智能 `smartLogModal/smartLogList` 中增加任务页签，入口脚本只提供已有预览与创建 Prompt 回调。读取 `GET /enterprise/api/me/generation-tasks`（cursor/status/kind/limit）及 `GET /enterprise/api/me/generation-tasks/{id}`；默认仍显示原生成日志，关闭后停止列表刷新。只有明确点击续查才调用原 `/api/canvas-image-tasks/{id}/reconcile` 或 Comfy GET `resume=true`，不调用生成端点。切换筛选期间旧响应不能覆盖新列表，未完成请求结束后补读当前筛选。本人目录不等于管理员全员任务/费用视图，尚待本包独立审查合并。
+
+任务目录读写协调补记：生产路径由 Gateway 的 generation_task_api 认证并覆盖身份，通过既有回环 HTTP 连接池读取 generation_task_routes 的内部路由；Repository 注入上游同一个 CANVAS_TASK_JOURNAL，共用既有互斥锁，Gateway 不直接打开回执文件。Windows 普通读取句柄阻止 os.replace 的对照已复现；改为同一对象协调后，并发读取/30 次回执写入通过。公开 Gateway 拒绝整个 /_enterprise_internal/ 命名空间，客户端伪造身份无效；业务进程不可用时返回 503，不自动生成。原生文件接口试验未保留，无新平台适配/数据库结构。

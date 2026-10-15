@@ -1,7 +1,7 @@
 """Personal task catalog over real temporary SQLite mappings and durable receipts."""
 import asyncio
 import sqlite3
-from types import SimpleNamespace
+from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 import pytest
@@ -9,6 +9,7 @@ import pytest
 from enterprise import db, generation_task_api
 from enterprise.canvas_task_journal import CanvasTaskJournal
 from enterprise.generation_tasks import GenerationTaskRepository, describe_task
+from enterprise.generation_task_routes import create_router
 
 
 @pytest.fixture
@@ -26,7 +27,6 @@ def catalog(tmp_path, monkeypatch):
             CREATE TABLE user_resource_map(user_id TEXT, resource_url TEXT UNIQUE, source TEXT, created_at INTEGER);
         ''')
     monkeypatch.setattr(db, 'get_db', connect)
-    monkeypatch.setattr(generation_task_api, 'PATH_ROOTS', SimpleNamespace(DATA_ROOT=tmp_path))
     repository = GenerationTaskRepository(tmp_path / 'canvas-tasks')
     def add(task_id, owner='alice', created_at=1000, **changes):
         record = {'id':task_id, 'type':'online-image', 'status':'failed', 'created_at':created_at/1000,
@@ -88,21 +88,30 @@ def test_task_states_and_outputs_do_not_expose_internal_provider_configuration()
 
 def test_gateway_auth_owner_checks_and_disconnected_result_projection(catalog, monkeypatch):
     from enterprise import gateway
+    from fastapi import FastAPI
     repository, add, _ = catalog
     add('finished', status='succeeded', result={'images':['/output/finished.png']})
     add('foreign', owner='bob', status='succeeded', result={'images':['/output/foreign.png']})
     add('mismatch', enterprise_user_id='bob')
     monkeypatch.setattr(gateway,'verify_token',lambda token: {'user_id':token,'username':token,'role':'user','is_admin':False,'auth_version':1} if token in {'alice','bob'} else None)
+    upstream=FastAPI()
+    upstream.include_router(create_router(repository.journal))
     before = {path.name:path.read_bytes() for path in repository.journal.root.glob('*.json')}
     async def scenario():
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=gateway.app),base_url='http://testserver') as client:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=upstream),base_url='http://upstream') as transport, httpx.AsyncClient(transport=httpx.ASGITransport(app=gateway.app),base_url='http://testserver') as client:
             path='/enterprise/api/me/generation-tasks'
             assert (await client.get(path)).status_code==401
             headers={'Cookie':'enterprise_token=alice'}
+            monkeypatch.setattr(gateway.app.state,'upstream_client',None,raising=False)
+            assert (await client.get(path,headers=headers)).status_code==503
+            monkeypatch.setattr(gateway.app.state,'upstream_client',transport)
             page=await client.get(path,headers=headers)
             assert page.status_code==200 and 'foreign' not in page.text
             assert page.headers['cache-control']=='no-store'
             assert (await client.get(path+'/foreign',headers=headers)).status_code==404
+            spoofed={**headers,'X-Enterprise-User-ID':'bob'}
+            assert (await client.get(path+'/foreign',headers=spoofed)).status_code==404
+            assert (await client.get('/_enterprise_internal/generation-tasks',headers=spoofed)).status_code==404
             assert (await client.get(path+'/mismatch',headers=headers)).status_code==404
             assert db.get_resource_owner('/output/finished.png') is None
             detail=await client.get(path+'/finished?user_id=bob',headers=headers)
@@ -112,6 +121,20 @@ def test_gateway_auth_owner_checks_and_disconnected_result_projection(catalog, m
             assert (await client.get(path+'?status=nonsense',headers=headers)).status_code==400
     asyncio.run(scenario())
     assert before=={path.name:path.read_bytes() for path in repository.journal.root.glob('*.json')}
+
+
+def test_catalog_readers_share_the_single_writer_journal_lock(catalog):
+    repository,add,_=catalog
+    add('shared',status='running')
+    catalog_reader=GenerationTaskRepository(repository.journal.root,journal=repository.journal)
+    def write():
+        for _ in range(30):repository.journal.record_reconciliation('shared','querying')
+    def read():
+        for _ in range(30):assert catalog_reader.page('alice')['items'][0]['id']=='shared'
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        futures=[pool.submit(write),*(pool.submit(read) for _ in range(4))]
+        for future in futures:future.result()
+    assert repository.journal.get('shared')['reconciliation']['count']==30
 
 
 def test_existing_resource_owner_is_never_reassigned_by_task_detail(catalog):

@@ -84,8 +84,8 @@ def describe_task(record, *, detail=False):
 
 
 class GenerationTaskRepository:
-    def __init__(self, root):
-        self.journal = CanvasTaskJournal(root)
+    def __init__(self, root, *, journal=None):
+        self.journal = journal if journal is not None else CanvasTaskJournal(root)
 
     def owned_record(self, user_id, task_id, task_type):
         if task_type not in TYPES or db.get_task_owner(task_type, task_id) != user_id:

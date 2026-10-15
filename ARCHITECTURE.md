@@ -174,3 +174,5 @@ ComfyUI 10.2 反馈续修候选从 ef4c1e4 开发：协议边界在 enterprise/p
 2026-10-15 ComfyUI 已批准增量继续放在 #161：图输入组和结果选择进入 enterprise/providers/comfy_workflow.py，文本使用进入共用 comfy-outputs.js/CSS，入口复用既有请求、归档、回执和画布持久化。动态扩展只采用已确认的 core 插槽契约；未知图依赖不进行通用推断。输出同时携带类型、正文、文件引用和运行/结果身份，选定下游文本保存快照。无新表/队列/平台依赖，#161 已合并 main6603550，尚未发布。
 
 2026-10-15 任务中心候选采用 `enterprise/generation_tasks.py` 作为归属映射和既有 journal 的读取 Repository，`generation_task_api.py` 仅接认证和 HTTP。Gateway 不写上游任务事实；已核实本人任务的结果复用既有资源归属投影，保留已有 owner。前端 `generation-task-center.js/CSS` 只接入原画布日志页签，两类入口各提供已有媒体预览/Prompt 创建回调。新回执信息为 v1 可选字段，重启仍由原单写入者恢复；供应商报告金额不等于结算，没有金额或币种不猜测。Zhenzhen 图像请求与查询/鉴权构造在对应模块，通用 JSON 状态在 `image_task_protocol.py`；结果解析/归档仍有 main 编排，尚不是全 Provider 模块化。当前仅单 Windows 主机，不新增 Windows 核心业务依赖；服务器/容量目标继续作为后续边界约束。
+
+任务目录读写协调补记：生产路径由 Gateway 的 generation_task_api 认证并覆盖身份，通过既有回环 HTTP 连接池读取 generation_task_routes 的内部路由；Repository 注入上游同一个 CANVAS_TASK_JOURNAL，共用既有互斥锁，Gateway 不直接打开回执文件。Windows 普通读取句柄阻止 os.replace 的对照已复现；改为同一对象协调后，并发读取/30 次回执写入通过。公开 Gateway 拒绝整个 /_enterprise_internal/ 命名空间，客户端伪造身份无效；业务进程不可用时返回 503，不自动生成。原生文件接口试验未保留，无新平台适配/数据库结构。
