@@ -126,3 +126,15 @@ Browser 为已启用 Codex 内置浏览器，无需安装或 Playwright 回退�
 智能画布的多结果选择校验只在实际运行入口实施：手动运行使用既有 toast 提醒，级联向既有调用方报告错误。读取提示词/参考图用于展示时不抛异常，避免尚未选择结果就破坏界面；实际运行函数 VM 验证在提醒后停止构造请求，语法检查通过。
 
 96095ef 的 Enterprise 与 Runtime CI 最终 SUCCESS；Documentation 的文档契约和夹具已通过，但 Linux whitespace 步骤发现两份原有混合换行脚本的新增 CRLF 行。随后仅将 PR 新增/修改行规范为 LF，保留历史行，按相同 whitespace 规则检查通过；不因格式修正重跑本地全套业务测试。最终候选以 Draft #161 最新准确 Head 的 CI 为准。
+
+### #161 独立审查与修正
+
+负责人批准独立代理审查。565f9f6 的三项常规 CI 最终 SUCCESS，但只读审查仍发现 5 项真实问题，因此该 Head 不可直接合并：普通 HTTP 下 randomUUID 不存在、两类 LLM 不读取选定正文、动态图片组遗留旧默认 params、切换后端未清空组上传引用，以及 workflow_values 的随机字段键不能由 Gateway 原键名规则可靠识别，可能绕过实际素材归属检查。原复现脚本保留于 D:/CodeProject/Infinite-Canvas-Enterprise-Artifacts/review-161-565f9f6，不把绿色 CI 当成独立审查。
+
+- 受理身份统一通过 crypto.getRandomValues 构造 UUID，不依赖安全上下文限定的 randomUUID，不使用 Math.random。
+- 经典与智能 LLM 文本读取复用选定正文；选中正文不再进入图片/视频附件。智能 LLM 在运行入口提醒多结果歧义，展示函数保持可用。
+- 动态组替代的原字段不再进入 legacy params；旧客户端 params 协议仍保留。后端切换按 runtimeFields 清空全部媒体，释放预览引用并取消上传令牌。
+- execute 的工作流映射后，使用 Gateway 注入的私有身份和服务端配置确定真实输入，复用既有 can_access_resource 核验归属。该检查覆盖异步任务、直接 /api/generate 和同步/异步设置测试，发生在构造 Comfy 客户端/提交前，不依赖可省略的客户端 params。字段伪称 text 仍不能绕过标准 image 输入检查；filename_prefix 不作为输入素材。
+- 19 项影响范围检查通过，包含实际 onRun 的非安全上下文 VM、两类 LLM 读取、组切换和旧参数，以及隔离真实应用入口的跨用户输入拒绝与本人输入成功；拒绝路径供应商客户端构造/提交为 0。没有为此重跑无关安装演练，也没有访问真实 GPU 或局域网设备。
+
+修正需按新准确 Head 再作独立复核与 CI，不因原 Head 审查或原 CI 成功宣称通过；正式 Release 仍为 v2026.10.2。

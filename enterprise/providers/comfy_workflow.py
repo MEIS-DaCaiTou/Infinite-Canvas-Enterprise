@@ -145,6 +145,26 @@ def apply_workflow_values(workflow, config, values):
     return graph
 
 
+def workflow_media_names(workflow, config, values):
+    """Names actually applied by the trusted field mapping, excluding output labels."""
+    names = []
+    groups = config.get("image_groups") or []
+    grouped = {node for group in groups for node in group["source_nodes"]}
+    for group in groups:
+        names.extend(values.get(group["id"]) or [])
+    for field in config.get("fields") or []:
+        if field.get("input") == "filename_prefix" or (field.get("node") in grouped and field.get("input") == "image"):
+            continue
+        media_input = field.get("input") in {"image", "video", "audio", "mask", "file", "filename", "filepath"}
+        if field.get("type") not in {"image", "video", "audio", "file"} and not media_input:
+            continue
+        value = workflow[field["node"]]["inputs"][field["input"]]
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("工作流媒体输入必须是已上传的文件名")
+        names.append(value)
+    return names
+
+
 def select_history_outputs(history, workflow, *, is_preview, is_debug):
     """Retain typed outputs; a SaveText body and its file are one result, not two."""
     files, texts = [], []

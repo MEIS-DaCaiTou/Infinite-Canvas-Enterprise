@@ -2,6 +2,12 @@
 (function(root){
     'use strict';
     class ComfyWorkflowSession {
+        static requestId(){
+            const bytes=new Uint8Array(16);
+            root.crypto.getRandomValues(bytes);
+            bytes[6]=(bytes[6]&15)|64;bytes[8]=(bytes[8]&63)|128;
+            return Array.from(bytes,value=>value.toString(16).padStart(2,'0')).join('');
+        }
         constructor(fields=[]){
             this.values = Object.fromEntries(fields.map(f => [f.id, f.default ?? '']));
             this.urls = {};

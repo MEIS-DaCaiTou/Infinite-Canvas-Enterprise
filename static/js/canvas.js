@@ -8155,6 +8155,7 @@ function onLLMPaneResize(e){
 }
 function llmInputText(node){
     return connections.filter(c => c.to === node.id).map(c => nodes.find(n => n.id === c.from)).filter(Boolean).map(n => {
+        if(n.type==='output' || n.type==='comfy')return ComfyOutputs.prompt(n,n.type==='output'?n.images:n.generatedOutputs);
         if(n.type === 'prompt') return n.text || '';
         if(n.type === 'loop') return renderLoopPrompt(n);
         if(n.type === 'promptGroup') return (n.items || []).map(id => nodes.find(x => x.id === id)).filter(Boolean).map(p => p.text || '').filter(Boolean).join('\n\n');
@@ -8168,7 +8169,7 @@ function llmInputImages(node){
         if(n.type === 'image' && n.url && mediaKindForNode(n) === 'image') urls.push(n.url);
         if((n.type==='output' && (n.images || []).length) || (n.type==='comfy' && (n.generatedOutputs || []).length)){
             const selected=ComfyOutputs.selected(n,n.type==='output'?n.images:n.generatedOutputs);
-            if(selected?.kind==='text')return {id:n.id,type:'outputText',label:'上游文本',refs:[],prompt:ComfyOutputs.prompt(n,[selected])};
+            if(selected?.kind==='text')return;
         }
         if(n.type === 'output' && (n.images||[]).length){
             const last = [...n.images].reverse().map(outputUrlValue).find(url => url && !isVideoUrl(url) && !isAudioUrl(url));
@@ -8186,7 +8187,7 @@ function llmInputVideos(node){
         if(n.type === 'image' && n.url && mediaKindForNode(n) === 'video') urls.push(n.url);
         if((n.type==='output' || n.type==='comfy') && (n.images || n.generatedOutputs || []).length){
             const selected=ComfyOutputs.selected(n,n.type==='output'?n.images:n.generatedOutputs);
-            if(selected?.kind==='text')return {id:n.id,type:'outputText',label:'上游文本',refs:[],prompt:ComfyOutputs.prompt(n,[selected])};
+            if(selected?.kind==='text')return;
         }
         if(n.type === 'output' && (n.images||[]).length){
             const last = [...n.images].reverse().map(outputUrlValue).find(url => url && isVideoUrl(url));

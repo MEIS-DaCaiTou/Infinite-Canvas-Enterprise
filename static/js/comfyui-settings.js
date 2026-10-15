@@ -236,7 +236,11 @@ function renderBackendChoice(){
 function changeWorkflowBackend(value){
     currentConfig.backend=value;
     testSession.uploads.clear();
-    currentConfig.fields.filter(isMediaField).forEach(f=>{testSession.set(f.id,'');delete testSession.urls[f.id];});
+    ComfyWorkflowFields.runtimeFields(currentConfig).filter(isMediaField).forEach(f=>{
+        testSession.set(f.id,f.type==='image_group'?[]:'');
+        for(const url of [testSession.urls[f.id]].flat())if(typeof url==='string' && url.startsWith('blob:'))URL.revokeObjectURL(url);
+        delete testSession.urls[f.id];
+    });
     refreshTestViews();
     setStatus('执行后端已更改，请重新上传测试素材并保存配置');
 }
@@ -1337,7 +1341,7 @@ async function onRun(){
         const missing = runtimeFields.filter(f => isMediaField(f) && (f.type==='image_group' ? !Array.isArray(runFields[f.id]) || runFields[f.id].length<f.min_images || runFields[f.id].length>f.max_images : !runFields[f.id]));
         if(missing.length) throw new Error(ComfyWorkflowFields.missingMessage(missing,currentLang()==='en'));
         config.fields.forEach(f => {runFields[f.id]=ComfyWorkflowFields.coerceValue(f,runFields[f.id]);});
-        const requestId=crypto.randomUUID().replaceAll('-','');
+        const requestId=ComfyWorkflowSession.requestId();
         session.taskId='canvas_comfy_'+requestId; changed();
         const res = await fetch(`/api/workflows/${encodeURIComponent(name)}/run`,{
             method:'POST',headers:{'Content-Type':'application/json'},

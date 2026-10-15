@@ -2397,6 +2397,7 @@ class GenerateRequest(BaseModel):
     backend: str = ""
     workflow_values: Optional[Dict[str, Any]] = None
     _workflow_config: Dict[str, Any] = PrivateAttr(default_factory=dict)
+    _enterprise_user_id: str = PrivateAttr(default="")
 
 class DeleteHistoryRequest(BaseModel):
     timestamp: float
@@ -12993,6 +12994,7 @@ async def run_canvas_comfy_task(task_id: str, payload: GenerateRequest):
 async def create_canvas_comfy_task(
     payload: GenerateRequest, x_enterprise_user_id: Optional[str] = Header(default=None),
 ):
+    payload._enterprise_user_id = x_enterprise_user_id if isinstance(x_enterprise_user_id, str) else ""
     payload.backend = workflow_backend(payload.workflow_json, payload.backend)
     if payload.workflow_values is not None and not payload._workflow_config:
         payload._workflow_config = get_workflow(payload.workflow_json)["config"]
@@ -16220,6 +16222,8 @@ def prepare_comfy_workflow(req):
         config = getattr(req, "_workflow_config", None) or get_workflow(req.workflow_json)["config"]
         try:
             workflow = apply_workflow_values(workflow, config, req.workflow_values)
+            from enterprise.comfy_input_policy import authorize_workflow_media
+            authorize_workflow_media(getattr(req, "_enterprise_user_id", ""), workflow, config, req.workflow_values)
         except (ValueError, TypeError) as exc:
             raise ComfyExecutionError(str(exc)) from exc
         return workflow, seed
@@ -16388,9 +16392,12 @@ def execute_comfy_generation(req, journal_id=None):
 
 
 @app.post("/api/generate")
-def generate(req: GenerateRequest):
+def generate(req: GenerateRequest, x_enterprise_user_id: Optional[str] = Header(default=None)):
+    req._enterprise_user_id = x_enterprise_user_id if isinstance(x_enterprise_user_id, str) else ""
     try:
         return execute_comfy_generation(req)
+    except HTTPException:
+        raise
     except Exception as exc:
         return {"images": [], "error": str(exc)}
 
@@ -17071,7 +17078,7 @@ async def run_workflow(name: str, payload: WorkflowRunRequest, x_enterprise_user
     req._workflow_config = payload.config.dict()
     if payload.async_task:
         return await create_canvas_comfy_task(req, x_enterprise_user_id)
-    return await asyncio.to_thread(generate, req)
+    return await asyncio.to_thread(generate, req, x_enterprise_user_id)
 
 if __name__ == "__main__":
     import uvicorn

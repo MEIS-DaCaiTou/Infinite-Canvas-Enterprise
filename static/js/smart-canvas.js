@@ -1823,7 +1823,8 @@ function promptTextItemsForNode(node, ctx=smartLoopContext){
         return text ? [text] : [];
     }
     if(node.type === 'smart-group') return smartGroupMembers(node).flatMap(member => promptTextItemsForNode(member, ctx));
-    return [];
+    const text=ComfyOutputs.prompt(node,node.images || []);
+    return text ? [text] : [];
 }
 function promptNodeUpstreamPromptItems(node, ctx=smartLoopContext){
     const seen = new Set();
@@ -14587,6 +14588,8 @@ async function runGeneration(){
 async function runPromptLLMNode(nodeId){
     const node = nodes.find(n => n.id === nodeId);
     if(!node || node.type !== 'smart-prompt') return;
+    try { validateSmartTextInputs(node); }
+    catch(error){ toast(error.message); return; }
     const message = promptNodeLLMInputText(node).trim();
     if(!message){ toast(tr('smart.promptLlmNeedText')); return; }
     const systemPrompt = (node.llmSystemPrompt || '').trim();

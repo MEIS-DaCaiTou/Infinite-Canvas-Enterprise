@@ -102,6 +102,7 @@
         const params = {};
         (config.fields || []).forEach(field => {
             if(!field.node || !field.input) return;
+            if(field.input==='image' && (config.image_groups || []).some(group=>group.source_nodes.includes(field.node)))return;
             (params[field.node] ||= {})[field.input] = coerceValue(field, values[field.id]);
         });
         return params;
