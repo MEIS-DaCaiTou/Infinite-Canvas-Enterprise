@@ -5,6 +5,14 @@
   "scope": "Main6603550: #161 independently re-reviewed and merged, main Enterprise/Runtime/docs CI SUCCESS; release remains immutable v2026.10.2. Approved personal durable generation-task center and common image-provider boundary candidate documented in the existing operation record and Code Wiki, not yet independently reviewed, merged or released. No new production operation, schema, release or architecture roadmap.",
   "documents": [
     {
+      "path": ".github/PULL_REQUEST_TEMPLATE.md",
+      "kind": "reference"
+    },
+    {
+      "path": "CONTRIBUTING.md",
+      "kind": "reference"
+    },
+    {
       "path": "docs/ops/ONLINE-UPGRADE-SEQUENCE-2026-10-12.md",
       "kind": "record"
     },
@@ -86,7 +94,7 @@
       "path": "CODEX_WORKFLOW.md",
       "kind": "authority",
       "authority": "workflow",
-      "reviewed_at": "2026-10-13"
+      "reviewed_at": "2026-10-15"
     },
     {
       "path": "docs/architecture/ARCH-2A-ARCHITECTURE-ASSESSMENT-AND-EVOLUTION-2026-07.md",
@@ -468,7 +476,7 @@
       "path": "docs/README.md",
       "kind": "authority",
       "authority": "navigation",
-      "reviewed_at": "2026-10-13"
+      "reviewed_at": "2026-10-15"
     },
     {
       "path": "docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md",

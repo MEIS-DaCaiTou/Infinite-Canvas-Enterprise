@@ -1,0 +1,38 @@
+name: 工程任务
+description: 在既有路线和事项下描述一个可验收的工程增量。
+title: "[工程] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        优先沿用现有 Issue，不为同一工作另建队列。登记任务不等于批准实施、合并或发布。
+        本仓库公开：仅提供脱敏摘要和公开证据，不提交凭据、环境配置、日志原件或客户数据。
+  - type: input
+    id: source_refs
+    attributes:
+      label: 既有事项或路线依据
+      description: 引用已有 Issue、路线图条目或原 BR/T 编号；暂不明确可写“未映射，待确认”，不自行新增正式需求编号。
+      placeholder: "#112；路线图对应条目"
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: 当前差距与本次范围
+      description: 说明已有能力、最小增量、涉及边界及本次不做的内容；不复制整份路线图。
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 可验收的结果
+      description: 描述完成后可以观察或核对的行为。
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: 验证计划或已有证据（可选）
+      description: 优先复用有效测试、CI 和记录，只补受影响范围；标明实际版本和未验证边界。尚未执行写“未运行”，不填写 PASS。
+    validations:
+      required: false
