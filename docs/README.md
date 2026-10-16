@@ -1,6 +1,6 @@
 # Infinite Canvas Enterprise 文档索引
 
-更新时间：2026-10-13
+更新时间：2026-10-15
 
 本文是唯一导航入口。2026-10-13 已核对现行事实源与全部 Code Wiki 章节；main、开发候选和正式发行分别标注。[文档登记表](./document-register.json) 列出仓库全部受管理 Markdown／文本资料的角色；[本轮审查](./ops/DOC-3-DOCUMENT-SYSTEM-AUDIT-2026-10.md) 记录整改依据。文档数量不等于现行规则数量。
 
@@ -20,6 +20,8 @@
 | 查源码与接口 | [Code Wiki](./code-wiki/README.md) | 代码参考，不是第二份状态表/路线图 |
 
 根目录 [README](../README.md) 是项目入口，[ENTERPRISE_DOCS](../ENTERPRISE_DOCS.md) 是快速开发指南；两者链接事实源，不复制整份状态和规划。
+
+贡献与反馈导航见 [CONTRIBUTING](../CONTRIBUTING.md)，开发规则仍以本索引列出的权威文档为准。
 
 ## 2. 分层与读法
 

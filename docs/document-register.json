@@ -1,9 +1,17 @@
 {
   "schema_version": "enterprise-documents-v1",
-  "reviewed_at": "2026-10-15",
-  "audit_base_commit": "6d9d77dc07c5a2b655e2002536a653e285033d69",
-  "scope": "Main6d9d77d: #162 independently reviewed and merged; exact PR and main Enterprise/Runtime/docs CI SUCCESS. Release remains v2026.10.2. Subsequent accepted Zhenzhen image/Comfy task automatic-query recovery candidate documented in the same roadmap and operation record plus Code Wiki; not independently reviewed, merged or released. No new business schema, production operation or overall refactor.",
+  "reviewed_at": "2026-10-16",
+  "audit_base_commit": "39f4b02d232142c4ede66f0133b759b32178d70f",
+  "scope": "Main39f4b02: #162 task center and G0-G3 increments merged; release remains v2026.10.2. Accepted Zhenzhen image/Comfy task automatic-query recovery candidate documented in the existing roadmap, operation record and Code Wiki; pending independent review and merge, not released. Existing G0 contribution entries retained. No new business schema, production operation or overall refactor.",
   "documents": [
+    {
+      "path": ".github/PULL_REQUEST_TEMPLATE.md",
+      "kind": "reference"
+    },
+    {
+      "path": "CONTRIBUTING.md",
+      "kind": "reference"
+    },
     {
       "path": "docs/ops/ONLINE-UPGRADE-SEQUENCE-2026-10-12.md",
       "kind": "record"
@@ -86,7 +94,7 @@
       "path": "CODEX_WORKFLOW.md",
       "kind": "authority",
       "authority": "workflow",
-      "reviewed_at": "2026-10-13"
+      "reviewed_at": "2026-10-16"
     },
     {
       "path": "docs/architecture/ARCH-2A-ARCHITECTURE-ASSESSMENT-AND-EVOLUTION-2026-07.md",
@@ -468,7 +476,7 @@
       "path": "docs/README.md",
       "kind": "authority",
       "authority": "navigation",
-      "reviewed_at": "2026-10-13"
+      "reviewed_at": "2026-10-15"
     },
     {
       "path": "docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md",
