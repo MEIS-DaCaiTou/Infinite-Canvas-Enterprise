@@ -22,7 +22,7 @@ from enterprise.ops.update.mvp import _run_launcher, execute_update_job
 from enterprise.ops.update.diagnostics import diagnostics_zip, recent_diagnostics
 from enterprise.tests.test_stab_1_supervisor_logging import build_supervisor
 from enterprise.tests.test_update_mvp_1 import (
-    _execution_fixture, _create_update_database, _update_migration_step, _migration_update_plan,
+    _execution_fixture, _create_update_database, _update_migration_step, _migration_update_plan, _roots,
 )
 from enterprise.migrations.versioned import inspect_schema_metadata
 
@@ -741,6 +741,89 @@ def test_export_keeps_phase_evidence_without_raw_error(tmp_path, monkeypatch):
         report = json.loads(archive.read("update-diagnostics.json"))
     assert report["summary"]["update_job"]["runtime_phases"]["source_health"]["launcher_exit_code"] == 0
     assert any("SYSTEM_UPDATE_RUNTIME_PHASE_RESULT" in record["line"] for record in report["records"])
+
+
+@pytest.mark.parametrize("failure_kind", ["stat_denied", "open_denied", "rotated_before_open"])
+def test_diagnostics_unreadable_log_keeps_other_records_and_saved_state(tmp_path, monkeypatch, failure_kind):
+    roots = _roots(tmp_path)
+    runtime_logs = roots.LOG_ROOT / "runtime"
+    runtime_logs.mkdir(parents=True)
+    unreadable = runtime_logs / "gateway.stderr.log"
+    unreadable.write_text("not collected", encoding="utf-8")
+    (runtime_logs / "launcher.log").write_text("Authorization: Bearer fixture-secret\nhealthy evidence\n", encoding="utf-8")
+    roots.RUNTIME_ROOT.mkdir(parents=True, exist_ok=True)
+    state_path = roots.RUNTIME_ROOT / "runtime-state.json"
+    state_bytes = b'{"state":"crash_loop","gateway":{"last_exit_code_decimal":2}}'
+    state_path.write_bytes(state_bytes)
+    real_stat, real_open = Path.stat, Path.open
+
+    def stat(path, *args, **kwargs):
+        if path == unreadable and failure_kind == "stat_denied":
+            raise PermissionError(13, "private-path fixture-secret")
+        return real_stat(path, *args, **kwargs)
+
+    def open_file(path, *args, **kwargs):
+        if path == unreadable and failure_kind != "stat_denied":
+            error_type = FileNotFoundError if failure_kind == "rotated_before_open" else PermissionError
+            raise error_type(2 if error_type is FileNotFoundError else 13, "private-path fixture-secret")
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", stat)
+    monkeypatch.setattr(Path, "open", open_file)
+    payload = recent_diagnostics(roots, secret_values=("fixture-secret",))
+    assert payload["log_collection"] == {
+        "partial": True,
+        "warnings": [{"source": "gateway.stderr.log", "code": "SOURCE_READ_FAILED"}],
+    }
+    assert payload["summary"]["runtime"]["state"] == "crash_loop"
+    assert payload["summary"]["runtime"]["gateway"]["last_exit_code_decimal"] == 2
+    assert any(record["line"] == "healthy evidence" for record in payload["records"])
+    assert all(record["source"] == "launcher.log" for record in payload["records"])
+    with zipfile.ZipFile(io.BytesIO(diagnostics_zip(payload))) as archive:
+        assert archive.namelist() == ["update-diagnostics.json"]
+        report = json.loads(archive.read("update-diagnostics.json"))
+    assert report["log_collection"] == payload["log_collection"]
+    assert report["summary"] == payload["summary"]
+    assert "private-path" not in json.dumps(report) and "fixture-secret" not in json.dumps(report)
+    assert state_path.read_bytes() == state_bytes
+
+
+def test_diagnostics_absent_logs_are_optional_and_filters_still_apply(tmp_path):
+    roots = _roots(tmp_path)
+    assert recent_diagnostics(roots)["log_collection"] == {"partial": False, "warnings": []}
+    runtime_logs = roots.LOG_ROOT / "runtime"
+    runtime_logs.mkdir(parents=True)
+    (runtime_logs / "supervisor.log").write_text("INFO start\nERROR first\nERROR second\n", encoding="utf-8")
+    payload = recent_diagnostics(roots, limit=1, level="error", keyword="second")
+    assert payload["log_collection"] == {"partial": False, "warnings": []}
+    assert payload["record_count"] == 1
+    assert payload["records"] == [{"source": "supervisor.log", "line": "ERROR second"}]
+
+
+def test_diagnostics_unreadable_update_events_keeps_job_summary(tmp_path, monkeypatch):
+    roots = _roots(tmp_path)
+    job_id = "a" * 32
+    job_root = roots.STAGING_ROOT / "update-mvp" / "jobs" / job_id
+    job_root.mkdir(parents=True)
+    (job_root / "status.json").write_text('{"state":"RECOVERY_REQUIRED"}', encoding="utf-8")
+    events = job_root / "events.jsonl"
+    events.write_text("not collected", encoding="utf-8")
+    real_open = Path.open
+
+    def open_file(path, *args, **kwargs):
+        if path == events:
+            raise PermissionError(13, "private-path fixture-secret")
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", open_file)
+    payload = recent_diagnostics(roots, job_id=job_id)
+    assert payload["log_collection"] == {
+        "partial": True,
+        "warnings": [{"source": "update-events.jsonl", "code": "SOURCE_READ_FAILED"}],
+    }
+    assert payload["summary"]["update_job"] == {"state": "RECOVERY_REQUIRED"}
+    assert payload["records"] == []
+    assert "private-path" not in json.dumps(payload) and "fixture-secret" not in json.dumps(payload)
 
 
 @pytest.mark.parametrize("migrating", [False, True])

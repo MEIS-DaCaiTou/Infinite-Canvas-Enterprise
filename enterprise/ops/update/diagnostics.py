@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import stat
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -49,11 +50,16 @@ def _read_small_json(path: Path, maximum: int = 64 * 1024) -> dict[str, Any] | N
 
 
 def _tail_lines(path: Path, *, limit: int, secret_values: tuple[str, ...]) -> list[str]:
-    if not path.is_file():
+    try:
+        source = path.stat()
+    except FileNotFoundError:
+        # A log that has never been created is optional. A source that vanishes
+        # after this observation is a partial collection, handled by the caller.
         return []
-    size = path.stat().st_size
+    if not stat.S_ISREG(source.st_mode):
+        return []
     with path.open("rb") as handle:
-        handle.seek(max(0, size - MAX_SOURCE_BYTES))
+        handle.seek(max(0, source.st_size - MAX_SOURCE_BYTES))
         raw = handle.read(MAX_SOURCE_BYTES)
     text = raw.decode("utf-8", errors="replace")
     return [redact_text(line, secret_values=secret_values)[:4096] for line in text.splitlines()[-limit:]]
@@ -72,23 +78,26 @@ def recent_diagnostics(
     level = str(level or "").strip().casefold()[:32]
     keyword = str(keyword or "").strip().casefold()[:128]
     records: list[dict[str, str]] = []
-    for name in sorted(LOG_NAMES):
-        for line in _tail_lines(roots.LOG_ROOT / "runtime" / name, limit=limit, secret_values=secret_values):
+    warnings: list[dict[str, str]] = []
+    sources = [(name, roots.LOG_ROOT / "runtime" / name) for name in sorted(LOG_NAMES)]
+    if job_id:
+        events = roots.STAGING_ROOT / "update-mvp" / "jobs" / job_id / "events.jsonl"
+        sources.append(("update-events.jsonl", events))
+    for name, path in sources:
+        try:
+            lines = _tail_lines(path, limit=limit, secret_values=secret_values)
+        except OSError:
+            # Keep other sources and saved state usable during a sharing/ACL
+            # failure or log rotation. Never export exception text or paths.
+            warnings.append({"source": name, "code": "SOURCE_READ_FAILED"})
+            continue
+        for line in lines:
             folded = line.casefold()
             if level and level not in folded:
                 continue
             if keyword and keyword not in folded:
                 continue
             records.append({"source": name, "line": line})
-    if job_id:
-        events = roots.STAGING_ROOT / "update-mvp" / "jobs" / job_id / "events.jsonl"
-        for line in _tail_lines(events, limit=limit, secret_values=secret_values):
-            folded = line.casefold()
-            if level and level not in folded:
-                continue
-            if keyword and keyword not in folded:
-                continue
-            records.append({"source": "update-events.jsonl", "line": line})
     summary: dict[str, Any] = {}
     state_path = roots.RUNTIME_ROOT / "runtime-state.json"
     state = _read_small_json(state_path)
@@ -106,6 +115,7 @@ def recent_diagnostics(
     return {
         "schema_version": "enterprise-update-diagnostics-v1",
         "generated_at": utc_now(),
+        "log_collection": {"partial": bool(warnings), "warnings": warnings},
         "summary": redact_value(summary, secret_values=secret_values),
         "record_count": min(len(records), limit),
         "records": redact_value(records[-limit:], secret_values=secret_values),
