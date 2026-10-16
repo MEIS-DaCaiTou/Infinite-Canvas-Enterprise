@@ -1,8 +1,8 @@
 {
   "schema_version": "enterprise-documents-v1",
   "reviewed_at": "2026-10-16",
-  "audit_base_commit": "6603550c4ad367b031de34e53cc9b488bd207140",
-  "scope": "Main6603550: #161 independently re-reviewed and merged, main Enterprise/Runtime/docs CI SUCCESS; release remains immutable v2026.10.2. Approved personal durable generation-task center and common image-provider boundary candidate documented in the existing operation record and Code Wiki, not yet independently reviewed, merged or released. No new production operation, schema, release or architecture roadmap.",
+  "audit_base_commit": "39f4b02d232142c4ede66f0133b759b32178d70f",
+  "scope": "Main39f4b02 includes merged task center and G0-G3 increments; release remains v2026.10.2. #163 accepted-task recovery independently reviewed and fixed, still Draft. Personal model dialog and workflow catalog availability candidate documented in existing product record, status and Code Wiki; not merged or released. No new production operation, schema or roadmap.",
   "documents": [
     {
       "path": ".github/PULL_REQUEST_TEMPLATE.md",
@@ -158,7 +158,7 @@
       "path": "docs/CURRENT_PROJECT_STATUS.md",
       "kind": "authority",
       "authority": "status",
-      "reviewed_at": "2026-10-15"
+      "reviewed_at": "2026-10-16"
     },
     {
       "path": "docs/data/DATA-MVP-1-INDEPENDENT-REVIEW-2026-09.md",
