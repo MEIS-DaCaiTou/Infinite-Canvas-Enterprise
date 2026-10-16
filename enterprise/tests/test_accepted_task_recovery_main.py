@@ -8,6 +8,49 @@ import pytest
 from enterprise.tests.test_canvas_image_recovery_main import ROOT, BOOTSTRAP
 
 
+def test_actual_comfy_polling_survives_queued_running_and_backend_pause(tmp_path):
+    install = tmp_path / "install"
+    app = install / "releases/fixture"
+    (app / "static").mkdir(parents=True)
+    (app / "main.py").write_text("# fixture", encoding="utf-8")
+    script = BOOTSTRAP + r'''
+main.COMFYUI_INSTANCES = ['https://comfy.example']
+record={'id':'poll-original','type':'comfy','status':'failed','recovery_required':True,
+        'comfy_receipt':{'backend':main.COMFYUI_INSTANCES[0],'prompt_id':'original-id'}}
+main.CANVAS_TASK_JOURNAL.create(record)
+phase = 'queued'
+def handler(request):
+    calls.append((request.method, request.url.path))
+    assert request.method == 'GET'
+    if request.url.path.startswith('/history/'):
+        return httpx.Response(200,json={'original-id':{'status':{'completed':True},'outputs':{}}} if phase=='done' else {})
+    return httpx.Response(200,json={'queue_pending' if phase=='queued' else 'queue_running':[[0,'original-id']]})
+main.httpx.AsyncClient=lambda **kwargs: original_client(transport=httpx.MockTransport(handler),**kwargs)
+main.CANVAS_COMFY_RECOVERY.archive=lambda *_:{'texts':['/output/fixture.txt']}
+async def scenario():
+    global phase
+    for phase in ['queued','running','done']:
+        first=await main.get_canvas_comfy_task('poll-original',resume=True)
+        assert first['status']=='running',first
+        await asyncio.gather(*main.CANVAS_TASK_RUNNERS)
+        following=await main.get_canvas_comfy_task('poll-original')
+        assert following['status']==('succeeded' if phase=='done' else 'running'),following
+    assert len(calls)==5 and all(method=='GET' for method,_ in calls),calls
+    main.CANVAS_TASK_JOURNAL.create({**record,'id':'changed-backend','error_code':'runtime_interrupted'})
+    main.COMFYUI_INSTANCES=['https://replacement.example']
+    await main.get_canvas_comfy_task('changed-backend',resume=True)
+    await asyncio.gather(*main.CANVAS_TASK_RUNNERS)
+    paused=await main.get_canvas_comfy_task('changed-backend')
+    assert paused['status']=='failed' and paused['auto_recovery']['status']=='manual',paused
+    assert len(calls)==5
+asyncio.run(scenario())
+'''
+    result = subprocess.run([sys.executable, "-c", script, str(ROOT), str(install), str(tmp_path / "local")],
+                            cwd=ROOT, env=dict(os.environ, PYTHONUTF8="1", PYTHONDONTWRITEBYTECODE="1"),
+                            capture_output=True, text=True, timeout=40)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 @pytest.mark.parametrize("kind", ["online-image", "comfy"])
 def test_actual_startup_recovers_without_browser_or_new_submission(tmp_path, kind):
     install = tmp_path / "install"

@@ -13084,7 +13084,18 @@ CANVAS_ACCEPTED_RECOVERY = AcceptedTaskRecovery(CANVAS_TASK_JOURNAL, query_accep
 
 
 async def resume_canvas_comfy_task(task_id):
-    await CANVAS_COMFY_RECOVERY.reconcile(task_id)
+    try:
+        result = await CANVAS_COMFY_RECOVERY.reconcile(task_id)
+    except HTTPException as exc:
+        result = {"status": "manual", "message": exc.detail}
+    code = result.get("http_status")
+    if result.get("status") == "manual" or (code is not None and 300 <= code < 500 and code not in {408, 429}):
+        await asyncio.to_thread(CANVAS_TASK_JOURNAL.record_auto_recovery, task_id,
+                               {"status": "manual", "next_query_at": None, "reason": result.get("message", "")})
+        return
+    if result.get("status") in {"queued", "running", "unknown"}:
+        await asyncio.to_thread(CANVAS_TASK_JOURNAL.record_auto_recovery, task_id,
+                               {"status": "waiting", "next_query_at": None, "reason": result.get("message", "")})
     CANVAS_ACCEPTED_RECOVERY.notify(task_id)
 
 
@@ -13093,12 +13104,15 @@ async def get_canvas_comfy_task(task_id: str, resume: bool = False):
     task = await asyncio.to_thread(CANVAS_TASK_JOURNAL.get, task_id)
     if not task or task.get("type") != "comfy":
         raise HTTPException(status_code=404, detail="ComfyUI 任务不存在；此版本启用前的内存任务无法凭空恢复")
-    if task.get("status") == "failed" and task.get("recovery_required") and (resume or task.get("error_code") == "runtime_interrupted"):
+    from enterprise.canvas_comfy_recovery import public_comfy_task
+    manual = (task.get("auto_recovery") or {}).get("status") == "manual"
+    resuming = bool(task.get("status") == "failed" and task.get("recovery_required")
+                    and (task.get("comfy_receipt") or {}).get("prompt_id")
+                    and (resume or (task.get("error_code") == "runtime_interrupted" and not manual)))
+    if resuming:
         schedule_canvas_task(resume_canvas_comfy_task(task_id))
     # Internal backend/class metadata stays in the journal, not the polling response.
-    public = {key: value for key, value in task.items() if key != "comfy_receipt"}
-    public["phase"] = (task.get("comfy_receipt") or {}).get("phase", "preparing" if task["status"] == "running" else task["status"])
-    return public
+    return public_comfy_task(task, resuming=resuming)
 
 # --- 图像生成参数 schema（供客户端动态渲染参数表单，避免把参数写死在前端） ---
 IMAGE_PARAM_RATIOS = [

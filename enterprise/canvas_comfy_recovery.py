@@ -9,6 +9,20 @@ from enterprise.providers.comfyui import ComfyExecutionError
 from enterprise.runtime.logging import redact_text
 
 
+def public_comfy_task(record, *, resuming=False):
+    """Expose accepted work still being queried as nonterminal to canvas pollers."""
+    public = {key: value for key, value in record.items() if key != "comfy_receipt"}
+    receipt = record.get("comfy_receipt") or {}
+    automatic = (record.get("auto_recovery") or {}).get("status")
+    tracking = (record.get("reconciliation") or {}).get("status")
+    pending = resuming or (automatic != "manual" and (
+        automatic in {"querying", "waiting"} or tracking in {"queued", "running"}))
+    if record.get("status") == "failed" and record.get("recovery_required") and receipt.get("prompt_id") and pending:
+        public.update(status="running", error="", error_code="")
+    public["phase"] = receipt.get("phase", "preparing" if public["status"] == "running" else public["status"])
+    return public
+
+
 class CanvasComfyRecovery:
     def __init__(self, journal, inspect, archive, validate):
         self.journal, self.inspect, self.archive, self.validate = journal, inspect, archive, validate

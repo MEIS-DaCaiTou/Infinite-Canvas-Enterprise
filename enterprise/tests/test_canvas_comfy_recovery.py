@@ -5,7 +5,7 @@ import httpx
 import pytest
 from fastapi import HTTPException
 
-from enterprise.canvas_comfy_recovery import CanvasComfyRecovery
+from enterprise.canvas_comfy_recovery import CanvasComfyRecovery, public_comfy_task
 from enterprise.canvas_task_journal import CanvasTaskJournal
 from enterprise.providers.comfyui import ComfyClient, ComfyExecutionError
 
@@ -15,6 +15,25 @@ def journal_for(tmp_path):
     journal.create({"id": "comfy-original", "type": "comfy", "status": "failed", "recovery_required": True,
                     "comfy_receipt": {"backend": "https://comfy.invalid/prefix", "prompt_id": "accepted-27"}})
     return journal
+
+
+@pytest.mark.parametrize("phase", ["queued", "running"])
+def test_polling_original_task_stays_nonterminal_until_archive(tmp_path, phase):
+    async def run():
+        journal = journal_for(tmp_path)
+        async def inspect(*_): return phase, None
+        recovery = CanvasComfyRecovery(journal, inspect, lambda *_: pytest.fail("not ready"), lambda _: None)
+        assert public_comfy_task(journal.get("comfy-original"), resuming=True)["status"] == "running"
+        assert (await recovery.reconcile("comfy-original"))["status"] == phase
+        record = journal.get("comfy-original")
+        assert public_comfy_task(record)["status"] == "running"
+        assert "comfy_receipt" not in public_comfy_task(record)
+        journal.record_auto_recovery("comfy-original", {"status": "manual", "reason": "backend changed"})
+        assert public_comfy_task(journal.get("comfy-original"))["status"] == "failed"
+        journal.claim_comfy_query("comfy-original")
+        journal.finish("comfy-original", {"status": "failed", "recovery_required": False, "error": "upstream failed"})
+        assert public_comfy_task(journal.get("comfy-original"), resuming=True)["status"] == "failed"
+    asyncio.run(run())
 
 
 def test_async_inspection_reuses_history_queue_semantics_and_only_gets():
