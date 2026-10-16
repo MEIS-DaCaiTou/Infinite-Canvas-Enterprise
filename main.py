@@ -16190,6 +16190,8 @@ async def ms_generate(req: MsGenerateRequest):
 # --- 本地 ComfyUI 生图 ---
 
 def prepare_comfy_workflow(req):
+    if req.type == "workflow-custom" and not get_workflow(req.workflow_json)["config"]["enabled"]:
+        raise HTTPException(409, "工作流已停用，请在工作流设置中启用或选择其他工作流")
     workflow_path = workflow_path_from_name(req.workflow_json)
     if not os.path.exists(workflow_path) and req.workflow_json == "Z-Image.json":
         workflow_path = WORKFLOW_PATH
@@ -16433,6 +16435,7 @@ class WorkflowImageGroup(BaseModel):
     max_images: int = 10
 
 class WorkflowConfig(BaseModel):
+    enabled: Optional[bool] = None
     backend: str = ""
     title: str = ""
     fields: List[WorkflowField] = []
@@ -16475,6 +16478,14 @@ def workflow_config_path(name: str) -> str:
 
 def is_builtin_workflow(name: str) -> bool:
     return os.path.isfile(shipped_workflow_path_from_name(name)) and not os.path.exists(user_workflow_path_from_name(name))
+
+
+def workflow_enabled(name: str, config: dict) -> bool:
+    if isinstance(config.get("enabled"), bool):
+        return config["enabled"]
+    # Unconfigured shipped tools belong to the dedicated local modes. Preserve
+    # configured legacy workflows and every uploaded custom workflow by default.
+    return bool(config.get("fields")) or not is_builtin_workflow(name)
 
 def _copy_shipped_workflow_to_user(name: str) -> str:
     user_path = user_workflow_path_from_name(name)
@@ -16914,7 +16925,7 @@ def save_comfyui_instances(payload: ComfyInstancesPayload):
     return {"instances": COMFYUI_INSTANCES}
 
 @app.get("/api/workflows")
-def list_workflows():
+def list_workflows(include_disabled: bool = False):
     items_by_name = {}
     for workflow_root, source in ((SHIPPED_WORKFLOW_DIR, "shipped"), (WORKFLOW_DIR, "user")):
         if not os.path.isdir(workflow_root):
@@ -16939,8 +16950,9 @@ def list_workflows():
                 "title": cfg.get("title") or fn.replace(".json", ""),
                 "builtin": source == "shipped" and not os.path.exists(user_workflow_path_from_name(rel)),
                 "field_count": len(cfg.get("fields") or []),
+                "enabled": workflow_enabled(rel, cfg),
                 }
-    items = list(items_by_name.values())
+    items = [item for item in items_by_name.values() if include_disabled or item["enabled"]]
     items.sort(key=lambda item: (0 if item["name"].startswith(f"{CUSTOM_WORKFLOW_FOLDER}/") else 1, item["title"]))
     return {"workflows": items}
 
@@ -16961,7 +16973,7 @@ def get_workflow(name: str, include_definitions: bool = False):
                 cfg = json.load(f) or cfg
         except Exception:
             pass
-    cfg = {**cfg, "backend": cfg.get("backend") or COMFYUI_INSTANCES[0]}
+    cfg = {**cfg, "backend": cfg.get("backend") or COMFYUI_INSTANCES[0], "enabled": workflow_enabled(name, cfg)}
     cfg["fields"] = [{**field, "role": field_role(workflow, field)} for field in cfg.get("fields", [])]
     result = {"name": name, "workflow": workflow, "config": cfg, "builtin": is_builtin_workflow(name)}
     result["image_group_candidates"] = image_group_candidates(workflow)
@@ -17041,6 +17053,8 @@ async def run_workflow(name: str, payload: WorkflowRunRequest, x_enterprise_user
         raise HTTPException(status_code=400, detail="Invalid workflow name")
     if not os.path.exists(workflow_path_from_name(name)):
         raise HTTPException(status_code=404, detail="Workflow not found")
+    if not get_workflow(name)["config"]["enabled"]:
+        raise HTTPException(409, "工作流已停用，请在工作流设置中启用或选择其他工作流")
     # 根据 config 的字段把值映射成 params 节点覆盖
     params: Dict[str, Dict[str, Any]] = {}
     for field in payload.config.fields:

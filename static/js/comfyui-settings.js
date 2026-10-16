@@ -280,7 +280,7 @@ async function saveComfyInstances(){
 
 async function loadList(){
     try {
-        const data = await fetch('/api/workflows').then(r=>r.json());
+        const data = await fetch('/api/workflows?include_disabled=true').then(r=>r.json());
         workflows = data.workflows || [];
         renderList();
         // 自动加载：当前没选中 或 之前选中的已不存在 → 选第一个
@@ -302,7 +302,7 @@ function renderList(){
             <span class="workflow-icon"><i data-lucide="${w.builtin?'package':'file-json-2'}" class="w-3.5 h-3.5"></i></span>
             <span class="min-w-0" style="flex:1">
                 <div class="workflow-name">${escapeHtml(w.title)}</div>
-                <div class="workflow-meta">${tf('comfy.fieldCount', {count:w.field_count})}</div>
+                <div class="workflow-meta">${tf('comfy.fieldCount', {count:w.field_count})}${w.enabled === false ? ' · 未启用' : ''}</div>
             </span>
             ${w.builtin?`<span class="builtin-badge">${tr('comfy.builtin')}</span>`:''}
         </button>
@@ -472,6 +472,16 @@ function renderEditor(){
     subEl.textContent = tf('comfy.nodeStats', {nodes:Object.keys(currentWorkflow).length, fields:currentConfig.fields.length}) + (isBuiltin ? ` · ${tr('comfy.builtin')}` : '');
     deleteBtn.style.display = isBuiltin ? 'none' : 'inline-flex';
     saveBtn.style.display = 'inline-flex';
+    let availability = document.getElementById('workflowAvailability');
+    if(!availability){
+        availability = document.createElement('label');
+        availability.id = 'workflowAvailability';
+        availability.className = 'workflow-availability';
+        availability.innerHTML = '<input type="checkbox" aria-label="在画布调用列表中启用"><span>在画布调用列表中启用</span><small>停用不删除文件，不影响本地功能的固定入口；修改后保存配置</small>';
+        subEl.after(availability);
+        availability.querySelector('input').onchange = event => {currentConfig.enabled = event.target.checked;};
+    }
+    availability.querySelector('input').checked = currentConfig.enabled !== false;
 
     renderGraph();
     renderWorkspaceView();

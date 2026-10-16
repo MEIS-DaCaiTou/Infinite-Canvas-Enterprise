@@ -8746,24 +8746,22 @@ function renderVideoImageInputs(list, node, imageInputs){
 }
 function comfyWorkflowOptions(selected){
     const opts = comfyWorkflows.map(w => `<option value="${escapeHtml(w.name)}" ${w.name === selected ? 'selected' : ''}>${escapeHtml(w.title || w.name.replace('.json',''))}</option>`).join('');
+    if(selected && !hasComfyWorkflow(selected)) return `<option value="${escapeHtml(selected)}" selected disabled>${escapeHtml(selected)} · 已停用或移除</option>${opts}`;
     return opts || `<option value="">${tr('canvas.comfyNoWorkflow')}</option>`;
 }
 function hasComfyWorkflow(name){
     return !!name && comfyWorkflows.some(w => w.name === name);
 }
 function validComfyWorkflowName(name){
-    return hasComfyWorkflow(name) ? name : (comfyWorkflows[0]?.name || '');
+    return name || comfyWorkflows[0]?.name || '';
 }
 function pruneMissingComfyWorkflows(){
-    let changed = false;
     nodes.filter(n => n.type === 'comfy').forEach(node => {
         if(node.comfyWorkflow && !hasComfyWorkflow(node.comfyWorkflow)){
             delete comfyWorkflowCache[node.comfyWorkflow];
-            node.comfyWorkflow = '';
-            changed = true;
+            // Keep the saved identity. Never silently run a replacement workflow.
         }
     });
-    if(changed) scheduleSave();
 }
 function currentComfyWorkflow(node){
     const selected = validComfyWorkflowName(node.comfyWorkflow || comfyWorkflows[0]?.name || '');
@@ -8894,7 +8892,7 @@ function renderComfyBody(node){
         btn.onclick = e => {
             e.stopPropagation();
             node.mode = btn.dataset.mode;
-            if(node.mode === 'custom' && !hasComfyWorkflow(node.comfyWorkflow) && comfyWorkflows[0]?.name){
+            if(node.mode === 'custom' && !node.comfyWorkflow && comfyWorkflows[0]?.name){
                 node.comfyWorkflow = comfyWorkflows[0].name;
                 ensureComfyWorkflow(node.comfyWorkflow).then(() => render());
             }
@@ -10070,10 +10068,10 @@ function renderComfySettings(container, node){
             <div class="gen-settings-row">
                 <select class="select-lite comfy-workflow-select" data-field="comfyWorkflow" style="width:100%">${comfyWorkflowOptions(selected)}</select>
             </div>
-            ${!selected ? `<div class="text-[11px] text-slate-400">${tr('canvas.comfyNoWorkflow')}</div>` : (!data ? `<div class="text-[11px] text-slate-400">${tr('canvas.comfyLoadingWorkflow')}</div>` : '')}
+            ${!selected ? `<div class="text-[11px] text-slate-400">${tr('canvas.comfyNoWorkflow')}</div>` : !hasComfyWorkflow(selected) ? '<div class="muted-note">原工作流已停用或移除，请重新选择或在工作流设置中启用</div>' : (!data ? `<div class="text-[11px] text-slate-400">${tr('canvas.comfyLoadingWorkflow')}</div>` : '')}
             ${data ? settingFields.map(f => renderComfyCustomField(node, f)).join('') || `<div class="text-[11px] text-slate-400">${tr('canvas.comfyNoExtraParams')}</div>` : ''}
         `;
-        if(selected && !data) ensureComfyWorkflow(selected).then(() => render());
+        if(selected && hasComfyWorkflow(selected) && !data) ensureComfyWorkflow(selected).then(() => render());
     } else {
         container.innerHTML = '';
     }
@@ -11342,6 +11340,7 @@ async function runComfyNode(nodeId, opts={}){
         if(!opts.cascade){ node.running = true; refreshRunNodes(node, null); }
         try {
             const workflowName = validComfyWorkflowName(node.comfyWorkflow || comfyWorkflows[0]?.name || '');
+            if(workflowName && !hasComfyWorkflow(workflowName)) throw new Error('原工作流已停用或移除，请在工作流设置中启用或选择其他工作流');
             const wf = await ensureComfyWorkflow(workflowName);
             if(!wf) throw new Error(tr('canvas.comfyNoWorkflow'));
             ComfyWorkflowFields.requireMedia(wf.config, {image:refs, video:videoRefsOnly(allRefs), audio:audioRefsOnly(allRefs)}, langIsEn());

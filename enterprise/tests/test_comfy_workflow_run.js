@@ -28,7 +28,7 @@ async function runRace(scenario='race'){
         cascadeTargetIdFromOptions:()=>'', orderedSources:(_node,sources)=>sources,
         generatorSources:()=>[{prompt:'connected prompt',refs:[{url:'synthetic.png'}]}],
         imageRefsOnly:refs=>refs, videoRefsOnly:()=>[], audioRefsOnly:()=>[],
-        validComfyWorkflowName:name=>name, ensureComfyWorkflow:()=>workflowReady,
+        validComfyWorkflowName:name=>name, hasComfyWorkflow:()=>true, ensureComfyWorkflow:()=>workflowReady,
         comfyFields:(_node,kind)=>config.fields.filter(f=>kind === undefined || fields.kind(f) === kind),
         comfyFieldKind:fields.kind,
         comfyRandomEnabled:()=>false, comfyRandomActive:()=>false,
@@ -54,7 +54,34 @@ async function runRace(scenario='race'){
     return {submissions,uploads,runningBeforeWorkflowReady,alerts,runStatus:node.runStatus || '',firstCompletion:settled[0].status,runningAfterCompletion:!!node.running};
 }
 
+function retiredWorkflowKeepsIdentityWithoutRenderLoop(){
+    const source = fs.readFileSync(path.join(checkout, 'static/js/canvas.js'), 'utf8');
+    const names = ['comfyWorkflowOptions','hasComfyWorkflow','validComfyWorkflowName','pruneMissingComfyWorkflows','currentComfyWorkflow','renderComfySettings'];
+    const functions = names.map(name => {
+        const start = source.indexOf(`function ${name}(`);
+        const next = source.slice(start+1).search(/\n(?:async )?function /);
+        return source.slice(start, start+1+next);
+    }).join('\n');
+    const node = {id:'old',type:'comfy',mode:'custom',comfyWorkflow:'custom/retired.json'};
+    let lookups = 0, renders = 0, saves = 0;
+    const container = {innerHTML:'',querySelectorAll:()=>[]};
+    const context = vm.createContext({nodes:[node],comfyWorkflows:[{name:'custom/current.json',title:'Available'}],comfyWorkflowCache:{},
+        escapeHtml:value=>value,tr:key=>key,comfyFieldKind:()=>'',scheduleSave:()=>{saves++;},
+        ensureComfyWorkflow:async()=>{lookups++;return null;},render:()=>{renders++;}});
+    vm.runInContext(functions,context,{timeout:1000});
+    context.pruneMissingComfyWorkflows();
+    context.renderComfySettings(container,node);
+    assert.equal(node.comfyWorkflow,'custom/retired.json');
+    assert.equal(context.validComfyWorkflowName(node.comfyWorkflow),'custom/retired.json');
+    assert.ok(container.innerHTML.includes('selected disabled'));
+    assert.ok(container.innerHTML.includes('已停用或移除'));
+    assert.equal(lookups,0,'unavailable workflow must not create a repeated resolve-render loop');
+    assert.equal(renders,0);
+    assert.equal(saves,0,'loading a retired selection must not rewrite the saved workflow');
+}
+
 (async()=>{
+    retiredWorkflowKeepsIdentityWithoutRenderLoop();
     const race = await runRace();
     assert.equal(race.submissions, 1, 'a second click during lookup must not submit');
     assert.equal(race.uploads, 1);
