@@ -10071,7 +10071,7 @@ function renderComfySettings(container, node){
             ${!selected ? `<div class="text-[11px] text-slate-400">${tr('canvas.comfyNoWorkflow')}</div>` : !hasComfyWorkflow(selected) ? '<div class="muted-note">原工作流已停用或移除，请重新选择或在工作流设置中启用</div>' : (!data ? `<div class="text-[11px] text-slate-400">${tr('canvas.comfyLoadingWorkflow')}</div>` : '')}
             ${data ? settingFields.map(f => renderComfyCustomField(node, f)).join('') || `<div class="text-[11px] text-slate-400">${tr('canvas.comfyNoExtraParams')}</div>` : ''}
         `;
-        if(selected && hasComfyWorkflow(selected) && !data) ensureComfyWorkflow(selected).then(() => render());
+        if(selected && hasComfyWorkflow(selected) && !data) ensureComfyWorkflow(selected).then(data => {if(data) render();});
     } else {
         container.innerHTML = '';
     }

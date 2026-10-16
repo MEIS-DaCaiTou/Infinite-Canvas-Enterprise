@@ -15,6 +15,8 @@
 - 大页面脚本持有大量可变全局状态，回归必须覆盖真实浏览器交互。
 - 企业 Gateway 会对旧页面注入用户导航与权限守卫。
 
+2026-10-16 候选增量（`codex/model-workflow-selection-20261016`，Base main@39f4b02，未合并/发布）：`model-picker.js` 的个人模型弹窗复用 `comfy-outputs.css` 组件和主题，新增 `model-picker.css` 只补列表/搜索/勾选；账号存储与已有节点模型不变。`GET /api/workflows` 默认仅返回启用项，设置页通过 `include_disabled=true` 查看全部；原配置的可选 `enabled` 管理画布可用列表。未配置 shipped 默认隐藏，历史配置和自定义继续兼容；两类画布保留停用/移除身份、不自动替换且不循环重载。固定本地入口及配置边界见[产品记录](../ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#2026-10-16-个人模型与工作流可用列表续修候选)。
+
 ## 2. 工作台与普通画布
 
 ### `static/js/canvas-list.js`

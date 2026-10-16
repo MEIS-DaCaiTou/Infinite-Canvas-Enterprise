@@ -80,8 +80,37 @@ function retiredWorkflowKeepsIdentityWithoutRenderLoop(){
     assert.equal(saves,0,'loading a retired selection must not rewrite the saved workflow');
 }
 
+async function smartRetiredWorkflowDoesNotReload(){
+    const source = fs.readFileSync(path.join(checkout, 'static/js/smart-canvas.js'), 'utf8');
+    const functions = ['ensureComfyWorkflow','renderComfyParams','renderComfyWorkflowControl'].map(name=>{
+        const start = source.search(new RegExp(`(?:async )?function ${name}\\(`));
+        const next = source.slice(start+1).search(/\n(?:async )?function /);
+        return source.slice(start,start+1+next);
+    }).join('\n');
+    const settings = {comfyMode:'custom',comfyWorkflow:'custom/retired.json'};
+    const dynamicParams = {innerHTML:''};
+    let loads=0,renders=0;
+    const context=vm.createContext({settings,dynamicParams,comfyWorkflowCache:{},comfyWorkflows:[{name:'custom/current.json'}],
+        escapeHtml:value=>value,tr:key=>key,renderDynamicParams:()=>{renders++;},
+        fetch:async()=>{loads++;return {ok:false};}});
+    vm.runInContext(functions,context,{timeout:1000});
+    context.renderComfyParams();
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(loads,0);
+    assert.equal(settings.comfyWorkflow,'custom/retired.json');
+    assert.ok(dynamicParams.innerHTML.includes('已停用或移除'));
+    // If an enabled catalog entry goes missing between list and detail reads,
+    // one failed lookup must not immediately schedule another render/load.
+    context.comfyWorkflows.push({name:settings.comfyWorkflow});
+    context.renderComfyParams();
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(loads,1);
+    assert.equal(renders,0);
+}
+
 (async()=>{
     retiredWorkflowKeepsIdentityWithoutRenderLoop();
+    await smartRetiredWorkflowDoesNotReload();
     const race = await runRace();
     assert.equal(race.submissions, 1, 'a second click during lookup must not submit');
     assert.equal(race.uploads, 1);

@@ -16,7 +16,7 @@
 .personal-model-row.selected { background:var(--soft); border-color:var(--line); color:var(--text); }
 .personal-model-row[hidden],.personal-model-empty[hidden] { display:none; }
 .personal-model-row input { appearance:none; width:16px; height:16px; flex:none; margin:0; border:1px solid var(--line-2); border-radius:5px; background:var(--card-solid); display:grid; place-items:center; cursor:pointer; }
-.personal-model-row input:checked { background:var(--strong); border-color:var(--strong); }
+.personal-model-row input:checked { background:var(--strong) !important; border-color:var(--strong) !important; }
 .personal-model-row input:checked::after { content:''; width:7px; height:4px; border-left:1.5px solid var(--strong-text); border-bottom:1.5px solid var(--strong-text); transform:rotate(-45deg) translateY(-1px); }
 .personal-model-dialog :focus-visible { outline:2px solid var(--strong); outline-offset:2px; }
 .personal-model-hint { color:var(--faint); font-size:10px; line-height:1.6; }

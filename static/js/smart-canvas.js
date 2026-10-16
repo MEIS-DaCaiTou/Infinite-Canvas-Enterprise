@@ -2970,7 +2970,9 @@ function renderComfyParams(){
     ];
     if(settings.comfyMode === 'custom'){
         if(!settings.comfyWorkflow) settings.comfyWorkflow = comfyWorkflows[0]?.name || '';
-        if(settings.comfyWorkflow && !comfyWorkflowCache[settings.comfyWorkflow]) ensureComfyWorkflow(settings.comfyWorkflow).then(renderDynamicParams);
+        if(settings.comfyWorkflow && comfyWorkflows.some(w => w.name === settings.comfyWorkflow) && !comfyWorkflowCache[settings.comfyWorkflow]){
+            ensureComfyWorkflow(settings.comfyWorkflow).then(data => {if(data) renderDynamicParams();});
+        }
     }
     let html = '';
     if(settings.comfyMode === 'text'){
