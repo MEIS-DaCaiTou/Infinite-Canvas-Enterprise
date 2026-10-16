@@ -33,7 +33,7 @@ def catalog(tmp_path, monkeypatch):
                   'provider_id':'zhenzhen', 'model':'fixture-model', 'result':None, **changes}
         with connect() as connection:
             connection.execute('INSERT INTO user_task_map VALUES(?,?,?,?)',
-                ('canvas_comfy' if record['type']=='comfy' else 'canvas_image', task_id, owner, created_at))
+                ({'comfy':'canvas_comfy','video':'canvas_video'}.get(record['type'],'canvas_image'), task_id, owner, created_at))
         repository.journal.create(record)
         return record
     return repository, add, connect
@@ -201,3 +201,18 @@ def test_automatic_task_state_requires_current_query_not_pre_restart_status():
     assert describe_task(record)['status']=='running'
     record.update(status='succeeded',result={'texts':['/output/kept.txt']})
     assert describe_task(record)['auto_recovery']['status']=='complete'
+
+
+def test_video_filter_pagination_and_disconnected_result_projection(catalog):
+    repository, add, _ = catalog
+    add('video-new', type='video', created_at=3000, status='succeeded', result={'videos':['/output/video.mp4']})
+    add('image-mid', created_at=2000)
+    add('video-old', type='video', created_at=1000, recovery_required=True)
+    add('bob-video', owner='bob', type='video', created_at=4000)
+    page=repository.page('alice',kind='canvas_video',limit=1)
+    assert [item['id'] for item in page['items']]==['video-new']
+    following=repository.page('alice',kind='canvas_video',cursor=page['next_cursor'])
+    assert [item['id'] for item in following['items']]==['video-old']
+    detail=repository.detail('alice','video-new')
+    assert detail['items']==[{'url':'/output/video.mp4','kind':'video'}]
+    assert repository.detail('bob','video-new') is None

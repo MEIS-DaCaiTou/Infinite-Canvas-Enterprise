@@ -535,6 +535,6 @@ def is_generation_response(path: str, method: str, data: Any) -> bool:
     normalized = str(path or "").strip().lstrip("/")
     if normalized in _GENERATION_RESPONSE_PATHS:
         return bool(data.get("images") or data.get("videos") or data.get("outputs") or protected_resource_urls(data))
-    if normalized.startswith("api/canvas-image-tasks/") or normalized.startswith("api/canvas-comfy-tasks/"):
+    if normalized.startswith(("api/canvas-image-tasks/", "api/canvas-comfy-tasks/", "api/canvas-video-tasks/")):
         return str(data.get("status") or "").lower() == "succeeded"
     return False

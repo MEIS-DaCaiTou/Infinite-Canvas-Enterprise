@@ -152,11 +152,14 @@ class CanvasTaskJournal:
         return records
 
     def record_image_request(self, task_id: str, index: int, changes: dict, *, recovering=False) -> None:
+        return self.record_provider_request(task_id, index, changes, recovering=recovering)
+
+    def record_provider_request(self, task_id: str, index: int, changes: dict, *, recovering=False) -> None:
         """Additive v1 receipt fields; no payloads or credentials are recorded."""
         with self._lock:
             record = self.get(task_id)
             required = "failed" if recovering else "running"
-            if not record or record.get("type") != "online-image" or record.get("status") != required:
+            if not record or record.get("type") not in {"online-image", "video"} or record.get("status") != required:
                 raise ValueError("Canvas image receipt is not writable")
             receipts = list(record.get("provider_receipts") or [])
             if type(index) is not int or not 0 <= index < len(receipts):
@@ -187,13 +190,16 @@ class CanvasTaskJournal:
                          "recovery_required": True, "updated_at": time.time()})
 
     def finish_image_recovery(self, task_id: str, result: dict) -> None:
+        return self.finish_provider_recovery(task_id, result)
+
+    def finish_provider_recovery(self, task_id: str, result: dict) -> None:
         with self._lock:
             record = self.get(task_id)
-            if not record or record.get("type") != "online-image" or record.get("status") != "failed":
-                raise ValueError("Canvas image task is not recoverable")
+            if not record or record.get("type") not in {"online-image", "video"} or record.get("status") != "failed":
+                raise ValueError("Canvas provider task is not recoverable")
             succeeded = result["status"] == "succeeded"
             self._write({**record, "status": "succeeded" if succeeded else "failed",
-                         "result": result, "error": "" if succeeded else result["message"],
+                         "result": result, "error": "" if succeeded else result.get("message", ""),
                          "recovery_required": not succeeded, "updated_at": time.time()})
 
     def recover(self) -> dict:
@@ -236,7 +242,7 @@ No provider work may start if either the receipt or owner commit fails.
         journal.create({**record, "enterprise_user_id": user_id})
         db.record_canvas_image_task_owner(user_id, record["id"])
         db.record_task_owner(
-            user_id, "canvas_image" if record["type"] == "online-image" else "canvas_comfy",
+            user_id, {"online-image": "canvas_image", "comfy": "canvas_comfy", "video": "canvas_video"}[record["type"]],
             record["id"], source="durable_canvas_task_receipt", status="queued",
         )
         if db.get_canvas_image_task_owner(record["id"]) != user_id:

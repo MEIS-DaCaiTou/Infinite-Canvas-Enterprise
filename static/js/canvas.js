@@ -10619,10 +10619,7 @@ async function runVideoNode(nodeId, opts={}){
     if(!opts.cascade){ node.running = true; refreshRunNodes(node, out); }
     else refreshRunNodes(node, out);
     try {
-        const result = await cascadeFetch('/api/canvas-video', {
-            method:'POST',
-            headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({
+        const result = await CanvasTaskQuery.runVideo({
                 prompt,
                 provider_id:resolveVideoProviderId(node.apiProvider || 'comfly'),
                 model:node.model || 'veo3-fast',
@@ -10640,8 +10637,7 @@ async function runVideoNode(nodeId, opts={}){
                 camerafixed:Boolean(node.cameraFixed),
                 generate_audio:Boolean(node.generateAudio),
                 multimodal:Boolean(node.multimodal)
-            })
-        }, {cascadeTargetId}).then(async r => { if(!r.ok) throw new Error(await responseErrorMessage(r, tr('canvas.videoFailed'))); return r.json(); });
+        }, {fetcher:(url, options) => cascadeFetch(url, options, {cascadeTargetId})});
         const meta = collectRunMeta(out, pendingId);
         if(out) out._pending = (out._pending || []).filter(p => p.id !== pendingId);
         const outputUrls = resultMediaUrls(result).map(item => {

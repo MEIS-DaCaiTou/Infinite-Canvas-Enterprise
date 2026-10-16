@@ -118,3 +118,19 @@ Responses 后台/SSE、专属 CLI 等尚未接入通用持久原任务续查，�
 loopback 实际 HTTP/Browser 演练复用隔离临时 SQLite owner 与固定测试 actor（不是 Browser 真实登录），关闭页面后终止拥有的测试进程、保留数据重启。首次演练发现 querying 状态 next_query_at=null 导致调度循环退出；已修正并增加启动回归，再以相同原回执演练成功找回图片和文本。配置变更原 ID 未向新地址发送，供应商夹具日志生成 POST 为 0。QA 用 .5 秒加速间隔，不能外推正式默认频率、真实 GPU/付费供应商或客户容量。证据集中于 D:/CodeProject/Infinite-Canvas-Enterprise-Artifacts/task-auto-recovery-20261015/。
 
 候选以 Draft PR 供独立审查，准确 CI 单独核对，不等于发布。正式 v2026.10.2 未重打包，没有客户/生产操作。
+
+
+## 2026-10-16 视频持久任务与原任务续查候选
+
+负责人批准视频优先；候选从 #163 的 `0a6db0f36edcb18fb352f7ab5768684a3334a666` 建立独立 `codex/video-task-recovery-20261016`，依赖 #163 的既有受理任务调度器。唯一产品顺序仍为路线图 4.2，没有扩大安装维护、工程治理或服务器部署范围。
+
+- `enterprise/canvas_video_tasks.py` 负责视频平台任务登记、一次提交、受理回执、单飞续查、归档与终态；`enterprise/providers/video_tasks.py` 负责单次 GET 的状态识别。main 只增加既有提交路径的受理钩子、协议回调与 API 接线，原视频参数构造不复制。
+- 两类画布共用 `CanvasTaskQuery.runVideo`：一次 POST 登记后以 GET 读取本地任务。请求 UUID 可重复登记到同一任务；服务端在调度前保存 owner，收到上游 ID 后把 ID、地址/协议和查询模式原子提交。未知提交结果无 ID 时不会再发付费生成。没有存储提示词、参考素材或密钥到新任务回执。
+- `canvas_video` 类型复用已有 task owner 表和 v1 JSON journal。本人列表、分页、详情、视频结果与服务端访问隔离复用任务中心；继续查询只接受本地 task ID，不能由浏览器指定查询供应商地址。配置重新绑定、认证拒绝及未知回包暂停并保留原身份；视频归档失败可再次 GET 原任务。
+- 自动恢复复用 #163 的维护暂停、并发 2 与退避。支持现有通用 v1/v2、Agnes、APIMart、火山、玉玉 HTTP 视频回执；并非对所有模型或供应商作真实付费认证。即梦 CLI 仍沿用原 pending/submit_id，RunningHub 尚无本包原任务恢复闭环；旧版未持久登记的视频任务不能补造事实。
+
+定向单元/协议检查证明相同请求不重复调度、无 ID 不续提、原 ID 单飞查询、归档失败后恢复、绑定变化/401 手动核对、失败终态不循环、视频 owner 分页与结果隔离。实际 main 隔离子进程在一次 POST 受理后硬退出，重启由原调度器执行 2 GET（排队→成功）归档原视频，0 次生成 POST；五类 HTTP 分支首个查询路径及即梦空 Base URL/CLI pending 兼容另行验证。旧 scheduler 的一项本地短时序测试首轮超时，定向复跑通过，保留该事实，最终准确 Head CI 另列 PR。
+
+独立 Review 定位了 Agnes 未定义鉴权函数、v2 查询路径提示不匹配及即梦空地址误拦截三项实际问题，均修正并补定向检查；最终复审结论记录 PR。Browser 使用 loopback 实际画布与目录模块、隔离 SQLite 和固定测试账号，经典画布筛选视频→详情→原任务续查后出现本地结果，智能画布读取相同已完成记录。控制台无相关错误，现有 Tailwind CDN 警告保留。首轮 QA 固定夹具的供应商绑定未采用规范化配置，正确触发了配置拒绝；修正夹具后通过，没有绕过生产校验。
+
+证据集中于 D:/CodeProject/Infinite-Canvas-Enterprise-Artifacts/video-task-recovery-20261016/。Browser 没有验证真实登录、付费生成或视频播放；播放文件为不可播放的合成夹具，仅验证记录和结果入口。无新依赖/CI 门禁、全量安装测试、Schema 变更或生产操作。回滚为撤回本包代码，保留 journal 和 owner 数据；旧程序不能显示新视频目录条目，不删除客户数据。未合并/发布，正式 10.2 不变。

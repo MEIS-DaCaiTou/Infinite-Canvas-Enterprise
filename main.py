@@ -56,6 +56,8 @@ from enterprise.app_paths import AppPathLayout
 from enterprise.canvas_task_journal import CanvasTaskJournal, create_task_receipt
 from enterprise.generation_task_routes import create_router as create_generation_task_router
 from enterprise.canvas_image_recovery import CanvasImageRecovery, ImageReceiptSink, public_receipt
+from enterprise.canvas_video_tasks import CanvasVideoTasks, public_video_task, record_video_acceptance
+from enterprise.providers.video_tasks import inspect_video, encoded_task_id
 from enterprise.canvas_comfy_recovery import CanvasComfyRecovery
 from enterprise.accepted_task_recovery import AcceptedTaskRecovery, validate_owned_task
 from enterprise.runtime.install_maintenance import maintenance_active
@@ -257,6 +259,7 @@ async def startup_event():
 async def shutdown_task_recovery():
     await CANVAS_ACCEPTED_RECOVERY.stop()
     await CANVAS_IMAGE_RECOVERY.shutdown()
+    await CANVAS_VIDEO_TASKS.shutdown()
     await CANVAS_COMFY_RECOVERY.shutdown()
 
 
@@ -2490,6 +2493,7 @@ def schedule_canvas_task(coroutine):
     task.add_done_callback(completed)
 
 class CanvasVideoRequest(BaseModel):
+    request_id: str = ""
     prompt: str = Field(min_length=1, max_length=VIDEO_PROMPT_MAX_LENGTH)
     provider_id: str = "comfly"
     model: str = "veo3-fast"
@@ -13075,7 +13079,7 @@ def validate_auto_task(record):
 
 
 async def query_accepted_task(record):
-    recovery = CANVAS_COMFY_RECOVERY if record["type"] == "comfy" else CANVAS_IMAGE_RECOVERY
+    recovery = {"comfy": CANVAS_COMFY_RECOVERY, "online-image": CANVAS_IMAGE_RECOVERY, "video": CANVAS_VIDEO_TASKS}[record["type"]]
     return await recovery.reconcile(record["id"])
 
 
@@ -13516,6 +13520,7 @@ async def generate_agnes_video(client, payload, provider, base_url, requested_mo
     video_id = str(raw.get("video_id") or "").strip()
     task_id = str(raw.get("task_id") or raw.get("id") or "").strip()
     result = raw
+    await record_video_acceptance(video_id or task_id, provider, submit_url, "agnes")
     if video_id and not video_output_urls(raw):
         result = await wait_for_agnes_video_task(client, provider, video_id, model)
     elif task_id and not video_output_urls(raw):
@@ -13619,6 +13624,7 @@ async def generate_yuli_openai_video(client, payload, provider, base_url, reques
         resp_text = (response.text or "")[:500]
         raise HTTPException(status_code=502, detail=f"玉玉API 视频接口返回非 JSON 响应（状态 {response.status_code}）：{resp_text}") from exc
     task_id = raw.get("id") or extract_task_id(raw) or raw.get("task_id")
+    await record_video_acceptance(task_id, provider, submit_url, "yuli")
     result = raw
     if task_id and not video_output_urls(raw):
         result = await wait_for_video_task(client, provider, task_id, submit_url)
@@ -13992,6 +13998,7 @@ async def canvas_video(payload: CanvasVideoRequest):
                 raw = submission_json(response, kind="视频")
                 break
             task_id = extract_task_id(raw) or raw.get("task_id") or raw.get("id")
+            await record_video_acceptance(task_id, provider, submit_url, video_query_mode(provider, payload.model))
             result = raw
             if task_id and not video_output_urls(raw):
                 try:
@@ -14066,6 +14073,60 @@ async def canvas_video(payload: CanvasVideoRequest):
     except httpx.HTTPError as exc:
         log_net_error(f"视频 网络/TLS错误 provider={provider.get('id')} model={payload.model}", exc)
         raise provider_submission_unknown("视频提交或任务查询的网络响应中断，是否已被供应商受理尚不确定") from exc
+
+def video_query_mode(provider, model):
+    if is_jimeng_provider(provider) or is_runninghub_provider(provider):
+        return ""
+    if is_agnes_provider(provider, model):
+        return "agnes"
+    if is_apimart_provider(provider):
+        return "apimart"
+    if is_volcengine_provider(provider):
+        return "volcengine"
+    if is_yuli_provider(provider):
+        return "yuli"
+    return "generic"
+
+
+async def inspect_saved_video_task(provider, receipt):
+    mode = video_query_mode(provider, receipt.get("model", ""))
+    if not mode or mode != receipt.get("video_query_mode"):
+        raise HTTPException(409, "原视频查询协议无法匹配，请核对供应商记录")
+    base = video_api_root(provider)
+    task_id = encoded_task_id(receipt["upstream_task_id"])
+    urls = video_task_url_candidates(provider, base, task_id, "/v2/videos/generations" if receipt.get("video_v2") else "")
+    headers = api_headers(provider=provider)
+    if mode == "agnes":
+        # Agnes query has additional model headers and query parameters.
+        urls = [f"{base}/agnesapi?" + urllib.parse.urlencode({"video_id": receipt["upstream_task_id"], "model_name": receipt.get("model", "")}),
+                f"{base}/v1/videos/{task_id}"]
+        headers = api_headers(provider=provider, model=receipt.get("model", ""))
+    async with httpx.AsyncClient(timeout=httpx.Timeout(30, connect=10), follow_redirects=False) as client:
+        return await inspect_video(client, urls, headers, video_output_urls, humanize_video_task_failure)
+
+
+CANVAS_VIDEO_TASKS = CanvasVideoTasks(CANVAS_TASK_JOURNAL, get_api_provider_exact, canvas_video,
+    inspect_saved_video_task, save_remote_video_to_output, image_outputs_are_archived, save_to_history,
+    schedule_canvas_task, lambda task_id: CANVAS_ACCEPTED_RECOVERY.notify(task_id), query_mode=video_query_mode)
+
+
+@app.post("/api/canvas-video-tasks")
+async def create_canvas_video_task(payload: CanvasVideoRequest, x_enterprise_user_id: Optional[str] = Header(default=None)):
+    return await CANVAS_VIDEO_TASKS.create(payload, x_enterprise_user_id)
+
+
+@app.get("/api/canvas-video-tasks/{task_id}")
+async def get_canvas_video_task(task_id: str):
+    record = await asyncio.to_thread(CANVAS_TASK_JOURNAL.get, task_id)
+    if not record or record.get("type") != "video":
+        raise HTTPException(404, "视频任务不存在；此前没有持久回执的任务无法补录")
+    return public_video_task(record)
+
+
+@app.post("/api/canvas-video-tasks/{task_id}/reconcile")
+async def reconcile_canvas_video_task(task_id: str):
+    return await CANVAS_VIDEO_TASKS.reconcile(task_id)
+
 
 # --- Canvas LLM ---
 

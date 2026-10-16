@@ -6,11 +6,12 @@ from urllib.parse import unquote, urlsplit
 
 from enterprise import db
 from enterprise.canvas_image_recovery import can_reconcile
+from enterprise.canvas_video_tasks import can_reconcile_video
 from enterprise.canvas_task_journal import CanvasTaskJournal
 from enterprise.accepted_task_recovery import recovery_candidate
 from enterprise.runtime.logging import redact_text
 
-TYPES = {"canvas_image": "online-image", "canvas_comfy": "comfy"}
+TYPES = {"canvas_image": "online-image", "canvas_comfy": "comfy", "canvas_video": "video"}
 STATES = {"queued", "running", "succeeded", "failed", "unknown", "partial", "unavailable"}
 
 
@@ -21,7 +22,7 @@ def task_state(record):
     if state in {"queued", "running", "jimeng_pending"}:
         return "queued" if state == "queued" else "running"
     receipts = record.get("provider_receipts") or []
-    if any((item.get("result") or {}).get("images") for item in receipts):
+    if any((item.get("result") or {}).get("images") or (item.get("result") or {}).get("videos") for item in receipts):
         return "partial"
     if receipts and all(item.get("state") == "failed" for item in receipts):
         return "failed"
@@ -45,7 +46,8 @@ def result_items(record):
         if not items and isinstance(result.get("image"), str):
             items.append({"url": result["image"], "kind": "image"})
     for attempt in record.get("provider_receipts") or []:
-        items.extend({"url": value, "kind": "image"} for value in (attempt.get("result") or {}).get("images", []))
+        for key, kind in (("images", "image"), ("videos", "video")):
+            items.extend({"url": value, "kind": kind} for value in (attempt.get("result") or {}).get(key, []))
     unique = {}
     for item in items:
         if isinstance(item, str):
@@ -64,7 +66,8 @@ def result_items(record):
 def describe_task(record, *, detail=False):
     state = task_state(record)
     comfy = record.get("comfy_receipt") or {}
-    can_query = (can_reconcile(record) if record.get("type") == "online-image" else
+    can_query = (can_reconcile_video(record) if record.get("type") == "video" else
+                 can_reconcile(record) if record.get("type") == "online-image" else
                  bool(comfy.get("prompt_id") and record.get("status") == "failed" and record.get("recovery_required")))
     items = result_items(record)
     first = next(iter(record.get("provider_receipts") or []), {})
@@ -121,7 +124,7 @@ class GenerationTaskRepository:
     def page(self, user_id, *, cursor="", status="", kind="", limit=30):
         before = None
         if cursor:
-            match = re.fullmatch(r"(\d{1,16})\|(canvas_image|canvas_comfy)\|([A-Za-z0-9_-]{1,160})", cursor)
+            match = re.fullmatch(r"(\d{1,16})\|(canvas_image|canvas_comfy|canvas_video)\|([A-Za-z0-9_-]{1,160})", cursor)
             if not match:
                 raise ValueError("任务分页位置无效")
             before = (int(match[1]), match[2], match[3])
