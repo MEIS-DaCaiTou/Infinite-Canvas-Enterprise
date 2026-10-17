@@ -3,7 +3,7 @@
     'use strict';
     const esc=value=>String(value ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     const labels={queued:'排队中',running:'运行中',succeeded:'已完成',failed:'明确失败',unknown:'待核对',partial:'部分结果',unavailable:'记录不可读'};
-    const attemptLabels={...labels,started:'已登记',submitting:'提交中',accepted:'已受理',generated:'待归档',querying:'核对中'};
+    const attemptLabels={...labels,started:'已登记',submitting:'提交中',accepted:'已受理',generated:'待归档',querying:'核对中',manual:'需人工核对'};
     const label=value=>attemptLabels[value] || value;
     async function json(url,options={}){
         const response=await fetch(url,{cache:'no-store',...options});
@@ -20,7 +20,7 @@
         const tabs=document.createElement('div');tabs.className='generation-task-tabs';tabs.setAttribute('role','tablist');
         tabs.innerHTML='<button type="button" role="tab" aria-selected="true" data-view="logs">生成日志</button><button type="button" role="tab" aria-selected="false" data-view="tasks">生成任务</button><span>仅显示本人任务</span>';
         const pane=document.createElement('div');pane.className='generation-task-pane';pane.hidden=true;
-        pane.innerHTML='<div class="generation-task-filters"><select aria-label="任务状态"><option value="">全部状态</option>'+Object.entries(labels).map(([key,label])=>`<option value="${key}">${label}</option>`).join('')+'</select><select aria-label="任务类型"><option value="">全部类型</option><option value="canvas_image">API 图片</option><option value="canvas_comfy">ComfyUI</option></select><button type="button" data-refresh>刷新</button></div><div class="generation-task-status" role="status"></div><div class="generation-task-list"></div><button type="button" class="generation-task-more" hidden>查看更早任务</button>';
+        pane.innerHTML='<div class="generation-task-filters"><select aria-label="任务状态"><option value="">全部状态</option>'+Object.entries(labels).map(([key,label])=>`<option value="${key}">${label}</option>`).join('')+'</select><select aria-label="任务类型"><option value="">全部类型</option><option value="canvas_image">API 图片</option><option value="canvas_comfy">ComfyUI</option><option value="canvas_video">API 视频</option></select><button type="button" data-refresh>刷新</button></div><div class="generation-task-status" role="status"></div><div class="generation-task-list"></div><button type="button" class="generation-task-more" hidden>查看更早任务</button>';
         logs.before(tabs);logs.after(pane);
         const list=pane.querySelector('.generation-task-list'),notice=pane.querySelector('[role=status]'),more=pane.querySelector('.generation-task-more');
         const filters=pane.querySelectorAll('select'),details=new Map();
@@ -28,7 +28,7 @@
         function stop(){clearTimeout(timer);timer=null;}
         function schedule(){
             stop();
-            if(view==='tasks' && modal.classList.contains('open') && rows.some(row=>['queued','running'].includes(row.status)))timer=setTimeout(()=>load(),5000);
+            if(view==='tasks' && modal.classList.contains('open') && rows.some(row=>['queued','running'].includes(row.status) || ['querying','waiting'].includes(row.auto_recovery?.status)))timer=setTimeout(()=>load(),5000);
         }
         function draw(){
             list.innerHTML=rows.length?rows.map(row=>`<article class="generation-task-row"><div class="generation-task-row-head"><div><span class="generation-task-badge" data-state="${esc(row.status)}">${esc(labels[row.status] || row.status)}</span><strong>${esc(row.workflow || row.model || row.provider || '生成任务')}</strong><p>${esc(date(row.created_at))} · ${esc(row.provider || row.type || '')} · ${Number(row.output_count || 0)} 个结果</p></div><button type="button" data-detail="${esc(row.id)}" ${row.status==='unavailable'?'disabled':''}>${expanded===row.id?'收起':'详情'}</button></div>${expanded===row.id?'<div class="generation-task-detail"></div>':''}</article>`).join(''):'<div class="log-empty">暂无匹配任务；此前没有持久回执的历史任务无法补录。</div>';
@@ -48,6 +48,8 @@
         function drawDetail(data){
             const container=list.querySelector('.generation-task-detail');if(!container)return;
             const query=data.reconciliation;
+            const automatic=data.auto_recovery;
+            const autoLabels={querying:'自动续查中',waiting:'等待自动续查',manual:'自动续查已暂停，需要人工核对',complete:'自动续查已结束'};
             const attempts=(data.attempts || []).map(item=>{
                 const usage=item.reported_usage || {};
                 const counts=Object.entries(usage).filter(([key])=>!['reported_cost','currency'].includes(key));
@@ -63,6 +65,7 @@
                 <div class="generation-task-attempts">${attempts}</div>
                 <p class="generation-task-note">${esc(data.cost_note || '')}</p>
                 ${query?`<p class="generation-task-note">最近核对：${esc(label(query.status))} · ${esc(date(query.finished_at || query.started_at))} · 共 ${query.count || 0} 次</p>`:''}
+                ${automatic?`<p class="generation-task-note">${esc(autoLabels[automatic.status] || automatic.status)}${automatic.next_query_at?' · 下次 '+esc(date(automatic.next_query_at)):''}${automatic.reason?' · '+esc(automatic.reason):''}</p>`:''}
                 <div class="generation-task-results"></div>
                 ${data.can_query?'<button type="button" class="generation-task-query">继续查询原任务</button>':data.status==='unknown'?'<p class="generation-task-note">当前没有可安全续查的受理身份，请核对供应商记录；不会自动重新生成。</p>':''}`;
             const results=container.querySelector('.generation-task-results');
@@ -82,7 +85,7 @@
             if(queryButton)queryButton.onclick=async()=>{
                 const token=epoch;queryButton.disabled=true;notice.textContent='正在核对原任务，不会重新生成…';
                 try{
-                    const url=data.type==='comfy'?'/api/canvas-comfy-tasks/'+encodeURIComponent(data.id)+'?resume=true':'/api/canvas-image-tasks/'+encodeURIComponent(data.id)+'/reconcile';
+                    const url=data.type==='comfy'?'/api/canvas-comfy-tasks/'+encodeURIComponent(data.id)+'?resume=true':(data.type==='video'?'/api/canvas-video-tasks/':'/api/canvas-image-tasks/')+encodeURIComponent(data.id)+'/reconcile';
                     await json(url,data.type==='comfy'?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
                     if(token===epoch){notice.textContent='已查询原任务';await load();}
                 }catch(error){if(token===epoch){notice.textContent=error.message;queryButton.disabled=false;}}

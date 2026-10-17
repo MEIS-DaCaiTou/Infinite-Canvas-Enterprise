@@ -189,6 +189,7 @@ async def _run_checks() -> None:
             FakeRequest(actor_admin, {"mode": "deny"}),
         )
         await _assert_forbidden("api/canvas-video", "POST", actor_a, {"prompt": "video"})
+        await _assert_forbidden("api/canvas-video-tasks", "POST", actor_a, {"prompt": "video"})
         await _assert_forbidden("api/online-image", "POST", actor_a, {"prompt": "image"})
         await _assert_forbidden("api/generate", "POST", actor_a, {"prompt": "image"})
         await _assert_allowed("api/canvas-video", "POST", actor_b, {"prompt": "video"})

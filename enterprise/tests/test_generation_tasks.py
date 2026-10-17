@@ -33,7 +33,7 @@ def catalog(tmp_path, monkeypatch):
                   'provider_id':'zhenzhen', 'model':'fixture-model', 'result':None, **changes}
         with connect() as connection:
             connection.execute('INSERT INTO user_task_map VALUES(?,?,?,?)',
-                ('canvas_comfy' if record['type']=='comfy' else 'canvas_image', task_id, owner, created_at))
+                ({'comfy':'canvas_comfy','video':'canvas_video'}.get(record['type'],'canvas_image'), task_id, owner, created_at))
         repository.journal.create(record)
         return record
     return repository, add, connect
@@ -187,3 +187,32 @@ def test_new_receipt_fields_remain_readable_by_v1_journal_after_restart(tmp_path
     record=restarted.get('accepted')
     assert record['journal_version']==1 and record['reconciliation']['count']==1
     assert describe_task(record)['status']=='unknown'
+
+
+def test_automatic_task_state_requires_current_query_not_pre_restart_status():
+    record={'id':'original','type':'comfy','status':'failed','recovery_required':True,
+        'comfy_receipt':{'prompt_id':'original-27'},
+        'auto_recovery':{'status':'waiting','last_query_at':20},
+        'reconciliation':{'status':'queued','started_at':21}}
+    assert describe_task(record)['status']=='queued'
+    record['auto_recovery'].update(status='querying',last_query_at=30)
+    assert describe_task(record)['status']=='unknown'
+    record['reconciliation'].update(status='running',started_at=31)
+    assert describe_task(record)['status']=='running'
+    record.update(status='succeeded',result={'texts':['/output/kept.txt']})
+    assert describe_task(record)['auto_recovery']['status']=='complete'
+
+
+def test_video_filter_pagination_and_disconnected_result_projection(catalog):
+    repository, add, _ = catalog
+    add('video-new', type='video', created_at=3000, status='succeeded', result={'videos':['/output/video.mp4']})
+    add('image-mid', created_at=2000)
+    add('video-old', type='video', created_at=1000, recovery_required=True)
+    add('bob-video', owner='bob', type='video', created_at=4000)
+    page=repository.page('alice',kind='canvas_video',limit=1)
+    assert [item['id'] for item in page['items']]==['video-new']
+    following=repository.page('alice',kind='canvas_video',cursor=page['next_cursor'])
+    assert [item['id'] for item in following['items']]==['video-old']
+    detail=repository.detail('alice','video-new')
+    assert detail['items']==[{'url':'/output/video.mp4','kind':'video'}]
+    assert repository.detail('bob','video-new') is None

@@ -1564,7 +1564,7 @@ def get_task(task_type: str, task_id: str) -> Optional[dict]:
 
 def list_owned_canvas_tasks(user_id: str, *, before=None, limit=100, task_type="") -> list[dict]:
     """Owner-first keyset lookup; journal records remain the task state source."""
-    clauses = ["user_id = ?", "task_type IN ('canvas_image', 'canvas_comfy')"]
+    clauses = ["user_id = ?", "task_type IN ('canvas_image', 'canvas_comfy', 'canvas_video')"]
     values = [user_id]
     if task_type:
         clauses.append("task_type = ?")

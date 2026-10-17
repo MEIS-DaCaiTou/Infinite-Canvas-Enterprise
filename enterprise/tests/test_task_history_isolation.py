@@ -250,6 +250,19 @@ async def _run_checks() -> None:
         assert edb.get_canvas_image_task_owner("canvas-comfy-a") == user_a["id"]
         assert edb.get_task_owner("canvas_comfy", "canvas-comfy-a") == user_a["id"]
 
+        # Durable video tasks preserve the owner across polling/reconciliation.
+        await _post_process_json(interceptors, "api/canvas-video-tasks", "POST", actor_a,
+            {"task_id":"canvas-video-a", "status":"queued"})
+        assert edb.get_task_owner("canvas_video", "canvas-video-a") == user_a["id"]
+        for method, path in [("GET", "api/canvas-video-tasks/canvas-video-a"),
+                             ("POST", "api/canvas-video-tasks/canvas-video-a/reconcile")]:
+            assert await interceptors.pre_process(path, method, actor_a) is None
+            denied = await interceptors.pre_process(path, method, actor_b)
+            assert denied is not None and denied.status_code == 404
+        await _post_process_json(interceptors, "api/canvas-video-tasks/canvas-video-a/reconcile", "POST", actor_admin,
+            {"status":"succeeded", "videos":["/assets/output/recovered-video.mp4"]})
+        assert edb.get_resource_owner("/assets/output/recovered-video.mp4") == user_a["id"]
+
         # Video tasks record task owner and output resource owner from the response.
         await _post_process_json(
             interceptors,

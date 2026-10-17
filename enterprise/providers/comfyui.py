@@ -45,6 +45,26 @@ class ComfyExecutionError(RuntimeError):
     pass
 
 
+def history_result(payload, prompt_id):
+    entry = payload.get(prompt_id)
+    if entry is None:
+        return None
+    status = entry.get("status") or {}
+    if status.get("status_str") == "error":
+        messages = status.get("messages") or []
+        detail = next((m[1].get("exception_message") for m in messages
+                       if len(m) > 1 and m[0] == "execution_error" and isinstance(m[1], dict)), "工作流执行失败")
+        raise ComfyExecutionError(str(detail))
+    return ("running", None) if status.get("completed") is False else ("retrieving", entry)
+
+
+def queue_result(queue, prompt_id):
+    for key, phase in (("queue_running", "running"), ("queue_pending", "queued")):
+        if any(isinstance(row, list) and len(row) > 1 and row[1] == prompt_id for row in queue.get(key, [])):
+            return phase, None
+    return "unknown", None
+
+
 class ComfyClient:
     def __init__(self, backend: str):
         self.backend = backend
@@ -74,24 +94,23 @@ class ComfyClient:
     def inspect(self, prompt_id: str):
         response = requests.get(endpoint(self.backend, "/history/" + quote(prompt_id, safe="")), timeout=(10, 30))
         response.raise_for_status()
-        entry = response.json().get(prompt_id)
-        if entry is not None:
-            status = entry.get("status") or {}
-            if status.get("status_str") == "error":
-                messages = status.get("messages") or []
-                detail = next((m[1].get("exception_message") for m in messages
-                               if len(m) > 1 and m[0] == "execution_error" and isinstance(m[1], dict)), "工作流执行失败")
-                raise ComfyExecutionError(str(detail))
-            if status.get("completed") is False:
-                return "running", None
-            return "retrieving", entry
+        result = history_result(response.json(), prompt_id)
+        if result:
+            return result
         response = requests.get(endpoint(self.backend, "/queue"), timeout=(10, 30))
         response.raise_for_status()
-        queue = response.json()
-        for key, phase in (("queue_running", "running"), ("queue_pending", "queued")):
-            if any(isinstance(row, list) and len(row) > 1 and row[1] == prompt_id for row in queue.get(key, [])):
-                return phase, None
-        return "unknown", None
+        return queue_result(response.json(), prompt_id)
+
+    async def inspect_async(self, client, prompt_id: str):
+        """Cancellable one-shot GETs, sharing the existing response semantics."""
+        response = await client.get(endpoint(self.backend, "/history/" + quote(prompt_id, safe="")))
+        response.raise_for_status()
+        result = history_result(response.json(), prompt_id)
+        if result:
+            return result
+        response = await client.get(endpoint(self.backend, "/queue"))
+        response.raise_for_status()
+        return queue_result(response.json(), prompt_id)
 
     def wait(self, prompt_id: str, *, timeout=1800, progress=lambda phase: None):
         deadline = time.monotonic() + timeout

@@ -56,6 +56,11 @@ from enterprise.app_paths import AppPathLayout
 from enterprise.canvas_task_journal import CanvasTaskJournal, create_task_receipt
 from enterprise.generation_task_routes import create_router as create_generation_task_router
 from enterprise.canvas_image_recovery import CanvasImageRecovery, ImageReceiptSink, public_receipt
+from enterprise.canvas_video_tasks import CanvasVideoTasks, public_video_task, record_video_acceptance
+from enterprise.providers.video_tasks import inspect_video, encoded_task_id
+from enterprise.canvas_comfy_recovery import CanvasComfyRecovery
+from enterprise.accepted_task_recovery import AcceptedTaskRecovery, validate_owned_task
+from enterprise.runtime.install_maintenance import maintenance_active
 from enterprise.providers.submission import (
     image_api_explicitly_rejected, provider_submission_unknown, submission_json,
     httpx_request_with_transient_retries,
@@ -70,6 +75,7 @@ from enterprise.providers.zhenzhen import (
     submit_image as submit_zhenzhen_image,
     is_zhenzhen, image_headers as zhenzhen_image_headers,
     image_task_endpoint as zhenzhen_image_task_endpoint, query_image as query_zhenzhen_image,
+    image_query_status as zhenzhen_image_query_status,
 )
 from enterprise.providers.image_task_protocol import (
     SUCCESS_STATUSES as IMAGE_TASK_SUCCESS_STATUSES, FAILED_STATUSES as IMAGE_TASK_FAILED_STATUSES,
@@ -247,6 +253,15 @@ async def startup_event():
         await asyncio.to_thread(migrate_mislabeled_image_extensions)
     except Exception as exc:
         print(f"纠正图片扩展名失败: {exc}")
+    await CANVAS_ACCEPTED_RECOVERY.start()
+
+@app.on_event("shutdown")
+async def shutdown_task_recovery():
+    await CANVAS_ACCEPTED_RECOVERY.stop()
+    await CANVAS_IMAGE_RECOVERY.shutdown()
+    await CANVAS_VIDEO_TASKS.shutdown()
+    await CANVAS_COMFY_RECOVERY.shutdown()
+
 
 @app.websocket("/ws/stats")
 async def websocket_endpoint(websocket: WebSocket, client_id: str = None):
@@ -2478,6 +2493,7 @@ def schedule_canvas_task(coroutine):
     task.add_done_callback(completed)
 
 class CanvasVideoRequest(BaseModel):
+    request_id: str = ""
     prompt: str = Field(min_length=1, max_length=VIDEO_PROMPT_MAX_LENGTH)
     provider_id: str = "comfly"
     model: str = "veo3-fast"
@@ -12840,6 +12856,14 @@ async def query_image_task_result(payload: ImageTaskQueryRequest, *, store_histo
         image_items = extract_images(raw)
     except HTTPException:
         image_items = []
+    if is_zhenzhen(provider):
+        state = zhenzhen_image_query_status(raw, has_images=bool(image_items))
+        if state != "succeeded":
+            message = (image_task_fail_reason(raw) if state == "failed" else
+                       "原任务仍在生成中" if state == "running" else
+                       "Zhenzhen 原任务回包状态或结果无法确认，请人工核对；不会重新生成")
+            return {"status": state, "task_id": task_id, "provider_id": provider["id"],
+                    "message": message, "error": message if state == "failed" else "", "raw": raw}
     if image_items:
         local_urls = []
         local_items = []
@@ -12941,6 +12965,7 @@ async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
         if getattr(exc, "submission_unknown", False):
             changes.update(recovery_required=True, error_code="PROVIDER_SUBMISSION_UNKNOWN")
     await asyncio.to_thread(CANVAS_TASK_JOURNAL.finish, task_id, changes)
+    CANVAS_ACCEPTED_RECOVERY.notify(task_id)
 
 @app.post("/api/canvas-image-tasks")
 async def create_canvas_image_task(
@@ -12991,6 +13016,7 @@ async def run_canvas_comfy_task(task_id: str, payload: GenerateRequest):
             "recovery_required": bool((CANVAS_TASK_JOURNAL.get(task_id) or {}).get("comfy_receipt")) and not isinstance(exc, ComfyExecutionError),
         }
     await asyncio.to_thread(CANVAS_TASK_JOURNAL.finish, task_id, changes)
+    CANVAS_ACCEPTED_RECOVERY.notify(task_id)
 
 @app.post("/api/canvas-comfy-tasks")
 async def create_canvas_comfy_task(
@@ -13025,19 +13051,56 @@ async def create_canvas_comfy_task(
         schedule_canvas_task(run_canvas_comfy_task(task_id, payload))
         return {"task_id": task_id, "status": "queued"}
 
-async def resume_canvas_comfy_task(task_id, receipt):
+def validate_comfy_receipt(receipt):
+    if comfy_base_url(receipt["backend"]) not in {comfy_base_url(addr) for addr in COMFYUI_INSTANCES}:
+        raise HTTPException(409, "原 ComfyUI 后端已移除；请核对原任务，不向替代后端发送原 ID")
+
+
+async def inspect_saved_comfy_task(backend, prompt_id):
+    async with httpx.AsyncClient(timeout=httpx.Timeout(30, connect=10), follow_redirects=False) as client:
+        return await ComfyClient(backend).inspect_async(client, prompt_id)
+
+
+def archive_saved_comfy_task(record, history):
+    receipt = record["comfy_receipt"]
+    req = GenerateRequest(type=receipt["output_type"], workflow_json=receipt.get("workflow_json", "Z-Image.json"), convert_to_jpg=receipt.get("convert_to_jpg", False))
+    return archive_comfy_history(history, receipt["workflow_classes"], req,
+                                 receipt["prompt_id"], receipt["backend"], record["id"], receipt["seed"])
+
+
+CANVAS_COMFY_RECOVERY = CanvasComfyRecovery(CANVAS_TASK_JOURNAL, inspect_saved_comfy_task,
+                                           archive_saved_comfy_task, validate_comfy_receipt)
+
+
+def validate_auto_task(record):
+    from enterprise import db
+    return validate_owned_task(record, task_owner=db.get_task_owner, user=db.get_user_by_id,
+                               provider=get_api_provider_exact, comfy=validate_comfy_receipt)
+
+
+async def query_accepted_task(record):
+    recovery = {"comfy": CANVAS_COMFY_RECOVERY, "online-image": CANVAS_IMAGE_RECOVERY, "video": CANVAS_VIDEO_TASKS}[record["type"]]
+    return await recovery.reconcile(record["id"])
+
+
+CANVAS_ACCEPTED_RECOVERY = AcceptedTaskRecovery(CANVAS_TASK_JOURNAL, query_accepted_task,
+    validate_auto_task, lambda: maintenance_active(PATH_ROOTS.STATE_ROOT))
+
+
+async def resume_canvas_comfy_task(task_id):
     try:
-        client = ComfyClient(receipt["backend"])
-        history = await asyncio.to_thread(client.wait, receipt["prompt_id"], timeout=COMFYUI_HISTORY_TIMEOUT,
-            progress=lambda phase: CANVAS_TASK_JOURNAL.record_comfy(task_id, {"phase": phase}))
-        req = GenerateRequest(type=receipt["output_type"], workflow_json=receipt.get("workflow_json", "Z-Image.json"), convert_to_jpg=receipt.get("convert_to_jpg", False))
-        result = await asyncio.to_thread(archive_comfy_history, history, receipt["workflow_classes"], req,
-                                        receipt["prompt_id"], receipt["backend"], task_id, receipt["seed"])
-        changes = {"status": "succeeded", "result": result, "error": "", "recovery_required": False}
-    except Exception as exc:
-        changes = {"status": "failed", "error": str(exc), "recovery_required": not isinstance(exc, ComfyExecutionError)}
-    await asyncio.to_thread(CANVAS_TASK_JOURNAL.finish, task_id, changes)
-    await asyncio.to_thread(CANVAS_TASK_JOURNAL.record_reconciliation, task_id, changes["status"], changes.get("error", ""))
+        result = await CANVAS_COMFY_RECOVERY.reconcile(task_id)
+    except HTTPException as exc:
+        result = {"status": "manual", "message": exc.detail}
+    code = result.get("http_status")
+    if result.get("status") == "manual" or (code is not None and 300 <= code < 500 and code not in {408, 429}):
+        await asyncio.to_thread(CANVAS_TASK_JOURNAL.record_auto_recovery, task_id,
+                               {"status": "manual", "next_query_at": None, "reason": result.get("message", "")})
+        return
+    if result.get("status") in {"queued", "running", "unknown"}:
+        await asyncio.to_thread(CANVAS_TASK_JOURNAL.record_auto_recovery, task_id,
+                               {"status": "waiting", "next_query_at": None, "reason": result.get("message", "")})
+    CANVAS_ACCEPTED_RECOVERY.notify(task_id)
 
 
 @app.get("/api/canvas-comfy-tasks/{task_id}")
@@ -13045,15 +13108,15 @@ async def get_canvas_comfy_task(task_id: str, resume: bool = False):
     task = await asyncio.to_thread(CANVAS_TASK_JOURNAL.get, task_id)
     if not task or task.get("type") != "comfy":
         raise HTTPException(status_code=404, detail="ComfyUI 任务不存在；此版本启用前的内存任务无法凭空恢复")
-    if task.get("status") == "failed" and task.get("recovery_required") and (resume or task.get("error_code") == "runtime_interrupted"):
-        receipt = await asyncio.to_thread(CANVAS_TASK_JOURNAL.claim_comfy_query, task_id)
-        if receipt:
-            schedule_canvas_task(resume_canvas_comfy_task(task_id, receipt))
-            task = await asyncio.to_thread(CANVAS_TASK_JOURNAL.get, task_id)
+    from enterprise.canvas_comfy_recovery import public_comfy_task
+    manual = (task.get("auto_recovery") or {}).get("status") == "manual"
+    resuming = bool(task.get("status") == "failed" and task.get("recovery_required")
+                    and (task.get("comfy_receipt") or {}).get("prompt_id")
+                    and (resume or (task.get("error_code") == "runtime_interrupted" and not manual)))
+    if resuming:
+        schedule_canvas_task(resume_canvas_comfy_task(task_id))
     # Internal backend/class metadata stays in the journal, not the polling response.
-    public = {key: value for key, value in task.items() if key != "comfy_receipt"}
-    public["phase"] = (task.get("comfy_receipt") or {}).get("phase", "preparing" if task["status"] == "running" else task["status"])
-    return public
+    return public_comfy_task(task, resuming=resuming)
 
 # --- 图像生成参数 schema（供客户端动态渲染参数表单，避免把参数写死在前端） ---
 IMAGE_PARAM_RATIOS = [
@@ -13457,6 +13520,7 @@ async def generate_agnes_video(client, payload, provider, base_url, requested_mo
     video_id = str(raw.get("video_id") or "").strip()
     task_id = str(raw.get("task_id") or raw.get("id") or "").strip()
     result = raw
+    await record_video_acceptance(video_id or task_id, provider, submit_url, "agnes")
     if video_id and not video_output_urls(raw):
         result = await wait_for_agnes_video_task(client, provider, video_id, model)
     elif task_id and not video_output_urls(raw):
@@ -13560,6 +13624,7 @@ async def generate_yuli_openai_video(client, payload, provider, base_url, reques
         resp_text = (response.text or "")[:500]
         raise HTTPException(status_code=502, detail=f"玉玉API 视频接口返回非 JSON 响应（状态 {response.status_code}）：{resp_text}") from exc
     task_id = raw.get("id") or extract_task_id(raw) or raw.get("task_id")
+    await record_video_acceptance(task_id, provider, submit_url, "yuli")
     result = raw
     if task_id and not video_output_urls(raw):
         result = await wait_for_video_task(client, provider, task_id, submit_url)
@@ -13933,6 +13998,7 @@ async def canvas_video(payload: CanvasVideoRequest):
                 raw = submission_json(response, kind="视频")
                 break
             task_id = extract_task_id(raw) or raw.get("task_id") or raw.get("id")
+            await record_video_acceptance(task_id, provider, submit_url, video_query_mode(provider, payload.model))
             result = raw
             if task_id and not video_output_urls(raw):
                 try:
@@ -14007,6 +14073,60 @@ async def canvas_video(payload: CanvasVideoRequest):
     except httpx.HTTPError as exc:
         log_net_error(f"视频 网络/TLS错误 provider={provider.get('id')} model={payload.model}", exc)
         raise provider_submission_unknown("视频提交或任务查询的网络响应中断，是否已被供应商受理尚不确定") from exc
+
+def video_query_mode(provider, model):
+    if is_jimeng_provider(provider) or is_runninghub_provider(provider):
+        return ""
+    if is_agnes_provider(provider, model):
+        return "agnes"
+    if is_apimart_provider(provider):
+        return "apimart"
+    if is_volcengine_provider(provider):
+        return "volcengine"
+    if is_yuli_provider(provider):
+        return "yuli"
+    return "generic"
+
+
+async def inspect_saved_video_task(provider, receipt):
+    mode = video_query_mode(provider, receipt.get("model", ""))
+    if not mode or mode != receipt.get("video_query_mode"):
+        raise HTTPException(409, "原视频查询协议无法匹配，请核对供应商记录")
+    base = video_api_root(provider)
+    task_id = encoded_task_id(receipt["upstream_task_id"])
+    urls = video_task_url_candidates(provider, base, task_id, "/v2/videos/generations" if receipt.get("video_v2") else "")
+    headers = api_headers(provider=provider)
+    if mode == "agnes":
+        # Agnes query has additional model headers and query parameters.
+        urls = [f"{base}/agnesapi?" + urllib.parse.urlencode({"video_id": receipt["upstream_task_id"], "model_name": receipt.get("model", "")}),
+                f"{base}/v1/videos/{task_id}"]
+        headers = api_headers(provider=provider, model=receipt.get("model", ""))
+    async with httpx.AsyncClient(timeout=httpx.Timeout(30, connect=10), follow_redirects=False) as client:
+        return await inspect_video(client, urls, headers, video_output_urls, humanize_video_task_failure)
+
+
+CANVAS_VIDEO_TASKS = CanvasVideoTasks(CANVAS_TASK_JOURNAL, get_api_provider_exact, canvas_video,
+    inspect_saved_video_task, save_remote_video_to_output, image_outputs_are_archived, save_to_history,
+    schedule_canvas_task, lambda task_id: CANVAS_ACCEPTED_RECOVERY.notify(task_id), query_mode=video_query_mode)
+
+
+@app.post("/api/canvas-video-tasks")
+async def create_canvas_video_task(payload: CanvasVideoRequest, x_enterprise_user_id: Optional[str] = Header(default=None)):
+    return await CANVAS_VIDEO_TASKS.create(payload, x_enterprise_user_id)
+
+
+@app.get("/api/canvas-video-tasks/{task_id}")
+async def get_canvas_video_task(task_id: str):
+    record = await asyncio.to_thread(CANVAS_TASK_JOURNAL.get, task_id)
+    if not record or record.get("type") != "video":
+        raise HTTPException(404, "视频任务不存在；此前没有持久回执的任务无法补录")
+    return public_video_task(record)
+
+
+@app.post("/api/canvas-video-tasks/{task_id}/reconcile")
+async def reconcile_canvas_video_task(task_id: str):
+    return await CANVAS_VIDEO_TASKS.reconcile(task_id)
+
 
 # --- Canvas LLM ---
 

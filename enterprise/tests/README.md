@@ -101,3 +101,6 @@ For every access-control implementation PR, add or extend a focused test here be
 ## 原任务持久续查
 
 `test_canvas_image_recovery.py` 使用临时 journal 和只查询的模拟供应商；`test_canvas_image_recovery_main.py` 在真实 main 接受上游 ID 后强退进程，再验证新进程只查询原 ID。`node enterprise/tests/test_canvas_task_query.js` 验证两类画布共用请求分流；已有任务/历史隔离脚本补跨用户续查与管理员保持原资源归属。均无真实付费任务或客户操作，GUI/原件范围见 `docs/ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md`。
+
+
+Video task candidate: `py -3.11 -B -m pytest -q enterprise/tests/test_canvas_video_tasks.py enterprise/tests/test_canvas_video_tasks_main.py enterprise/tests/test_generation_tasks.py` verifies private-journal acceptance/recovery, an actual process hard exit and GET-only startup recovery, existing HTTP query families, CLI pending compatibility and owner catalog filtering. `node enterprise/tests/test_canvas_task_query.js` covers both canvases' shared video client. Reuse `test_task_history_isolation.py` and `test_feature_flags.py` for authenticated gateway interception. These are isolated/mock evidence, not paid-provider, real-login or video-playback acceptance.

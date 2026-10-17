@@ -4,7 +4,7 @@ import httpx
 
 from enterprise.canvas_image_recovery import CanvasImageRecovery, ImageReceiptSink
 from enterprise.providers.submission import httpx_request_with_transient_retries, reported_usage
-from enterprise.providers.zhenzhen import image_headers, image_task_endpoint, query_image
+from enterprise.providers.zhenzhen import image_headers, image_task_endpoint, query_image, image_query_status
 from enterprise.tests.test_canvas_image_recovery import PROVIDER, new_journal
 
 
@@ -12,6 +12,15 @@ def test_usage_is_reported_fact_not_estimated_settlement():
     assert reported_usage({'usage':{'total_tokens':17,'api_key':'hidden'},'cost':'0.025'}) == {'total_tokens':17,'reported_cost':'0.025','currency':None}
     assert reported_usage({'data':{'usage':{'input_tokens':3},'cost':0,'currency':'CNY'}})['currency']=='CNY'
     assert reported_usage({'usage':{'input_tokens':-1,'output_tokens':float('nan')},'cost':'NaN'}) == {}
+    assert reported_usage({'data':{'status':'SUCCESS','data':{'usage':{'total_tokens':27}}}}) == {'total_tokens':27}
+
+
+def test_zhenzhen_query_state_does_not_turn_unknown_payload_into_running_or_success():
+    assert image_query_status({'data':{'status':'IN_PROGRESS'}},has_images=False)=='running'
+    assert image_query_status({'data':{'status':'FAILURE'}},has_images=True)=='failed'
+    assert image_query_status({'data':{'status':'SUCCESS'}},has_images=True)=='succeeded'
+    assert image_query_status({'data':{'status':'SUCCESS'}},has_images=False)=='manual'
+    assert image_query_status({'unexpected':'reply'},has_images=False)=='manual'
 
 
 def test_submission_fact_and_local_archive_error_stay_unknown(tmp_path):
