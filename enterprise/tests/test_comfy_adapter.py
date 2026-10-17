@@ -140,7 +140,7 @@ def test_imported_graph_keeps_original_nodes_and_rejects_obsolete_field_mapping(
     scope = {"os": os, "json": json, "random": random, "BUILTIN_WORKFLOWS": set(),
              "workflow_path_from_name": lambda _: str(path), "ComfyExecutionError": ComfyExecutionError}
     exec(compile(ast.Module(body=[prepare], type_ignores=[]), str(source), "exec"), scope)
-    request = SimpleNamespace(workflow_json="custom/tool.json", prompt="do not overwrite unrelated node",
+    request = SimpleNamespace(type="zimage", workflow_json="custom/tool.json", prompt="do not overwrite unrelated node",
                               width=1024, height=1024, params={"14": {"image": "bound/selected.png"}})
     graph, _ = scope["prepare_comfy_workflow"](request)
     assert graph["14"]["inputs"]["image"] == "bound/selected.png"

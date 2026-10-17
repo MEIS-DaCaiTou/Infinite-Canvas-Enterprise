@@ -1,8 +1,8 @@
 {
   "schema_version": "enterprise-documents-v1",
-  "reviewed_at": "2026-10-16",
+  "reviewed_at": "2026-10-17",
   "audit_base_commit": "39f4b02d232142c4ede66f0133b759b32178d70f",
-  "scope": "Main39f4b02: #162 task center and G0-G3 increments merged; release remains v2026.10.2. Accepted Zhenzhen image/Comfy task automatic-query recovery candidate documented in the existing roadmap, operation record and Code Wiki; pending independent review and merge, not released. Existing G0 contribution entries retained. No new business schema, production operation or overall refactor. Video persistent-task candidate is stacked on #163: existing journal/owner/scheduler, no schema or release change; protocol and unpaid validation limits remain explicit.",
+  "scope": "Main cb057b12 includes #163 accepted-image/Comfy recovery and #169 durable video tasks after owner approval; post-merge main CI is tracked separately from successful PR CI. #168 model dialog/workflow availability candidate integrates that main without changing reviewed business logic. RunningHub #170 remains Draft and deferred; prioritize Zhenzhen and local ComfyUI. Existing journal, owner tables and document authorities retained; no schema, release, production operation or second roadmap. Formal release remains v2026.10.2.",
   "documents": [
     {
       "path": ".github/PULL_REQUEST_TEMPLATE.md",
@@ -158,7 +158,7 @@
       "path": "docs/CURRENT_PROJECT_STATUS.md",
       "kind": "authority",
       "authority": "status",
-      "reviewed_at": "2026-10-16"
+      "reviewed_at": "2026-10-17"
     },
     {
       "path": "docs/data/DATA-MVP-1-INDEPENDENT-REVIEW-2026-09.md",

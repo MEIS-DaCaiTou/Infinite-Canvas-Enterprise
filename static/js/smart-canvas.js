@@ -2969,8 +2969,10 @@ function renderComfyParams(){
         ['custom', tr('canvas.comfyModeCustom') || '自定义']
     ];
     if(settings.comfyMode === 'custom'){
-        if(!settings.comfyWorkflow || !comfyWorkflows.some(w => w.name === settings.comfyWorkflow)) settings.comfyWorkflow = comfyWorkflows[0]?.name || '';
-        if(settings.comfyWorkflow && !comfyWorkflowCache[settings.comfyWorkflow]) ensureComfyWorkflow(settings.comfyWorkflow).then(renderDynamicParams);
+        if(!settings.comfyWorkflow) settings.comfyWorkflow = comfyWorkflows[0]?.name || '';
+        if(settings.comfyWorkflow && comfyWorkflows.some(w => w.name === settings.comfyWorkflow) && !comfyWorkflowCache[settings.comfyWorkflow]){
+            ensureComfyWorkflow(settings.comfyWorkflow).then(data => {if(data) renderDynamicParams();});
+        }
     }
     let html = '';
     if(settings.comfyMode === 'text'){
@@ -3017,9 +3019,10 @@ function renderUpscalePill(paramKey, current){
     </div>`;
 }
 function renderComfyWorkflowControl(){
-    if(!comfyWorkflows.length) return `<div class="muted-note">${escapeHtml(tr('smart.noWorkflow'))}</div>`;
-    const current = comfyWorkflows.find(w => w.name === settings.comfyWorkflow) || comfyWorkflows[0];
-    const label = current?.title || (current?.name || '').replace('.json','') || tr('smart.workflow');
+    if(!comfyWorkflows.length && !settings.comfyWorkflow) return `<div class="muted-note">${escapeHtml(tr('smart.noWorkflow'))}</div>`;
+    const current = comfyWorkflows.find(w => w.name === settings.comfyWorkflow);
+    const unavailable = settings.comfyWorkflow && !current;
+    const label = unavailable ? `${settings.comfyWorkflow} · 已停用或移除` : current?.title || comfyWorkflows[0]?.title || tr('smart.workflow');
     return `<div class="smart-control workflow-control">
         <button class="smart-pill" type="button"><i data-lucide="layers"></i><span class="sub">${escapeHtml(label)}</span></button>
         <div class="smart-popover compact-popover">
@@ -13886,6 +13889,7 @@ async function generateComfyUrlsWithSettings(runSettings, prompt, refs){
     }
     const workflowName = runSettings.comfyWorkflow || comfyWorkflows[0]?.name || '';
     if(!workflowName) throw new Error(tr('smart.errNeedWorkflow'));
+    if(!comfyWorkflows.some(w => w.name === workflowName)) throw new Error('原工作流已停用或移除，请在工作流设置中启用或选择其他工作流');
     const wf = await fetch(`/api/workflows/${encodeURIComponent(workflowName)}`).then(async r => {
         if(!r.ok) throw new Error(await r.text());
         return r.json().then(ComfyWorkflowFields.normalizeWorkflow);
@@ -14790,6 +14794,7 @@ async function runComfyGeneration(node, prompt, refs, pendingNode, meta){
     if(mode === 'edit') return runComfyEdit(node, prompt, refs, pendingNode, meta);
     const workflowName = settings.comfyWorkflow || comfyWorkflows[0]?.name || '';
     if(!workflowName) throw new Error(tr('smart.errNeedWorkflow'));
+    if(!comfyWorkflows.some(w => w.name === workflowName)) throw new Error('原工作流已停用或移除，请在工作流设置中启用或选择其他工作流');
     const wf = await fetch(`/api/workflows/${encodeURIComponent(workflowName)}`).then(async r => {
         if(!r.ok) throw new Error(await r.text());
         return r.json().then(ComfyWorkflowFields.normalizeWorkflow);
