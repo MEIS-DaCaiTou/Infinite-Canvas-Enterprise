@@ -134,3 +134,15 @@ loopback 实际 HTTP/Browser 演练复用隔离临时 SQLite owner 与固定测�
 独立 Review 定位了 Agnes 未定义鉴权函数、v2 查询路径提示不匹配及即梦空地址误拦截三项实际问题，均修正并补定向检查；最终复审结论记录 PR。Browser 使用 loopback 实际画布与目录模块、隔离 SQLite 和固定测试账号，经典画布筛选视频→详情→原任务续查后出现本地结果，智能画布读取相同已完成记录。控制台无相关错误，现有 Tailwind CDN 警告保留。首轮 QA 固定夹具的供应商绑定未采用规范化配置，正确触发了配置拒绝；修正夹具后通过，没有绕过生产校验。
 
 证据集中于 D:/CodeProject/Infinite-Canvas-Enterprise-Artifacts/video-task-recovery-20261016/。Browser 没有验证真实登录、付费生成或视频播放；播放文件为不可播放的合成夹具，仅验证记录和结果入口。无新依赖/CI 门禁、全量安装测试、Schema 变更或生产操作。回滚为撤回本包代码，保留 journal 和 owner 数据；旧程序不能显示新视频目录条目，不删除客户数据。未合并/发布，正式 10.2 不变。
+
+## 2026-10-17 手动原任务查询后接续后台跟踪
+
+负责人调整优先级：先收口 #163/#168/#169，再围绕实际使用的 Zhenzhen 与本地 ComfyUI 完善闭环。RunningHub AI 应用和工作流是现有两种调用方式，图片/视频是输出类型；#170 保留 Draft，未继续扩展，也不要求注册或充值。未来相关恢复验收以没有重复调用生成接口为准，上游查询本身可以使用 POST。
+
+本包复现了 Zhenzhen 任务因 401 暂停后，修正配置并手动查到 IN_PROGRESS，自动状态仍为 manual、必须反复点击的问题；同一任务在后台 waiting/querying 时向画布返回 failed，也会使现有画布轮询提前退出。`AcceptedTaskRecovery.after_manual_query` 复用后台结果记录/退避逻辑，图像与 ComfyUI 的显式查询接线共用；下一次后台请求仍校验 owner、账号和原绑定，仍受维护暂停保护。`public_receipt` 仅对确有受理 ID 且处于后台跟踪的图像投影 running，不改持久事实或把明确失败伪报为运行。
+
+现有按钮、页面和 CSS 不变：修好配置后点击一次“继续查询原任务”即可接续后台跟踪；仍然拒绝或回包未知则保持人工核对。没有生成重提、请求模板、新 Schema、依赖或 Windows 平台绑定。恢复逻辑留在原模块，main 减少重复处理。
+
+验证使用隔离数据和模拟上游。新增实际 main 子进程用例在修复前准确失败于 manual 未接续，修复后 401 → 人工查询 IN_PROGRESS → 后台 SUCCESS 共 3 次原 ID 查询，0 次生成调用；本地归档完成后再次读取不再访问上游。首轮夹具输出解码受 Windows GBK 默认值影响，新增用例显式按 UTF-8 读取后才取得准确复现证据。受影响检查 34 项通过；新增暂停/归属/投影用例所在定向检查 27 项通过，范围重叠不相加。已有 ComfyUI 排队/生成/完成与取消归档检查复用，无新 Browser/GPU/公网或真实付费验收。准确 Base/Head、独立 Review 和最终 CI 见本 PR；候选不改变正式 v2026.10.2。回滚只撤销代码，保留原 journal/owner/输出，旧程序仍可读取 v1 记录。
+
+独立 Review 在 `491972a` 定位一项实际缺陷：手动查询后 journal 已写正常 5 秒间隔，内存 pending 的 setdefault 却保留原 300 秒退避。`82c19c7` 只让显式手动结果替换已有 due，普通通知仍去重；可控时钟驱动真实调度器证明 1300 → 1005 的新 due 实际执行，相关 9 项通过。定向复审 `NO_ACTIONABLE_BUGS_FOUND`，技术 Review 非 GitHub Approval。

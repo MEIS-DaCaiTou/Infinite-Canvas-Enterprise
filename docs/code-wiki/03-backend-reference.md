@@ -205,3 +205,5 @@ Zhenzhen `image_query_status` 按维护的异步查询状态区分处理中/明�
 ### 视频持久任务候选（2026-10-16，依赖 #163）
 
 `enterprise/canvas_video_tasks.py` 在现有 v1 journal/owner 映射上登记视频任务，提交前写归属、轮询前写受理 ID 与查询绑定；`enterprise/providers/video_tasks.py` 只做单次 GET 状态识别。main 保留现有视频参数构造并接线 `/api/canvas-video-tasks`、`/{task_id}`、`/{task_id}/reconcile`。原任务续查复用 #163 调度器和输出归档，不能重新提交生成；无 ID/协议不明保留待核对。覆盖与验证限制见 [原任务记录](../ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md#2026-10-16-视频持久任务与原任务续查候选)，不属于正式 10.2。
+
+2026-10-17 续修候选：`AcceptedTaskRecovery.after_manual_query` 让 Zhenzhen 图像和 ComfyUI 显式查询复用后台结果记账/退避；解除此前 manual 后，下一次查询仍由原验证和维护暂停控制。`canvas_image_recovery.public_receipt` 对已受理且后台等待/查询的任务投影 running，保留内部失败/原身份并屏蔽绑定。既有端点、前端、v1 journal 和 owner 表复用，不增加生成提交。范围和模拟证据见 [同一工程记录](../ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md#2026-10-17-手动原任务查询后接续后台跟踪)；尚未合并或发布。
