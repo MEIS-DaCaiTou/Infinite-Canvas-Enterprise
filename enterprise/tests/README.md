@@ -13,7 +13,7 @@ Before adding or changing scripts, read:
 - `../../ENTERPRISE_DOCS.md`
 - `SMOKE_CHECKLIST.md`
 
-Reviewed: 2026-10-13
+Reviewed: 2026-10-18
 
 ## Verification policy
 
@@ -104,3 +104,5 @@ For every access-control implementation PR, add or extend a focused test here be
 
 
 Video task candidate: `py -3.11 -B -m pytest -q enterprise/tests/test_canvas_video_tasks.py enterprise/tests/test_canvas_video_tasks_main.py enterprise/tests/test_generation_tasks.py` verifies private-journal acceptance/recovery, an actual process hard exit and GET-only startup recovery, existing HTTP query families, CLI pending compatibility and owner catalog filtering. `node enterprise/tests/test_canvas_task_query.js` covers both canvases' shared video client. Reuse `test_task_history_isolation.py` and `test_feature_flags.py` for authenticated gateway interception. These are isolated/mock evidence, not paid-provider, real-login or video-playback acceptance.
+
+Unified video adapter: `py -3.11 -B -m pytest -q enterprise/tests/test_zhenzhen_video_adapter.py enterprise/tests/test_canvas_video_tasks_main.py enterprise/tests/test_paid_submission_stoploss.py` covers existing JSON fields, Zhenzhen Bearer/v2 routing, explicit404/405 proxy compatibility, unknown-submit stop-loss, NOT_START live/restart parsing, durable acceptance before queries and oldv1/v2 recovery. It uses mock HTTP and disposable installation roots, no real paid requests. Reuse image-model contracts and existing video ownership/recovery tests for unchanged boundaries; do not treat this as all-model or Browser acceptance.
