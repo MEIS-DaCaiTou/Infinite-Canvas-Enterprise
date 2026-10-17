@@ -2,7 +2,7 @@
   "schema_version": "enterprise-documents-v1",
   "reviewed_at": "2026-10-17",
   "audit_base_commit": "39f4b02d232142c4ede66f0133b759b32178d70f",
-  "scope": "Main cb057b12 includes #163 accepted-image/Comfy recovery and #169 durable video tasks after owner approval; post-merge main CI is tracked separately from successful PR CI. #168 model dialog/workflow availability candidate integrates that main without changing reviewed business logic. RunningHub #170 remains Draft and deferred; prioritize Zhenzhen and local ComfyUI. Existing journal, owner tables and document authorities retained; no schema, release, production operation or second roadmap. Formal release remains v2026.10.2.",
+  "scope": "Main cb057b12 includes #163 accepted-image/Comfy recovery and #169 durable video tasks after owner approval; both post-merge main CI runs succeeded separately. #168 model dialog/workflow availability candidate integrates that main. A scoped follow-up restores background tracking after manual original-task queries and corrects image nonterminal projection; review fix validated, candidate not merged or released. RunningHub #170 remains Draft and deferred; prioritize Zhenzhen and local ComfyUI. Existing journal, owner tables and authorities retained; no schema, release, production operation or second roadmap. Formal release remains v2026.10.2.",
   "documents": [
     {
       "path": ".github/PULL_REQUEST_TEMPLATE.md",

@@ -3,11 +3,13 @@
 更新时间：2026-10-17
 核验对象：main@cb057b12（含已合并 #163 图像/ComfyUI 自动续查、#169 视频持久任务），正式版本仍为 v2026.10.2，10.1 → 10.2 升级/恢复证据继续沿用；本轮未发布或操作客户/生产设备。下文早期候选条目保留其记录时点，最新增量如下。
 
-2026-10-17：负责人批准 #163、#168、#169 合并；#163 已按审查 Head `0a6db0f36edcb18fb352f7ab5768684a3334a666` 合并为 `476e0dc7cbc1354961ca81cd18e15c22611d84f1`，#169 按审查 Head `9a36a1effccc8c0128100f37b8e9ab05f9309b85` 调整 Base 为 main 后合并为 `cb057b12dee7c6830a2ac46d33c99ab9ff0cf8f4`。两项准确 Head 的常规 CI 均成功，独立技术 Review 均已修复有效问题并定向复审 `NO_ACTIONABLE_BUGS_FOUND`；不是 GitHub Approval。合并后 main 文档 CI 成功，Enterprise/Runtime 正在运行，尚不写成全部通过。
+2026-10-17：负责人批准 #163、#168、#169 合并；#163 已按审查 Head `0a6db0f36edcb18fb352f7ab5768684a3334a666` 合并为 `476e0dc7cbc1354961ca81cd18e15c22611d84f1`，#169 按审查 Head `9a36a1effccc8c0128100f37b8e9ab05f9309b85` 调整 Base 为 main 后合并为 `cb057b12dee7c6830a2ac46d33c99ab9ff0cf8f4`。两项准确 Head 的常规 CI 均成功，独立技术 Review 均已修复有效问题并定向复审 `NO_ACTIONABLE_BUGS_FOUND`；不是 GitHub Approval。上述两个合并点的 main 文档、Enterprise/Runtime CI 已分别最终 SUCCESS，不以 PR CI 代替。
 
 负责人新增产品反馈在 `codex/model-workflow-selection-20261016` 独立修复：个人模型弹窗复用既有组件/主题；工作流启用/停用保存在原配置，自定义列表排除停用项，保留旧节点身份并提示改选，固定本地入口继续保留。候选尚未合并/发布，验证与本地调用来源见[产品修复记录](./ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#2026-10-16-个人模型与工作流可用列表续修候选)。继续按唯一路线图 4.2 推进业务主线，不增加治理阶段或大规模重构。
 
 负责人确认 RunningHub 的“AI 应用”指上游已封装功能，与按工作流 ID 调用均为现有 RunningHub 节点入口，不是新客户端；图片/视频是输出类型。当前优先实际使用的 Zhenzhen 与本地 ComfyUI，#170 RunningHub API 视频恢复保留 Draft，不继续扩展或按模拟证据宣称真实账号/收费验收。恢复验收统计“生成接口无重复提交”，不以零 POST 代替。
+
+同日独立候选 `codex/accepted-task-resume-20261017` 补齐 Zhenzhen 在修正配置后手动查询接续后台跟踪，以及图像续查中的非终态投影；ComfyUI 复用同一结果记录/退避逻辑，按钮和页面不变。基于 #168 整合 Head `ba34019830bb27219f629d1a310c623c599c3546` 堆叠交付，避免等待已授权合并时重复触发本包 CI。独立 Review 的一项实际退避问题已修复并定向复审 `NO_ACTIONABLE_BUGS_FOUND`；本候选尚未合并/发布，模拟验证与限制见 [同一工程记录](./ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md#2026-10-17-手动原任务查询后接续后台跟踪)。
 
 ## 1. 开发基线、发行与现场必须分开
 
