@@ -82,25 +82,45 @@
     }
     function openPersonalModels(config) {
         const dialog = document.createElement('dialog');
-        dialog.style.cssText = 'border:1px solid #d1d5db;border-radius:14px;padding:20px;width:520px;max-width:90vw;max-height:80vh;color:#111827;background:white';
-        dialog.innerHTML = '<h3 style="margin:0 0 6px">我的模型</h3><p style="font-size:12px;color:#64748b">勾选当前平台日常需要的模型，保存后默认显示个人列表。</p><input type="search" aria-label="搜索个人模型" placeholder="搜索模型名称" style="width:100%;padding:8px;box-sizing:border-box"><div style="display:flex;gap:8px;margin:8px 0"><button type="button" data-action="all">勾选搜索结果</button><button type="button" data-action="none">取消搜索结果</button></div><div data-model-list style="overflow:auto;max-height:42vh"></div><div data-save-error role="status" style="color:#b45309;font-size:12px"></div><div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px"><button type="button" data-action="cancel">取消</button><button type="button" data-action="save">保存我的模型</button></div>';
+        dialog.className = 'comfy-text-dialog personal-model-dialog';
+        dialog.setAttribute('aria-labelledby', 'personalModelTitle');
+        dialog.innerHTML = `<div class="comfy-text-head">
+            <div class="comfy-text-heading"><span class="comfy-text-heading-icon"><i data-lucide="list-checks"></i></span>
+                <div><h3 id="personalModelTitle" class="comfy-text-title">我的模型</h3><div class="comfy-text-subtitle">选择日常使用的模型，仅对当前账号生效</div></div></div>
+            <button type="button" class="comfy-text-close" data-action="close" aria-label="关闭我的模型"><i data-lucide="x"></i></button></div>
+            <div class="personal-model-content"><label class="personal-model-search"><i data-lucide="search"></i><input type="search" aria-label="搜索个人模型" placeholder="搜索模型名称"></label>
+            <div class="personal-model-toolbar"><span data-selection-count role="status"></span><div><button type="button" data-action="all">全选搜索结果</button><button type="button" data-action="none">清除搜索结果</button></div></div>
+            <div data-model-list class="personal-model-list"></div><div data-empty class="personal-model-empty" hidden>没有匹配的模型，试试其他关键词</div></div>
+            <div class="comfy-text-footer"><span class="personal-model-hint">保存后默认显示常用模型，已有节点保持不变</span><div class="comfy-text-actions"><button type="button" class="comfy-text-btn" data-action="cancel">取消</button><button type="button" class="comfy-text-btn primary" data-action="save">保存选择</button></div></div>
+            <p data-save-error class="comfy-text-status" role="status"></p>`;
         const list = dialog.querySelector('[data-model-list]');
         const rows = [...new Set(config.getModels())].map(model => {
             const row = document.createElement('label');
-            row.style.cssText = 'display:flex;gap:8px;padding:6px 0;overflow-wrap:anywhere';
+            row.className = 'personal-model-row';
             const input = document.createElement('input'); input.type = 'checkbox'; input.checked = isFavorite(config,model);
             const text = document.createElement('span'); text.textContent = model;
             row.append(input,text); list.append(row);
             return {model,row,input};
         });
+        const updateSelection = () => {
+            dialog.querySelector('[data-selection-count]').textContent = `已选 ${rows.filter(({input}) => input.checked).length} / ${rows.length}`;
+            dialog.querySelector('[data-empty]').hidden = rows.some(({row}) => !row.hidden);
+            for(const {row,input} of rows) row.classList.toggle('selected', input.checked);
+        };
+        list.addEventListener('change', updateSelection);
         dialog.querySelector('input[type=search]').oninput = event => {
             const query = event.target.value.trim().toLowerCase();
-            rows.forEach(({model,row}) => {row.hidden = !model.toLowerCase().includes(query); row.style.display = row.hidden ? 'none' : 'flex';});
+            rows.forEach(({model,row}) => {row.hidden = !model.toLowerCase().includes(query);});
+            updateSelection();
         };
         for(const [action,checked] of [['all',true],['none',false]]) {
-            dialog.querySelector(`[data-action=${action}]`).onclick = () => rows.filter(({row}) => !row.hidden).forEach(({input}) => {input.checked=checked;});
+            dialog.querySelector(`[data-action=${action}]`).onclick = () => {
+                rows.filter(({row}) => !row.hidden).forEach(({input}) => {input.checked=checked;});
+                updateSelection();
+            };
         }
         dialog.querySelector('[data-action=cancel]').onclick = () => dialog.close();
+        dialog.querySelector('[data-action=close]').onclick = () => dialog.close();
         dialog.querySelector('[data-action=save]').onclick = async () => {
             const button = dialog.querySelector('[data-action=save]'); button.disabled = true;
             rows.forEach(({model,input}) => {const id = key(config,model); if(input.checked) favorites.add(id); else favorites.delete(id);});
@@ -111,7 +131,9 @@
         };
         dialog.addEventListener('close',() => dialog.remove());
         for(const event of ['mousedown','click','keydown']) dialog.addEventListener(event,e => e.stopPropagation());
+        updateSelection();
         document.body.append(dialog); dialog.showModal();
+        window.lucide?.createIcons({root:dialog});
     }
     function visible(config, model, query) {
         return (!query || model.toLowerCase().includes(query)) && (view !== 'favorites' || isFavorite(config, model));

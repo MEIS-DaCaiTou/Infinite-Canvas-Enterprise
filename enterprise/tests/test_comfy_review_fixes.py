@@ -33,7 +33,7 @@ interceptors._resource_in_user_conversation_scope=lambda *args:False
 workflow={'a':{'class_type':'LoadImage','inputs':{'image':'default.png'}},'edit':{'class_type':'TextEncodeQwenImage21','inputs':{'images.image_1':['a',0]}},'save':{'class_type':'SaveImage','inputs':{'filename_prefix':'result.png'}}}
 config={'fields':[{'id':'f_random','node':'a','input':'image','type':'image'}, {'id':'prefix','node':'save','input':'filename_prefix','type':'image','default':'result.png'}]}
 path=roots.DATA_ROOT/'workflows/custom/shared.json';path.parent.mkdir(parents=True,exist_ok=True);path.write_text(json.dumps(workflow))
-main.get_workflow=lambda *a,**k:{'config':config}
+main.get_workflow=lambda *a,**k:{'config':{**config,'enabled':True}}
 main.workflow_backend=lambda *a:'http://127.0.0.1:8188'
 main.create_task_receipt=lambda journal,record,user_id:journal.create({**record,'enterprise_user_id':user_id})
 submits=[]
