@@ -58,6 +58,7 @@ from enterprise.generation_task_routes import create_router as create_generation
 from enterprise.canvas_image_recovery import CanvasImageRecovery, ImageReceiptSink, public_receipt
 from enterprise.canvas_video_tasks import CanvasVideoTasks, public_video_task, record_video_acceptance
 from enterprise.providers.video_tasks import inspect_video, encoded_task_id
+from enterprise.providers import runninghub_video
 from enterprise.canvas_comfy_recovery import CanvasComfyRecovery
 from enterprise.accepted_task_recovery import AcceptedTaskRecovery, validate_owned_task
 from enterprise.runtime.install_maintenance import maintenance_active
@@ -9930,23 +9931,8 @@ async def generate_runninghub_provider_image(prompt, size, model, reference_imag
         return runninghub_extract_image(result), result
 
 async def wait_for_runninghub_openapi_task(client, provider, task_id, output_kind=""):
-    query_url = runninghub_openapi_url(provider, "query")
-    deadline = time.monotonic() + 1800
-    last_payload = None
-    while time.monotonic() < deadline:
-        await asyncio.sleep(3)
-        response = await client.post(query_url, headers=runninghub_json_headers(provider), json={"taskId": task_id})
-        response.raise_for_status()
-        raw = response.json()
-        last_payload = raw
-        status = runninghub_query_status(raw).upper()
-        if status in {"SUCCESS", "SUCCEEDED", "COMPLETED", "COMPLETE", "FINISHED", "DONE", "3"}:
-            return raw
-        if status in {"FAILED", "FAIL", "ERROR", "CANCEL", "CANCELED", "CANCELLED", "4"}:
-            raise HTTPException(status_code=502, detail=f"RunningHub 任务失败：{runninghub_fail_reason(raw) or raw}")
-        if output_kind == "video" and video_output_urls(raw):
-            return raw
-    raise HTTPException(status_code=504, detail=f"RunningHub 任务超时：{last_payload or task_id}")
+    return await runninghub_video.wait_video(client, runninghub_openapi_url(provider, "query"),
+                                            runninghub_json_headers(provider), task_id)
 
 async def generate_runninghub_video(payload, provider):
     model_def = await runninghub_model_definition(provider, payload.model)
@@ -9994,17 +9980,14 @@ async def generate_runninghub_video(payload, provider):
             else:
                 body[key] = image_urls[0]
         runninghub_apply_schema_defaults(body, params)
-        response = await client.post(endpoint, headers=runninghub_json_headers(provider), json=body)
-        response.raise_for_status()
-        raw = response.json()
-        task_id = runninghub_extract_task_id(raw)
+        async def accepted(identity):
+            await record_video_acceptance(identity, provider, endpoint, "runninghub-v2")
+        raw = await runninghub_video.submit_video(client, endpoint, runninghub_json_headers(provider), body, accepted)
+        task_id = runninghub_video.task_id(raw)
         result = raw
-        if task_id and not video_output_urls(raw):
+        if task_id and runninghub_video.video_result(raw).get("status") != "succeeded":
             result = await wait_for_runninghub_openapi_task(client, provider, task_id, "video")
-        urls = video_output_urls(result)
-        if not urls:
-            outputs = runninghub_extract_outputs(result.get("data") if isinstance(result, dict) else result)
-            urls = [url for url in outputs if str(url).startswith(("http://", "https://", "/output/", "/assets/"))]
+        urls = [rewrite_runninghub_file_url(url) for url in runninghub_video.video_urls(result)]
         if not urls:
             raise HTTPException(status_code=502, detail=f"RunningHub 视频生成成功但没有返回视频：{result}")
         local_urls = [await save_remote_video_to_output(url, prefix="rh_video_") for url in urls]
@@ -14075,8 +14058,10 @@ async def canvas_video(payload: CanvasVideoRequest):
         raise provider_submission_unknown("视频提交或任务查询的网络响应中断，是否已被供应商受理尚不确定") from exc
 
 def video_query_mode(provider, model):
-    if is_jimeng_provider(provider) or is_runninghub_provider(provider):
+    if is_jimeng_provider(provider):
         return ""
+    if is_runninghub_provider(provider):
+        return "runninghub-v2"
     if is_agnes_provider(provider, model):
         return "agnes"
     if is_apimart_provider(provider):
@@ -14092,6 +14077,14 @@ async def inspect_saved_video_task(provider, receipt):
     mode = video_query_mode(provider, receipt.get("model", ""))
     if not mode or mode != receipt.get("video_query_mode"):
         raise HTTPException(409, "原视频查询协议无法匹配，请核对供应商记录")
+    if mode == "runninghub-v2":
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30, connect=10), follow_redirects=False) as client:
+            result = await runninghub_video.inspect_video(client, runninghub_openapi_url(provider, "query"),
+                                                         runninghub_json_headers(provider), receipt["upstream_task_id"])
+            result.pop("raw", None)
+            if result.get("remote_urls"):
+                result["remote_urls"] = [rewrite_runninghub_file_url(url) for url in result["remote_urls"]]
+            return result
     base = video_api_root(provider)
     task_id = encoded_task_id(receipt["upstream_task_id"])
     urls = video_task_url_candidates(provider, base, task_id, "/v2/videos/generations" if receipt.get("video_v2") else "")

@@ -205,3 +205,8 @@ Zhenzhen `image_query_status` 按维护的异步查询状态区分处理中/明�
 ### 视频持久任务候选（2026-10-16，依赖 #163）
 
 `enterprise/canvas_video_tasks.py` 在现有 v1 journal/owner 映射上登记视频任务，提交前写归属、轮询前写受理 ID 与查询绑定；`enterprise/providers/video_tasks.py` 只做单次 GET 状态识别。main 保留现有视频参数构造并接线 `/api/canvas-video-tasks`、`/{task_id}`、`/{task_id}/reconcile`。原任务续查复用 #163 调度器和输出归档，不能重新提交生成；无 ID/协议不明保留待核对。覆盖与验证限制见 [原任务记录](../ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md#2026-10-16-视频持久任务与原任务续查候选)，不属于正式 10.2。
+
+
+### RunningHub API 视频候选（2026-10-17，依赖 #169）
+
+`enterprise/providers/runninghub_video.py` 接管 RunningHub V2 视频提交/查询/轮询状态边界，main 保留现有参数构造和鉴权来源。受理 ID 由既有 `record_video_acceptance` 在轮询前持久保存，查询回调选择 `runninghub-v2`，后台和手动入口继续共用 `CanvasVideoTasks`。官方查询使用只读语义的 POST `/openapi/v2/query`，生成 POST 不自动重试。解析识别 `results` 视频并排除缩略图/音频，未知状态不伪造成功。只覆盖 API 视频链路，不把独立应用/工作流节点写成已恢复；验证范围见 [原任务记录](../ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md#2026-10-17-runninghub-api-视频原任务续查候选)。未进入正式 10.2。

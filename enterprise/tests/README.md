@@ -104,3 +104,6 @@ For every access-control implementation PR, add or extend a focused test here be
 
 
 Video task candidate: `py -3.11 -B -m pytest -q enterprise/tests/test_canvas_video_tasks.py enterprise/tests/test_canvas_video_tasks_main.py enterprise/tests/test_generation_tasks.py` verifies private-journal acceptance/recovery, an actual process hard exit and GET-only startup recovery, existing HTTP query families, CLI pending compatibility and owner catalog filtering. `node enterprise/tests/test_canvas_task_query.js` covers both canvases' shared video client. Reuse `test_task_history_isolation.py` and `test_feature_flags.py` for authenticated gateway interception. These are isolated/mock evidence, not paid-provider, real-login or video-playback acceptance.
+
+
+RunningHub API video candidate: `py -3.11 -B -m pytest -q enterprise/tests/test_runninghub_video_recovery.py enterprise/tests/test_runninghub_video_recovery_main.py` uses MockTransport and private main processes. It distinguishes one paid creation POST from documented query POSTs to `/openapi/v2/query`; acceptance survives process exit and archive retry without a second creation. Includes unknown replies, auth/config changes and typed video outputs. No real paid/provider/playback acceptance. Existing frontend/owner verification from #169 is reused.
