@@ -30,6 +30,7 @@ function setup(kind, nodes) {
         MEDIA_NODE_DEFAULT_SCALE:1,MEDIA_GROUP_PREVIOUS_DEFAULT_SCALE:1,MEDIA_GROUP_DEFAULT_SCALE:1,
         mediaNodeDefaultScale:()=>1, isActive:()=>true,
     });
+    ctx.saveCount=0;ctx.scheduleSave=()=>ctx.saveCount++;
     ctx.window=ctx;
     ctx.JimengPendingSignal=class extends Error {constructor(data){super(data.message);Object.assign(this,data,{jimengPending:true});}};
     ctx.setNodeJimengPending=(node,signal)=>{node.jimengPending={submitId:signal.submitId};};
@@ -94,6 +95,7 @@ async function resume(ctx,kind) {
         else await ctx.querySmartImageTaskNow(output.id,task.taskId);
         assert(ctx.calls.some(call=>call.method==='POST' && call.url.endsWith('/reconcile')));
         assert.equal(output.images.at(-1).url,'/output/recovered.mp4');
+        assert(ctx.saveCount>0,'manual recovery result was not saved');
         if(kind==='smart'){
             ctx=setup(kind,fixture(kind));
             ctx.reply={status:'jimeng_pending',result:{jimeng_pending:true,submit_id:'cli-original'}};
@@ -102,6 +104,17 @@ async function resume(ctx,kind) {
             assert.equal(ctx.nodes[0].jimengPending.submitId,'cli-original');
             assert.equal(ctx.nodes[0].images.length,1);
         }
+        // Manual original-task query also ignores responses after navigation.
+        ctx=setup(kind,fixture(kind));
+        output=ctx.nodes.find(node=>node.id==='output');
+        const originalTask=kind==='classic'?output._pending[0]:output.pendingTasks[0];
+        Object.assign(originalTask,{failed:true,recoverTaskId:'video-one'});
+        ctx.fetch=async()=>{ctx.canvas={id:'another-canvas'};ctx.nodes=[];return {ok:true,json:async()=>ctx.reply};};
+        if(kind==='classic')await ctx.queryRecoverPendingOutput(originalTask.id);
+        else await ctx.querySmartImageTaskNow(output.id,originalTask.taskId);
+        assert.equal(output.images.length,1);
+        assert.equal(ctx.logs.length,0);
+        assert.equal(ctx.saveCount,0,'old query saved another canvas');
         // Navigating to another canvas never receives the old result.
         ctx=setup(kind,fixture(kind));
         ctx.fetch=async()=>{ctx.canvas={id:'another-canvas'};return {ok:true,json:async()=>ctx.reply};};

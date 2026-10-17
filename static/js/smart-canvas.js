@@ -15082,12 +15082,15 @@ async function querySmartImageTaskNow(nodeId, localTaskId){
         toast('没有任务 ID，无法查询');
         return;
     }
+    const sourceCanvas=canvas;
+    const videoActive=() => canvas===sourceCanvas && nodes.includes(node) && smartPendingTasks(node).includes(task);
     task.querying = true;
     task.recoverTaskId = recoverTaskId;
     render();
     try {
         if(task.taskType === 'video'){
             const data=await CanvasTaskQuery.queryVideo(task.taskId);
+            if(!videoActive()) return;
             if(data.status === 'succeeded') finalizeSmartPendingTask(node, task.taskId, data, 'video');
             else if(['queued','running','unknown'].includes(data.status)){
                 task.failed=false;
@@ -15119,9 +15122,11 @@ async function querySmartImageTaskNow(nodeId, localTaskId){
             toast(task.error);
         }
     } catch(e){
+        if(task.taskType === 'video' && !videoActive()) return;
         task.error = e.message || '查询失败';
         toast(task.error.slice(0, 160));
     } finally {
+        if(task.taskType === 'video' && (canvas !== sourceCanvas || !nodes.includes(node))) return;
         const latest = smartPendingTasks(node).find(item => item.taskId === localTaskId);
         if(latest) latest.querying = false;
         render();

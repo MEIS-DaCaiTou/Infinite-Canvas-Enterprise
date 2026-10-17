@@ -12408,12 +12408,15 @@ async function queryRecoverPendingOutput(pendingId){
         showErrorModal('没有任务 ID，无法查询结果', tr('canvas.apiFailed'));
         return;
     }
+    const sourceCanvas = canvas;
+    const videoActive = () => canvas === sourceCanvas && nodes.includes(out) && pendingById(out, pendingId) === pending;
     pending.querying = true;
     pending.recoverTaskId = taskId;
     refreshNodes([out.id]);
     try {
         if(pending.canvasTaskType === 'video'){
             const data = await CanvasTaskQuery.queryVideo(pending.canvasTaskId);
+            if(!videoActive()) return;
             if(data.status === 'succeeded') completeCanvasVideoTask(out, pending, data);
             else if(['queued','running','unknown'].includes(data.status)){
                 pending.failed=false;
@@ -12441,9 +12444,11 @@ async function queryRecoverPendingOutput(pendingId){
             setStatus(pending.error);
         }
     } catch(err) {
+        if(pending.canvasTaskType === 'video' && !videoActive()) return;
         pending.error = err.message || '查询失败';
         showErrorModal(pending.error, tr('canvas.apiFailed'));
     } finally {
+        if(pending.canvasTaskType === 'video' && (canvas !== sourceCanvas || !nodes.includes(out))) return;
         const latest = pendingById(out, pendingId);
         if(latest){
             latest.querying = false;
