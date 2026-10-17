@@ -8,6 +8,64 @@ import pytest
 from enterprise.tests.test_canvas_image_recovery_main import ROOT, BOOTSTRAP
 
 
+def test_corrected_credentials_and_one_manual_query_resume_image_tracking(tmp_path):
+    install = tmp_path / "install"
+    app = install / "releases/fixture"
+    (app / "static").mkdir(parents=True)
+    (app / "main.py").write_text("# fixture", encoding="utf-8")
+    script = BOOTSTRAP + r'''
+from enterprise import db
+from enterprise.canvas_image_recovery import provider_scope
+db.get_task_owner=lambda *_:'fixture-alice'
+db.get_user_by_id=lambda uid:{'id':uid}
+authorized=False
+finished=False
+def inspect(request):
+    calls.append((request.method,request.url.path))
+    assert request.method=='GET' and request.url.path=='/v1/images/tasks/accepted-before-process-exit'
+    if not authorized:return httpx.Response(401,json={'error':'fixture authentication denied'})
+    return httpx.Response(200,json={'status':'SUCCESS','data':[{'url':'https://supplier.example/result.png'}]} if finished else {'status':'IN_PROGRESS'})
+main.httpx.AsyncClient=lambda **kwargs:original_client(transport=httpx.MockTransport(inspect),**kwargs)
+async def archive(image,prefix=''):
+    from PIL import Image
+    Image.new('RGB',(1,1),'white').save(Path(main.OUTPUT_DIR)/'resumed.png')
+    return '/output/resumed.png'
+main.save_ai_image_to_output=archive
+main.CANVAS_ACCEPTED_RECOVERY.poll_delay=.02
+key='manual-resume-original'
+main.CANVAS_TASK_JOURNAL.create({'id':key,'type':'online-image','status':'failed',
+    'enterprise_user_id':'fixture-alice','recovery_required':True,
+    'provider_receipts':[{'index':0,'state':'accepted','upstream_task_id':'accepted-before-process-exit',**provider_scope(provider)}],
+    'auto_recovery':{'status':'manual','reason':'old credentials denied'}})
+async def scenario():
+    global authorized,finished
+    await main.startup_event()
+    try:
+        assert (await main.reconcile_canvas_image_task(key))['http_status']==401
+        assert main.CANVAS_TASK_JOURNAL.get(key)['auto_recovery']['status']=='manual'
+        await asyncio.sleep(.06)
+        assert len(calls)==1, calls
+        authorized=True
+        result=await main.reconcile_canvas_image_task(key)
+        assert result['status']=='running',result
+        assert main.CANVAS_TASK_JOURNAL.get(key)['auto_recovery']['status']=='waiting', 'manual query did not rearm automatic tracking'
+        assert (await main.get_canvas_image_task(key))['status']=='running', 'canvas sees failed while original task is still running'
+        finished=True
+        async with asyncio.timeout(5):
+            while main.CANVAS_TASK_JOURNAL.get(key)['status']!='succeeded':await asyncio.sleep(.01)
+        assert (await main.get_canvas_image_task(key))['result']['images']==['/output/resumed.png']
+        count=len(calls)
+        await main.reconcile_canvas_image_task(key)
+        assert len(calls)==count and count==3,calls
+    finally:await main.shutdown_task_recovery()
+asyncio.run(scenario())
+'''
+    result = subprocess.run([sys.executable, "-c", script, str(ROOT), str(install), str(tmp_path / "local")],
+        cwd=ROOT, env=dict(os.environ, PYTHONUTF8="1", PYTHONDONTWRITEBYTECODE="1"),
+        capture_output=True, text=True, encoding="utf-8", timeout=35)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_actual_comfy_polling_survives_queued_running_and_backend_pause(tmp_path):
     install = tmp_path / "install"
     app = install / "releases/fixture"

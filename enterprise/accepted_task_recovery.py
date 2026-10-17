@@ -76,10 +76,13 @@ class AcceptedTaskRecovery:
         if not future.cancelled() and future.exception():
             logging.getLogger(__name__).error("Automatic original-task scheduler stopped unexpectedly")
 
-    def notify(self, task_id, due=0):
+    def notify(self, task_id, due=0, *, reschedule=False):
         # Called by the owning event loop after durable task completion.
         if not self._closed:
-            self._pending.setdefault(task_id, due)
+            if reschedule:
+                self._pending[task_id] = due
+            else:
+                self._pending.setdefault(task_id, due)
             self._wake.set()
 
     async def stop(self):
@@ -124,6 +127,19 @@ class AcceptedTaskRecovery:
     async def _record(self, task_id, changes):
         await asyncio.to_thread(self.journal.record_auto_recovery, task_id, changes)
 
+    async def after_manual_query(self, task_id, result):
+        """An explicit original-task query may resume a previously paused loop.
+
+        Keep the regular delay and validation before the next background query.
+        This records query outcomes only; it cannot schedule a generation.
+        """
+        record = await asyncio.to_thread(self.journal.get, task_id)
+        if not recovery_candidate(record):
+            if record and record.get("auto_recovery"):
+                await self._record(task_id, {"status": "complete", "next_query_at": None, "reason": ""})
+            return
+        await self._record_result(task_id, result, record.get("auto_recovery") or {}, reschedule=True)
+
     async def _one(self, task_id):
         record = await asyncio.to_thread(self.journal.get, task_id)
         if not recovery_candidate(record):
@@ -151,6 +167,9 @@ class AcceptedTaskRecovery:
         except Exception as exc:
             result = {"status": "unknown", "http_status": getattr(exc, "status_code", None),
                       "message": getattr(exc, "detail", None) or str(exc)}
+        await self._record_result(task_id, result, previous)
+
+    async def _record_result(self, task_id, result, previous, *, reschedule=False):
         state = result.get("status", "unknown")
         code = result.get("http_status")
         reason = redact_text(result.get("message") or "")[:1200]
@@ -165,4 +184,4 @@ class AcceptedTaskRecovery:
             due = self.clock() + delay
             await self._record(task_id, {"status": "waiting", "failures": failures,
                                         "next_query_at": due, "reason": reason})
-            self.notify(task_id, due)
+            self.notify(task_id, due, reschedule=reschedule)

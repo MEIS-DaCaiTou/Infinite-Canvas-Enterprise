@@ -1,10 +1,74 @@
 """Background queries of durable identities, independent of browser polling."""
 import asyncio
 
+import pytest
+
 from fastapi import HTTPException
 
 from enterprise.accepted_task_recovery import AcceptedTaskRecovery
 from enterprise.canvas_task_journal import CanvasTaskJournal
+
+
+@pytest.mark.parametrize("result", [
+    {"status": "manual", "message": "unknown upstream status"},
+    {"status": "unknown", "http_status": 401, "message": "credentials still denied"},
+])
+def test_manual_query_that_still_requires_attention_stays_paused(tmp_path, result):
+    async def run():
+        journal = CanvasTaskJournal(tmp_path / "tasks")
+        accepted(journal, auto_recovery={"status": "manual"})
+        async def query(_): pytest.fail("paused task was queried in the background")
+        worker = AcceptedTaskRecovery(journal, query, lambda _: "", lambda: False, poll_delay=.01)
+        await worker.start()
+        try:
+            await worker.after_manual_query("original", result)
+            await asyncio.sleep(.04)
+            assert journal.get("original")["auto_recovery"]["status"] == "manual"
+        finally:
+            await worker.stop()
+    asyncio.run(run())
+
+
+def test_resumed_manual_query_still_checks_owner_before_background_request(tmp_path):
+    async def run():
+        journal = CanvasTaskJournal(tmp_path / "tasks")
+        accepted(journal, auto_recovery={"status": "manual"})
+        async def query(_): pytest.fail("task with changed ownership was queried")
+        worker = AcceptedTaskRecovery(journal, query, lambda _: "owner unavailable", lambda: False, poll_delay=.01)
+        await worker.start()
+        try:
+            await worker.after_manual_query("original", {"status": "running"})
+            await until(lambda: journal.get("original")["auto_recovery"]["status"] == "manual")
+            assert journal.get("original")["auto_recovery"]["reason"] == "owner unavailable"
+        finally:
+            await worker.stop()
+    asyncio.run(run())
+
+
+def test_manual_running_reply_replaces_existing_long_backoff(tmp_path):
+    async def run():
+        journal = CanvasTaskJournal(tmp_path / "tasks")
+        accepted(journal, auto_recovery={"status": "waiting", "failures": 5})
+        now, calls = 1000, []
+        async def query(record):
+            calls.append(record["id"])
+            if len(calls) == 1:
+                return {"status": "unknown", "http_status": 503}
+            journal.finish_image_recovery(record["id"], {"status": "succeeded"})
+            return {"status": "succeeded"}
+        worker = AcceptedTaskRecovery(journal, query, lambda _: "", lambda: False, clock=lambda: now)
+        await worker.start()
+        try:
+            await until(lambda: (journal.get("original")["auto_recovery"]).get("next_query_at") == 1300)
+            await worker.after_manual_query("original", {"status": "running"})
+            assert journal.get("original")["auto_recovery"]["next_query_at"] == 1005
+            now = 1006
+            worker.notify("original")  # Wake the real scheduler with the advanced clock.
+            await until(lambda: journal.get("original")["status"] == "succeeded")
+            assert calls == ["original", "original"]
+        finally:
+            await worker.stop()
+    asyncio.run(run())
 
 
 def accepted(journal, key="original", **changes):
