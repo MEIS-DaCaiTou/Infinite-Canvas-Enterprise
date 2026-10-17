@@ -19,6 +19,9 @@ def recovery_candidate(record):
         return False
     if record.get("type") == "comfy":
         return bool(record.get("recovery_required") and (record.get("comfy_receipt") or {}).get("prompt_id"))
+    if record.get("type") == "video":
+        from enterprise.canvas_video_tasks import can_reconcile_video
+        return can_reconcile_video(record)
     return record.get("type") == "online-image" and any(
         item.get("upstream_task_id") and item.get("state") not in {"succeeded", "failed"}
         for item in record.get("provider_receipts") or []
@@ -28,7 +31,7 @@ def recovery_candidate(record):
 def validate_owned_task(record, *, task_owner, user, provider, comfy):
     """Resolve existing ownership/configuration through application callbacks."""
     owner = record.get("enterprise_user_id")
-    kind = "canvas_comfy" if record["type"] == "comfy" else "canvas_image"
+    kind = {"comfy": "canvas_comfy", "online-image": "canvas_image", "video": "canvas_video"}[record["type"]]
     if not owner or task_owner(kind, record["id"]) != owner or not user(owner):
         return "任务缺少有效的本人归属；请管理员核对，不自动查询或变更归属"
     if record["type"] == "comfy":
@@ -43,7 +46,7 @@ def validate_owned_task(record, *, task_owner, user, provider, comfy):
                     selected = provider(receipt["provider_id"])
                 except (HTTPException, KeyError):
                     return "原供应商配置已移除，请人工核对"
-                if not is_zhenzhen(selected):
+                if record["type"] != "video" and not is_zhenzhen(selected):
                     return "此供应商暂未启用自动续查，可使用已有手动查询"
     return ""
 

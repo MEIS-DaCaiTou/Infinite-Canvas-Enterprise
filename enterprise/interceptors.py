@@ -91,6 +91,7 @@ _INPUT_REUSE_PATHS = {
     "api/chat/stream",
     "api/generate",
     "api/canvas-image-tasks",
+    "api/canvas-video-tasks",
     "api/canvas-comfy-tasks",
     "api/runninghub/upload-asset",
     "api/runninghub/submit",
@@ -99,6 +100,7 @@ _INPUT_REUSE_PATHS = {
 
 _INPUT_REUSE_PREFIXES = (
     "api/canvas-image-tasks/",
+    "api/canvas-video-tasks/",
     "api/canvas-comfy-tasks/",
 )
 
@@ -494,7 +496,7 @@ def _is_runninghub_submit(path: str, method: str) -> bool:
 
 
 def _is_video_submit(path: str, method: str) -> bool:
-    return method.upper() == "POST" and path == "api/canvas-video"
+    return method.upper() == "POST" and path in {"api/canvas-video", "api/canvas-video-tasks"}
 
 
 def _is_local_asset_manage_request(path: str, method: str) -> bool:
@@ -1685,7 +1687,7 @@ def _canvas_task_id_from_path(path: str) -> str:
     if (
         len(parts) >= 3
         and parts[0] == "api"
-        and parts[1] in {"canvas-image-tasks", "canvas-comfy-tasks"}
+        and parts[1] in {"canvas-image-tasks", "canvas-comfy-tasks", "canvas-video-tasks"}
         and parts[2]
     ):
         return parts[2]
@@ -2892,9 +2894,9 @@ def _record_query_task_response_resources(
 
 
 def record_resources_from_data(user: dict, path: str, method: str, data: Any, request_body: bytes | None = None) -> None:
-    if method.upper() == "POST" and path.startswith("api/canvas-image-tasks/") and path.endswith("/reconcile"):
+    if method.upper() == "POST" and path.startswith(("api/canvas-image-tasks/", "api/canvas-video-tasks/")) and path.endswith("/reconcile"):
         # Admin inspection preserves the original task owner's output rights.
-        _record_task_response_resources(user, "api/image-task-query", TASK_TYPE_CANVAS_IMAGE, _canvas_task_id_from_path(path), data)
+        _record_task_response_resources(user, "api/image-task-query", TASK_TYPE_CANVAS_VIDEO if path.startswith("api/canvas-video-tasks/") else TASK_TYPE_CANVAS_IMAGE, _canvas_task_id_from_path(path), data)
         return
     if (
         method.upper() in {"POST", "PUT", "PATCH", "DELETE"}
@@ -3055,10 +3057,10 @@ def _post_process_sync(
             except Exception as exc:
                 print(f"[企业版] 记录对话归属失败: user={_user_id(user)} conversation={conv_obj.get('id')} error={exc}")
 
-    if path in {"api/canvas-image-tasks", "api/canvas-comfy-tasks"} and method == "POST" and status_code in (200, 201):
+    if path in {"api/canvas-image-tasks", "api/canvas-comfy-tasks", "api/canvas-video-tasks"} and method == "POST" and status_code in (200, 201):
         task_id = str(data.get("task_id") or "") if isinstance(data, dict) else ""
         if task_id:
-            task_type = TASK_TYPE_CANVAS_IMAGE if path == "api/canvas-image-tasks" else TASK_TYPE_CANVAS_COMFY
+            task_type = {"api/canvas-image-tasks": TASK_TYPE_CANVAS_IMAGE, "api/canvas-comfy-tasks": TASK_TYPE_CANVAS_COMFY, "api/canvas-video-tasks": TASK_TYPE_CANVAS_VIDEO}[path]
             try:
                 edb.record_canvas_image_task_owner(_user_id(user), task_id)
                 _record_task_owner_safe(
@@ -3078,7 +3080,7 @@ def _post_process_sync(
         if task_owner:
             record_resource_urls_for_user(task_owner, path, data)
             upstream_task_id = str(data.get("upstream_task_id") or "") if isinstance(data, dict) else ""
-            if upstream_task_id:
+            if upstream_task_id and not path.startswith("api/canvas-video-tasks/"):
                 _record_task_owner_safe(
                     task_owner,
                     TASK_TYPE_PROVIDER_IMAGE,

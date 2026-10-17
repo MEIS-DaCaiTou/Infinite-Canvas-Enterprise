@@ -200,3 +200,8 @@ enterprise/providers/comfyui.py 的 ComfyClient 分离 upload/submit/inspect/wai
 自动恢复候选：`CanvasTaskJournal.recovery_candidates/record_auto_recovery` 在同一互斥锁内重建索引/写入 v1 可选调度字段。`AcceptedTaskRecovery.start/notify/stop` 由 main 生命周期和实际失败完成钩子接入；内存不是事实源，未知提交不进入自动任务。owner/启用账号/已维护供应商由现有 DB 与配置校验；图像沿用 CanvasImageRecovery 的原供应商绑定，Comfy 沿用原 backend/prompt_id 并校验后端仍在配置中。`CanvasComfyRecovery` 用共享单飞和 claim，每次只调用 `ComfyClient.inspect_async` 的 GET，初次提交/同步 inspect 仍复用原解析 helper。归档失败保留原身份，归档线程取消时先等待该次写入结束，不启动第二次归档。维护标记仅暂停新领取，不能据此声称完整业务写屏障。
 
 Zhenzhen `image_query_status` 按维护的异步查询状态区分处理中/明确失败/结果成功/人工核对；未知 JSON 和成功无结果不无限伪报运行。`reported_usage` 识别异步 data.data 的报告用量，仍无费用估算或平台结算。协议来源见 [供应商查询文档](https://gpt-best.apifox.cn/api-356258956)。候选尚待独立审查合并，详见任务工程记录。
+
+
+### 视频持久任务候选（2026-10-16，依赖 #163）
+
+`enterprise/canvas_video_tasks.py` 在现有 v1 journal/owner 映射上登记视频任务，提交前写归属、轮询前写受理 ID 与查询绑定；`enterprise/providers/video_tasks.py` 只做单次 GET 状态识别。main 保留现有视频参数构造并接线 `/api/canvas-video-tasks`、`/{task_id}`、`/{task_id}/reconcile`。原任务续查复用 #163 调度器和输出归档，不能重新提交生成；无 ID/协议不明保留待核对。覆盖与验证限制见 [原任务记录](../ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md#2026-10-16-视频持久任务与原任务续查候选)，不属于正式 10.2。
