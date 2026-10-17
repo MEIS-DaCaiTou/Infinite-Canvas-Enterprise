@@ -11,7 +11,7 @@ import pytest
 from fastapi import HTTPException
 
 from enterprise.canvas_task_journal import CanvasTaskJournal
-from enterprise.canvas_video_tasks import CanvasVideoTasks, record_video_acceptance, can_reconcile_video
+from enterprise.canvas_video_tasks import CanvasVideoTasks, record_video_acceptance, can_reconcile_video, public_video_task
 from enterprise.accepted_task_recovery import AcceptedTaskRecovery
 from enterprise.generation_tasks import describe_task
 from enterprise.providers.video_tasks import inspect_video
@@ -24,6 +24,20 @@ def test_shared_video_client_submits_once_then_reads_local_task():
         pytest.skip("Node is unavailable for shared browser-client contract")
     root = Path(__file__).resolve().parents[2]
     subprocess.run(["node", "enterprise/tests/test_canvas_task_query.js"], cwd=root, check=True)
+    subprocess.run(["node", "enterprise/tests/test_video_canvas_resume.js"], cwd=root, check=True)
+
+
+def test_video_public_polling_remains_running_during_original_task_recovery():
+    record = {"id": "video", "type": "video", "status": "failed", "error": "tracking interrupted",
+        "auto_recovery": {"status": "waiting"}, "provider_receipts": [
+            {"state": "accepted", "upstream_task_id": "original", "video_query_mode": "generic"}]}
+    assert public_video_task(record)["status"] == "running"
+    assert record["status"] == "failed" and "provider_receipts" not in public_video_task(record)
+    record["auto_recovery"]["status"] = "manual"
+    assert public_video_task(record)["status"] == "failed"
+    record["auto_recovery"]["status"] = "waiting"
+    record["provider_receipts"][0]["state"] = "failed"
+    assert public_video_task(record)["status"] == "failed"
 
 
 def service(tmp_path, generate=None):

@@ -14119,7 +14119,9 @@ async def get_canvas_video_task(task_id: str):
 
 @app.post("/api/canvas-video-tasks/{task_id}/reconcile")
 async def reconcile_canvas_video_task(task_id: str):
-    return await CANVAS_VIDEO_TASKS.reconcile(task_id)
+    result = await CANVAS_VIDEO_TASKS.reconcile(task_id)
+    await CANVAS_ACCEPTED_RECOVERY.after_manual_query(task_id, result)
+    return result
 
 
 # --- Canvas LLM ---
