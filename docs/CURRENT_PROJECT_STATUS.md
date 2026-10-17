@@ -1,7 +1,7 @@
 # Infinite Canvas Enterprise 当前项目状态
 
-更新时间：2026-10-16
-核验对象：main@6d9d77d（#162 任务中心已独立复审后合并）、合并后主线 CI；正式 10.2 的准确包及 10.1 → 10.2 升级/恢复证据继续沿用。v2026.10.2 已正式发布为 Latest，10.1 保持不可变；本轮未操作客户/生产设备。
+更新时间：2026-10-17
+核验对象：main@39f4b02（G0–G3 已合并）及 #163/#169 依赖的任务恢复候选；main 与候选 PR CI 分开记录。正式 v2026.10.2 的准确包及 10.1 → 10.2 升级/恢复证据继续沿用，本轮未构建、发布或操作客户/生产设备。
 
 ## 1. 开发基线、发行与现场必须分开
 
@@ -147,3 +147,12 @@
 按负责人授权继续唯一路线图 4.2，视频候选分支 `codex/video-task-recovery-20261016` 基于 #163 Head `0a6db0f36edcb18fb352f7ab5768684a3334a666`，独立堆叠交付，不复制或改写 #163。两类画布的视频生成先登记本人持久任务，已有 HTTP 提交在收到 ID 后原子保存地址/协议绑定；复用既有调度器、归属表与 v1 journal，刷新或重启后可在现有“日志 → 生成任务 → API 视频”查看结果和继续查询原任务。没有新页面、数据库 Schema、计费算法或付费自动重提。
 
 通用视频、Agnes、APIMart、火山及玉玉沿用现有请求和查询协议，实际可恢复以取得已绑定 ID 为前提；即梦 CLI 排队保留原 submit_id 和既有专用查询路径，RunningHub 等未接入本次 HTTP 回执钩子的协议不据此宣称自动恢复。提交结果不明且无 ID、配置/协议变化和未知回包需人工核对。实现、定向验证及限制复用 [同一任务记录](./ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md#2026-10-16-视频持久任务与原任务续查候选)。本候选尚未合并或发布，正式 Release 仍为 v2026.10.2。
+
+
+### 2026-10-17 RunningHub API 视频闭环候选
+
+#169 准确 Head `9a36a1effccc8c0128100f37b8e9ab05f9309b85` 的文档/Enterprise/Runtime CI 最终 SUCCESS（Enterprise 1832 passed/50 skipped/12 subtests，Runtime 376 passed），三项审查缺陷已修正并复审；仍为依赖 #163 的 Draft，未合并/发布。本轮核对 origin/main 仍为 `39f4b02d232142c4ede66f0133b759b32178d70f`，原工作区和 PR 保留。
+
+按负责人要求继续路线图 4.2，在独立 `codex/runninghub-video-recovery-20261017` 基于 #169 Head 补齐 RunningHub API 视频。新 `enterprise/providers/runninghub_video.py` 统一一次提交、原 taskId 查询和视频状态/结果解析，main 的既有参数构造保留。受理后使用已有视频回执/任务中心/调度器；恢复只调用官方 `POST /openapi/v2/query`，不会调用创建视频端点。区分缩略图/音频与视频，状态和 ID 无法确认时保留人工核对。
+
+未新增页面、配置步骤、依赖、Schema 或 CI 门禁。具体未付费验证、POST 语义和旧回执限制见 [同一任务工程记录](./ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md#2026-10-17-runninghub-api-视频原任务续查候选)。仍不宣称独立 RunningHub 应用/工作流节点或即梦 CLI 已全面持久恢复，正式版本保持 10.2。
