@@ -124,6 +124,19 @@ class AcceptedTaskRecovery:
     async def _record(self, task_id, changes):
         await asyncio.to_thread(self.journal.record_auto_recovery, task_id, changes)
 
+    async def after_manual_query(self, task_id, result):
+        """An explicit original-task query may resume a previously paused loop.
+
+        Keep the regular delay and validation before the next background query.
+        This records query outcomes only; it cannot schedule a generation.
+        """
+        record = await asyncio.to_thread(self.journal.get, task_id)
+        if not recovery_candidate(record):
+            if record and record.get("auto_recovery"):
+                await self._record(task_id, {"status": "complete", "next_query_at": None, "reason": ""})
+            return
+        await self._record_result(task_id, result, record.get("auto_recovery") or {})
+
     async def _one(self, task_id):
         record = await asyncio.to_thread(self.journal.get, task_id)
         if not recovery_candidate(record):
@@ -151,6 +164,9 @@ class AcceptedTaskRecovery:
         except Exception as exc:
             result = {"status": "unknown", "http_status": getattr(exc, "status_code", None),
                       "message": getattr(exc, "detail", None) or str(exc)}
+        await self._record_result(task_id, result, previous)
+
+    async def _record_result(self, task_id, result, previous):
         state = result.get("status", "unknown")
         code = result.get("http_status")
         reason = redact_text(result.get("message") or "")[:1200]

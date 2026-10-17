@@ -37,8 +37,14 @@ def can_reconcile(record):
 
 def public_receipt(record):
     # Internal query binding is not frontend configuration or a credential.
-    return {**{key: value for key, value in record.items() if key != "provider_receipts"},
-            "can_reconcile": can_reconcile(record)}
+    public = {**{key: value for key, value in record.items() if key != "provider_receipts"},
+              "can_reconcile": can_reconcile(record)}
+    from enterprise.accepted_task_recovery import recovery_candidate
+    if (recovery_candidate(record)
+            and (record.get("auto_recovery") or {}).get("status") in {"waiting", "querying"}):
+        # A local tracking interruption is not a terminal supplier failure.
+        public.update(status="running", error="", error_code="")
+    return public
 
 
 class ImageReceiptSink:

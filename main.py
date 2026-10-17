@@ -12930,7 +12930,9 @@ CANVAS_IMAGE_RECOVERY = CanvasImageRecovery(CANVAS_TASK_JOURNAL, get_api_provide
 
 @app.post("/api/canvas-image-tasks/{task_id}/reconcile")
 async def reconcile_canvas_image_task(task_id: str):
-    return await CANVAS_IMAGE_RECOVERY.reconcile(task_id)
+    result = await CANVAS_IMAGE_RECOVERY.reconcile(task_id)
+    await CANVAS_ACCEPTED_RECOVERY.after_manual_query(task_id, result)
+    return result
 
 async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
     if not await asyncio.to_thread(CANVAS_TASK_JOURNAL.mark_running, task_id):
@@ -13092,15 +13094,7 @@ async def resume_canvas_comfy_task(task_id):
         result = await CANVAS_COMFY_RECOVERY.reconcile(task_id)
     except HTTPException as exc:
         result = {"status": "manual", "message": exc.detail}
-    code = result.get("http_status")
-    if result.get("status") == "manual" or (code is not None and 300 <= code < 500 and code not in {408, 429}):
-        await asyncio.to_thread(CANVAS_TASK_JOURNAL.record_auto_recovery, task_id,
-                               {"status": "manual", "next_query_at": None, "reason": result.get("message", "")})
-        return
-    if result.get("status") in {"queued", "running", "unknown"}:
-        await asyncio.to_thread(CANVAS_TASK_JOURNAL.record_auto_recovery, task_id,
-                               {"status": "waiting", "next_query_at": None, "reason": result.get("message", "")})
-    CANVAS_ACCEPTED_RECOVERY.notify(task_id)
+    await CANVAS_ACCEPTED_RECOVERY.after_manual_query(task_id, result)
 
 
 @app.get("/api/canvas-comfy-tasks/{task_id}")

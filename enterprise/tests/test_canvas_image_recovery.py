@@ -13,6 +13,19 @@ from enterprise.canvas_image_recovery import CanvasImageRecovery, ImageReceiptSi
 PROVIDER = {"id": "zhenzhen", "base_url": "https://supplier.example/v1", "protocol": "openai", "image_request_mode": "openai"}
 
 
+@pytest.mark.parametrize("automatic,expected", [("waiting", "running"), ("querying", "running"), ("manual", "failed"), ("complete", "failed")])
+def test_canvas_image_polling_tracks_automatic_query_without_false_failure(automatic, expected):
+    record = {"id": "original", "type": "online-image", "status": "failed", "error": "local tracking lost",
+              "error_code": "runtime_interrupted", "auto_recovery": {"status": automatic},
+              "provider_receipts": [{"index": 0, "state": "accepted", "upstream_task_id": "original-id", **provider_scope(PROVIDER)}]}
+    public = public_receipt(record)
+    assert public["status"] == expected
+    assert record["status"] == "failed" and record["error"] == "local tracking lost"
+    assert "provider_receipts" not in public and "supplier.example" not in str(public)
+    record["provider_receipts"][0]["state"] = "failed"
+    assert public_receipt(record)["status"] == "failed"
+
+
 def new_journal(tmp_path, count=1):
     journal = CanvasTaskJournal(tmp_path)
     journal.create({"id": "canvas_img_a", "type": "online-image", "provider_id": "zhenzhen", "model": "nano-banana-2",
