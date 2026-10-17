@@ -149,12 +149,14 @@ static/js/comfy-workflow-session.js 提供共享输入、上传互斥、运行�
 
 2026-10-15 #161 增量：runtimeFields 合并配置图片输入组，范围校验/上传顺序由 comfy-workflow-fields.js 共用。comfy-outputs.js/CSS 提供文本摘要、统一正文弹窗、复制/下载及 Prompt 节点复用，沿用日志面板的主题变量和按钮层级。经典 generatedOutputs/Output 和智能媒体列表保留类型、文本及结果身份，selectedResult 存储明确选择的快照；普通连线把文本送入提示词，不列作图片。已有画布 JSON 存储，无新页面/用户模板。GUI 是 loopback 协议夹具证据，真实 GPU 和内置 Browser 下载事件限制见实施记录。
 
-## 2026-10-15 本人生成任务候选
+## 2026-10-15 本人生成任务（#162 已合并）
 
 #161 已合并 main6603550，未进入正式 Release。其共用文本视图/Prompt 复用作为本包依赖，沿用原主题变量和操作层级。
 
-`static/js/generation-task-center.js`/CSS 在经典 `logModal/logList` 和智能 `smartLogModal/smartLogList` 中增加任务页签，入口脚本只提供已有预览与创建 Prompt 回调。读取 `GET /enterprise/api/me/generation-tasks`（cursor/status/kind/limit）及 `GET /enterprise/api/me/generation-tasks/{id}`；默认仍显示原生成日志，关闭后停止列表刷新。只有明确点击续查才调用原 `/api/canvas-image-tasks/{id}/reconcile` 或 Comfy GET `resume=true`，不调用生成端点。切换筛选期间旧响应不能覆盖新列表，未完成请求结束后补读当前筛选。本人目录不等于管理员全员任务/费用视图，尚待本包独立审查合并。
+`static/js/generation-task-center.js`/CSS 在经典 `logModal/logList` 和智能 `smartLogModal/smartLogList` 中增加任务页签，入口脚本只提供已有预览与创建 Prompt 回调。读取 `GET /enterprise/api/me/generation-tasks`（cursor/status/kind/limit）及 `GET /enterprise/api/me/generation-tasks/{id}`；默认仍显示原生成日志，关闭后停止列表刷新。只有明确点击续查才调用原 `/api/canvas-image-tasks/{id}/reconcile` 或 Comfy GET `resume=true`，不调用生成端点。切换筛选期间旧响应不能覆盖新列表，未完成请求结束后补读当前筛选。本人目录不等于管理员全员任务/费用视图；#162 已独立复审并合并 main6d9d77d，尚未发行。
 
 任务目录读写协调补记：生产路径由 Gateway 的 generation_task_api 认证并覆盖身份，通过既有回环 HTTP 连接池读取 generation_task_routes 的内部路由；Repository 注入上游同一个 CANVAS_TASK_JOURNAL，共用既有互斥锁，Gateway 不直接打开回执文件。Windows 普通读取句柄阻止 os.replace 的对照已复现；改为同一对象协调后，并发读取/30 次回执写入通过。公开 Gateway 拒绝整个 /_enterprise_internal/ 命名空间，客户端伪造身份无效；业务进程不可用时返回 503，不自动生成。原生文件接口试验未保留，无新平台适配/数据库结构。
 
 任务中心审查修正：音频保留原文件链接，图片/视频才调用既有预览；详情资源投影仅使用已筛选结果 URL，不递归正文/错误/名称。未实际提交的本地失败显示明确失败，重启/真实受理未知仍待核对。
+
+自动恢复候选继续使用相同任务页签和详情：列表/详情的 auto_recovery 含状态、次数、最近/下次查询及脱敏原因；后台 waiting/querying 时列表继续刷新，终态覆盖中断留下的旧调度显示。只有本次自动续查确认的 queued/running 才显示相应状态，旧的重启前核对记录不能伪报仍在运行。页面关闭不影响服务端调度，前端刷新只读取目录，不发起生成或自动查询操作；手动按钮继续查询原 ID。沿用现有 CSS/主题，无新页面、控件体系或用户配置步骤。

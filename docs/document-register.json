@@ -1,8 +1,8 @@
 {
   "schema_version": "enterprise-documents-v1",
   "reviewed_at": "2026-10-16",
-  "audit_base_commit": "6603550c4ad367b031de34e53cc9b488bd207140",
-  "scope": "Main6603550: #161 independently re-reviewed and merged, main Enterprise/Runtime/docs CI SUCCESS; release remains immutable v2026.10.2. Approved personal durable generation-task center and common image-provider boundary candidate documented in the existing operation record and Code Wiki, not yet independently reviewed, merged or released. No new production operation, schema, release or architecture roadmap.",
+  "audit_base_commit": "39f4b02d232142c4ede66f0133b759b32178d70f",
+  "scope": "Main39f4b02: #162 task center and G0-G3 increments merged; release remains v2026.10.2. Accepted Zhenzhen image/Comfy task automatic-query recovery candidate documented in the existing roadmap, operation record and Code Wiki; pending independent review and merge, not released. Existing G0 contribution entries retained. No new business schema, production operation or overall refactor.",
   "documents": [
     {
       "path": ".github/PULL_REQUEST_TEMPLATE.md",

@@ -132,6 +132,39 @@ def test_missing_id_never_causes_submission_or_legacy_guessing(tmp_path):
     asyncio.run(scenario())
 
 
+def test_partial_cache_keeps_local_member_and_queries_pending_original_id(tmp_path):
+    async def scenario():
+        journal = new_journal(tmp_path, 2)
+        await ImageReceiptSink(journal, 'canvas_img_a', 0).completed(['/output/kept.png'], [])
+        await ImageReceiptSink(journal, 'canvas_img_a', 1).accepted('still-pending', PROVIDER)
+        journal.recover()
+        journal.finish_image_recovery('canvas_img_a', {'status':'partial','images':['/output/kept.png'],'message':'prior partial'})
+        calls = []
+        async def query(provider, key):
+            calls.append(key)
+            return {'status':'succeeded','images':['/output/recovered.png']}
+        recovery = CanvasImageRecovery(journal, lambda _:PROVIDER, query, lambda _:None)
+        result = await recovery.reconcile('canvas_img_a')
+        assert result['status']=='succeeded' and result['images']==['/output/kept.png','/output/recovered.png']
+        assert calls==['still-pending']
+    asyncio.run(scenario())
+
+
+def test_unknown_provider_payload_is_manual_not_terminal_or_infinite_running(tmp_path):
+    async def scenario():
+        journal = new_journal(tmp_path)
+        await ImageReceiptSink(journal, 'canvas_img_a', 0).accepted('original', PROVIDER)
+        journal.recover()
+        async def query(*_): return {'status':'manual','message':'unrecognized supplier response'}
+        recovery = CanvasImageRecovery(journal, lambda _:PROVIDER, query, lambda _:None)
+        assert (await recovery.reconcile('canvas_img_a'))['status']=='manual'
+        record=journal.get('canvas_img_a')
+        assert record['reconciliation']['status']=='manual'
+        assert record['provider_receipts'][0]['state']=='accepted'
+        assert record['provider_receipts'][0]['upstream_task_id']=='original'
+    asyncio.run(scenario())
+
+
 def test_credential_rotation_does_not_persist_keys_and_task_identity_is_immutable(tmp_path):
     async def scenario():
         journal = new_journal(tmp_path)

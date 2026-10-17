@@ -10,6 +10,15 @@ import os
 from pathlib import Path
 
 
+def maintenance_active(state_root):
+    """Shared pause signal for background work; never grants file authority."""
+    try:
+        return any(os.path.lexists(Path(state_root) / name)
+                   for name in ("install-upgrade-active.json", "upgrade-sequence-active.json"))
+    except OSError:
+        return True
+
+
 class InstallMaintenanceMiddleware:
     def __init__(self, app, *, state_root):
         self.app = app

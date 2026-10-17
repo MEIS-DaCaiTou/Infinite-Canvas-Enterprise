@@ -7,6 +7,7 @@ existing routes; this module does not speculate about unknown model names.
 """
 from copy import deepcopy
 from urllib.parse import urlsplit, quote
+from enterprise.providers.image_task_protocol import SUCCESS_STATUSES, FAILED_STATUSES, task_status
 
 
 RATIOS = ["4:3", "3:4", "16:9", "9:16", "2:3", "3:2", "1:1", "4:5", "5:4", "21:9"]
@@ -94,3 +95,19 @@ async def query_image(client, endpoint, headers, request):
     response = await request(client, "GET", endpoint, attempts=3, headers=headers)
     response.raise_for_status()
     return response.json()
+
+
+def image_query_status(payload, *, has_images):
+    """Maintained async status contract; an unknown reply needs human review.
+
+    https://gpt-best.apifox.cn/api-356258956 documents IN_PROGRESS,
+    FAILURE and SUCCESS. Retain existing terminal aliases for managed proxies.
+    """
+    status = task_status(payload)
+    if status in FAILED_STATUSES:
+        return "failed"
+    if status == "IN_PROGRESS":
+        return "running"
+    if has_images and (not status or status in SUCCESS_STATUSES):
+        return "succeeded"
+    return "manual"

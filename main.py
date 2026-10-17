@@ -56,6 +56,9 @@ from enterprise.app_paths import AppPathLayout
 from enterprise.canvas_task_journal import CanvasTaskJournal, create_task_receipt
 from enterprise.generation_task_routes import create_router as create_generation_task_router
 from enterprise.canvas_image_recovery import CanvasImageRecovery, ImageReceiptSink, public_receipt
+from enterprise.canvas_comfy_recovery import CanvasComfyRecovery
+from enterprise.accepted_task_recovery import AcceptedTaskRecovery, validate_owned_task
+from enterprise.runtime.install_maintenance import maintenance_active
 from enterprise.providers.submission import (
     image_api_explicitly_rejected, provider_submission_unknown, submission_json,
     httpx_request_with_transient_retries,
@@ -70,6 +73,7 @@ from enterprise.providers.zhenzhen import (
     submit_image as submit_zhenzhen_image,
     is_zhenzhen, image_headers as zhenzhen_image_headers,
     image_task_endpoint as zhenzhen_image_task_endpoint, query_image as query_zhenzhen_image,
+    image_query_status as zhenzhen_image_query_status,
 )
 from enterprise.providers.image_task_protocol import (
     SUCCESS_STATUSES as IMAGE_TASK_SUCCESS_STATUSES, FAILED_STATUSES as IMAGE_TASK_FAILED_STATUSES,
@@ -247,6 +251,14 @@ async def startup_event():
         await asyncio.to_thread(migrate_mislabeled_image_extensions)
     except Exception as exc:
         print(f"纠正图片扩展名失败: {exc}")
+    await CANVAS_ACCEPTED_RECOVERY.start()
+
+@app.on_event("shutdown")
+async def shutdown_task_recovery():
+    await CANVAS_ACCEPTED_RECOVERY.stop()
+    await CANVAS_IMAGE_RECOVERY.shutdown()
+    await CANVAS_COMFY_RECOVERY.shutdown()
+
 
 @app.websocket("/ws/stats")
 async def websocket_endpoint(websocket: WebSocket, client_id: str = None):
@@ -12840,6 +12852,14 @@ async def query_image_task_result(payload: ImageTaskQueryRequest, *, store_histo
         image_items = extract_images(raw)
     except HTTPException:
         image_items = []
+    if is_zhenzhen(provider):
+        state = zhenzhen_image_query_status(raw, has_images=bool(image_items))
+        if state != "succeeded":
+            message = (image_task_fail_reason(raw) if state == "failed" else
+                       "原任务仍在生成中" if state == "running" else
+                       "Zhenzhen 原任务回包状态或结果无法确认，请人工核对；不会重新生成")
+            return {"status": state, "task_id": task_id, "provider_id": provider["id"],
+                    "message": message, "error": message if state == "failed" else "", "raw": raw}
     if image_items:
         local_urls = []
         local_items = []
@@ -12941,6 +12961,7 @@ async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
         if getattr(exc, "submission_unknown", False):
             changes.update(recovery_required=True, error_code="PROVIDER_SUBMISSION_UNKNOWN")
     await asyncio.to_thread(CANVAS_TASK_JOURNAL.finish, task_id, changes)
+    CANVAS_ACCEPTED_RECOVERY.notify(task_id)
 
 @app.post("/api/canvas-image-tasks")
 async def create_canvas_image_task(
@@ -12991,6 +13012,7 @@ async def run_canvas_comfy_task(task_id: str, payload: GenerateRequest):
             "recovery_required": bool((CANVAS_TASK_JOURNAL.get(task_id) or {}).get("comfy_receipt")) and not isinstance(exc, ComfyExecutionError),
         }
     await asyncio.to_thread(CANVAS_TASK_JOURNAL.finish, task_id, changes)
+    CANVAS_ACCEPTED_RECOVERY.notify(task_id)
 
 @app.post("/api/canvas-comfy-tasks")
 async def create_canvas_comfy_task(
@@ -13025,19 +13047,56 @@ async def create_canvas_comfy_task(
         schedule_canvas_task(run_canvas_comfy_task(task_id, payload))
         return {"task_id": task_id, "status": "queued"}
 
-async def resume_canvas_comfy_task(task_id, receipt):
+def validate_comfy_receipt(receipt):
+    if comfy_base_url(receipt["backend"]) not in {comfy_base_url(addr) for addr in COMFYUI_INSTANCES}:
+        raise HTTPException(409, "原 ComfyUI 后端已移除；请核对原任务，不向替代后端发送原 ID")
+
+
+async def inspect_saved_comfy_task(backend, prompt_id):
+    async with httpx.AsyncClient(timeout=httpx.Timeout(30, connect=10), follow_redirects=False) as client:
+        return await ComfyClient(backend).inspect_async(client, prompt_id)
+
+
+def archive_saved_comfy_task(record, history):
+    receipt = record["comfy_receipt"]
+    req = GenerateRequest(type=receipt["output_type"], workflow_json=receipt.get("workflow_json", "Z-Image.json"), convert_to_jpg=receipt.get("convert_to_jpg", False))
+    return archive_comfy_history(history, receipt["workflow_classes"], req,
+                                 receipt["prompt_id"], receipt["backend"], record["id"], receipt["seed"])
+
+
+CANVAS_COMFY_RECOVERY = CanvasComfyRecovery(CANVAS_TASK_JOURNAL, inspect_saved_comfy_task,
+                                           archive_saved_comfy_task, validate_comfy_receipt)
+
+
+def validate_auto_task(record):
+    from enterprise import db
+    return validate_owned_task(record, task_owner=db.get_task_owner, user=db.get_user_by_id,
+                               provider=get_api_provider_exact, comfy=validate_comfy_receipt)
+
+
+async def query_accepted_task(record):
+    recovery = CANVAS_COMFY_RECOVERY if record["type"] == "comfy" else CANVAS_IMAGE_RECOVERY
+    return await recovery.reconcile(record["id"])
+
+
+CANVAS_ACCEPTED_RECOVERY = AcceptedTaskRecovery(CANVAS_TASK_JOURNAL, query_accepted_task,
+    validate_auto_task, lambda: maintenance_active(PATH_ROOTS.STATE_ROOT))
+
+
+async def resume_canvas_comfy_task(task_id):
     try:
-        client = ComfyClient(receipt["backend"])
-        history = await asyncio.to_thread(client.wait, receipt["prompt_id"], timeout=COMFYUI_HISTORY_TIMEOUT,
-            progress=lambda phase: CANVAS_TASK_JOURNAL.record_comfy(task_id, {"phase": phase}))
-        req = GenerateRequest(type=receipt["output_type"], workflow_json=receipt.get("workflow_json", "Z-Image.json"), convert_to_jpg=receipt.get("convert_to_jpg", False))
-        result = await asyncio.to_thread(archive_comfy_history, history, receipt["workflow_classes"], req,
-                                        receipt["prompt_id"], receipt["backend"], task_id, receipt["seed"])
-        changes = {"status": "succeeded", "result": result, "error": "", "recovery_required": False}
-    except Exception as exc:
-        changes = {"status": "failed", "error": str(exc), "recovery_required": not isinstance(exc, ComfyExecutionError)}
-    await asyncio.to_thread(CANVAS_TASK_JOURNAL.finish, task_id, changes)
-    await asyncio.to_thread(CANVAS_TASK_JOURNAL.record_reconciliation, task_id, changes["status"], changes.get("error", ""))
+        result = await CANVAS_COMFY_RECOVERY.reconcile(task_id)
+    except HTTPException as exc:
+        result = {"status": "manual", "message": exc.detail}
+    code = result.get("http_status")
+    if result.get("status") == "manual" or (code is not None and 300 <= code < 500 and code not in {408, 429}):
+        await asyncio.to_thread(CANVAS_TASK_JOURNAL.record_auto_recovery, task_id,
+                               {"status": "manual", "next_query_at": None, "reason": result.get("message", "")})
+        return
+    if result.get("status") in {"queued", "running", "unknown"}:
+        await asyncio.to_thread(CANVAS_TASK_JOURNAL.record_auto_recovery, task_id,
+                               {"status": "waiting", "next_query_at": None, "reason": result.get("message", "")})
+    CANVAS_ACCEPTED_RECOVERY.notify(task_id)
 
 
 @app.get("/api/canvas-comfy-tasks/{task_id}")
@@ -13045,15 +13104,15 @@ async def get_canvas_comfy_task(task_id: str, resume: bool = False):
     task = await asyncio.to_thread(CANVAS_TASK_JOURNAL.get, task_id)
     if not task or task.get("type") != "comfy":
         raise HTTPException(status_code=404, detail="ComfyUI 任务不存在；此版本启用前的内存任务无法凭空恢复")
-    if task.get("status") == "failed" and task.get("recovery_required") and (resume or task.get("error_code") == "runtime_interrupted"):
-        receipt = await asyncio.to_thread(CANVAS_TASK_JOURNAL.claim_comfy_query, task_id)
-        if receipt:
-            schedule_canvas_task(resume_canvas_comfy_task(task_id, receipt))
-            task = await asyncio.to_thread(CANVAS_TASK_JOURNAL.get, task_id)
+    from enterprise.canvas_comfy_recovery import public_comfy_task
+    manual = (task.get("auto_recovery") or {}).get("status") == "manual"
+    resuming = bool(task.get("status") == "failed" and task.get("recovery_required")
+                    and (task.get("comfy_receipt") or {}).get("prompt_id")
+                    and (resume or (task.get("error_code") == "runtime_interrupted" and not manual)))
+    if resuming:
+        schedule_canvas_task(resume_canvas_comfy_task(task_id))
     # Internal backend/class metadata stays in the journal, not the polling response.
-    public = {key: value for key, value in task.items() if key != "comfy_receipt"}
-    public["phase"] = (task.get("comfy_receipt") or {}).get("phase", "preparing" if task["status"] == "running" else task["status"])
-    return public
+    return public_comfy_task(task, resuming=resuming)
 
 # --- 图像生成参数 schema（供客户端动态渲染参数表单，避免把参数写死在前端） ---
 IMAGE_PARAM_RATIOS = [

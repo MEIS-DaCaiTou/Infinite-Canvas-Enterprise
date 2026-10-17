@@ -187,3 +187,17 @@ def test_new_receipt_fields_remain_readable_by_v1_journal_after_restart(tmp_path
     record=restarted.get('accepted')
     assert record['journal_version']==1 and record['reconciliation']['count']==1
     assert describe_task(record)['status']=='unknown'
+
+
+def test_automatic_task_state_requires_current_query_not_pre_restart_status():
+    record={'id':'original','type':'comfy','status':'failed','recovery_required':True,
+        'comfy_receipt':{'prompt_id':'original-27'},
+        'auto_recovery':{'status':'waiting','last_query_at':20},
+        'reconciliation':{'status':'queued','started_at':21}}
+    assert describe_task(record)['status']=='queued'
+    record['auto_recovery'].update(status='querying',last_query_at=30)
+    assert describe_task(record)['status']=='unknown'
+    record['reconciliation'].update(status='running',started_at=31)
+    assert describe_task(record)['status']=='running'
+    record.update(status='succeeded',result={'texts':['/output/kept.txt']})
+    assert describe_task(record)['auto_recovery']['status']=='complete'

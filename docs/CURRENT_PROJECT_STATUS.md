@@ -1,14 +1,14 @@
 # Infinite Canvas Enterprise 当前项目状态
 
 更新时间：2026-10-15
-核验对象：main@6603550（#161 独立审查后已合并）、合并后主线 CI；正式 10.2 的准确包及 10.1 → 10.2 升级/恢复证据继续沿用。v2026.10.2 已正式发布为 Latest，10.1 保持不可变；本轮未操作客户/生产设备。
+核验对象：main@6d9d77d（#162 任务中心已独立复审后合并）、合并后主线 CI；正式 10.2 的准确包及 10.1 → 10.2 升级/恢复证据继续沿用。v2026.10.2 已正式发布为 Latest，10.1 保持不可变；本轮未操作客户/生产设备。
 
 ## 1. 开发基线、发行与现场必须分开
 
 | 层级 | 本次事实 | 不能据此声称 |
 | --- | --- | --- |
-| 主线核验基点 | `main@6603550c4ad367b031de34e53cc9b488bd207140`；#123、#137–#142、#146–#159、#161 已合并；#153 发布目录分页与完整性已进入主线；服务器及 500+/200+ 长期约束随 #152 入主线 | 主线能力已随正式 10.1 全部交付、所有历史来源均兼容 |
-| 最近已完成 main CI | main6603550 的 [Enterprise/Runtime 38680468852](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/38680468852) 与 [文档 38680468773](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/38680468773) 最终 SUCCESS；固定 EXE opt-in SKIPPED。历史： 发行源码 7da593b 的 Enterprise/Runtime 38497837123、文档 38497837116 SUCCESS；main01c 的 [Enterprise/Runtime 38499949781](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/38499949781) 失败作业唯一重试后最终 SUCCESS，文档 38499949813 SUCCESS；opt-in SKIPPED。旧 main32c 与 main01c 的首次失败及各自唯一失败作业重试保留，不能改称首次通过 | 用 PR CI 替代 main CI；跳过门禁等于已验收 |
+| 主线核验基点 | `main@6d9d77dc07c5a2b655e2002536a653e285033d69`；#123、#137–#142、#146–#159、#161、#162 已合并；#153 发布目录分页与完整性已进入主线；服务器及 500+/200+ 长期约束随 #152 入主线 | 主线能力已随正式 10.1 全部交付、所有历史来源均兼容 |
+| 最近已完成 main CI | main6d9d77d 的 [Enterprise/Runtime 38694777075](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/38694777075) 与 [文档 38694777090](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/38694777090) 最终 SUCCESS；固定 EXE opt-in SKIPPED。历史： 发行源码 7da593b 的 Enterprise/Runtime 38497837123、文档 38497837116 SUCCESS；main01c 的 [Enterprise/Runtime 38499949781](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/38499949781) 失败作业唯一重试后最终 SUCCESS，文档 38499949813 SUCCESS；opt-in SKIPPED。旧 main32c 与 main01c 的首次失败及各自唯一失败作业重试保留，不能改称首次通过 | 用 PR CI 替代 main CI；跳过门禁等于已验收 |
 | 开发基线收口 | #146 选择性接回 10.1 同源页面提示和数据库 v2 迁移/构建契约，保留主线安全治理、任务回执、原生入口和恢复保护；准确整合范围与验证见 [收口记录](./ops/DEVELOPMENT-BASELINE-CLOSEOUT-2026-10-09.md) | 整条维护分支已合并；任意历史安装已受支持 |
 | 主线诊断/恢复增量 | #147、#148 已合并。#148 工作包 B 完成精确 Job/READY、源进程 lease、接受竞争和超时恢复保护；310 项关联回归通过。代码 `6002300eff5fd4750f84bfe684b41a739c541120` 的本机固定 EXE 合成三门禁通过、测试进程/端口清理确认；准确最终 Head `fd8303337ea22bab91d4d1eb84606dcaa410f4ca` 三项常规 CI 及独立审查通过，2026-10-10 合并；[实施与验证记录](./ops/RUNTIME-UPDATE-LIFECYCLE-2026-10-09.md) | 已进入正式 10.1、所有安装副本或客户环境已验收、现场旧失败根因已确定 |
 | 正式 Release | [v2026.10.2](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.10.2)，Latest、非预发布；`ice-2026.10.2-7da593b52f3d`，准确 source `7da593b52f3d487033e3ab1771142bfed891f316`，2026-10-14 发布，共 10 项资产 | 10.2 已部署客户、所有来源均兼容；覆盖旧 10.1 资产 |
@@ -78,7 +78,7 @@
 
 ## 5. 当前阶段与下一步边界
 
-当前是 **阶段 3 收口与既有创作阻断修复**，唯一实施顺序见[路线图](./roadmap/DEVELOPMENT-ROADMAP-2026-2027.md)。
+当前已按负责人批准进入 **阶段 4.2 持久任务与供应商闭环**；阶段 3 仅继续处理实际迭代阻断，唯一实施顺序见[路线图](./roadmap/DEVELOPMENT-ROADMAP-2026-2027.md)。
 
 1. #146–#153 的主线基础、固定入口、缓存清理、同版保留数据卸载/重装和目录分页已完成合并；C4 不再重复开发或重跑已有充分证据的测试。#148 的失败与最终合成三门禁、C2/C3 的限定证据继续保留。
 2. #154/#155 已按负责人授权核查准确 Head 并合并，包含目标执行器、离线/在线连续升级、原生工具和检查点恢复；没有将开发端核查称为新增独立审查。main 的 #155 历史在线交接阻断仍保留原证据；#157 已按一种正式固定入口启动方式完成候选收口及必要恢复提示，独立审查后已合并，不继续扩展任意受限宿主矩阵。合成两跳成功不证明真实整机重启和所有在线续接已通过。
@@ -131,4 +131,10 @@
 
 上节“候选/未合并”是审查前快照。#161 的实现者以外代理复核发现输入归属、普通 HTTP 下 UUID、LLM 文本读取、分组旧默认值及切换后端上传残留五项缺口，已在 `13c796e74997a7fa488377358d701942ffdbbe77` 修正并独立复审；准确 Head 三项常规 CI 成功后 squash 合并为 `6603550c4ad367b031de34e53cc9b488bd207140`。本地主目录已安全快进，其他 worktree/修改保留。主线 CI 已单独核对最终成功；正式 Release 仍是 10.2，未把 #161 当已发布能力。
 
-负责人批准按唯一 [路线图 4.2](./roadmap/DEVELOPMENT-ROADMAP-2026-2027.md#42-持久任务中心与独立供应商适配) 继续。当前 [Draft PR #162](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/162)，开发分支 `codex/durable-task-center-20261015`：在现有画布日志增加本人“生成任务”页签，复用持久回执与 SQLite 归属映射；状态筛选、详情、图文结果和原任务续查共用模块，两类画布均接入。补充提交/受理/归档阶段、脱敏错误、供应商报告用量和最近核对事实；Zhenzhen 图像 GET/鉴权构造与通用状态解析继续移出 main。候选尚未独立审查或合并，不宣称完整任务调度、全供应商恢复或费用账本完成，详见 [任务工程记录](./ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md#2026-10-15-持久任务中心与供应商边界续包)。本轮没有新发行、生产操作或整体架构重构。
+负责人批准按唯一 [路线图 4.2](./roadmap/DEVELOPMENT-ROADMAP-2026-2027.md#42-持久任务中心与独立供应商适配) 继续。[PR #162 已合并](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/162)，开发分支 `codex/durable-task-center-20261015`：在现有画布日志增加本人“生成任务”页签，复用持久回执与 SQLite 归属映射；状态筛选、详情、图文结果和原任务续查共用模块，两类画布均接入。补充提交/受理/归档阶段、脱敏错误、供应商报告用量和最近核对事实；Zhenzhen 图像 GET/鉴权构造与通用状态解析继续移出 main。准确 Head b61b564 已由独立代理复审通过（三项发现均关闭），三项 PR CI SUCCESS 后合并为 main6d9d77d；合并后主线 CI 另行核验最终 SUCCESS。审查记录为 COMMENT，不冒充不同账号的 GitHub Approval。不宣称完整任务调度、全供应商恢复或费用账本完成，详见 [任务工程记录](./ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md#2026-10-15-持久任务中心与供应商边界续包)。本轮没有新发行、生产操作或整体架构重构。
+
+### 2026-10-15 自动恢复与常用供应商闭环候选
+
+任务中心审查交付已先完成；后续按唯一路线图 4.2，在 codex/task-auto-recovery-20261015 推进已有受理 ID 的后台续查。Zhenzhen 图像和 ComfyUI 原任务不依赖浏览器轮询；启动从同一个 v1 journal 重建调度，运行中跟踪失败后登记续查；并发 2、正常间隔 5 秒、瞬态失败退避至最多 300 秒。认证/配置/归属/未知回包需要人工核对，不自动重新生成。维护标记存在时不领取新查询，停止时取消查询并保留原身份。现有日志任务详情补充自动状态/下次查询/暂停原因，没有新页面或用户模板。
+
+本候选复用原归档、单飞和 Comfy 查询领取，仍由单个 Upstream 执行，未完成独立 Worker 进程、多实例或全部 GPT/视频供应商。准确证据及重启演练发现/修正见 [同一任务记录](./ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md#2026-10-15-已受理任务自动恢复候选)。尚未独立审查、合并或发布；正式 v2026.10.2 保持不变。

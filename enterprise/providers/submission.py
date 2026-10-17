@@ -58,20 +58,24 @@ def reported_usage(raw):
     from decimal import Decimal, InvalidOperation
     if not isinstance(raw, dict):
         return {}
-    data = raw.get("data") if isinstance(raw.get("data"), dict) else raw
-    usage = raw.get("usage") or data.get("usage") or {}
+    data = raw.get("data") if isinstance(raw.get("data"), dict) else {}
+    nested = data.get("data") if isinstance(data.get("data"), dict) else {}
+    # Zhenzhen async wraps the generation response in data.data.
+    sources = (raw, data, nested)
+    usage = next((item["usage"] for item in sources if isinstance(item.get("usage"), dict)), {})
     result = {}
     if isinstance(usage, dict):
         for key in ("input_tokens", "output_tokens", "total_tokens", "prompt_tokens", "completion_tokens", "billed_units"):
             value = usage.get(key)
             if type(value) in {int, float} and value >= 0 and value < 10**18:
                 result[key] = value
-    cost = raw.get("cost", data.get("cost"))
+    cost_source = next((item for item in sources if item.get("cost") is not None), {})
+    cost = cost_source.get("cost")
     try:
         number = Decimal(str(cost))
         if number.is_finite() and number >= 0:
             result["reported_cost"] = str(number)
-            currency = raw.get("currency") or data.get("currency")
+            currency = cost_source.get("currency")
             result["currency"] = currency if isinstance(currency, str) and len(currency) == 3 and currency.isalpha() else None
     except (InvalidOperation, ValueError):
         pass
