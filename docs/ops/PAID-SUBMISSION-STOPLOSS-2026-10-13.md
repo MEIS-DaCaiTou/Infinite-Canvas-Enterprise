@@ -146,3 +146,11 @@ loopback 实际 HTTP/Browser 演练复用隔离临时 SQLite owner 与固定测�
 验证使用隔离数据和模拟上游。新增实际 main 子进程用例在修复前准确失败于 manual 未接续，修复后 401 → 人工查询 IN_PROGRESS → 后台 SUCCESS 共 3 次原 ID 查询，0 次生成调用；本地归档完成后再次读取不再访问上游。首轮夹具输出解码受 Windows GBK 默认值影响，新增用例显式按 UTF-8 读取后才取得准确复现证据。受影响检查 34 项通过；新增暂停/归属/投影用例所在定向检查 27 项通过，范围重叠不相加。已有 ComfyUI 排队/生成/完成与取消归档检查复用，无新 Browser/GPU/公网或真实付费验收。准确 Base/Head、独立 Review 和最终 CI 见本 PR；候选不改变正式 v2026.10.2。回滚只撤销代码，保留原 journal/owner/输出，旧程序仍可读取 v1 记录。
 
 独立 Review 在 `491972a` 定位一项实际缺陷：手动查询后 journal 已写正常 5 秒间隔，内存 pending 的 setdefault 却保留原 300 秒退避。`82c19c7` 只让显式手动结果替换已有 due，普通通知仍去重；可控时钟驱动真实调度器证明 1300 → 1005 的新 due 实际执行，相关 9 项通过。定向复审 `NO_ACTIONABLE_BUGS_FOUND`，技术 Review 非 GitHub Approval。
+
+## 2026-10-18 两类画布视频任务保存重开与结果续接
+
+基于已合并 #171 的 main73d2b67；独立候选 `codex/video-canvas-resume-20261018`，准确 Base/Head、Review 与 CI 见本 PR。共享 `canvas-task-query.js` 拆开一次提交与原任务只读轮询，在收到平台任务 ID 后先保存画布绑定。经典输出节点 `_pending.canvasTaskId`/`canvasTaskType=video`，智能节点 `pendingTasks` 的 `taskId`/`taskType=video` 沿用原序列化格式，不增加 Schema。重开只续查已绑定任务；结果完成只应用一次，保留历史输出。显式“查询原任务”使用现有按钮与本地 reconcile 接口，查询修正后继续原后台跟踪；后台 waiting/querying 的视频只向页面投影运行中，不改内部失败事实。没有重复生成、自动重提交或新页面/CSS。即梦 pending 仍交给已有 CLI 机制，不宣称新增 CLI 重启恢复。
+
+受影响 Python 检查 23 项通过（视频服务/实际 main 子进程恢复、共享调度器、画布持久化）；新增 `test_video_canvas_resume.js` 使用实际画布函数、JSON 序列化及模拟请求验证两类重开续查、重复完成去重、历次结果保留、手动续查及导航隔离。既有 shared query 测试继续通过。Browser 使用私有目录、固定测试用户、模拟供应商和合成 MP4：两类真实页面点击提交各一次，保存后刷新重开，结果回到原节点；经典路径在受理后主动中断隔离服务，再启动只查询原上游 ID，生成调用总计仍为两次。最终经典保留历史+恢复视频 2 项、智能恢复视频 1 项，各只有 1 条生成日志，pending 清空；再次重开结果仍在。首轮页面验证发现经典画布身份变量引用错误，已改用现有 canvas 对象身份并重验。隔离证据位于产品 artifact 根 `video-canvas-resume-20261018/`，不含客户素材或凭据。没有真实 Gateway 登录、GPU、付费 Provider 或公网验收；既有 Tailwind 本地脚本警告不等于运行错误。
+
+独立 Review 在代码 Head82cc9a5 定位一项实际问题：手动视频续查返回时已切换画布，旧任务日志可能写到新画布。4a67239 修复两类手动查询响应/异常/清理路径的画布、节点及任务身份检查，定向用例证明旧响应不写输出/日志或保存，正常成功仍保存。定向复审 `NO_ACTIONABLE_BUGS_FOUND`，不是 GitHub Approval。回滚撤销本包代码即可，原 journal、owner、输出和画布数据保留；旧程序可读取画布但没有本包的视频自动续接能力。未知旧任务没有绑定不猜造。正式 v2026.10.2、#170 Draft 与客户设备不变。

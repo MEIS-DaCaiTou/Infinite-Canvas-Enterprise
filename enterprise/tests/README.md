@@ -13,7 +13,7 @@ Before adding or changing scripts, read:
 - `../../ENTERPRISE_DOCS.md`
 - `SMOKE_CHECKLIST.md`
 
-Reviewed: 2026-10-13
+Reviewed: 2026-10-18
 
 ## Verification policy
 
@@ -104,3 +104,5 @@ For every access-control implementation PR, add or extend a focused test here be
 
 
 Video task candidate: `py -3.11 -B -m pytest -q enterprise/tests/test_canvas_video_tasks.py enterprise/tests/test_canvas_video_tasks_main.py enterprise/tests/test_generation_tasks.py` verifies private-journal acceptance/recovery, an actual process hard exit and GET-only startup recovery, existing HTTP query families, CLI pending compatibility and owner catalog filtering. `node enterprise/tests/test_canvas_task_query.js` covers both canvases' shared video client. Reuse `test_task_history_isolation.py` and `test_feature_flags.py` for authenticated gateway interception. These are isolated/mock evidence, not paid-provider, real-login or video-playback acceptance.
+
+Video canvas reconnect: `node enterprise/tests/test_video_canvas_resume.js` runs actual classic/smart resume functions against serialized disposable nodes and mock HTTP. Covers original-task GET polling, manual reconcile, single completion, retained output history, navigation isolation and existing Jimeng pending takeover. It runs through `test_canvas_video_tasks.py`; no duplicate CI job. Browser evidence for 2026-10-18 uses fixed test actor and synthetic MP4, not real Gateway login, GPU or paid supplier acceptance.
