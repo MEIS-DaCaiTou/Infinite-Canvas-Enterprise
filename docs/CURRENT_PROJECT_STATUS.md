@@ -1,7 +1,9 @@
 # Infinite Canvas Enterprise 当前项目状态
 
-更新时间：2026-10-17
-核验对象：main@cb057b12（含已合并 #163 图像/ComfyUI 自动续查、#169 视频持久任务），正式版本仍为 v2026.10.2，10.1 → 10.2 升级/恢复证据继续沿用；本轮未发布或操作客户/生产设备。下文早期候选条目保留其记录时点，最新增量如下。
+更新时间：2026-10-18
+核验对象：main@73d2b67（含已合并 #163/#168/#169/#171），正式版本仍为 v2026.10.2，10.1 → 10.2 升级/恢复证据继续沿用；本轮未发布或操作客户/生产设备。下文早期候选条目保留其记录时点，最新增量如下。
+
+2026-10-18：#168/#171 已合并，最新核验 main 为 `73d2b67b4931d6b54d606d009a647a95eaadf5d7`；main [文档39049269843](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/39049269843) 与 [Enterprise/Runtime39049269844](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/39049269844) 最终 SUCCESS，旧候选条目保留记录时点。#172 两类画布视频保存重开仍为 Draft，准确 Head `d52035ef51fc798fe8f4e66e1425b2f93d81867f` 的最终 CI 与技术复审通过，尚无合并授权。本轮另从 main 建立 `codex/zhenzhen-video-adapter-20261018`：整理 Zhenzhen 统一视频请求/提交/鉴权/响应边界，修正 NOT_START 排队识别并保留旧回执续查。独立 Review 未发现可证实缺陷，候选未合并/发布；范围与证据见 [同一工程记录](./ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md#2026-10-18-zhenzhen-统一视频适配收口)。#170 继续暂缓。
 
 2026-10-17：负责人批准 #163、#168、#169 合并；#163 已按审查 Head `0a6db0f36edcb18fb352f7ab5768684a3334a666` 合并为 `476e0dc7cbc1354961ca81cd18e15c22611d84f1`，#169 按审查 Head `9a36a1effccc8c0128100f37b8e9ab05f9309b85` 调整 Base 为 main 后合并为 `cb057b12dee7c6830a2ac46d33c99ab9ff0cf8f4`。两项准确 Head 的常规 CI 均成功，独立技术 Review 均已修复有效问题并定向复审 `NO_ACTIONABLE_BUGS_FOUND`；不是 GitHub Approval。上述两个合并点的 main 文档、Enterprise/Runtime CI 已分别最终 SUCCESS，不以 PR CI 代替。
 

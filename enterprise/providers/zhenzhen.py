@@ -111,3 +111,18 @@ def image_query_status(payload, *, has_images):
     if has_images and (not status or status in SUCCESS_STATUSES):
         return "succeeded"
     return "manual"
+
+
+def video_submit_endpoints(base_url):
+    """Official unified v2 first; managed legacy proxies retain explicit 404/405 fallback.
+
+    https://gpt-best.apifox.cn/doc-7324259 documents the unified JSON video API.
+    Existing receipts keep their actual v1/v2 binding for later queries.
+    """
+    base = base_url.rstrip("/")
+    return [f"{base}/v2/videos/generations", f"{base}/v1/videos/generations"]
+
+
+def video_headers(authorization):
+    # Unified video always uses Bearer, independently of an image/chat protocol.
+    return image_headers(authorization)

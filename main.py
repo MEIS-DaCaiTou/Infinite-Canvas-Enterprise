@@ -58,6 +58,7 @@ from enterprise.generation_task_routes import create_router as create_generation
 from enterprise.canvas_image_recovery import CanvasImageRecovery, ImageReceiptSink, public_receipt
 from enterprise.canvas_video_tasks import CanvasVideoTasks, public_video_task, record_video_acceptance
 from enterprise.providers.video_tasks import inspect_video, encoded_task_id
+from enterprise.providers.video_generation import json_video_body, generate_json_video, poll_video, video_error_detail
 from enterprise.canvas_comfy_recovery import CanvasComfyRecovery
 from enterprise.accepted_task_recovery import AcceptedTaskRecovery, validate_owned_task
 from enterprise.runtime.install_maintenance import maintenance_active
@@ -76,6 +77,8 @@ from enterprise.providers.zhenzhen import (
     is_zhenzhen, image_headers as zhenzhen_image_headers,
     image_task_endpoint as zhenzhen_image_task_endpoint, query_image as query_zhenzhen_image,
     image_query_status as zhenzhen_image_query_status,
+    video_submit_endpoints as zhenzhen_video_submit_endpoints,
+    video_headers as zhenzhen_video_headers,
 )
 from enterprise.providers.image_task_protocol import (
     SUCCESS_STATUSES as IMAGE_TASK_SUCCESS_STATUSES, FAILED_STATUSES as IMAGE_TASK_FAILED_STATUSES,
@@ -13279,6 +13282,15 @@ def looks_like_html_response(text: str) -> bool:
     sample = str(text or "").lstrip()[:200].lower()
     return sample.startswith("<!doctype html") or sample.startswith("<html") or "<head" in sample
 
+def video_api_headers(provider):
+    if not is_zhenzhen(provider):
+        return api_headers(provider=provider)
+    key = provider_env_key_value(provider["id"])
+    if not key:
+        raise HTTPException(400, f"未配置 {provider.get('name') or provider['id']} 的 API Key，请在 API 平台管理中填写。")
+    return zhenzhen_video_headers(bearer_auth_value(key))
+
+
 def video_submit_url_candidates(provider, base_url):
     if is_agnes_provider(provider):
         return [f"{base_url}/v1/videos"]
@@ -13291,6 +13303,8 @@ def video_submit_url_candidates(provider, base_url):
         return [f"{base_url}/api/v3/contents/generations/tasks"]
     if is_yuli_provider(provider):
         return [f"{base_url}/v1/video/create"]
+    if is_zhenzhen(provider):
+        return zhenzhen_video_submit_endpoints(base_url)
     return [f"{base_url}/v1/videos/generations", f"{base_url}/v2/videos/generations"]
 
 def video_task_url_candidates(provider, base_url, task_id, submit_url=""):
@@ -13359,6 +13373,9 @@ async def wait_for_video_task(client, provider, task_id, submit_url=""):
     if not base_url:
         raise HTTPException(status_code=400, detail=f"{provider.get('name') or provider['id']} 未配置 Base URL")
     task_urls = video_task_url_candidates(provider, base_url, task_id, submit_url)
+    if is_zhenzhen(provider):
+        return await poll_video(client, task_urls, video_api_headers(provider), video_output_urls,
+                                humanize_video_task_failure, timeout=VIDEO_POLL_TIMEOUT, initial_delay=IMAGE_POLL_INTERVAL)
     deadline = time.monotonic() + VIDEO_POLL_TIMEOUT
     delay = max(2.0, IMAGE_POLL_INTERVAL)
     last_payload = {}
@@ -13943,68 +13960,13 @@ async def canvas_video(payload: CanvasVideoRequest):
                     for ref in payload.images[:4]:
                         if ref.url:
                             image_payload.append(reference_to_data_url(ref.dict(), max_size=1536))
-                    body = {
-                        "prompt": payload.prompt,
-                        "model": selected_model(payload.model, "veo3-fast"),
-                        "duration": payload.duration,
-                        "watermark": payload.watermark,
-                    }
-                    if payload.aspect_ratio:
-                        body["aspect_ratio"] = payload.aspect_ratio
-                        body["ratio"] = payload.aspect_ratio
-                    if payload.size:
-                        body["size"] = payload.size
-                    if payload.resolution:
-                        body["resolution"] = payload.resolution
-                    if image_payload:
-                        body["images"] = image_payload
-                    if payload.videos:
-                        body["videos"] = [v for v in payload.videos if v]
-                    if payload.enhance_prompt:
-                        body["enhance_prompt"] = True
-                    if payload.enable_upsample:
-                        body["enable_upsample"] = True
-                    if payload.seed is not None:
-                        body["seed"] = payload.seed
-                    if payload.camerafixed:
-                        body["camerafixed"] = True
-                    if payload.return_last_frame:
-                        body["return_last_frame"] = True
-                    if payload.generate_audio:
-                        body["generate_audio"] = True
-            # --- 发起视频生成请求 ---
-            raw = None
-            total_candidates = len(submit_urls)
-            for idx, candidate_url in enumerate(submit_urls):
-                submit_url = candidate_url
-                is_last = idx == total_candidates - 1
-                response = await client.post(submit_url, headers=api_headers(provider=provider), json=body)
-                endpoint_missing = response.status_code in (404, 405)
-                if response.status_code >= 400:
-                    # 只有明确的 404/405 才表示端点不存在，可以尝试下一个候选路径；
-                    # 例如有的站点只实现了统一格式的 /v2/videos/generations，而我们先试了 /v1。
-                    # HTML、5xx 和网络中断都不能证明请求未被受理，不得再提交。
-                    if endpoint_missing and not is_last:
-                        continue
-                    if response.status_code >= 500:
-                        raise provider_submission_unknown(f"视频提交接口返回 HTTP {response.status_code}，是否已受理任务尚不确定")
-                    response.raise_for_status()
-                raw = submission_json(response, kind="视频")
-                break
-            task_id = extract_task_id(raw) or raw.get("task_id") or raw.get("id")
-            await record_video_acceptance(task_id, provider, submit_url, video_query_mode(provider, payload.model))
-            result = raw
-            if task_id and not video_output_urls(raw):
-                try:
-                    result = await wait_for_video_task(client, provider, task_id, submit_url)
-                except (HTTPException, httpx.HTTPError, ValueError) as exc:
-                    if getattr(exc, "provider_task_failed", False):
-                        setattr(exc, "upstream_task_id", task_id)
-                        raise
-                    raise provider_submission_unknown("已受理的视频任务查询未能确认最终结果", upstream_task_id=task_id) from exc
-            urls = video_output_urls(result)
-            if not urls:
-                raise provider_submission_unknown("视频提交已返回，但没有可核对的视频结果", upstream_task_id=task_id or "")
+                    body = json_video_body(payload, selected_model(payload.model, "veo3-fast"), image_payload)
+            task_id, result, urls = await generate_json_video(
+                client, submit_urls, video_api_headers(provider), body,
+                extract_task_id=extract_task_id, output_urls=video_output_urls,
+                accepted=lambda task_id, url: record_video_acceptance(task_id, provider, url, video_query_mode(provider, payload.model)),
+                poll=lambda task_id, url: wait_for_video_task(client, provider, task_id, url),
+            )
             local_urls = [await save_remote_video_to_output(url) for url in urls]
             return {"videos": local_urls, "task_id": task_id, "raw": result}
     except httpx.HTTPStatusError as exc:
@@ -14013,57 +13975,7 @@ async def canvas_video(payload: CanvasVideoRequest):
             requested_model = body.get("model", "") or payload.model or ""
         except NameError:
             requested_model = payload.model or ""
-        provider_name = provider.get('name') or provider['id']
-        # 1) 模型名不在上游支持范围 → 从错误信息里抽取合法列表展示
-        valid_models_match = re.search(r"not in\s*\[([^\]]+)\]", text)
-        if valid_models_match:
-            valid_models = [m.strip() for m in valid_models_match.group(1).split(",") if m.strip()]
-            sample = valid_models[:30]
-            more = f"（共 {len(valid_models)} 个，仅显示前 {len(sample)} 个）" if len(valid_models) > len(sample) else ""
-            hint = (
-                f"上游「{provider_name}」不识别模型「{requested_model}」。\n\n"
-                f"上游支持的视频模型清单{more}：\n  {', '.join(sample)}\n\n"
-                f"请到「API 设置」里把视频模型改成上面列表中的一个。"
-            )
-            raise HTTPException(status_code=exc.response.status_code, detail=hint) from exc
-        # 2) 模型名合法但账号没开通通道
-        if "channel not found" in text or "model_not_found" in text:
-            hint = (
-                f"上游「{provider_name}」识别了模型「{requested_model}」，但你的 API Key 账号下**没有该模型的可用通道**。\n\n"
-                f"原因：你的账号没开通这个模型的访问权限（付费/订阅相关）。\n\n"
-                f"解决方法：\n"
-                f"  1. 登录 {provider.get('base_url') or '上游平台'} 控制台，开通该模型 / 充值；\n"
-                f"  2. 或在「API 设置」里把视频模型改成你账号已开通的型号（如 veo3-fast / veo2-fast / sora-2 等）。"
-            )
-            raise HTTPException(status_code=exc.response.status_code, detail=hint) from exc
-        if "text.duration" in text or "specified duration is not supported" in text:
-            hint = (
-                f"上游「{provider_name}」模型「{requested_model}」不支持当前时长参数。\n\n"
-                f"不同视频模型支持的时长不一样；如果选择了模型不支持的时长，上游可能报错，"
-                f"也可能自动按平台默认时长生成，例如 5 秒。\n\n"
-                f"请把视频时长切回该模型支持的值，或改用支持更长时长的视频模型。"
-            )
-            raise HTTPException(status_code=exc.response.status_code, detail=hint) from exc
-        if "audio duration" in text.lower():
-            too_long = "less than or equal" in text.lower() or "15.2" in text
-            bound_hint = "太长（超过 15.2 秒）" if too_long else "太短（不足 1.8 秒）"
-            hint = (
-                f"上游「{provider_name}」模型「{requested_model}」拒绝了参考音频：时长{bound_hint}。\n\n"
-                f"方舟 Seedance 的参考音频时长必须在 1.8 ~ 15.2 秒之间，"
-                f"请把音频裁剪到这个区间后再作为参考音频输入。"
-            )
-            raise HTTPException(status_code=exc.response.status_code, detail=hint) from exc
-        if "inputimagesensitivecontentdetected" in text.lower() or "privacyinformation" in text.lower() or "may contain real person" in text.lower():
-            hint = (
-                f"上游「{provider_name}」拦截了输入参考图，原因是图片里可能包含真人身份/隐私信息。\n\n"
-                f"这不是代码协议错误，而是火山视频模型的内容安全策略。\n\n"
-                f"建议你这样处理：\n"
-                f"  1. 改用非真人参考图，例如插画、AI 头像、商品图、场景图；\n"
-                f"  2. 先把真人脸做模糊、遮挡、裁掉，或转成明显的二次元/插画风；\n"
-                f"  3. 如果只是想做文生视频，先去掉参考图只保留文字提示词测试。"
-            )
-            raise HTTPException(status_code=exc.response.status_code, detail=hint) from exc
-        raise HTTPException(status_code=exc.response.status_code, detail=f"上游视频接口错误：{text}") from exc
+        raise HTTPException(status_code=exc.response.status_code, detail=video_error_detail(text, provider, requested_model)) from exc
     except httpx.HTTPError as exc:
         log_net_error(f"视频 网络/TLS错误 provider={provider.get('id')} model={payload.model}", exc)
         raise provider_submission_unknown("视频提交或任务查询的网络响应中断，是否已被供应商受理尚不确定") from exc
@@ -14089,7 +14001,7 @@ async def inspect_saved_video_task(provider, receipt):
     base = video_api_root(provider)
     task_id = encoded_task_id(receipt["upstream_task_id"])
     urls = video_task_url_candidates(provider, base, task_id, "/v2/videos/generations" if receipt.get("video_v2") else "")
-    headers = api_headers(provider=provider)
+    headers = video_api_headers(provider)
     if mode == "agnes":
         # Agnes query has additional model headers and query parameters.
         urls = [f"{base}/agnesapi?" + urllib.parse.urlencode({"video_id": receipt["upstream_task_id"], "model_name": receipt.get("model", "")}),
