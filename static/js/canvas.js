@@ -10600,8 +10600,10 @@ async function runGeneratorLegacy(genId, opts={}){
     }
 }
 async function runVideoNode(nodeId, opts={}){
-    const node = nodes.find(n => n.id === nodeId);
+    let node = nodes.find(n => n.id === nodeId);
     if(!node || (node.running && !opts.cascade)) return;
+    const existing = nodes.flatMap(n => n._pending || []).find(p => p.canvasTaskType === 'video' && p.run?.node?.id === nodeId);
+    if(existing){ setStatus('原视频任务仍保留在输出节点，请查询原任务后再决定是否重新生成'); return; }
     if(!checkTextSelection(node,opts))return;
     const cascadeTargetId = cascadeTargetIdFromOptions(opts);
     const sources = orderedSources(node, generatorSources(node));
@@ -10617,7 +10619,17 @@ async function runVideoNode(nodeId, opts={}){
     let out = outputForNode(node, 460);
     const pendingId = uid('p');
     const run = runSnapshot(node, prompt, refs);
-    if(out) out._pending = [...(out._pending || []), makePendingForRun(pendingId, run, node, {refs, cascadeTargetId})];
+    const sourceCanvasId = canvas?.id, outputId = out?.id;
+    let pending = makePendingForRun(pendingId, run, node, {refs, cascadeTargetId}, {canvasTaskType:'video'});
+    if(out) out._pending = [...(out._pending || []), pending];
+    const isActive = () => {
+        if(canvas?.id !== sourceCanvasId) return false;
+        const currentNode=nodes.find(n=>n.id===nodeId), currentOut=nodes.find(n=>n.id===outputId);
+        const currentPending=pendingById(currentOut,pendingId);
+        if(!currentNode || !currentOut || !currentPending) return false;
+        node=currentNode;out=currentOut;pending=currentPending;
+        return true;
+    };
     if(!opts.cascade){ node.running = true; refreshRunNodes(node, out); }
     else refreshRunNodes(node, out);
     try {
@@ -10640,25 +10652,21 @@ async function runVideoNode(nodeId, opts={}){
                 camerafixed:Boolean(node.cameraFixed),
                 generate_audio:Boolean(node.generateAudio),
                 multimodal:Boolean(node.multimodal)
-        }, {fetcher:(url, options) => cascadeFetch(url, options, {cascadeTargetId})});
-        const meta = collectRunMeta(out, pendingId);
-        if(out) out._pending = (out._pending || []).filter(p => p.id !== pendingId);
-        const outputUrls = resultMediaUrls(result).map(item => {
-            const url = outputUrlValue(item);
-            return item && typeof item === 'object' ? {...item, url, kind:item.kind || 'video'} : {url, kind:'video'};
-        }).filter(item => item.url);
-        if(!outputUrls.length) throw new Error(tr('canvas.videoFailed'));
-        run.request = requestMetaFromResult(result);
-        appendOutputImages(out, outputUrls, refs[0], [{...meta, kind:'video'}]);
-        mergeGeneratedOutputs(node, outputUrls, Boolean(opts.cascade));
-        addGenerationLog({run, outputs:outputUrls, runMs:meta.runMs || 0});
-        node.runStatus = 'done'; node.runError = '';
-        refreshRunNodes(node, out);
-        scheduleSave();
+        }, {fetcher:(url, options) => cascadeFetch(url, options, {cascadeTargetId}), isActive,
+            onAccepted:async taskId => {
+                pending.canvasTaskId = taskId;
+                refreshRunNodes(node, out);
+                scheduleSave();
+                await saveCanvas();
+            }});
+        if(isActive()) completeCanvasVideoTask(out, pending, result);
     } catch(err) {
-        const meta = collectRunMeta(out, pendingId);
-        addGenerationLog({run, outputs:[], runMs:meta.runMs || 0, error:err.message || String(err)});
-        if(out) out._pending = (out._pending || []).filter(p => p.id !== pendingId);
+        if(!isActive()) return;
+        if(pending.canvasTaskId) failCanvasVideoTask(out, pending, err);
+        else {
+            if(out) out._pending = (out._pending || []).filter(p => p.id !== pendingId);
+            addGenerationLog({run, outputs:[], error:err.message || String(err)});
+        }
         if(isCascadeAbortError(err)){
             if(opts.cascade) throw err;
             return;
@@ -10668,9 +10676,52 @@ async function runVideoNode(nodeId, opts={}){
         if(opts.cascade) throw err;
         alert(err.message || tr('canvas.videoFailed'));
     } finally {
-        node.running = false;
-        refreshRunNodes(node, out);
+        if(canvas?.id === sourceCanvasId){
+            const currentNode=nodes.find(n=>n.id===nodeId);
+            if(currentNode){currentNode.running=false;refreshRunNodes(currentNode,nodes.find(n=>n.id===outputId));}
+        }
     }
+}
+function completeCanvasVideoTask(out, pending, result){
+    if(!nodes.includes(out) || pendingById(out, pending.id) !== pending) return false;
+    const outputs = resultMediaUrls(result).map(item => typeof item === 'object'
+        ? {...item, kind:'video'} : {url:item, kind:'video'}).filter(item => item.url);
+    if(!outputs.length) throw new Error(tr('canvas.videoFailed'));
+    const meta = collectRunMeta(out, pending.id);
+    out._pending = (out._pending || []).filter(p => p !== pending);
+    const run = pending.run || {};
+    run.request = requestMetaFromResult(result);
+    appendOutputImages(out, outputs, run.refs?.[0], [{...meta, kind:'video'}]);
+    const node = nodes.find(n => n.id === run.node?.id);
+    if(node){ mergeGeneratedOutputs(node, outputs, true); node.running=false; node.runStatus='done'; node.runError=''; }
+    addGenerationLog({run, outputs, runMs:meta.runMs || 0});
+    refreshRunNodes(node, out);
+    scheduleSave();
+    return true;
+}
+function failCanvasVideoTask(out, pending, error){
+    if(!nodes.includes(out) || pendingById(out, pending.id) !== pending) return;
+    Object.assign(pending, {failed:true, querying:false, recoverTaskId:pending.canvasTaskId,
+        canReconcile:error.canReconcile, error:error.message || '原视频任务待核对'});
+    refreshNodes([out.id]);
+    scheduleSave();
+}
+const activeCanvasVideoPolls = new WeakSet();
+async function resumeCanvasVideoTask(out, pending){
+    if(activeCanvasVideoPolls.has(pending)) return;
+    activeCanvasVideoPolls.add(pending);
+    const initialPending=pending, sourceCanvasId=canvas?.id, outputId=out.id, pendingId=pending.id;
+    const isActive = () => {
+        if(canvas?.id !== sourceCanvasId) return false;
+        const currentOut=nodes.find(n=>n.id===outputId), currentPending=pendingById(currentOut,pendingId);
+        if(!currentOut || !currentPending) return false;
+        out=currentOut;pending=currentPending;return true;
+    };
+    try {
+        const result = await CanvasTaskQuery.waitVideo(pending.canvasTaskId, {isActive});
+        if(isActive()) completeCanvasVideoTask(out, pending, result);
+    } catch(error){ if(isActive()) failCanvasVideoTask(out, pending, error); }
+    finally { activeCanvasVideoPolls.delete(initialPending); }
 }
 async function uploadCanvasUrlToComfy(url, workflow="", backend=""){
     const blob = await fetch(url).then(r => {
@@ -12414,18 +12465,35 @@ function completeRecoverPendingOutput(out, pending, result){
     scheduleSave();
 }
 async function queryRecoverPendingOutput(pendingId){
-    const out = findOutputByPendingId(pendingId);
-    const pending = pendingById(out, pendingId);
+    let out = findOutputByPendingId(pendingId);
+    let pending = pendingById(out, pendingId);
     if(!out || !pending || pending.querying) return;
     const taskId = pending.recoverTaskId || extractUpstreamTaskId(pending.error || '');
     if(!taskId){
         showErrorModal('没有任务 ID，无法查询结果', tr('canvas.apiFailed'));
         return;
     }
+    const sourceCanvasId=canvas?.id, outputId=out.id;
+    const videoActive = () => {
+        if(canvas?.id !== sourceCanvasId) return false;
+        const currentOut=nodes.find(n=>n.id===outputId), currentPending=pendingById(currentOut,pendingId);
+        if(!currentOut || !currentPending) return false;
+        out=currentOut;pending=currentPending;return true;
+    };
     pending.querying = true;
     pending.recoverTaskId = taskId;
     refreshNodes([out.id]);
     try {
+        if(pending.canvasTaskType === 'video'){
+            const data = await CanvasTaskQuery.queryVideo(pending.canvasTaskId);
+            if(!videoActive()) return;
+            if(data.status === 'succeeded') completeCanvasVideoTask(out, pending, data);
+            else if(['queued','running','unknown'].includes(data.status)){
+                pending.failed=false;
+                await resumeCanvasVideoTask(out, pending);
+            } else pending.error=data.message || data.error || '原视频任务需人工核对';
+            return;
+        }
         const data = await window.CanvasTaskQuery.query({canvasTaskId:pending.canvasTaskId,
             canReconcile:pending.canReconcile, providerId:providerIdForPending(pending), upstreamTaskId:taskId});
         if(data.status === 'succeeded' || data.status === 'partial'){
@@ -12446,9 +12514,15 @@ async function queryRecoverPendingOutput(pendingId){
             setStatus(pending.error);
         }
     } catch(err) {
+        if(pending.canvasTaskType === 'video' && !videoActive()) return;
         pending.error = err.message || '查询失败';
         showErrorModal(pending.error, tr('canvas.apiFailed'));
     } finally {
+        if(pending.canvasTaskType === 'video'){
+            if(canvas?.id !== sourceCanvasId) return;
+            out=nodes.find(n=>n.id===outputId);
+            if(!out) return;
+        }
         const latest = pendingById(out, pendingId);
         if(latest){
             latest.querying = false;
@@ -12573,6 +12647,7 @@ function failCanvasImageTask(taskId, message, taskData={}){
 function resumeCanvasImageTasks(){
     nodes.filter(n => n.type === 'output').forEach(out => {
         (out._pending || []).forEach(p => {
+            if(p.canvasTaskType === 'video' && p.canvasTaskId && !p.failed) resumeCanvasVideoTask(out, p);
             if(p.canvasTaskType === 'online-image' && p.canvasTaskId && !p.failed) pollCanvasImageTask(p.canvasTaskId, {cascadeTargetId:p.cascadeTargetId || ''});
         });
     });

@@ -38,6 +38,8 @@ def can_reconcile_video(record):
 def public_video_task(record):
     data = {key: value for key, value in record.items() if key != "provider_receipts"}
     data["can_reconcile"] = can_reconcile_video(record)
+    if data["can_reconcile"] and (record.get("auto_recovery") or {}).get("status") in {"waiting", "querying"}:
+        data.update(status="running", error="")
     return data
 
 

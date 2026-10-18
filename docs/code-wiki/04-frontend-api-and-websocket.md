@@ -21,6 +21,8 @@
 
 2026-10-16 候选增量（`codex/model-workflow-selection-20261016`，Base main@39f4b02，未合并/发布）：`model-picker.js` 的个人模型弹窗复用 `comfy-outputs.css` 组件和主题，新增 `model-picker.css` 只补列表/搜索/勾选；账号存储与已有节点模型不变。`GET /api/workflows` 默认仅返回启用项，设置页通过 `include_disabled=true` 查看全部；原配置的可选 `enabled` 管理画布可用列表。未配置 shipped 默认隐藏，历史配置和自定义继续兼容；两类画布保留停用/移除身份、不自动替换且不循环重载。固定本地入口及配置边界见[产品记录](../ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#2026-10-16-个人模型与工作流可用列表续修候选)。
 
+2026-10-18 候选增量（Base main73d2b67，未合并/发布）：`canvas-task-query.js` 的 `runVideo` 一次提交后调用 `onAccepted` 保存平台任务 ID，`waitVideo` 只读轮询，`queryVideo` 只查询原任务。`canvas.js` 在输出节点保留视频 pending，`smart-canvas.js` 沿用 pendingTasks；重新打开后据此续接视频、保留旧结果并防止重复回调追加。新视频异步分支校验画布/节点/任务身份，离开后不将旧结果和日志写入其他画布。复用现有失败区域及查询按钮，无新页面或 CSS；回执/模拟与 Browser 验证边界见 [工程记录](../ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md#2026-10-18-两类画布视频任务保存重开与结果续接)。
+
 ## 2. 工作台与普通画布
 
 ### `static/js/canvas-list.js`

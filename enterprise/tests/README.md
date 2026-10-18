@@ -19,7 +19,6 @@ Before adding or changing scripts, read:
 - `../../ENTERPRISE_DOCS.md`
 - `SMOKE_CHECKLIST.md`
 
-
 ## Verification policy
 
 The development-only CI helper lives beside the existing test/diagnostic tools, outside application modules. It writes only the explicit CI temporary plan/step-output files; existing APP_ROOT audit rules are unchanged. PR CI uses `enterprise/tests/check_ci_scope.py` to skip the existing Enterprise/Runtime suites only for regular collaboration/reference files explicitly listed in that script. Other Markdown (including prompts, licenses and delivery decisions), unknown paths, mixed changes, moves from runtime paths, type changes and unavailable Git history retain full suites. `push` to main and manual runs retain the original suites; Native Entry and opt-in fixed EXE selection is unchanged. The Git diff is local and complete, with no API page/path-filter truncation. Run `py -3.11 -B -m unittest discover -s enterprise/tests -p test_ci_scope.py` to check this fail-safe behavior.
@@ -109,3 +108,5 @@ For every access-control implementation PR, add or extend a focused test here be
 
 
 Video task candidate: `py -3.11 -B -m pytest -q enterprise/tests/test_canvas_video_tasks.py enterprise/tests/test_canvas_video_tasks_main.py enterprise/tests/test_generation_tasks.py` verifies private-journal acceptance/recovery, an actual process hard exit and GET-only startup recovery, existing HTTP query families, CLI pending compatibility and owner catalog filtering. `node enterprise/tests/test_canvas_task_query.js` covers both canvases' shared video client. Reuse `test_task_history_isolation.py` and `test_feature_flags.py` for authenticated gateway interception. These are isolated/mock evidence, not paid-provider, real-login or video-playback acceptance.
+
+Video canvas reconnect: `node enterprise/tests/test_video_canvas_resume.js` runs actual classic/smart resume functions against serialized disposable nodes and mock HTTP. Covers original-task GET polling, manual reconcile, single completion, retained output history, navigation isolation and existing Jimeng pending takeover. It runs through `test_canvas_video_tasks.py`; no duplicate CI job. Browser evidence for 2026-10-18 uses fixed test actor and synthetic MP4, not real Gateway login, GPU or paid supplier acceptance.
