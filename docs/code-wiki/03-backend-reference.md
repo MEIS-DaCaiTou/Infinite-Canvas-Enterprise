@@ -1,5 +1,7 @@
 # 后端类与函数参考
 
+2026-10-18 LLM 任务续包（基于 #174 的独立候选）：`canvas_llm_tasks.CanvasLLMTasks` 使用原 journal、任务归属和调度钩子，在请求断开后执行原 `main.canvas_llm`；`llm_submitting/llm_response` 只在同步 HTTP/CLI 提交边界记录阶段。请求/聊天历史/密钥不写入回执，收到正文通过 `record_llm_result` 先保存，再复用原文本文件归档。平台 GET 读取原任务，reconcile 仅能恢复已收到的本地正文；不会调用供应商或把 chat completion ID 当异步查询 ID。原 `/api/canvas-llm` 兼容保留，新 `canvas-llm-tasks` 入口沿用 Gateway 路由/素材/任务授权；目录增加 `canvas_llm` 类型，无新业务表。状态见 [CURRENT](../CURRENT_PROJECT_STATUS.md)。
+
 2026-10-18 来源关联增量（开发候选）：`task_canvas_context.TaskCanvasSource/accepted_source/describe_source` 复用既有画布文件和 `interceptors.can_access_canvas`，在原 journal 中记录可选来源，不新增业务表。`create_task_receipt` 在执行前校验来源；图片/视频/ComfyUI 请求都可携带此字段，旧调用仍可省略。`GenerationTaskRepository.detail` 仅在当前仍可访问时返回来源标题和定位 URL；原节点删除时保留打开画布入口。`generation_task_routes` 的原详情 GET 可带 `target_canvas_id`，同时核实本人任务、目标画布及具体结果资源后才允许复用，不写入目标画布。Gateway 继续覆盖用户身份；真实状态与限制见 [CURRENT](../CURRENT_PROJECT_STATUS.md)。
 
 > 源码参考快照（2026-10-13）：main@e89a288（已合并 #154/#155/#156）；产品功能源码基点 #156@4bdd9a1 保留；C5/C6/C7 已合并，构建与验收范围仍引用其准确记录。本文是代码/运行参考，当前 PR/CI、Release 和验收只见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，实施顺序只认路线图。
