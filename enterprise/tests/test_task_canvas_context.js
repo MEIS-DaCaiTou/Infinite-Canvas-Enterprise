@@ -17,6 +17,7 @@ async function run(){
     for(const kind of ['classic','smart']){
         const node={id:'generator'},saved=[];
         const context=vm.createContext({URLSearchParams,console,nodes:[node],canvas:{id:'original'},
+            savingCanvasNow:false,canvasSyncInFlight:false,
             location:{search:'?focus_node=generator'},
             saveCanvas:async()=>{saved.push('saved');context.canvas={...context.canvas,updated_at:2};},
         });context.window=context;
@@ -25,6 +26,20 @@ async function run(){
         load(context,file,'taskCanvasSource');
         assert.deepEqual(plain(await context.taskCanvasSource(node)),{canvas_id:'original',node_id:'generator'});
         assert.equal(saved.length,1,'source waits for save but accepts the replaced canvas object');
+        const busy=kind==='classic'?'savingCanvasNow':'canvasSyncInFlight';
+        context[busy]=true;let waiting=0;
+        context.sleep=async()=>{waiting++;context[busy]=false;};
+        await context.taskCanvasSource(node);
+        assert.equal(waiting,1,'source waits for an in-flight automatic save');
+        const realSave=context.saveCanvas;
+        context.saveCanvas=async()=>{
+            context.nodes=context.nodes.map(n=>({...n}));
+            return realSave();
+        };
+        await context.taskCanvasSource(node);  // Same node ID survives a conflict merge.
+        context.saveCanvas=async()=>false;
+        await assert.rejects(context.taskCanvasSource(node),/画布保存失败/);
+        context.nodes=[node];
         context.saveCanvas=async()=>{context.canvas={id:'different'};};
         await assert.rejects(context.taskCanvasSource(node),/已离开来源画布/);
         let selected,focused;
@@ -55,6 +70,33 @@ async function run(){
         const media=kind==='classic'?created[1]:created[1].images[0];
         assert.equal(media.url,'/output/v.mp4');assert.equal(media.mediaKind || media.kind,'video');
         assert.equal(savedCount,2);
+
+        // Execute actual save branches: conflict merge must be written before source resolves.
+        context.canvas={id:'original',updated_at:1};context.nodes=[node];
+        let writes=0;
+        Object.assign(context,{
+            canvasId:'original',applyingRemoteCanvas:false,saveCanvasAgain:false,localCanvasDirty:true,
+            lastCanvasUpdatedAt:1,CLIENT_ID:'fixture',smartClientId:'fixture',viewport:{},
+            connections:[],canvasDefaultSmartSettings:{},initialSmartSettings:{},saveTimer:null,currentCanvasTime:null,
+            tr:x=>x,setStatus:()=>{},loadCanvasList:()=>{},sanitizeConnections:()=>{},serializableCanvasNodes:()=>context.nodes,
+            savePromptDraftForCurrent:()=>{},settingsForStorage:x=>x,canvasForStorage:()=>({...context.canvas,nodes:context.nodes}),
+            mediaItemForStorage:x=>x,stripImageGenerationMeta:x=>x,normalizeSmartGenerationLogs:x=>x || [],
+            setTimeout:()=>0,clearTimeout:()=>{},mergeSmartImageLists:()=>[],
+            smartNodeHasCompletedResult:()=>false,smartNodeInFlight:()=>false,smartNodeHasDisplayResult:()=>false,
+            fetch:async()=>{
+                writes++;
+                if(writes===1)return {ok:false,status:409,json:async()=>({detail:{updated_at:2,canvas:{id:'original',nodes:[node],updated_at:2}}})};
+                return {ok:true,status:200,json:async()=>({canvas:{...context.canvas,updated_at:3}})};
+            },
+        });
+        if(kind==='smart'){
+            load(context,file,'mergeSmartNode');load(context,file,'mergeSmartNodeLists');
+            context.applyMergedServerCanvas=remote=>{context.nodes=context.mergeSmartNodeLists(context.nodes,remote.nodes);context.canvas.updated_at=remote.updated_at;};
+        }
+        load(context,file,'saveCanvas');
+        await context.taskCanvasSource(node);
+        assert.equal(writes,2,'conflicting save followed by persisted merged state');
+        assert.equal(context.canvas.updated_at,3);
     }
     console.log('task canvas source, navigation guard and typed reuse: PASS (classic + smart)');
 }

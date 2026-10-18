@@ -1430,11 +1430,11 @@ async function saveCanvas(){
                 lastCanvasUpdatedAt = Number(data.detail?.updated_at || data.updated_at || remote?.updated_at || lastCanvasUpdatedAt || 0);
                 saveCanvasAgain = true;
                 setStatus('Saving...');
-                return;
+                return 'retry';
             }
             if(remote) applyRemoteCanvasData(remote);
             setStatus('Synced');
-            return;
+            return 'retry';
         }
         if(!res.ok) throw new Error('save failed');
         const data = await res.json().catch(() => ({}));
@@ -1447,9 +1447,11 @@ async function saveCanvas(){
         if(currentCanvasTime) currentCanvasTime.textContent = formatCanvasTime(canvas.updated_at);
         setStatus('Saved');
         loadCanvasList(false);
+        return true;
     } catch(e) {
         setStatus('Save failed');
         console.error(e);
+        return false;
     } finally {
         savingCanvasNow = false;
         if(saveCanvasAgain && canvas && !applyingRemoteCanvas){
@@ -12294,7 +12296,12 @@ function findPendingTask(taskId){
 }
 async function taskCanvasSource(node){
     const current=canvas;
-    return TaskCanvasContext.source(current,node,saveCanvas,()=>canvas?.id===current?.id && nodes.includes(node));
+    const isCurrent=()=>canvas?.id===current?.id && nodes.some(value=>value.id===node?.id);
+    return TaskCanvasContext.source(current,node,async()=>{
+        while(savingCanvasNow && isCurrent())await sleep(50);
+        if(!isCurrent())return false;
+        return saveCanvas();
+    },isCurrent);
 }
 function focusTaskSource(){
     TaskCanvasContext.focus(nodes,node=>{selected=new Set([node.id]);},node=>{

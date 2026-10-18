@@ -3,8 +3,12 @@
     'use strict';
     async function source(canvas,node,save,isCurrent){
         if(!canvas?.id || !node?.id)return undefined;
-        await save();
-        if(!isCurrent())throw new Error('已离开来源画布，请在当前画布重新确认运行');
+        let saved;
+        do {
+            saved=await save();
+            if(!isCurrent())throw new Error('已离开来源画布，请在当前画布重新确认运行');
+            if(saved===false)throw new Error('画布保存失败，本次未提交生成任务，请保存后再试');
+        }while(saved==='retry');
         return {canvas_id:canvas.id,node_id:node.id};
     }
     function focus(nodes,select,pan){

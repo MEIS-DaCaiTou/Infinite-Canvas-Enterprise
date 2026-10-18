@@ -5895,6 +5895,7 @@ async function saveCanvas(){
         if(res.ok){
             const data = await res.json();
             if(data.canvas && data.canvas.updated_at) canvas.updated_at = data.canvas.updated_at;
+            return true;
         } else if(res.status === 409) {
             // 冲突：别人先保存了。合并对方的状态（节点 id 合并、图片取并集，谁都不丢），
             // 然后用对方最新的 updated_at 作为基底重存，把合并结果落盘——而不是直接覆盖对方。
@@ -5912,8 +5913,10 @@ async function saveCanvas(){
             }
             clearTimeout(saveTimer);
             saveTimer = setTimeout(saveCanvas, 300);
+            return 'retry';
         }
-    } catch(e) {} finally {
+        return false;
+    } catch(e) {return false;} finally {
         canvasSyncInFlight = false;
     }
 }
@@ -13791,7 +13794,12 @@ function loadNodePromptDraftToInput(node){
 }
 async function taskCanvasSource(node){
     const current=canvas;
-    return TaskCanvasContext.source(current,node,saveCanvas,()=>canvas?.id===current?.id && nodes.includes(node));
+    const isCurrent=()=>canvas?.id===current?.id && nodes.some(value=>value.id===node?.id);
+    return TaskCanvasContext.source(current,node,async()=>{
+        while(canvasSyncInFlight && isCurrent())await sleep(50);
+        if(!isCurrent())return false;
+        return saveCanvas();
+    },isCurrent);
 }
 function focusTaskSource(){
     TaskCanvasContext.focus(nodes,node=>{selectedId=node.id;selectedIds=[node.id];},node=>{
