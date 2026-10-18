@@ -55,7 +55,7 @@ from enterprise.paths import get_path_roots, prepare_application_directories
 from enterprise.app_paths import AppPathLayout
 from enterprise.canvas_task_journal import CanvasTaskJournal, create_task_receipt
 from enterprise.task_canvas_context import TaskCanvasSource
-from enterprise.canvas_llm_tasks import CanvasLLMTasks, public_llm_task, llm_submitting, llm_response
+from enterprise.canvas_llm_tasks import CanvasLLMTasks, llm_submitting, llm_response, validate_llm_text
 from enterprise.generation_task_routes import create_router as create_generation_task_router
 from enterprise.canvas_image_recovery import CanvasImageRecovery, ImageReceiptSink, public_receipt
 from enterprise.canvas_video_tasks import CanvasVideoTasks, public_video_task, record_video_acceptance
@@ -14224,6 +14224,7 @@ async def canvas_llm(payload: CanvasLLMRequest):
         raise HTTPException(status_code=502, detail=f"解析上游响应失败：{exc}") from exc
     try:
         text = text_from_chat_response(raw).strip() if isinstance(raw, dict) else ""
+        validate_llm_text(text)
         text = text or "接口返回了空回复。"
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"解析回复内容失败：{exc}") from exc

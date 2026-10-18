@@ -7,7 +7,7 @@ import pytest
 from enterprise.tests.test_canvas_image_recovery_main import ROOT, BOOTSTRAP
 
 
-@pytest.mark.parametrize('phase,exit_code',[('lost',17),('received',18),('complete',0)])
+@pytest.mark.parametrize('phase,exit_code',[('lost',17),('received',18),('complete',0),('empty',0)])
 def test_actual_text_http_boundary_and_restart_never_resubmits(tmp_path,phase,exit_code):
     install=tmp_path/'install';app=install/'releases/fixture'
     (app/'static').mkdir(parents=True);(app/'main.py').write_text('# private fixture',encoding='utf-8')
@@ -20,6 +20,7 @@ def text_handler(request):
     record=main.CANVAS_TASK_JOURNAL.get(id_path.read_text())
     assert record['provider_receipts'][0]['state']=='submitting'
     if phase=='lost':os._exit(17)
+    if phase=='empty':return httpx.Response(200,json={'choices':[]})
     return httpx.Response(200,json={'choices':[{'message':{'content':'durable text'}}],
         'usage':{'prompt_tokens':3,'completion_tokens':5}})
 main.httpx.AsyncClient=lambda **kw:original_client(transport=httpx.MockTransport(text_handler),**kw)
@@ -30,6 +31,17 @@ async def write():
     id_path.write_text(accepted['task_id'])
     await asyncio.gather(*main.CANVAS_TASK_RUNNERS)
     record=main.CANVAS_TASK_JOURNAL.get(accepted['task_id'])
+    if phase=='empty':
+        assert record['status']=='failed' and record['recovery_required']
+        assert record['result'] is None and 'llm_result' not in record
+        assert len(calls)==1
+        # The original direct endpoint keeps its existing display fallback.
+        main.httpx.AsyncClient=lambda **kw:original_client(
+            transport=httpx.MockTransport(lambda request:httpx.Response(200,json={'choices':[]})),**kw)
+        legacy=await main.canvas_llm(main.CanvasLLMRequest(
+            message='legacy',model='text-fixture',provider='zhenzhen'))
+        assert legacy['text']=='接口返回了空回复。'
+        return
     assert record['status']=='succeeded' and record['result']['text']=='durable text'
     assert record['provider_receipts'][0]['reported_usage']=={'prompt_tokens':3,'completion_tokens':5}
     assert 'private-input' not in json.dumps(record) and 'fixture-only-key' not in json.dumps(record)
@@ -43,7 +55,7 @@ async def read():
     await main.startup_event()
     try:
         record=await main.get_canvas_llm_task(id_path.read_text())
-        if phase=='lost':
+        if phase in {'lost','empty'}:
             assert record['status']=='failed' and record['recovery_required']
             assert record['result'] is None
         else:

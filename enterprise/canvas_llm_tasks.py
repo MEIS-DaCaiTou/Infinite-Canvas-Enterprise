@@ -32,6 +32,12 @@ async def llm_response(status_code):
             {'state':'failed' if rejected else 'received', 'http_status':status_code})
 
 
+def validate_llm_text(text):
+    """Keep legacy display fallbacks out of durable successful results."""
+    if _attempt.get() and (not isinstance(text, str) or not text.strip()):
+        raise ValueError('文本接口没有返回可确认的正文')
+
+
 def can_restore_llm(record):
     return record.get('type') == 'llm' and record.get('status') == 'failed' and bool(record.get('llm_result'))
 
