@@ -30,3 +30,7 @@
 .generation-task-pane button:disabled {opacity:.5;cursor:default;}
 .generation-task-more[hidden] {display:none;}
 @media(max-width:600px){.generation-task-tabs span{display:none;}.generation-task-filters{flex-wrap:wrap;}.generation-task-row-head{align-items:flex-start;}}
+
+.generation-task-source {display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:10px 0;font-size:11px;color:var(--muted);overflow-wrap:anywhere;}
+.generation-task-source small {flex-basis:100%;}
+.generation-task-result {display:flex;flex-direction:column;align-items:flex-start;gap:8px;max-width:100%;}

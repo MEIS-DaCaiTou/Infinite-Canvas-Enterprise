@@ -118,7 +118,10 @@ class GenerationTaskRepository:
         for task_type in TYPES:
             record = self.owned_record(user_id, task_id, task_type)
             if record:
-                return describe_task(record, detail=True)
+                data = describe_task(record, detail=True)
+                from enterprise.task_canvas_context import describe_source
+                data['source'] = describe_source(record.get('source'), user_id, self.journal.root.parent / 'canvases')
+                return data
         return None
 
     def page(self, user_id, *, cursor="", status="", kind="", limit=30):

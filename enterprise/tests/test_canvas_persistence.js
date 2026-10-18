@@ -35,7 +35,7 @@ function fixture(canvas) {
     return {...canvas,
         nodes:[
             {id:'result', type:smart?'smart-image':'output', images:plain(results), selectedResultId:results[0].result_id, selectedResult:plain(results[0]), x:20, y:30},
-            {id:'next', type:smart?'smart-image':'comfy', mode:'custom', comfyWorkflow:workflow, comfyParams:plain(parameters),
+            {id:'next', sourceTaskId:'original-task', sourceResultId:'original-result', type:smart?'smart-image':'comfy', mode:'custom', comfyWorkflow:workflow, comfyParams:plain(parameters),
                 runSettings:{engine:'comfy', comfyWorkflow:workflow, comfyParams:plain(parameters)}, images:[], x:420, y:30},
         ],
         connections:[{from:'result', to:'next', ...(smart?{kind:'input'}:{})}],
@@ -70,7 +70,7 @@ function contextFor(data) {
     // UI-only refreshes, device-local viewport lookup and background task polling
     // are outside this persistence contract. No generation function is supplied.
     for (const name of ['loadCanvasList', 'rememberCanvasListProject', 'resetCascadeRuntimeState',
-        'setCanvasMode', 'renderCanvasList', 'render', 'resumeCanvasImageTasks', 'startCanvasRemotePolling',
+        'setCanvasMode', 'renderCanvasList', 'render', 'focusTaskSource', 'resumeCanvasImageTasks', 'startCanvasRemotePolling',
         'savePromptDraftForCurrent', 'updateProviderModels', 'applyViewport', 'loadRecentSmartSettings',
         'resumeSmartPendingTasks', 'resumeJimengPendingNodes', 'startCanvasMetaPoll']) context[name]=()=>{};
     context.localViewportForCanvas=(_id, value)=>value;
@@ -145,6 +145,8 @@ async function main() {
         assert.equal(outputNode.selectedResultId, results[0].result_id, 'a later run does not replace the pinned prompt');
         assert.deepEqual(plain(outputNode.selectedResult), results[0]);
         assert.equal(generator.comfyWorkflow,workflow);
+        assert.equal(generator.sourceTaskId,'original-task');
+        assert.equal(generator.sourceResultId,'original-result');
         assert.deepEqual(plain(generator.comfyParams),parameters);
         assert.deepEqual(plain(context.canvas.logs),fixture(response.canvas).logs);
         const connections=kind==='classic'?context.connections:context.canvas.connections;

@@ -54,6 +54,7 @@ from enterprise.config import PATH_ROOTS as _CONFIG_PATH_ROOTS
 from enterprise.paths import get_path_roots, prepare_application_directories
 from enterprise.app_paths import AppPathLayout
 from enterprise.canvas_task_journal import CanvasTaskJournal, create_task_receipt
+from enterprise.task_canvas_context import TaskCanvasSource
 from enterprise.generation_task_routes import create_router as create_generation_task_router
 from enterprise.canvas_image_recovery import CanvasImageRecovery, ImageReceiptSink, public_receipt
 from enterprise.canvas_video_tasks import CanvasVideoTasks, public_video_task, record_video_acceptance
@@ -2407,6 +2408,7 @@ def rollback_update(req: RollbackRequest):
         UPDATE_LOCK.release()
 
 class GenerateRequest(BaseModel):
+    source: Optional[TaskCanvasSource] = None
     request_id: str = ""
     prompt: str = ""
     width: int = 1024
@@ -2462,6 +2464,7 @@ class AIReference(BaseModel):
     mime: str = ""
 
 class OnlineImageRequest(BaseModel):
+    source: Optional[TaskCanvasSource] = None
     prompt: str = Field(min_length=1, max_length=ONLINE_IMAGE_PROMPT_MAX_LENGTH)
     provider_id: str = "comfly"
     model: str = ""
@@ -2493,6 +2496,7 @@ def schedule_canvas_task(coroutine):
     task.add_done_callback(completed)
 
 class CanvasVideoRequest(BaseModel):
+    source: Optional[TaskCanvasSource] = None
     request_id: str = ""
     prompt: str = Field(min_length=1, max_length=VIDEO_PROMPT_MAX_LENGTH)
     provider_id: str = "comfly"
@@ -12984,6 +12988,7 @@ async def create_canvas_image_task(
         "error": "",
         "provider_id": payload.provider_id,
         "model": payload.model,
+        "source": payload.source.model_dump() if payload.source else None,
         "provider_receipts": [{"index": index, "state": "started"} for index in range(max(1, min(8, int(payload.n or 1))))],
     }, x_enterprise_user_id)
     schedule_canvas_task(run_canvas_image_task(task_id, payload))
@@ -13049,6 +13054,7 @@ async def create_canvas_comfy_task(
             "result": None,
             "error": "",
             "workflow_json": payload.workflow_json,
+            "source": payload.source.model_dump() if payload.source else None,
         }, x_enterprise_user_id)
         schedule_canvas_task(run_canvas_comfy_task(task_id, payload))
         return {"task_id": task_id, "status": "queued"}
