@@ -1,9 +1,15 @@
 # Infinite Canvas Enterprise 当前项目状态
 
-更新时间：2026-10-18
-核验对象：main@73d2b67（含已合并 #163/#168/#169/#171），正式版本仍为 v2026.10.2，10.1 → 10.2 升级/恢复证据继续沿用；本轮未发布或操作客户/生产设备。下文早期候选条目保留其记录时点，最新增量如下。
+2026-10-19 集成收口：负责人已批准 #172–#175 合并。#174/#175 已分别合并为442fa69、d9f16b2；该 main 核验基点包含任务来源/按项复用与 LLM 持久任务。本轮集成源码在同一基线上接入 #172 视频保存续接及 #173 贞贞提交/查询适配，并修正正常保存、409冲突和续查时对象更换造成的视频绑定丢失。源码、最终合并SHA与CI分别按 [#172](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/172)、[#173](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/173) 的准确记录判断；下文旧候选描述保留核验时点。正式 Release 仍为 v2026.10.2，无新发布或客户部署。负责人授权真实贞贞验证总预算10平台额度单位，密钥不入仓库/证据，真实结果与模拟/Browser边界在原PR分别报告。
 
-2026-10-18：#168/#171 已合并，最新核验 main 为 `73d2b67b4931d6b54d606d009a647a95eaadf5d7`；main [文档39049269843](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/39049269843) 与 [Enterprise/Runtime39049269844](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/39049269844) 最终 SUCCESS，旧候选条目保留记录时点。#172 两类画布视频保存重开仍为 Draft，准确 Head `d52035ef51fc798fe8f4e66e1425b2f93d81867f` 的最终 CI 与技术复审通过，尚无合并授权。本轮另从 main 建立 `codex/zhenzhen-video-adapter-20261018`：整理 Zhenzhen 统一视频请求/提交/鉴权/响应边界，修正 NOT_START 排队识别并保留旧回执续查。独立 Review 未发现可证实缺陷，候选未合并/发布；范围与证据见 [同一工程记录](./ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md#2026-10-18-zhenzhen-统一视频适配收口)。#170 继续暂缓。
+更新时间：2026-10-19
+
+本轮续包「两类画布 LLM 提示词任务持久化与结果找回」基于 #174 准确 Head `9309e52825f59522d4749ed53ef5fb871da495e0`，分支 `codex/canvas-llm-tasks-20261018` 独立交付；main 仍为下述 73d2b67，未擅自合并依赖。现有 LLM 节点、聊天模式和智能画布提示词节点先保存平台任务 ID，再提交一次；刷新后读取原任务，文本保留在现有任务中心，可继续复用。当前同步 chat/completions 没有已实现的上游查询身份：浏览器断开后服务端继续，进程中断未收到正文则保留待核对，不自动重提；已收到正文可本地恢复归档。无新页面、Schema、计费或 Release，细节与证据见 [同一任务记录](./ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md#2026-10-18-画布-llm-持久任务与文本找回候选)。
+核验对象：main@73d2b67b4931d6b54d606d009a647a95eaadf5d7（已含 #163/#168/#169/#171）；该 main 的文档与 Enterprise/Runtime CI 均单独核对最终 SUCCESS。正式版本仍为 v2026.10.2，本轮未合并、发布或操作客户/生产设备。下文早期候选条目保留其记录时点。
+
+本轮按负责人批准推进 4.2 的「任务来源与结果复用」，分支 `codex/task-canvas-origin-20261018` 从上述 main 独立开发，不修改其他候选。新图片/视频/ComfyUI 回执可保存来源画布和节点；现有任务详情增加「定位原画布」和每项「放入当前画布」，两类画布继续使用原素材/提示词节点和保存路径。来源读取、目标画布和结果访问重新校验当前权限；旧任务不补造来源，无新 Schema、付费重提或页面。定向测试、隔离 Browser 与限制见 [同一工程记录](./ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md#2026-10-18-任务来源画布节点与结果复用候选)。候选不代表正式发行能力。
+
+#172 视频画布保存重开（Head `d52035ef51fc798fe8f4e66e1425b2f93d81867f`）与 #173 Zhenzhen 视频适配（Head `789ff81c8c643013891e19b88acd245aac0d4892`）仍为 Draft，准确 Head 常规 CI 已成功；前者保留 Enterprise 首次失败与重试记录。它们尚未合并；#170 仍暂缓，不因本包扩展 RunningHub。
 
 2026-10-17：负责人批准 #163、#168、#169 合并；#163 已按审查 Head `0a6db0f36edcb18fb352f7ab5768684a3334a666` 合并为 `476e0dc7cbc1354961ca81cd18e15c22611d84f1`，#169 按审查 Head `9a36a1effccc8c0128100f37b8e9ab05f9309b85` 调整 Base 为 main 后合并为 `cb057b12dee7c6830a2ac46d33c99ab9ff0cf8f4`。两项准确 Head 的常规 CI 均成功，独立技术 Review 均已修复有效问题并定向复审 `NO_ACTIONABLE_BUGS_FOUND`；不是 GitHub Approval。上述两个合并点的 main 文档、Enterprise/Runtime CI 已分别最终 SUCCESS，不以 PR CI 代替。
 

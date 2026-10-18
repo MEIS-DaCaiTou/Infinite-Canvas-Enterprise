@@ -1,5 +1,11 @@
 # Enterprise Test Scripts
 
+Reviewed: 2026-10-18
+
+Canvas LLM tasks: `py -3.11 -B -m pytest -q enterprise/tests/test_canvas_llm_tasks.py enterprise/tests/test_canvas_llm_tasks_main.py` uses private receipts/SQLite, A/B/admin authorization, actual main HTTP with MockTransport and hard process exits. It verifies owner-before-dispatch, one submit per ticket, unknown/rejection states, GET-only client resume/navigation, persisted text and local-only archival recovery; the real provider and CLI hosts are not invoked. `test_canvas_persistence.py` retains ticket metadata across process save/reopen. Rendered Browser evidence and limits are in the existing [task record](../../docs/ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md#2026-10-18-画布-llm-持久任务与文本找回候选).
+
+Task provenance/reuse: `py -3.11 -B -m pytest -q enterprise/tests/test_task_canvas_context.py enterprise/tests/test_canvas_persistence.py` checks private SQLite ownership, revoked/deleted source handling, legacy receipts, current target/resource access, actual client source/reuse adapters, and retained origin metadata after cross-process save/reopen. Its Node VM isolates rendering/provider boundaries; rendered Browser evidence and real-provider limitations belong to the existing [task implementation record](../../docs/ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md#2026-10-18-任务来源画布节点与结果复用候选). No real paid generation or customer data.
+
 `test_install_upgrade.py`, `test_install_maintenance.py` and `test_windows_install_registration.py` cover the C6 offline transaction, object ownership, interrupted recovery, stopped WAL-mode SQLite reads, successful target finalization and HTTP/WS pause. Their Runtime/registration substitutes are bounded unit evidence. `offline_upgrade_windows_smoke.py` runs frozen complete source/target payloads, real native entry and Runtime on newly owned synthetic installations; only an owned hard process exit or target service stop is injected. It records the runner return code/stdout/stderr before checking the injected exit, stops at AWAITING_REGISTRATION and does not imply Windows registration or clicked GUI acceptance. Pass explicit source/target build/native directories, target Setup and a NEW evidence root; `--preserve-existing-local-roots` requires stopped historical KnownFolder roots and verifies their exact restoration. Reuse sufficient existing C2/C3/C4 evidence. Actual scope/results are in [C6 record](../../docs/ops/OFFLINE-RETAINED-UPGRADE-2026-10-12.md).
 
 This folder is the only place for project diagnostic and smoke-test scripts.
@@ -12,8 +18,6 @@ Before adding or changing scripts, read:
 - `../../CODE_BOUNDARIES.md`
 - `../../ENTERPRISE_DOCS.md`
 - `SMOKE_CHECKLIST.md`
-
-Reviewed: 2026-10-18
 
 ## Verification policy
 
@@ -105,4 +109,4 @@ For every access-control implementation PR, add or extend a focused test here be
 
 Video task candidate: `py -3.11 -B -m pytest -q enterprise/tests/test_canvas_video_tasks.py enterprise/tests/test_canvas_video_tasks_main.py enterprise/tests/test_generation_tasks.py` verifies private-journal acceptance/recovery, an actual process hard exit and GET-only startup recovery, existing HTTP query families, CLI pending compatibility and owner catalog filtering. `node enterprise/tests/test_canvas_task_query.js` covers both canvases' shared video client. Reuse `test_task_history_isolation.py` and `test_feature_flags.py` for authenticated gateway interception. These are isolated/mock evidence, not paid-provider, real-login or video-playback acceptance.
 
-Unified video adapter: `py -3.11 -B -m pytest -q enterprise/tests/test_zhenzhen_video_adapter.py enterprise/tests/test_canvas_video_tasks_main.py enterprise/tests/test_paid_submission_stoploss.py` covers existing JSON fields, Zhenzhen Bearer/v2 routing, explicit404/405 proxy compatibility, unknown-submit stop-loss, NOT_START live/restart parsing, durable acceptance before queries and oldv1/v2 recovery. It uses mock HTTP and disposable installation roots, no real paid requests. Reuse image-model contracts and existing video ownership/recovery tests for unchanged boundaries; do not treat this as all-model or Browser acceptance.
+Video canvas reconnect: `node enterprise/tests/test_video_canvas_resume.js` runs actual classic/smart resume functions against serialized disposable nodes and mock HTTP. Covers original-task GET polling, manual reconcile, single completion, retained output history, navigation isolation and existing Jimeng pending takeover. It runs through `test_canvas_video_tasks.py`; no duplicate CI job. Browser evidence for 2026-10-18 uses fixed test actor and synthetic MP4, not real Gateway login, GPU or paid supplier acceptance.

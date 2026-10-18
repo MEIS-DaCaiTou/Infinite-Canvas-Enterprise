@@ -38,6 +38,8 @@ def can_reconcile_video(record):
 def public_video_task(record):
     data = {key: value for key, value in record.items() if key != "provider_receipts"}
     data["can_reconcile"] = can_reconcile_video(record)
+    if data["can_reconcile"] and (record.get("auto_recovery") or {}).get("status") in {"waiting", "querying"}:
+        data.update(status="running", error="")
     return data
 
 
@@ -67,6 +69,7 @@ class CanvasVideoTasks:
             await asyncio.to_thread(create_task_receipt, self.journal, {
                 "id": task_id, "type": "video", "status": "queued", "created_at": time.time(),
                 "updated_at": time.time(), "provider_id": payload.provider_id, "model": payload.model,
+                "source": payload.source.model_dump() if getattr(payload, "source", None) else None,
                 "result": None, "error": "", "provider_receipts": [{"index": 0, "state": "started"}],
             }, owner)
             self.schedule(self.run(task_id, payload))

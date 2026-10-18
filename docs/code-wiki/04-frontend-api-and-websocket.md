@@ -1,5 +1,9 @@
 # 前端、API 与 WebSocket
 
+2026-10-18 LLM 任务续包（开发候选）：`canvas-llm-tasks.js` 共用提交前保存 ticket、单次 POST、刷新后 GET 原任务和导航守卫。经典 LLM 节点/聊天与智能画布 Prompt 的原操作不变；节点 `llmTask` 保留平台 ID/状态，保存重开后回填输出正文或聊天记录。任务中心增加「LLM 文本」筛选，复用原正文弹窗和 Prompt 复用入口；有待执行回执的运行按钮改为「查询原任务」，未知时「新建运行」提示可能重复费用，只有用户主动新建运行才再提交。正常轮询状态不变时不重复安排画布保存。保留旧文本直到新结果到达，不将结果写入已经切换的画布。当前状态/模拟与真实调用限制见 [CURRENT](../CURRENT_PROJECT_STATUS.md)。
+
+2026-10-18 来源关联增量（开发候选）：`task-canvas-context.js` 共用来源构造与 `focus_node` 识别；两类画布在新持久生成请求附带来源，在打开来源画布时选中并居中原节点。现有 `generation-task-center.js` 详情增加「定位原画布」与按项「放入当前画布」；采用原日志面板、主题变量与胶囊按钮，不增加页面。复用前重新读取有权限的详情，异步完成后检查仍在同一目标画布；文本使用原 Prompt 节点，其他媒体使用原素材节点，保存 `sourceTaskId/sourceResultId` 并沿用原保存重开逻辑。不再调用生成接口。无来源旧任务和不可访问来源明确提示；缺失原节点仅打开画布。真实状态见 [CURRENT](../CURRENT_PROJECT_STATUS.md)。
+
 > 源码参考快照（2026-10-13）：main@e89a288（已合并 #154/#155/#156）；产品功能源码基点 #156@4bdd9a1 保留；C5/C6/C7 已合并，构建与验收范围仍引用其准确记录。本文是代码/运行参考，当前 PR/CI、Release 和验收只见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，实施顺序只认路线图。
 
 [返回索引](./README.md)
@@ -16,6 +20,8 @@
 - 企业 Gateway 会对旧页面注入用户导航与权限守卫。
 
 2026-10-16 候选增量（`codex/model-workflow-selection-20261016`，Base main@39f4b02，未合并/发布）：`model-picker.js` 的个人模型弹窗复用 `comfy-outputs.css` 组件和主题，新增 `model-picker.css` 只补列表/搜索/勾选；账号存储与已有节点模型不变。`GET /api/workflows` 默认仅返回启用项，设置页通过 `include_disabled=true` 查看全部；原配置的可选 `enabled` 管理画布可用列表。未配置 shipped 默认隐藏，历史配置和自定义继续兼容；两类画布保留停用/移除身份、不自动替换且不循环重载。固定本地入口及配置边界见[产品记录](../ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#2026-10-16-个人模型与工作流可用列表续修候选)。
+
+2026-10-18 候选增量（Base main73d2b67，未合并/发布）：`canvas-task-query.js` 的 `runVideo` 一次提交后调用 `onAccepted` 保存平台任务 ID，`waitVideo` 只读轮询，`queryVideo` 只查询原任务。`canvas.js` 在输出节点保留视频 pending，`smart-canvas.js` 沿用 pendingTasks；重新打开后据此续接视频、保留旧结果并防止重复回调追加。新视频异步分支校验画布/节点/任务身份，离开后不将旧结果和日志写入其他画布。复用现有失败区域及查询按钮，无新页面或 CSS；回执/模拟与 Browser 验证边界见 [工程记录](../ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md#2026-10-18-两类画布视频任务保存重开与结果续接)。
 
 ## 2. 工作台与普通画布
 
