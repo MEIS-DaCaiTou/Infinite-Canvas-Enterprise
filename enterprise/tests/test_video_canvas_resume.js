@@ -63,7 +63,88 @@ async function resume(ctx,kind) {
     if(kind==='classic')await ctx.resumeCanvasVideoTask(ctx.nodes[1],ctx.nodes[1]._pending[0]);
     else await ctx.resumeSmartPendingNode(ctx.nodes[0]);
 }
+async function submitAfterSourceSave(kind, conflictAt) {
+    const originalNodes=kind==='classic'
+        ? [{id:'generator',type:'video'}, {id:'output',type:'output',images:[]}]
+        : [{id:'output',type:'smart-image',images:[],running:true,pending:1}];
+    const ctx=setup(kind,originalNodes),file=kind==='classic'?'canvas.js':'smart-canvas.js';
+    Object.assign(ctx,{
+        crypto:require('node:crypto').webcrypto,URLSearchParams,
+        savingCanvasNow:false,canvasSyncInFlight:false,canvasId:'original-canvas',
+        applyingRemoteCanvas:false,saveCanvasAgain:false,localCanvasDirty:true,
+        lastCanvasUpdatedAt:1,CLIENT_ID:'fixture',smartClientId:'fixture',viewport:{},
+        connections:[],canvasDefaultSmartSettings:{},initialSmartSettings:{},saveTimer:null,currentCanvasTime:null,
+        setTimeout:()=>0,clearTimeout:()=>{},sleep:async()=>{},
+        setStatus:()=>{},loadCanvasList:()=>{},sanitizeConnections:()=>{},
+        serializableCanvasNodes:()=>ctx.nodes,savePromptDraftForCurrent:()=>{},settingsForStorage:x=>x,
+        canvasForStorage:()=>({...ctx.canvas,nodes:ctx.nodes}),mediaItemForStorage:x=>x,
+        normalizeSmartGenerationLogs:x=>x || [],normalizeLegacySmartNode:x=>x,
+        mergeSmartImageLists:(a,b)=>[...(a||[]),...(b||[])],
+        smartNodeHasCompletedResult:()=>false,smartNodeInFlight:()=>true,smartNodeHasDisplayResult:()=>false,
+        mergeSmartConnections:()=>[],mergeSmartGenerationLogs:()=>[],clearCompletedNodeBusyStates:()=>false,
+        recoverStuckLoopOutputsFromLogs:()=>false,resumeSmartPendingTasks:()=>{},resumeJimengPendingNodes:()=>{},
+        checkTextSelection:()=>true,cascadeTargetIdFromOptions:()=>'',
+        generatorSources:()=>[{prompt:'Synthetic geometry',refs:[]}],orderedSources:(_n,s)=>s,
+        mediaKindForRef:()=> 'image',applyUploadedUrlToRefs:x=>x,applyUploadedUrlsToSmartRefs:x=>x,
+        imageRefsOnly:x=>x,videoRefsOnly:()=>[],audioRefsOnly:()=>[],manualVideoUrlForNode:()=>'',
+        manualSmartVideoLink:()=>null,resolveVideoProviderId:x=>x,videoProviderPlatform:()=>'',
+        outputForNode:()=>ctx.nodes.find(n=>n.id==='output'),uid:()=> 'new-pending',
+        runSnapshot:()=>({node:{id:'generator'}}),
+        makePendingForRun:(id,run,_n,_refs,extra)=>({id,run,...extra}),
+        isCascadeAbortError:error=>error.name==='AbortError',alert:error=>{throw new Error(error);},
+        smartRunSnapshot:()=>({node:{id:'output'}}),
+        startSmartPendingGenerationLog:(node,run)=>{node.pendingGenerationLog={run};},
+    });
+    let writes=0,posts=0,conflicted=false;
+    ctx.fetch=ctx.cascadeFetch=async(url,options={})=>{
+        ctx.calls.push({url,method:options.method||'GET'});
+        if(options.method==='PUT'){
+            writes++;
+            if(writes===conflictAt){
+                conflicted=true;
+                return {ok:false,status:409,json:async()=>({detail:{canvas:{...ctx.canvas,updated_at:writes+1,nodes:plain(ctx.nodes)}}})};
+            }
+            return {ok:true,status:200,json:async()=>({canvas:{id:'original-canvas',updated_at:writes+1}})};
+        }
+        if(options.method==='POST'){
+            assert.equal(url,'/api/canvas-video-tasks');posts++;
+            const body=JSON.parse(options.body);
+            assert.equal(body.source.canvas_id,'original-canvas');
+            assert.equal(body.source.node_id,kind==='classic'?'generator':'output');
+            return {ok:true,json:async()=>({task_id:'video-new'})};
+        }
+        // A normal save/remote merge while waiting must not detach the original task.
+        ctx.canvas={...ctx.canvas};ctx.nodes=plain(ctx.nodes);
+        return {ok:true,json:async()=>({status:'succeeded',result:{videos:['/output/new.mp4']}})};
+    };
+    vm.runInContext(read('task-canvas-context.js'),ctx);
+    functions(ctx,file,['saveCanvas','taskCanvasSource']);
+    if(kind==='classic'){
+        functions(ctx,file,['runVideoNode']);
+        await ctx.runVideoNode('generator');
+        assert.equal(ctx.nodes[1].images.at(-1)?.url,'/output/new.mp4');
+        assert.equal(ctx.nodes[1]._pending.length,0);
+    } else {
+        functions(ctx,file,['mergeSmartNode','mergeSmartNodeLists','applyMergedServerCanvas',
+            'runApiVideoGeneration','completeSmartVideoTracking']);
+        const original=ctx.nodes[0];
+        const result=await ctx.runApiVideoGeneration('Synthetic geometry',[],{videoModel:'fixture'}, {node:original});
+        assert.equal(result[0],'/output/new.mp4');
+        assert(ctx.nodes[0].pendingTasks.some(t=>t.taskId==='video-new'),'accepted ID belongs to the live node');
+        ctx.completeSmartVideoTracking(original,'video-new');
+        assert.equal((ctx.nodes[0].pendingTasks||[]).length,0);
+    }
+    assert.equal(posts,1,'source save and conflict retry never create twice');
+    assert.equal(conflicted,Boolean(conflictAt));
+}
 (async()=>{
+    for(const kind of ['classic','smart']){
+        await submitAfterSourceSave(kind,0);
+        if(kind==='smart'){
+            await submitAfterSourceSave(kind,1);
+            await submitAfterSourceSave(kind,2);
+        }
+    }
     for(const kind of ['classic','smart']){
         let ctx=setup(kind,fixture(kind));
         // Serialization destroys object identity, as a newly opened page does.
@@ -115,6 +196,22 @@ async function resume(ctx,kind) {
         assert.equal(output.images.length,1);
         assert.equal(ctx.logs.length,0);
         assert.equal(ctx.saveCount,0,'old query saved another canvas');
+        // Autosave/remote merge can replace objects while querying the same task.
+        for(const manual of [false,true]){
+            ctx=setup(kind,fixture(kind));
+            ctx.fetch=async()=>{
+                ctx.canvas={...ctx.canvas};ctx.nodes=plain(ctx.nodes);
+                return {ok:true,json:async()=>manual?{status:'succeeded',videos:['/output/one.mp4']}:ctx.reply};
+            };
+            if(manual){
+                const pending=kind==='classic'?ctx.nodes[1]._pending[0]:ctx.nodes[0].pendingTasks[0];
+                Object.assign(pending,{failed:true,recoverTaskId:'video-one'});
+                if(kind==='classic')await ctx.queryRecoverPendingOutput(pending.id);
+                else await ctx.querySmartImageTaskNow(ctx.nodes[0].id,pending.taskId);
+            } else await resume(ctx,kind);
+            assert.equal(ctx.nodes.find(n=>n.id==='output').images.at(-1).url,'/output/one.mp4',kind+' same-canvas replacement');
+            assert.equal(ctx.logs.length,1);
+        }
         // Navigating to another canvas never receives the old result.
         ctx=setup(kind,fixture(kind));
         ctx.fetch=async()=>{ctx.canvas={id:'another-canvas'};return {ok:true,json:async()=>ctx.reply};};

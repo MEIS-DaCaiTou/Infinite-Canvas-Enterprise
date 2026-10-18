@@ -18,7 +18,7 @@ async def read_catalog(request, suffix="", **params):
     try:
         response = await client.get("/_enterprise_internal/generation-tasks" + suffix,
             params=params, headers={"X-Enterprise-User-ID": user_id})
-        if response.status_code not in {200, 400, 404, 422, 503}:
+        if response.status_code not in {200, 400, 403, 404, 422, 503}:
             raise ValueError("Unexpected catalog response")
         return JSONResponse(response.json(), status_code=response.status_code, headers={"Cache-Control": "no-store"})
     except (httpx.HTTPError, ValueError) as exc:
@@ -31,5 +31,5 @@ async def generation_tasks(request: Request, cursor: str = "", status: str = "",
 
 
 @router.get('/api/me/generation-tasks/{task_id}')
-async def generation_task(request: Request, task_id: str):
-    return await read_catalog(request, "/" + quote(task_id, safe=""))
+async def generation_task(request: Request, task_id: str, target_canvas_id: str = ""):
+    return await read_catalog(request, "/" + quote(task_id, safe=""), target_canvas_id=target_canvas_id)

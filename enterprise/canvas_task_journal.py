@@ -159,7 +159,7 @@ class CanvasTaskJournal:
         with self._lock:
             record = self.get(task_id)
             required = "failed" if recovering else "running"
-            if not record or record.get("type") not in {"online-image", "video"} or record.get("status") != required:
+            if not record or record.get("type") not in {"online-image", "video", "llm"} or record.get("status") != required:
                 raise ValueError("Canvas image receipt is not writable")
             receipts = list(record.get("provider_receipts") or [])
             if type(index) is not int or not 0 <= index < len(receipts):
@@ -195,12 +195,20 @@ class CanvasTaskJournal:
     def finish_provider_recovery(self, task_id: str, result: dict) -> None:
         with self._lock:
             record = self.get(task_id)
-            if not record or record.get("type") not in {"online-image", "video"} or record.get("status") != "failed":
+            if not record or record.get("type") not in {"online-image", "video", "llm"} or record.get("status") != "failed":
                 raise ValueError("Canvas provider task is not recoverable")
             succeeded = result["status"] == "succeeded"
             self._write({**record, "status": "succeeded" if succeeded else "failed",
                          "result": result, "error": "" if succeeded else result.get("message", ""),
                          "recovery_required": not succeeded, "updated_at": time.time()})
+
+    def record_llm_result(self, task_id, value):
+        """Received output only; preserve text if the following file archive is interrupted."""
+        with self._lock:
+            record = self.get(task_id)
+            if not record or record.get("type") != "llm" or record.get("status") != "running":
+                raise ValueError("Canvas text task is not running")
+            self._write({**record, "llm_result":value, "updated_at":time.time()})
 
     def recover(self) -> dict:
         """Startup-only, before accepting traffic; no provider/network calls."""
@@ -235,6 +243,11 @@ the authenticated gateway, not accepted from the public client unmodified.
 No provider work may start if either the receipt or owner commit fails.
 """
     user_id = enterprise_user_id if isinstance(enterprise_user_id, str) else ""
+    from enterprise.task_canvas_context import accepted_source
+    record = {**record}
+    source = accepted_source(record.pop('source', None), user_id, journal.root.parent / 'canvases')
+    if source:
+        record['source'] = source
     if user_id:
         from enterprise import db
         if db.get_user_by_id(user_id) is None:
@@ -242,7 +255,7 @@ No provider work may start if either the receipt or owner commit fails.
         journal.create({**record, "enterprise_user_id": user_id})
         db.record_canvas_image_task_owner(user_id, record["id"])
         db.record_task_owner(
-            user_id, {"online-image": "canvas_image", "comfy": "canvas_comfy", "video": "canvas_video"}[record["type"]],
+            user_id, {"online-image": "canvas_image", "comfy": "canvas_comfy", "video": "canvas_video", "llm": "canvas_llm"}[record["type"]],
             record["id"], source="durable_canvas_task_receipt", status="queued",
         )
         if db.get_canvas_image_task_owner(record["id"]) != user_id:

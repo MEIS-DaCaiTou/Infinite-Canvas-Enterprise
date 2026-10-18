@@ -5853,6 +5853,8 @@ async function loadCanvas(){
         updateProviderModels();
         applyViewport();
         render();
+        focusTaskSource();
+        resumeSmartLLMTasks();
         if(cleanedDetachedInputs || cleanedCompletedState || recoveredLoopOutputs || hiddenCompletedTimers) scheduleSave();
         resumeSmartPendingTasks();
         resumeJimengPendingNodes();
@@ -5894,6 +5896,7 @@ async function saveCanvas(){
         if(res.ok){
             const data = await res.json();
             if(data.canvas && data.canvas.updated_at) canvas.updated_at = data.canvas.updated_at;
+            return true;
         } else if(res.status === 409) {
             // 冲突：别人先保存了。合并对方的状态（节点 id 合并、图片取并集，谁都不丢），
             // 然后用对方最新的 updated_at 作为基底重存，把合并结果落盘——而不是直接覆盖对方。
@@ -5911,8 +5914,10 @@ async function saveCanvas(){
             }
             clearTimeout(saveTimer);
             saveTimer = setTimeout(saveCanvas, 300);
+            return 'retry';
         }
-    } catch(e) {} finally {
+        return false;
+    } catch(e) {return false;} finally {
         canvasSyncInFlight = false;
     }
 }
@@ -7022,7 +7027,7 @@ function promptNodeBodyHtml(node){
             </div>
             ${upstreamPromptHtml}
             <div class="prompt-node-llm-actions">
-                <button class="prompt-node-run prompt-node-control" type="button" ${node.running ? 'disabled' : ''}><i data-lucide="${node.running ? 'loader-2' : 'play'}"></i><span>${node.running ? escapeHtml(tr('common.running')) : escapeHtml(tr('common.run'))}</span></button>
+                <button title="${escapeAttr(CanvasLLMTasks.hint(node.llmTask))}" class="prompt-node-run prompt-node-control" type="button" ${node.running ? 'disabled' : ''}><i data-lucide="${node.running ? 'loader-2' : 'play'}"></i><span>${node.running ? escapeHtml(tr('common.running')) : escapeHtml(CanvasLLMTasks.label(node.llmTask,tr('common.run')))}</span></button>
                 <button class="prompt-node-pill prompt-node-control prompt-system-toggle ${node.llmSystemEnabled ? 'active' : ''}" type="button"><i data-lucide="${node.llmSystemEnabled ? 'toggle-right' : 'toggle-left'}"></i><span>${escapeHtml(node.llmSystemEnabled ? tr('smart.promptLlmDisableSystem') : tr('smart.promptLlmEnableSystem'))}</span></button>
             </div>
             ${node.llmSystemEnabled ? `<textarea class="prompt-node-control prompt-llm-system" placeholder="${escapeHtml(tr('smart.promptLlmSystemPlaceholder'))}">${escapeHtml(systemPrompt || 'You are a helpful prompt assistant.')}</textarea>` : ''}
@@ -13788,11 +13793,28 @@ function loadNodePromptDraftToInput(node){
         else setPromptText(node?.runPrompt || '');
     }
 }
-async function createSmartComfyTask(payload){
+async function taskCanvasSource(node){
+    const current=canvas;
+    const isCurrent=()=>canvas?.id===current?.id && nodes.some(value=>value.id===node?.id);
+    return TaskCanvasContext.source(current,node,async()=>{
+        while(canvasSyncInFlight && isCurrent())await sleep(50);
+        if(!isCurrent())return false;
+        return saveCanvas();
+    },isCurrent);
+}
+function focusTaskSource(){
+    TaskCanvasContext.focus(nodes,node=>{selectedId=node.id;selectedIds=[node.id];},node=>{
+        const rect=nodeRect(node);
+        centerViewportOnWorldPoint({x:rect.x+rect.width/2,y:rect.y+rect.height/2});
+        render();
+    });
+}
+async function createSmartComfyTask(payload,node){
+    const source=await taskCanvasSource(node);
     const res = await fetch('/api/canvas-comfy-tasks', {
         method:'POST',
         headers:{'Content-Type':'application/json'},
-        body:JSON.stringify(payload)
+        body:JSON.stringify({...payload,source})
     });
     if(!res.ok) throw new Error(await smartResponseErrorMessage(res, tr('smart.errRunFailed')));
     return res.json();
@@ -13810,8 +13832,8 @@ async function waitSmartComfyTaskResult(taskId){
         await sleep(1600);
     }
 }
-async function runQueuedSmartComfyGenerate(payload){
-    const task = await createSmartComfyTask(payload);
+async function runQueuedSmartComfyGenerate(payload,node){
+    const task = await createSmartComfyTask(payload,node);
     return waitSmartComfyTaskResult(task.task_id);
 }
 function comfyParamsFromWorkflowValues(config, values={}){ return ComfyWorkflowFields.paramsFromValues(config, values); }
@@ -13830,9 +13852,9 @@ function buildPromptRequestForNode(node, defaultImages, ctx=smartLoopContext){
 }
 async function generateUrlsForCurrentSettings(node, prompt, refs, runSettings=settings){
     const activeSettings = runSettings || settings;
-    if(activeSettings.engine === 'comfy') return generateComfyUrlsWithSettings(activeSettings, prompt, refs);
+    if(activeSettings.engine === 'comfy') return generateComfyUrlsWithSettings(activeSettings, prompt, refs,node);
     if(activeSettings.engine === 'runninghub' && runningHubSelectedModel(activeSettings)){
-        const taskResult = await runApiGeneration(prompt, refs, runningHubModelApiSettings(activeSettings));
+        const taskResult = await runApiGeneration(prompt, refs, runningHubModelApiSettings(activeSettings),{node});
         const taskIds = Array.isArray(taskResult?.taskIds) ? taskResult.taskIds : [];
         if(taskIds.length){
             const settled = await Promise.all(taskIds.map(taskId => pollSmartCanvasTask(taskId)));
@@ -13847,7 +13869,7 @@ async function generateUrlsForCurrentSettings(node, prompt, refs, runSettings=se
         return {urls, kind:'video', videoTaskId:urls.videoTaskId, videoAlreadyApplied:urls.videoAlreadyApplied};
     }
     if(isApiLikeEngine(activeSettings.engine)){
-        const taskResult = await runApiGeneration(prompt, refs, activeSettings);
+        const taskResult = await runApiGeneration(prompt, refs, activeSettings,{node});
         const taskIds = Array.isArray(taskResult?.taskIds) ? taskResult.taskIds : [];
         if(taskIds.length){
             const settled = await Promise.all(taskIds.map(taskId => pollSmartCanvasTask(taskId)));
@@ -13864,19 +13886,19 @@ async function generateUrlsForCurrentSettings(node, prompt, refs, runSettings=se
             : [];
     return {urls, kind:mediaKindForUrls(urls, 'image')};
 }
-async function generateComfyUrlsWithSettings(runSettings, prompt, refs){
+async function generateComfyUrlsWithSettings(runSettings, prompt, refs,node){
     const allRefs = refs || [];
     const imageRefs = imageRefsOnly(allRefs);
     const mode = runSettings.comfyMode || 'text';
     if(mode === 'text'){
-        const data = await runQueuedSmartComfyGenerate({prompt, width:Number(runSettings.width || 1024), height:Number(runSettings.height || 1024), workflow_json:'Z-Image.json', type:'zimage', client_id:smartClientId});
+        const data = await runQueuedSmartComfyGenerate({prompt, width:Number(runSettings.width || 1024), height:Number(runSettings.height || 1024), workflow_json:'Z-Image.json', type:'zimage', client_id:smartClientId},node);
         const urls = resultMediaUrls(data);
         return {urls, kind:mediaKindForUrls(urls, 'image')};
     }
     if(mode === 'enhance'){
         if(!imageRefs.length) throw new Error(tr('smart.errEnhanceNeedRefs'));
         const inputName = await comfyNameForRef(imageRefs[0],'Z-Image-Enhance.json');
-        const data = await runQueuedSmartComfyGenerate({workflow_json:'Z-Image-Enhance.json', type:'enhance', params:{"15":{image:inputName},"204":{value:Number(runSettings.enhanceStrength ?? 0.5)}}, client_id:smartClientId});
+        const data = await runQueuedSmartComfyGenerate({workflow_json:'Z-Image-Enhance.json', type:'enhance', params:{"15":{image:inputName},"204":{value:Number(runSettings.enhanceStrength ?? 0.5)}}, client_id:smartClientId},node);
         const urls = resultMediaUrls(data);
         return {urls, kind:mediaKindForUrls(urls, 'image')};
     }
@@ -13884,7 +13906,7 @@ async function generateComfyUrlsWithSettings(runSettings, prompt, refs){
         if(!imageRefs.length) throw new Error(tr('smart.errEditNeedRefs'));
         const names = [];
         for(const ref of imageRefs.slice(0, 3)) names.push(await comfyNameForRef(ref,'Flux2-Klein.json'));
-        const data = await runQueuedSmartComfyGenerate({prompt, workflow_json:'Flux2-Klein.json', type:'klein', params:{"168":{text:prompt},"158":{noise_seed:Math.floor(Math.random()*1000000)},"278":{image:names[0] || ""},"270":{image:names[1] || ""},"292":{image:names[2] || ""},"313":{value:Boolean(names[1])},"314":{value:Boolean(names[2])}}, client_id:smartClientId});
+        const data = await runQueuedSmartComfyGenerate({prompt, workflow_json:'Flux2-Klein.json', type:'klein', params:{"168":{text:prompt},"158":{noise_seed:Math.floor(Math.random()*1000000)},"278":{image:names[0] || ""},"270":{image:names[1] || ""},"292":{image:names[2] || ""},"313":{value:Boolean(names[1])},"314":{value:Boolean(names[2])}}, client_id:smartClientId},node);
         const urls = resultMediaUrls(data);
         return {urls, kind:mediaKindForUrls(urls, 'image')};
     }
@@ -13900,7 +13922,7 @@ async function generateComfyUrlsWithSettings(runSettings, prompt, refs){
         parameters:runSettings.comfyParams || {}, mediaName:ref=>comfyNameForRef(ref,workflowName,wf.config.backend), english:window.StudioI18n?.lang?.() === 'en',
         randomValue:field => comfyRandomEnabledField(field) && smartComfyRandomActiveFor(runSettings, field.id) ? smartComfyRandomValue(field) : undefined
     });
-    const result = await runQueuedSmartComfyGenerate({prompt, workflow_json:workflowName, backend:wf.config.backend, params:comfyParamsFromWorkflowValues(wf.config || {fields:[]}, values), workflow_values:values, type:'workflow-custom', client_id:smartClientId});
+    const result = await runQueuedSmartComfyGenerate({prompt, workflow_json:workflowName, backend:wf.config.backend, params:comfyParamsFromWorkflowValues(wf.config || {fields:[]}, values), workflow_values:values, type:'workflow-custom', client_id:smartClientId},node);
     const urls = ComfyOutputs.items(result);
     const fallbackKind = result.videos?.length ? 'video' : result.audios?.length ? 'audio' : result.texts?.length ? 'text' : 'image';
     return {urls, kind:mediaKindForUrls(urls, fallbackKind)};
@@ -14056,7 +14078,7 @@ async function runLoopRoundIntoSlot(loopNode, rootNode, outputSlot, loopIndex, c
         settings = previousSettings;
         let result;
         if(isApiLikeEngine(runSettings.engine) && runSettings.apiKind !== 'video'){
-            const taskResult = await runApiGeneration(prompt, request.refs || [], runSettings);
+            const taskResult = await runApiGeneration(prompt, request.refs || [], runSettings,{node:outputSlot});
             const taskIds = Array.isArray(taskResult?.taskIds) ? taskResult.taskIds : [];
             if(!taskIds.length) throw new Error(tr('smart.errRunFailed'));
             const existing = cleanHistoryImages(outputSlot.images || []);
@@ -14520,12 +14542,12 @@ async function runGeneration(){
         }
         const rhModelMode = settings.engine === 'runninghub' && Boolean(runningHubSelectedModel(settings));
         const outImages = rhModelMode
-            ? await runApiGeneration(prompt, refs, runningHubModelApiSettings(settings))
+            ? await runApiGeneration(prompt, refs, runningHubModelApiSettings(settings),{node})
             : settings.engine === 'runninghub'
                 ? await runRunningHubGeneration(prompt, refs)
                 : settings.engine === 'modelscope'
                 ? await runModelscopeGeneration(prompt, refs)
-                : await runApiGeneration(prompt, refs);
+                : await runApiGeneration(prompt, refs,settings,{node});
         if(isApiLikeEngine(settings.engine) || rhModelMode){
             const taskIds = Array.isArray(outImages?.taskIds) ? outImages.taskIds : [];
             if(!taskIds.length) throw new Error(tr('smart.errRunFailed'));
@@ -14602,9 +14624,39 @@ async function runGeneration(){
         render();
     }
 }
+async function runSmartLLMTask(node,payload){
+    const originId=canvas?.id,nodeId=node.id;
+    const current=()=>canvas?.id===originId ? nodes.find(value=>value.id===nodeId) : null;
+    return CanvasLLMTasks.run(payload,{
+        task:CanvasLLMTasks.pending(node.llmTask)?node.llmTask:null,
+        isCurrent:()=>Boolean(current()),prepare:async()=>taskCanvasSource(current()),
+        onState:ticket=>{
+            const target=current();if(!target)return;
+            if(ticket && target.llmTask?.id===ticket.id && target.llmTask.state===ticket.state && (target.llmTask.error || '')===(ticket.error || ''))return;
+            if(ticket)target.llmTask={...(target.llmTask?.id===ticket.id?target.llmTask:{}),...ticket};else delete target.llmTask;
+            scheduleSave();
+        },
+        onResult:async(result,taskId)=>{
+            const target=current();if(!target)return;
+            target.text=(result.text || '').trim();target.llmModel=result.model || target.llmModel;
+            target.llmTask={...target.llmTask,id:taskId,state:'succeeded',applied:true};target.running=false;
+            render();scheduleSave();
+        }
+    });
+}
+function resumeSmartLLMTasks(){
+    nodes.filter(node=>node.type==='smart-prompt' && CanvasLLMTasks.pending(node.llmTask)).forEach(node=>{
+        node.running=true;
+        runSmartLLMTask(node,null).catch(error=>{
+            if(error.name==='AbortError')return;
+            const target=nodes.find(value=>value.id===node.id);
+            if(target){target.running=false;render();scheduleSave();toast(error.message.slice(0,200));}
+        });
+    });
+}
 async function runPromptLLMNode(nodeId){
     const node = nodes.find(n => n.id === nodeId);
-    if(!node || node.type !== 'smart-prompt') return;
+    if(!node || node.type !== 'smart-prompt' || node.running) return;
     try { validateSmartTextInputs(node); }
     catch(error){ toast(error.message); return; }
     const message = promptNodeLLMInputText(node).trim();
@@ -14619,26 +14671,11 @@ async function runPromptLLMNode(nodeId){
         const mediaRefs = promptNodeInputMediaForLLM(node);
         const images = imageRefsOnly(mediaRefs).map(img => img.url).filter(Boolean);
         const videos = videoRefsOnly(mediaRefs).map(video => video.url).filter(Boolean);
-        const result = await fetch('/api/canvas-llm', {
-            method:'POST',
-            headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({
-                message,
-                messages:[],
-                images,
-                videos,
-                model,
-                provider,
-                ms_model: provider === 'modelscope' ? model : '',
-                system_prompt:node.llmSystemEnabled ? (systemPrompt || 'You are a helpful prompt assistant.') : ''
-            })
-        }).then(async r => {
-            if(!r.ok) throw new Error(await r.text());
-            return r.json();
+        await runSmartLLMTask(node,{
+            message,messages:[],images,videos,model,provider,
+            ms_model:provider==='modelscope'?model:'',
+            system_prompt:node.llmSystemEnabled ? (systemPrompt || 'You are a helpful prompt assistant.') : ''
         });
-        node.text = (result.text || '').trim();
-        node.llmProvider = provider;
-        node.llmModel = model;
         scheduleSave();
     } catch(e) {
         toast((e.message || tr('smart.promptLlmFailed')).slice(0, 160));
@@ -14648,10 +14685,11 @@ async function runPromptLLMNode(nodeId){
     }
 }
 function comfyFieldKind(field){ return ComfyWorkflowFields.kind(field); }
-async function runApiGeneration(prompt, refs, runSettings=settings){
+async function runApiGeneration(prompt, refs, runSettings=settings,{node}={}){
     if(!runSettings.provider_id || !runSettings.model) throw new Error(tr('smart.errNoApiModel'));
     const count = Math.max(1, Math.min(8, Number(runSettings.count || 1)));
-    const payload = {prompt, provider_id:runSettings.provider_id, model:runSettings.model, size:sizeForRun(runSettings), quality:runSettings.quality || 'auto', n:1, reference_images:imageRefsOnly(refs).slice(0, SMART_REFERENCE_IMAGE_MAX)};
+    const source=await taskCanvasSource(node);
+    const payload = {source,prompt, provider_id:runSettings.provider_id, model:runSettings.model, size:sizeForRun(runSettings), quality:runSettings.quality || 'auto', n:1, reference_images:imageRefsOnly(refs).slice(0, SMART_REFERENCE_IMAGE_MAX)};
     Object.assign(payload, window.CanvasModelPicker?.imageParameters(runSettings) || {});
     const tasks = await Promise.all(Array.from({length:count}, () => fetch('/api/canvas-image-tasks', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)}).then(async r => {
         if(!r.ok) throw new Error(await r.text());
@@ -14702,8 +14740,14 @@ async function runRunningHubGeneration(prompt, refs, runSettings=settings){
 }
 async function runApiVideoGeneration(prompt, refs, runSettings=settings, {node}={}){
     if(!runSettings.videoModel) throw new Error(tr('smart.errNoVideoModel'));
-    const sourceCanvas = canvas;
-    const isActive = () => canvas === sourceCanvas && (!node || nodes.includes(node));
+    const sourceCanvasId=canvas?.id,nodeId=node?.id;
+    const isActive = () => {
+        if(canvas?.id !== sourceCanvasId) return false;
+        if(!nodeId) return true;
+        const current=nodes.find(n=>n.id===nodeId);
+        if(!current) return false;
+        node=current;return true;
+    };
     let acceptedTaskId = '';
     try {
         const uploadedRefs = applyUploadedUrlsToSmartRefs(refs, runSettings);
@@ -14735,6 +14779,7 @@ async function runApiVideoGeneration(prompt, refs, runSettings=settings, {node}=
         const refAudios = audioRefsOnly(uploadedRefs).map(ref => effUrl(ref)).filter(Boolean).slice(0, 3);
         if(mismatchedAsset) toast('部分认证素材属于其它平台，已回退为普通素材。切换到对应平台的视频接口才能用 asset:// 认证地址。');
         const payload = {
+            source:await taskCanvasSource(node),
             prompt,
             provider_id: runSettings.videoProvider || 'comfly',
             model: runSettings.videoModel || 'veo3-fast',
@@ -14760,6 +14805,7 @@ async function runApiVideoGeneration(prompt, refs, runSettings=settings, {node}=
             startSmartPendingGenerationLog(node, smartRunSnapshot(node, prompt, refs, 'video'), node.runStartedAt || nowMs());
             render(); scheduleSave(); await saveCanvas();
         }});
+        if(!isActive()) throw Object.assign(new Error('已离开原视频输出节点'),{name:'AbortError'});
         if(result && result.jimeng_pending) throw new JimengPendingSignal({submitId:result.submit_id, kind:result.kind || 'video', queueInfo:result.queue_info, message:result.message});
         const urls=resultMediaUrls(result);
         urls.videoTaskId=acceptedTaskId;
@@ -14782,6 +14828,8 @@ async function runApiVideoGeneration(prompt, refs, runSettings=settings, {node}=
 }
 function completeSmartVideoTracking(node, taskId){
     if(!taskId || !node) return;
+    node=nodes.find(current=>current.id===node.id);
+    if(!node) return;
     node.pendingTasks=smartPendingTasks(node).filter(task => task.taskId!==taskId);
     node.pending=node.pendingTasks.length;
     if(!node.pending){delete node.pendingTasks; clearSmartPendingGenerationLog(node);}
@@ -14847,7 +14895,7 @@ async function runComfyGeneration(node, prompt, refs, pendingNode, meta){
         parameters:settings.comfyParams || {}, mediaName:ref=>comfyNameForRef(ref,workflowName,wf.config.backend), english:window.StudioI18n?.lang?.() === 'en',
         randomValue:field => comfyRandomEnabledField(field) && smartComfyRandomActive(field.id) ? smartComfyRandomValue(field) : undefined
     });
-    const result = await runQueuedSmartComfyGenerate({prompt, workflow_json:workflowName, backend:wf.config.backend, params:comfyParamsFromWorkflowValues(wf.config || {fields:[]}, values), workflow_values:values, type:'workflow-custom', client_id:smartClientId});
+    const result = await runQueuedSmartComfyGenerate({prompt, workflow_json:workflowName, backend:wf.config.backend, params:comfyParamsFromWorkflowValues(wf.config || {fields:[]}, values), workflow_values:values, type:'workflow-custom', client_id:smartClientId},node);
     const urls = ComfyOutputs.items(result);
     if(!urls.length) throw new Error(tr('smart.errComfyNoImages'));
     const kind = mediaKindForUrls(urls, result.videos?.length ? 'video' : result.audios?.length ? 'audio' : result.texts?.length ? 'text' : 'image');
@@ -14866,7 +14914,7 @@ async function runComfyGeneration(node, prompt, refs, pendingNode, meta){
     scheduleSave();
 }
 async function runComfyText(node, prompt, pendingNode, meta){
-    const data = await runQueuedSmartComfyGenerate({prompt, width:Number(settings.width || 1024), height:Number(settings.height || 1024), workflow_json:'Z-Image.json', type:'zimage', client_id:smartClientId});
+    const data = await runQueuedSmartComfyGenerate({prompt, width:Number(settings.width || 1024), height:Number(settings.height || 1024), workflow_json:'Z-Image.json', type:'zimage', client_id:smartClientId},node);
     const out = data.outputs || data.images || [];
     if(!out.length) throw new Error(tr('smart.errComfyNoImages'));
     if(pendingNode){
@@ -14882,7 +14930,7 @@ async function runComfyText(node, prompt, pendingNode, meta){
 async function runComfyEnhance(node, refs, pendingNode, meta){
     if(!refs.length) throw new Error(tr('smart.errEnhanceNeedRefs'));
     const inputName = await comfyNameForRef(refs[0],'Z-Image-Enhance.json');
-    const data = await runQueuedSmartComfyGenerate({workflow_json:'Z-Image-Enhance.json', type:'enhance', params:{"15":{image:inputName},"204":{value:Number(settings.enhanceStrength ?? 0.5)}}, client_id:smartClientId});
+    const data = await runQueuedSmartComfyGenerate({workflow_json:'Z-Image-Enhance.json', type:'enhance', params:{"15":{image:inputName},"204":{value:Number(settings.enhanceStrength ?? 0.5)}}, client_id:smartClientId},node);
     const out = data.outputs || data.images || [];
     if(!out.length) throw new Error(tr('smart.errComfyNoImages'));
     if(pendingNode){
@@ -14898,7 +14946,7 @@ async function runComfyEdit(node, prompt, refs, pendingNode, meta){
     if(!refs.length) throw new Error(tr('smart.errEditNeedRefs'));
     const names = [];
     for(const ref of refs.slice(0, 3)) names.push(await comfyNameForRef(ref,'Flux2-Klein.json'));
-    const data = await runQueuedSmartComfyGenerate({prompt, workflow_json:'Flux2-Klein.json', type:'klein', params:{"168":{text:prompt},"158":{noise_seed:Math.floor(Math.random()*1000000)},"278":{image:names[0] || ""},"270":{image:names[1] || ""},"292":{image:names[2] || ""},"313":{value:Boolean(names[1])},"314":{value:Boolean(names[2])}}, client_id:smartClientId});
+    const data = await runQueuedSmartComfyGenerate({prompt, workflow_json:'Flux2-Klein.json', type:'klein', params:{"168":{text:prompt},"158":{noise_seed:Math.floor(Math.random()*1000000)},"278":{image:names[0] || ""},"270":{image:names[1] || ""},"292":{image:names[2] || ""},"313":{value:Boolean(names[1])},"314":{value:Boolean(names[2])}}, client_id:smartClientId},node);
     const out = data.outputs || data.images || [];
     if(!out.length) throw new Error(tr('smart.errComfyNoImages'));
     if(pendingNode){
@@ -15073,17 +15121,22 @@ function providerIdForSmartTask(node, task){
     return task?.providerId || node?.runSettings?.provider_id || settings.provider_id || 'comfly';
 }
 async function querySmartImageTaskNow(nodeId, localTaskId){
-    const node = nodes.find(n => n.id === nodeId);
+    let node = nodes.find(n => n.id === nodeId);
     if(!node) return;
-    const task = smartPendingTasks(node).find(item => item.taskId === localTaskId) || smartRecoverableImageTask(node);
+    let task = smartPendingTasks(node).find(item => item.taskId === localTaskId) || smartRecoverableImageTask(node);
     if(!task || task.querying) return;
     const recoverTaskId = task.recoverTaskId || extractUpstreamTaskId(task.error || '');
     if(!recoverTaskId){
         toast('没有任务 ID，无法查询');
         return;
     }
-    const sourceCanvas=canvas;
-    const videoActive=() => canvas===sourceCanvas && nodes.includes(node) && smartPendingTasks(node).includes(task);
+    const sourceCanvasId=canvas?.id;
+    const videoActive=() => {
+        if(canvas?.id !== sourceCanvasId) return false;
+        const current=nodes.find(n=>n.id===nodeId), currentTask=smartPendingTasks(current).find(t=>t.taskId===localTaskId);
+        if(!current || !currentTask) return false;
+        node=current;task=currentTask;return true;
+    };
     task.querying = true;
     task.recoverTaskId = recoverTaskId;
     render();
@@ -15126,7 +15179,11 @@ async function querySmartImageTaskNow(nodeId, localTaskId){
         task.error = e.message || '查询失败';
         toast(task.error.slice(0, 160));
     } finally {
-        if(task.taskType === 'video' && (canvas !== sourceCanvas || !nodes.includes(node))) return;
+        if(task.taskType === 'video'){
+            if(canvas?.id !== sourceCanvasId) return;
+            node=nodes.find(n=>n.id===nodeId);
+            if(!node) return;
+        }
         const latest = smartPendingTasks(node).find(item => item.taskId === localTaskId);
         if(latest) latest.querying = false;
         render();
@@ -15282,6 +15339,7 @@ function finalizeSmartPendingTask(node, taskId, images, kind='image', options={}
 async function resumeSmartPendingNode(node, logContext={}){
     const tasks = smartPendingTasks(node);
     if(!node || !tasks.length) return;
+    const sourceCanvasId=canvas?.id,nodeId=node.id;
     const logTaskFailure = (message, task) => {
         if(!logContext?.run || !message) return;
         const runMs = Math.max(0, nowMs() - Number(logContext.runLogStart || nowMs()));
@@ -15298,9 +15356,15 @@ async function resumeSmartPendingNode(node, logContext={}){
     const failures = [];
     await Promise.all(tasks.map(async task => {
         if(task.failed && task.recoverTaskId) return;
+        const sourceCanvas=canvas,taskId=task.taskId;
+        const isActive=() => {
+            if(task.taskType !== 'video') return canvas===sourceCanvas && nodes.includes(node);
+            if(canvas?.id !== sourceCanvasId) return false;
+            const current=nodes.find(n=>n.id===nodeId),currentTask=smartPendingTasks(current).find(t=>t.taskId===taskId);
+            if(!current || !currentTask) return false;
+            node=current;task=currentTask;return true;
+        };
         try {
-            const sourceCanvas=canvas;
-            const isActive=() => canvas===sourceCanvas && nodes.includes(node);
             const result = task.taskType === 'video'
                 ? await CanvasTaskQuery.waitVideo(task.taskId,{isActive})
                 : await pollSmartCanvasTask(task.taskId);
@@ -15310,6 +15374,7 @@ async function resumeSmartPendingNode(node, logContext={}){
             render();
             scheduleSave();
         } catch(e) {
+            if(task.taskType === 'video' && !isActive()) return;
             if(task.taskType === 'video' && !e.jimengPending){
                 if(nodes.includes(node) && e.name !== 'AbortError'){
                     Object.assign(task,{failed:true, querying:false, recoverTaskId:task.taskId, canReconcile:e.canReconcile, error:e.message});
@@ -17086,6 +17151,17 @@ document.addEventListener('click',event=>{
 },true);
 
 GenerationTaskCenter.attach({
+    canvasContext:()=>{const id=canvas?.id;return {id,isCurrent:()=>canvas?.id===id};},
+    addResult:async(item,task)=>{
+        let node;
+        if(item.kind==='text'){
+            const text=item.text;
+            const point=viewportCenter();node=createPromptNode(point.x,point.y);node.text=text;
+        }else{
+            node=createImageNodeAt(viewportCenter(),[{...item}]);
+        }
+        if(node){Object.assign(node,{sourceTaskId:task.id,sourceResultId:item.result_id || item.url});render();scheduleSave();}
+    },
     modalId:'smartLogModal',listId:'smartLogList',
     previewMedia:item=>smartLogPreviewNode(item.url,item.kind),
     createPrompt:(text,result)=>{

@@ -84,5 +84,5 @@
         const result = await waitVideo(taskId, options);
         return result;
     }
-    window.CanvasTaskQuery = {query, runVideo, waitVideo, queryVideo};
+    window.CanvasTaskQuery = {query, runVideo, waitVideo, queryVideo, requestId};
 })();

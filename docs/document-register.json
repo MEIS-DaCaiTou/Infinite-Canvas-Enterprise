@@ -2,7 +2,7 @@
   "schema_version": "enterprise-documents-v1",
   "reviewed_at": "2026-10-18",
   "audit_base_commit": "39f4b02d232142c4ede66f0133b759b32178d70f",
-  "scope": "Main 73d2b67 includes merged #163/#168/#169/#171; post-merge main Documentation and Enterprise/Runtime CI both succeeded. Current candidate persists accepted video task bindings in both canvases, reconnects original results after reopen, retains history and ignores stale replies after navigation. Independent review finding fixed and targeted re-review passed. No new page, schema, paid call, release or production operation. RunningHub #170 remains Draft/deferred; formal release remains v2026.10.2.",
+  "scope": "Main 73d2b67 remains unchanged. The approved canvas LLM durable-task candidate builds on pending #174 head9309e52, reusing existing provenance, journal, owner policy, task center and text results. #172/#173/#174 remain separate Drafts and #170 deferred. Current synchronous chat has no implemented provider query ID: page reload reads the platform task, unknown work is not resubmitted, and received text can be archived locally after interruption. No schema, release, production operation or second roadmap. Formal release remains v2026.10.2.",
   "documents": [
     {
       "path": ".github/PULL_REQUEST_TEMPLATE.md",
