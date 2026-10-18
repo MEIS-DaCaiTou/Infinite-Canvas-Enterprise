@@ -5853,6 +5853,7 @@ async function loadCanvas(){
         updateProviderModels();
         applyViewport();
         render();
+        focusTaskSource();
         if(cleanedDetachedInputs || cleanedCompletedState || recoveredLoopOutputs || hiddenCompletedTimers) scheduleSave();
         resumeSmartPendingTasks();
         resumeJimengPendingNodes();
@@ -5894,6 +5895,7 @@ async function saveCanvas(){
         if(res.ok){
             const data = await res.json();
             if(data.canvas && data.canvas.updated_at) canvas.updated_at = data.canvas.updated_at;
+            return true;
         } else if(res.status === 409) {
             // 冲突：别人先保存了。合并对方的状态（节点 id 合并、图片取并集，谁都不丢），
             // 然后用对方最新的 updated_at 作为基底重存，把合并结果落盘——而不是直接覆盖对方。
@@ -5911,8 +5913,10 @@ async function saveCanvas(){
             }
             clearTimeout(saveTimer);
             saveTimer = setTimeout(saveCanvas, 300);
+            return 'retry';
         }
-    } catch(e) {} finally {
+        return false;
+    } catch(e) {return false;} finally {
         canvasSyncInFlight = false;
     }
 }
@@ -13788,11 +13792,28 @@ function loadNodePromptDraftToInput(node){
         else setPromptText(node?.runPrompt || '');
     }
 }
-async function createSmartComfyTask(payload){
+async function taskCanvasSource(node){
+    const current=canvas;
+    const isCurrent=()=>canvas?.id===current?.id && nodes.some(value=>value.id===node?.id);
+    return TaskCanvasContext.source(current,node,async()=>{
+        while(canvasSyncInFlight && isCurrent())await sleep(50);
+        if(!isCurrent())return false;
+        return saveCanvas();
+    },isCurrent);
+}
+function focusTaskSource(){
+    TaskCanvasContext.focus(nodes,node=>{selectedId=node.id;selectedIds=[node.id];},node=>{
+        const rect=nodeRect(node);
+        centerViewportOnWorldPoint({x:rect.x+rect.width/2,y:rect.y+rect.height/2});
+        render();
+    });
+}
+async function createSmartComfyTask(payload,node){
+    const source=await taskCanvasSource(node);
     const res = await fetch('/api/canvas-comfy-tasks', {
         method:'POST',
         headers:{'Content-Type':'application/json'},
-        body:JSON.stringify(payload)
+        body:JSON.stringify({...payload,source})
     });
     if(!res.ok) throw new Error(await smartResponseErrorMessage(res, tr('smart.errRunFailed')));
     return res.json();
@@ -13810,8 +13831,8 @@ async function waitSmartComfyTaskResult(taskId){
         await sleep(1600);
     }
 }
-async function runQueuedSmartComfyGenerate(payload){
-    const task = await createSmartComfyTask(payload);
+async function runQueuedSmartComfyGenerate(payload,node){
+    const task = await createSmartComfyTask(payload,node);
     return waitSmartComfyTaskResult(task.task_id);
 }
 function comfyParamsFromWorkflowValues(config, values={}){ return ComfyWorkflowFields.paramsFromValues(config, values); }
@@ -13830,9 +13851,9 @@ function buildPromptRequestForNode(node, defaultImages, ctx=smartLoopContext){
 }
 async function generateUrlsForCurrentSettings(node, prompt, refs, runSettings=settings){
     const activeSettings = runSettings || settings;
-    if(activeSettings.engine === 'comfy') return generateComfyUrlsWithSettings(activeSettings, prompt, refs);
+    if(activeSettings.engine === 'comfy') return generateComfyUrlsWithSettings(activeSettings, prompt, refs,node);
     if(activeSettings.engine === 'runninghub' && runningHubSelectedModel(activeSettings)){
-        const taskResult = await runApiGeneration(prompt, refs, runningHubModelApiSettings(activeSettings));
+        const taskResult = await runApiGeneration(prompt, refs, runningHubModelApiSettings(activeSettings),{node});
         const taskIds = Array.isArray(taskResult?.taskIds) ? taskResult.taskIds : [];
         if(taskIds.length){
             const settled = await Promise.all(taskIds.map(taskId => pollSmartCanvasTask(taskId)));
@@ -13843,10 +13864,10 @@ async function generateUrlsForCurrentSettings(node, prompt, refs, runSettings=se
         return {urls, kind:mediaKindForUrls(urls, 'image')};
     }
     if(isApiLikeEngine(activeSettings.engine) && activeSettings.apiKind === 'video'){
-        return {urls:await runApiVideoGeneration(prompt, refs, activeSettings), kind:'video'};
+        return {urls:await runApiVideoGeneration(prompt, refs, activeSettings,{node}), kind:'video'};
     }
     if(isApiLikeEngine(activeSettings.engine)){
-        const taskResult = await runApiGeneration(prompt, refs, activeSettings);
+        const taskResult = await runApiGeneration(prompt, refs, activeSettings,{node});
         const taskIds = Array.isArray(taskResult?.taskIds) ? taskResult.taskIds : [];
         if(taskIds.length){
             const settled = await Promise.all(taskIds.map(taskId => pollSmartCanvasTask(taskId)));
@@ -13863,19 +13884,19 @@ async function generateUrlsForCurrentSettings(node, prompt, refs, runSettings=se
             : [];
     return {urls, kind:mediaKindForUrls(urls, 'image')};
 }
-async function generateComfyUrlsWithSettings(runSettings, prompt, refs){
+async function generateComfyUrlsWithSettings(runSettings, prompt, refs,node){
     const allRefs = refs || [];
     const imageRefs = imageRefsOnly(allRefs);
     const mode = runSettings.comfyMode || 'text';
     if(mode === 'text'){
-        const data = await runQueuedSmartComfyGenerate({prompt, width:Number(runSettings.width || 1024), height:Number(runSettings.height || 1024), workflow_json:'Z-Image.json', type:'zimage', client_id:smartClientId});
+        const data = await runQueuedSmartComfyGenerate({prompt, width:Number(runSettings.width || 1024), height:Number(runSettings.height || 1024), workflow_json:'Z-Image.json', type:'zimage', client_id:smartClientId},node);
         const urls = resultMediaUrls(data);
         return {urls, kind:mediaKindForUrls(urls, 'image')};
     }
     if(mode === 'enhance'){
         if(!imageRefs.length) throw new Error(tr('smart.errEnhanceNeedRefs'));
         const inputName = await comfyNameForRef(imageRefs[0],'Z-Image-Enhance.json');
-        const data = await runQueuedSmartComfyGenerate({workflow_json:'Z-Image-Enhance.json', type:'enhance', params:{"15":{image:inputName},"204":{value:Number(runSettings.enhanceStrength ?? 0.5)}}, client_id:smartClientId});
+        const data = await runQueuedSmartComfyGenerate({workflow_json:'Z-Image-Enhance.json', type:'enhance', params:{"15":{image:inputName},"204":{value:Number(runSettings.enhanceStrength ?? 0.5)}}, client_id:smartClientId},node);
         const urls = resultMediaUrls(data);
         return {urls, kind:mediaKindForUrls(urls, 'image')};
     }
@@ -13883,7 +13904,7 @@ async function generateComfyUrlsWithSettings(runSettings, prompt, refs){
         if(!imageRefs.length) throw new Error(tr('smart.errEditNeedRefs'));
         const names = [];
         for(const ref of imageRefs.slice(0, 3)) names.push(await comfyNameForRef(ref,'Flux2-Klein.json'));
-        const data = await runQueuedSmartComfyGenerate({prompt, workflow_json:'Flux2-Klein.json', type:'klein', params:{"168":{text:prompt},"158":{noise_seed:Math.floor(Math.random()*1000000)},"278":{image:names[0] || ""},"270":{image:names[1] || ""},"292":{image:names[2] || ""},"313":{value:Boolean(names[1])},"314":{value:Boolean(names[2])}}, client_id:smartClientId});
+        const data = await runQueuedSmartComfyGenerate({prompt, workflow_json:'Flux2-Klein.json', type:'klein', params:{"168":{text:prompt},"158":{noise_seed:Math.floor(Math.random()*1000000)},"278":{image:names[0] || ""},"270":{image:names[1] || ""},"292":{image:names[2] || ""},"313":{value:Boolean(names[1])},"314":{value:Boolean(names[2])}}, client_id:smartClientId},node);
         const urls = resultMediaUrls(data);
         return {urls, kind:mediaKindForUrls(urls, 'image')};
     }
@@ -13899,7 +13920,7 @@ async function generateComfyUrlsWithSettings(runSettings, prompt, refs){
         parameters:runSettings.comfyParams || {}, mediaName:ref=>comfyNameForRef(ref,workflowName,wf.config.backend), english:window.StudioI18n?.lang?.() === 'en',
         randomValue:field => comfyRandomEnabledField(field) && smartComfyRandomActiveFor(runSettings, field.id) ? smartComfyRandomValue(field) : undefined
     });
-    const result = await runQueuedSmartComfyGenerate({prompt, workflow_json:workflowName, backend:wf.config.backend, params:comfyParamsFromWorkflowValues(wf.config || {fields:[]}, values), workflow_values:values, type:'workflow-custom', client_id:smartClientId});
+    const result = await runQueuedSmartComfyGenerate({prompt, workflow_json:workflowName, backend:wf.config.backend, params:comfyParamsFromWorkflowValues(wf.config || {fields:[]}, values), workflow_values:values, type:'workflow-custom', client_id:smartClientId},node);
     const urls = ComfyOutputs.items(result);
     const fallbackKind = result.videos?.length ? 'video' : result.audios?.length ? 'audio' : result.texts?.length ? 'text' : 'image';
     return {urls, kind:mediaKindForUrls(urls, fallbackKind)};
@@ -14051,7 +14072,7 @@ async function runLoopRoundIntoSlot(loopNode, rootNode, outputSlot, loopIndex, c
         settings = previousSettings;
         let result;
         if(isApiLikeEngine(runSettings.engine) && runSettings.apiKind !== 'video'){
-            const taskResult = await runApiGeneration(prompt, request.refs || [], runSettings);
+            const taskResult = await runApiGeneration(prompt, request.refs || [], runSettings,{node:outputSlot});
             const taskIds = Array.isArray(taskResult?.taskIds) ? taskResult.taskIds : [];
             if(!taskIds.length) throw new Error(tr('smart.errRunFailed'));
             const existing = cleanHistoryImages(outputSlot.images || []);
@@ -14500,7 +14521,7 @@ async function runGeneration(){
             return;
         }
         if(isApiLikeEngine(settings.engine) && settings.apiKind === 'video'){
-            const outVideos = await runApiVideoGeneration(prompt, refs);
+            const outVideos = await runApiVideoGeneration(prompt, refs,settings,{node});
             if(!outVideos.length) throw new Error(tr('smart.errNoOutVideos'));
             finalizePendingNode(pendingNode, outVideos, pendingMeta, 'video');
             if(sourceVisualState) restoreSourceVisualState(node, sourceVisualState);
@@ -14512,12 +14533,12 @@ async function runGeneration(){
         }
         const rhModelMode = settings.engine === 'runninghub' && Boolean(runningHubSelectedModel(settings));
         const outImages = rhModelMode
-            ? await runApiGeneration(prompt, refs, runningHubModelApiSettings(settings))
+            ? await runApiGeneration(prompt, refs, runningHubModelApiSettings(settings),{node})
             : settings.engine === 'runninghub'
                 ? await runRunningHubGeneration(prompt, refs)
                 : settings.engine === 'modelscope'
                 ? await runModelscopeGeneration(prompt, refs)
-                : await runApiGeneration(prompt, refs);
+                : await runApiGeneration(prompt, refs,settings,{node});
         if(isApiLikeEngine(settings.engine) || rhModelMode){
             const taskIds = Array.isArray(outImages?.taskIds) ? outImages.taskIds : [];
             if(!taskIds.length) throw new Error(tr('smart.errRunFailed'));
@@ -14635,10 +14656,11 @@ async function runPromptLLMNode(nodeId){
     }
 }
 function comfyFieldKind(field){ return ComfyWorkflowFields.kind(field); }
-async function runApiGeneration(prompt, refs, runSettings=settings){
+async function runApiGeneration(prompt, refs, runSettings=settings,{node}={}){
     if(!runSettings.provider_id || !runSettings.model) throw new Error(tr('smart.errNoApiModel'));
     const count = Math.max(1, Math.min(8, Number(runSettings.count || 1)));
-    const payload = {prompt, provider_id:runSettings.provider_id, model:runSettings.model, size:sizeForRun(runSettings), quality:runSettings.quality || 'auto', n:1, reference_images:imageRefsOnly(refs).slice(0, SMART_REFERENCE_IMAGE_MAX)};
+    const source=await taskCanvasSource(node);
+    const payload = {source,prompt, provider_id:runSettings.provider_id, model:runSettings.model, size:sizeForRun(runSettings), quality:runSettings.quality || 'auto', n:1, reference_images:imageRefsOnly(refs).slice(0, SMART_REFERENCE_IMAGE_MAX)};
     Object.assign(payload, window.CanvasModelPicker?.imageParameters(runSettings) || {});
     const tasks = await Promise.all(Array.from({length:count}, () => fetch('/api/canvas-image-tasks', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)}).then(async r => {
         if(!r.ok) throw new Error(await r.text());
@@ -14687,7 +14709,7 @@ async function runRunningHubGeneration(prompt, refs, runSettings=settings){
     }
     throw new Error(tr('smart.rhTimeout'));
 }
-async function runApiVideoGeneration(prompt, refs, runSettings=settings){
+async function runApiVideoGeneration(prompt, refs, runSettings=settings,{node}={}){
     if(!runSettings.videoModel) throw new Error(tr('smart.errNoVideoModel'));
     try {
         const uploadedRefs = applyUploadedUrlsToSmartRefs(refs, runSettings);
@@ -14719,6 +14741,7 @@ async function runApiVideoGeneration(prompt, refs, runSettings=settings){
         const refAudios = audioRefsOnly(uploadedRefs).map(ref => effUrl(ref)).filter(Boolean).slice(0, 3);
         if(mismatchedAsset) toast('部分认证素材属于其它平台，已回退为普通素材。切换到对应平台的视频接口才能用 asset:// 认证地址。');
         const payload = {
+            source:await taskCanvasSource(node),
             prompt,
             provider_id: runSettings.videoProvider || 'comfly',
             model: runSettings.videoModel || 'veo3-fast',
@@ -14804,7 +14827,7 @@ async function runComfyGeneration(node, prompt, refs, pendingNode, meta){
         parameters:settings.comfyParams || {}, mediaName:ref=>comfyNameForRef(ref,workflowName,wf.config.backend), english:window.StudioI18n?.lang?.() === 'en',
         randomValue:field => comfyRandomEnabledField(field) && smartComfyRandomActive(field.id) ? smartComfyRandomValue(field) : undefined
     });
-    const result = await runQueuedSmartComfyGenerate({prompt, workflow_json:workflowName, backend:wf.config.backend, params:comfyParamsFromWorkflowValues(wf.config || {fields:[]}, values), workflow_values:values, type:'workflow-custom', client_id:smartClientId});
+    const result = await runQueuedSmartComfyGenerate({prompt, workflow_json:workflowName, backend:wf.config.backend, params:comfyParamsFromWorkflowValues(wf.config || {fields:[]}, values), workflow_values:values, type:'workflow-custom', client_id:smartClientId},node);
     const urls = ComfyOutputs.items(result);
     if(!urls.length) throw new Error(tr('smart.errComfyNoImages'));
     const kind = mediaKindForUrls(urls, result.videos?.length ? 'video' : result.audios?.length ? 'audio' : result.texts?.length ? 'text' : 'image');
@@ -14823,7 +14846,7 @@ async function runComfyGeneration(node, prompt, refs, pendingNode, meta){
     scheduleSave();
 }
 async function runComfyText(node, prompt, pendingNode, meta){
-    const data = await runQueuedSmartComfyGenerate({prompt, width:Number(settings.width || 1024), height:Number(settings.height || 1024), workflow_json:'Z-Image.json', type:'zimage', client_id:smartClientId});
+    const data = await runQueuedSmartComfyGenerate({prompt, width:Number(settings.width || 1024), height:Number(settings.height || 1024), workflow_json:'Z-Image.json', type:'zimage', client_id:smartClientId},node);
     const out = data.outputs || data.images || [];
     if(!out.length) throw new Error(tr('smart.errComfyNoImages'));
     if(pendingNode){
@@ -14839,7 +14862,7 @@ async function runComfyText(node, prompt, pendingNode, meta){
 async function runComfyEnhance(node, refs, pendingNode, meta){
     if(!refs.length) throw new Error(tr('smart.errEnhanceNeedRefs'));
     const inputName = await comfyNameForRef(refs[0],'Z-Image-Enhance.json');
-    const data = await runQueuedSmartComfyGenerate({workflow_json:'Z-Image-Enhance.json', type:'enhance', params:{"15":{image:inputName},"204":{value:Number(settings.enhanceStrength ?? 0.5)}}, client_id:smartClientId});
+    const data = await runQueuedSmartComfyGenerate({workflow_json:'Z-Image-Enhance.json', type:'enhance', params:{"15":{image:inputName},"204":{value:Number(settings.enhanceStrength ?? 0.5)}}, client_id:smartClientId},node);
     const out = data.outputs || data.images || [];
     if(!out.length) throw new Error(tr('smart.errComfyNoImages'));
     if(pendingNode){
@@ -14855,7 +14878,7 @@ async function runComfyEdit(node, prompt, refs, pendingNode, meta){
     if(!refs.length) throw new Error(tr('smart.errEditNeedRefs'));
     const names = [];
     for(const ref of refs.slice(0, 3)) names.push(await comfyNameForRef(ref,'Flux2-Klein.json'));
-    const data = await runQueuedSmartComfyGenerate({prompt, workflow_json:'Flux2-Klein.json', type:'klein', params:{"168":{text:prompt},"158":{noise_seed:Math.floor(Math.random()*1000000)},"278":{image:names[0] || ""},"270":{image:names[1] || ""},"292":{image:names[2] || ""},"313":{value:Boolean(names[1])},"314":{value:Boolean(names[2])}}, client_id:smartClientId});
+    const data = await runQueuedSmartComfyGenerate({prompt, workflow_json:'Flux2-Klein.json', type:'klein', params:{"168":{text:prompt},"158":{noise_seed:Math.floor(Math.random()*1000000)},"278":{image:names[0] || ""},"270":{image:names[1] || ""},"292":{image:names[2] || ""},"313":{value:Boolean(names[1])},"314":{value:Boolean(names[2])}}, client_id:smartClientId},node);
     const out = data.outputs || data.images || [];
     if(!out.length) throw new Error(tr('smart.errComfyNoImages'));
     if(pendingNode){
@@ -17016,6 +17039,17 @@ document.addEventListener('click',event=>{
 },true);
 
 GenerationTaskCenter.attach({
+    canvasContext:()=>{const id=canvas?.id;return {id,isCurrent:()=>canvas?.id===id};},
+    addResult:async(item,task)=>{
+        let node;
+        if(item.kind==='text'){
+            const text=item.text;
+            const point=viewportCenter();node=createPromptNode(point.x,point.y);node.text=text;
+        }else{
+            node=createImageNodeAt(viewportCenter(),[{...item}]);
+        }
+        if(node){Object.assign(node,{sourceTaskId:task.id,sourceResultId:item.result_id || item.url});render();scheduleSave();}
+    },
     modalId:'smartLogModal',listId:'smartLogList',
     previewMedia:item=>smartLogPreviewNode(item.url,item.kind),
     createPrompt:(text,result)=>{

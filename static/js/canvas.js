@@ -1430,11 +1430,11 @@ async function saveCanvas(){
                 lastCanvasUpdatedAt = Number(data.detail?.updated_at || data.updated_at || remote?.updated_at || lastCanvasUpdatedAt || 0);
                 saveCanvasAgain = true;
                 setStatus('Saving...');
-                return;
+                return 'retry';
             }
             if(remote) applyRemoteCanvasData(remote);
             setStatus('Synced');
-            return;
+            return 'retry';
         }
         if(!res.ok) throw new Error('save failed');
         const data = await res.json().catch(() => ({}));
@@ -1447,9 +1447,11 @@ async function saveCanvas(){
         if(currentCanvasTime) currentCanvasTime.textContent = formatCanvasTime(canvas.updated_at);
         setStatus('Saved');
         loadCanvasList(false);
+        return true;
     } catch(e) {
         setStatus('Save failed');
         console.error(e);
+        return false;
     } finally {
         savingCanvasNow = false;
         if(saveCanvasAgain && canvas && !applyingRemoteCanvas){
@@ -2031,6 +2033,7 @@ async function openCanvas(id){
         setCanvasMode(true);
         renderCanvasList();
         render();
+        focusTaskSource();
         resumeCanvasImageTasks();
         startCanvasRemotePolling();
         setStatus('Ready');
@@ -9964,7 +9967,7 @@ async function runRhModelNode(node, opts={}){
         setTimeout(() => { node.running = false; refreshRunNodes(node, out); }, 2000);
     }
     try {
-        const taskInfos = await Promise.all(Array.from({length:count}, () => createCanvasImageTask(payload, {cascadeTargetId})));
+        const taskInfos = await Promise.all(Array.from({length:count}, () => createCanvasImageTask(payload, {cascadeTargetId,sourceNode:node})));
         if(!out){
             let outputs = [];
             for(const task of taskInfos){
@@ -10481,7 +10484,7 @@ async function runGenerator(genId, opts={}){
         setTimeout(() => { gen.running = false; refreshRunNodes(gen, out); }, 2000);
     }
     try {
-        const taskInfos = await Promise.all(Array.from({length:count}, () => createCanvasImageTask(payload, {cascadeTargetId})));
+        const taskInfos = await Promise.all(Array.from({length:count}, () => createCanvasImageTask(payload, {cascadeTargetId,sourceNode:gen})));
         if(!out){
             let outputs = [];
             for(const task of taskInfos){
@@ -10618,6 +10621,7 @@ async function runVideoNode(nodeId, opts={}){
     else refreshRunNodes(node, out);
     try {
         const result = await CanvasTaskQuery.runVideo({
+                source:await taskCanvasSource(node),
                 prompt,
                 provider_id:resolveVideoProviderId(node.apiProvider || 'comfly'),
                 model:node.model || 'veo3-fast',
@@ -11287,7 +11291,7 @@ async function runLTXDirectorNode(nodeId, opts={}){
             params,
             type:'ltx-director',
             client_id:CLIENT_ID
-        }, {cascadeTargetId});
+        }, {cascadeTargetId,sourceNode:node});
         run.request = requestMetaFromResult(result);
         if(result.error) throw new Error(result.error);
         const outputs = comfyResultOutputs(result);
@@ -11372,7 +11376,7 @@ async function runComfyNode(nodeId, opts={}){
                 workflow_json:'Z-Image.json',
                 type:'zimage',
                 client_id:CLIENT_ID
-            }, {cascadeTargetId});
+            }, {cascadeTargetId,sourceNode:node});
             run.request = requestMetaFromResult(result);
             images = comfyResultOutputs(result);
         } else if(mode === 'enhance'){
@@ -11386,7 +11390,7 @@ async function runComfyNode(nodeId, opts={}){
                 },
                 type:'enhance',
                 client_id:CLIENT_ID
-            }, {cascadeTargetId});
+            }, {cascadeTargetId,sourceNode:node});
             run.request = requestMetaFromResult(enhance);
             if(enhance.error) throw new Error(actionFailed('canvas.comfyEnhance', enhance.error));
             if(!enhance.images?.length) throw new Error(noReturnedImage('canvas.comfyEnhance'));
@@ -11419,7 +11423,7 @@ async function runComfyNode(nodeId, opts={}){
                 workflow_values:values,
                 type:'workflow-custom',
                 client_id:CLIENT_ID
-            }, {cascadeTargetId});
+            }, {cascadeTargetId,sourceNode:node});
             run.request = requestMetaFromResult(result);
             if(result.error) throw new Error(actionFailed('canvas.comfyCustom', result.error));
             images = comfyResultOutputs(result);
@@ -11442,7 +11446,7 @@ async function runComfyNode(nodeId, opts={}){
                     "314": { value:Boolean(names[2]) }
                 },
                 client_id:CLIENT_ID
-            }, {cascadeTargetId});
+            }, {cascadeTargetId,sourceNode:node});
             run.request = requestMetaFromResult(result);
             if(result.error) throw new Error(actionFailed('canvas.comfyEdit', result.error));
             if(!result.images?.length) throw new Error(noReturnedImage('canvas.comfyEdit'));
@@ -12290,20 +12294,38 @@ function findPendingTask(taskId){
     }
     return null;
 }
+async function taskCanvasSource(node){
+    const current=canvas;
+    const isCurrent=()=>canvas?.id===current?.id && nodes.some(value=>value.id===node?.id);
+    return TaskCanvasContext.source(current,node,async()=>{
+        while(savingCanvasNow && isCurrent())await sleep(50);
+        if(!isCurrent())return false;
+        return saveCanvas();
+    },isCurrent);
+}
+function focusTaskSource(){
+    TaskCanvasContext.focus(nodes,node=>{selected=new Set([node.id]);},node=>{
+        const rect=nodeRect(node);
+        centerViewportOnWorldPoint({x:rect.cx,y:rect.cy});
+        render();
+    });
+}
 async function createCanvasImageTask(payload, options={}){
+    const source=await taskCanvasSource(options.sourceNode);
     const res = await cascadeFetch('/api/canvas-image-tasks', {
         method:'POST',
         headers:{'Content-Type':'application/json'},
-        body:JSON.stringify(payload)
+        body:JSON.stringify({...payload,source})
     }, options);
     if(!res.ok) throw new Error(await responseErrorMessage(res, tr('canvas.generationFailed')));
     return res.json();
 }
 async function createCanvasComfyTask(payload, options={}){
+    const source=await taskCanvasSource(options.sourceNode);
     const res = await cascadeFetch('/api/canvas-comfy-tasks', {
         method:'POST',
         headers:{'Content-Type':'application/json'},
-        body:JSON.stringify(payload)
+        body:JSON.stringify({...payload,source})
     }, options);
     if(!res.ok) throw new Error(await responseErrorMessage(res, actionFailed('canvas.comfyGenerate')));
     return res.json();
@@ -14863,6 +14885,17 @@ function checkTextSelection(node,options={}){
 }
 
 GenerationTaskCenter.attach({
+    canvasContext:()=>{const id=canvas?.id;return {id,isCurrent:()=>canvas?.id===id};},
+    addResult:async(item,task)=>{
+        let node;
+        if(item.kind==='text'){
+            const text=item.text;
+            node=addPromptNode();if(node)node.text=text;
+        }else{
+            node=addImageNode();if(node)Object.assign(node,{url:item.url,name:item.name || '任务结果',mediaKind:item.kind});
+        }
+        if(node){Object.assign(node,{sourceTaskId:task.id,sourceResultId:item.result_id || item.url});render();scheduleSave();}
+    },
     modalId:'logModal',listId:'logList',
     previewMedia:item=>openOutputLightbox(item.url,null),
     createPrompt:(text,result)=>{

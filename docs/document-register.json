@@ -1,8 +1,8 @@
 {
   "schema_version": "enterprise-documents-v1",
-  "reviewed_at": "2026-10-17",
+  "reviewed_at": "2026-10-18",
   "audit_base_commit": "39f4b02d232142c4ede66f0133b759b32178d70f",
-  "scope": "Main cb057b12 includes #163 accepted-image/Comfy recovery and #169 durable video tasks after owner approval; both post-merge main CI runs succeeded separately. #168 model dialog/workflow availability candidate integrates that main. A scoped follow-up restores background tracking after manual original-task queries and corrects image nonterminal projection; review fix validated, candidate not merged or released. RunningHub #170 remains Draft and deferred; prioritize Zhenzhen and local ComfyUI. Existing journal, owner tables and authorities retained; no schema, release, production operation or second roadmap. Formal release remains v2026.10.2.",
+  "scope": "Main 73d2b67 includes #163/#168/#169/#171; its main CI succeeded separately. The approved 4.2 task-source and result-reuse candidate reuses existing journal, ownership, task detail and canvas save boundaries. #172 video canvas resumption and #173 Zhenzhen video adapter remain separate Drafts; #170 remains deferred. Targeted tests, Browser evidence and limits are recorded in the existing task implementation record and PR. No new schema, roadmap, release or production operation. Formal release remains v2026.10.2.",
   "documents": [
     {
       "path": ".github/PULL_REQUEST_TEMPLATE.md",
@@ -158,7 +158,7 @@
       "path": "docs/CURRENT_PROJECT_STATUS.md",
       "kind": "authority",
       "authority": "status",
-      "reviewed_at": "2026-10-17"
+      "reviewed_at": "2026-10-18"
     },
     {
       "path": "docs/data/DATA-MVP-1-INDEPENDENT-REVIEW-2026-09.md",
@@ -561,7 +561,7 @@
       "path": "enterprise/tests/README.md",
       "kind": "authority",
       "authority": "testing",
-      "reviewed_at": "2026-10-13"
+      "reviewed_at": "2026-10-18"
     },
     {
       "path": "enterprise/tests/SMOKE_CHECKLIST.md",

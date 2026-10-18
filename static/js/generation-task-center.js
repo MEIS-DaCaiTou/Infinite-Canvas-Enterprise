@@ -14,7 +14,7 @@
         return response.json();
     }
     const date=value=>value?new Date(value*1000).toLocaleString():'未记录';
-    function attach({modalId,listId,createPrompt,previewMedia}){
+    function attach({modalId,listId,createPrompt,previewMedia,canvasContext,addResult}){
         const modal=document.getElementById(modalId),logs=document.getElementById(listId);
         if(!modal || !logs)return;
         const tabs=document.createElement('div');tabs.className='generation-task-tabs';tabs.setAttribute('role','tablist');
@@ -66,19 +66,52 @@
                 <p class="generation-task-note">${esc(data.cost_note || '')}</p>
                 ${query?`<p class="generation-task-note">最近核对：${esc(label(query.status))} · ${esc(date(query.finished_at || query.started_at))} · 共 ${query.count || 0} 次</p>`:''}
                 ${automatic?`<p class="generation-task-note">${esc(autoLabels[automatic.status] || automatic.status)}${automatic.next_query_at?' · 下次 '+esc(date(automatic.next_query_at)):''}${automatic.reason?' · '+esc(automatic.reason):''}</p>`:''}
+                <div class="generation-task-source">
+                    <span>${esc(data.source?.available ? '来源：'+data.source.title : data.source?.message || '此历史任务未记录来源画布')}</span>
+                    ${data.source?.available?'<button type="button" data-open-source>定位原画布</button>':''}
+                    ${data.source?.available && data.source.message?`<small>${esc(data.source.message)}</small>`:''}
+                </div>
                 <div class="generation-task-results"></div>
                 ${data.can_query?'<button type="button" class="generation-task-query">继续查询原任务</button>':data.status==='unknown'?'<p class="generation-task-note">当前没有可安全续查的受理身份，请核对供应商记录；不会自动重新生成。</p>':''}`;
+            const sourceButton=container.querySelector('[data-open-source]');
+            if(sourceButton)sourceButton.onclick=async()=>{
+                const token=epoch;sourceButton.disabled=true;
+                try{
+                    const fresh=await json('/enterprise/api/me/generation-tasks/'+encodeURIComponent(data.id));
+                    if(token!==epoch || expanded!==data.id)return;
+                    if(!fresh.source?.available)throw new Error(fresh.source?.message || '来源画布不可访问');
+                    root.location.assign(fresh.source.url);
+                }catch(error){if(token===epoch)notice.textContent=error.message;}
+                finally{sourceButton.disabled=false;}
+            };
             const results=container.querySelector('.generation-task-results');
             for(const item of data.items || []){
+                const card=document.createElement('div');card.className='generation-task-result';results.append(card);
                 if(item.kind==='text'){
                     const button=document.createElement('button');button.type='button';button.className='generation-task-text';
-                    button.innerHTML=ComfyOutputs.card(item);button.onclick=()=>ComfyOutputs.open(item,{createPrompt});results.append(button);
+                    button.innerHTML=ComfyOutputs.card(item);button.onclick=()=>ComfyOutputs.open(item,{createPrompt});card.append(button);
                 }else{
                     const link=document.createElement('a');link.href=item.url;link.target='_blank';link.rel='noopener';link.className='generation-task-media';
                     if(item.kind==='image') {const image=document.createElement('img');image.src=item.url;image.alt=item.name || '生成结果';link.append(image);}
                     else link.textContent=item.name || item.kind || '查看结果';
                     if(previewMedia && ['image','video'].includes(item.kind))link.onclick=event=>{event.preventDefault();previewMedia(item);};
-                    results.append(link);
+                    card.append(link);
+                }
+                if(addResult && canvasContext && ['image','video','audio','text'].includes(item.kind)){
+                    const button=document.createElement('button');button.type='button';button.textContent='放入当前画布';card.append(button);
+                    button.onclick=async()=>{
+                        const token=epoch,context=canvasContext();button.disabled=true;
+                        try{
+                            if(!context?.id)throw new Error('请先打开目标画布');
+                            const fresh=await json('/enterprise/api/me/generation-tasks/'+encodeURIComponent(data.id)+'?'+new URLSearchParams({target_canvas_id:context.id}));
+                            const found=fresh.items?.find(value=>value.url===item.url && value.kind===item.kind && (value.result_id || value.url)===(item.result_id || item.url));
+                            if(!fresh.reuse_allowed || !found)throw new Error('结果已不可访问，请刷新任务记录');
+                            const value={...found};if(value.kind==='text')value.text=await ComfyOutputs.text(value);
+                            if(token!==epoch || expanded!==data.id || !context.isCurrent())return;
+                            await addResult(value,fresh);notice.textContent='已放入当前画布，可继续连线使用';
+                        }catch(error){if(token===epoch)notice.textContent=error.message;}
+                        finally{button.disabled=false;}
+                    };
                 }
             }
             const queryButton=container.querySelector('.generation-task-query');

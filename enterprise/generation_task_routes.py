@@ -30,7 +30,7 @@ def create_router(journal):
             raise HTTPException(503, "任务记录暂不可读，请稍后重试") from exc
 
     @router.get("/{task_id}")
-    async def detail(task_id: str, x_enterprise_user_id: str = Header(default="")):
+    async def detail(task_id: str, target_canvas_id: str = "", x_enterprise_user_id: str = Header(default="")):
         user_id = owner(x_enterprise_user_id)
         try:
             value = await run_in_threadpool(repository.detail, user_id, task_id)
@@ -38,11 +38,21 @@ def create_router(journal):
             raise HTTPException(503, "任务记录暂不可读，请保留原任务并稍后重试") from exc
         if value is None:
             raise HTTPException(404, "任务不存在或不可访问")
+        if target_canvas_id:
+            from enterprise.task_canvas_context import accessible_canvas
+            await run_in_threadpool(accessible_canvas, journal.root.parent / 'canvases', user_id, target_canvas_id)
         from enterprise.interceptors import record_resource_urls_for_user
         # Only verified output references grant ownership. Text, errors and
         # names may themselves contain paths; they are never authorizations.
         output_urls = [item["url"] for item in value["items"]]
         await run_in_threadpool(record_resource_urls_for_user, user_id, "generation_task_detail", output_urls)
+        if target_canvas_id:
+            from enterprise import db
+            from enterprise.interceptors import can_access_resource
+            user = {**(await run_in_threadpool(db.get_user_by_id, user_id) or {}), 'user_id':user_id}
+            value['items'] = [item for item in value['items'] if item.get('kind') in {'image','video','audio','text'}
+                              and await run_in_threadpool(can_access_resource, user, item['url'])]
+            value['reuse_allowed'] = True
         return JSONResponse(value, headers={"Cache-Control": "no-store"})
 
     return router

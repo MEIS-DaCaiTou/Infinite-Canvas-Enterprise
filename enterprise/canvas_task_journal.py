@@ -235,6 +235,11 @@ the authenticated gateway, not accepted from the public client unmodified.
 No provider work may start if either the receipt or owner commit fails.
 """
     user_id = enterprise_user_id if isinstance(enterprise_user_id, str) else ""
+    from enterprise.task_canvas_context import accepted_source
+    record = {**record}
+    source = accepted_source(record.pop('source', None), user_id, journal.root.parent / 'canvases')
+    if source:
+        record['source'] = source
     if user_id:
         from enterprise import db
         if db.get_user_by_id(user_id) is None:
