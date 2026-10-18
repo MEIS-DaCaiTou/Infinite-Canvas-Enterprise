@@ -11,7 +11,7 @@ from enterprise.canvas_task_journal import CanvasTaskJournal
 from enterprise.accepted_task_recovery import recovery_candidate
 from enterprise.runtime.logging import redact_text
 
-TYPES = {"canvas_image": "online-image", "canvas_comfy": "comfy", "canvas_video": "video"}
+TYPES = {"canvas_image": "online-image", "canvas_comfy": "comfy", "canvas_video": "video", "canvas_llm": "llm"}
 STATES = {"queued", "running", "succeeded", "failed", "unknown", "partial", "unavailable"}
 
 
@@ -69,6 +69,9 @@ def describe_task(record, *, detail=False):
     can_query = (can_reconcile_video(record) if record.get("type") == "video" else
                  can_reconcile(record) if record.get("type") == "online-image" else
                  bool(comfy.get("prompt_id") and record.get("status") == "failed" and record.get("recovery_required")))
+    if record.get("type") == "llm":
+        from enterprise.canvas_llm_tasks import can_restore_llm
+        can_query = can_restore_llm(record)
     items = result_items(record)
     first = next(iter(record.get("provider_receipts") or []), {})
     data = {"id": record["id"], "type": record.get("type"), "status": state,
@@ -127,7 +130,7 @@ class GenerationTaskRepository:
     def page(self, user_id, *, cursor="", status="", kind="", limit=30):
         before = None
         if cursor:
-            match = re.fullmatch(r"(\d{1,16})\|(canvas_image|canvas_comfy|canvas_video)\|([A-Za-z0-9_-]{1,160})", cursor)
+            match = re.fullmatch(r"(\d{1,16})\|(canvas_image|canvas_comfy|canvas_video|canvas_llm)\|([A-Za-z0-9_-]{1,160})", cursor)
             if not match:
                 raise ValueError("任务分页位置无效")
             before = (int(match[1]), match[2], match[3])

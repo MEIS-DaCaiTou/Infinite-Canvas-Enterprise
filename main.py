@@ -55,6 +55,7 @@ from enterprise.paths import get_path_roots, prepare_application_directories
 from enterprise.app_paths import AppPathLayout
 from enterprise.canvas_task_journal import CanvasTaskJournal, create_task_receipt
 from enterprise.task_canvas_context import TaskCanvasSource
+from enterprise.canvas_llm_tasks import CanvasLLMTasks, llm_submitting, llm_response, validate_llm_text
 from enterprise.generation_task_routes import create_router as create_generation_task_router
 from enterprise.canvas_image_recovery import CanvasImageRecovery, ImageReceiptSink, public_receipt
 from enterprise.canvas_video_tasks import CanvasVideoTasks, public_video_task, record_video_acceptance
@@ -2652,6 +2653,10 @@ class CanvasLLMRequest(BaseModel):
     ms_model: str = ""
     images: List[str] = []   # 可以是 /output/*.png、/assets/*.png 本地路径 或 http(s) URL 或 data URL
     videos: List[str] = []   # 可以是 /output/*.mp4、/assets/*.mp4 本地路径 或 http(s) URL 或 data URL
+
+class CanvasLLMTaskRequest(CanvasLLMRequest):
+    request_id: str = ""
+    source: Optional[TaskCanvasSource] = None
 
 class ConversationCreateRequest(BaseModel):
     title: str = "新对话"
@@ -14136,11 +14141,13 @@ async def canvas_llm(payload: CanvasLLMRequest):
     if is_codex_provider(_provider):
         model = selected_model(payload.model, (_provider.get("chat_models") or CODEX_DEFAULT_CHAT_MODELS)[0])
         payload.model = model
+        await llm_submitting(model)
         text, raw = await codex_chat_text(payload, payload.messages)
         return {"text": text, "model": model, "raw_usage": None, "raw": raw}
     if is_gemini_cli_provider(_provider):
         model = selected_model(payload.model, (_provider.get("chat_models") or GEMINI_CLI_DEFAULT_CHAT_MODELS)[0])
         payload.model = model
+        await llm_submitting(model)
         text, raw = await gemini_cli_chat_text(payload, payload.messages)
         return {"text": text, "model": model, "raw_usage": None, "raw": raw}
     chat_base, chat_hdrs, model = resolve_chat_provider(payload.provider, payload.model, payload.ms_model)
@@ -14194,11 +14201,13 @@ async def canvas_llm(payload: CanvasLLMRequest):
             req_body = {"model": model, "messages": upstream_messages}
             if _is_apimart:
                 req_body["stream"] = False   # APIMart 默认流式，强制关闭
+            await llm_submitting(model)
             response = await client.post(
                 f"{chat_base}/chat/completions",
                 headers=chat_hdrs,
                 json=req_body,
             )
+            await llm_response(response.status_code)
             response.raise_for_status()
             if not response.content:
                 raise HTTPException(status_code=502, detail="上游接口返回了空响应")
@@ -14215,11 +14224,30 @@ async def canvas_llm(payload: CanvasLLMRequest):
         raise HTTPException(status_code=502, detail=f"解析上游响应失败：{exc}") from exc
     try:
         text = text_from_chat_response(raw).strip() if isinstance(raw, dict) else ""
+        validate_llm_text(text)
         text = text or "接口返回了空回复。"
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"解析回复内容失败：{exc}") from exc
     raw_data = unwrap_apimart_response(raw) if isinstance(raw, dict) else {}
     return {"text": text, "model": model, "raw_usage": raw_data.get("usage")}
+
+# Durable canvas entry reuses the existing synchronous LLM implementation.
+from enterprise.interceptors import record_resource_urls_for_user as _publish_llm_resources
+CANVAS_LLM_TASKS = CanvasLLMTasks(CANVAS_TASK_JOURNAL, canvas_llm,
+    lambda text: save_comfy_text_output(text, prefix="llm_", name="result.txt"),
+    lambda owner, urls: _publish_llm_resources(owner, "canvas_llm_task", urls), schedule_canvas_task)
+
+@app.post("/api/canvas-llm-tasks")
+async def create_canvas_llm_task(payload: CanvasLLMTaskRequest, x_enterprise_user_id: Optional[str] = Header(default=None)):
+    return await CANVAS_LLM_TASKS.create(payload, x_enterprise_user_id)
+
+@app.get("/api/canvas-llm-tasks/{task_id}")
+async def get_canvas_llm_task(task_id: str):
+    return await CANVAS_LLM_TASKS.restore(task_id)
+
+@app.post("/api/canvas-llm-tasks/{task_id}/reconcile")
+async def reconcile_canvas_llm_task(task_id: str):
+    return await CANVAS_LLM_TASKS.restore(task_id)
 
 # --- 对话管理 ---
 

@@ -2,7 +2,7 @@
   "schema_version": "enterprise-documents-v1",
   "reviewed_at": "2026-10-18",
   "audit_base_commit": "39f4b02d232142c4ede66f0133b759b32178d70f",
-  "scope": "Main 73d2b67 includes #163/#168/#169/#171; its main CI succeeded separately. The approved 4.2 task-source and result-reuse candidate reuses existing journal, ownership, task detail and canvas save boundaries. #172 video canvas resumption and #173 Zhenzhen video adapter remain separate Drafts; #170 remains deferred. Targeted tests, Browser evidence and limits are recorded in the existing task implementation record and PR. No new schema, roadmap, release or production operation. Formal release remains v2026.10.2.",
+  "scope": "Main 73d2b67 remains unchanged. The approved canvas LLM durable-task candidate builds on pending #174 head9309e52, reusing existing provenance, journal, owner policy, task center and text results. #172/#173/#174 remain separate Drafts and #170 deferred. Current synchronous chat has no implemented provider query ID: page reload reads the platform task, unknown work is not resubmitted, and received text can be archived locally after interruption. No schema, release, production operation or second roadmap. Formal release remains v2026.10.2.",
   "documents": [
     {
       "path": ".github/PULL_REQUEST_TEMPLATE.md",
