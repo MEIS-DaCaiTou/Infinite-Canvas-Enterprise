@@ -54,5 +54,5 @@
             throw error;
         }
     }
-    window.CanvasTaskQuery = {query, runVideo};
+    window.CanvasTaskQuery = {query, runVideo, requestId};
 })();

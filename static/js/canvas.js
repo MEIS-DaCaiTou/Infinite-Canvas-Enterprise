@@ -2034,6 +2034,7 @@ async function openCanvas(id){
         renderCanvasList();
         render();
         focusTaskSource();
+        resumeCanvasLLMTasks();
         resumeCanvasImageTasks();
         startCanvasRemotePolling();
         setStatus('Ready');
@@ -7994,7 +7995,7 @@ function renderLLMNodePane(container, node){
             <div class="llm-output llm-result-output">${escapeHtml(node.outputText || tr('canvas.llmOutputEmpty'))}</div>
         </div>
         <div class="gen-run-row mt-2">
-            <button class="llm-run ${node.running ? 'running' : ''}" ${node.running ? 'disabled' : ''}><i data-lucide="play" class="w-4 h-4"></i>${node.running ? tr('canvas.running') : 'Run LLM'}</button>
+            <button title="${escapeAttr(CanvasLLMTasks.hint(node.llmTask))}" class="llm-run ${node.running ? 'running' : ''}" ${node.running ? 'disabled' : ''}><i data-lucide="play" class="w-4 h-4"></i>${node.running ? tr('canvas.running') : CanvasLLMTasks.label(node.llmTask,'Run LLM')}</button>
             ${cascadeBtnHtml(node)}
         </div>
         ${retryBarHtml(node)}
@@ -8027,7 +8028,7 @@ function renderLLMChatPane(container, node){
     container.innerHTML = `
         <div class="llm-chat-log">${messages.length ? messages.map((msg, mi) => `<div class="llm-bubble ${msg.role === 'user' ? 'user' : 'assistant'}" data-msg-idx="${mi}">${escapeHtml(msg.content || '')}${msg.role === 'assistant' ? `<button class="llm-bubble-copy" type="button" title="复制"><i data-lucide="copy" style="width:11px;height:11px;display:inline-block;vertical-align:middle"></i></button>` : ''}</div>`).join('') : `<div class="text-[11px] text-gray-300">${tr('canvas.startChat')}</div>`}</div>
         <textarea class="llm-chat-input mt-2" rows="2" placeholder="${tr('canvas.chatInput')}">${escapeHtml(node.chatInput || '')}</textarea>
-        <button class="llm-run mt-2" ${node.running ? 'disabled' : ''}><i data-lucide="send" class="w-4 h-4"></i>${node.running ? tr('canvas.sending') : 'Send'}</button>
+        <button title="${escapeAttr(CanvasLLMTasks.hint(node.llmTask))}" class="llm-run mt-2" ${node.running ? 'disabled' : ''}><i data-lucide="send" class="w-4 h-4"></i>${node.running ? tr('canvas.sending') : CanvasLLMTasks.label(node.llmTask,'Send')}</button>
     `;
     bindScrollableText(container.querySelector('.llm-chat-log'));
     bindScrollableText(container.querySelector('.llm-chat-input'));
@@ -11475,30 +11476,52 @@ async function runComfyNode(nodeId, opts={}){
         alert(err.message || actionFailed('canvas.comfyGenerate'));
     }
 }
-async function callCanvasLLM(node, message, messages=[], options={}){
-    const llmProv = resolveChatProviderId(node.llmProvider || 'comfly');
-    const model = resolveChatModel(node.model || node.llmMsModel, llmProv);
-    const images = llmInputImages(node);
-    const videos = llmInputVideos(node);
-    const result = await cascadeFetch('/api/canvas-llm', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({
-            message,
-            model,
-            ms_model: llmProv === 'modelscope' ? model : '',
-            provider: llmProv,
-            system_prompt:node.systemPrompt || 'You are a helpful assistant.',
-            messages,
-            images,
-            videos,
-        })
-    }, options).then(async r => {
-        if(!r.ok){
-            throw new Error(await responseErrorMessage(r, 'LLM 运行失败'));
+async function runCanvasLLMTask(node,payload,options={}){
+    const originId=canvas?.id,nodeId=node.id;
+    const current=()=>canvas?.id===originId ? nodes.find(value=>value.id===nodeId) : null;
+    return CanvasLLMTasks.run(payload,{
+        task:CanvasLLMTasks.pending(node.llmTask)?node.llmTask:null,
+        isCurrent:()=>Boolean(current()),
+        prepare:async()=>taskCanvasSource(current()),
+        fetcher:(url,request)=>cascadeFetch(url,request,options),
+        onState:ticket=>{
+            const target=current();if(!target)return;
+            if(ticket && target.llmTask?.id===ticket.id && target.llmTask.state===ticket.state && (target.llmTask.error || '')===(ticket.error || ''))return;
+            if(ticket)target.llmTask={...(target.llmTask?.id===ticket.id?target.llmTask:{mode:target.mode || 'node'}),...ticket};
+            else delete target.llmTask;
+            scheduleSave();
+        },
+        onResult:async(result,taskId)=>{
+            const target=current();if(!target)return;
+            target.outputText=result.text || '';
+            if(target.llmTask?.mode==='chat' && !target.llmTask.applied){
+                target.messages=target.messages || [];
+                target.messages.push({role:'assistant',content:target.outputText});
+            }
+            target.llmTask={...target.llmTask,id:taskId,state:'succeeded',applied:true};
+            target.running=false;target.runStatus='done';target.runError='';
+            refreshNodes([nodeId]);scheduleSave();
         }
-        return r.json();
     });
+}
+function resumeCanvasLLMTasks(){
+    nodes.filter(node=>node.type==='llm' && CanvasLLMTasks.pending(node.llmTask)).forEach(node=>{
+        node.running=true;refreshNodes([node.id]);
+        runCanvasLLMTask(node,null).catch(error=>{
+            if(error.name==='AbortError')return;
+            const target=nodes.find(value=>value.id===node.id);
+            if(target){target.running=false;target.runError=error.message;refreshNodes([target.id]);scheduleSave();}
+        });
+    });
+}
+async function callCanvasLLM(node,message,messages=[],options={}){
+    const llmProv=resolveChatProviderId(node.llmProvider || 'comfly');
+    const model=resolveChatModel(node.model || node.llmMsModel,llmProv);
+    const result=await runCanvasLLMTask(node,{
+        message,model,ms_model:llmProv==='modelscope'?model:'',provider:llmProv,
+        system_prompt:node.systemPrompt || 'You are a helpful assistant.',messages,
+        images:llmInputImages(node),videos:llmInputVideos(node)
+    },options);
     return result.text || '';
 }
 async function runLLMNode(nodeId, opts={}){
@@ -11936,6 +11959,13 @@ function cancelCascade(nodeId){
 async function runLLMChat(nodeId){
     const node = nodes.find(n => n.id === nodeId);
     if(!node || node.running) return;
+    if(CanvasLLMTasks.pending(node.llmTask)){
+        node.running=true;refreshNodes([node.id]);
+        try {await runCanvasLLMTask(node,null);}
+        catch(error){if(error.name!=='AbortError')alert(error.message);}
+        finally{node.running=false;refreshNodes([node.id]);}
+        return;
+    }
     const message = (node.chatInput || '').trim();
     if(!message) return;
     node.messages = node.messages || [];
@@ -11946,7 +11976,6 @@ async function runLLMChat(nodeId){
     refreshNodes([node.id]);
     try {
         const text = await callCanvasLLM(node, message, history);
-        node.messages.push({role:'assistant', content:text});
         node.outputText = text;
         node.running = false;
         refreshNodes([node.id]);

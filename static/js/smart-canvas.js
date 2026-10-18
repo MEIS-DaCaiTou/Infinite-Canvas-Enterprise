@@ -5854,6 +5854,7 @@ async function loadCanvas(){
         applyViewport();
         render();
         focusTaskSource();
+        resumeSmartLLMTasks();
         if(cleanedDetachedInputs || cleanedCompletedState || recoveredLoopOutputs || hiddenCompletedTimers) scheduleSave();
         resumeSmartPendingTasks();
         resumeJimengPendingNodes();
@@ -7026,7 +7027,7 @@ function promptNodeBodyHtml(node){
             </div>
             ${upstreamPromptHtml}
             <div class="prompt-node-llm-actions">
-                <button class="prompt-node-run prompt-node-control" type="button" ${node.running ? 'disabled' : ''}><i data-lucide="${node.running ? 'loader-2' : 'play'}"></i><span>${node.running ? escapeHtml(tr('common.running')) : escapeHtml(tr('common.run'))}</span></button>
+                <button title="${escapeAttr(CanvasLLMTasks.hint(node.llmTask))}" class="prompt-node-run prompt-node-control" type="button" ${node.running ? 'disabled' : ''}><i data-lucide="${node.running ? 'loader-2' : 'play'}"></i><span>${node.running ? escapeHtml(tr('common.running')) : escapeHtml(CanvasLLMTasks.label(node.llmTask,tr('common.run')))}</span></button>
                 <button class="prompt-node-pill prompt-node-control prompt-system-toggle ${node.llmSystemEnabled ? 'active' : ''}" type="button"><i data-lucide="${node.llmSystemEnabled ? 'toggle-right' : 'toggle-left'}"></i><span>${escapeHtml(node.llmSystemEnabled ? tr('smart.promptLlmDisableSystem') : tr('smart.promptLlmEnableSystem'))}</span></button>
             </div>
             ${node.llmSystemEnabled ? `<textarea class="prompt-node-control prompt-llm-system" placeholder="${escapeHtml(tr('smart.promptLlmSystemPlaceholder'))}">${escapeHtml(systemPrompt || 'You are a helpful prompt assistant.')}</textarea>` : ''}
@@ -14610,9 +14611,39 @@ async function runGeneration(){
         render();
     }
 }
+async function runSmartLLMTask(node,payload){
+    const originId=canvas?.id,nodeId=node.id;
+    const current=()=>canvas?.id===originId ? nodes.find(value=>value.id===nodeId) : null;
+    return CanvasLLMTasks.run(payload,{
+        task:CanvasLLMTasks.pending(node.llmTask)?node.llmTask:null,
+        isCurrent:()=>Boolean(current()),prepare:async()=>taskCanvasSource(current()),
+        onState:ticket=>{
+            const target=current();if(!target)return;
+            if(ticket && target.llmTask?.id===ticket.id && target.llmTask.state===ticket.state && (target.llmTask.error || '')===(ticket.error || ''))return;
+            if(ticket)target.llmTask={...(target.llmTask?.id===ticket.id?target.llmTask:{}),...ticket};else delete target.llmTask;
+            scheduleSave();
+        },
+        onResult:async(result,taskId)=>{
+            const target=current();if(!target)return;
+            target.text=(result.text || '').trim();target.llmModel=result.model || target.llmModel;
+            target.llmTask={...target.llmTask,id:taskId,state:'succeeded',applied:true};target.running=false;
+            render();scheduleSave();
+        }
+    });
+}
+function resumeSmartLLMTasks(){
+    nodes.filter(node=>node.type==='smart-prompt' && CanvasLLMTasks.pending(node.llmTask)).forEach(node=>{
+        node.running=true;
+        runSmartLLMTask(node,null).catch(error=>{
+            if(error.name==='AbortError')return;
+            const target=nodes.find(value=>value.id===node.id);
+            if(target){target.running=false;render();scheduleSave();toast(error.message.slice(0,200));}
+        });
+    });
+}
 async function runPromptLLMNode(nodeId){
     const node = nodes.find(n => n.id === nodeId);
-    if(!node || node.type !== 'smart-prompt') return;
+    if(!node || node.type !== 'smart-prompt' || node.running) return;
     try { validateSmartTextInputs(node); }
     catch(error){ toast(error.message); return; }
     const message = promptNodeLLMInputText(node).trim();
@@ -14627,26 +14658,11 @@ async function runPromptLLMNode(nodeId){
         const mediaRefs = promptNodeInputMediaForLLM(node);
         const images = imageRefsOnly(mediaRefs).map(img => img.url).filter(Boolean);
         const videos = videoRefsOnly(mediaRefs).map(video => video.url).filter(Boolean);
-        const result = await fetch('/api/canvas-llm', {
-            method:'POST',
-            headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({
-                message,
-                messages:[],
-                images,
-                videos,
-                model,
-                provider,
-                ms_model: provider === 'modelscope' ? model : '',
-                system_prompt:node.llmSystemEnabled ? (systemPrompt || 'You are a helpful prompt assistant.') : ''
-            })
-        }).then(async r => {
-            if(!r.ok) throw new Error(await r.text());
-            return r.json();
+        await runSmartLLMTask(node,{
+            message,messages:[],images,videos,model,provider,
+            ms_model:provider==='modelscope'?model:'',
+            system_prompt:node.llmSystemEnabled ? (systemPrompt || 'You are a helpful prompt assistant.') : ''
         });
-        node.text = (result.text || '').trim();
-        node.llmProvider = provider;
-        node.llmModel = model;
         scheduleSave();
     } catch(e) {
         toast((e.message || tr('smart.promptLlmFailed')).slice(0, 160));

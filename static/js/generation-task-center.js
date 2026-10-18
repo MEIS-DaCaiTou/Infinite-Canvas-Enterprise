@@ -20,7 +20,7 @@
         const tabs=document.createElement('div');tabs.className='generation-task-tabs';tabs.setAttribute('role','tablist');
         tabs.innerHTML='<button type="button" role="tab" aria-selected="true" data-view="logs">生成日志</button><button type="button" role="tab" aria-selected="false" data-view="tasks">生成任务</button><span>仅显示本人任务</span>';
         const pane=document.createElement('div');pane.className='generation-task-pane';pane.hidden=true;
-        pane.innerHTML='<div class="generation-task-filters"><select aria-label="任务状态"><option value="">全部状态</option>'+Object.entries(labels).map(([key,label])=>`<option value="${key}">${label}</option>`).join('')+'</select><select aria-label="任务类型"><option value="">全部类型</option><option value="canvas_image">API 图片</option><option value="canvas_comfy">ComfyUI</option><option value="canvas_video">API 视频</option></select><button type="button" data-refresh>刷新</button></div><div class="generation-task-status" role="status"></div><div class="generation-task-list"></div><button type="button" class="generation-task-more" hidden>查看更早任务</button>';
+        pane.innerHTML='<div class="generation-task-filters"><select aria-label="任务状态"><option value="">全部状态</option>'+Object.entries(labels).map(([key,label])=>`<option value="${key}">${label}</option>`).join('')+'</select><select aria-label="任务类型"><option value="">全部类型</option><option value="canvas_image">API 图片</option><option value="canvas_comfy">ComfyUI</option><option value="canvas_video">API 视频</option><option value="canvas_llm">LLM 文本</option></select><button type="button" data-refresh>刷新</button></div><div class="generation-task-status" role="status"></div><div class="generation-task-list"></div><button type="button" class="generation-task-more" hidden>查看更早任务</button>';
         logs.before(tabs);logs.after(pane);
         const list=pane.querySelector('.generation-task-list'),notice=pane.querySelector('[role=status]'),more=pane.querySelector('.generation-task-more');
         const filters=pane.querySelectorAll('select'),details=new Map();
@@ -72,7 +72,7 @@
                     ${data.source?.available && data.source.message?`<small>${esc(data.source.message)}</small>`:''}
                 </div>
                 <div class="generation-task-results"></div>
-                ${data.can_query?'<button type="button" class="generation-task-query">继续查询原任务</button>':data.status==='unknown'?'<p class="generation-task-note">当前没有可安全续查的受理身份，请核对供应商记录；不会自动重新生成。</p>':''}`;
+                ${data.can_query?'<button type="button" class="generation-task-query">'+(data.type==='llm'?'恢复已接收文本':'继续查询原任务')+'</button>':data.status==='unknown'?'<p class="generation-task-note">当前没有可安全续查的受理身份，请核对供应商记录；不会自动重新生成。</p>':''}`;
             const sourceButton=container.querySelector('[data-open-source]');
             if(sourceButton)sourceButton.onclick=async()=>{
                 const token=epoch;sourceButton.disabled=true;
@@ -118,7 +118,7 @@
             if(queryButton)queryButton.onclick=async()=>{
                 const token=epoch;queryButton.disabled=true;notice.textContent='正在核对原任务，不会重新生成…';
                 try{
-                    const url=data.type==='comfy'?'/api/canvas-comfy-tasks/'+encodeURIComponent(data.id)+'?resume=true':(data.type==='video'?'/api/canvas-video-tasks/':'/api/canvas-image-tasks/')+encodeURIComponent(data.id)+'/reconcile';
+                    const url=data.type==='comfy'?'/api/canvas-comfy-tasks/'+encodeURIComponent(data.id)+'?resume=true':(data.type==='llm'?'/api/canvas-llm-tasks/':data.type==='video'?'/api/canvas-video-tasks/':'/api/canvas-image-tasks/')+encodeURIComponent(data.id)+'/reconcile';
                     await json(url,data.type==='comfy'?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
                     if(token===epoch){notice.textContent='已查询原任务';await load();}
                 }catch(error){if(token===epoch){notice.textContent=error.message;queryButton.disabled=false;}}
