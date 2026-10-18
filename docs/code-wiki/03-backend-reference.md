@@ -1,5 +1,7 @@
 # 后端类与函数参考
 
+2026-10-18 来源关联增量（开发候选）：`task_canvas_context.TaskCanvasSource/accepted_source/describe_source` 复用既有画布文件和 `interceptors.can_access_canvas`，在原 journal 中记录可选来源，不新增业务表。`create_task_receipt` 在执行前校验来源；图片/视频/ComfyUI 请求都可携带此字段，旧调用仍可省略。`GenerationTaskRepository.detail` 仅在当前仍可访问时返回来源标题和定位 URL；原节点删除时保留打开画布入口。`generation_task_routes` 的原详情 GET 可带 `target_canvas_id`，同时核实本人任务、目标画布及具体结果资源后才允许复用，不写入目标画布。Gateway 继续覆盖用户身份；真实状态与限制见 [CURRENT](../CURRENT_PROJECT_STATUS.md)。
+
 > 源码参考快照（2026-10-13）：main@e89a288（已合并 #154/#155/#156）；产品功能源码基点 #156@4bdd9a1 保留；C5/C6/C7 已合并，构建与验收范围仍引用其准确记录。本文是代码/运行参考，当前 PR/CI、Release 和验收只见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，实施顺序只认路线图。
 
 [返回索引](./README.md)

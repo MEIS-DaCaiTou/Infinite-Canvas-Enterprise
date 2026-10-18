@@ -1,5 +1,9 @@
 # Enterprise Test Scripts
 
+Reviewed: 2026-10-18
+
+Task provenance/reuse: `py -3.11 -B -m pytest -q enterprise/tests/test_task_canvas_context.py enterprise/tests/test_canvas_persistence.py` checks private SQLite ownership, revoked/deleted source handling, legacy receipts, current target/resource access, actual client source/reuse adapters, and retained origin metadata after cross-process save/reopen. Its Node VM isolates rendering/provider boundaries; rendered Browser evidence and real-provider limitations belong to the existing [task implementation record](../../docs/ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md#2026-10-18-任务来源画布节点与结果复用候选). No real paid generation or customer data.
+
 `test_install_upgrade.py`, `test_install_maintenance.py` and `test_windows_install_registration.py` cover the C6 offline transaction, object ownership, interrupted recovery, stopped WAL-mode SQLite reads, successful target finalization and HTTP/WS pause. Their Runtime/registration substitutes are bounded unit evidence. `offline_upgrade_windows_smoke.py` runs frozen complete source/target payloads, real native entry and Runtime on newly owned synthetic installations; only an owned hard process exit or target service stop is injected. It records the runner return code/stdout/stderr before checking the injected exit, stops at AWAITING_REGISTRATION and does not imply Windows registration or clicked GUI acceptance. Pass explicit source/target build/native directories, target Setup and a NEW evidence root; `--preserve-existing-local-roots` requires stopped historical KnownFolder roots and verifies their exact restoration. Reuse sufficient existing C2/C3/C4 evidence. Actual scope/results are in [C6 record](../../docs/ops/OFFLINE-RETAINED-UPGRADE-2026-10-12.md).
 
 This folder is the only place for project diagnostic and smoke-test scripts.
@@ -13,7 +17,6 @@ Before adding or changing scripts, read:
 - `../../ENTERPRISE_DOCS.md`
 - `SMOKE_CHECKLIST.md`
 
-Reviewed: 2026-10-13
 
 ## Verification policy
 

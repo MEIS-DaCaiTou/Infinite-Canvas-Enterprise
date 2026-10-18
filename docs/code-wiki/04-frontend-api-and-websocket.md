@@ -1,5 +1,7 @@
 # 前端、API 与 WebSocket
 
+2026-10-18 来源关联增量（开发候选）：`task-canvas-context.js` 共用来源构造与 `focus_node` 识别；两类画布在新持久生成请求附带来源，在打开来源画布时选中并居中原节点。现有 `generation-task-center.js` 详情增加「定位原画布」与按项「放入当前画布」；采用原日志面板、主题变量与胶囊按钮，不增加页面。复用前重新读取有权限的详情，异步完成后检查仍在同一目标画布；文本使用原 Prompt 节点，其他媒体使用原素材节点，保存 `sourceTaskId/sourceResultId` 并沿用原保存重开逻辑。不再调用生成接口。无来源旧任务和不可访问来源明确提示；缺失原节点仅打开画布。真实状态见 [CURRENT](../CURRENT_PROJECT_STATUS.md)。
+
 > 源码参考快照（2026-10-13）：main@e89a288（已合并 #154/#155/#156）；产品功能源码基点 #156@4bdd9a1 保留；C5/C6/C7 已合并，构建与验收范围仍引用其准确记录。本文是代码/运行参考，当前 PR/CI、Release 和验收只见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，实施顺序只认路线图。
 
 [返回索引](./README.md)
