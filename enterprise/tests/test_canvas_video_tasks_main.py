@@ -25,9 +25,9 @@ async def exit_after_acceptance(client, selected, upstream_id, submit_url=''):
     record = main.CANVAS_TASK_JOURNAL.get(id_path.read_text())
     receipt = record['provider_receipts'][0]
     assert upstream_id == receipt['upstream_task_id'] == 'accepted-before-process-exit'
-    assert receipt['video_query_mode'] == 'generic' and receipt['provider_base_url'] == provider['base_url']
+    assert receipt['video_v2'] and receipt['video_query_mode'] == 'generic' and receipt['provider_base_url'] == provider['base_url']
     assert 'private-prompt' not in json.dumps(record) and 'fixture-only-key' not in json.dumps(record)
-    assert calls == [('POST','/v1/videos/generations')], calls
+    assert calls == [('POST','/v2/videos/generations')], calls
     os._exit(17)
 main.wait_for_video_task = exit_after_acceptance
 async def create():
@@ -42,7 +42,7 @@ def query_handler(request):
     global phase
     calls.append((request.method,request.url.path))
     assert request.method == 'GET', 'recovery must never submit'
-    assert request.url.path == '/v1/videos/generations/accepted-before-process-exit'
+    assert request.url.path == '/v2/videos/generations/accepted-before-process-exit'
     phase += 1
     return httpx.Response(200,json={'status':'QUEUED' if phase == 1 else 'SUCCESS', **({} if phase==1 else {'videos':['https://supplier.example/paid.mp4']})})
 main.httpx.AsyncClient = lambda **kwargs: original_client(transport=httpx.MockTransport(query_handler), **kwargs)
@@ -84,6 +84,7 @@ def test_actual_video_query_families_and_v2_first_path(tmp_path):
     (app/'static').mkdir(parents=True)
     (app/'main.py').write_text('# fixture',encoding='utf-8')
     script=BOOTSTRAP+r'''
+main.provider_env_key_value=lambda _: 'fixture-only-key'
 async def check():
     # Existing local Jimeng CLI has an intentionally empty HTTP Base URL.
     local_provider=main.normalize_provider({'id':'jimeng','protocol':'jimeng','base_url':''})
@@ -99,6 +100,8 @@ async def check():
     local_record=await main.get_canvas_video_task(local['task_id'])
     assert local_record['status']=='jimeng_pending' and local_record['result']['submit_id']=='existing-cli-submit'
     cases=[
+      ({'id':'zhenzhen','base_url':'https://supplier.example/v1','protocol':'gemini'},'generic',False,'/v1/videos/generations/original'),
+      ({'id':'zhenzhen','base_url':'https://supplier.example/v1','protocol':'gemini'},'generic',True,'/v2/videos/generations/original'),
       ({'id':'fixture','base_url':'https://supplier.example/v1','protocol':'openai'},'generic',True,'/v2/videos/generations/original'),
       ({'id':'fixture','base_url':'https://apihub.agnes-ai.com','protocol':'openai'},'agnes',False,'/agnesapi'),
       ({'id':'fixture','base_url':'https://supplier.example','protocol':'apimart'},'apimart',False,'/v1/tasks/original'),

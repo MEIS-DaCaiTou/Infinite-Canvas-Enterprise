@@ -188,3 +188,15 @@ Browser 使用本机58130隔离安装、私有SQLite、固定测试身份、实�
 受影响 Python 检查 23 项通过（视频服务/实际 main 子进程恢复、共享调度器、画布持久化）；新增 `test_video_canvas_resume.js` 使用实际画布函数、JSON 序列化及模拟请求验证两类重开续查、重复完成去重、历次结果保留、手动续查及导航隔离。既有 shared query 测试继续通过。Browser 使用私有目录、固定测试用户、模拟供应商和合成 MP4：两类真实页面点击提交各一次，保存后刷新重开，结果回到原节点；经典路径在受理后主动中断隔离服务，再启动只查询原上游 ID，生成调用总计仍为两次。最终经典保留历史+恢复视频 2 项、智能恢复视频 1 项，各只有 1 条生成日志，pending 清空；再次重开结果仍在。首轮页面验证发现经典画布身份变量引用错误，已改用现有 canvas 对象身份并重验。隔离证据位于产品 artifact 根 `video-canvas-resume-20261018/`，不含客户素材或凭据。没有真实 Gateway 登录、GPU、付费 Provider 或公网验收；既有 Tailwind 本地脚本警告不等于运行错误。
 
 独立 Review 在代码 Head82cc9a5 定位一项实际问题：手动视频续查返回时已切换画布，旧任务日志可能写到新画布。4a67239 修复两类手动查询响应/异常/清理路径的画布、节点及任务身份检查，定向用例证明旧响应不写输出/日志或保存，正常成功仍保存。定向复审 `NO_ACTIONABLE_BUGS_FOUND`，不是 GitHub Approval。回滚撤销本包代码即可，原 journal、owner、输出和画布数据保留；旧程序可读取画布但没有本包的视频自动续接能力。未知旧任务没有绑定不猜造。正式 v2026.10.2、#170 Draft 与客户设备不变。
+
+## 2026-10-18 Zhenzhen 统一视频适配收口
+
+独立候选 `codex/zhenzhen-video-adapter-20261018` 基于 main73d2b67，不依赖尚未合并的 #172，不改其工作区或 PR。`enterprise/providers/video_generation.py` 接收已处理参考图、既有请求对象、HTTP 客户端、请求头及受理/查询回调，承接原统一 JSON 请求构造、提交响应解析和错误提示；模块不读凭据、数据库或素材目录。main 保留参数入口、媒体转换、受理回执与结果归档接线。此为具体调用边界提取，不是所有供应商/模型适配已完成声明。
+
+核对 [供应商统一接口](https://gpt-best.apifox.cn/doc-7324259.md)、[Veo提交](https://gpt-best.apifox.cn/api-343590061.md) 和 [Veo查询](https://gpt-best.apifox.cn/api-343593236.md)：Zhenzhen 优先 `/v2/videos/generations`，只有明确404/405才尝试已有v1代理兼容；5xx、网络中断、HTML、未知回包均不重提。实际接受的路径仍写既有 `video_v2` 回执，历史v1/v2均按原绑定续查，不改回执格式或 query mode。统一视频 Bearer 鉴权独立图片/聊天协议；普通用户不新增模板或配置步骤。原统一JSON字段保持兼容，没有猜测新模型名、能力限值或新接口。既有专用供应商构造和选路保留，复用提取后的提交保护与错误消息。
+
+实时轮询与重启续查复用只查询模块的读取/状态解析。最小复现证明 main73d2b67 的 `NOT_START` 被判为 manual，候选正确为 queued；供应商仍未开始时继续查询原ID。明确失败保持失败；未知回包或查询中断保留受理身份并由原任务恢复机制处理。没有新页面、CSS、Schema、任务队列、费用估算、Runtime或安装更新语义变化。
+
+验证：参数/图像兼容及新adapter检查51 passed；实际main受理、硬退出重启及原v1/v2查询3 passed；提交止损/既有视频服务相关20 passed，范围重叠不相加。新增实际main隔离用例证明一次v2 POST后，先持久保存受理身份，再经历NOT_START与SUCCESS两次原ID GET并本地归档；当图片协议为gemini，视频仍为Bearer。初次新增夹具引用不存在的main.db失败，修正为既有enterprise.db后通过，未隐瞒首轮失败。验证均使用MockTransport、临时安装根和测试密钥，无真实付费/GPU/公网/客户验收；本包无前端改动，不重跑已有Browser矩阵。准确Head的CI结果见本PR，不以main或#172结果代替。
+
+独立 Review 对代码 Head `f197521e69c79eec01fdeb9eb0270272ca45473d` 核对受理顺序、404/405边界、终态/未知、旧回执和鉴权，结论 `NO_ACTIONABLE_BUGS_FOUND`；不是GitHub Approval或无缺陷保证。回滚撤销代码即可，保留journal、owner、画布及输出；旧版本仍可读取同一回执并按记录路径查询。本轮不合并候选、不构建/发布新Release、不操作客户设备，正式仍v2026.10.2。

@@ -1,8 +1,8 @@
 {
   "schema_version": "enterprise-documents-v1",
-  "reviewed_at": "2026-10-18",
+  "reviewed_at": "2026-10-19",
   "audit_base_commit": "39f4b02d232142c4ede66f0133b759b32178d70f",
-  "scope": "Main 73d2b67 remains unchanged. The approved canvas LLM durable-task candidate builds on pending #174 head9309e52, reusing existing provenance, journal, owner policy, task center and text results. #172/#173/#174 remain separate Drafts and #170 deferred. Current synchronous chat has no implemented provider query ID: page reload reads the platform task, unknown work is not resubmitted, and received text can be archived locally after interruption. No schema, release, production operation or second roadmap. Formal release remains v2026.10.2.",
+  "scope": "Owner-authorized #172-#175 integration: task provenance, result reuse, durable canvas LLM, video resume and Zhenzhen video adapter share one source baseline. #174/#175 merged into main d9f16b2; exact remaining merge and CI facts are recorded in their existing PRs. Stable canvas/node/task identity survives normal saves and 409 merges; unknown work is never resubmitted. Real Zhenzhen validation is authorized up to 10 platform units, without credentials in source or evidence. No schema, release, customer deployment or second roadmap; formal v2026.10.2 remains unchanged.",
   "documents": [
     {
       "path": ".github/PULL_REQUEST_TEMPLATE.md",
@@ -158,7 +158,7 @@
       "path": "docs/CURRENT_PROJECT_STATUS.md",
       "kind": "authority",
       "authority": "status",
-      "reviewed_at": "2026-10-18"
+      "reviewed_at": "2026-10-19"
     },
     {
       "path": "docs/data/DATA-MVP-1-INDEPENDENT-REVIEW-2026-09.md",
@@ -647,7 +647,8 @@
     },
     {
       "path": "docs/ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md",
-      "kind": "record"
+      "kind": "record",
+      "reviewed_at": "2026-10-19"
     },
     {
       "path": "docs/ops/COMFY-WORKFLOW-INPUT-REPAIR-2026-10-14.md",
