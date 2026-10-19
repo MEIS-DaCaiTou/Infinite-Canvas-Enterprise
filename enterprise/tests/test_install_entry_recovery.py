@@ -28,6 +28,39 @@ class Interrupted(BaseException):
     """Simulate runner loss without exercising the ordinary exception rollback."""
 
 
+@pytest.mark.parametrize("registered", [False, True])
+def test_entry_inspection_proves_legacy_owner_without_writing_registration(installed, registered):
+    arguments, roots, original = installed
+    if not registered:
+        (roots.STATE_ROOT / entry.RECORD_NAME).unlink()
+        (roots.STATE_ROOT / "native-entry.json").write_bytes(canonical_json({
+            "schema_version": "enterprise-native-entry-v1", "launcher_sha256": original.sha256}))
+    before = _files(roots.INSTALL_ROOT)
+    # Inspection must not need Runtime stop, choose a new UUID, or run repair.
+    result = recovery.inspect_fixed_entry(**arguments)
+    assert result["entry_state"] == ("REGISTERED" if registered else "REGISTRATION_REQUIRED")
+    assert bool(result["installation_id"]) is registered
+    assert result["release_id"] == roots.APP_ROOT.name
+    assert _files(roots.INSTALL_ROOT) == before
+    if not registered:
+        assert entry.repair_fixed_entry(**arguments)["repair_state"] == "SUCCEEDED"
+        assert recovery.inspect_fixed_entry(**arguments)["entry_state"] == "REGISTERED"
+
+
+def test_entry_inspection_cannot_claim_unknown_exe_or_replace_foreign_lock(installed):
+    arguments, roots, _original = installed
+    (roots.STATE_ROOT / entry.RECORD_NAME).unlink()
+    before = _files(roots.INSTALL_ROOT)
+    with pytest.raises(entry.InstallEntryError, match="INSTALL_ENTRY_UNOWNED_FILE"):
+        recovery.inspect_fixed_entry(**arguments)
+    assert _files(roots.INSTALL_ROOT) == before
+    lock = roots.STATE_ROOT / "system-update-active.lock"
+    lock.write_bytes(b"unknown maintenance owner")
+    with pytest.raises(entry.InstallEntryError, match="INSTALL_ENTRY_MAINTENANCE_BUSY"):
+        recovery.inspect_fixed_entry(**arguments)
+    assert lock.read_bytes() == b"unknown maintenance owner"
+
+
 @pytest.fixture
 def installed(tmp_path, monkeypatch):
     root, _manifest, _archive, _inventory, document = qualified_program_fixture(tmp_path)

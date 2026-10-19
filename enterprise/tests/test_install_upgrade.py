@@ -109,6 +109,49 @@ def finish(fixture):
         local_app_data_base=fixture["local"], verify_registration=lambda *_: None)
 
 
+@pytest.mark.parametrize("target_failure", [False, True])
+def test_page_upgraded_source_without_registration_uses_existing_entry_repair(installed, monkeypatch, target_failure):
+    from enterprise import install_entry_repair
+    from enterprise.install_entry import repair_fixed_entry
+    f = installed; roots = f["roots"]
+    (roots.STATE_ROOT / "installation.json").unlink()
+    (roots.STATE_ROOT / "native-entry.json").write_bytes(canonical_json({
+        "schema_version": "enterprise-native-entry-v1", "launcher_sha256": f["old_entry"].sha256}))
+    before = protected(f)
+    pointer_before = (roots.STATE_ROOT / "current-release.json").read_bytes()
+    args = dict(install_root=roots.INSTALL_ROOT, release_dir=f["target_assets"], local_app_data_base=f["local"])
+    with pytest.raises(lifecycle.LifecycleError, match="INSTALL_LIFECYCLE_IDENTITY_REQUIRED"):
+        upgrade.inspect_upgrade(**args)
+    entry_args = dict(install_root=roots.INSTALL_ROOT, entry=f["new_entry"], local_app_data_base=f["local"])
+    assert install_entry_repair.inspect_fixed_entry(**entry_args)["entry_state"] == "REGISTRATION_REQUIRED"
+    assert not (roots.STATE_ROOT / "installation.json").exists()
+    monkeypatch.setattr(install_entry_repair, "_runtime_quiescent", lambda _: None)
+    assert repair_fixed_entry(**entry_args)["repair_state"] == "SUCCEEDED"
+    assert (roots.STATE_ROOT / "current-release.json").read_bytes() == pointer_before
+    assert protected(f) == before
+    assert upgrade.inspect_upgrade(**args)["upgrade_state"] == "ELIGIBLE"
+    installation = (roots.STATE_ROOT / "installation.json").read_bytes()
+    if target_failure:
+        monkeypatch.setattr(upgrade.mvp, "_run_launcher", lambda app, command:
+            (2, {"code": "SYSTEM_UPDATE_TARGET_HEALTH_FAILED"})
+            if command == "health" and app.name.startswith("ice-2026.07.7-")
+            else (0, {"result": "stopped"}))
+    result = upgrade.upgrade_retained(**arguments(f))
+    if target_failure:
+        assert result["upgrade_state"] == "ROLLED_BACK"
+        # Rollback reactivates the original source with a new activation time.
+        current = json.loads((roots.STATE_ROOT / "current-release.json").read_bytes())
+        source = json.loads(pointer_before)
+        assert {key: current[key] for key in ("release_id", "manifest_sha256", "app_root_relative", "schema_version")} == {
+            key: source[key] for key in ("release_id", "manifest_sha256", "app_root_relative", "schema_version")}
+        assert current["previous_release_id"] == result["target_release_id"]
+        assert (roots.STATE_ROOT / "installation.json").read_bytes() == installation
+    else:
+        assert result["upgrade_state"] == "AWAITING_REGISTRATION"
+        assert finish(f)["upgrade_state"] == "COMPLETE"
+    assert protected(f) == before
+
+
 @pytest.mark.parametrize("retained", [False, True])
 def test_shared_upgrade_changes_program_and_native_tools_preserves_business_and_identity(installed, retained):
     f = installed; root = f["roots"].INSTALL_ROOT

@@ -121,6 +121,48 @@ def test_request_rejects_unknown_or_inconsistent_fields(changes: dict[str, objec
         _decode_request(_request_bytes(**changes))
 
 
+def test_entry_inspection_is_additive_credential_free_and_never_calls_repair(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from enterprise import install_setup_bridge as bridge, install_entry, install_entry_repair
+    request = _request(schema_version=bridge.MAINTENANCE_REQUEST_SCHEMA, operation="inspect-entry",
+                       username="", password="", password_confirmation="")
+    assert _decode_request(json.dumps(request).encode()) == request
+    for field in ("username", "password", "password_confirmation"):
+        with pytest.raises(SetupBridgeError):
+            _decode_request(json.dumps(request | {field: "must-not-be-used"}).encode())
+    observed = []
+    monkeypatch.setattr(install_entry, "verify_entry_bundle", lambda *a, **kw: "verified-entry")
+    def inspect(**kw):
+        observed.append(kw)
+        return {"installation_id": None, "entry_state": "REGISTRATION_REQUIRED", "release_id": "source-release"}
+    monkeypatch.setattr(install_entry_repair, "inspect_fixed_entry", inspect)
+    monkeypatch.setattr(install_entry, "repair_fixed_entry", lambda **_: pytest.fail("inspection executed repair"))
+    monkeypatch.setattr(install_entry, "recover_fixed_entry", lambda **_: pytest.fail("inspection executed recovery"))
+    verified = SimpleNamespace(manifest=SimpleNamespace(section=lambda _: {"commit": "b" * 40, "tree": "c" * 40}))
+    result = bridge._execute_install_request(request, assets=tmp_path / "assets", verified=verified,
+        target=tmp_path / "source", known_folder=tmp_path / "local")
+    assert result["status"] == "succeeded" and result["entry_state"] == "REGISTRATION_REQUIRED"
+    assert result["installation_id"] is None
+    assert observed == [{"install_root": tmp_path / "source", "entry": "verified-entry", "local_app_data_base": tmp_path / "local"}]
+
+
+def test_setup_preflights_upgrade_and_refreshes_selected_maintenance_scope():
+    source = (Path(__file__).resolve().parents[2] / "installer/windows/InfiniteCanvasEnterprise.iss").read_text(encoding="utf8")
+    inspect = source[source.index("function InspectSelectedMaintenance("):source.index("procedure InitializeWizard;")]
+    assert "0, 4: InspectingEntry := True" in inspect
+    assert "6, 7, 8, 9: OperationPage.SelectedValueIndex := 9" in inspect
+    assert "10, 11, 12: OperationPage.SelectedValueIndex := 12" in inspect
+    assert "InspectingEntry := False" in inspect and "OperationPage.SelectedValueIndex := SelectedOperation" in inspect
+    next_page = source[source.index("function NextButtonClick("):source.index("function PrepareToInstall(")]
+    assert "(CurPageID = OperationPage.ID) and (MaintenanceOperation = 'upgrade-retained')" in next_page
+    assert "Result := InspectSelectedMaintenance(False)" in next_page
+    assert "本安装尚无身份登记" in source and "请先选择“只修复固定入口与快捷方式”" in source
+    assert "Read-only inspection must not manufacture an installation ID" in source
+    prepare = source[source.index("function PrepareToInstall("):source.index("procedure CurStepChanged(")]
+    assert "MaintenanceFailureCaption" in prepare
+    assert "关闭窗口不会停止后台服务" in source
+
+
 def test_result_is_bounded_stable_and_contains_no_credentials() -> None:
     password = "Never-In-Result-2026!"
     payload = _blocked("INSTALL_PASSWORD_INVALID")
@@ -467,7 +509,7 @@ def test_toolchain_and_build_policies_are_pinned_and_nonsecret() -> None:
     assert build["core_asset_count"] == 3
     assert build["security_authority"] == "enterprise.fresh_install.install_greenfield"
     assert build["credential_channel"]["request_schema"] == "enterprise-install-maintenance-request-v2"
-    assert build["maintenance_operations"] == ["install", "repair-entry", "repair-program", "recover-program", "inspect-program", "recover-entry", "inspect-cache", "clean-cache", "inspect-lifecycle", "uninstall-retain", "recover-uninstall", "reinstall-retained"]
+    assert build["maintenance_operations"] == ["install", "repair-entry", "inspect-entry", "repair-program", "recover-program", "inspect-program", "recover-entry", "inspect-cache", "clean-cache", "inspect-lifecycle", "uninstall-retain", "recover-uninstall", "reinstall-retained"]
     assert build["entry_maintenance"] == {
         "journal_protocol": "enterprise-entry-maintenance-plan-v2",
         "recovery_requires_runner_lease": True,

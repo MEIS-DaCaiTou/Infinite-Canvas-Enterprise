@@ -161,7 +161,7 @@ def _decode_request(raw: bytes) -> dict[str, object]:
             raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
     elif schema == MAINTENANCE_REQUEST_SCHEMA:
         expected.add("operation")
-        if payload.get("operation") not in {"install", "repair-entry", "recover-entry"}:
+        if payload.get("operation") not in {"install", "repair-entry", "recover-entry", "inspect-entry"}:
             raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
     elif schema != REQUEST_SCHEMA:
         raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
@@ -179,7 +179,7 @@ def _decode_request(raw: bytes) -> dict[str, object]:
         raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
     if payload["install_mode"] == "custom" and not install_root:
         raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
-    if payload.get("operation") in {"repair-entry", "recover-entry", "repair-program", "recover-program", "inspect-program", "inspect-cache", "clean-cache", "inspect-lifecycle", "uninstall-retain", "recover-uninstall", "reinstall-retained", "inspect-upgrade", "upgrade-retained", "recover-upgrade", "finish-upgrade"} and any(payload[field] for field in ("username", "password", "password_confirmation")):
+    if payload.get("operation") in {"repair-entry", "recover-entry", "inspect-entry", "repair-program", "recover-program", "inspect-program", "inspect-cache", "clean-cache", "inspect-lifecycle", "uninstall-retain", "recover-uninstall", "reinstall-retained", "inspect-upgrade", "upgrade-retained", "recover-upgrade", "finish-upgrade"} and any(payload[field] for field in ("username", "password", "password_confirmation")):
         raise SetupBridgeError("INSTALL_SETUP_BRIDGE_REQUEST_INVALID")
     return payload
 
@@ -294,7 +294,7 @@ def _validated_install_root(
             or _paths_overlap(target, known_folder / "Infinite-Canvas-Enterprise" / "maintenance-payloads")):
         raise SetupBridgeError("INSTALL_TARGET_OVERLAP")
     try:
-        if request.get("operation", "install") in {"repair-entry", "recover-entry", "repair-program", "recover-program", "inspect-program", "inspect-cache", "clean-cache", "inspect-lifecycle", "uninstall-retain", "recover-uninstall", "reinstall-retained", "inspect-upgrade", "upgrade-retained", "recover-upgrade", "finish-upgrade"}:
+        if request.get("operation", "install") in {"repair-entry", "recover-entry", "inspect-entry", "repair-program", "recover-program", "inspect-program", "inspect-cache", "clean-cache", "inspect-lifecycle", "uninstall-retain", "recover-uninstall", "reinstall-retained", "inspect-upgrade", "upgrade-retained", "recover-upgrade", "finish-upgrade"}:
             if not target.is_dir():
                 raise SetupBridgeError("INSTALL_ENTRY_SOURCE_INVALID")
         elif target.exists() and (not target.is_dir() or any(target.iterdir())):
@@ -414,9 +414,13 @@ def _execute_install_request(request, *, assets, verified, target, known_folder,
         return {"schema_version": RESULT_SCHEMA, "status": "succeeded",
                 "code": "INSTALL_PROGRAM_RECOVERED" if request["operation"] == "recover-program" else "INSTALL_PROGRAM_REPAIRED",
                 **result}
-    if request.get("operation") in {"repair-entry", "recover-entry"}:
+    if request.get("operation") in {"repair-entry", "recover-entry", "inspect-entry"}:
         source = verified.manifest.section("enterprise_source")
         entry = verify_entry_bundle(assets / "native-entry", commit=str(source["commit"]), tree=str(source["tree"]))
+        if request["operation"] == "inspect-entry":
+            from enterprise.install_entry_repair import inspect_fixed_entry
+            result = inspect_fixed_entry(install_root=target, entry=entry, local_app_data_base=known_folder)
+            return {"schema_version": RESULT_SCHEMA, "status": "succeeded", "code": "INSTALL_ENTRY_STATUS", **result}
         handler = recover_fixed_entry if request["operation"] == "recover-entry" else repair_fixed_entry
         result = handler(install_root=target, entry=entry, local_app_data_base=known_folder)
         return {"schema_version": RESULT_SCHEMA, "status": "succeeded",

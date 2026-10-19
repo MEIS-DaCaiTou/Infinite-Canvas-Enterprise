@@ -467,6 +467,35 @@ def _lease_warning(roots, lock, cleanup_warnings, warning):
     return warning
 
 
+def _entry_targets(roots, entry):
+    """Same ownership proof for read-only inspection and explicit repair."""
+    originals = {name: _snapshot(path) for name, path in _paths(roots).items()}
+    identity = validate_installation_record(roots.INSTALL_ROOT, originals["record"]) if originals["record"] else None
+    if originals["entry"] is not None and _sha(originals["entry"].data) != entry.sha256:
+        owner = identity["native_entry"]["sha256"] if identity else None
+        legacy = _snapshot(roots.STATE_ROOT / "native-entry.json", maximum=16384)
+        if owner is None and legacy is not None:
+            old = _document(legacy.data)
+            if set(old) == {"schema_version", "launcher_sha256"} and old.get("schema_version") == "enterprise-native-entry-v1":
+                owner = old.get("launcher_sha256")
+        if owner != _sha(originals["entry"].data):
+            _fail("INSTALL_ENTRY_UNOWNED_FILE")
+    return originals, identity
+
+
+def inspect_fixed_entry(*, install_root: Path, entry: NativeEntry, local_app_data_base: Path) -> dict:
+    """Prove the current Release/entry without creating an installation ID."""
+    roots, _manifest, _pointer, _native = _source(install_root, entry, local_app_data_base)
+    if _snapshot(roots.STATE_ROOT / "system-update-active.lock", maximum=16384) is not None:
+        _fail("INSTALL_ENTRY_MAINTENANCE_BUSY")
+    if _snapshot(roots.RUNTIME_ROOT / "runtime-reconcile.lock", maximum=16384) is not None:
+        _fail("INSTALL_ENTRY_RUNTIME_BUSY")
+    _originals, identity = _entry_targets(roots, entry)
+    return {"installation_id": identity["installation_id"] if identity else None,
+            "release_id": roots.APP_ROOT.name,
+            "entry_state": "REGISTERED" if identity else "REGISTRATION_REQUIRED"}
+
+
 def repair_entry_transaction(*, install_root: Path, entry: NativeEntry, local_app_data_base: Path) -> dict:
     try:
         roots, manifest, pointer, native = _source(install_root, entry, local_app_data_base)
@@ -475,18 +504,8 @@ def repair_entry_transaction(*, install_root: Path, entry: NativeEntry, local_ap
         if _snapshot(roots.RUNTIME_ROOT / "runtime-reconcile.lock", maximum=16384) is not None:
             _fail("INSTALL_ENTRY_RUNTIME_BUSY")
         _runtime_quiescent(roots)
-        originals = {name: _snapshot(path) for name, path in _paths(roots).items()}
+        originals, identity = _entry_targets(roots, entry)
         candidate_record = _record(roots.INSTALL_ROOT, entry, originals["record"])
-        identity = validate_installation_record(roots.INSTALL_ROOT, originals["record"]) if originals["record"] else None
-        if originals["entry"] is not None and _sha(originals["entry"].data) != entry.sha256:
-            owner = identity["native_entry"]["sha256"] if identity else None
-            legacy = _snapshot(roots.STATE_ROOT / "native-entry.json", maximum=16384)
-            if owner is None and legacy is not None:
-                old = _document(legacy.data)
-                if set(old) == {"schema_version", "launcher_sha256"} and old.get("schema_version") == "enterprise-native-entry-v1":
-                    owner = old.get("launcher_sha256")
-            if owner != _sha(originals["entry"].data):
-                _fail("INSTALL_ENTRY_UNOWNED_FILE")
         operation = uuid.uuid4().hex
         area = _safe(roots.STAGING_ROOT / "entry-repairs", missing=True)
         directory = area / operation[:12]
