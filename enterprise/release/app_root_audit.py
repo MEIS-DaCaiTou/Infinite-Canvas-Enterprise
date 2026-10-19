@@ -571,6 +571,10 @@ def _flow_for_operation(file: str, symbol: str) -> str:
         # Atomic task receipts/results live under DATA_ROOT/canvas-tasks;
         # neither an immutable Release nor a provider configuration is written.
         return "W48"
+    if file == "enterprise/canvas_task_dispatch.py" and symbol == "CanvasTaskDispatch._remove_input":
+        # Private queued input artifacts share the existing DATA_ROOT task
+        # boundary; cleanup never deletes referenced media or public results.
+        return "W48"
     if file == "enterprise/migrations/versioned.py" and symbol in {
         "_write_new_file", "create_database_backup", "restore_database_backup",
         "preview_legacy_schema_enrollment",
@@ -687,7 +691,7 @@ def _flow_for_operation(file: str, symbol: str) -> str:
 # Wxx flow). Line numbers are deliberately excluded, while duplicate identical
 # calls remain duplicate records. Any added/removed/changed call drifts it.
 # W15 replaces the generic URL fallback with removal of this invocation's generated partial output.
-EXPECTED_SITE_MANIFEST_DIGEST = "e04ec8f513bfbbf4b4692906ab6f84724d6fe8f9fd6c46118eb0be9d5f9e2c6b"
+EXPECTED_SITE_MANIFEST_DIGEST = "4276108855d03bd121007d53d4010ef4d312f8a919eb3361ebd4fdad0e37eece"
 
 FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W01", "main.py", "startup_event"),

@@ -18,6 +18,7 @@ db.get_task_owner = lambda *_: 'fixture-alice'
 db.record_canvas_image_task_owner = lambda *_: None
 db.record_task_owner = lambda *args, **kwargs: None
 db.get_canvas_image_task_owner = lambda _: 'fixture-alice'
+db.can_use_feature = lambda *_: True  # Restored dispatch rechecks the current generation grant.
 main.provider_env_key_value = lambda _: 'fixture-only-key'
 '''
     writer = setup + r'''
