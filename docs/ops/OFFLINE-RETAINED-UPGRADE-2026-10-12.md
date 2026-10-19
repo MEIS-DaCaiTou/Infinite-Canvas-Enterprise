@@ -111,3 +111,23 @@ Draft [#155](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/15
 首次长 artifact 测试目录触及 Windows 路径限制，产生 21 项路径失败，另 1 项是新增占用用例在 Windows 锁字节读取处未映射的错误；缩短目录并修正后，后续新增测试又发现 hook 错误复用已关闭 writer，修正该测试。独立 Review 随后用真实提交复现 1 项 P1：最后检查与 checkpoint 间新出现非空 WAL，事后检查过晚。已按上述互斥/失败 close 保护修复，具体并发回归通过，定向复审 NO_ACTIONABLE_BUGS_FOUND；不是 GitHub Approval 或无缺陷保证。未把早期失败改写为首次全绿。
 
 证据位于产品专用 artifact 的 install-database-preparation-20261020；客户数据只在仓库外隔离副本。新增 CI 只在现有 Runtime3.14 作业加入该小模块，本地约13秒，不加作业、依赖或新门禁。准确 Head CI 与候选构建结果在 PR 记录；GUI、Windows 登记及现场 10.2→目标完整升级仍 NOT_VERIFIED。合并/补丁发布/现场执行需分别批准。
+
+## 2026-10-20 组合候选的完整冻结副本验收
+
+独立组合分支汇集 #177、#178→#181、#179→#180；Base main `e0dfa843d4bec3ff9c05a6f2ee25337a3687fc3e`。完整构建与原生演练源码准确为 `b0fcb067aaf6deff3ff372a7a10ba911d6947780`，内部目标 `ice-2026.10.3-b0fcb067aaf6`；后续只补文档和演练Setup路径提前检查，最终PR Head/CI另记。此10.3候选未替换公开10.3资产，不是新正式Release。
+
+固定CPython3.14.6/依赖和原编译工具链构建ZIP/Manifest、固定EXE、Setup及维护资产成功。复用原C6完整副本演练，新增显式 `--empty-wal-residue --scenarios in-place interrupted rollback`：正式 `ice-2026.10.2-7da593b52f3d` 源资产新建合成账号/画布/素材，实际固定EXE启动、健康和停机后生成限定空WAL/SHM，冻结目标Python执行原升级事务。无客户ZIP/原库执行、无付费调用。
+
+| 场景 | 实际结果 | 证据边界 |
+| --- | --- | --- |
+| 正常升级 | AWAITING_REGISTRATION；新目标真实健康200、业务入口503；显式recover不把成功目标降回旧版 | 受控准备阶段主库字节保持，业务文件/安装身份保持；不含Windows登记 |
+| SQLite锁内中断 | 进程在database_locked实际退出93；显式recover处理受证空日志后ROLLED_BACK | 原native对象恢复、主库字节和业务文件保持；不是任意电源故障覆盖 |
+| 目标健康失败 | 目标start成功后在真实health前受控停止；health返回PORTABLE_STARTUP_NOT_READY，原引擎停止目标并重启正式10.2，source_health成功，ROLLED_BACK | Runtime phases/events记录完整，不以任意提前回滚冒充注入到达；原native对象和安装身份保持 |
+
+三个场景的测试端口关闭，既有本机两处KnownFolder原树字节/mtime及目录身份完整恢复。开发宿主第一次保全移开原树后出现历史空占位目录而安全拒绝，未创建安装fixture；空占位单独保留后原树恢复。第二次传入不存在的Setup文件名，事务发布前返回INSTALL_CACHE_UNPROVEN；只读资格仍ELIGIBLE，修正为实际构建文件并在演练前增加文件存在检查。失败和恢复记录保留，不算首次全绿。普通桌面上下文最终三场景退出0；没有修改应用Job/Runtime保护。
+
+同一源码业务组合定向127项通过；新增三进程排队MiniMax-H3验证一次选定POST、GET原ID、终态重开无供应商请求。测试自身最初误读结果响应层级，定向修正后1项通过，原五项四类任务恢复场景通过。写点审计7项通过，513处完整登记、无失效映射，增删正好为已审候选并集；文档检查及17项契约通过。其余仍有效的单包CP314、Browser及真实Provider证据只按原范围复用，不重复全量本机测试。
+
+组合运行交界及新增演练/测试独立Review为NO_ACTIONABLE_BUGS_FOUND。仓库外演练驱动一处普通文件可能被空目录快照误接纳的P2，已增加目录类型/对象身份复验，定向拒绝及复审通过；不是应用源码缺陷，也不是GitHub Approval。证据仍放产品既有artifact的candidate-integration-20261020与t/C20，不新增治理文档；35个其他工作区原状态保持。
+
+当前新条件的Setup GUI、Windows登记、在线更新及现场完整升级仍NOT_VERIFIED，不以本节覆盖；常规CI跳过固定EXE opt-in也不算通过。候选准确Head CI/合并状态见新PR，main及正式10.3不变。新增演练是手动opt-in，未增加常规PR作业/依赖/门禁。下一完整包在获准合并后固定补丁版本/源码，补Setup登记、更新中心来源副本和现场复测边界；发行及客户操作分别批准。未知恢复继续原fence与显式recover，不删除日志或强行重装。

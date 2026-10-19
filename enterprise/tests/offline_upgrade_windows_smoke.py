@@ -120,6 +120,10 @@ assert db.with_name(db.name+'-shm').stat().st_size == 32768
 def run(args):
     if os.name != "nt":
         raise RuntimeError("OFFLINE_DRILL_WINDOWS_REQUIRED")
+    # Reject a wrong build-output path before materializing or preserving roots.
+    files._safe(args.target_setup, missing=True)
+    if not args.target_setup.is_file():
+        raise RuntimeError("OFFLINE_DRILL_SETUP_MISSING")
     output = args.evidence_root.absolute()
     files._safe(output, missing=True); output.mkdir(exist_ok=False)
     source = _asset_view(args.source_build, output / "source-assets")
