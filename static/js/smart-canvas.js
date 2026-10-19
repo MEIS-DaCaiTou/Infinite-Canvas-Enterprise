@@ -14002,7 +14002,7 @@ async function runCascadeStepIntoNode(sourceNode, targetNode, inputRefs, ctx=sma
         const ext = result.kind === 'video' ? 'mp4' : result.kind === 'audio' ? 'mp3' : result.kind === 'text' ? 'txt' : 'png';
         const additions = result.urls.map((item, i) => {
             const url = typeof item === 'string' ? item : item?.url || '';
-            return stripImageGenerationMeta(copyMediaSizeFields(item, {url, name:(typeof item === 'object' && item.name) || `output-${i + 1}.${ext}`, kind:(typeof item === 'object' && item.kind) || result.kind, generatedResult:true}));
+            return stripImageGenerationMeta(copyMediaSizeFields(item, {...(typeof item==='object'?item:{}), url, name:(typeof item === 'object' && item.name) || `output-${i + 1}.${ext}`, kind:(typeof item === 'object' && item.kind) || result.kind, generatedResult:true}));
         }).filter(item => item.url);
         if(result.videoAlreadyApplied) {
             // A concurrent original-task poll already applied this receipt.
@@ -14125,7 +14125,7 @@ async function runLoopRoundIntoSlot(loopNode, rootNode, outputSlot, loopIndex, c
             const ext = result.kind === 'video' ? 'mp4' : result.kind === 'audio' ? 'mp3' : result.kind === 'text' ? 'txt' : 'png';
             additions = result.urls.map((item, i) => {
                 const url = typeof item === 'string' ? item : item?.url || '';
-                return stripImageGenerationMeta(copyMediaSizeFields(item, {url, name:(typeof item === 'object' && item.name) || `output-${i + 1}.${ext}`, kind:(typeof item === 'object' && item.kind) || result.kind, generatedResult:true}));
+                return stripImageGenerationMeta(copyMediaSizeFields(item, {...(typeof item==='object'?item:{}), url, name:(typeof item === 'object' && item.name) || `output-${i + 1}.${ext}`, kind:(typeof item === 'object' && item.kind) || result.kind, generatedResult:true}));
             }).filter(item => item.url);
             outputSlot = liveSmartNode(outputSlot);
             outputSlot.images = nonPreviewOutputImages(outputSlot.images);
@@ -15060,7 +15060,7 @@ function finalizeJimengPending(node, urls, kind='image'){
     const additions = (urls || []).map((item, i) => {
         const url = typeof item === 'string' ? item : item?.url || '';
         const itemKind = (typeof item === 'object' && item.kind) || kind;
-        return stripImageGenerationMeta(copyMediaSizeFields(item, {url, name:(typeof item === 'object' && item.name) || `output-${i + 1}.${ext}`, kind:itemKind, generatedResult:true}));
+        return stripImageGenerationMeta(copyMediaSizeFields(item, {...(typeof item==='object'?item:{}), url, name:(typeof item === 'object' && item.name) || `output-${i + 1}.${ext}`, kind:itemKind, generatedResult:true}));
     }).filter(item => item.url);
     if(!additions.length) return false;
     delete node.jimengPending;
@@ -15314,7 +15314,7 @@ function finalizeSmartPendingTask(node, taskId, images, kind='image', options={}
     const additions = cleanHistoryImages((mediaItems || []).map((item, i) => {
         const url = typeof item === 'string' ? item : item?.url || '';
         const itemKind = (typeof item === 'object' && item.kind) || kind;
-        return stripImageGenerationMeta(copyMediaSizeFields(item, {url, name:(typeof item === 'object' && item.name) || `output-${i + 1}.${ext}`, kind:itemKind, generatedResult:true}));
+        return stripImageGenerationMeta(copyMediaSizeFields(item, {...(typeof item==='object'?item:{}), url, name:(typeof item === 'object' && item.name) || `output-${i + 1}.${ext}`, kind:itemKind, generatedResult:true}));
     }).filter(item => item.url)).filter(item => {
         const key = `${item.kind || ''}|${item.url || ''}`;
         if(seen.has(key)) return false;

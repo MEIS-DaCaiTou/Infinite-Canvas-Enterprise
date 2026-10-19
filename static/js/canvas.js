@@ -10605,7 +10605,7 @@ async function runGeneratorLegacy(genId, opts={}){
             headers:{'Content-Type':'application/json'},
             body:JSON.stringify(payload)
         }).then(async r => { if(!r.ok) throw new Error(await responseErrorMessage(r, tr('canvas.generationFailed'))); return r.json(); })));
-        const images = results.flatMap(result => result.images || []);
+        const images = results.flatMap(result => result.image_items?.length ? result.image_items : (result.images || []));
         const metas = collectRunMetas(out, pendingIds);
         run.request = results[0] ? requestMetaFromResult(results[0]) : {};
         if(out) out._pending = (out._pending||[]).filter(p => !pendingIds.includes(p.id));
@@ -12469,7 +12469,7 @@ function providerIdForPending(pending){
 }
 function completeRecoverPendingOutput(out, pending, result){
     if(!out || !pending || !result) return;
-    const images = result.images || [];
+    const images = result.image_items?.length ? result.image_items : (result.images || []);
     if(!images.length) return;
     const meta = {
         runMs: nowMs() - Number(pending.startedAt || nowMs()),
@@ -12618,7 +12618,7 @@ function completeCanvasImageTask(taskId, result){
         run: pending.run || {},
     };
     meta.run.request = requestMetaFromResult(result);
-    const images = result.images || [];
+    const images = result.image_items?.length ? result.image_items : (result.images || []);
     out._pending = (out._pending || []).filter(p => p.id !== pending.id);
     appendOutputImages(out, images, meta.run?.refs?.[0], [meta]);
     const gen = nodes.find(n => n.id === meta.run?.node?.id);
@@ -12756,7 +12756,7 @@ function appendOutputImages(out, images, compareRef, metas=[], layout=null){
     if(compareRef?.url){
         out.imageComparisons = out.imageComparisons || {};
         list.forEach(url => {
-            out.imageComparisons[url] = {url:compareRef.url, name:compareRef.name || 'input image'};
+            out.imageComparisons[outputUrlValue(url)] = {url:compareRef.url, name:compareRef.name || 'input image'};
         });
     }
 }

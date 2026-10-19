@@ -183,7 +183,7 @@ def test_older_provider_settings_do_not_erase_capability_profiles(explicit_clear
         assert saved[0][field] == ({} if explicit_clear else existing[field])
 
 
-@pytest.mark.parametrize('model', list(IMAGE_MODELS))
+@pytest.mark.parametrize('model', [name for name, profile in IMAGE_MODELS.items() if not profile.get('min_references')])
 def test_zhenzhen_builtin_text_and_reference_requests_need_no_template(builders, model):
     import json
     env, calls, _ = builders
@@ -192,9 +192,9 @@ def test_zhenzhen_builtin_text_and_reference_requests_need_no_template(builders,
     for references in ([], [{'url':'data:image/png;base64,ZmFrZQ=='}]):
         asyncio.run(env['generate_ai_image']('fixture prompt', '1024x1024', 'high', model, references, 'fixture', {'aspect_ratio':'1:1', 'resolution':'2K'}))
     assert len(calls) == 2
-    for request in calls:
+    for index, request in enumerate(calls):
         body = json.loads(request.content)
-        assert request.url.path == '/v1/images/generations'
+        assert request.url.path == ('/v1/images/edits' if model == 'gpt-image-2-all' and index == 1 else '/v1/images/generations')
         profile = IMAGE_MODELS[model]
         if profile['mode'] == 'aspect-size':
             assert body['aspect_ratio'] == '1:1' and 'size' not in body

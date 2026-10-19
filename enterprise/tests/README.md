@@ -113,3 +113,6 @@ Video canvas reconnect: `node enterprise/tests/test_video_canvas_resume.js` runs
 
 
 Zhenzhen per-model video routing: `py -3.11 -B -m pytest -q enterprise/tests/test_zhenzhen_model_routing.py enterprise/tests/test_zhenzhen_video_adapter.py enterprise/tests/test_canvas_video_tasks_main.py` covers exact model classification, request/media contracts, pre-submit capability validation, one selected submit path, actual-main hard process exit and original-ID query recovery, including old generic receipts for newly mapped models. Synthetic HTTP/media only; bounded paid and Browser evidence is separately recorded in the existing product integration record and PR.
+
+
+Image contract/layer delta: `py -3.11 -B -m pytest -q enterprise/tests/test_model_request_contract.py enterprise/tests/test_zhenzhen_image_outputs.py enterprise/tests/test_generation_tasks.py` uses only synthetic requests, temporary roots and owned PNGs. Covers chosen JSON edit path/no fallback, layer source constraints, transparent multi-result archival, bounded metadata, nested URL/base64/list deduplication, reopened journal and existing task projection. Paid/Browser results and upstream 500 limitations remain separately recorded in the original PR/product record.

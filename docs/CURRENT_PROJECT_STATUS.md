@@ -1,14 +1,18 @@
 # Infinite Canvas Enterprise 当前项目状态
 
+更新时间：2026-10-19
+
 ## 当前结论（2026-10-19）
 
 已核对 main `e0dfa843d4bec3ff9c05a6f2ee25337a3687fc3e`：#172–#176 均已合并；正式 v2026.10.3 已发布，发行源码 `d8ffe55b48fdb9944aa1dac71f21e772ec06d3eb`。准确发行证据见 [10.3 记录](./ops/RELEASE-2026.10.3-RECORD.md)。本轮不发布或操作客户设备。
 
 业务仍处于唯一路线图 4.2。#177 未受理队列执行/启动恢复与 #178 安装维护提示均为 Draft，尚未合并。现场反馈确认：正式 10.2 页面升级来源缺少 installation.json，停止服务并关闭固定 EXE 窗口后入口修复成功；不能据此宣布离线跨版本升级验收通过。
 
-独立候选 `codex/zhenzhen-video-routing-20261019` 补齐 Grok imagine、MiniMax-H3、Wan3 的精确协议、媒体参数和原任务续查；两类画布复用既有控件展示对应能力，不修改已有节点模型。真实三型号各单次提交并续查归档；连同前轮累计用量差额 6.670022 / 已批准总计 10 平台额度，未将预算重置。合同测试、Browser、独立 Review 及限制见 [原产品工程记录](./ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#2026-10-19-贞贞视频协议路由候选)，准确 Head CI 以对应 PR 为准。
+[Draft #179](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/179) `codex/zhenzhen-video-routing-20261019` 补齐 Grok imagine、MiniMax-H3、Wan3 的精确协议、媒体参数和原任务续查；两类画布复用既有控件展示对应能力，不修改已有节点模型。真实三型号各单次提交并续查归档；连同前轮累计用量差额 6.670022 / 已批准总计 10 平台额度，未将预算重置。合同测试、Browser、独立 Review 及限制见 [原产品工程记录](./ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#2026-10-19-贞贞视频协议路由候选)，准确 Head bd341fb 的文档/Enterprise/Runtime CI 已成功，fixed EXE opt-in 跳过。
 
-下一完整开发主题是已批准的图像文生图/编辑/多图参考及特殊输出适配；随后收口上述候选的兼容集成与离线升级现场验证。RunningHub #170 继续暂缓，4.3 部门/项目和费用治理依赖不变。候选合并、正式 Release 和客户升级分别等待授权。
+接续图片候选 `codex/zhenzhen-image-contracts-20261019` 堆叠于 #179 Head bd341fb：补 gpt-image-2-all 文生图/JSON编辑分流，以及单原图层拆分、透明PNG和图层元数据保留。模拟/Browser与真实结果分开：真实文生图成功；双参考JSON编辑上游500无受理ID，保留待核对且没有重提，不能称已验收。累计用量差额6.710022/原总预算10，未知调用仍保留费用余量。
+
+下一完整主题为视频/图片/队列/安装维护候选集成与修复版本验收，优先核对该编辑失败及离线升级；无需扩大到全目录模型或组织费用功能。RunningHub #170 继续暂缓，4.3 部门/项目和费用治理依赖不变。候选合并、正式 Release 和客户升级分别等待授权。
 
 ## 工作包历史快照
 

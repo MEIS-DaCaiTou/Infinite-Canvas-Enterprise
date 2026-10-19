@@ -120,3 +120,6 @@ Photoshop UXP 源码 manifest 0.3.0，最低 PS 24，具备浏览/置入/PNG 导
 
 
 2026-10-19 独立视频候选（Base main e0dfa84）：`enterprise/providers/zhenzhen_video.py` 承接精确型号能力、媒体字段及提交/查询选路，`model_catalog.py` 仅修正已知分类。main 保留媒体转换、现有鉴权、回执和归档接线；CanvasModelPicker 向两类画布提供同一视频能力。实际调用、旧回执兼容与未覆盖边界见 [产品记录](../ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#2026-10-19-贞贞视频协议路由候选)，不是全部上游模型或正式发行能力声明。
+
+
+同日图片候选（Base #179@bd341fb）：zhenzhen.py补精确JSON编辑/单图拆层；`image_outputs.py`保留有界图层元数据，generation_tasks沿用资源校验后投影，经典画布优先既有image_items。图层仍是普通透明图片及元数据，没有新编辑器；上游500和未验收范围见[图片候选](../ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#2026-10-19-图片编辑与图层输出候选)。
