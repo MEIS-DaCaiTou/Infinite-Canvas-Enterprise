@@ -1,6 +1,8 @@
 # Enterprise Test Scripts
 
-Reviewed: 2026-10-18
+Reviewed: 2026-10-19
+
+Queued task dispatch: `py -3.11 -B -m pytest -q enterprise/tests/test_canvas_task_dispatch.py enterprise/tests/test_canvas_task_dispatch_policy.py enterprise/tests/test_canvas_task_dispatch_main.py enterprise/tests/test_canvas_video_tasks_main.py` uses isolated v1 receipts/SQLite and controlled generators in actual main subprocesses. It checks all four never-started requests survive a hard restart and run once, claimed work never replays, current permissions/configuration/maintenance are rechecked, sensitive Comfy fields are not saved, and pending inputs are cleaned safely. No real paid Provider, GPU or Browser; normal submission concurrency and existing accepted-task query recovery remain unchanged. Scope/review/rollback stay in the [existing task record](../../docs/ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md#2026-10-19-未开始任务持久执行与重启恢复候选). This candidate is outside the frozen 10.3 release.
 
 Canvas LLM tasks: `py -3.11 -B -m pytest -q enterprise/tests/test_canvas_llm_tasks.py enterprise/tests/test_canvas_llm_tasks_main.py` uses private receipts/SQLite, A/B/admin authorization, actual main HTTP with MockTransport and hard process exits. It verifies owner-before-dispatch, one submit per ticket, unknown/rejection states, GET-only client resume/navigation, persisted text and local-only archival recovery; the real provider and CLI hosts are not invoked. `test_canvas_persistence.py` retains ticket metadata across process save/reopen. Rendered Browser evidence and limits are in the existing [task record](../../docs/ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md#2026-10-18-画布-llm-持久任务与文本找回候选).
 

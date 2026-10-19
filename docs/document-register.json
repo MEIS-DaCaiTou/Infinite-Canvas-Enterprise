@@ -1,8 +1,8 @@
 {
   "schema_version": "enterprise-documents-v1",
   "reviewed_at": "2026-10-19",
-  "audit_base_commit": "783f2cfa67d3ee9e0103503d3af30e111b92289a",
-  "scope": "Owner-authorized repair candidate after #172-#175 merged into main783. VERSION-only clean build source d8ffe55 binds 2026.10.3 ZIP, fixed EXE, Setup, existing Runtime and exact official 10.2 route. Installed-copy upgrade and recovery evidence, remaining limitations and approvals stay in the release record and Draft PR. Historical status snapshots retain their original roles. No schema, new governance gate, GitHub Release, customer deployment or second roadmap; formal v2026.10.2 remains unchanged.",
+  "audit_base_commit": "e0dfa843d4bec3ff9c05a6f2ee25337a3687fc3e",
+  "scope": "Owner-authorized 4.2 queued-task candidate on maine0dfa84: private pending inputs and existing v1 journal recover only never-started authenticated Zhenzhen HTTP and ComfyUI work. Current ownership, resource, configuration and maintenance are rechecked; claimed or unknown work is never resubmitted. No schema, new UI, external queue, production or extra governance. Independent Review P2 sensitive field retention fixed; targeted re-review NO_ACTIONABLE_BUGS_FOUND. Frozen 10.3 build remains source d8ffe55, separate from this runtime candidate; actual publication is recorded in CURRENT and the existing release record. Owner explicitly approved #176 merge and formal10.3 publication: maine0dfa84 CI successful, immutable sourced8ffe55 and 10 release assets published; official10.2 public check confirms stable/direct10.3. Customer devices untouched; queued runtime candidate remains separate and unmerged.",
   "documents": [
     {
       "path": ".github/PULL_REQUEST_TEMPLATE.md",
@@ -561,7 +561,7 @@
       "path": "enterprise/tests/README.md",
       "kind": "authority",
       "authority": "testing",
-      "reviewed_at": "2026-10-18"
+      "reviewed_at": "2026-10-19"
     },
     {
       "path": "enterprise/tests/SMOKE_CHECKLIST.md",

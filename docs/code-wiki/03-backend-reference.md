@@ -213,3 +213,9 @@ Zhenzhen `image_query_status` 按维护的异步查询状态区分处理中/明�
 2026-10-17 续修候选：`AcceptedTaskRecovery.after_manual_query` 让 Zhenzhen 图像和 ComfyUI 显式查询复用后台结果记账/退避；解除此前 manual 后，下一次查询仍由原验证和维护暂停控制。`canvas_image_recovery.public_receipt` 对已受理且后台等待/查询的任务投影 running，保留内部失败/原身份并屏蔽绑定。既有端点、前端、v1 journal 和 owner 表复用，不增加生成提交。范围和模拟证据见 [同一工程记录](../ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md#2026-10-17-手动原任务查询后接续后台跟踪)；尚未合并或发布。
 
 2026-10-18 候选增量（Base main73d2b67，尚未合并/发布）：`providers/video_generation.py` 的 `json_video_body`、`generate_json_video`、`video_error_detail` 承接既有统一JSON构造/提交/解析；main只注入媒体、HTTP头、受理与查询回调，再归档输出。`providers/zhenzhen.py` 集中视频v2优先/明确缺失时v1兼容及Bearer头；`video_tasks.read_video_task`/`video_task_result` 保持只查询能力，实时 `poll_video` 与重启恢复共用解析，NOT_START为排队。旧回执的video_v2与generic mode保持兼容。不提供全模型能力目录/模板系统，不宣称所有Provider已模块化；源文档、验证及回滚见 [工程记录](../ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md#2026-10-18-zhenzhen-统一视频适配收口)。
+
+## 2026-10-19 未开始任务执行边界候选
+
+`canvas_task_dispatch.CanvasTaskDispatch` 在原 v1 journal 上协调私有待执行输入和就绪标记；既有 runner 的 mark_running 是提交前不可重放边界。`canvas_task_dispatch_app.create_dispatch` 注入当前 owner/来源/素材权限、Zhenzhen 模型与鉴权绑定、Comfy 工作流与后端绑定及维护暂停。新模块不改变数据库 Schema 或 Provider 提交协议，main 只连接四类入口和启动/停止。既有 `AcceptedTaskRecovery` 仍只负责已受理原任务续查。
+
+认证 Zhenzhen HTTP 图像/视频/LLM 和 ComfyUI 可恢复未开始任务；CLI/匿名/其他供应商、敏感字段和超64MiB输入保留既有路径。正常提交并发不变，仅重启批次并发2。inputs 位于 DATA_ROOT 的私有任务子目录，不进入公开任务数据；结束/拒绝后清理，不删除素材。单 Upstream、旧回执人工核对和已开始不重提限制保留，详见 [原任务记录](../ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md#2026-10-19-未开始任务持久执行与重启恢复候选)。这是独立候选，不包含在冻结 v2026.10.3 构建中。

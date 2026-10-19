@@ -1,4 +1,18 @@
-# v2026.10.3 修复版本候选记录
+# v2026.10.3 修复版本发行记录
+
+## 正式发布收口（2026-10-19）
+
+负责人明确批准合并 #176 并正式发布10.3（不操作客户设备）。准确审查 Head `a8f58c84cd926dae2bf1c0af254a503d91db5228` 已通过独立技术 Review `NO_ACTIONABLE_BUGS_FOUND` 和 PR CI，随后以 merge commit 合入 main `e0dfa843d4bec3ff9c05a6f2ee25337a3687fc3e`；技术 Review 不是 GitHub Approval。固定构建源码仍是可从该 main 到达的 `d8ffe55b48fdb9944aa1dac71f21e772ec06d3eb`，没有用合并后工作区重建/替换资产。
+
+该准确 main 的 [Enterprise/Runtime 39185355220](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/39185355220) 和 [文档 39185355324](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/39185355324) 最终 SUCCESS，均非 PR CI。固定 EXE opt-in 在 CI 为 SKIPPED，保留前述准确包的本地真实 CLI/认证 HTTP 验收，不把跳过说成通过。
+
+[v2026.10.3](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.10.3) 已正式发布，Latest、非预发布；Git tag准确指向d8ffe55，Release ID `ice-2026.10.3-d8ffe55b48fd`，共10项资产。9项核心资产上传后逐项下载回读与已验收构建字节一致，另附含准确主线CI/验收边界的发布验证JSON并回读；既有10.2资产未修改。发行ZIP SHA256 `d2af9e75e8ad67bbaf942d7b081e42bfd76f5feed7fedfc9de344c6ca00bf975`，Manifest SHA256 `1055a0a0ea555f3527ceed7591ef5b85e9f5d8a3eb52816e2beaebc5f9dbce0b`，沿用既有交付完整性契约。
+
+公开目录核对：在此前正式10.2合成安装上直接调用该版本原有 `_check_update_sync`，不带GitHub Token，真实读取18条完整公开目录记录；返回 update_available=true、latest=v2026.10.3、stage=stable、route_status=direct。该步骤只执行更新服务检查，不启动Runtime、不准备或执行升级，不是Browser/客户验收。先前准确包升级与失败恢复证据继续有效，无需再演练一次。正常启动继续当前版本，不强制更新；管理员手动确认后才升级。
+
+本轮新增未开始任务队列代码留在独立候选，不属于10.3。客户设备、运行中真实付费视频中断、全部自定义工作流和签名等限制继续保留。公开原始元数据/回读/CI与只读更新检查保存在同一R103 artifact目录；本文以下为冻结候选时点的历史记录，不将旧“未发布”状态当作当前结论。
+
+## 冻结候选历史快照
 
 记录日期：2026-10-19。状态：本地候选，未创建 GitHub Release，未进入稳定更新目录。负责人授权继续形成修复版本候选；本轮不包含正式发布或客户设备升级。
 
