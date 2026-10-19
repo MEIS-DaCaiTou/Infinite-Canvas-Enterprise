@@ -71,8 +71,18 @@ def _database_inspection(roots):
         files._safe(sidecar, missing=True)
         if files._exists(sidecar):
             _fail("INSTALL_LIFECYCLE_DATABASE_RECOVERY_REQUIRED")
-    # immutable is permitted only after explicitly rejecting all sidecars and
-    # proving Runtime quiescence. It prevents readonly inspection creating SHM.
+    return _immutable_database_inspection(roots)
+
+
+def _immutable_database_inspection(roots):
+    """Internal read, after proving absent logs or the empty-WAL preparation case."""
+    database = roots.DATA_ROOT / "enterprise.db"
+    files._safe(database)
+    info = files._io(database).lstat()
+    if not files.stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+        _fail("INSTALL_LIFECYCLE_DATABASE_UNPROVEN")
+    # Callers prove absent sidecars, or the upgrade's exact empty-WAL case.
+    # immutable prevents qualification itself creating SHM or recovering logs.
     uri = database.as_uri() + "?mode=ro&immutable=1"
     try:
         with closing(sqlite3.connect(uri, uri=True)) as connection:

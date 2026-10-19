@@ -1,8 +1,10 @@
 # Infinite Canvas Enterprise 当前项目状态
 
-更新时间：2026-10-19
+更新时间：2026-10-20
 
-## 当前结论（2026-10-19）
+## 当前结论（2026-10-20）
+
+2026-10-20 安装现场续修：负责人确认入口修复成功，随后离线升级被空 WAL/SHM 阻断。完整安装快照的隔离检查为 quick_check=ok、Schema READY/v2；这不是数据库损坏证明或现场升级成功。负责人已单独批准受控预处理候选；分支 `codex/install-database-preparation-20261020` 以 #178 的准确 Head `26299e11d35e2dc813d44cb425ed15b33f8dec1b` 为依赖，保留 #178 原分支。实际写连接位于原升级计划/租约/fence 内，复用 SQLite 检查点并在数据库互斥内重验空日志，失败与中断保持显式恢复保护。限定范围、独立 Review 和冻结 CP314 验证见 [同一 C6 记录](./ops/OFFLINE-RETAINED-UPGRADE-2026-10-12.md#2026-10-20-空-walshm-受控预处理候选)。本候选未合并、未发布、不处理现场原库；main 与正式 v2026.10.3 不变。#177、视频 #179 和图片 #180 仍为独立 Draft，#180 依赖 #179；不夹带这些业务修改。
 
 已核对 main `e0dfa843d4bec3ff9c05a6f2ee25337a3687fc3e`：负责人已批准并完成 #176 合并与正式 [v2026.10.3](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.10.3) 发布，准确源码为 `d8ffe55b48fdb9944aa1dac71f21e772ec06d3eb`；main 文档 39185355324、Enterprise/Runtime 39185355220 最终 SUCCESS，区别于 PR CI。发行资产和正式 10.2 升级/失败恢复范围见 [发行记录](./ops/RELEASE-2026.10.3-RECORD.md)。
 

@@ -96,6 +96,7 @@ jobs:
       - name: Run Runtime convergence tests
         run: >-
           python -m pytest -q
+          enterprise/tests/test_install_database_preparation.py
           enterprise/tests/test_runtime_reliability.py
           enterprise/tests/test_canvas_task_journal.py
           enterprise/tests/test_runtime_update_diagnostics.py
