@@ -1,6 +1,6 @@
 # Runtime、安装、发布与在线更新
 
-2026-10-19 发行候选补记：main783 已合并任务来源、LLM 持久记录、视频续接与贞贞视频适配，正式包仍为 v2026.10.2；[2026.10.3 候选记录](../ops/RELEASE-2026.10.3-RECORD.md) 绑定干净源码、既有固定 Runtime、EXE/Setup 和准确 10.2 路由。以下代码参考快照不冒充最新发行身份；本轮复用现有工具，不新增安装步骤、强制更新或恢复规则。
+2026-10-19 补记：#176 已合并 main e0dfa84，正式发行已为 v2026.10.3，准确构建身份见 [发行记录](../ops/RELEASE-2026.10.3-RECORD.md)。当前独立维护候选新增 Setup v2 的只读 inspect-entry；`install_entry_repair.inspect_fixed_entry` 复用当前完整 Release/入口归属证明，缺登记仅返回 REGISTRATION_REQUIRED，不生成 UUID。GUI 按所选操作刷新并提前检查离线升级，明确停机及关闭固定启动窗口；PermissionError 只在原事务成功回退后映射 WRITE_DENIED，回退不明仍阻断。实际补登记仍由显式 repair-entry 原事务完成，不改 Runtime/数据库/在线更新语义。此候选未发布，范围和验证见 [C6 增量](../ops/OFFLINE-RETAINED-UPGRADE-2026-10-12.md#2026-10-19-页面升级来源的登记预检与维护提示候选)。
 
 > 源码参考快照（2026-10-13）：main@e89a288（已合并 #154/#155/#156）；产品功能源码基点 #156@4bdd9a1 保留；C5/C6/C7 已合并，构建与验收范围仍引用其准确记录。本文是代码/运行参考，当前 PR/CI、Release 和验收只见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，实施顺序只认路线图。
 

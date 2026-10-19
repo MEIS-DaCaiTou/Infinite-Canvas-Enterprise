@@ -73,3 +73,22 @@ Draft [#155](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/15
 自动多跳、在线原生 EXE/Setup 更新、完整业务维护态、未知未来 Schema 迁移、长期恢复副本/资产保留政策及旧 v1/未知锁接管仍是路线图中的独立工程能力。本包的离线原生工具更新不等于这些范围已完成；专业服务器/云部署和 500+/200+ 约束继续适用。
 
 身份无法证明、目标停止无法确认或 fence 写入中遭遇未覆盖的电源/文件系统故障时仍安全阻断；检查点进程退出演练不能扩写为任意电源故障自动恢复。完整维护 GUI 矩阵、客户历史版本和生产服务验收分别保留边界。
+
+
+## 2026-10-19 页面升级来源的登记预检与维护提示候选
+
+基线 main `e0dfa843d4bec3ff9c05a6f2ee25337a3687fc3e`，独立分支 `codex/install-upgrade-preflight-20261019`，运行代码 `a8ec5268fc3eda4bc0a7ab247f62c89815ba217a`。正式 v2026.10.3 已发布；本节是后续维护候选，不替换该正式资产、不承诺任意历史来源可升级，也没有客户操作。
+
+负责人反馈正式 10.2 经页面升级、installation.json 缺失而旧 native-entry.json 存在，离线升级返回 IDENTITY_REQUIRED。旧来源升级不会凭空创建安装身份。原入口修复已有兼容路径，但必须核验完整来源/旧 EXE 归属并停机；未知 EXE 不认领。客户提供日志在北京时间 13:55:26 仍有业务/网关 HTTP 200，且当天没有停止完成，解释了首次 RUNTIME_BUSY；该副本日志不证明客户后来机器的实时状态。原生诊断 ZIP 只含上次操作摘要，不能独立证明停机。负责人随后确认停机后固定 EXE 窗口仍打开，出现通用 REPAIR_FAILED；本地真实 Windows 句柄拒绝替换可复现该码及 PermissionError/WinError 5，但客户错误仍须关闭窗口后的结果确认，不把本地条件复现当现场唯一原因。
+
+增量只做：Setup v2 新增无凭据 inspect-entry，共用原归属检查且不写登记；刷新按入口/程序/生命周期/离线升级操作选择检查，不再固定跑同版程序检查；离线升级在进入确认页前预检；缺登记、Runtime 占用与写入被拒绝给出明确下一步。PermissionError 在原事务回退及清理成功后返回 INSTALL_ENTRY_WRITE_DENIED；恢复不明确继续 RECOVERY_REQUIRED。没有自动停机、删除锁、绕过身份、重建账号/Schema、安装策略或升级引擎变更。
+
+验证证据保存在受管 artifact 的 install-103-identity-fix-20261019 和 t/I19B：
+
+- 相关五模块首次 179 passed / 1 failed；失败是新增回退测试错误要求指针时间字节不变。修正为核验原 Release/Manifest/根及回退目标身份后，两个新来源场景定向 2 passed；后续桥接/GUI 静态契约/新来源定向 3 passed。没有将首次失败改写为首次全绿，也未因文案重复全量回归。
+- Windows 真实文件句柄阻止替换测试 1 passed：写入失败保留原入口/登记/业务，关闭句柄后同一入口修复成功。Runtime 在该单元夹具中替代，不是实际运行 EXE 窗口点击证据。
+- 写点审计继续通过，原登记摘要未变化。固定 CPython 3.14.6、编译器和依赖不升级；准确代码 a8ec526 的 ZIP/Manifest、固定 EXE、Setup 和维护资产构建成功，EXE/Setup 各自双构建一致。
+- 冻结目标 CP314 工具对正式 ice-2026.10.2-7da593b52f3d 新建的合成副本验证，使用中文安装路径：缺登记→REGISTRATION_REQUIRED/IDENTITY_REQUIRED；本轮自建模拟 Runtime 锁仍阻断为 RUNTIME_BUSY；清除该自建测试标记后原入口事务 SUCCEEDED、REGISTERED、离线资格 ELIGIBLE，原业务/配置/指针字节保持。没有修改真实 Runtime 目录或客户文件。
+- 既有单跳引擎的成功及目标失败恢复仅由新来源定向测试覆盖；本候选未执行真实 GUI 离线升级/Windows 登记矩阵，也未完成客户停机关闭窗口后的实测。上述冻结包只证明登记修复和离线资格，不等于完整客户升级验收。
+
+独立技术 Review 对当前运行 Diff 及新增写入错误映射的定向复审均为 NO_ACTIONABLE_BUGS_FOUND；该结论不是 GitHub Approval 或无缺陷保证。准确 PR Head CI 单独见原 PR。候选可关闭/弃用；合并后如需回退源码，使用正常 revert PR。补丁版本、正式发布和客户升级另行批准，不覆盖 v2026.10.3。

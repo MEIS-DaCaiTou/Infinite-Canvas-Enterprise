@@ -1,12 +1,16 @@
 # Infinite Canvas Enterprise 当前项目状态
 
+更新时间：2026-10-19
+
 ## 当前结论（2026-10-19）
 
-已核对 main `783f2cfa67d3ee9e0103503d3af30e111b92289a`：#172–#175 均已合并，准确 main 文档及 Enterprise/Runtime CI 最终 SUCCESS；#163/#168/#169/#171 和 G1–G3 已在此前合并。正式发行仍为 v2026.10.2，客户设备没有被本轮操作。
+已核对 main `e0dfa843d4bec3ff9c05a6f2ee25337a3687fc3e`：负责人已批准并完成 #176 合并与正式 [v2026.10.3](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.10.3) 发布，准确源码为 `d8ffe55b48fdb9944aa1dac71f21e772ec06d3eb`；main 文档 39185355324、Enterprise/Runtime 39185355220 最终 SUCCESS，区别于 PR CI。发行资产和正式 10.2 升级/失败恢复范围见 [发行记录](./ops/RELEASE-2026.10.3-RECORD.md)。
 
-当前工作为 [2026.10.3 修复版本候选](./ops/RELEASE-2026.10.3-RECORD.md)：从上述 main 仅递增 VERSION 的干净源码 d8ffe55 构建 ZIP、EXE、Setup、维护资产与准确 10.2 路由；升级/恢复、候选 PR 与最终 CI 分别按该记录和原 PR 的真实结果判断，不把构建完成当已发布。上轮真实贞贞调用费用为 1.300022 / 已批准 10 平台额度单位，本轮不新增付费生成。
+现场补充暴露了未覆盖的来源：经页面升级的正式 10.2 安装缺少 installation.json，离线维护因此阻断；入口修复另须停机，固定 EXE 窗口仍打开时 Windows 也可能拒绝写入。当前独立维护候选 `codex/install-upgrade-preflight-20261019` 基于上述 main，代码 `a8ec5268fc3eda4bc0a7ab247f62c89815ba217a`：只读检查登记/归属、按所选操作刷新、离线升级提前预检和可执行错误提示，复用原事务补登记，不自动接管未知入口。定向测试、真实文件占用复现、冻结包检查及未覆盖 GUI/客户边界见 [C6 增量记录](./ops/OFFLINE-RETAINED-UPGRADE-2026-10-12.md#2026-10-19-页面升级来源的登记预检与维护提示候选)。尚未合并或发布补丁，不操作客户设备。
 
-业务仍处于唯一路线图 4.2。候选交付之后，剩余完整主题是未受理队列任务的持久执行与启动恢复、实际使用供应商边界收口；4.3 的部门/项目及费用治理按既有依赖和单独设计推进。RunningHub #170 暂缓，Linux/云/多实例不扩展。候选合并、正式 Release 和客户升级需分别取得授权。
+业务仍处于唯一路线图 4.2。[#177](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/177) 的未受理队列持久执行/启动恢复保持 Draft，Head `3ce811b3bb19d8e938be7dec977c488f8726f1d3`，准确 Head CI 与独立 Review 已通过，等待合并批准。此前真实贞贞调用累计 1.300022 / 已批准 10 平台额度单位，本轮只读目录/文档核查及安装验证新增付费调用为 0。
+
+当前模型列表拉取、名称分组、OpenAI/Gemini 单模型覆盖及贞贞旧统一视频接口不等于全目录适配。公开文档中的 Grok imagine / MiniMax-H3 等新视频协议尚未绑定；专用贞贞图片参数契约为 12 个 ID，其余通用路径仍需按协议核验。下一完整业务主题为实际使用的贞贞模型协议路由与视频可用性收口，随后按图片参数/编辑协议差异补齐；不是新增产品或另一套路由平台。4.3 部门/项目及费用治理依赖不变，RunningHub #170 暂缓，Linux/云/多实例不扩展。合并、补丁 Release 和客户升级仍分别等待授权。
 
 ## 工作包历史快照
 
