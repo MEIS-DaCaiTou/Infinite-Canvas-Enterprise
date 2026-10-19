@@ -72,3 +72,17 @@ Base main `e0dfa843d4bec3ff9c05a6f2ee25337a3687fc3e`；独立分支 `codex/zhenz
 真实验证仅使用自有蓝色立方体提示词：Grok1.5 1秒、MiniMax-H3 5秒768P、Wan3 5秒480P，各一次 POST `/v1/videos`；受理身份写 journal 后故意结束前台轮询，再读原回执 GET 续查并归档本地MP4。三项 succeeded，未再次生成。MiniMax JSON提交本轮真实成功，消除了其文档仅列multipart的兼容疑点。累计用量差额6.670022/总授权10，包含前轮1.300022；不是产品费用账本或逐任务结算。未覆盖原生Grok账号通道、Wan prime、参考音视频/多图、每一分辨率/时长或全部目录模型。
 
 独立 Review 定位并修复经典画布时长blur显示15但仍提交旧60的问题；真实UI与定向复审 `NO_ACTIONABLE_BUGS_FOUND`。技术 Review 不等于 GitHub Approval。回滚撤销本候选；新模式回执需保留当前版本续查，旧程序不能保证识别新模式，不能删除回执或重提替代。证据位于仓库外 `zhenzhen-model-routing-20261019/`，凭据/客户素材不入仓库。准确提交、CI和合并状态见原PR。
+
+## 2026-10-19 图片编辑与图层输出候选
+
+分支 `codex/zhenzhen-image-contracts-20261019` 堆叠于 [#179](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/179) 精确 Head `bd341fb80bdad1e2a8972eb6c31aa03d3c7a2e7e`，不修改 main 或该视频分支。沿用 zhenzhen.py 和既有图片任务/归档；精确新增 `gpt-image-2-all`（JSON文生图 generations、参考图 edits，不支持当前维护范围外的mask）和 `seedream-v5-flash/layer-decomposition`（单原图 generations，image为标量，输出透明PNG）。不猜测名称相似的型号别名，也不强行把所有绘图入口归为一种请求。协议源：[文生图](https://gpt-best.apifox.cn/api-510695314.md)、[JSON编辑](https://gpt-best.apifox.cn/api-513955033.md)、[图层拆分](https://gpt-best.apifox.cn/api-522995149.md)；后者文档仍标developing，不代表上游账号真实开放。
+
+特殊输出复用现有图片结果和任务详情：多个图层分别归档，保留层名、z_index和有限坐标/说明字段；RGBA不转换JPEG。相同像素的不同层不合并，单层同时返回URL/base64只收一次；嵌套result.images和旧URL列表继续兼容。`image_outputs.py` 只做有界元数据提取，任务中心继续先校验已有资源归属。经典画布完成/续查优先image_items并保留旧images fallback；Browser发现智能画布生成/恢复映射只复制尺寸，已沿用既有对象展开写法保留图层字段；结果保存重开、作为后续参考图继续使用现有操作，不新增图层编辑器、PSD合成或页面。无Schema、权限、供应商自动重提、Runtime或安装更新变化。
+
+必要验证：请求构造/旧模型兼容41 passed；图像恢复、实际main归档/重开及任务目录42 passed，修复后同一实际main图层用例1 passed（范围重叠不相加）。新用例涵盖单原图、双参考JSON字段、错误/超时只一次提交、未知字段不落元数据、透明PNG及不同层同像素。首轮新夹具缺kind:image被现有引用筛选拒绝，补足真实客户端字段后通过，保留失败证据。原JS共享查询和视频重开脚本继续通过。
+
+独立Review定位嵌套图层先收裸URL再收对象导致重复归档；修正标量及URL-list两种情况，定向复审 `NO_ACTIONABLE_BUGS_FOUND`，准确Head CI以原PR记录为准。不是GitHub Approval。Browser使用固定隔离身份、MockTransport和自有透明PNG，复用现有两类画布控件；模型选择、双图层输出、名称/层号保存重开、1440×1000与1024×768检查通过，页面身份/非空/无错误覆盖层及控制台无新增运行错误；既有Tailwind提示保留，截图及结果记录仓库外image-browser-qa.json，不替代真实Gateway或上游图层效果验收。
+
+真实 `gpt-image-2-all`：文生图单次生成并归档成功；两张自有96×96色块的JSON编辑单次提交返回HTTP500，无受理ID，保留PROVIDER_SUBMISSION_UNKNOWN，未重复提交或切换付费入口。这一结果不能区分当前账号通道故障与接口多图格式限制，编辑验收仍未通过，不据此宣布全目录可用。累计使用差额6.710022/同一授权总计10，未知编辑保留预留，不将无即时扣费视为未受理；不进行第二次付费探测。图层按输出数量收费且当前证据不能可靠限定上界，未执行付费拆层。既有Nano Banana/Seedream等能力沿用原验证，不假装本轮全部重测。
+
+回滚撤销本包，保留原图片/回执；旧版本可继续读取普通URL但可能不展示层名/元数据。正式Release保持10.3，候选未合并，不操作客户设备。后续先收口编辑可用性和各Draft候选兼容，再按独立授权合并/发行；安装入口修复现场成功与跨版本升级未验收分别保留。

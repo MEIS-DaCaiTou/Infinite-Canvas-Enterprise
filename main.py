@@ -3751,6 +3751,7 @@ def extract_image_flexible(value, depth=0):
     return None
 
 def extract_images(data):
+    from enterprise.providers.image_outputs import layer_metadata
     found = []
     seen = set()
 
@@ -3761,7 +3762,7 @@ def extract_images(data):
         value = item.get("value")
         if not value:
             return
-        key = (img_type, value)
+        key = (img_type, value, item.get("z_index"))
         if key in seen:
             return
         seen.add(key)
@@ -3780,6 +3781,27 @@ def extract_images(data):
             return
         if not isinstance(value, dict):
             return
+        layer = layer_metadata(value)
+        if layer:
+            # A layer may carry both encodings; prefer its URL once, while
+            # distinct layer indices may legitimately contain identical pixels.
+            for key in IMAGE_OUTPUT_KEY_HINTS:
+                item = value.get(key)
+                if isinstance(item, list):
+                    urls = [url for url in item if isinstance(url, str) and looks_like_generated_image_url(url)]
+                    if urls:
+                        for url in urls:
+                            add_image({"type": "url", "value": url, **layer})
+                        return
+                if isinstance(item, str) and looks_like_generated_image_url(item):
+                    add_image({"type": "url", "value": item, **layer})
+                    return
+            for key in IMAGE_BASE64_KEY_HINTS:
+                item = value.get(key)
+                if isinstance(item, str) and item.strip():
+                    add_image({"type": "b64", "value": item.strip(),
+                        "mime_type": value.get("mime_type") or value.get("mimeType") or "image/png", **layer})
+                    return
         if value.get("type") == "image_generation_call":
             result = value.get("result")
             if isinstance(result, str) and result.strip():
@@ -3797,11 +3819,12 @@ def extract_images(data):
                     "type": "b64",
                     "value": item.strip(),
                     "mime_type": value.get("mime_type") or value.get("mimeType") or "image/png",
+                    **layer_metadata(value),
                 })
         for key in IMAGE_OUTPUT_KEY_HINTS:
             item = value.get(key)
             if isinstance(item, str) and looks_like_generated_image_url(item):
-                add_image({"type": "url", "value": item})
+                add_image({"type": "url", "value": item, **layer_metadata(value)})
             else:
                 collect(item, depth + 1)
         for key in IMAGE_CONTAINER_KEY_HINTS:
@@ -3841,10 +3864,9 @@ def extract_images(data):
             url = item.get("url")
             if isinstance(url, list):
                 for one in url:
-                    collect(one)
+                    collect({**item, "url": one})
             else:
-                collect(url)
-            collect(item)
+                collect(item)
 
     collect(data)
     if isinstance(data, dict) and isinstance(data.get("data"), dict) and isinstance(data["data"].get("data"), dict):
@@ -8400,6 +8422,7 @@ async def save_ai_image_to_output(image_data, prefix="online_", category="output
         return value
 
 def image_output_meta(url, source_item=None):
+    from enterprise.providers.image_outputs import layer_metadata
     meta = {"url": url, "kind": "image"}
     if not url:
         return meta
@@ -8407,6 +8430,7 @@ def image_output_meta(url, source_item=None):
     if parsed_name:
         meta["name"] = parsed_name
     if isinstance(source_item, dict):
+        meta.update(layer_metadata(source_item))
         for key in ("natural_w", "natural_h", "width", "height", "w", "h", "layout_w", "layout_h"):
             try:
                 value = int(float(source_item.get(key) or 0))
@@ -10101,6 +10125,7 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
                 model=model, prompt=prompt, size=size, quality=quality,
                 references=[reference_to_data_url(ref, max_size=1536) for ref in image_refs],
                 aspect_parameters=aspect_params,
+                edit_endpoint=edit_url,
             )
         elif is_aspect_image and not image_refs:
             body = {"model": model, "prompt": prompt, "response_format": "url", **aspect_params}
