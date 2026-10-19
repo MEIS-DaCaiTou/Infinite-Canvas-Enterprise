@@ -45,11 +45,12 @@ def public_video_task(record):
 
 class CanvasVideoTasks:
     def __init__(self, journal, resolve_provider, generate, inspect, archive, archived, publish, schedule, notify,
-                 query_mode=lambda provider, model: "generic"):
+                 query_mode=lambda provider, model: "generic", enqueue=None):
         self.journal, self.resolve_provider, self.generate, self.inspect = journal, resolve_provider, generate, inspect
         self.archive, self.archived, self.publish = archive, archived, publish
         self.schedule, self.notify = schedule, notify
         self.query_mode = query_mode
+        self.enqueue = enqueue
         self.accept_lock = asyncio.Lock()
         self.active = {}
 
@@ -72,7 +73,10 @@ class CanvasVideoTasks:
                 "source": payload.source.model_dump() if getattr(payload, "source", None) else None,
                 "result": None, "error": "", "provider_receipts": [{"index": 0, "state": "started"}],
             }, owner)
-            self.schedule(self.run(task_id, payload))
+            if self.enqueue:
+                await self.enqueue(task_id, payload)
+            else:
+                self.schedule(self.run(task_id, payload))
         return {"task_id": task_id, "status": "queued"}
 
     async def run(self, task_id, payload):

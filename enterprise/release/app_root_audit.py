@@ -571,6 +571,10 @@ def _flow_for_operation(file: str, symbol: str) -> str:
         # Atomic task receipts/results live under DATA_ROOT/canvas-tasks;
         # neither an immutable Release nor a provider configuration is written.
         return "W48"
+    if file == "enterprise/canvas_task_dispatch.py" and symbol == "CanvasTaskDispatch._remove_input":
+        # Private queued input artifacts share the existing DATA_ROOT task
+        # boundary; cleanup never deletes referenced media or public results.
+        return "W48"
     if file == "enterprise/migrations/versioned.py" and symbol in {
         "_write_new_file", "create_database_backup", "restore_database_backup",
         "preview_legacy_schema_enrollment",

@@ -259,9 +259,11 @@ async def startup_event():
     except Exception as exc:
         print(f"纠正图片扩展名失败: {exc}")
     await CANVAS_ACCEPTED_RECOVERY.start()
+    await CANVAS_TASK_DISPATCH.start()
 
 @app.on_event("shutdown")
 async def shutdown_task_recovery():
+    await CANVAS_TASK_DISPATCH.stop()
     await CANVAS_ACCEPTED_RECOVERY.stop()
     await CANVAS_IMAGE_RECOVERY.shutdown()
     await CANVAS_VIDEO_TASKS.shutdown()
@@ -2498,6 +2500,7 @@ def schedule_canvas_task(coroutine):
             # Do not log response bodies, prompts or credentials on write failure.
             logging.getLogger(__name__).error("Canvas task tracking failed; inspect durable task records")
     task.add_done_callback(completed)
+    return task
 
 class CanvasVideoRequest(BaseModel):
     source: Optional[TaskCanvasSource] = None
@@ -12999,7 +13002,7 @@ async def create_canvas_image_task(
         "source": payload.source.model_dump() if payload.source else None,
         "provider_receipts": [{"index": index, "state": "started"} for index in range(max(1, min(8, int(payload.n or 1))))],
     }, x_enterprise_user_id)
-    schedule_canvas_task(run_canvas_image_task(task_id, payload))
+    await CANVAS_TASK_DISPATCH.enqueue(task_id, payload)
     return {"task_id": task_id, "status": "queued"}
 
 @app.get("/api/canvas-image-tasks/{task_id}")
@@ -13064,7 +13067,7 @@ async def create_canvas_comfy_task(
             "workflow_json": payload.workflow_json,
             "source": payload.source.model_dump() if payload.source else None,
         }, x_enterprise_user_id)
-        schedule_canvas_task(run_canvas_comfy_task(task_id, payload))
+        await CANVAS_TASK_DISPATCH.enqueue(task_id, payload)
         return {"task_id": task_id, "status": "queued"}
 
 def validate_comfy_receipt(receipt):
@@ -14024,7 +14027,8 @@ async def inspect_saved_video_task(provider, receipt):
 
 CANVAS_VIDEO_TASKS = CanvasVideoTasks(CANVAS_TASK_JOURNAL, get_api_provider_exact, canvas_video,
     inspect_saved_video_task, save_remote_video_to_output, image_outputs_are_archived, save_to_history,
-    schedule_canvas_task, lambda task_id: CANVAS_ACCEPTED_RECOVERY.notify(task_id), query_mode=video_query_mode)
+    schedule_canvas_task, lambda task_id: CANVAS_ACCEPTED_RECOVERY.notify(task_id), query_mode=video_query_mode,
+    enqueue=lambda task_id, payload: CANVAS_TASK_DISPATCH.enqueue(task_id, payload))
 
 
 @app.post("/api/canvas-video-tasks")
@@ -14149,7 +14153,19 @@ async def canvas_llm(payload: CanvasLLMRequest):
 from enterprise.interceptors import record_resource_urls_for_user as _publish_llm_resources
 CANVAS_LLM_TASKS = CanvasLLMTasks(CANVAS_TASK_JOURNAL, canvas_llm,
     lambda text: save_comfy_text_output(text, prefix="llm_", name="result.txt"),
-    lambda owner, urls: _publish_llm_resources(owner, "canvas_llm_task", urls), schedule_canvas_task)
+    lambda owner, urls: _publish_llm_resources(owner, "canvas_llm_task", urls), schedule_canvas_task,
+    enqueue=lambda task_id, payload: CANVAS_TASK_DISPATCH.enqueue(task_id, payload))
+
+from enterprise.canvas_task_dispatch_app import create_dispatch as _create_task_dispatch, dispatch_paused as _task_dispatch_paused
+from enterprise.config import JWT_SECRET as _task_dispatch_secret
+CANVAS_TASK_DISPATCH = _create_task_dispatch(CANVAS_TASK_JOURNAL,
+    {"online-image": OnlineImageRequest, "comfy": GenerateRequest, "video": CanvasVideoRequest, "llm": CanvasLLMTaskRequest},
+    {"online-image": run_canvas_image_task, "comfy": run_canvas_comfy_task,
+     "video": CANVAS_VIDEO_TASKS.run, "llm": CANVAS_LLM_TASKS.run},
+    schedule_canvas_task, lambda: _task_dispatch_paused(PATH_ROOTS.STATE_ROOT),
+    secret=_task_dispatch_secret, provider=get_api_provider_exact, headers=api_headers,
+    workflow=lambda name: get_workflow(name), backend=lambda name, override: workflow_backend(name, override),
+    default_model=lambda kind, provider: preferred_chat_model(provider) if kind == "llm" else (provider.get("image_models") or [IMAGE_MODEL])[0])
 
 @app.post("/api/canvas-llm-tasks")
 async def create_canvas_llm_task(payload: CanvasLLMTaskRequest, x_enterprise_user_id: Optional[str] = Header(default=None)):
