@@ -73,3 +73,5 @@
 C7 `ops/update/sequence.py` 只协调已声明路径，逐跳消费共享 MVP 与 C6 原生对象事务；数据库操作仍由版本化引擎实施，原生注册表更新只在 `runtime/windows_install_registration.py` 中操作已核验本实例 DisplayVersion。恢复/暂停标记不授权删除客户数据，进度状态不授权跳步或恢复旧快照。源码与限定证据见 [C7 记录](docs/ops/ONLINE-UPGRADE-SEQUENCE-2026-10-12.md)。
 
 2026-10-15 前端增量约束：沿用当前页面的主题变量、字体、圆角、面板、按钮和交互层级。新的文本结果视图与已有日志/错误详情保持一致，设置页和两类画布共用 static/css/comfy-outputs.css；不得以临时原生控件、散落硬编码样式另立视觉体系。页面/交互变更先告知负责人方案，再按实际页面路径验收。
+
+2026-10-20 已批准候选的限定增量：`install_database_preparation` 只为 C6 离线升级处理 WAL=0、SHM=32768 的既有成对残留。只读资格与写连接分开，实际 SQLite 处理由原 `install_upgrade` 计划、kernel lease 和启动 fence 保护，并在 SQLite 互斥内重新核验；默认生命周期检查仍拒绝旁路文件。非空 WAL、journal、未知对象/锁与不能证明一致性的状态继续阻断，不手工删除日志、不恢复旧数据库、不替代版本化迁移。新能力以候选 PR 为准，不视为正式 v2026.10.3 已具备。

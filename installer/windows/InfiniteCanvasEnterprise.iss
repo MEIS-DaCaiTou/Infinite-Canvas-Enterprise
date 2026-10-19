@@ -833,7 +833,13 @@ begin
   else if LastStableCode = 'INSTALL_PROGRAM_SAME_RELEASE_REQUIRED' then
     Result := '程序修复必须使用当前版本安装包。跨版本更新请选择“升级到本包版本／跨版本保留数据重装”。'
   else if LastStableCode = 'INSTALL_UPGRADE_TARGET_NOT_NEWER' then
-    Result := '本包不是比当前版本更新的版本。同版本维护请使用对应的程序修复或保留数据重装选项。';
+    Result := '本包不是比当前版本更新的版本。同版本维护请使用对应的程序修复或保留数据重装选项。'
+  else if LastStableCode = 'INSTALL_LIFECYCLE_DATABASE_RECOVERY_REQUIRED' then
+    Result := '数据库日志尚不能证明可安全处理，本次未执行升级。这不等于已确认数据库损坏。' + #13#10 +
+      '请保留数据库、WAL、SHM、journal 和维护记录并导出诊断；不要手工删除这些文件。'
+  else if LastStableCode = 'INSTALL_UPGRADE_DATABASE_PREPARATION_REQUIRED' then
+    Result := 'SQLite 未能完成受控日志预处理，维护阻断和恢复记录已保留。' + #13#10 +
+      '请确认服务停止后选择“显式恢复本包上次中断的离线升级”；仍失败时保留诊断，不要删除锁或数据库日志。';
   Result := Result + #13#10 + '错误代码：' + LastStableCode;
 end;
 
@@ -1034,6 +1040,7 @@ begin
       Space + '原安装目录：' + SelectedInstallRoot + NewLine +
       Space + '目标版本：{#AppVersion}；账号、数据库、画布、素材、配置和安装身份保持。' + NewLine +
       Space + '仅接受已证明兼容的相同 Schema；分别核验程序、固定入口、维护安装器和 Windows 登记。' + NewLine +
+      Space + '如存在空 WAL／SHM 残留，将在停机与维护锁内由 SQLite 处理并复核；非空日志仍会阻断。' + NewLine +
       Space + '目标失败恢复来源版本；成功后完成登记才开放业务访问。'
   else if IsLifecycleOperation then
     Result := '操作：' + MaintenanceCaption + NewLine +

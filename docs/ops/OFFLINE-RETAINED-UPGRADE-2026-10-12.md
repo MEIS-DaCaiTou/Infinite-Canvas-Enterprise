@@ -92,3 +92,22 @@ Draft [#155](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/15
 - 既有单跳引擎的成功及目标失败恢复仅由新来源定向测试覆盖；本候选未执行真实 GUI 离线升级/Windows 登记矩阵，也未完成客户停机关闭窗口后的实测。上述冻结包只证明登记修复和离线资格，不等于完整客户升级验收。
 
 独立技术 Review 对当前运行 Diff 及新增写入错误映射的定向复审均为 NO_ACTIONABLE_BUGS_FOUND；该结论不是 GitHub Approval 或无缺陷保证。准确 PR Head CI 单独见原 PR。候选可关闭/弃用；合并后如需回退源码，使用正常 revert PR。补丁版本、正式发布和客户升级另行批准，不覆盖 v2026.10.3。
+
+
+## 2026-10-20 空 WAL/SHM 受控预处理候选
+
+负责人提供完整测试安装快照后，确认入口登记已补齐，当前仍为正式 `ice-2026.10.2-7da593b52f3d`；WAL=0、SHM=32768、无 journal。停机完成日志与隔离快照的 quick_check/Schema READY-v2 证明限定状态，不替代执行时进程/端口/Runtime 锁检查，也不承诺所有业务内容正确。客户原 ZIP、数据库、配置及素材不入 Git/PR；原库未处理。
+
+负责人已明确批准新增写连接的候选开发，终点仍是独立 Review/Draft PR，不合并、不发布、不操作测试主机原库。候选 `codex/install-database-preparation-20261020` 以 #178 Head `26299e11d35e2dc813d44cb425ed15b33f8dec1b` 为 Base，保留该 PR 与历史工作区；不是替换已发布 10.3 资产。
+
+- `install_database_preparation` 只接受 WAL 模式、空 WAL 与 32768 字节 SHM 同时存在的受证文件对象；非空 WAL、journal、不完整/陌生旁路文件及非 READY 元数据拒绝。资格检查只读，返回 `database_preparation_required`，不删除日志或调用 checkpoint。
+- 写阶段复用原 `install_upgrade` 的不可变计划、runner lease、active receipt 和 system-update fence；绑定原来源、安装登记、主库对象/字节及 Schema/ledger。停机及身份再核验后才记录 PREPARING_DATABASE、调用既有版本化 SQLite checkpoint helper，不新增恢复引擎或数据库表。
+- helper 的可选 guard 只在本路径启用，迁移/备份默认行为不变。先禁止失败关闭时隐式 checkpoint，再取得 SQLite exclusive mutex，锁内复验 WAL 仍为空、主库字节与旁路对象仍匹配，之后才允许 TRUNCATE。仅成功且主库字节不变时恢复正常 SQLite close 清理。SHM 是 SQLite 自管锁/索引，其内容可变化但文件身份与长度必须匹配；不得手工 unlink。
+- 进程中断保留原事务 fence/计划；现有 inspect-upgrade 只报告 RECOVERY_REQUIRED，只有用户显式 recover-upgrade 才在准确计划/租约下重验并清理受证空日志、回到原版本。未知非空日志及字节变化继续阻断，不自动重试、重建数据或回旧快照。无该字段的旧 v1 计划仍可读取。
+- 固定 CP314 Runtime 的 SQLite setconfig/NO_CKPT_ON_CLOSE 是必要能力；旧 Python 工具缺失时在发布维护记录前拒绝。保留数据卸载/同版重装等其他生命周期操作的原旁路文件拒绝语义不放宽。
+
+定向验证：冻结 CPython 3.14.6/SQLite 3.50.4 下新模块 15 passed / 1 skipped（旧工具专属分支）；含真实第二连接写入互斥、检查后提交非空 WAL 保持原主库/WAL，以及持 SQLite 锁时子进程实际 os._exit(93) 后显式恢复。Python3.11 的同模块 2 passed / 14 capability skips；默认迁移 backup/restore 9 passed。原生命周期/桥接/Setup 静态契约 84 passed。原离线升级 35 个无残留场景的有效证据沿用本轮初次短路径运行；没有为文案或 Review 重跑无关全套。
+
+首次长 artifact 测试目录触及 Windows 路径限制，产生 21 项路径失败，另 1 项是新增占用用例在 Windows 锁字节读取处未映射的错误；缩短目录并修正后，后续新增测试又发现 hook 错误复用已关闭 writer，修正该测试。独立 Review 随后用真实提交复现 1 项 P1：最后检查与 checkpoint 间新出现非空 WAL，事后检查过晚。已按上述互斥/失败 close 保护修复，具体并发回归通过，定向复审 NO_ACTIONABLE_BUGS_FOUND；不是 GitHub Approval 或无缺陷保证。未把早期失败改写为首次全绿。
+
+证据位于产品专用 artifact 的 install-database-preparation-20261020；客户数据只在仓库外隔离副本。新增 CI 只在现有 Runtime3.14 作业加入该小模块，本地约13秒，不加作业、依赖或新门禁。准确 Head CI 与候选构建结果在 PR 记录；GUI、Windows 登记及现场 10.2→目标完整升级仍 NOT_VERIFIED。合并/补丁发布/现场执行需分别批准。

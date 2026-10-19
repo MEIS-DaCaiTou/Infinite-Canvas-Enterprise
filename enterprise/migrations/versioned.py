@@ -16,6 +16,7 @@ import shutil
 import sqlite3
 import time
 import uuid
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
@@ -623,14 +624,15 @@ def _runtime_sidecars_absent(database_path: Path) -> None:
             _fail("DATA_DATABASE_RUNTIME_FILES_PRESENT")
 
 
-def _checkpoint_quiescent_database(database_path: Path) -> None:
+def _checkpoint_quiescent_database(database_path: Path, *, checkpoint_guard=None) -> None:
     """Checkpoint WAL after the supervisor stops all owners; never unlink sidecars."""
     database_path = _regular_file(Path(database_path), "DATA_DATABASE_INVALID")
     try:
         with open_existing_sqlite(database_path, mode="rw", error_type=sqlite3.OperationalError) as conn:
-            result = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
-            if result is None or int(result[0]) != 0:
-                _fail("DATA_DATABASE_WAL_NOT_QUIESCENT")
+            with checkpoint_guard(conn) if checkpoint_guard is not None else nullcontext():
+                result = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+                if result is None or int(result[0]) != 0:
+                    _fail("DATA_DATABASE_WAL_NOT_QUIESCENT")
     except DataMigrationError:
         raise
     except sqlite3.Error as exc:
