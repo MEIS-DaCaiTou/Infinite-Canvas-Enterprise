@@ -115,7 +115,8 @@ async def check():
             assert seen==[('GET',path)],seen
             return httpx.Response(200,json={'status':'SUCCESS','videos':['https://supplier.example/paid.mp4']})
         main.httpx.AsyncClient=lambda **kwargs: original_client(transport=httpx.MockTransport(reply),**kwargs)
-        result=await main.inspect_saved_video_task(selected,{'upstream_task_id':'original','model':'video-fixture','video_query_mode':mode,'video_v2':v2})
+        # A newly mapped model must keep the route in its old accepted receipt.
+        result=await main.inspect_saved_video_task(selected,{'upstream_task_id':'original','model':'MiniMax-H3','video_query_mode':mode,'video_v2':v2})
         assert result['status']=='succeeded' and seen==[('GET',path)]
 asyncio.run(check())
 '''

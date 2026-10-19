@@ -105,19 +105,17 @@ def video_error_detail(text, provider, requested_model):
         sample = valid_models[:30]
         more = f"（共 {len(valid_models)} 个，仅显示前 {len(sample)} 个）" if len(valid_models) > len(sample) else ""
         hint = (
-            f"上游「{provider_name}」不识别模型「{requested_model}」。\n\n"
-            f"上游支持的视频模型清单{more}：\n  {', '.join(sample)}\n\n"
-            f"请到「API 设置」里把视频模型改成上面列表中的一个。"
+            f"上游「{provider_name}」当前调用接口不接受模型「{requested_model}」。\n\n"
+            f"该接口返回的型号清单{more}：\n  {', '.join(sample)}\n\n"
+            f"这不是整个平台的完整模型目录。请核对该型号对应的接口适配，或选择已适配型号；不会自动换接口重新生成。"
         )
         return hint
     # 2) 模型名合法但账号没开通通道
     if "channel not found" in text or "model_not_found" in text:
         hint = (
-            f"上游「{provider_name}」识别了模型「{requested_model}」，但你的 API Key 账号下**没有该模型的可用通道**。\n\n"
-            f"原因：你的账号没开通这个模型的访问权限（付费/订阅相关）。\n\n"
-            f"解决方法：\n"
-            f"  1. 登录 {provider.get('base_url') or '上游平台'} 控制台，开通该模型 / 充值；\n"
-            f"  2. 或在「API 设置」里把视频模型改成你账号已开通的型号（如 veo3-fast / veo2-fast / sora-2 等）。"
+            f"上游「{provider_name}」没有为模型「{requested_model}」返回可用通道。\n\n"
+            f"可能涉及型号/接口不匹配、账号权限或上游通道状态；此错误本身不能证明充值就能解决。\n\n"
+            f"请由管理员核对该型号的接口适配与账号通道，不要重复提交生成。"
         )
         return hint
     if "text.duration" in text or "specified duration is not supported" in text:

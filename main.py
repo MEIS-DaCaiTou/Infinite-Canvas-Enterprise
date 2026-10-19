@@ -82,6 +82,13 @@ from enterprise.providers.zhenzhen import (
     video_submit_endpoints as zhenzhen_video_submit_endpoints,
     video_headers as zhenzhen_video_headers,
 )
+from enterprise.providers.model_catalog import classify_model, correct_known_groups
+from enterprise.providers.zhenzhen_video import (
+    video_profile as zhenzhen_video_profile, public_video_profiles as zhenzhen_public_video_profiles,
+    submit_endpoints as zhenzhen_model_video_endpoints, query_endpoints as zhenzhen_video_query_endpoints,
+    video_body as zhenzhen_video_body, request_id as zhenzhen_video_request_id,
+    QUERY_MODES as ZHENZHEN_VIDEO_QUERY_MODES,
+)
 from enterprise.providers.image_task_protocol import (
     SUCCESS_STATUSES as IMAGE_TASK_SUCCESS_STATUSES, FAILED_STATUSES as IMAGE_TASK_FAILED_STATUSES,
     task_data as image_task_data, task_status as image_task_status, failure_reason as image_task_fail_reason,
@@ -1303,6 +1310,10 @@ def normalize_provider(item):
     video_models = model_list_from_values(item.get("video_models") or [])
     if locked_rule and "video_models" in locked_rule:
         video_models = model_list_from_values(locked_rule.get("video_models") or [])
+    groups = {"image": model_list_from_values(item.get("image_models") or []),
+              "chat": model_list_from_values(item.get("chat_models") or []), "video": video_models}
+    if is_zhenzhen({"id": provider_id, "base_url": base_url}):
+        groups = correct_known_groups(groups)
     return {
         "id": provider_id,
         "name": name,
@@ -1313,9 +1324,9 @@ def normalize_provider(item):
         "image_edit_endpoint": image_edit_endpoint,
         "enabled": bool(item.get("enabled", True)),
         "primary": bool(item.get("primary", False)),
-        "image_models": model_list_from_values(item.get("image_models") or []),
-        "chat_models": model_list_from_values(item.get("chat_models") or []),
-        "video_models": video_models,
+        "image_models": groups["image"],
+        "chat_models": groups["chat"],
+        "video_models": groups["video"],
         "model_protocols": normalize_model_protocols(item.get("model_protocols")),
         "image_profile": normalize_image_profile(item.get("image_profile")),
         "model_image_profiles": normalize_model_image_profiles(item.get("model_image_profiles")),
@@ -1359,6 +1370,7 @@ def public_provider(provider):
         "key_preview": mask_secret(key),
         "key_env": provider_key_env(provider["id"]),
         "builtin_model_image_profiles": zhenzhen_public_image_profiles(provider),
+        "builtin_model_video_profiles": zhenzhen_public_video_profiles(provider),
     }
     if provider.get("id") == "runninghub":
         wallet_key = runninghub_wallet_key_value()
@@ -3742,6 +3754,7 @@ def extract_image_flexible(value, depth=0):
     return None
 
 def extract_images(data):
+    from enterprise.providers.image_outputs import layer_metadata
     found = []
     seen = set()
 
@@ -3752,7 +3765,7 @@ def extract_images(data):
         value = item.get("value")
         if not value:
             return
-        key = (img_type, value)
+        key = (img_type, value, item.get("z_index"))
         if key in seen:
             return
         seen.add(key)
@@ -3771,6 +3784,27 @@ def extract_images(data):
             return
         if not isinstance(value, dict):
             return
+        layer = layer_metadata(value)
+        if layer:
+            # A layer may carry both encodings; prefer its URL once, while
+            # distinct layer indices may legitimately contain identical pixels.
+            for key in IMAGE_OUTPUT_KEY_HINTS:
+                item = value.get(key)
+                if isinstance(item, list):
+                    urls = [url for url in item if isinstance(url, str) and looks_like_generated_image_url(url)]
+                    if urls:
+                        for url in urls:
+                            add_image({"type": "url", "value": url, **layer})
+                        return
+                if isinstance(item, str) and looks_like_generated_image_url(item):
+                    add_image({"type": "url", "value": item, **layer})
+                    return
+            for key in IMAGE_BASE64_KEY_HINTS:
+                item = value.get(key)
+                if isinstance(item, str) and item.strip():
+                    add_image({"type": "b64", "value": item.strip(),
+                        "mime_type": value.get("mime_type") or value.get("mimeType") or "image/png", **layer})
+                    return
         if value.get("type") == "image_generation_call":
             result = value.get("result")
             if isinstance(result, str) and result.strip():
@@ -3788,11 +3822,12 @@ def extract_images(data):
                     "type": "b64",
                     "value": item.strip(),
                     "mime_type": value.get("mime_type") or value.get("mimeType") or "image/png",
+                    **layer_metadata(value),
                 })
         for key in IMAGE_OUTPUT_KEY_HINTS:
             item = value.get(key)
             if isinstance(item, str) and looks_like_generated_image_url(item):
-                add_image({"type": "url", "value": item})
+                add_image({"type": "url", "value": item, **layer_metadata(value)})
             else:
                 collect(item, depth + 1)
         for key in IMAGE_CONTAINER_KEY_HINTS:
@@ -3832,10 +3867,9 @@ def extract_images(data):
             url = item.get("url")
             if isinstance(url, list):
                 for one in url:
-                    collect(one)
+                    collect({**item, "url": one})
             else:
-                collect(url)
-            collect(item)
+                collect(item)
 
     collect(data)
     if isinstance(data, dict) and isinstance(data.get("data"), dict) and isinstance(data["data"].get("data"), dict):
@@ -8391,6 +8425,7 @@ async def save_ai_image_to_output(image_data, prefix="online_", category="output
         return value
 
 def image_output_meta(url, source_item=None):
+    from enterprise.providers.image_outputs import layer_metadata
     meta = {"url": url, "kind": "image"}
     if not url:
         return meta
@@ -8398,6 +8433,7 @@ def image_output_meta(url, source_item=None):
     if parsed_name:
         meta["name"] = parsed_name
     if isinstance(source_item, dict):
+        meta.update(layer_metadata(source_item))
         for key in ("natural_w", "natural_h", "width", "height", "w", "h", "layout_w", "layout_h"):
             try:
                 value = int(float(source_item.get(key) or 0))
@@ -10092,6 +10128,7 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
                 model=model, prompt=prompt, size=size, quality=quality,
                 references=[reference_to_data_url(ref, max_size=1536) for ref in image_refs],
                 aspect_parameters=aspect_params,
+                edit_endpoint=edit_url,
             )
         elif is_aspect_image and not image_refs:
             body = {"model": model, "prompt": prompt, "response_format": "url", **aspect_params}
@@ -12231,14 +12268,7 @@ async def probe_volcengine_auto_detect(client, base_url: str, api_key: str):
     }
 
 def classify_upstream_model(mid):
-    lc = str(mid or "").lower()
-    video_keys = ["veo", "sora", "wan2", "wanx", "doubao-seedance", "doubao-1", "kling", "hailuo", "video", "t2v-", "i2v-", "s2v"]
-    if any(k in lc for k in video_keys):
-        return "video"
-    image_keys = ["banana", "image", "dalle", "dall-e", "imagen", "flux", "stable", "sdxl", "midjourney", "nano-banana", "ideogram", "fal-ai", "z-image", "qwen-image", "klein", "seedream", "doubao-seedream", "text-to-image", "image-to-image"]
-    if any(k in lc for k in image_keys):
-        return "image"
-    return "chat"
+    return classify_model(mid)
 
 def parse_upstream_models(raw, protocol="openai"):
     items = raw.get("data") if isinstance(raw, dict) else None
@@ -13305,7 +13335,7 @@ def video_api_headers(provider):
     return zhenzhen_video_headers(bearer_auth_value(key))
 
 
-def video_submit_url_candidates(provider, base_url):
+def video_submit_url_candidates(provider, base_url, model=""):
     if is_agnes_provider(provider):
         return [f"{base_url}/v1/videos"]
     if is_apimart_provider(provider):
@@ -13318,10 +13348,14 @@ def video_submit_url_candidates(provider, base_url):
     if is_yuli_provider(provider):
         return [f"{base_url}/v1/video/create"]
     if is_zhenzhen(provider):
-        return zhenzhen_video_submit_endpoints(base_url)
+        return zhenzhen_model_video_endpoints(base_url, model)
     return [f"{base_url}/v1/videos/generations", f"{base_url}/v2/videos/generations"]
 
 def video_task_url_candidates(provider, base_url, task_id, submit_url=""):
+    if is_zhenzhen(provider):
+        urls = zhenzhen_video_query_endpoints(base_url, encoded_task_id(task_id), submit_url=submit_url)
+        if urls:
+            return urls
     if is_agnes_provider(provider):
         quoted_id = urllib.parse.quote(str(task_id), safe="")
         return [
@@ -13695,9 +13729,10 @@ async def canvas_video(payload: CanvasVideoRequest):
     is_yuli = is_yuli_provider(provider)
     is_agnes = is_agnes_provider(provider, payload.model)
     volc_is_proxy = bool(is_volcengine and urllib.parse.urlparse(base_url).path.rstrip("/"))
-    submit_urls = video_submit_url_candidates(provider, base_url)
-    submit_url = submit_urls[0]
     requested_model = selected_model(payload.model, "agnes-video-v2.0" if is_agnes else "veo3-fast")
+    submit_urls = video_submit_url_candidates(provider, base_url, requested_model)
+    submit_url = submit_urls[0]
+    zhenzhen_profile = zhenzhen_video_profile(provider, requested_model)
     is_veo31 = is_apimart and is_apimart_veo31_model(requested_model)
     if is_agnes:
         try:
@@ -13971,13 +14006,19 @@ async def canvas_video(payload: CanvasVideoRequest):
                         body["enable_upsample"] = True
                 else:
                     image_payload = []
-                    for ref in payload.images[:4]:
+                    for ref in (payload.images if zhenzhen_profile else payload.images[:4]):
                         if ref.url:
-                            image_payload.append(reference_to_data_url(ref.dict(), max_size=1536))
-                    body = json_video_body(payload, selected_model(payload.model, "veo3-fast"), image_payload)
+                            image_payload.append(ref.url if zhenzhen_profile and ref.url.startswith(("https://", "http://", "data:"))
+                                                 else reference_to_data_url(ref.dict(), max_size=1536))
+                    if zhenzhen_profile:
+                        body = zhenzhen_video_body(payload, requested_model, image_payload,
+                            [media_reference_to_url(value) for value in payload.videos],
+                            [media_reference_to_url(value) for value in payload.audios])
+                    else:
+                        body = json_video_body(payload, requested_model, image_payload)
             task_id, result, urls = await generate_json_video(
                 client, submit_urls, video_api_headers(provider), body,
-                extract_task_id=extract_task_id, output_urls=video_output_urls,
+                extract_task_id=zhenzhen_video_request_id if zhenzhen_profile else extract_task_id, output_urls=video_output_urls,
                 accepted=lambda task_id, url: record_video_acceptance(task_id, provider, url, video_query_mode(provider, payload.model)),
                 poll=lambda task_id, url: wait_for_video_task(client, provider, task_id, url),
             )
@@ -13995,6 +14036,9 @@ async def canvas_video(payload: CanvasVideoRequest):
         raise provider_submission_unknown("视频提交或任务查询的网络响应中断，是否已被供应商受理尚不确定") from exc
 
 def video_query_mode(provider, model):
+    profile = zhenzhen_video_profile(provider, model)
+    if profile:
+        return profile["route"]
     if is_jimeng_provider(provider) or is_runninghub_provider(provider):
         return ""
     if is_agnes_provider(provider, model):
@@ -14010,11 +14054,17 @@ def video_query_mode(provider, model):
 
 async def inspect_saved_video_task(provider, receipt):
     mode = video_query_mode(provider, receipt.get("model", ""))
+    # Old accepted receipts retain their original unified route. New model
+    # mappings must never redirect an already accepted supplier task.
+    if is_zhenzhen(provider) and receipt.get("video_query_mode") in ZHENZHEN_VIDEO_QUERY_MODES | {"generic"}:
+        mode = receipt["video_query_mode"]
     if not mode or mode != receipt.get("video_query_mode"):
         raise HTTPException(409, "原视频查询协议无法匹配，请核对供应商记录")
     base = video_api_root(provider)
     task_id = encoded_task_id(receipt["upstream_task_id"])
     urls = video_task_url_candidates(provider, base, task_id, "/v2/videos/generations" if receipt.get("video_v2") else "")
+    if mode in ZHENZHEN_VIDEO_QUERY_MODES:
+        urls = zhenzhen_video_query_endpoints(base, task_id, mode=mode)
     headers = video_api_headers(provider)
     if mode == "agnes":
         # Agnes query has additional model headers and query parameters.

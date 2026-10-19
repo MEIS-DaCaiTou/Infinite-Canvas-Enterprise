@@ -4,18 +4,15 @@
 
 ## 当前结论（2026-10-20）
 
-2026-10-20 安装现场续修：负责人确认入口修复成功，随后离线升级被空 WAL/SHM 阻断。完整安装快照的隔离检查为 quick_check=ok、Schema READY/v2；这不是数据库损坏证明或现场升级成功。负责人已单独批准受控预处理候选；分支 `codex/install-database-preparation-20261020` 以 #178 的准确 Head `26299e11d35e2dc813d44cb425ed15b33f8dec1b` 为依赖，保留 #178 原分支。实际写连接位于原升级计划/租约/fence 内，复用 SQLite 检查点并在数据库互斥内重验空日志，失败与中断保持显式恢复保护。限定范围、独立 Review 和冻结 CP314 验证见 [同一 C6 记录](./ops/OFFLINE-RETAINED-UPGRADE-2026-10-12.md#2026-10-20-空-walshm-受控预处理候选)。本候选未合并、未发布、不处理现场原库；main 与正式 v2026.10.3 不变。#177、视频 #179 和图片 #180 仍为独立 Draft，#180 依赖 #179；不夹带这些业务修改。
+正式版本仍为 [v2026.10.3](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.10.3)，main `e0dfa843d4bec3ff9c05a6f2ee25337a3687fc3e`，发行源码 `d8ffe55b48fdb9944aa1dac71f21e772ec06d3eb`；准确发行/主线CI与现场边界见 [发行记录](./ops/RELEASE-2026.10.3-RECORD.md)。本轮只做开发机候选集成，不修改正式资产、main或测试主机原库。
 
-已核对 main `e0dfa843d4bec3ff9c05a6f2ee25337a3687fc3e`：负责人已批准并完成 #176 合并与正式 [v2026.10.3](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.10.3) 发布，准确源码为 `d8ffe55b48fdb9944aa1dac71f21e772ec06d3eb`；main 文档 39185355324、Enterprise/Runtime 39185355220 最终 SUCCESS，区别于 PR CI。发行资产和正式 10.2 升级/失败恢复范围见 [发行记录](./ops/RELEASE-2026.10.3-RECORD.md)。
+业务处于唯一路线图4.2。集成分支 `codex/candidate-integration-20261020` 从已核验main的后代汇集准确候选：#177 `3ce811b3bb19d8e938be7dec977c488f8726f1d3` 的队列持久执行/重启恢复；#178→#181 `4f100cc4a15655bac59ef33aa81e9a39720d71da` 的维护预检/受控空WAL处理；#179→#180 `0350053846a4ab745bb9ca05abd1f5c8ff5cba56` 的视频协议路由/JSON编辑与图层输出。所有原PR保持Draft、未合并，原分支与其他工作区保持。独立Review和各自CI沿用原PR的准确范围；组合后的代码另做集成验证，不以原CI替代组合验收。
 
-现场补充暴露了未覆盖的来源：经页面升级的正式 10.2 安装缺少 installation.json，离线维护因此阻断；入口修复另须停机，固定 EXE 窗口仍打开时 Windows 也可能拒绝写入。当前独立维护候选 `codex/install-upgrade-preflight-20261019` 基于上述 main，代码 `a8ec5268fc3eda4bc0a7ab247f62c89815ba217a`：只读检查登记/归属、按所选操作刷新、离线升级提前预检和可执行错误提示，复用原事务补登记，不自动接管未知入口。定向测试、真实文件占用复现、冻结包检查及未覆盖 GUI/客户边界见 [C6 增量记录](./ops/OFFLINE-RETAINED-UPGRADE-2026-10-12.md#2026-10-19-页面升级来源的登记预检与维护提示候选)。尚未合并或发布补丁，不操作客户设备。
+入口修复已有现场成功反馈；原10.2安装快照的空WAL/SHM在隔离副本中可由候选安全处理，尚无现场完整离线升级通过反馈。受控预处理不扩展到非空WAL/journal或未知恢复，详细事务/保护见 [C6记录](./ops/OFFLINE-RETAINED-UPGRADE-2026-10-12.md#2026-10-20-空-walshm-受控预处理候选)。本轮优先补开发机完整冻结副本的升级、失败回退与中断恢复证据，再核对业务组合兼容性。
 
-业务仍处于唯一路线图 4.2。[#177](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/177) 的未受理队列持久执行/启动恢复保持 Draft，Head `3ce811b3bb19d8e938be7dec977c488f8726f1d3`，准确 Head CI 与独立 Review 已通过，等待合并批准。此前真实贞贞调用累计 1.300022 / 已批准 10 平台额度单位，本轮只读目录/文档核查及安装验证新增付费调用为 0。
+Grok imagine、MiniMax-H3、Wan3各一次真实提交/原任务续查已在视频候选归档；图片真实文生图成功，双参考JSON编辑上游500且无受理ID，保留待核对、未自动重提，不能称已验收。此前累计用量差额6.710022/原总预算10平台额度，未知调用保留余量；本轮初始新增付费调用0。模型能力、模拟/Browser与真实边界见 [产品记录](./ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md)。
 
-当前模型列表拉取、名称分组、OpenAI/Gemini 单模型覆盖及贞贞旧统一视频接口不等于全目录适配。公开文档中的 Grok imagine / MiniMax-H3 等新视频协议尚未绑定；专用贞贞图片参数契约为 12 个 ID，其余通用路径仍需按协议核验。下一完整业务主题为实际使用的贞贞模型协议路由与视频可用性收口，随后按图片参数/编辑协议差异补齐；不是新增产品或另一套路由平台。4.3 部门/项目及费用治理依赖不变，RunningHub #170 暂缓，Linux/云/多实例不扩展。合并、补丁 Release 和客户升级仍分别等待授权。
-
-独立续包 `codex/queued-task-recovery-20261019` 已实现未开始任务持久执行与启动恢复：认证 Zhenzhen HTTP 图像/视频/LLM 和 ComfyUI 使用同一 v1 journal 与私有输入，就绪后确认，提交前 claim；权限/配置变化和维护暂停重新核验，已开始/未知任务不重提。定向验证及独立 Review 已完成（1项敏感字段问题已修复并复审），准确 Head CI 以该 PR 为准。该代码未进入冻结10.3，尚待候选合并批准；范围与回滚见 [原任务记录](./ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md#2026-10-19-未开始任务持久执行与重启恢复候选)。无新增页面、Schema或客户操作。
-
+下一步按候选集成与修复版本验收收口，4.3部门/项目和费用治理依赖不变；RunningHub #170、Linux/云/多实例继续暂缓。合并、正式补丁与客户升级分别等待负责人授权。
 
 ## 工作包历史快照
 
