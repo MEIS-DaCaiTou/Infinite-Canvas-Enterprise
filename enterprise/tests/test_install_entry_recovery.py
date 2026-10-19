@@ -61,6 +61,34 @@ def test_entry_inspection_cannot_claim_unknown_exe_or_replace_foreign_lock(insta
     assert lock.read_bytes() == b"unknown maintenance owner"
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows executable replacement sharing contract")
+def test_open_entry_write_denial_rolls_back_and_can_retry_after_handle_closes(installed):
+    import ctypes
+    from ctypes import wintypes
+
+    arguments, roots, _original = installed
+    before, published = _business(roots), _published(roots)
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+        wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    kernel.CreateFileW.restype = wintypes.HANDLE
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.CloseHandle.restype = wintypes.BOOL
+    # A live EXE may deny replacement independently of Runtime service state.
+    handle = kernel.CreateFileW(str(roots.INSTALL_ROOT / entry.ENTRY_NAME),
+        0x80000000, 3, None, 3, 0x80, None)  # READ/WRITE sharing, no DELETE sharing.
+    assert handle not in (None, ctypes.c_void_p(-1).value)
+    try:
+        with pytest.raises(entry.InstallEntryError, match="INSTALL_ENTRY_WRITE_DENIED"):
+            entry.repair_fixed_entry(**arguments)
+        assert _published(roots) == published and _business(roots) == before
+        assert not (roots.STATE_ROOT / "system-update-active.lock").exists()
+    finally:
+        assert kernel.CloseHandle(handle)
+    assert entry.repair_fixed_entry(**arguments)["repair_state"] == "SUCCEEDED"
+    assert _business(roots) == before
+
+
 @pytest.fixture
 def installed(tmp_path, monkeypatch):
     root, _manifest, _archive, _inventory, document = qualified_program_fixture(tmp_path)

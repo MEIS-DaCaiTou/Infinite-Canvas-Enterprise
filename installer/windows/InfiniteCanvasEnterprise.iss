@@ -822,6 +822,9 @@ begin
       '请先选择“只修复固定入口与快捷方式”，完成后再检查离线升级资格。账号、数据库和当前业务版本不会因此重建。'
   else if LastStableCode = 'INSTALL_ENTRY_UNOWNED_FILE' then
     Result := '旧固定入口的归属未能核验。请保留原安装目录并导出诊断；未覆盖该入口或初始化业务数据。'
+  else if LastStableCode = 'INSTALL_ENTRY_WRITE_DENIED' then
+    Result := 'Windows 拒绝写入入口或登记文件，本次操作已回退。请确认服务已停止，并关闭本安装的固定 EXE 启动窗口后重试。' + #13#10 +
+      '若仍失败，请保留诊断与恢复记录，继续核查文件占用或写入权限；不要手工覆盖入口或删除锁文件。'
   else if (LastStableCode = 'INSTALL_PROGRAM_RUNTIME_BUSY') or
           (LastStableCode = 'INSTALL_ENTRY_RUNTIME_BUSY') or
           (LastStableCode = 'INSTALL_LIFECYCLE_RUNTIME_BUSY') then

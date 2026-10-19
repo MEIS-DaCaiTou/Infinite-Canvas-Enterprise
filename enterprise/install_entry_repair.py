@@ -598,6 +598,8 @@ def repair_entry_transaction(*, install_root: Path, entry: NativeEntry, local_ap
                     raise InstallEntryError("INSTALL_ENTRY_RECOVERY_REQUIRED") from rollback_error
                 if isinstance(exc, InstallEntryError):
                     raise
+                if isinstance(exc, PermissionError):
+                    raise InstallEntryError("INSTALL_ENTRY_WRITE_DENIED") from exc
                 raise InstallEntryError("INSTALL_ENTRY_REPAIR_FAILED") from exc
             # Commit is outside the rollback handler. Cleanup failure cannot
             # revert an already successful publication.
