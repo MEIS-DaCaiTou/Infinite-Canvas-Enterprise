@@ -98,7 +98,10 @@ def test_startup_queries_durable_id_without_browser_and_rebuilds_after_stop(tmp_
         await worker.start()
         await until(lambda: (journal.get("original").get("auto_recovery") or {}).get("status") == "waiting")
         await worker.stop()
-        worker = AcceptedTaskRecovery(CanvasTaskJournal(journal.root), query, lambda _: "", lambda: False, poll_delay=.01)
+        # Rebind query/polling to the restarted journal as the real application
+        # does. Two live instances use different locks and race Windows replace.
+        journal = CanvasTaskJournal(journal.root)
+        worker = AcceptedTaskRecovery(journal, query, lambda _: "", lambda: False, poll_delay=.01)
         await worker.start()
         await until(lambda: journal.get("original")["status"] == "succeeded")
         await worker.stop()

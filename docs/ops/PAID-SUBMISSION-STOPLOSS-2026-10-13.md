@@ -216,3 +216,6 @@ Browser 使用本机58130隔离安装、私有SQLite、固定测试身份、实�
 验证沿用现有 Python/协议与实际 main 隔离子进程：四类请求在暂停时入队，硬退出后重启各执行一次；重复启动不重提；四类 claim 后硬退出均不会再生成；当前权限撤销、来源失效、配置/凭据变化、缺失/损坏输入、维护暂停竞争和重启并发均有定向覆盖。新核心/策略/main 与既有视频 main 定向28 passed /44.53s；此前相关恢复/LLM/video检查35 passed。实际写入边界审计通过，新增删除仅复用既有 W48 DATA_ROOT 边界。首轮较宽定向检查中旧视频夹具未提供现行权限授权导致1项失败，补齐夹具授权后定向通过，生产权限未放宽。没有真实付费、GPU、Browser 或客户验证；前端及请求返回契约未变，不重复已有页面矩阵。
 
 独立 Review 对运行 Diff 发现1项 P2：api_token/refresh_token 等未被最初精确名单识别，会落入私有输入。已复用现有 Gateway 敏感键分类并覆盖字段元数据；实际 enqueue 定向证明这些输入不落盘、不启用dispatch，普通字段仍可持久。定向复审 `NO_ACTIONABLE_BUGS_FOUND`，不是 GitHub Approval 或无缺陷保证。准确代码提交4262fbe7fcfba92b0dec4515a051d415f4da2635；后续仅接入已合并基线及文档。本包候选合并与后续发行仍待负责人批准。
+
+
+本候选首次 CI Enterprise 为1 failed/1894 passed/50 skipped（9分钟内），失败是既有同进程重启测试的 Windows 文件替换竞争。定向当前21次复现1次、准确 main 旧 journal/恢复器/原测试5次复现1次；夹具第二次 worker 用新 journal，查询回调和观察却仍用旧实例，锁不共享。仅重绑测试 journal，使查询/观察/worker与真实单Upstream一样使用同一重建实例；未改产品恢复器或放宽断言。模块9 passed/4.69s及连续40次定向无失败，原两次原ID查询/重建断言保留。首次CI和定向证据留在原PR/artifact，最终Head及其CI另记。
