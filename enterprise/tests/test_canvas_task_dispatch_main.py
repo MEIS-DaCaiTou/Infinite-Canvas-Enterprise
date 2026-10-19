@@ -130,3 +130,78 @@ asyncio.run(restart())
 '''
     second=invoke(tmp_path,reader)
     assert second.returncode==0,second.stdout+second.stderr
+
+
+def test_queued_video_restart_uses_selected_protocol_once_and_retains_result(tmp_path):
+    setup=r'''
+provider['video_models']=['MiniMax-H3']
+main.save_api_providers([provider])
+main.CANVAS_VIDEO_TASKS.generate=main.canvas_video
+'''
+    writer=setup+r'''
+main.CANVAS_TASK_DISPATCH.paused=lambda:True
+async def write():
+    result=await main.create_canvas_video_task(main.CanvasVideoRequest(
+        prompt='owned queued video',provider_id='zhenzhen',model='MiniMax-H3',
+        duration=5,resolution='768P'),'alice')
+    id_path.write_text(result['task_id'])
+    assert main.CANVAS_TASK_JOURNAL.get(result['task_id'])['status']=='queued'
+    assert not calls
+    os._exit(17)
+asyncio.run(write())
+'''
+    first=invoke(tmp_path,writer)
+    assert first.returncode==17,first.stdout+first.stderr
+    reader=setup+r'''
+def reply(request):
+    calls.append((request.method,request.url.path))
+    if request.method=='POST':
+        assert request.url.path=='/v1/videos'
+        body=json.loads(request.content)
+        assert body['model']=='MiniMax-H3' and body['seconds']=='5' and body['resolution']=='768P',body
+        return httpx.Response(200,json={'id':'original-video'})
+    assert request.method=='GET' and request.url.path=='/v1/videos/original-video'
+    return httpx.Response(200,json={'status':'done','video':{'url':'https://supplier.example/result.mp4'}})
+main.httpx.AsyncClient=lambda **kw:original_client(transport=httpx.MockTransport(reply),**kw)
+async def archive(url):
+    assert url=='https://supplier.example/result.mp4'
+    (Path(main.OUTPUT_DIR)/'queued-video.mp4').write_bytes(b'owned result')
+    return '/output/queued-video.mp4'
+main.save_remote_video_to_output=archive
+main.CANVAS_VIDEO_TASKS.archive=archive
+async def restart():
+    await main.startup_event()
+    try:
+        task_id=id_path.read_text()
+        async with asyncio.timeout(10):
+            while main.CANVAS_TASK_JOURNAL.get(task_id)['status']=='queued' or main.CANVAS_TASK_DISPATCH.active:
+                await asyncio.sleep(.02)
+        record=main.CANVAS_TASK_JOURNAL.get(task_id)
+        assert record['status']=='succeeded',record
+        receipt=record['provider_receipts'][0]
+        assert receipt['upstream_task_id']=='original-video' and receipt['video_query_mode']=='zhenzhen-videos-v1',receipt
+        assert record['result']['videos']==['/output/queued-video.mp4'],record
+        assert calls==[('POST','/v1/videos'),('GET','/v1/videos/original-video')],calls
+        assert not main.CANVAS_TASK_DISPATCH.inputs._path(task_id).exists()
+    finally:await main.shutdown_task_recovery()
+asyncio.run(restart())
+'''
+    second=invoke(tmp_path,reader)
+    assert second.returncode==0,second.stdout+second.stderr
+    final=setup+r'''
+def reject(request):
+    raise AssertionError('completed video contacted supplier after reopening')
+main.httpx.AsyncClient=lambda **kw:original_client(transport=httpx.MockTransport(reject),**kw)
+async def reopen():
+    await main.startup_event()
+    try:
+        await asyncio.sleep(.1)
+        result=await main.get_canvas_video_task(id_path.read_text())
+        assert result['status']=='succeeded' and result['result']['videos']==['/output/queued-video.mp4'],result
+        assert (Path(main.OUTPUT_DIR)/'queued-video.mp4').read_bytes()==b'owned result'
+        assert not main.CANVAS_TASK_DISPATCH.active
+    finally:await main.shutdown_task_recovery()
+asyncio.run(reopen())
+'''
+    third=invoke(tmp_path,final)
+    assert third.returncode==0,third.stdout+third.stderr
