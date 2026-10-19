@@ -1,8 +1,8 @@
 {
   "schema_version": "enterprise-documents-v1",
   "reviewed_at": "2026-10-19",
-  "audit_base_commit": "39f4b02d232142c4ede66f0133b759b32178d70f",
-  "scope": "Owner-authorized #172-#175 integration: task provenance, result reuse, durable canvas LLM, video resume and Zhenzhen video adapter share one source baseline. #174/#175 merged into main d9f16b2; exact remaining merge and CI facts are recorded in their existing PRs. Stable canvas/node/task identity survives normal saves and 409 merges; unknown work is never resubmitted. Real Zhenzhen validation is authorized up to 10 platform units, without credentials in source or evidence. No schema, release, customer deployment or second roadmap; formal v2026.10.2 remains unchanged.",
+  "audit_base_commit": "783f2cfa67d3ee9e0103503d3af30e111b92289a",
+  "scope": "Owner-authorized repair candidate after #172-#175 merged into main783. VERSION-only clean build source d8ffe55 binds 2026.10.3 ZIP, fixed EXE, Setup, existing Runtime and exact official 10.2 route. Installed-copy upgrade and recovery evidence, remaining limitations and approvals stay in the release record and Draft PR. Historical status snapshots retain their original roles. No schema, new governance gate, GitHub Release, customer deployment or second roadmap; formal v2026.10.2 remains unchanged.",
   "documents": [
     {
       "path": ".github/PULL_REQUEST_TEMPLATE.md",
@@ -660,6 +660,10 @@
     },
     {
       "path": "docs/ops/RELEASE-2026.10.2-RECORD.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/ops/RELEASE-2026.10.3-RECORD.md",
       "kind": "record"
     }
   ],
