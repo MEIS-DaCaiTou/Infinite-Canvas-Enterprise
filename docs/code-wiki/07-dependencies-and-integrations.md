@@ -117,3 +117,6 @@ Provider 凭据存于服务端配置，不应通过设置读取接口回传明�
 Zhenzhen 图像能力/请求构造位于 #156 的 enterprise/providers/zhenzhen.py，使用现有 HTTPX client，不新增 SDK、数据库或 Windows 依赖。12 个已确认 JSON 图像模型/别名的契约及未覆盖协议见[实现记录](../ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md)。Chat 继续复用既有 OpenAI-compatible 路径；不据此宣称全部视频/原生接口可用。
 
 Photoshop UXP 源码 manifest 0.3.0，最低 PS 24，具备浏览/置入/PNG 导出/生成查询等接线，但企业认证与真实宿主未验收。素材 Chrome 扩展源码 1.0.1 包含网页/媒体采集、截图、下载/ZIP 与平台导入；#156 修复同源平台连接，真实扩展宿主矩阵未验收，不推断已安装状态。两者是项目能力，与开发用 Codex Browser 不混同。
+
+
+2026-10-19 独立视频候选（Base main e0dfa84）：`enterprise/providers/zhenzhen_video.py` 承接精确型号能力、媒体字段及提交/查询选路，`model_catalog.py` 仅修正已知分类。main 保留媒体转换、现有鉴权、回执和归档接线；CanvasModelPicker 向两类画布提供同一视频能力。实际调用、旧回执兼容与未覆盖边界见 [产品记录](../ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#2026-10-19-贞贞视频协议路由候选)，不是全部上游模型或正式发行能力声明。

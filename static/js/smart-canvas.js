@@ -2549,9 +2549,14 @@ function renderVideoModelControl(models){
         </div>
     </div>`;
 }
+function currentVideoProfile(){
+    return settings.engine === 'api' && settings.apiKind === 'video'
+        ? window.CanvasModelPicker?.videoProfileFor(apiProviderById(settings.videoProvider), settings.videoModel) || {} : {};
+}
 function renderVideoDurationControl(){
-    const v = Math.max(1, Math.min(60, Number(settings.videoDuration) || 5));
-    const quick = [3, 4, 5, 6, 8, 10, 12, 15];
+    const profile = currentVideoProfile(), min = profile.duration_min || 1, max = profile.duration_max || 60;
+    const v = Number(settings.videoDuration) || 5;
+    const quick = [3, 4, 5, 6, 8, 10, 12, 15].filter(value => value >= min && value <= max);
     return `<div class="smart-control duration-control" title="${escapeHtml(tr('smart.videoDurationTip'))}">
         <button class="smart-pill" type="button"><i data-lucide="timer"></i><span>${v}s</span></button>
         <div class="smart-popover compact-popover">
@@ -2561,13 +2566,14 @@ function renderVideoDurationControl(){
             </div>
             <label class="duration-custom">
                 <span>${escapeHtml(tr('smart.custom'))}</span>
-                <input type="number" min="1" max="60" step="1" data-param="videoDuration" value="${v}">
+                <input type="number" min="${min}" max="${max}" step="1" data-param="videoDuration" value="${v}">
             </label>
         </div>
     </div>`;
 }
 function renderVideoAspectControl(){
-    const options = [
+    const profile = currentVideoProfile();
+    const options = profile.ratios ? (window.CanvasModelPicker?.videoChoices(profile.ratios, settings.videoAspect) || profile.ratios).map(value => [value, value + (profile.ratios.includes(value) ? '' : '（不支持）')]) : [
         ['16:9','16:9'], ['9:16','9:16'], ['1:1','1:1'], ['4:3','4:3'], ['3:4','3:4'],
         ['21:9','21:9'], ['9:21','9:21'], ['keep_ratio', tr('smart.videoAspectKeep')], ['adaptive', tr('smart.videoAspectAdaptive')]
     ];
@@ -2584,7 +2590,8 @@ function renderVideoAspectControl(){
     </div>`;
 }
 function renderVideoResolutionControl(){
-    const options = [['', tr('smart.videoResAuto')], ['480p','480P'], ['720p','720P'], ['1080p','1080P']];
+    const profile = currentVideoProfile();
+    const options = profile.resolutions ? [['', '默认 ' + profile.resolutions[0]], ...(window.CanvasModelPicker?.videoChoices(profile.resolutions, settings.videoResolution) || profile.resolutions).map(value => [value, value + (profile.resolutions.includes(value) ? '' : '（不支持）')])] : [['', tr('smart.videoResAuto')], ['480p','480P'], ['720p','720P'], ['1080p','1080P']];
     const value = settings.videoResolution || '';
     const labelMap = Object.fromEntries(options);
     return `<div class="smart-control resolution-control">
@@ -2599,7 +2606,8 @@ function renderVideoResolutionControl(){
 }
 function renderVideoToggleControl(key, label){
     const on = !!settings[key];
-    return `<button type="button" class="setting-check ${on ? 'active' : ''}" data-toggle-param="${escapeHtml(key)}"><span class="check-box"></span><span>${escapeHtml(label)}</span></button>`;
+    const supported = window.CanvasModelPicker?.videoToggleSupported(currentVideoProfile(), key) !== false;
+    return `<button type="button" ${!supported && !on ? 'disabled' : ''} title="${supported ? '' : '此模型不支持该选项；已开启时可点击取消'}" class="setting-check ${on ? 'active' : ''}" data-toggle-param="${escapeHtml(key)}"><span class="check-box"></span><span>${escapeHtml(label)}</span></button>`;
 }
 function renderTempShUploadControl(){
     return `<button type="button" class="smart-pill cloud-upload-pill" data-temp-sh-upload-video title="上传当前输入图片或视频到云端直链"><i data-lucide="upload-cloud"></i><span>上传云端</span></button>`;

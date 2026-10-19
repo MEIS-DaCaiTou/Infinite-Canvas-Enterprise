@@ -189,6 +189,24 @@
     function profileFor(provider, model) {
         return provider?.builtin_model_image_profiles?.[model] || provider?.model_image_profiles?.[model] || provider?.image_profile || {};
     }
+    function videoProfileFor(provider, model) {
+        return provider?.builtin_model_video_profiles?.[model] || {};
+    }
+    function videoToggleSupported(profile, key) {
+        const field = {
+            enhancePrompt:'enhance_prompt', enableUpsample:'enable_upsample', cameraFixed:'camerafixed',
+            watermark:'watermark', generateAudio:'generate_audio', multimodal:'multimodal',
+            useFrameRoles:'frame_roles', returnLastFrame:'return_last_frame',
+            videoEnhancePrompt:'enhance_prompt', videoEnableUpsample:'enable_upsample', videoCameraFixed:'camerafixed',
+            videoWatermark:'watermark', videoGenerateAudio:'generate_audio', videoMultimodal:'multimodal', videoUseFrameRoles:'frame_roles',
+        }[key];
+        return !profile?.route || !field || (profile.toggles || []).includes(field);
+    }
+    function videoChoices(values, current) {
+        const options = [...values];
+        if(current && !options.includes(current)) options.unshift(current);
+        return options;
+    }
     function imageParameters(source) {
         const ratios = {square:'1:1', portrait:'2:3', landscape:'3:2', portrait43:'3:4', landscape43:'4:3', story:'9:16', wide:'16:9', ultrawide:'21:9', ultratall:'9:21'};
         const ratio = source.ratio === 'custom' ? source.customRatio : source.ratio === 'source' ? '' : (ratios[source.ratio] || source.ratio);
@@ -197,5 +215,5 @@
     function preferredModel(kind, providerId, models) {
         return models.find(model => favorites.has(JSON.stringify([kind,providerId,model]))) || models[0] || '';
     }
-    window.CanvasModelPicker = {mountSelect, mountList, profileFor, imageParameters, preferredModel};
+    window.CanvasModelPicker = {mountSelect, mountList, profileFor, videoProfileFor, videoToggleSupported, videoChoices, imageParameters, preferredModel};
 })();
