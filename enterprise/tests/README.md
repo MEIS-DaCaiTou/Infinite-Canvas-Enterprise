@@ -122,3 +122,6 @@ Zhenzhen per-model video routing: `py -3.11 -B -m pytest -q enterprise/tests/tes
 
 
 Image contract/layer delta: `py -3.11 -B -m pytest -q enterprise/tests/test_model_request_contract.py enterprise/tests/test_zhenzhen_image_outputs.py enterprise/tests/test_generation_tasks.py` uses only synthetic requests, temporary roots and owned PNGs. Covers chosen JSON edit path/no fallback, layer source constraints, transparent multi-result archival, bounded metadata, nested URL/base64/list deduplication, reopened journal and existing task projection. Paid/Browser results and upstream 500 limitations remain separately recorded in the original PR/product record.
+
+
+Legacy entry/source compatibility: `py -3.11 -B -m pytest -q enterprise/tests/test_legacy_call_sources_main.py` runs actual main routes with isolated v2/v3 SQLite, Windows DPAPI and controlled HTTP. It covers old-schema compatibility, explicit administrator adoption, department/company selection, chat/stream/image/agent legs, immutable accepted revisions, denied sources, cost facts, partial-stream cancellation, and received-text archive/restore without another POST. Rendered online/chat/adoption checks use installed Playwright Edge at loopback with synthetic data; not a real Gateway login, paid-provider or customer upgrade acceptance. No new CI job.

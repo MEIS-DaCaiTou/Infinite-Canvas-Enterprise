@@ -425,7 +425,7 @@ def sanitize_settings_response(user: dict, path: str, method: str, data: Any) ->
 
 def _settings_denial_for_normal_user(path: str, method: str) -> bool:
     method = method.upper()
-    if path == "api/providers" or path.startswith("api/providers/"):
+    if path == "api/call-sources/adopt" or path == "api/providers" or path.startswith("api/providers/"):
         return True
     if path in {
         "api/codex/status",
@@ -455,7 +455,7 @@ def _settings_denial_for_normal_user(path: str, method: str) -> bool:
 
 
 def _settings_feature_key(path: str, method: str) -> str:
-    if path == "api/providers" or path.startswith("api/providers/"):
+    if path == "api/call-sources/adopt" or path == "api/providers" or path.startswith("api/providers/"):
         return FEATURE_API_SETTINGS
     if path.startswith("api/codex/") or path.startswith("api/gemini-cli/"):
         return FEATURE_API_SETTINGS

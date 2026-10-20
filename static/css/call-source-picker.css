@@ -4,6 +4,9 @@
 .call-source-line>span{flex:none;font-weight:600}
 .call-source-picker select{min-width:0;width:100%;height:30px;padding:4px 9px;border:1px solid var(--line,#e8ecf2);border-radius:10px;background:var(--soft,#f1f4f8);color:var(--text,#0f172a);font:inherit;text-overflow:ellipsis}
 .call-source-note{font-size:9px;line-height:1.5;color:var(--muted,#64748b)}
+.composer:has(>#legacyCallSources>.call-source-picker:not([hidden])){max-height:min(52vh,440px)}
+#legacyCallSources{flex:0 0 auto}
+html:has(.chat-main #legacyCallSources){overflow:clip}
 
 .llm-row>.call-source-picker{flex-basis:100%;width:100%}
 .prompt-node-llm>.call-source-picker{grid-column:1/-1}

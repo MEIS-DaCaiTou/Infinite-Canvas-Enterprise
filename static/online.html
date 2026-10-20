@@ -71,6 +71,8 @@
             -webkit-backdrop-filter: blur(22px) saturate(1.05) !important;
         }
     </style>
+    <link rel="stylesheet" href="/static/css/call-source-picker.css?v=20261021.1">
+    <script src="/static/js/call-source-picker.js?v=20261020.1"></script>
 </head>
 <body>
     <div class="container-box min-h-screen flex flex-col">
@@ -188,6 +190,7 @@
                     </div>
                 </div>
 
+                <div id="legacyCallSources"></div>
                 <button id="genBtn" onclick="submitImage()" class="glass-btn w-full py-5 text-white rounded-3xl font-bold flex items-center justify-center gap-3 shadow-lg">
                     <i data-lucide="zap" class="w-4 h-4 text-yellow-400"></i>
                     <span class="tracking-[0.3em] text-[11px] uppercase" data-i18n="online.generate">Generate</span>
@@ -250,9 +253,13 @@
         window.addEventListener('studio-lang-change', () => {
             document.title = tr('online.title');
             updateAdaptivePanel();
+            refreshCallSources();
         });
         let refs = {1:null,2:null,3:null};
         let refDims = {1:null,2:null,3:null};
+        let callSourceState={},callSourcePicker,imageCallSourcePicker;
+        const callSelection=id=>CanvasCallSources.selection(callSourceState,id);
+        function refreshCallSources(){callSourcePicker?.refresh();imageCallSourcePicker?.refresh();}
         let provider = 'comfly';
         let selectedModel = 'gpt-image-2';
         let apiProviders = [];
@@ -366,6 +373,7 @@
                 modelSelect.innerHTML = modelsForProvider.map(m => `<option value="${escapeHtml(m)}" ${m === selectedModel ? 'selected' : ''}>${escapeHtml(m)}</option>`).join('');
             }
             updateAdaptivePanel();
+            refreshCallSources();
         }
 
         /* ---- 协议自适应：根据所选 provider 的 protocol 调整参数栏 ----
@@ -622,12 +630,12 @@
             const btn = document.getElementById('genBtn'), loader = document.getElementById('loader'), placeholder = document.getElementById('placeholder'), out = document.getElementById('outputImg'), dl = document.getElementById('downloadBtn');
             btn.disabled = true; placeholder.classList.add('hidden'); out.classList.add('hidden'); dl.classList.add('hidden'); loader.classList.remove('hidden');
             try {
-                const reqBody = { prompt, provider_id:provider, model:selectedModel, size:currentSize(), n:outputCount, reference_images:Object.values(refs).filter(Boolean) };
+                const reqBody = { ...callSelection(provider), prompt, provider_id:provider, model:selectedModel, size:currentSize(), n:outputCount, reference_images:Object.values(refs).filter(Boolean) };
                 if(QUALITY_PROTOCOLS.has(providerProtocol(provider))) reqBody.quality = quality;
                 const result = await fetch('/api/online-image', {
                     method:'POST', headers:{'Content-Type':'application/json'},
                     body:JSON.stringify(reqBody)
-                }).then(async r => { if(!r.ok) throw new Error((await r.json()).detail || '生成失败'); return r.json(); });
+                }).then(async r => { if(!r.ok) {const error=(await r.json()).detail;throw new Error(error?.message || error || '生成失败');}; return r.json(); });
                 currentResult = result; out.src = result.images[0]; out.classList.remove('hidden'); dl.href = result.images[0]; dl.classList.remove('hidden'); renderImageCard(result, true);
             } catch(err) {
                 alert(err.message || 'Generation failed'); placeholder.classList.remove('hidden');
@@ -739,6 +747,10 @@
         }
         const observer = new IntersectionObserver(entries => { if(entries[0].isIntersecting && currentIndex < allHistory.length) loadHistory(1); }, {threshold:.1});
         window.onload = async () => { applyLanguage(); setRatio('square'); setResolution('1k'); await initModels(); await loadHistory(0); window.HistoryBulkManager?.attach({masonry:'#masonry'}); observer.observe(document.getElementById('loadMoreTrigger')); document.getElementById('loadMoreTrigger').onclick = () => loadHistory(1); };
+        window.addEventListener('DOMContentLoaded',()=>{
+            callSourcePicker=CanvasCallSources.mount(document.getElementById('legacyCallSources'),{
+                getProvider:()=>provider,getValue:()=>callSourceState,onChange:value=>{callSourceState=value;}});
+        });
     </script>
 </body>
 </html>

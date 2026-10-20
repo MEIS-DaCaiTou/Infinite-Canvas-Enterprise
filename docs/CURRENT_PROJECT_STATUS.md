@@ -18,6 +18,12 @@
 
 本候选尚不构成首版完整交付：部门任务视图仅显示元数据，项目共享目前只覆盖项目元数据；画布/成果的显式项目内容绑定、完整资源只读授权、旧个人在线/聊天入口的透明兼容、旧全局凭据受控接纳和 schema 3 发行级迁移/恢复验收仍需收口。默认 migration registry 保持 schema 2，普通启动不建新表、不导入旧密钥；不能将这些候选直接发布。预算当前为负责人页面提醒，尚无主动通知事件。现有 v2026.10.4 与客户设备不变，本轮无真实付费生成。
 
+## 旧入口来源兼容候选（2026-10-21）
+
+`codex/legacy-call-source-compat-20261021` 从 #187 准确 Head `3d8edc1d637e5bf79c3d456542e29350c011e650` 继续独立候选；main 仍为 `0d0078f2243bbacf6b24200e0a22a30d94b2a64e`，正式版 v2026.10.4 未变。旧在线生图、普通/流式聊天和 Agent API 接入既有来源及费用回执；旧 Schema 和未接纳的全局配置保留原路径。启用受管来源后按授权选择，不在失败后换 Key；Agent 文本和图片调用分别绑定来源。旧共享密钥由公司管理员明确接纳到加密来源、填写采购及账户，再授权使用，不回显原文，不自动导入。
+
+本轮复用图片执行器、LLM journal/归档和既有费用服务，没有新建队列、业务表或检查门禁。隔离实际 main/DPAPI/HTTP 场景与桌面/窄屏 Edge 验证已完成；真实付费及客户环境尚未验收，准确提交/独立 Review/CI 以候选 PR 为准。部门完整首版仍需项目内容及结果权限、费用分页/主动预算提醒、Schema3 发行级升级与恢复联合验收。#185–#187 与独立性能候选 #189 均未合并，不把接线候选当成正式上线。
+
 ## 当前结论（2026-10-20）
 
 正式版本仍为 [v2026.10.3](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.10.3)，发行源码 `d8ffe55b48fdb9944aa1dac71f21e772ec06d3eb`，公开资产未替换。负责人批准后，组合 [#182](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/182) 已按准确 Head `7370af1ee3518cd118cd18f91d686ca5e66dc8c5` 合入 main `5582c9f3094e052bee889835cae1aca065210992`。该 main 自身 Enterprise/Runtime [39351798091](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/39351798091)、文档 [39351798247](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/39351798247)、Native [39351798243](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/39351798243) 最终 SUCCESS；与 PR CI 分开，固定 EXE opt-in 的跳过不是验收。原 #180/#181 仍为历史 Draft，组合代码已在 main，不再次合并这些分支。

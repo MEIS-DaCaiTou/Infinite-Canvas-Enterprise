@@ -43,7 +43,7 @@ _EXACT_ROUTES: dict[str, frozenset[str]] = {
         "api/asset-library/items/move", "api/asset-library/libraries",
         "api/asset-library/workflows/upload", "api/canvas-assets/check",
         "api/canvas-assets/download", "api/canvas-comfy-tasks",
-        "api/canvas-image-tasks", "api/canvas-video-tasks", "api/canvas-llm", "api/canvas-llm-tasks", "api/canvas-video",
+        "api/canvas-image-tasks", "api/canvas-video-tasks", "api/call-sources/adopt", "api/canvas-llm", "api/canvas-llm-tasks", "api/canvas-video",
         "api/canvas-workflows/export", "api/canvas-workflows/export-to-library",
         "api/canvas-workflows/import", "api/canvases", "api/chat",
         "api/chat/agent", "api/chat/stream", "api/cloud-video/upload",
