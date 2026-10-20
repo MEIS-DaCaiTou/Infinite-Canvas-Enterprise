@@ -86,13 +86,12 @@ const
   HexDigits = '0123456789abcdef';
 
 var
-  ModePage: TInputOptionWizardPage;
   TargetPage: TInputDirWizardPage;
-  EnvironmentPage: TOutputMsgMemoWizardPage;
+  ActionPage: TInputOptionWizardPage;
   OperationPage: TInputOptionWizardPage;
   CachePage: TInputOptionWizardPage;
-  TaskConfirmationPage: TInputOptionWizardPage;
   CredentialPage: TInputQueryWizardPage;
+  StopConfirmation, DesktopOption, LaunchOption: TNewCheckBox;
   InstallProgress: TOutputProgressWizardPage;
   DetachButton, StatusButton: TNewButton;
   SelectedInstallRoot: String;
@@ -114,6 +113,7 @@ var
   FinalizingUpgrade: Boolean;
   InspectingEntry: Boolean;
   EntryState: String;
+  RecommendedOperation: Integer;
 
 procedure ExitProcess(ExitCode: Cardinal);
   external 'ExitProcess@kernel32.dll stdcall';
@@ -283,13 +283,9 @@ var
   Mode, Target, Operation, Schema, Confirmation: String;
 begin
   Operation := MaintenanceOperation;
-  if (ModePage.SelectedValueIndex = 0) and not ExistingEntryRepair and not MultipleInstalls then begin
-    Mode := 'quick';
-    Target := 'null';
-  end else begin
-    Mode := 'custom';
-    Target := '"' + JsonEscape(SelectedInstallRoot) + '"';
-  end;
+  { The one location page always sends the exact directory the user reviewed. }
+  Mode := 'custom';
+  Target := '"' + JsonEscape(SelectedInstallRoot) + '"';
   Schema := 'enterprise-install-maintenance-request-v2';
   Confirmation := '';
   if IsUpgradeOperation then begin
@@ -892,6 +888,50 @@ begin
   InspectSelectedMaintenance(True);
 end;
 
+procedure RecommendMaintenance;
+var
+  Verified: Boolean;
+begin
+  { Recommendation is read-only. Execution still repeats all backend checks. }
+  ActionPage.CheckListBox.ItemCaption[0] := '升级到 {#AppVersion}（保留数据）';
+  ActionPage.SubCaptionLabel.Caption := '保留账号、画布和素材；也可以修复当前安装。';
+  RecommendedOperation := 10;
+  ActionPage.SelectedValueIndex := 0;
+  OperationPage.SelectedValueIndex := 0;
+  InspectingEntry := True;
+  InstallProgress.Show;
+  try
+    try
+      PrepareBundle;
+      Verified := RunBridge;
+      if not Verified then begin
+        ActionPage.SelectedValueIndex := 2;
+        ActionPage.SubCaptionLabel.Caption := '安装状态需要核对。请进入高级维护查看或恢复；不会重新创建业务数据。';
+      end else if EntryState = 'REGISTRATION_REQUIRED' then begin
+        ActionPage.SelectedValueIndex := 1;
+        ActionPage.SubCaptionLabel.Caption := '建议先修复启动与安装登记，再升级。账号、画布和素材保持不变。';
+      end else if MatchingLifecycleRelease then begin
+        RecommendedOperation := 1;
+        ActionPage.CheckListBox.ItemCaption[0] := '修复当前版本程序（保留数据）';
+      end;
+    except
+      ActionPage.SelectedValueIndex := 2;
+      ActionPage.SubCaptionLabel.Caption := '安装状态尚未核准。请进入高级维护检查；未执行修复或升级。';
+    end;
+  finally
+    InspectingEntry := False;
+    InstallProgress.Hide;
+  end;
+end;
+
+function RequiresStoppedService: Boolean;
+begin
+  Result := ExistingEntryRepair and
+    (MaintenanceOperation <> 'inspect-program') and
+    (MaintenanceOperation <> 'inspect-lifecycle') and
+    (MaintenanceOperation <> 'inspect-upgrade') and not IsCacheOperation;
+end;
+
 procedure InitializeWizard;
 begin
   FindRegisteredInstall;
@@ -899,30 +939,26 @@ begin
   WizardForm.WelcomeLabel2.Caption := '版本 {#AppVersion}' + #13#10 + #13#10 +
     '安装包已包含独立 Python 运行环境，无需安装 Python。';
 
-  ModePage := CreateInputOptionPage(wpWelcome, '选择安装或维护位置',
-    '已有安装优先使用原位置', '已有数据不作为新安装重建；可选择入口修复、同版本维护、保留数据卸载重装或本包支持的离线升级。', True, False);
-  ModePage.Add('使用推荐位置（已有安装优先）');
-  ModePage.Add('选择安装位置');
-  ModePage.SelectedValueIndex := 0;
-  if MultipleInstalls then ModePage.SelectedValueIndex := 1;
-
-  TargetPage := CreateInputDirPage(ModePage.ID, '选择安装位置',
-    '选择全新目录，或要维护的已有安装。',
-    '多个安装须明确选择；仅有目录/登记不代表已通过身份核验。其他项目、未知目录及损坏程序不会被覆盖。', False, '');
+  TargetPage := CreateInputDirPage(wpWelcome, '选择安装位置',
+    '已有安装请选择原位置，账号、画布和素材会保留。',
+    '新安装使用空目录。默认位置可直接使用，也可以点击“浏览”更改。', False, '');
   TargetPage.Add('安装根目录：');
   TargetPage.Values[0] := DefaultInstallRoot;
+  if MultipleInstalls then begin
+    TargetPage.Values[0] := '';
+    TargetPage.SubCaptionLabel.Caption := '检测到多个安装，请明确选择要处理的原安装目录。';
+  end;
 
-  EnvironmentPage := CreateOutputMsgMemoPage(TargetPage.ID, '环境检查',
-    '安装器将在继续前执行以下检查：', '',
-    'Windows x64' + #13#10 +
-    '当前用户安装（不请求管理员权限）' + #13#10 +
-    '本机固定磁盘与可用空间' + #13#10 +
-    '新装目录安全，或已有安装完整 Release 身份' + #13#10 +
-    '内嵌 Release 身份和三个核心资产');
+  ActionPage := CreateInputOptionPage(TargetPage.ID, '安装与修复',
+    '保留账号、画布和素材', '请选择需要进行的操作。', True, False);
+  ActionPage.Add('升级到 {#AppVersion}（保留数据）');
+  ActionPage.Add('修复启动与快捷方式（保留当前版本）');
+  ActionPage.Add('高级维护…');
+  ActionPage.SelectedValueIndex := 0;
 
-  OperationPage := CreateInputOptionPage(EnvironmentPage.ID, '选择维护操作',
-    '保留原账号、数据库、画布、素材、配置和安装身份',
-    '同版本修复使用原包；离线升级只接受本包证明兼容的较新版本。服务须已停止，未知升级或数据库 Schema 会被阻断。', True, False);
+  OperationPage := CreateInputOptionPage(ActionPage.ID, '高级维护',
+    '仅在需要恢复、卸载或排查时使用',
+    '以下操作继续核验安装身份、停机和恢复记录；不会重建已有业务数据。', True, False);
   OperationPage.Add('只修复固定入口与快捷方式');
   OperationPage.Add('修复当前版本程序与 Python（不是业务升级）');
   OperationPage.Add('恢复上次中断的程序修复');
@@ -943,6 +979,7 @@ begin
   StatusButton.Width := ScaleX(125);
   StatusButton.Height := ScaleY(28);
   StatusButton.Top := OperationPage.SurfaceHeight - StatusButton.Height;
+  OperationPage.CheckListBox.Height := StatusButton.Top - ScaleY(8) - OperationPage.CheckListBox.Top;
   StatusButton.OnClick := @InspectMaintenance;
 
   CachePage := CreateInputOptionPage(OperationPage.ID, '维护准备包安全清理',
@@ -956,17 +993,33 @@ begin
   CacheRefreshButton.Top := CachePage.SurfaceHeight - CacheRefreshButton.Height;
   CacheRefreshButton.OnClick := @PreviewMaintenanceCache;
 
-  TaskConfirmationPage := CreateInputOptionPage(CachePage.ID, '确认安全维护',
-    '此操作不取消或重新提交 AI 任务',
-    '请先确认没有未完成的 AI 任务，并从固定入口停止本安装服务。后台还会核验进程、端口与维护锁；不会强行停止其他安装。', False, False);
-  TaskConfirmationPage.Add('我确认没有未完成的 AI 任务，并已停止本安装服务。');
-  TaskConfirmationPage.Values[0] := False;
-
-  CredentialPage := CreateInputQueryPage(TaskConfirmationPage.ID, '创建首个管理员',
-    '创建唯一的首个 super_admin', '凭据只通过当前用户的一次性内存管道传递，不写入命令行、环境或文件。');
+  CredentialPage := CreateInputQueryPage(CachePage.ID, '创建管理员',
+    '首次安装需要创建一个管理员账号', '此账号用于登录和管理无限画布。');
   CredentialPage.Add('管理员用户名：', False);
   CredentialPage.Add('密码：', True);
   CredentialPage.Add('确认密码：', True);
+
+  { Keep optional tasks and the maintenance confirmation on the final page. }
+  WizardForm.ReadyMemo.Height := WizardForm.ReadyMemo.Height - ScaleY(104);
+  StopConfirmation := TNewCheckBox.Create(WizardForm);
+  StopConfirmation.Parent := WizardForm.ReadyPage;
+  StopConfirmation.SetBounds(WizardForm.ReadyMemo.Left,
+    WizardForm.ReadyMemo.Top + WizardForm.ReadyMemo.Height + ScaleY(8),
+    WizardForm.ReadyMemo.Width, ScaleY(32));
+  StopConfirmation.Caption := '我已停止服务并关闭启动窗口，确认没有未完成的 AI 任务。';
+  StopConfirmation.Checked := False;
+  DesktopOption := TNewCheckBox.Create(WizardForm);
+  DesktopOption.Parent := WizardForm.ReadyPage;
+  DesktopOption.SetBounds(StopConfirmation.Left, StopConfirmation.Top + ScaleY(36),
+    StopConfirmation.Width, ScaleY(22));
+  DesktopOption.Caption := '创建桌面快捷方式';
+  DesktopOption.Checked := True;
+  LaunchOption := TNewCheckBox.Create(WizardForm);
+  LaunchOption.Parent := WizardForm.ReadyPage;
+  LaunchOption.SetBounds(DesktopOption.Left, DesktopOption.Top + ScaleY(26),
+    DesktopOption.Width, ScaleY(22));
+  LaunchOption.Caption := '完成后打开启动窗口';
+  LaunchOption.Checked := True;
 
   InstallProgress := CreateOutputProgressPage('正在安装', '安装未完成前不会发布 current-release 指针。');
   DetachButton := TNewButton.Create(WizardForm);
@@ -981,10 +1034,9 @@ begin
   if HeadlessLifecycle then begin
     SelectedInstallRoot := HeadlessRoot;
     ExistingEntryRepair := True;
-    ModePage.SelectedValueIndex := 1;
     TargetPage.Values[0] := HeadlessRoot;
     CredentialPage.Values[0] := ''; CredentialPage.Values[1] := ''; CredentialPage.Values[2] := '';
-    TaskConfirmationPage.Values[0] := True;
+    StopConfirmation.Checked := True;
     try
       PrepareBundle;
       if RunBridge and (LifecycleState = 'UNINSTALLED') then ExitProcess(0);
@@ -997,38 +1049,20 @@ end;
 
 function ShouldSkipPage(PageID: Integer): Boolean;
 begin
-  Result := ((PageID = TargetPage.ID) and (ModePage.SelectedValueIndex = 0) and not MultipleInstalls) or
-    ((PageID = CredentialPage.ID) and ExistingEntryRepair) or
-    ((PageID = OperationPage.ID) and not ExistingEntryRepair) or
+  Result := ((PageID = CredentialPage.ID) and ExistingEntryRepair) or
+    ((PageID = ActionPage.ID) and not ExistingEntryRepair) or
+    ((PageID = OperationPage.ID) and (not ExistingEntryRepair or (ActionPage.SelectedValueIndex <> 2))) or
     ((PageID = CachePage.ID) and not IsCacheOperation) or
-    ((PageID = TaskConfirmationPage.ID) and ((ShouldMaintainEntry and not IsLifecycleOperation and not IsUpgradeOperation) or (MaintenanceOperation = 'inspect-program') or (MaintenanceOperation = 'inspect-lifecycle') or (MaintenanceOperation = 'inspect-upgrade') or IsCacheOperation)) or
-    ((PageID = wpSelectTasks) and not ShouldMaintainEntry);
-end;
-
-procedure ShowMaintenanceScope;
-begin
-  if ExistingEntryRepair then
-    EnvironmentPage.RichEditViewer.Text := '操作：只修复固定入口' + #13#10 +
-      '原安装目录：' + SelectedInstallRoot + #13#10 + #13#10 +
-      '已发现已有安装候选，执行时仍需完整核验其当前 Release。' + #13#10 +
-      '只修复固定 EXE、实例登记和快捷方式。不会初始化或迁移数据库，不会改变当前版本。' + #13#10 +
-      '下一页明确选择入口修复、同版本维护、保留数据卸载重装或本包支持的离线升级。'
-  else
-    EnvironmentPage.RichEditViewer.Text := '操作：首次安装' + #13#10 +
-      '安装根目录：' + SelectedInstallRoot + #13#10 + #13#10 +
-      '目标必须是全新空目录，已有数据不会被当作新安装重建。' + #13#10 +
-      'Windows x64；当前用户安装；本机固定磁盘与可用空间。' + #13#10 +
-      '执行时验证内嵌 Release 身份、核心资产和固定入口，再创建首个管理员。';
+    (PageID = wpSelectTasks);
 end;
 
 procedure CurPageChanged(CurPageID: Integer);
-var
-  Code: String;
 begin
-  if CurPageID = EnvironmentPage.ID then begin
-    if ValidateTarget(SelectedInstallRoot, Code) then ShowMaintenanceScope
-    else EnvironmentPage.RichEditViewer.Text := '目标位置检查未通过：' + SelectedInstallRoot + #13#10 +
-      '错误代码：' + Code + #13#10 + '尚未执行安装；请选择有效目录。';
+  if CurPageID = wpReady then begin
+    StopConfirmation.Visible := RequiresStoppedService;
+    StopConfirmation.Checked := False;
+    DesktopOption.Visible := ShouldMaintainEntry;
+    LaunchOption.Visible := ShouldMaintainEntry;
   end;
 end;
 
@@ -1039,9 +1073,7 @@ begin
     Result := '操作：' + MaintenanceCaption + NewLine +
       Space + '原安装目录：' + SelectedInstallRoot + NewLine +
       Space + '目标版本：{#AppVersion}；账号、数据库、画布、素材、配置和安装身份保持。' + NewLine +
-      Space + '仅接受已证明兼容的相同 Schema；分别核验程序、固定入口、维护安装器和 Windows 登记。' + NewLine +
-      Space + '如存在空 WAL／SHM 残留，将在停机与维护锁内由 SQLite 处理并复核；非空日志仍会阻断。' + NewLine +
-      Space + '目标失败恢复来源版本；成功后完成登记才开放业务访问。'
+      Space + '升级失败会按原流程恢复；无法确认安全时会停止并保留恢复记录。'
   else if IsLifecycleOperation then
     Result := '操作：' + MaintenanceCaption + NewLine +
       Space + '原安装目录：' + SelectedInstallRoot + NewLine +
@@ -1061,36 +1093,51 @@ begin
   else
     Result := '操作：首次安装' + NewLine + Space + '安装根目录：' + SelectedInstallRoot + NewLine +
       Space + '安装版本：{#AppVersion}' + NewLine + Space + 'Release：{#ReleaseId}';
-  if MemoTasksInfo <> '' then Result := Result + NewLine + NewLine + MemoTasksInfo;
+
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
 var
-  Code: String;
+  Code, Tasks: String;
   Index: Integer;
 begin
   Result := True;
-  if CurPageID = ModePage.ID then begin
-    if ModePage.SelectedValueIndex = 0 then
-      SelectedInstallRoot := DefaultInstallRoot
-    else
-      SelectedInstallRoot := TargetPage.Values[0];
-  end;
-  if CurPageID = TargetPage.ID then
+  if CurPageID = TargetPage.ID then begin
     SelectedInstallRoot := TargetPage.Values[0];
-  if CurPageID = EnvironmentPage.ID then begin
-    if not ValidateTarget(SelectedInstallRoot, Code) then begin
-      MsgBox('安装环境检查未通过。' + #13#10 + '错误代码：' + Code,
-        mbError, MB_OK);
-      Result := False;
-    end else if ExistingEntryRepair then begin
-      WizardForm.DirEdit.Text := SelectedInstallRoot;
+    Result := ValidateTarget(SelectedInstallRoot, Code);
+    if not Result then begin
+      MsgBox('此位置不能安装或维护。请使用本机空目录，或选择原安装目录。' + #13#10 +
+        '错误代码：' + Code, mbError, MB_OK);
+      exit;
+    end;
+    WizardForm.DirEdit.Text := SelectedInstallRoot;
+    StopConfirmation.Checked := False;
+    if ExistingEntryRepair then begin
       CredentialPage.Values[0] := '';
       CredentialPage.Values[1] := '';
       CredentialPage.Values[2] := '';
-      ShowMaintenanceScope;
+      RecommendMaintenance;
     end;
-    if Result then WizardForm.DirEdit.Text := SelectedInstallRoot;
+  end;
+  if CurPageID = ActionPage.ID then begin
+    case ActionPage.SelectedValueIndex of
+      0: OperationPage.SelectedValueIndex := RecommendedOperation;
+      1: OperationPage.SelectedValueIndex := 0;
+    end;
+    if (ActionPage.SelectedValueIndex = 0) and (MaintenanceOperation = 'upgrade-retained') then
+      Result := InspectSelectedMaintenance(False);
+  end;
+  if CurPageID = wpReady then begin
+    if RequiresStoppedService and not StopConfirmation.Checked then begin
+      MsgBox('请先停止本安装服务并关闭启动窗口，再勾选确认。不会取消或重新提交 AI 任务。', mbError, MB_OK);
+      Result := False;
+      exit;
+    end;
+    if ShouldMaintainEntry then begin
+      if DesktopOption.Checked then Tasks := 'desktopicon' else Tasks := '!desktopicon';
+      if LaunchOption.Checked then Tasks := Tasks + ',launchafter' else Tasks := Tasks + ',!launchafter';
+      WizardSelectTasks(Tasks);
+    end;
   end;
   if CurPageID = CredentialPage.ID then begin
     if Trim(CredentialPage.Values[0]) = '' then begin
@@ -1104,12 +1151,8 @@ begin
       Result := False;
     end;
   end;
-  if (CurPageID = TaskConfirmationPage.ID) and not TaskConfirmationPage.Values[0] then begin
-    MsgBox('请先确认没有未完成任务，并停止本安装服务。', mbError, MB_OK);
-    Result := False;
-  end;
-  if (CurPageID = TaskConfirmationPage.ID) and Result and (MaintenanceOperation = 'uninstall-retain') then begin
-    Result := False; { Use the actual Windows uninstaller, never a Setup install step. }
+  if (CurPageID = OperationPage.ID) and (MaintenanceOperation = 'uninstall-retain') then begin
+    Result := False; { The registered Windows uninstaller keeps its own confirmation. }
     try RunRegisteredUninstall;
     except MsgBox('Windows 卸载入口未通过核验；未删除程序或业务数据。' + #13#10 + GetExceptionMessage, mbError, MB_OK); end;
   end;
@@ -1424,7 +1467,7 @@ begin
   try
     if IsCacheOperation then RaiseException('INSTALL_CACHE_INSPECTION_ONLY');
     if MaintenanceOperation = 'uninstall-retain' then RaiseException('INSTALL_UNINSTALL_WINDOWS_ENTRY_REQUIRED');
-    if (not ShouldMaintainEntry or IsLifecycleOperation or IsUpgradeOperation) and not TaskConfirmationPage.Values[0] then
+    if RequiresStoppedService and not StopConfirmation.Checked then
       RaiseException('INSTALL_PROGRAM_TASK_CONFIRMATION_REQUIRED');
     PrepareBundle;
     if IsUpgradeOperation then SetStage('核验并执行保留数据升级／恢复', 3)

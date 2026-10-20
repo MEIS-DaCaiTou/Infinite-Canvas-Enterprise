@@ -206,7 +206,7 @@ def test_gui_scopes_and_payload_lifetime_remain_explicit():
     for operation in ("repair-program", "recover-program", "inspect-program"):
         assert operation in source
     assert "enterprise-install-maintenance-request-v4" in source
-    assert "TaskConfirmationPage.Values[0] := False" in source
+    assert "StopConfirmation.Checked := False" in source
     assert "关闭查看（后台继续）" in source and "PeekNamedPipe(Stream.Handle" in source
     assert "InstallProgress.SetProgress(0, 0)" in source
     assert "if (BundleRoot <> '') and not PersistentBundle then" in source
