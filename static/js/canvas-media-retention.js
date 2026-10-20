@@ -32,11 +32,19 @@
             if(media.controls)parent.querySelector('.canvas-video-play')?.style.setProperty('display','none');
         }
     }
-    const preparing=new WeakSet();
+    const preparing=new Map();
     root.CanvasMediaRetention={transplant};
     root.CanvasRunPreparation={
-        has:node=>preparing.has(node),
-        begin(node){if(preparing.has(node))return false;preparing.add(node);return true;},
-        end:node=>preparing.delete(node)
+        has:(node,canvasId)=>preparing.get(canvasId)?.has(node?.id) || false,
+        active:canvasId=>Boolean(preparing.get(canvasId)?.size),
+        begin(node,canvasId){
+            if(!node?.id || !canvasId || this.has(node,canvasId))return false;
+            if(!preparing.has(canvasId))preparing.set(canvasId,new Set());
+            preparing.get(canvasId).add(node.id);return true;
+        },
+        end(node,canvasId){
+            const ids=preparing.get(canvasId);ids?.delete(node?.id);
+            if(!ids?.size)preparing.delete(canvasId);
+        }
     };
 })(window);

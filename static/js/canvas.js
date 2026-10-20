@@ -995,8 +995,7 @@ async function generatorSizeForRun(gen, refs){
         const ref = refs?.[0];
         if(ref?.url){
             try {
-                const known=pendingPreviewSizeFromRefs([ref]);
-                const dims=known?{width:known.w,height:known.h}:await getImageDimensions(ref.url);
+                const dims=await getImageDimensions(ref.url);
                 const parts = ratioPartsFromDimensions(dims.width, dims.height);
                 gen.customRatioWidth = String(parts.width);
                 gen.customRatioHeight = String(parts.height);
@@ -2049,7 +2048,7 @@ async function openCanvas(id){
 }
 function applyRemoteCanvasData(remote){
     if(!remote || !canvas || remote.id !== canvas.id) return;
-    if(localCanvasDirty || saveTimer || savingCanvasNow || saveCanvasAgain){
+    if(localCanvasDirty || saveTimer || savingCanvasNow || saveCanvasAgain || CanvasRunPreparation.active(canvas.id)){
         clearTimeout(remoteSyncTimer);
         remoteSyncTimer = setTimeout(syncRemoteCanvasNow, 1000);
         return;
@@ -6317,8 +6316,11 @@ function bindOutputWrap(wrap, node){
         };
     }
 }
-function outputDomKeyForItem(item,index=0){
-    return item?.result_id?`result:${item.result_id}`:`url:${outputUrlValue(item)}:${index}`;
+function outputDomKeyForItem(item,occurrences=new Map()){
+    if(item?.result_id)return `result:${item.result_id}`;
+    const url=outputUrlValue(item),occurrence=occurrences.get(url) || 0;
+    occurrences.set(url,occurrence+1);
+    return `url:${url}:${occurrence}`;
 }
 function outputDomKeyForPending(pending){
     return `pending:${pending?.id || ''}`;
@@ -6333,9 +6335,10 @@ function refreshOutputNodeContent(node){
     grid.classList.toggle('grid-layout', !!layout);
     if(layout) grid.style.setProperty('--grid-cols', String(Math.max(1, Number(layout.cols || 1))));
     else grid.style.removeProperty('--grid-cols');
+    const itemOccurrences=new Map();
     const items = [
-        ...(node.images || []).map((item,index) => ({
-            key:outputDomKeyForItem(item,index),
+        ...(node.images || []).map(item => ({
+            key:outputDomKeyForItem(item,itemOccurrences),
             missing:isMissingAssetUrl(outputUrlValue(item)),
             html:renderOutputMedia(item, !!layout)
         })),
@@ -6345,8 +6348,9 @@ function refreshOutputNodeContent(node){
         }))
     ];
     const wanted = new Set(items.map(item => item.key));
-    [...grid.children].forEach((child,index) => {
-        const key = child.dataset.pendingId ? outputDomKeyForPending({id:child.dataset.pendingId}) : outputDomKeyForItem({result_id:child.dataset.resultId,url:child.dataset.outputUrl || child.dataset.missingUrl || child.querySelector('img,video,audio')?.dataset.url || ''},index);
+    const childOccurrences=new Map();
+    [...grid.children].forEach(child => {
+        const key = child.dataset.pendingId ? outputDomKeyForPending({id:child.dataset.pendingId}) : outputDomKeyForItem({result_id:child.dataset.resultId,url:child.dataset.outputUrl || child.dataset.missingUrl || child.querySelector('img,video,audio')?.dataset.url || ''},childOccurrences);
         if(!wanted.has(key)) child.remove();
         else child.dataset.outputKey = key;
     });
@@ -8255,7 +8259,7 @@ function renderGeneratorBody(node){
             </div>
         </div>
         <div class="gen-run-row">
-            <button class="gen-btn ${node.running ? 'running' : ''}" ${node.running || CanvasRunPreparation.has(node) ? 'disabled' : ''}><i data-lucide="zap" class="w-4 h-4"></i>${CanvasRunPreparation.has(node) ? (langIsEn()?'Preparing…':'准备中…') : node.running ? tr('canvas.generating') : tr('canvas.apiGenerate')}</button>
+            <button class="gen-btn ${node.running ? 'running' : ''}" ${node.running || CanvasRunPreparation.has(node,canvas?.id) ? 'disabled' : ''}><i data-lucide="zap" class="w-4 h-4"></i>${CanvasRunPreparation.has(node,canvas?.id) ? (langIsEn()?'Preparing…':'准备中…') : node.running ? tr('canvas.generating') : tr('canvas.apiGenerate')}</button>
             ${cascadeBtnHtml(node)}
         </div>
         ${retryBarHtml(node)}
@@ -10458,7 +10462,7 @@ function refreshGeneratorInputViews(){
 }
 async function runGenerator(genId, opts={}){
     const gen = nodes.find(n => n.id === genId);
-    if(!gen || CanvasRunPreparation.has(gen) || (gen.running && !opts.cascade)) return;
+    if(!gen || CanvasRunPreparation.has(gen,canvas?.id) || (gen.running && !opts.cascade)) return;
     if(!checkTextSelection(gen,opts))return;
     const cascadeTargetId = cascadeTargetIdFromOptions(opts);
     const sources = orderedSources(gen, generatorSources(gen));
@@ -10468,7 +10472,7 @@ async function runGenerator(genId, opts={}){
     const count = Math.max(1, Math.min(8, Number(gen.count || 1)));
     let out = outputForNode(gen, 460);
     const run = runSnapshot(gen, prompt || 'Edit the reference images.', refs);
-    if(!CanvasRunPreparation.begin(gen))return;
+    if(!CanvasRunPreparation.begin(gen,canvas?.id))return;
     const originId=canvas?.id;
     let payload,source,startedAt;
     refreshRunNodes(gen,out);
@@ -10485,7 +10489,7 @@ async function runGenerator(genId, opts={}){
         if(opts.cascade)throw error;
         showErrorModal(error.message || tr('canvas.generationFailed'),tr('canvas.apiFailed'));return;
     }finally{
-        CanvasRunPreparation.end(gen);
+        CanvasRunPreparation.end(gen,originId);
         if(canvas?.id===originId)refreshRunNodes(gen,out);
     }
     let pendingIds = [];

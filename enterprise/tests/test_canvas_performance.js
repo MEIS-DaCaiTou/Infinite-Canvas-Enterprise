@@ -15,7 +15,7 @@ function fixture({size=async()=>'1024x1024',save=async()=>true,result=async()=>(
         orderedSources:(_n,s)=>s,imageRefsOnly:()=>[],outputForNode:()=>null,runSnapshot:()=>({}),
         resolveImageProviderId:()=> 'zhenzhen',resolveImageModel:x=>x,generatorSizeForRun:size,
         normalizedImageQuality:()=>'',CANVAS_REFERENCE_IMAGE_MAX:20,
-        refreshRunNodes:()=>calls.push(ctx.CanvasRunPreparation.has(node)?'preparing':'refresh'),
+        refreshRunNodes:()=>calls.push(ctx.CanvasRunPreparation.has(node,'canvas')?'preparing':'refresh'),
         nowMs:()=>1,tr:x=>x,mergeGeneratedOutputs:()=>{},addGenerationLog:()=>{},scheduleSave:()=>{},
         waitCanvasImageTaskResult:result,setTimeout:callback=>{timers.push(callback);},
         collectRunMetas:()=>[],isCascadeAbortError:()=>false,showErrorModal:error=>errors.push(error),
@@ -30,18 +30,25 @@ function fixture({size=async()=>'1024x1024',save=async()=>true,result=async()=>(
 const posts=f=>f.calls.filter(v=>typeof v==='object');
 async function run(){
     let release;const f=fixture({size:()=>new Promise(ok=>{release=ok;})});
-    const pending=f.ctx.runGenerator('gen');assert.equal(f.ctx.CanvasRunPreparation.has(f.node),true);
+    const pending=f.ctx.runGenerator('gen');assert.equal(f.ctx.CanvasRunPreparation.has(f.node,'canvas'),true);
     assert.equal(f.node.running,undefined);assert.equal(posts(f).length,0);
+    assert.equal(f.ctx.CanvasRunPreparation.has({...f.node},'canvas'),true,'preparation belongs to stable canvas/node identity');
+    Object.assign(f.ctx,{localCanvasDirty:false,saveTimer:null,saveCanvasAgain:false,remoteSyncTimer:null,
+        clearTimeout:()=>{},syncRemoteCanvasNow:()=>{}});
+    load(f.ctx,'applyRemoteCanvasData');const originalNodes=f.ctx.nodes;
+    f.ctx.applyRemoteCanvasData({id:'canvas',nodes:[{...f.node}]});
+    assert.equal(f.ctx.nodes,originalNodes,'remote sync waits until unsubmitted preparation finishes');
+    assert.equal(f.timers.length,1);f.timers.length=0;
     await f.ctx.runGenerator('gen');assert.equal(posts(f).length,0,'a second click during preparation cannot submit');
     release('1024x1024');await pending;
     assert.equal(f.calls.filter(v=>v==='save').length,1,'one confirmed source save per batch');
     assert.equal(posts(f).length,4,'the requested batch still creates four tasks');
     assert.ok(posts(f).every(p=>p.source.canvas_id==='canvas' && p.source.node_id==='gen'));
-    assert.equal(f.ctx.CanvasRunPreparation.has(f.node),false);
+    assert.equal(f.ctx.CanvasRunPreparation.has(f.node,'canvas'),false);
 
     const failed=fixture({save:async()=>false});await failed.ctx.runGenerator('gen');assert.equal(posts(failed).length,0);
     const badSize=fixture({size:async()=>{throw new Error('source image unavailable');}});await badSize.ctx.runGenerator('gen');
-    assert.equal(posts(badSize).length,0);assert.equal(badSize.ctx.CanvasRunPreparation.has(badSize.node),false);
+    assert.equal(posts(badSize).length,0);assert.equal(badSize.ctx.CanvasRunPreparation.has(badSize.node,'canvas'),false);
     let attempts=0;const conflict=fixture({save:async()=>++attempts===1?'retry':true});await conflict.ctx.runGenerator('gen');
     assert.equal(attempts,2);assert.equal(posts(conflict).length,4,'conflict must finish saving before any submission');
     for(const change of [f=>{f.ctx.canvas={id:'another'};},f=>{f.ctx.nodes=[];}]){
@@ -58,6 +65,15 @@ async function run(){
     concurrent.ctx.waitCanvasImageTaskResult=async()=>({images:['/output/second.png']});await concurrent.ctx.runGenerator('gen');
     assert.equal(posts(concurrent).length,8,'the existing post-preparation manual concurrency remains allowed');
     finishResult({images:['/output/first.png']});await first;
+    const dims=vm.createContext({getImageDimensions:async url=>url==='portrait'?{width:800,height:1200}:{width:1600,height:900},
+        pendingPreviewSizeFromRefs:()=>{throw new Error('approximate or stale preview sizes cannot construct a paid request');},
+        ratioPartsFromDimensions:(width,height)=>({width,height}),apiImageSize:(_ratio,_resolution,custom)=>custom});
+    load(dims,'generatorSizeForRun');
+    assert.equal(await dims.generatorSizeForRun({ratio:'source',resolution:'1k'},[{url:'portrait'}]),'800:1200');
+    assert.equal(await dims.generatorSizeForRun({ratio:'source',resolution:'1k'},[{url:'landscape'}]),'1600:900');
+    load(dims,'outputDomKeyForItem');dims.outputUrlValue=item=>typeof item==='string'?item:item.url;
+    const beforeKeys=['image','video'].map(item=>dims.outputDomKeyForItem(item,new Map()));
+    assert.equal(beforeKeys[1],dims.outputDomKeyForItem('video',new Map()),'a different preceding result cannot change video identity');
     console.log('preparation feedback/reentry, one-save batch, 409/failure/navigation, no automatic resubmit, existing concurrency: PASS');
 }
 run().catch(error=>{console.error(error);process.exitCode=1;});

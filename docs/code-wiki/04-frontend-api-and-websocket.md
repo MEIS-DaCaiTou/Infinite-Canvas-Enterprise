@@ -176,4 +176,4 @@ static/js/comfy-workflow-session.js 提供共享输入、上传互斥、运行�
 
 ### 2026-10-21 经典画布性能候选
 
-`codex/issue-canvas-performance-10-4`（Base main `0d0078f`，未合并）新增 `static/js/canvas-media-retention.js`。`CanvasMediaRetention.transplant` 在同画布、同节点内按结果身份/媒体 URL 及重复槽区分播放器；现代浏览器使用原子移动，旧路径保留已有逐元素播放状态恢复，不再使用全局 URL 状态覆盖多个卡片。`CanvasRunPreparation` 用临时 WeakSet 保护尺寸与来源保存阶段，不持久写入任务或画布、不限制受理后的既有并发。经典 `runGenerator` 保存一次来源后传给该批子任务，`createCanvasImageTask` 提交前仍核对当前画布/节点；冲突和失败继续由既有保存/任务契约处理。范围与准确状态见 [CURRENT](../CURRENT_PROJECT_STATUS.md) 和 [Issue #188](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/188)。
+`codex/issue-canvas-performance-10-4`（Base main `0d0078f`，未合并）新增 `static/js/canvas-media-retention.js`。`CanvasMediaRetention.transplant` 在同画布、同节点内按结果身份/媒体 URL 及重复槽区分播放器；现代浏览器使用原子移动，旧路径保留已有逐元素播放状态恢复，不再使用全局 URL 状态覆盖多个卡片。`CanvasRunPreparation` 按画布与节点 ID 临时标记尺寸与来源保存阶段，并沿用远端同步延后机制，不持久写入任务或画布、不限制受理后的既有并发。经典 `runGenerator` 保存一次来源后传给该批子任务，`createCanvasImageTask` 提交前仍核对当前画布/节点；冲突和失败继续由既有保存/任务契约处理。范围与准确状态见 [CURRENT](../CURRENT_PROJECT_STATUS.md) 和 [Issue #188](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/188)。
