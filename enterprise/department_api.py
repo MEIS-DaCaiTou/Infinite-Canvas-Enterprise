@@ -60,6 +60,26 @@ def create_router(governance=None):
             raise HTTPException(400, {'code':'INVALID_BUSINESS_FIELDS'})
         return body
 
+    @router.get('/context')
+    async def workspace(request: Request):
+        return await call(request, service.workspace)
+
+    @router.get('/directory')
+    async def directory(request: Request):
+        return await call(request, service.directory)
+
+    @router.get('/tasks')
+    async def business_tasks(request: Request, scope: str = 'me', department_id: str | None = None,
+                             before: str | None = None):
+        def tasks(principal, **kwargs):
+            from enterprise.business_workspace import task_summaries
+            return task_summaries(service, principal, **kwargs)
+        return await call(request, tasks, scope=scope, department_id=department_id, before=before)
+
+    @router.get('/sources/{source_id}/grants')
+    async def source_grants(request: Request, source_id: str):
+        return await call(request, service.source_grants, source_id=source_id)
+
     @router.get('/departments')
     async def departments(request: Request):
         return await call(request, service.departments)
@@ -80,6 +100,10 @@ def create_router(governance=None):
     @router.get('/projects')
     async def projects(request: Request):
         return await call(request, service.projects)
+
+    @router.get('/projects/{project_id}/members')
+    async def project_members(request: Request, project_id: str):
+        return await call(request, service.project_members, project_id=project_id)
 
     @router.delete('/departments/{department_id}/members/{user_id}')
     async def remove_member(request: Request, department_id: str, user_id: str):

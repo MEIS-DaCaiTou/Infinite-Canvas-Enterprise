@@ -173,3 +173,7 @@ static/js/comfy-workflow-session.js 提供共享输入、上传互斥、运行�
 ### 视频任务候选接线（2026-10-16，依赖 #163）
 
 两类画布沿用视频生成交互，共用 `canvas-task-query.js` 的 `runVideo`：一次创建平台视频任务，之后 GET 本地记录，失败/未知提示到现有日志核对。任务中心增加 `API 视频` 筛选，复用已有详情、结果预览与“继续查询原任务”；续查 URL 仅含本地 task ID。刷新后从本人目录找回服务器记录，不自动补造当前画布节点或重新生成。HTML 同步缓存版本；布局、组件和设置页面保持原设计。Browser 证据验证实际画布、固定夹具账号和受控查询，不代表真实付费视频或播放验收。
+
+### 部门项目界面候选（2026-10-20）
+
+相对 #186 Head `c3d2921` 的未合并候选新增 `enterprise-static/business.html`、`static/js/business-workspace.js` 与 `static/js/call-source-picker.js`。Gateway 的 `/enterprise/business` 是登录后入口；`enterprise/department_api.py` 的 context/directory/project-members/source-grants/tasks 读取继续复用领域权限。来源控件只提交来源 ID 与项目 ID，不取密钥原文；原任务续查不读取当前节点选择。部门任务页面仅元数据，不能从公开项目推导任务/费用或资源访问权限。schema 3 未激活，旧页面兼容与内容授权仍未完成；准确状态以 [CURRENT](../CURRENT_PROJECT_STATUS.md) 为准。

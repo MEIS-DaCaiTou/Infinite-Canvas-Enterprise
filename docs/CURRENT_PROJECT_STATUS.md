@@ -12,6 +12,12 @@
 
 更新时间：2026-10-20
 
+### 部门项目与调用来源界面候选（2026-10-20，未合并/未激活）
+
+在 #185 部门/费用基础与 #186 原任务凭据绑定候选之上，`codex/department-workspace-ui-20261020` 增加节点旁来源/部门项目选择、账号内的部门项目入口、权限过滤的成员/来源管理、员工/部门/公司费用视图和非阻断预算提醒。两类画布保存重开不改已有模型，查询原任务仍使用原回执身份。前端复用现有浅色面板、主题变量、圆角输入和按钮，不另设个人模型设置页。
+
+本候选尚不构成首版完整交付：部门任务视图仅显示元数据，项目共享目前只覆盖项目元数据；画布/成果的显式项目内容绑定、完整资源只读授权、旧个人在线/聊天入口的透明兼容、旧全局凭据受控接纳和 schema 3 发行级迁移/恢复验收仍需收口。默认 migration registry 保持 schema 2，普通启动不建新表、不导入旧密钥；不能将这些候选直接发布。预算当前为负责人页面提醒，尚无主动通知事件。现有 v2026.10.4 与客户设备不变，本轮无真实付费生成。
+
 ## 当前结论（2026-10-20）
 
 正式版本仍为 [v2026.10.3](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.10.3)，发行源码 `d8ffe55b48fdb9944aa1dac71f21e772ec06d3eb`，公开资产未替换。负责人批准后，组合 [#182](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/182) 已按准确 Head `7370af1ee3518cd118cd18f91d686ca5e66dc8c5` 合入 main `5582c9f3094e052bee889835cae1aca065210992`。该 main 自身 Enterprise/Runtime [39351798091](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/39351798091)、文档 [39351798247](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/39351798247)、Native [39351798243](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/39351798243) 最终 SUCCESS；与 PR CI 分开，固定 EXE opt-in 的跳过不是验收。原 #180/#181 仍为历史 Draft，组合代码已在 main，不再次合并这些分支。

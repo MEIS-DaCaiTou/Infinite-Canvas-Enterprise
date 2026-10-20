@@ -1054,6 +1054,13 @@ async def logout(request: Request):
     return resp
 
 
+@app.get('/enterprise/business', include_in_schema=False)
+async def business_page(request: Request):
+    if not _get_user(request):
+        return RedirectResponse('/enterprise/login?next=/enterprise/business')
+    return HTMLResponse((ENTERPRISE_STATIC_DIR / 'business.html').read_text(encoding='utf-8'))
+
+
 @app.get("/enterprise/admin", include_in_schema=False)
 async def admin_page(request: Request):
     """管理后台页面"""
@@ -1380,6 +1387,9 @@ def _build_user_bar(user: dict) -> str:
         'backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);">'
         f'<span style="font-weight:600;max-width:120px;overflow:hidden;'
         f'text-overflow:ellipsis;white-space:nowrap;" title="{display}">{display}</span>'
+        '<a href="/enterprise/business" style="padding:4px 10px;border-radius:8px;'
+        'border:1px solid var(--line,#e8ecf2);color:var(--muted,#64748b);'
+        'text-decoration:none;font-size:12px;font-weight:600;white-space:nowrap;">部门项目</a>'
         f'{admin_btn}'
         '<form action="/enterprise/logout" method="post" style="margin:0;display:inline-flex;">'
         '<button type="submit" '

@@ -50,6 +50,7 @@ Runtime Supervisor
 | 原任务续查（#123 候选） | 接受 ID 的持久绑定、原任务查询与原回执结果，复用既有 journal/归属 | `enterprise/canvas_image_recovery.py`，`static/js/canvas-task-query.js` |
 | Runtime | launcher、supervisor、health、ownership、state/log | `enterprise/runtime/` |
 | Release/update | Manifest v2、资产校验、prepare、pointer switch、rollback foundation | `enterprise/release/`，`enterprise/ops/update/`，`enterprise/update_api.py` |
+| 部门项目界面候选（未激活） | 权限过滤的来源/项目控件、成员和密钥管理、三级费用视图；复用原任务元数据，不建任务队列 | `enterprise/business_workspace.py`，`enterprise-static/business.html`，`static/js/business-workspace.js`，`static/js/call-source-picker.js` |
 | Enterprise UI | 登录、管理后台、个人中心、更新中心 | `enterprise-static/` |
 
 Code Wiki 提供更细的文件、类和函数导航：[docs/code-wiki/README.md](docs/code-wiki/README.md)。

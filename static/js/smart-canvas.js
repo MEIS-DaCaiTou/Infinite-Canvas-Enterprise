@@ -2794,6 +2794,10 @@ function renderDynamicParams(){
             getSelected:() => video ? settings.videoModel : settings.model,
         });
     }
+    if(settings.engine==='api')window.CanvasCallSources?.mount(dynamicParams,{
+        getProvider:()=>settings.apiKind==='video'?settings.videoProvider:settings.provider_id,
+        getValue:()=>settings,onChange:value=>{settings.callSources=value.callSources;settings.businessProjectId=value.businessProjectId;persistActiveSmartSettings();scheduleSave();}
+    });
     restoreOpenControl(keepOpen);
     restoreDynamicParamsScroll(scrollState);
     updatePromptPlaceholder();
@@ -7780,6 +7784,9 @@ function bindPromptNodeControls(el, node){
         render();
         scheduleSave();
     };
+    const llmPanel=el.querySelector('.prompt-node-llm');
+    if(llmPanel)window.CanvasCallSources?.mount(llmPanel,{getProvider:()=>node.llmProvider,getValue:()=>node,
+        onChange:value=>{node.callSources=value.callSources;node.businessProjectId=value.businessProjectId;scheduleSave();}});
     const providerEl = el.querySelector('.prompt-llm-provider');
     if(providerEl) providerEl.onchange = e => {
         e.stopPropagation();
@@ -14635,7 +14642,7 @@ async function runGeneration(){
 async function runSmartLLMTask(node,payload){
     const originId=canvas?.id,nodeId=node.id;
     const current=()=>canvas?.id===originId ? nodes.find(value=>value.id===nodeId) : null;
-    return CanvasLLMTasks.run(payload,{
+    return CanvasLLMTasks.run({...payload,...window.CanvasCallSources?.selection(node,payload.provider)},{
         task:CanvasLLMTasks.pending(node.llmTask)?node.llmTask:null,
         isCurrent:()=>Boolean(current()),prepare:async()=>taskCanvasSource(current()),
         onState:ticket=>{
@@ -14698,7 +14705,7 @@ async function runApiGeneration(prompt, refs, runSettings=settings,{node}={}){
     const count = Math.max(1, Math.min(8, Number(runSettings.count || 1)));
     const source=await taskCanvasSource(node);
     const payload = {source,prompt, provider_id:runSettings.provider_id, model:runSettings.model, size:sizeForRun(runSettings), quality:runSettings.quality || 'auto', n:1, reference_images:imageRefsOnly(refs).slice(0, SMART_REFERENCE_IMAGE_MAX)};
-    Object.assign(payload, window.CanvasModelPicker?.imageParameters(runSettings) || {});
+    Object.assign(payload, window.CanvasModelPicker?.imageParameters(runSettings) || {},window.CanvasCallSources?.selection(runSettings,payload.provider_id));
     const tasks = await Promise.all(Array.from({length:count}, () => fetch('/api/canvas-image-tasks', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)}).then(async r => {
         if(!r.ok) throw new Error(await r.text());
         return r.json();
@@ -14787,6 +14794,7 @@ async function runApiVideoGeneration(prompt, refs, runSettings=settings, {node}=
         const refAudios = audioRefsOnly(uploadedRefs).map(ref => effUrl(ref)).filter(Boolean).slice(0, 3);
         if(mismatchedAsset) toast('部分认证素材属于其它平台，已回退为普通素材。切换到对应平台的视频接口才能用 asset:// 认证地址。');
         const payload = {
+            ...window.CanvasCallSources?.selection(runSettings,runSettings.videoProvider || 'comfly'),
             source:await taskCanvasSource(node),
             prompt,
             provider_id: runSettings.videoProvider || 'comfly',

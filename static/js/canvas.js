@@ -7973,6 +7973,7 @@ function renderLLMBody(node){
     }
     window.CanvasModelPicker?.mountSelect(modelSelect, {
         kind:'chat', providerSelect,
+        callSource:{getValue:()=>node,onChange:value=>{node.callSources=value.callSources;node.businessProjectId=value.businessProjectId;scheduleSave();}},
         getProvider:() => node.llmProvider, getSelected:() => node.model,
         getModels:() => providerChatModels(node.llmProvider),
     });
@@ -8535,6 +8536,7 @@ function renderGeneratorBody(node){
     bindCascadeButtons(wrap, node.id);
     window.CanvasModelPicker?.mountSelect(modelSelect, {
         kind:'image', providerSelect,
+        callSource:{getValue:()=>node,onChange:value=>{node.callSources=value.callSources;node.businessProjectId=value.businessProjectId;scheduleSave();}},
         getProvider:() => node.apiProvider, getSelected:() => node.model,
         getModels:() => providerImageModels(node.apiProvider),
     });
@@ -8703,6 +8705,7 @@ function renderVideoBody(node){
     bindCascadeButtons(wrap, node.id);
     window.CanvasModelPicker?.mountSelect(modelSelect, {
         kind:'video', providerSelect,
+        callSource:{getValue:()=>node,onChange:value=>{node.callSources=value.callSources;node.businessProjectId=value.businessProjectId;scheduleSave();}},
         getProvider:() => node.apiProvider, getSelected:() => node.model,
         getModels:() => providerVideoModels(node.apiProvider),
     });
@@ -10660,6 +10663,7 @@ async function runVideoNode(nodeId, opts={}){
     else refreshRunNodes(node, out);
     try {
         const result = await CanvasTaskQuery.runVideo({
+                ...window.CanvasCallSources?.selection(node,resolveVideoProviderId(node.apiProvider || 'comfly')),
                 source:await taskCanvasSource(node),
                 prompt,
                 provider_id:resolveVideoProviderId(node.apiProvider || 'comfly'),
@@ -11556,7 +11560,7 @@ async function runComfyNode(nodeId, opts={}){
 async function runCanvasLLMTask(node,payload,options={}){
     const originId=canvas?.id,nodeId=node.id;
     const current=()=>canvas?.id===originId ? nodes.find(value=>value.id===nodeId) : null;
-    return CanvasLLMTasks.run(payload,{
+    return CanvasLLMTasks.run({...payload,...window.CanvasCallSources?.selection(node,payload.provider)},{
         task:CanvasLLMTasks.pending(node.llmTask)?node.llmTask:null,
         isCurrent:()=>Boolean(current()),
         prepare:async()=>taskCanvasSource(current()),
@@ -12421,7 +12425,7 @@ async function createCanvasImageTask(payload, options={}){
     const res = await cascadeFetch('/api/canvas-image-tasks', {
         method:'POST',
         headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({...payload,source})
+        body:JSON.stringify({...payload,...window.CanvasCallSources?.selection(options.sourceNode,payload.provider_id),source})
     }, options);
     if(!res.ok) throw new Error(await responseErrorMessage(res, tr('canvas.generationFailed')));
     return res.json();
