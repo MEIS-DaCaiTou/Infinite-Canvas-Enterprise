@@ -43,10 +43,11 @@ def can_restore_llm(record):
 
 
 class CanvasLLMTasks:
-    def __init__(self, journal, generate, archive, publish, schedule, enqueue=None):
+    def __init__(self, journal, generate, archive, publish, schedule, enqueue=None, prepare_binding=None):
         self.journal, self.generate, self.archive = journal, generate, archive
         self.publish, self.schedule = publish, schedule
         self.enqueue = enqueue
+        self.prepare_binding = prepare_binding
         self.accept_lock, self.restore_lock = asyncio.Lock(), asyncio.Lock()
 
     async def create(self, payload, user_id):
@@ -61,7 +62,9 @@ class CanvasLLMTasks:
                 if existing.get('type') != 'llm' or existing.get('enterprise_user_id', '') != owner:
                     raise HTTPException(403, 'Task owner mismatch')
                 return {'task_id':task_id, 'status':existing['status']}
+            binding = await asyncio.to_thread(self.prepare_binding, task_id, payload, owner) if self.prepare_binding else None
             await asyncio.to_thread(create_task_receipt, self.journal, {
+                **({'billing_context':binding} if binding else {}),
                 'id':task_id, 'type':'llm', 'status':'queued', 'created_at':time.time(),
                 'updated_at':time.time(), 'provider_id':payload.provider, 'model':payload.model or payload.ms_model,
                 'source':payload.source.model_dump() if payload.source else None,
@@ -100,10 +103,11 @@ class CanvasLLMTasks:
             await asyncio.to_thread(self.journal.record_provider_request, task_id, 0, {'state':'succeeded'})
             changes = {'status':'succeeded', 'result':result, 'model':value['model'], 'error':'', 'recovery_required':False}
         except Exception as exc:
+            from enterprise.task_credentials import task_error
             record = await asyncio.to_thread(self.journal.get, task_id)
             state = record['provider_receipts'][0]['state']
             unknown = state not in {'started', 'failed'}
-            message = redact_text(str(getattr(exc, 'detail', '') or exc))[:1000]
+            message = task_error(getattr(exc, 'detail', '') or exc)[:1000]
             if unknown:
                 message += '；请核对原文本任务，不会自动重新生成。'
             if state not in {'succeeded', 'failed'}:

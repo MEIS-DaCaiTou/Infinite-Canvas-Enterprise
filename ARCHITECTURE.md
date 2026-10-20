@@ -44,6 +44,7 @@ Runtime Supervisor
 | Enterprise data | 用户、角色、归属、审计、版本化 migration/backup/restore | `enterprise/db.py`，`enterprise/migrations/` |
 | Canvas application | 画布、工作流、模型调用、静态前端和原有业务 API | `main.py`，`static/` |
 | Task journal | 两类画布任务持久回执基础 | `enterprise/canvas_task_journal.py` |
+| 部门/费用候选（未激活） | 单部门/项目策略、DPAPI版本化来源、冻结调用归属、分单位费用和提醒；后续绑定接线候选复用任务回执，不新建队列 | `enterprise/department_governance.py`，`enterprise/department_costs.py`，`enterprise/task_credentials.py` |
 | 供应商图像适配（#156 已合并） | 内置 Zhenzhen 已确认模型协议与能力；新模型临时兼容配置；与存储/Windows 生命周期分离 | `enterprise/providers/zhenzhen.py`，`enterprise/provider_image_profiles.py` |
 | 个人模型显示（#156 已合并） | 当前登录账号的模型选择列表及持久设置；不授予供应商管理权限 | `enterprise/user_model_api.py`，`enterprise/user_model_preferences.py`，`static/js/model-picker.js` |
 | 原任务续查（#123 候选） | 接受 ID 的持久绑定、原任务查询与原回执结果，复用既有 journal/归属 | `enterprise/canvas_image_recovery.py`，`static/js/canvas-task-query.js` |

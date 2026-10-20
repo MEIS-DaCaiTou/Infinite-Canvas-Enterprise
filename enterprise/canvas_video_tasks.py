@@ -45,12 +45,13 @@ def public_video_task(record):
 
 class CanvasVideoTasks:
     def __init__(self, journal, resolve_provider, generate, inspect, archive, archived, publish, schedule, notify,
-                 query_mode=lambda provider, model: "generic", enqueue=None):
+                 query_mode=lambda provider, model: "generic", enqueue=None, prepare_binding=None):
         self.journal, self.resolve_provider, self.generate, self.inspect = journal, resolve_provider, generate, inspect
         self.archive, self.archived, self.publish = archive, archived, publish
         self.schedule, self.notify = schedule, notify
         self.query_mode = query_mode
         self.enqueue = enqueue
+        self.prepare_binding = prepare_binding
         self.accept_lock = asyncio.Lock()
         self.active = {}
 
@@ -67,7 +68,9 @@ class CanvasVideoTasks:
                 if existing.get("type") != "video" or existing.get("enterprise_user_id", "") != owner:
                     raise HTTPException(403, "Task owner mismatch")
                 return {"task_id": task_id, "status": existing["status"]}
+            binding = await asyncio.to_thread(self.prepare_binding, task_id, payload, owner) if self.prepare_binding else None
             await asyncio.to_thread(create_task_receipt, self.journal, {
+                **({'billing_context':binding} if binding else {}),
                 "id": task_id, "type": "video", "status": "queued", "created_at": time.time(),
                 "updated_at": time.time(), "provider_id": payload.provider_id, "model": payload.model,
                 "source": payload.source.model_dump() if getattr(payload, "source", None) else None,
@@ -106,10 +109,11 @@ class CanvasVideoTasks:
                                      "result": {**result, "status": "succeeded"}})
             changes = {"status": "succeeded", "result": result, "error": "", "recovery_required": False}
         except Exception as exc:
+            from enterprise.task_credentials import task_error
             await sink.interrupted(exc)
             record = await asyncio.to_thread(self.journal.get, task_id)
             unknown = record["provider_receipts"][0]["state"] == "unknown"
-            changes = {"status": "failed", "error": redact_text(getattr(exc, "detail", None) or str(exc))[:1200],
+            changes = {"status": "failed", "error": task_error(getattr(exc, "detail", None) or str(exc))[:1200],
                        "status_code": getattr(exc, "status_code", 500), "recovery_required": unknown}
         finally:
             _receipt.reset(token)
@@ -163,7 +167,11 @@ class CanvasVideoTasks:
             provider = self.resolve_provider(receipt["provider_id"])
             if any(receipt.get(key) != value for key, value in provider_scope(provider).items()):
                 raise HTTPException(409, "视频供应商地址或协议已改变，请核对原任务")
-            result = await self.inspect(provider, receipt)
+            from enterprise.task_credentials import credential_scope
+            with credential_scope(record):
+                result = await self.inspect(provider, receipt)
+                from enterprise.task_credentials import task_error
+                result = {**result, **{key:task_error(result[key]) for key in ('message','error') if key in result}}
             if result["status"] == "succeeded":
                 videos = []
                 for url in result["remote_urls"]:

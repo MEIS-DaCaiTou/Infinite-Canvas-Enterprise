@@ -90,6 +90,10 @@ def describe_task(record, *, detail=False):
         if state in {"succeeded", "failed", "partial"} and not recovery_candidate(record):
             data["auto_recovery"].update(status="complete", next_query_at=None, reason="")
     if detail:
+        snapshot = (record.get('billing_context') or {}).get('snapshot')
+        if snapshot:
+            data['call_source'] = {key:snapshot.get(key) for key in (
+                'source_id','source_name','scope','procurement','department_id','project_id','account_ref','pricing_version')}
         receipts = record.get("provider_receipts") or ([comfy] if comfy else [])
         data["attempts"] = [{"id": f"{record['id']}:{index}", "index": index,
             "status": state if record.get("type") == "comfy" and state not in {"queued", "running"} else item.get("state") or item.get("phase") or state,

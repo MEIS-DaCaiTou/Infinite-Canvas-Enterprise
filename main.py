@@ -54,6 +54,8 @@ from enterprise.config import PATH_ROOTS as _CONFIG_PATH_ROOTS
 from enterprise.paths import get_path_roots, prepare_application_directories
 from enterprise.app_paths import AppPathLayout
 from enterprise.canvas_task_journal import CanvasTaskJournal, create_task_receipt
+from enterprise.task_credentials import CallSourceSelection, credential_bound, scoped_api_key, prepare_task_binding, require_bound_generation, task_error
+from enterprise.department_governance import DepartmentGovernance
 from enterprise.task_canvas_context import TaskCanvasSource
 from enterprise.canvas_llm_tasks import CanvasLLMTasks, llm_submitting, llm_response, validate_llm_text
 from enterprise.generation_task_routes import create_router as create_generation_task_router
@@ -763,6 +765,8 @@ def read_api_env_value(key: str) -> str:
 
 def provider_env_key_value(provider_id: str) -> str:
     provider_id = str(provider_id or "").strip().lower()
+    if credential_bound():
+        return scoped_api_key(get_api_provider_exact(provider_id))
     env_key = provider_key_env(provider_id)
     key = os.getenv(env_key, "") or read_api_env_value(env_key)
     if key:
@@ -2481,7 +2485,7 @@ class AIReference(BaseModel):
     kind: str = ""
     mime: str = ""
 
-class OnlineImageRequest(BaseModel):
+class OnlineImageRequest(CallSourceSelection):
     source: Optional[TaskCanvasSource] = None
     prompt: str = Field(min_length=1, max_length=ONLINE_IMAGE_PROMPT_MAX_LENGTH)
     provider_id: str = "comfly"
@@ -2503,6 +2507,23 @@ CANVAS_TASK_RUNNERS: set = set()
 CANVAS_COMFY_ACCEPT_LOCK = asyncio.Lock()
 
 
+def prepare_canvas_call_binding(task_id, payload, owner):
+    provider_id = getattr(payload, 'provider_id', None) or getattr(payload, 'provider', 'comfly')
+    provider = get_api_provider(provider_id)
+    if isinstance(payload, CanvasLLMRequest):
+        fallback = preferred_chat_model(provider)
+    elif isinstance(payload, CanvasVideoRequest):
+        fallback = 'veo3-fast'
+    else:
+        fallback = (provider.get('image_models') or [IMAGE_MODEL])[0]
+    binding = prepare_task_binding(DepartmentGovernance(),
+        {'id':task_id, 'model':payload.model or fallback}, payload.model_dump(), owner, provider)
+    if binding:
+        payload.call_source_id = binding['snapshot']['source_id']
+        payload.model = binding['snapshot']['model']
+    return binding
+
+
 def schedule_canvas_task(coroutine):
     task = asyncio.create_task(coroutine)
     CANVAS_TASK_RUNNERS.add(task)
@@ -2514,7 +2535,7 @@ def schedule_canvas_task(coroutine):
     task.add_done_callback(completed)
     return task
 
-class CanvasVideoRequest(BaseModel):
+class CanvasVideoRequest(CallSourceSelection):
     source: Optional[TaskCanvasSource] = None
     request_id: str = ""
     prompt: str = Field(min_length=1, max_length=VIDEO_PROMPT_MAX_LENGTH)
@@ -2662,7 +2683,7 @@ class MsGenerateRequest(BaseModel):
     client_id: Optional[str] = None
     type: str = "klein"
 
-class CanvasLLMRequest(BaseModel):
+class CanvasLLMRequest(CallSourceSelection):
     message: str = Field(min_length=1, max_length=LLM_MESSAGE_MAX_LENGTH)
     system_prompt: str = ""
     model: str = ""
@@ -3551,6 +3572,7 @@ def resolve_chat_provider(provider: str, model: str, ms_model: str):
         mdl = selected_model(ms_model or model, MODELSCOPE_CHAT_MODELS[0] if MODELSCOPE_CHAT_MODELS else "MiniMax/MiniMax-M2.7")
         return base, hdrs, mdl
     api_provider = get_api_provider(provider or "")
+    require_bound_generation(api_provider)
     if is_codex_provider(api_provider):
         raise HTTPException(status_code=400, detail="OpenAI CLI 使用本机 codex 登录态，不需要 API Key。请使用画布/聊天里的 OpenAI CLI 专用通道。")
     if is_gemini_cli_provider(api_provider):
@@ -12722,6 +12744,7 @@ async def fetch_upstream_models(provider_id: str):
 
 async def build_online_image_result(payload: OnlineImageRequest, *, receipt_task_id=None):
     provider = get_api_provider(payload.provider_id)
+    require_bound_generation(provider)
     default_model = (provider.get("image_models") or [IMAGE_MODEL])[0]
     model = selected_model(payload.model, default_model)
     refs = [ref.dict() for ref in payload.reference_images if ref.url]
@@ -13000,7 +13023,7 @@ async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
             "error": "",
         }
     except Exception as exc:
-        detail = getattr(exc, "detail", None) or str(exc)
+        detail = task_error(getattr(exc, "detail", None) or str(exc))
         status_code = getattr(exc, "status_code", 500)
         upstream_task_id = getattr(exc, "upstream_task_id", "") or extract_task_id_from_text(detail)
         changes = {
@@ -13019,7 +13042,9 @@ async def create_canvas_image_task(
     payload: OnlineImageRequest, x_enterprise_user_id: Optional[str] = Header(default=None),
 ):
     task_id = f"canvas_img_{uuid.uuid4().hex}"
+    binding = await asyncio.to_thread(prepare_canvas_call_binding, task_id, payload, x_enterprise_user_id)
     await asyncio.to_thread(create_task_receipt, CANVAS_TASK_JOURNAL, {
+        **({'billing_context':binding} if binding else {}),
         "id": task_id,
         "type": "online-image",
         "status": "queued",
@@ -13707,6 +13732,7 @@ def volcengine_video_prompt_text(prompt, aspect_ratio="", duration=None):
 @app.post("/api/canvas-video")
 async def canvas_video(payload: CanvasVideoRequest):
     provider = get_api_provider(payload.provider_id)
+    require_bound_generation(provider)
     if is_jimeng_provider(provider):
         return await generate_jimeng_video(payload, provider)
     if is_runninghub_provider(provider):
@@ -14078,7 +14104,7 @@ async def inspect_saved_video_task(provider, receipt):
 CANVAS_VIDEO_TASKS = CanvasVideoTasks(CANVAS_TASK_JOURNAL, get_api_provider_exact, canvas_video,
     inspect_saved_video_task, save_remote_video_to_output, image_outputs_are_archived, save_to_history,
     schedule_canvas_task, lambda task_id: CANVAS_ACCEPTED_RECOVERY.notify(task_id), query_mode=video_query_mode,
-    enqueue=lambda task_id, payload: CANVAS_TASK_DISPATCH.enqueue(task_id, payload))
+    enqueue=lambda task_id, payload: CANVAS_TASK_DISPATCH.enqueue(task_id, payload), prepare_binding=prepare_canvas_call_binding)
 
 
 @app.post("/api/canvas-video-tasks")
@@ -14204,7 +14230,7 @@ from enterprise.interceptors import record_resource_urls_for_user as _publish_ll
 CANVAS_LLM_TASKS = CanvasLLMTasks(CANVAS_TASK_JOURNAL, canvas_llm,
     lambda text: save_comfy_text_output(text, prefix="llm_", name="result.txt"),
     lambda owner, urls: _publish_llm_resources(owner, "canvas_llm_task", urls), schedule_canvas_task,
-    enqueue=lambda task_id, payload: CANVAS_TASK_DISPATCH.enqueue(task_id, payload))
+    enqueue=lambda task_id, payload: CANVAS_TASK_DISPATCH.enqueue(task_id, payload), prepare_binding=prepare_canvas_call_binding)
 
 from enterprise.canvas_task_dispatch_app import create_dispatch as _create_task_dispatch, dispatch_paused as _task_dispatch_paused
 from enterprise.config import JWT_SECRET as _task_dispatch_secret

@@ -1,5 +1,9 @@
 # Infinite Canvas Enterprise 当前项目状态
 
+2026-10-20 后续候选：`codex/task-credential-binding-20261020` 依赖服务端核心 [#185](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/185) Head `33e096e5924a96cbff812151010cf9935f9e219c`，继续将贞贞图片/视频/LLM的持久入口接入来源绑定、原任务密钥查询、费用回执投影及中断补投影。凭据只在单任务执行上下文中存在，供应商地址/协议变更拒绝发送；排队执行重查授权，受理后轮换/调部门仍查原身份。旧schema/旧任务保留原路径；已经配置新来源的供应商拒绝未绑定的旧式直接生成，避免绕回全局Key。个人旧页面的透明兼容、节点来源控件和三级管理页面尚未交付，故候选迁移继续不激活，不能作为可直接发布的首版。
+
+#185准确Head的文档、Enterprise/Runtime CI均SUCCESS，固定EXE opt-in跳过；独立Review为NO_ACTIONABLE_BUGS_FOUND。本后续包的定向/进程重启验证和独立Review分别随其PR记录，不能复用#185 CI作为本Head结论。本轮新增付费0、main/正式10.4未改变，业务开发授权持续有效，合并/Release另批。
+
 2026-10-20 阶段4.3新授权候选：基于 main `0d0078f2243bbacf6b24200e0a22a30d94b2a64e`，在 `codex/department-credentials-20261020` 开发部门/项目授权、版本化密钥、调用归属、费用事实和非阻断预算服务端核心；规则见[需求决策登记第9节](./decisions/REQUIREMENTS-DECISION-REGISTER.md#9-2026-10-20-部门凭据与非阻断费用治理首版)。复用 Gateway 认证/来源校验与强制审计，凭据在 Windows 当前运行账号下由 DPAPI 保护，无明文读取API。v2→v3 仅导出候选迁移，未加入正式 registry、未自动激活；旧库请求返回需升级，不改变现有创作。旧用户/任务不自动改归属或补造费用。
 
 本包是服务端候选，尚未接通画布调用来源选择、已受理任务恢复或三级页面；内部归属和费用入口的受控验证不能冒充生产调用已接线。候选已验证隔离 SQLite/实际 DPAPI、越权/旧会话、密钥轮换、费用幂等和分单位汇总、非阻断预算及迁移/恢复；准确测试、Review和CI随PR记录。Update Center仅证明受控迁移计划和基础引擎恢复，尚未提供准确发行包的真实升级验收；正式迁移须经原同Schema registry预置路径及完整发行验证。

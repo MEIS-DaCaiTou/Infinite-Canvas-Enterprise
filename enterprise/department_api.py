@@ -35,6 +35,15 @@ def create_router(governance=None):
         if not isinstance(principal, dict) or not principal.get('user_id'):
             raise HTTPException(401, '请先登录')
         try:
+            if function.__name__ in {'entries', 'summary', 'budgets'}:
+                from enterprise.task_credentials import refresh_cost_projection
+                from enterprise.canvas_task_journal import CanvasTaskJournal
+                from enterprise.config import PATH_ROOTS
+                journal_root = PATH_ROOTS.DATA_ROOT / 'canvas-tasks'
+                if journal_root.is_dir():
+                    await run_in_threadpool(refresh_cost_projection, service, principal,
+                        kwargs.get('scope', 'department' if function.__name__ == 'budgets' else 'me'),
+                        kwargs.get('department_id'), CanvasTaskJournal(journal_root))
             value = await run_in_threadpool(function, principal, **kwargs)
             return JSONResponse(value, headers={'Cache-Control':'no-store'})
         except GovernanceError as exc:

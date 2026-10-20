@@ -130,7 +130,13 @@ class DepartmentCosts:
             rows = conn.execute('SELECT e.*,c.snapshot_json FROM generation_cost_entries e '
                 'JOIN generation_billing_context c ON c.task_id=e.task_id WHERE ' + where +
                 ' AND e.created_at>=? AND e.created_at<?', (*params, starts_at, ends_at))
-            groups, pending = {}, set()
+            groups = {}
+            # A missing projection is unknown, not zero expenditure. Keep it
+            # visible even if a process stopped after saving its task receipt.
+            unprojected = conn.execute('SELECT c.task_id FROM generation_billing_context c WHERE ' + where +
+                ' AND c.created_at>=? AND c.created_at<? AND NOT EXISTS '
+                '(SELECT 1 FROM generation_cost_entries e WHERE e.task_id=c.task_id)', (*params, starts_at, ends_at))
+            pending = {(row[0],0) for row in unprojected}
             resolved = set()
             for row in rows:
                 context = json.loads(row['snapshot_json'])
