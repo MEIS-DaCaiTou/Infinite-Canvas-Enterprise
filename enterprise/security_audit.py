@@ -118,6 +118,7 @@ VALID_RESULTS = frozenset({"attempted", "success", "denied", "failed"})
 VALID_ACTOR_TYPES = frozenset({"user", "system", "local_operator"})
 
 ACTION_RISK_LEVELS = {
+    "business.governance.change": frozenset({"L2"}),
     "security.audit.foundation.initialize": frozenset({"L3"}),
     "security.audit.foundation.activate": frozenset({"L3"}),
     "security.role_auth.migration.activate": frozenset({"L3"}),
