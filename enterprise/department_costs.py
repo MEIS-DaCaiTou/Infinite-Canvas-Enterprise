@@ -3,7 +3,7 @@
 No submission, balance inference, currency conversion or budget enforcement.
 Supplier adapters call record_fact; there is no public endpoint to invent costs.
 """
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, localcontext
 import json
 import re
 import sqlite3
@@ -18,11 +18,19 @@ def money(value):
         raise GovernanceError('INVALID_COST_AMOUNT')
     try:
         amount = Decimal(value)
-        if not amount.is_finite() or abs(amount) >= Decimal('1e18') or amount.as_tuple().exponent < -12:
+        if not amount.is_finite() or amount.copy_abs() >= Decimal('1e18') or amount.as_tuple().exponent < -12:
             raise InvalidOperation
     except (InvalidOperation, ValueError):
         raise GovernanceError('INVALID_COST_AMOUNT') from None
     return format(amount, 'f')
+
+
+def _add_money(left, right):
+    # The input contract permits 18 integer and 12 fractional digits. Python's
+    # default 28-digit context would silently round valid ledger facts.
+    with localcontext() as context:
+        context.prec = 64
+        return left + right
 
 
 def unit_code(value):
@@ -138,9 +146,10 @@ class DepartmentCosts:
                         'account_ref':key[7], 'unit':key[8], 'estimated':Decimal(0), 'actual':Decimal(0)}
                 amount = Decimal(row['amount'])
                 if row['kind'] == 'estimate':
-                    groups[key]['estimated'] += amount
+                    groups[key]['estimated'] = _add_money(groups[key]['estimated'], amount)
                 else:
-                    groups[key]['actual'] += -amount if row['kind'] == 'refund' else amount
+                    groups[key]['actual'] = _add_money(groups[key]['actual'],
+                        amount.copy_negate() if row['kind'] == 'refund' else amount)
                     if row['kind'] == 'charge':
                         resolved.add(task_attempt)
             result = [{**group, 'actual':str(group['actual']), 'estimated':str(group['estimated'])}
@@ -166,8 +175,11 @@ class DepartmentCosts:
         for budget in budgets:
             summary = self.summary(principal, scope='department', department_id=department_id,
                                    starts_at=budget['starts_at'], ends_at=budget['ends_at'])
-            actual = sum((Decimal(g['actual']) for g in summary['groups'] if g['unit'] == budget['unit']), Decimal(0))
+            actual = Decimal(0)
+            for group in summary['groups']:
+                if group['unit'] == budget['unit']:
+                    actual = _add_money(actual, Decimal(group['actual']))
             budget.update(actual=str(actual), exceeded=actual > Decimal(budget['amount']),
-                          over_amount=str(max(Decimal(0), actual-Decimal(budget['amount']))),
+                          over_amount=str(max(Decimal(0), _add_money(actual, Decimal(budget['amount']).copy_negate()))),
                           pending_reconciliation=summary['pending_reconciliation'], blocking=False)
         return budgets

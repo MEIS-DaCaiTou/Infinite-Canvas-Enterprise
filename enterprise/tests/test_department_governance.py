@@ -346,3 +346,16 @@ def test_frozen_billing_and_cost_facts_reject_in_place_changes(business):
             with pytest.raises(sqlite3.IntegrityError,match='append-only'):
                 conn.execute('DELETE FROM '+table)
             conn.rollback()
+
+
+def test_cost_precision_is_preserved_across_sum_refund_and_budget(business):
+    service,p,design,ops,path=business
+    source(service,p)
+    context(service,p)
+    costs=DepartmentCosts(service)
+    costs.record_fact('task-one',0,'charge',kind='charge',amount='999999999999999999.123456789123',unit='CNY')
+    costs.record_fact('task-one',0,'refund',kind='refund',amount='0.000000000001',unit='CNY')
+    assert costs.summary(p['employee'])['groups'][0]['actual']=='999999999999999999.123456789122'
+    now=int(time.time())
+    costs.set_budget(p['design'],design,'本期',now-5,now+100,'CNY','999999999999999999.123456789121')
+    assert costs.budgets(p['design'],design)[0]['over_amount']=='1E-12'
