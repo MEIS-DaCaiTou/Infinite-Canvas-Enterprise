@@ -4,14 +4,16 @@ from contextlib import contextmanager
 import time
 import uuid
 
+import anyio
 from fastapi import HTTPException
+from starlette.responses import StreamingResponse
 
 from enterprise.canvas_llm_tasks import _attempt
 from enterprise.canvas_task_journal import create_task_receipt
 from enterprise.department_governance import GovernanceError, _company
 from enterprise.providers.submission import reported_usage
 from enterprise.task_credentials import (
-    credential_scope, prepare_task_binding, project_record_costs, task_error,
+    credential_scope, prepare_task_binding, project_record_costs,
 )
 
 
@@ -100,16 +102,27 @@ class LegacyTextCalls:
             except BaseException:
                 await run.interrupted()
                 raise
-        original = response.body_iterator
-        async def body():
-            with run.scope():
-                try:
-                    async for chunk in original:
-                        yield task_error(chunk.decode('utf8') if isinstance(chunk, bytes) else chunk)
-                finally:
-                    await run.interrupted()
-        response.body_iterator = body()
-        return response
+        return TrackedTextResponse(response, run)
+
+
+class TrackedTextResponse(StreamingResponse):
+    def __init__(self, response, run):
+        super().__init__(response.body_iterator, status_code=response.status_code,
+                         media_type=response.media_type, background=response.background)
+        self.raw_headers = response.raw_headers
+        self.run = run
+
+    async def stream_response(self, send):
+        # The ASGI stream task owns both the ContextVar tokens and iterator close.
+        with self.run.scope():
+            try:
+                await super().stream_response(send)
+            finally:
+                with anyio.CancelScope(shield=True):
+                    try:
+                        await self.body_iterator.aclose()
+                    finally:
+                        await self.run.interrupted()
 
 
 class LegacyTextRun:

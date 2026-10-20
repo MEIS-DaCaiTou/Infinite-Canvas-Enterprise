@@ -36,11 +36,19 @@ employee={'user_id':'employee','auth_version':1}
 req=Request({'type':'http','method':'POST','path':'/api/chat','headers':[], 'client':('127.0.0.1',1)})
 trace=[];mode='success'
 png=io.BytesIO();Image.new('RGB',(2,2),'blue').save(png,format='PNG')
+class PausedStream(httpx.AsyncByteStream):
+    async def __aiter__(self):
+        yield b'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n'
+        await asyncio.Event().wait()
 def handler(request):
     body=json.loads(request.content)
     trace.append((str(request.url),request.headers.get('authorization'),body))
     if mode=='reject':
         return httpx.Response(401,text='rejected '+request.headers['authorization'].removeprefix('Bearer '),request=request)
+    if mode=='cancel':
+        return httpx.Response(200,stream=PausedStream(),headers={'content-type':'text/event-stream'})
+    if mode=='empty':
+        return httpx.Response(200,content=b'data: [DONE]\n\n',headers={'content-type':'text/event-stream'})
     if request.url.path.endswith('/images/generations'):
         return httpx.Response(200,json={'data':[{'b64_json':base64.b64encode(png.getvalue()).decode()}],
             'cost':'.2','currency':'USD'},request=request)
@@ -53,6 +61,18 @@ def handler(request):
             '\n\ndata: '+json.dumps({'choices':[],'usage':usage,'cost':'.2','currency':'USD'})+'\n\ndata: [DONE]\n\n').replace('\\n','\n').encode(),
             headers={'content-type':'text/event-stream'},request=request)
     return httpx.Response(200,json={'choices':[{'message':{'content':text}}],'usage':usage,'cost':'.2','currency':'USD'},request=request)
+
+async def consume(response,disconnect=False):
+    ended=asyncio.Event();chunks=[]
+    async def receive():
+        await ended.wait()
+        return {'type':'http.disconnect'}
+    async def send(message):
+        if message['type']=='http.response.body':
+            text=message.get('body',b'').decode();chunks.append(text)
+            if disconnect and '"delta"' in text:ended.set()
+    await response({'type':'http','method':'POST','asgi':{'spec_version':'2.3'}},receive,send)
+    return chunks
 
 async def scenario():
     # Old schema still uses the original configured key and conversation response.
@@ -85,7 +105,7 @@ async def scenario():
     payload=main.ChatRequest(message='stream',provider='zhenzhen',model='fixture-chat',call_source_id=company['id'])
     response=await main.chat_stream(payload,req,'employee','employee')
     service.rotate_source(admin,company['id'],company['revision'],'fixture-company-new')
-    chunks=[chunk async for chunk in response.body_iterator]
+    chunks=await consume(response)
     assert 'controlled text' in ''.join(chunks) and '"type": "done"' in ''.join(chunks)
     assert trace[-1][1]=='Bearer fixture-company-secret'
     # Online and chat-image both reuse the existing durable image runner.
@@ -108,7 +128,7 @@ async def scenario():
     global mode
     mode='reject'
     response=await main.chat_stream(main.ChatRequest(message='reject',provider='zhenzhen',call_source_id=company['id']),req,'employee','employee')
-    chunks=[chunk async for chunk in response.body_iterator]
+    chunks=await consume(response)
     assert 'fixture-company-new' not in ''.join(chunks)
     assert len(trace)==before+1
     records=[main.CANVAS_TASK_JOURNAL.get(p.stem) for p in main.CANVAS_TASK_JOURNAL.root.glob('*.json')]
@@ -121,18 +141,24 @@ async def scenario():
     assert sum(Decimal(g['actual']) for g in costs['groups'])==Decimal('1.2')
     assert costs['pending_reconciliation']==1
     assert len(trace)==8  # one old-schema call + seven managed legs, no retry
-    mode='success'
-    # Closing a partially consumed stream leaves the original task for review.
+    mode='empty'
+    response=await main.chat_stream(main.ChatRequest(message='empty',provider='zhenzhen'),req,'employee','employee')
+    chunks=await consume(response)
+    records=[main.CANVAS_TASK_JOURNAL.get(p.stem) for p in main.CANVAS_TASK_JOURNAL.root.glob('*.json')]
+    empty=max(records,key=lambda r:r['created_at'])
+    assert empty['status']=='failed' and empty['recovery_required'] and not empty.get('llm_result')
+    assert '"type": "done"' not in ''.join(chunks)
+    mode='cancel'
+    # Actual Starlette ASGI disconnect, rather than manual generator close.
     response=await main.chat_stream(main.ChatRequest(message='cancel',provider='zhenzhen'),req,'employee','employee')
-    await anext(response.body_iterator)  # metadata, before supplier submission
-    await anext(response.body_iterator)  # first received delta
-    await response.body_iterator.aclose()
+    await consume(response,disconnect=True)
     records=[main.CANVAS_TASK_JOURNAL.get(p.stem) for p in main.CANVAS_TASK_JOURNAL.root.glob('*.json')]
     interrupted=max(records,key=lambda r:r['created_at'])
     assert interrupted['status']=='failed' and interrupted['recovery_required']
     before=len(trace)
     assert (await main.CANVAS_LLM_TASKS.restore(interrupted['id']))['status']=='failed'
     assert len(trace)==before
+    mode='success'
     # Received text survives a local archive failure; restore never calls HTTP.
     archive=main.CANVAS_LLM_TASKS.archive
     main.CANVAS_LLM_TASKS.archive=lambda text:(_ for _ in ()).throw(OSError('controlled disk failure'))

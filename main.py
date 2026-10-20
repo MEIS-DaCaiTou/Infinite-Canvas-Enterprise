@@ -15860,6 +15860,7 @@ async def build_chat_stream(payload, request, x_user_id, tracking=None):
                     if response.status_code >= 400:
                         detail = await response.aread()
                         body = detail.decode("utf-8", errors="ignore")
+                        if tracking:body=task_error(body)
                         friendly = friendly_chat_error_detail(body, model, _stream_provider)
                         yield sse_event({"type": "error", "detail": friendly or f"上游接口错误：{body}"})
                         return
@@ -15879,6 +15880,7 @@ async def build_chat_stream(payload, request, x_user_id, tracking=None):
                             raw_usage = chunk.get("usage")
                         delta = text_delta_from_chat_chunk(chunk)
                         if delta:
+                            if tracking:delta=task_error(delta)
                             content_parts.append(delta)
                             yield sse_event({"type": "delta", "delta": delta})
         except httpx.HTTPError as exc:
@@ -15886,6 +15888,9 @@ async def build_chat_stream(payload, request, x_user_id, tracking=None):
             yield sse_event({"type": "error", "detail": f"请求上游接口失败：{exc}"})
             return
 
+        if tracking and not "".join(content_parts).strip():
+            yield sse_event({'type':'error','detail':'上游没有返回可确认的正文，请核对原生成任务；不会自动重新生成。'})
+            return
         assistant_message = {
             "id": uuid.uuid4().hex,
             "role": "assistant",

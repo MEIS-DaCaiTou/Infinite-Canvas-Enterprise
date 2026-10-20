@@ -6,7 +6,7 @@
 .call-source-note{font-size:9px;line-height:1.5;color:var(--muted,#64748b)}
 .composer:has(>#legacyCallSources>.call-source-picker:not([hidden])){max-height:min(52vh,440px)}
 #legacyCallSources{flex:0 0 auto}
-html:has(.chat-main #legacyCallSources){overflow:clip}
+html:has(.chat-main #legacyCallSources>.call-source-picker:not([hidden])){overflow:clip}
 
 .llm-row>.call-source-picker{flex-basis:100%;width:100%}
 .prompt-node-llm>.call-source-picker{grid-column:1/-1}
