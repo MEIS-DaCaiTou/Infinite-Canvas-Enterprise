@@ -4,17 +4,13 @@
 
 ## 当前结论（2026-10-20）
 
-正式版本仍为 [v2026.10.3](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.10.3)，发行源码 `d8ffe55b48fdb9944aa1dac71f21e772ec06d3eb`，公开资产未替换。负责人批准后，组合 [#182](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/182) 已按准确 Head `7370af1ee3518cd118cd18f91d686ca5e66dc8c5` 合入 main `5582c9f3094e052bee889835cae1aca065210992`。该 main 自身 Enterprise/Runtime [39351798091](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/39351798091)、文档 [39351798247](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/39351798247)、Native [39351798243](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/39351798243) 最终 SUCCESS；与 PR CI 分开，固定 EXE opt-in 的跳过不是验收。原 #180/#181 仍为历史 Draft，组合代码已在 main，不再次合并这些分支。
+[v2026.10.4 已正式发布](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.10.4)，Latest、非预发布，10项资产。负责人批准 #183 后按审查Head d495915 合入 main `0d0078f2243bbacf6b24200e0a22a30d94b2a64e`；准确 main 的Enterprise/Runtime39379586019、Docs39379586012、Native39379586015均最终SUCCESS。固定构建/标签源码 `2859a2aefbac5d30829eb7f7aa73c82ee1eb2583`，Release ID `ice-2026.10.4-2859a2aefbac`；九项核心资产及验证JSON下载回读一致，10.3旧资产未变；本地主目录同步该main。不是以PR CI冒充main CI，固定EXE opt-in跳过也不是验收。
 
-当前仍属唯一路线图4.2。主线已包含排队任务持久执行/启动恢复、受控空 WAL/SHM 准备、Grok imagine/MiniMax-H3/Wan3 路由，以及图片 JSON 编辑/图层结果的协议增量。其组合源码与有效业务/原生恢复证据见 [C6记录](./ops/OFFLINE-RETAINED-UPGRADE-2026-10-12.md#2026-10-20-组合候选的完整冻结副本验收)，不等于所有模型和客户升级均已通过。
+10.4已包含安装向导简化及#182的排队任务持久执行/重启恢复、受控空WAL/SHM准备与精确视频/图片协议增量。正式10.2合成安装经真实Setup完成升级、Windows登记和数据保留；正式10.3认证更新HTTP/worker的升级成功与目标启动失败恢复、原账号和两类画布保存重开均通过。所有测试实例已停止，本机原树完整恢复。公开正式10.3原更新服务确认stable/direct到10.4，10.2确认requires_intermediate；10.2直接Setup路径另验。准确源码、CI、失败尝试、现场步骤及边界见 [10.4发行记录](./ops/RELEASE-2026.10.4-RECORD.md)。
 
-负责人批准简化安装器后，独立 `codex/installer-simple-flow-20261020` 从该 main 开展，包含内部 VERSION=2026.10.4。向导用一个位置页替代原“位置模式+自选位置”，后台核验已有安装；常用入口只有升级/同版修复、启动修复和高级维护。环境说明页及附加任务页取消；首次安装保留创建管理员，维护停机确认与快捷方式选项合并到最终确认页。十三项恢复/卸载/清理能力只在主动进入高级维护时显示。安装身份、数据库、Runtime、升级恢复及权限规则继续由原后端执行。
+当前仍在唯一路线图4.2，不宣称全供应商或部门费用治理完成。负责人自行操作测试主机，代理未操作原库/设备，现场结果待反馈。JSON双参考编辑500仍无明确终态，账号通道与合同仍待核对，禁止自动重提；图层真实收费上界未明。此前真实用量累计6.710022/原预算10，本轮付费生成0。
 
-准确构建源码 `2859a2aefbac5d30829eb7f7aa73c82ee1eb2583`，内部目标 `ice-2026.10.4-2859a2aefbac`；ZIP、固定EXE、Setup及维护资产同源构建成功，既有工具链/Runtime/依赖保持。此前8ab5b90的未发布内部候选已被本次界面改动取代，不用于正式交付。定向单元94 passed/14 Windows opt-in skipped，真实窗口与副本升级/恢复结果及失败尝试按 [本轮C6记录](./ops/OFFLINE-RETAINED-UPGRADE-2026-10-12.md#2026-10-20-安装向导简化候选) 区分；准确 Head CI 记录在新 Draft PR。未新建 Release、更新目录或操作测试主机原库。
-
-真实模型边界：此前 Grok imagine、MiniMax-H3、Wan3 各一次提交/原任务续查已成功；图片文生图成功，双参考 JSON 编辑 HTTP500 无受理ID，仍为 PROVIDER_SUBMISSION_UNKNOWN。只读用量核对累计6.710022/原总预算10，消费日志仅找到已成功文生图记录，未找到编辑明确终态；未扣费/无日志不能证明未受理。当前官方编辑文档仍含“未开放”分类及示例不一致，不能证明账号通道或多图协议已可用。没有自动重提，本轮新增付费生成0；图层收费上界未明，未作真实付费拆层，详见 [产品记录](./ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md)。
-
-下一完整包是修复版本交付：先收口简化候选的审查/CI与准确资产、升级路由和复测步骤，获准后合并并发布补丁；现场复测另行授权。模型 JSON 编辑先澄清原未知请求及可用通道，再在原预算内安排有界真实复测，不承诺全目录统一兼容。4.3部门/项目与费用治理、RunningHub #170、Linux/云/多实例尚未启动。
+下一完整包先收集10.4现场升级与保留数据反馈，实际阻断按影响定向修复；同步澄清原图片编辑未知请求/账号通道，具备条件后安排预算内有界实测并收口图片编辑、多参考和特殊输出的可用性。4.3部门/项目及费用治理、RunningHub #170、Linux/云/多实例继续暂缓。后续新代码合并、Release与客户生产操作分别授权。
 
 ## 工作包历史快照
 
