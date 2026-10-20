@@ -6,7 +6,7 @@
     const api='/enterprise/api/business';let context,tab='projects',epoch=0,directory=[];
     const names={DEPARTMENT_PERMISSION_DENIED:'当前账号没有此操作权限',NO_AUTHORIZED_CALL_SOURCE:'尚未获授权使用调用来源',STALE_AUTHENTICATION:'登录已失效，请重新登录',INVALID_BUSINESS_REQUEST:'请检查填写内容',CREDENTIAL_VAULT_UNAVAILABLE:'当前运行身份无法使用凭据存储，请联系管理员',DEPARTMENT_SCHEMA_UPGRADE_REQUIRED:'请先完成支持部门项目的受控版本升级'};
     const visibility={private:'私有',department_readonly:'本部门只读',company_readonly:'企业内部只读'};
-    const state={queued:'排队中',running:'运行中',succeeded:'已完成',failed:'失败',unknown:'待核对',partial:'部分完成'};
+    const state={queued:'排队中',running:'运行中',succeeded:'已完成',failed:'失败',unknown:'待核对',partial:'部分完成',unavailable:'回执不可读'};
     async function json(path,method='GET',body){
         const r=await fetch(api+path,{method,cache:'no-store',...(body?{headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{})});
         const data=await r.json().catch(()=>({}));if(!r.ok){const code=data.detail?.code;throw new Error(names[code] || (r.status===401?'请重新登录后继续':'操作未完成，请检查权限与配置（'+(code || r.status)+'）'));}return data;
@@ -16,7 +16,7 @@
     const projectName=id=>context.projects.find(p=>p.id===id)?.name || (id?'原项目 '+id.slice(0,8):'个人创作');
     const personName=id=>directory.find(p=>p.id===id)?.display_name || (id===context.user_id?'本人':id);
     const unitName=unit=>unit==='platform_units'?'平台额度':unit;
-    const date=t=>new Date(t*1000).toLocaleString();
+    const date=t=>t?new Date(t*1000).toLocaleString():'未确认';
     const btn=(action,label,id='')=>`<button class="business-btn small" data-action="${action}" data-id="${esc(id)}">${label}</button>`;
     const empty=text=>`<div class="business-empty">${text}</div>`;
     const table=(headers,rows)=>`<div class="business-table-wrap"><table><thead><tr>${headers.map(x=>'<th>'+x+'</th>').join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`;

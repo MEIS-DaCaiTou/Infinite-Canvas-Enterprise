@@ -83,3 +83,15 @@ def test_http_workspace_auth_and_metadata_endpoints(business):
         assert grants.status_code==200 and grants.json()[0]['user_id']=='employee'
         assert client.get('/enterprise/api/business/sources/'+key['id']+'/grants',headers={'x-fixture-user':'ops'}).status_code==403
         assert client.get('/enterprise/api/business/costs/summary?scope=company',headers={'x-fixture-user':'design'}).status_code==403
+
+
+def test_one_corrupt_receipt_does_not_hide_remaining_tasks(business,tmp_path):
+    service,p,design,_,_=business;source(service,p,design)
+    journal=CanvasTaskJournal(tmp_path/'tasks')
+    for task in ['broken','valid']:
+        context(service,p,task=task)
+        journal.create({'id':task,'type':'llm','enterprise_user_id':'employee','status':'queued','model':'fixture'})
+    (journal.root/'broken.json').write_text('[]',encoding='utf8')
+    data=task_summaries(service,p['design'],scope='department',department_id=design,journal=journal)
+    assert {r['id']:r['status'] for r in data['tasks']}=={'valid':'queued','broken':'unavailable'}
+    assert task_summaries(service,p['outsider'],journal=journal)['tasks']==[]

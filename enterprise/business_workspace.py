@@ -19,7 +19,15 @@ def task_summaries(service, principal, *, scope='me', department_id=None, before
             ' ORDER BY c.rowid DESC LIMIT 51', (*params,*([before] if before else []))).fetchall()
     result=[]
     for row in rows[:50]:
-        record=journal.get(row[0])
+        try:
+            record=journal.get(row[0])
+        except (OSError, ValueError):
+            # One broken private receipt must not hide all other department
+            # tasks. Its authorized billing snapshot remains the only metadata.
+            result.append({'id':row[0], 'status':'unavailable',
+                'model':json.loads(row[1])['model'], 'context':json.loads(row[1]),
+                'error':'任务回执暂不可读，请保留原记录；没有重新生成'})
+            continue
         # Context rows committed before journal acceptance are not executable tasks.
         if record and record.get('enterprise_user_id') == json.loads(row[1])['user_id']:
             result.append({**describe_task(record), 'context':json.loads(row[1])})
