@@ -72,8 +72,45 @@ class CanvasTaskJournal:
             record = self.get(task_id)
             if record is None or record.get("status") != "queued":
                 return False
-            self._write({**record, "status": "running", "updated_at": time.time()})
+            now = time.time()
+            claimed = {**record, "status": "running", "updated_at": now}
+            if record.get("dispatch_version") == 1:
+                claimed["dispatch_started_at"] = now
+            self._write(claimed)
             return True
+
+    def enable_dispatch(self, task_id: str) -> None:
+        """Publish readiness only after private input and ownership are durable."""
+        with self._lock:
+            record = self.get(task_id)
+            if not record or record.get("status") != "queued":
+                raise ValueError("Canvas task is not queued")
+            candidate = {**record, "dispatch_version": 1}
+            if not pending_dispatch(candidate):
+                raise ValueError("Canvas task has already started")
+            self._write(candidate)
+
+    def pending_dispatches(self) -> list[dict]:
+        with self._lock:
+            records = []
+            _assert_no_reparse(self.root, "CANVAS_TASK_ROOT")
+            for path in self.root.glob("*.json"):
+                try:
+                    record = self.get(path.stem)
+                except (ValueError, UnicodeError):
+                    continue
+                if pending_dispatch(record):
+                    records.append(record)
+            return sorted(records, key=lambda item: (item.get("created_at", 0), item["id"]))
+
+    def reject_dispatch(self, task_id: str) -> None:
+        with self._lock:
+            record = self.get(task_id)
+            if record and pending_dispatch(record):
+                self._write({**record, "status": "failed", "recovery_required": False,
+                    "error_code": "QUEUED_TASK_NOT_DISPATCHED",
+                    "error": "待执行任务的输入、权限或原调用配置已变化/不可用，已停止执行；未重新生成，请核对后再发起新任务。",
+                    "updated_at": time.time()})
 
     def finish(self, task_id: str, changes: dict) -> None:
         with self._lock:
@@ -223,6 +260,9 @@ class CanvasTaskJournal:
                     counts["corrupt"] += 1
                     continue
                 if record is not None and record.get("status") in {"queued", "running"}:
+                    if pending_dispatch(record):
+                        counts["queued"] = counts.get("queued", 0) + 1
+                        continue
                     previous = record["status"]
                     self._write({
                         **record, "status": "failed", "recovery_required": True,
@@ -233,6 +273,15 @@ class CanvasTaskJournal:
                     })
                     counts["interrupted"] += 1
         return counts
+
+
+def pending_dispatch(record):
+    """A durable claim fence, not an inference from missing upstream identity."""
+    return bool(record and record.get("status") == "queued" and record.get("dispatch_version") == 1
+        and not record.get("dispatch_started_at") and not record.get("comfy_receipt")
+        and not record.get("upstream_task_id") and all(
+            receipt.get("state") == "started" and not receipt.get("upstream_task_id")
+            for receipt in record.get("provider_receipts") or []))
 
 
 def create_task_receipt(journal: CanvasTaskJournal, record: dict, enterprise_user_id=None) -> None:

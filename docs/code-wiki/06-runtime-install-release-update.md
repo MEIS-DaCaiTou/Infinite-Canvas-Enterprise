@@ -1,6 +1,6 @@
 # Runtime、安装、发布与在线更新
 
-2026-10-19 发行候选补记：main783 已合并任务来源、LLM 持久记录、视频续接与贞贞视频适配，正式包仍为 v2026.10.2；[2026.10.3 候选记录](../ops/RELEASE-2026.10.3-RECORD.md) 绑定干净源码、既有固定 Runtime、EXE/Setup 和准确 10.2 路由。以下代码参考快照不冒充最新发行身份；本轮复用现有工具，不新增安装步骤、强制更新或恢复规则。
+2026-10-19 补记：#176 已合并 main e0dfa84，正式发行已为 v2026.10.3，准确构建身份见 [发行记录](../ops/RELEASE-2026.10.3-RECORD.md)。当前独立维护候选新增 Setup v2 的只读 inspect-entry；`install_entry_repair.inspect_fixed_entry` 复用当前完整 Release/入口归属证明，缺登记仅返回 REGISTRATION_REQUIRED，不生成 UUID。GUI 按所选操作刷新并提前检查离线升级，明确停机及关闭固定启动窗口；PermissionError 只在原事务成功回退后映射 WRITE_DENIED，回退不明仍阻断。实际补登记仍由显式 repair-entry 原事务完成，不改 Runtime/数据库/在线更新语义。此候选未发布，范围和验证见 [C6 增量](../ops/OFFLINE-RETAINED-UPGRADE-2026-10-12.md#2026-10-19-页面升级来源的登记预检与维护提示候选)。
 
 > 源码参考快照（2026-10-13）：main@e89a288（已合并 #154/#155/#156）；产品功能源码基点 #156@4bdd9a1 保留；C5/C6/C7 已合并，构建与验收范围仍引用其准确记录。本文是代码/运行参考，当前 PR/CI、Release 和验收只见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，实施顺序只认路线图。
 
@@ -234,3 +234,7 @@ C5 的 updater.py / updater-worker-v1 契约选择目标 Python 执行器并绑�
 正式发行 source `7da593b52f3d487033e3ab1771142bfed891f316`，已随 #159 合并，ZIP/固定入口/Setup/维护工具同源。正式 10.1 普通桌面 BAT、包内 Python 和真实更新 worker 已完成准确包单跳成功及目标失败回退：目标 10.2 / 恢复 10.1 各自 healthy，原账号、业务行和配置/画布/素材保持一致。正式发布/CI/回读状态只见 CURRENT 与发行记录。
 
 来源必须匹配正式 10.1 的 READY v2/30 对象身份；10.1 裸新装缺版本账本会被安全拒绝，本次不宣称该来源直接在线升级。验证副本通过正式 10.1 已发布的准确备份/旧库登记 API 建立已登记来源，并保留备份与业务行对照；不手工伪造账本。在线不可用时仍走已有停服离线维护，不能直接覆盖目录。启动当前版本与确认更新分开，界面没有强制升级步骤。
+
+## 10.3 正式发布收口（2026-10-19）
+
+#176 按批准合并为maine0dfa84，合并后文档/Enterprise/Runtime CI成功。正式[v2026.10.3](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.10.3)的准确构建仍为d8ffe55；固定CPython不重建，9项核心资产与验收字节一致，10.2资产不变。正式10.2原更新检查从公开目录确认stable/direct到10.3，正常启动当前版本与手动确认升级继续分开。准确包成功/失败恢复、CLI与HTTP证据及未覆盖的GUI/客户边界见[原发行记录](../ops/RELEASE-2026.10.3-RECORD.md#正式发布收口2026-10-19)。独立未开始任务恢复候选不包含在该冻结发行中。

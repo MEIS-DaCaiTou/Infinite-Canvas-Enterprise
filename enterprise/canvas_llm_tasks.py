@@ -43,9 +43,10 @@ def can_restore_llm(record):
 
 
 class CanvasLLMTasks:
-    def __init__(self, journal, generate, archive, publish, schedule):
+    def __init__(self, journal, generate, archive, publish, schedule, enqueue=None):
         self.journal, self.generate, self.archive = journal, generate, archive
         self.publish, self.schedule = publish, schedule
+        self.enqueue = enqueue
         self.accept_lock, self.restore_lock = asyncio.Lock(), asyncio.Lock()
 
     async def create(self, payload, user_id):
@@ -66,7 +67,10 @@ class CanvasLLMTasks:
                 'source':payload.source.model_dump() if payload.source else None,
                 'result':None, 'error':'', 'provider_receipts':[{'index':0, 'state':'started'}],
             }, owner)
-            self.schedule(self.run(task_id, payload))
+            if self.enqueue:
+                await self.enqueue(task_id, payload)
+            else:
+                self.schedule(self.run(task_id, payload))
         return {'task_id':task_id, 'status':'queued'}
 
     async def _archive(self, task_id, value):

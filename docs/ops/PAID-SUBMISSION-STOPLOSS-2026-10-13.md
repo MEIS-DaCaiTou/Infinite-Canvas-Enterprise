@@ -200,3 +200,22 @@ Browser 使用本机58130隔离安装、私有SQLite、固定测试身份、实�
 验证：参数/图像兼容及新adapter检查51 passed；实际main受理、硬退出重启及原v1/v2查询3 passed；提交止损/既有视频服务相关20 passed，范围重叠不相加。新增实际main隔离用例证明一次v2 POST后，先持久保存受理身份，再经历NOT_START与SUCCESS两次原ID GET并本地归档；当图片协议为gemini，视频仍为Bearer。初次新增夹具引用不存在的main.db失败，修正为既有enterprise.db后通过，未隐瞒首轮失败。验证均使用MockTransport、临时安装根和测试密钥，无真实付费/GPU/公网/客户验收；本包无前端改动，不重跑已有Browser矩阵。准确Head的CI结果见本PR，不以main或#172结果代替。
 
 独立 Review 对代码 Head `f197521e69c79eec01fdeb9eb0270272ca45473d` 核对受理顺序、404/405边界、终态/未知、旧回执和鉴权，结论 `NO_ACTIONABLE_BUGS_FOUND`；不是GitHub Approval或无缺陷保证。回滚撤销代码即可，保留journal、owner、画布及输出；旧版本仍可读取同一回执并按记录路径查询。本轮不合并候选、不构建/发布新Release、不操作客户设备，正式仍v2026.10.2。
+
+## 2026-10-19 未开始任务持久执行与重启恢复候选
+
+负责人批准按原路线图 4.2 连续推进。本包独立分支 `codex/queued-task-recovery-20261019` 从 main783 开发，随后接入仅 VERSION/文档变化的 #176 合并 maine0dfa84；没有将新增队列代码混入冻结的 10.3 发行包。准确 Base/Head、Review 和最终 CI 记录在本 PR，不另建任务队列或工程台账。
+
+`enterprise/canvas_task_dispatch.py` 复用 v1 `CanvasTaskJournal`：先登记本人回执与既有 owner 映射，再将可恢复输入保存到 DATA_ROOT/canvas-tasks/inputs 的私有文件，最后原子写入 dispatch_version=1 就绪标记，之后才确认排队与调度。公开回执、任务列表和日志不包含请求输入或凭据。`canvas_task_dispatch_app.py` 接回现有权限、资源、当前供应商配置与维护暂停规则，main 仅负责接线；没有新 Schema、外部队列服务或页面。
+
+范围限定为认证用户的 Zhenzhen HTTP 图片、视频、LLM，以及指定可用后端的 ComfyUI。配置绑定使用安装密钥的 HMAC，绑定实际供应商身份、鉴权、模型/协议或工作流/后端；不保存原始请求头或供应商密钥。ComfyUI 保留本次未保存的设置预览配置。识别到现有 Gateway 敏感键（包括 Comfy 字段名与默认值）、超出64MiB、匿名/CLI/其他供应商的请求沿用既有即时路径，不能据此宣称支持全部自定义节点或任意嵌入文本中的秘密识别。
+
+启动只领取有就绪标记、从未 claim、没有受理身份的 queued 回执；已有 runner 在提交前原子 mark_running 并记 dispatch_started_at。领取后强退即使没有受理 ID 也不重放，继续原待核对规则；已受理任务由原查询恢复器处理。旧 queued 回执不猜造输入，仍按旧人工核对逻辑。重启批次并发2，正常新提交的原并发行为不变。维护/序列事务及单跳 system-update-active.lock 存在时暂停新提交，暂停解除后重新核验 owner、来源画布/节点、素材权限和当前配置；归属/配置失效或输入缺失时明确拒绝未提交任务，生成调用为0。
+
+执行完成、拒绝或下次启动发现非待执行输入时清理本包私有输入文件，不删除其引用的素材、结果或回执；文件损坏不能触发生成。维护标记不被删除。源码回滚保留 v1 journal 与 owner；旧程序不认识 dispatch 标记，启动将未执行回执按旧规则转人工核对，不会重提；私有输入文件可在恢复本版后的正常清理路径回收。不是多进程领取或独立 Worker，单 Windows/single Upstream 限制保留。
+
+验证沿用现有 Python/协议与实际 main 隔离子进程：四类请求在暂停时入队，硬退出后重启各执行一次；重复启动不重提；四类 claim 后硬退出均不会再生成；当前权限撤销、来源失效、配置/凭据变化、缺失/损坏输入、维护暂停竞争和重启并发均有定向覆盖。新核心/策略/main 与既有视频 main 定向28 passed /44.53s；此前相关恢复/LLM/video检查35 passed。实际写入边界审计通过，新增删除仅复用既有 W48 DATA_ROOT 边界。首轮较宽定向检查中旧视频夹具未提供现行权限授权导致1项失败，补齐夹具授权后定向通过，生产权限未放宽。没有真实付费、GPU、Browser 或客户验证；前端及请求返回契约未变，不重复已有页面矩阵。
+
+独立 Review 对运行 Diff 发现1项 P2：api_token/refresh_token 等未被最初精确名单识别，会落入私有输入。已复用现有 Gateway 敏感键分类并覆盖字段元数据；实际 enqueue 定向证明这些输入不落盘、不启用dispatch，普通字段仍可持久。定向复审 `NO_ACTIONABLE_BUGS_FOUND`，不是 GitHub Approval 或无缺陷保证。准确代码提交4262fbe7fcfba92b0dec4515a051d415f4da2635；后续仅接入已合并基线及文档。本包候选合并与后续发行仍待负责人批准。
+
+
+本候选首次 CI Enterprise 为1 failed/1894 passed/50 skipped（9分钟内），失败是既有同进程重启测试的 Windows 文件替换竞争。定向当前21次复现1次、准确 main 旧 journal/恢复器/原测试5次复现1次；夹具第二次 worker 用新 journal，查询回调和观察却仍用旧实例，锁不共享。仅重绑测试 journal，使查询/观察/worker与真实单Upstream一样使用同一重建实例；未改产品恢复器或放宽断言。模块9 passed/4.69s及连续40次定向无失败，原两次原ID查询/重建断言保留。首次CI和定向证据留在原PR/artifact，最终Head及其CI另记。

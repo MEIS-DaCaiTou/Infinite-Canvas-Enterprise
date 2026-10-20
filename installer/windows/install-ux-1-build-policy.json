@@ -31,7 +31,7 @@
   "installer_architecture": "x64",
   "installer_filename_pattern": "Infinite-Canvas-Enterprise-Setup-<version>-x64.exe",
   "installer_source": "installer/windows/InfiniteCanvasEnterprise.iss",
-  "maintenance_operations": ["install", "repair-entry", "repair-program", "recover-program", "inspect-program", "recover-entry", "inspect-cache", "clean-cache", "inspect-lifecycle", "uninstall-retain", "recover-uninstall", "reinstall-retained"],
+  "maintenance_operations": ["install", "repair-entry", "inspect-entry", "repair-program", "recover-program", "inspect-program", "recover-entry", "inspect-cache", "clean-cache", "inspect-lifecycle", "uninstall-retain", "recover-uninstall", "reinstall-retained"],
   "program_maintenance": {
     "same_release_only": true,
     "progress_is_authority": false,

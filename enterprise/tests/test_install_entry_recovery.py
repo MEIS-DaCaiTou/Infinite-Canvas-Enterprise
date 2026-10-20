@@ -28,6 +28,67 @@ class Interrupted(BaseException):
     """Simulate runner loss without exercising the ordinary exception rollback."""
 
 
+@pytest.mark.parametrize("registered", [False, True])
+def test_entry_inspection_proves_legacy_owner_without_writing_registration(installed, registered):
+    arguments, roots, original = installed
+    if not registered:
+        (roots.STATE_ROOT / entry.RECORD_NAME).unlink()
+        (roots.STATE_ROOT / "native-entry.json").write_bytes(canonical_json({
+            "schema_version": "enterprise-native-entry-v1", "launcher_sha256": original.sha256}))
+    before = _files(roots.INSTALL_ROOT)
+    # Inspection must not need Runtime stop, choose a new UUID, or run repair.
+    result = recovery.inspect_fixed_entry(**arguments)
+    assert result["entry_state"] == ("REGISTERED" if registered else "REGISTRATION_REQUIRED")
+    assert bool(result["installation_id"]) is registered
+    assert result["release_id"] == roots.APP_ROOT.name
+    assert _files(roots.INSTALL_ROOT) == before
+    if not registered:
+        assert entry.repair_fixed_entry(**arguments)["repair_state"] == "SUCCEEDED"
+        assert recovery.inspect_fixed_entry(**arguments)["entry_state"] == "REGISTERED"
+
+
+def test_entry_inspection_cannot_claim_unknown_exe_or_replace_foreign_lock(installed):
+    arguments, roots, _original = installed
+    (roots.STATE_ROOT / entry.RECORD_NAME).unlink()
+    before = _files(roots.INSTALL_ROOT)
+    with pytest.raises(entry.InstallEntryError, match="INSTALL_ENTRY_UNOWNED_FILE"):
+        recovery.inspect_fixed_entry(**arguments)
+    assert _files(roots.INSTALL_ROOT) == before
+    lock = roots.STATE_ROOT / "system-update-active.lock"
+    lock.write_bytes(b"unknown maintenance owner")
+    with pytest.raises(entry.InstallEntryError, match="INSTALL_ENTRY_MAINTENANCE_BUSY"):
+        recovery.inspect_fixed_entry(**arguments)
+    assert lock.read_bytes() == b"unknown maintenance owner"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows executable replacement sharing contract")
+def test_open_entry_write_denial_rolls_back_and_can_retry_after_handle_closes(installed):
+    import ctypes
+    from ctypes import wintypes
+
+    arguments, roots, _original = installed
+    before, published = _business(roots), _published(roots)
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+        wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    kernel.CreateFileW.restype = wintypes.HANDLE
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.CloseHandle.restype = wintypes.BOOL
+    # A live EXE may deny replacement independently of Runtime service state.
+    handle = kernel.CreateFileW(str(roots.INSTALL_ROOT / entry.ENTRY_NAME),
+        0x80000000, 3, None, 3, 0x80, None)  # READ/WRITE sharing, no DELETE sharing.
+    assert handle not in (None, ctypes.c_void_p(-1).value)
+    try:
+        with pytest.raises(entry.InstallEntryError, match="INSTALL_ENTRY_WRITE_DENIED"):
+            entry.repair_fixed_entry(**arguments)
+        assert _published(roots) == published and _business(roots) == before
+        assert not (roots.STATE_ROOT / "system-update-active.lock").exists()
+    finally:
+        assert kernel.CloseHandle(handle)
+    assert entry.repair_fixed_entry(**arguments)["repair_state"] == "SUCCEEDED"
+    assert _business(roots) == before
+
+
 @pytest.fixture
 def installed(tmp_path, monkeypatch):
     root, _manifest, _archive, _inventory, document = qualified_program_fixture(tmp_path)

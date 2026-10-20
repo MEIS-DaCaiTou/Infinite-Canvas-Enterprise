@@ -53,3 +53,36 @@ Base main `39f4b02d232142c4ede66f0133b759b32178d70f`；独立分支 `codex/model
 验证：受影响 overlay/字段契约/账号偏好 9 项通过；随后针对已移除工作流补真实两类画布函数 VM，验证旧身份不改、缺项零加载、目录/详情之间失效仅查一次且不递归重绘。独立审查定位智能画布缺少加载 guard，已修复；经典画布同类问题在 Browser 验证时发现并修复。Browser 使用实际两类画布和设置页、固定隔离 actor + 真实偏好存储，验证搜索、批选、保存、取消、空结果、原模型保持、启停保存及列表同步。1280×720 明/暗主题、390×844 窄屏已截图，深色 checkbox 被既有主题覆盖的问题修复后重验。页面身份、非空、无错误覆盖层和目标交互通过；无新增相关控制台错误，经典画布已有 Tailwind 开发提示保留。
 
 证据：`D:/CodeProject/Infinite-Canvas-Enterprise-Artifacts/model-workflow-selection-20261016/`。不冒充正式 Gateway 登录、真实 GPU/付费生成或客户验收。既有账号隔离/同源验证复用；无 Schema、权限、费用、安装更新或正式 Release 变化。回滚为撤销本 PR；旧程序忽略 enabled 字段，不保证仍隐藏停用项；工作流图及素材字节保持。审查及准确 Head CI 以对应 PR 为准。
+
+## 2026-10-19 贞贞视频协议路由候选
+
+Base main `e0dfa843d4bec3ff9c05a6f2ee25337a3687fc3e`；独立分支 `codex/zhenzhen-video-routing-20261019`，候选不改变正式 10.3。`model_catalog.py` 仅纠正已证实的 MiniMax-H3 与 Kling image 分类；`zhenzhen_video.py` 维护精确 ID 的能力和纯请求/查询构造。未知型号保留现有协议，不从目录出现推断全部兼容。参数、受理 ID 与结果仍沿用现有任务中心、账号隔离和归档，无新 Schema、权限、页面或队列。
+
+| 精确型号 | 选定提交 / 查询 | 当前维护边界 |
+| --- | --- | --- |
+| grok-imagine-video-1.5 | `/v1/videos` / `/v1/videos/{id}` | seconds 字符串；480/720/1080p，1–15 秒；多参考图最高 720p |
+| MiniMax-H3 | 同上 | seconds 字符串；768P/2K，5–15 秒；imageUrls/videoUrls/audioUrls |
+| wan3.0-video、wan3.0-video-prime | 同上 | duration 整数；480P/720P/1080P，当前最多30秒；image_urls/video_urls/audio_urls |
+| grok-imagine-video | `/xai/v1/videos/generations` / `/xai/v1/videos/{id}` | duration、image 或 reference_images；480/720p，参考图模式最多10秒 |
+
+原始依据：[Grok兼容提交](https://gpt-best.apifox.cn/api-472416532)、[MiniMax](https://gpt-best.apifox.cn/api-495802284)、[Wan3](https://gpt-best.apifox.cn/api-505897644)、[xAI格式](https://gpt-best.apifox.cn/api-498242621)、[参考图限制](https://docs.x.ai/developers/model-capabilities/video/reference-to-video)。供应商文档与公开目录可能演进；API Key 仍从现有管理员配置读取，不落任务回执。每个新协议只提交选定入口一次，不用404、5xx或未知回包探测另一个付费接口。已接受的新回执绑定查询模式；历史 generic/v1/v2 回执继续查原路径，不随新映射迁移。两类画布复用现有选择器/按钮，保留旧参数供显式修改；不支持的选项阻止新开启，已开启的可取消，服务端提交前校验，不静默丢参考素材。
+
+验证：首轮受影响 Python 55 passed；后续边界/旧回执定向36 passed（重叠不相加）；三份 JS 语法通过。Browser 使用隔离 loopback、固定测试身份、模拟供应商和自有视频，1440×1000、1024×768 检查页面身份、非空、无错误覆盖层、控制台与截图。两类实际控件切换模型/参数、禁用不支持项和保存重开通过；经典画布模拟生成/归档通过。Browser plugin 未提供，使用已安装 Edge 的 Playwright，无新依赖。初始夹具返回非MP4字节，改用自有有效MP4后实际video元数据加载通过；隔离目录没有固定Runtime媒体预览工具，`/api/media-preview`仍415，作为缩略图未验收限制保留，不伪报控制台全净。既有Tailwind开发警告保留。
+
+真实验证仅使用自有蓝色立方体提示词：Grok1.5 1秒、MiniMax-H3 5秒768P、Wan3 5秒480P，各一次 POST `/v1/videos`；受理身份写 journal 后故意结束前台轮询，再读原回执 GET 续查并归档本地MP4。三项 succeeded，未再次生成。MiniMax JSON提交本轮真实成功，消除了其文档仅列multipart的兼容疑点。累计用量差额6.670022/总授权10，包含前轮1.300022；不是产品费用账本或逐任务结算。未覆盖原生Grok账号通道、Wan prime、参考音视频/多图、每一分辨率/时长或全部目录模型。
+
+独立 Review 定位并修复经典画布时长blur显示15但仍提交旧60的问题；真实UI与定向复审 `NO_ACTIONABLE_BUGS_FOUND`。技术 Review 不等于 GitHub Approval。回滚撤销本候选；新模式回执需保留当前版本续查，旧程序不能保证识别新模式，不能删除回执或重提替代。证据位于仓库外 `zhenzhen-model-routing-20261019/`，凭据/客户素材不入仓库。准确提交、CI和合并状态见原PR。
+
+## 2026-10-19 图片编辑与图层输出候选
+
+分支 `codex/zhenzhen-image-contracts-20261019` 堆叠于 [#179](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/179) 精确 Head `bd341fb80bdad1e2a8972eb6c31aa03d3c7a2e7e`，不修改 main 或该视频分支。沿用 zhenzhen.py 和既有图片任务/归档；精确新增 `gpt-image-2-all`（JSON文生图 generations、参考图 edits，不支持当前维护范围外的mask）和 `seedream-v5-flash/layer-decomposition`（单原图 generations，image为标量，输出透明PNG）。不猜测名称相似的型号别名，也不强行把所有绘图入口归为一种请求。协议源：[文生图](https://gpt-best.apifox.cn/api-510695314.md)、[JSON编辑](https://gpt-best.apifox.cn/api-513955033.md)、[图层拆分](https://gpt-best.apifox.cn/api-522995149.md)；后者文档仍标developing，不代表上游账号真实开放。
+
+特殊输出复用现有图片结果和任务详情：多个图层分别归档，保留层名、z_index和有限坐标/说明字段；RGBA不转换JPEG。相同像素的不同层不合并，单层同时返回URL/base64只收一次；嵌套result.images和旧URL列表继续兼容。`image_outputs.py` 只做有界元数据提取，任务中心继续先校验已有资源归属。经典画布完成/续查优先image_items并保留旧images fallback；Browser发现智能画布生成/恢复映射只复制尺寸，已沿用既有对象展开写法保留图层字段；结果保存重开、作为后续参考图继续使用现有操作，不新增图层编辑器、PSD合成或页面。无Schema、权限、供应商自动重提、Runtime或安装更新变化。
+
+必要验证：请求构造/旧模型兼容41 passed；图像恢复、实际main归档/重开及任务目录42 passed，修复后同一实际main图层用例1 passed（范围重叠不相加）。新用例涵盖单原图、双参考JSON字段、错误/超时只一次提交、未知字段不落元数据、透明PNG及不同层同像素。首轮新夹具缺kind:image被现有引用筛选拒绝，补足真实客户端字段后通过，保留失败证据。原JS共享查询和视频重开脚本继续通过。
+
+独立Review定位嵌套图层先收裸URL再收对象导致重复归档；修正标量及URL-list两种情况，定向复审 `NO_ACTIONABLE_BUGS_FOUND`，准确Head CI以原PR记录为准。不是GitHub Approval。Browser使用固定隔离身份、MockTransport和自有透明PNG，复用现有两类画布控件；模型选择、双图层输出、名称/层号保存重开、1440×1000与1024×768检查通过，页面身份/非空/无错误覆盖层及控制台无新增运行错误；既有Tailwind提示保留，截图及结果记录仓库外image-browser-qa.json，不替代真实Gateway或上游图层效果验收。
+
+真实 `gpt-image-2-all`：文生图单次生成并归档成功；两张自有96×96色块的JSON编辑单次提交返回HTTP500，无受理ID，保留PROVIDER_SUBMISSION_UNKNOWN，未重复提交或切换付费入口。这一结果不能区分当前账号通道故障与接口多图格式限制，编辑验收仍未通过，不据此宣布全目录可用。累计使用差额6.710022/同一授权总计10，未知编辑保留预留，不将无即时扣费视为未受理；不进行第二次付费探测。图层按输出数量收费且当前证据不能可靠限定上界，未执行付费拆层。既有Nano Banana/Seedream等能力沿用原验证，不假装本轮全部重测。
+
+回滚撤销本包，保留原图片/回执；旧版本可继续读取普通URL但可能不展示层名/元数据。正式Release保持10.3，候选未合并，不操作客户设备。后续先收口编辑可用性和各Draft候选兼容，再按独立授权合并/发行；安装入口修复现场成功与跨版本升级未验收分别保留。

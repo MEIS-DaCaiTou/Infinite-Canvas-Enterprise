@@ -37,15 +37,18 @@ def task_state(record):
 
 
 def result_items(record):
+    from enterprise.providers.image_outputs import layer_metadata
     result = record.get("result") or {}
     items = list(result.get("items") or [])
     if not items:
+        items.extend(result.get("image_items") or [])
         for key, kind in (("images", "image"), ("videos", "video"), ("audios", "audio"), ("texts", "text"), ("files", "file")):
             items.extend({"url": item, "kind": kind} if isinstance(item, str) else {"kind": kind, **item}
                          for item in result.get(key) or [])
         if not items and isinstance(result.get("image"), str):
             items.append({"url": result["image"], "kind": "image"})
     for attempt in record.get("provider_receipts") or []:
+        items.extend((attempt.get("result") or {}).get("image_items") or [])
         for key, kind in (("images", "image"), ("videos", "video")):
             items.extend({"url": value, "kind": kind} for value in (attempt.get("result") or {}).get(key, []))
     unique = {}
@@ -59,7 +62,7 @@ def result_items(record):
         path = unquote(parsed.path).replace("\\", "/")
         if parsed.scheme or parsed.netloc or not path.startswith(("/assets/output/", "/output/")) or ".." in path.split("/"):
             continue
-        unique.setdefault(url, {key: item[key] for key in ("url", "kind", "name", "text", "result_id", "run_id", "created_at") if key in item})
+        unique.setdefault(url, {**{key: item[key] for key in ("url", "kind", "name", "text", "result_id", "run_id", "created_at") if key in item}, **layer_metadata(item)})
     return list(unique.values())
 
 

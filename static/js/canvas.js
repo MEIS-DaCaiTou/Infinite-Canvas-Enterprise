@@ -8619,6 +8619,27 @@ function renderVideoBody(node){
     durationSelect.value = String(node.duration || 5);
     aspectSelect.value = node.aspectRatio || '16:9';
     resolutionSelect.value = node.resolution || '';
+    const applyVideoProfile = () => {
+        const profile = window.CanvasModelPicker?.videoProfileFor(apiProviders.find(p => p.id === node.apiProvider), node.model) || {};
+        durationSelect.min = String(profile.duration_min || 1);
+        durationSelect.max = String(profile.duration_max || 60);
+        const ratios = profile.ratios || ['16:9','9:16','1:1','4:3','3:4','21:9','9:21','keep_ratio','adaptive'];
+        const resolutions = profile.resolutions || ['480p','720p','1080p','780P'];
+        const currentRatio = node.aspectRatio || '16:9', currentResolution = node.resolution || '';
+        aspectSelect.innerHTML = (window.CanvasModelPicker?.videoChoices(ratios, currentRatio) || ratios).map(value =>
+            `<option value="${escapeHtml(value)}">${escapeHtml(value)}${ratios.includes(value) ? '' : '（不支持）'}</option>`).join('');
+        resolutionSelect.innerHTML = `<option value="">${profile.route ? '默认 ' + escapeHtml(resolutions[0]) : '自动'}</option>` +
+            (window.CanvasModelPicker?.videoChoices(resolutions, currentResolution) || resolutions).map(value =>
+                `<option value="${escapeHtml(value)}">${escapeHtml(value)}${resolutions.includes(value) ? '' : '（不支持）'}</option>`).join('');
+        aspectSelect.value = currentRatio;
+        resolutionSelect.value = currentResolution;
+        wrap.querySelectorAll('[data-video-toggle]').forEach(button => {
+            const supported = window.CanvasModelPicker?.videoToggleSupported(profile, button.dataset.videoToggle) !== false;
+            button.disabled = !supported && !node[button.dataset.videoToggle];
+            button.title = supported ? '' : '此模型不支持该选项；已开启时可点击取消';
+        });
+    };
+    applyVideoProfile();
     [providerSelect, modelSelect, durationSelect, aspectSelect, resolutionSelect].forEach(input => {
         input.onmousedown = e => e.stopPropagation();
         input.onclick = e => e.stopPropagation();
@@ -8629,11 +8650,16 @@ function renderVideoBody(node){
         const models = providerVideoModels(node.apiProvider);
         if(!models.includes(node.model)) node.model = models[0] || node.model;
         modelSelect.innerHTML = videoModelOptions(node.model, node.apiProvider);
+        applyVideoProfile();
         scheduleSave();
     };
-    modelSelect.onchange = e => { e.stopPropagation(); node.model = e.target.value; scheduleSave(); };
-    durationSelect.oninput = e => { e.stopPropagation(); node.duration = Math.max(1, Math.min(60, Number(e.target.value || 5))); scheduleSave(); };
-    durationSelect.onblur = e => { e.target.value = String(Math.max(1, Math.min(60, Number(node.duration || 5)))); };
+    modelSelect.onchange = e => { e.stopPropagation(); node.model = e.target.value; applyVideoProfile(); scheduleSave(); };
+    durationSelect.oninput = e => { e.stopPropagation(); node.duration = Math.max(Number(durationSelect.min), Math.min(Number(durationSelect.max), Number(e.target.value || 5))); scheduleSave(); };
+    durationSelect.onblur = e => {
+        node.duration = Math.max(Number(durationSelect.min), Math.min(Number(durationSelect.max), Number(node.duration || 5)));
+        e.target.value = String(node.duration);
+        scheduleSave();
+    };
     aspectSelect.onchange = e => { e.stopPropagation(); node.aspectRatio = e.target.value; scheduleSave(); };
     resolutionSelect.onchange = e => { e.stopPropagation(); node.resolution = e.target.value; scheduleSave(); };
     wrap.querySelectorAll('[data-video-toggle]').forEach(btn => {
@@ -10579,7 +10605,7 @@ async function runGeneratorLegacy(genId, opts={}){
             headers:{'Content-Type':'application/json'},
             body:JSON.stringify(payload)
         }).then(async r => { if(!r.ok) throw new Error(await responseErrorMessage(r, tr('canvas.generationFailed'))); return r.json(); })));
-        const images = results.flatMap(result => result.images || []);
+        const images = results.flatMap(result => result.image_items?.length ? result.image_items : (result.images || []));
         const metas = collectRunMetas(out, pendingIds);
         run.request = results[0] ? requestMetaFromResult(results[0]) : {};
         if(out) out._pending = (out._pending||[]).filter(p => !pendingIds.includes(p.id));
@@ -12443,7 +12469,7 @@ function providerIdForPending(pending){
 }
 function completeRecoverPendingOutput(out, pending, result){
     if(!out || !pending || !result) return;
-    const images = result.images || [];
+    const images = result.image_items?.length ? result.image_items : (result.images || []);
     if(!images.length) return;
     const meta = {
         runMs: nowMs() - Number(pending.startedAt || nowMs()),
@@ -12592,7 +12618,7 @@ function completeCanvasImageTask(taskId, result){
         run: pending.run || {},
     };
     meta.run.request = requestMetaFromResult(result);
-    const images = result.images || [];
+    const images = result.image_items?.length ? result.image_items : (result.images || []);
     out._pending = (out._pending || []).filter(p => p.id !== pending.id);
     appendOutputImages(out, images, meta.run?.refs?.[0], [meta]);
     const gen = nodes.find(n => n.id === meta.run?.node?.id);
@@ -12730,7 +12756,7 @@ function appendOutputImages(out, images, compareRef, metas=[], layout=null){
     if(compareRef?.url){
         out.imageComparisons = out.imageComparisons || {};
         list.forEach(url => {
-            out.imageComparisons[url] = {url:compareRef.url, name:compareRef.name || 'input image'};
+            out.imageComparisons[outputUrlValue(url)] = {url:compareRef.url, name:compareRef.name || 'input image'};
         });
     }
 }

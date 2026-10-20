@@ -112,6 +112,8 @@ var
   HeadlessLifecycle, LifecycleSupportReady, MatchingLifecycleRelease: Boolean;
   HeadlessOperation, HeadlessRoot, LifecycleState, UpgradeState: String;
   FinalizingUpgrade: Boolean;
+  InspectingEntry: Boolean;
+  EntryState: String;
 
 procedure ExitProcess(ExitCode: Cardinal);
   external 'ExitProcess@kernel32.dll stdcall';
@@ -136,6 +138,7 @@ function PeekNamedPipe(hNamedPipe: THandle; lpBuffer, nBufferSize, lpBytesRead: 
 
 function MaintenanceOperation: String;
 begin
+  if InspectingEntry then begin Result := 'inspect-entry'; exit; end;
   if FinalizingUpgrade then begin Result := 'finish-upgrade'; exit; end;
   if HeadlessLifecycle then begin Result := HeadlessOperation; exit; end;
   if CacheCleaning then begin Result := 'clean-cache'; exit; end;
@@ -303,7 +306,7 @@ begin
     if CacheCleaning then Confirmation := ',"confirm_cache_cleanup":true'
     else Confirmation := ',"confirm_cache_cleanup":false';
     Confirmation := Confirmation + ',"cache_id":"' + SelectedCacheId + '","cache_token":"' + SelectedCacheToken + '"';
-  end else if not ShouldMaintainEntry then begin
+  end else if not ShouldMaintainEntry and (Operation <> 'inspect-entry') then begin
     Schema := 'enterprise-install-maintenance-request-v4';
     if Operation = 'inspect-program' then Confirmation := ',"confirm_no_active_tasks":false'
     else Confirmation := ',"confirm_no_active_tasks":true';
@@ -616,6 +619,7 @@ begin
   RepairState := '';
   LifecycleState := '';
   UpgradeState := '';
+  EntryState := '';
   MatchingLifecycleRelease := False;
   InstallationId := '';
   RawRoot := BundleRoot + '\raw\{#ArchiveRootPrefix}';
@@ -637,7 +641,7 @@ begin
   CredentialPage.Values[1] := '';
   CredentialPage.Values[2] := '';
   GraphicalPipeActive := not ShouldMaintainEntry or IsUpgradeOperation;
-  DetachButton.Visible := GraphicalPipeActive and (MaintenanceOperation <> 'inspect-program') and not IsCacheOperation and not IsLifecycleOperation and not IsUpgradeOperation;
+  DetachButton.Visible := GraphicalPipeActive and (MaintenanceOperation <> 'inspect-program') and (MaintenanceOperation <> 'inspect-entry') and not IsCacheOperation and not IsLifecycleOperation and not IsUpgradeOperation;
   try
     if not PipeExchange(PipeSuffix, Request, Response) then begin
       Request := '';
@@ -655,6 +659,14 @@ begin
   if Result and IsCacheOperation then begin
     CacheRows := Response;
     exit; { Cache-only requests never register an installation or maintain shortcuts. }
+  end;
+  if Result and (MaintenanceOperation = 'inspect-entry') then begin
+    if Pos('"entry_state":"REGISTERED"', Response) > 0 then EntryState := 'REGISTERED'
+    else if Pos('"entry_state":"REGISTRATION_REQUIRED"', Response) > 0 then begin
+      EntryState := 'REGISTRATION_REQUIRED';
+      Response := '';
+      exit; { Read-only inspection must not manufacture an installation ID. }
+    end else begin Result := False; LastStableCode := 'INSTALL_SETUP_BRIDGE_RESPONSE_INVALID'; end;
   end;
   if Result then begin
     InstallationId := ExtractInstallationId(Response);
@@ -676,7 +688,7 @@ begin
       else if Pos('"lifecycle_state":"REINSTALLING"', Response) > 0 then LifecycleState := 'REINSTALLING'
       else if Pos('"lifecycle_state":"NONE"', Response) > 0 then LifecycleState := 'NONE'
       else begin Result := False; LastStableCode := 'INSTALL_SETUP_BRIDGE_RESPONSE_INVALID'; end;
-    end else if not ShouldMaintainEntry or (MaintenanceOperation = 'recover-entry') then begin
+    end else if (MaintenanceOperation <> 'inspect-entry') and (not ShouldMaintainEntry or (MaintenanceOperation = 'recover-entry')) then begin
       ObserveMaintenancePhase(Response);
       if Pos('"repair_state":"SUCCEEDED"', Response) > 0 then RepairState := 'SUCCEEDED'
       else if Pos('"repair_state":"ROLLED_BACK"', Response) > 0 then RepairState := 'ROLLED_BACK'
@@ -802,24 +814,82 @@ begin
   else if RepairState = 'NONE' then Result := '暂无程序修复记录；未执行修复或恢复。';
 end;
 
-procedure InspectMaintenance(Sender: TObject);
+function MaintenanceFailureCaption: String;
+begin
+  Result := '状态或资格未通过核验；请保留诊断与恢复记录。';
+  if LastStableCode = 'INSTALL_LIFECYCLE_IDENTITY_REQUIRED' then
+    Result := '本安装尚无身份登记，页面升级到当前版本不会自动补齐。' + #13#10 +
+      '请先选择“只修复固定入口与快捷方式”，完成后再检查离线升级资格。账号、数据库和当前业务版本不会因此重建。'
+  else if LastStableCode = 'INSTALL_ENTRY_UNOWNED_FILE' then
+    Result := '旧固定入口的归属未能核验。请保留原安装目录并导出诊断；未覆盖该入口或初始化业务数据。'
+  else if LastStableCode = 'INSTALL_ENTRY_WRITE_DENIED' then
+    Result := 'Windows 拒绝写入入口或登记文件，本次操作已回退。请确认服务已停止，并关闭本安装的固定 EXE 启动窗口后重试。' + #13#10 +
+      '若仍失败，请保留诊断与恢复记录，继续核查文件占用或写入权限；不要手工覆盖入口或删除锁文件。'
+  else if (LastStableCode = 'INSTALL_PROGRAM_RUNTIME_BUSY') or
+          (LastStableCode = 'INSTALL_ENTRY_RUNTIME_BUSY') or
+          (LastStableCode = 'INSTALL_LIFECYCLE_RUNTIME_BUSY') then
+    Result := '请从本安装的固定入口点击“停止”，再用“查看状态”确认已停止，随后重新执行维护。' + #13#10 +
+      '关闭窗口不会停止后台服务；若仍提示占用，请保留诊断与恢复记录，不要删除 Runtime 锁文件。'
+  else if LastStableCode = 'INSTALL_PROGRAM_SAME_RELEASE_REQUIRED' then
+    Result := '程序修复必须使用当前版本安装包。跨版本更新请选择“升级到本包版本／跨版本保留数据重装”。'
+  else if LastStableCode = 'INSTALL_UPGRADE_TARGET_NOT_NEWER' then
+    Result := '本包不是比当前版本更新的版本。同版本维护请使用对应的程序修复或保留数据重装选项。'
+  else if LastStableCode = 'INSTALL_LIFECYCLE_DATABASE_RECOVERY_REQUIRED' then
+    Result := '数据库日志尚不能证明可安全处理，本次未执行升级。这不等于已确认数据库损坏。' + #13#10 +
+      '请保留数据库、WAL、SHM、journal 和维护记录并导出诊断；不要手工删除这些文件。'
+  else if LastStableCode = 'INSTALL_UPGRADE_DATABASE_PREPARATION_REQUIRED' then
+    Result := 'SQLite 未能完成受控日志预处理，维护阻断和恢复记录已保留。' + #13#10 +
+      '请确认服务停止后选择“显式恢复本包上次中断的离线升级”；仍失败时保留诊断，不要删除锁或数据库日志。';
+  Result := Result + #13#10 + '错误代码：' + LastStableCode;
+end;
+
+function InspectSelectedMaintenance(ShowResult: Boolean): Boolean;
 var
   SelectedOperation: Integer;
 begin
+  Result := False;
   SelectedOperation := OperationPage.SelectedValueIndex;
-  OperationPage.SelectedValueIndex := 3;
+  if SelectedOperation = 5 then begin
+    MsgBox('请点击“下一步”查看维护准备包列表；刷新状态不会清理文件。', mbInformation, MB_OK);
+    exit;
+  end;
+  case SelectedOperation of
+    0, 4: InspectingEntry := True;
+    6, 7, 8, 9: OperationPage.SelectedValueIndex := 9;
+    10, 11, 12: OperationPage.SelectedValueIndex := 12;
+  else OperationPage.SelectedValueIndex := 3;
+  end;
   InstallProgress.Show;
   try
     PrepareBundle;
-    if RunBridge then MsgBox(RepairStateCaption, mbInformation, MB_OK)
-    else MsgBox('状态未核准：' + LastStableCode + #13#10 +
-      '没有执行恢复；请保留诊断与恢复记录。', mbError, MB_OK);
+    Result := RunBridge;
+    if not Result then MsgBox(MaintenanceFailureCaption, mbError, MB_OK)
+    else if ShowResult then begin
+      if InspectingEntry then begin
+        if EntryState = 'REGISTRATION_REQUIRED' then
+          MsgBox('当前 Release 与固定入口归属已核验，但尚无安装身份登记。' + #13#10 +
+            '请继续完成所选固定入口修复；本次刷新没有写入登记或变更业务版本。', mbInformation, MB_OK)
+        else MsgBox('当前 Release、固定入口与安装身份登记已核验。' + #13#10 +
+          '本次刷新没有执行修复；执行维护前仍须停止服务。', mbInformation, MB_OK);
+      end else if IsUpgradeOperation then
+        MsgBox('本包核验的离线升级状态：' + UpgradeState + #13#10 + '未执行升级或恢复。', mbInformation, MB_OK)
+      else if IsLifecycleOperation then
+        MsgBox('已核验的卸载／重装状态：' + LifecycleState + #13#10 + '未执行恢复或初始化业务数据。', mbInformation, MB_OK)
+      else MsgBox(RepairStateCaption, mbInformation, MB_OK);
+    end;
   except
-    MsgBox('状态检查未完成；没有执行恢复。' + #13#10 + GetExceptionMessage, mbError, MB_OK);
+    Result := False;
+    MsgBox('状态检查未完成；没有执行修复或恢复。' + #13#10 + GetExceptionMessage, mbError, MB_OK);
   finally
+    InspectingEntry := False;
     OperationPage.SelectedValueIndex := SelectedOperation;
     InstallProgress.Hide;
   end;
+end;
+
+procedure InspectMaintenance(Sender: TObject);
+begin
+  InspectSelectedMaintenance(True);
 end;
 
 procedure InitializeWizard;
@@ -970,6 +1040,7 @@ begin
       Space + '原安装目录：' + SelectedInstallRoot + NewLine +
       Space + '目标版本：{#AppVersion}；账号、数据库、画布、素材、配置和安装身份保持。' + NewLine +
       Space + '仅接受已证明兼容的相同 Schema；分别核验程序、固定入口、维护安装器和 Windows 登记。' + NewLine +
+      Space + '如存在空 WAL／SHM 残留，将在停机与维护锁内由 SQLite 处理并复核；非空日志仍会阻断。' + NewLine +
       Space + '目标失败恢复来源版本；成功后完成登记才开放业务访问。'
   else if IsLifecycleOperation then
     Result := '操作：' + MaintenanceCaption + NewLine +
@@ -1044,23 +1115,14 @@ begin
   end;
   if (CurPageID = OperationPage.ID) and (MaintenanceOperation = 'inspect-lifecycle') then begin
     Result := False;
-    InstallProgress.Show;
-    try
-      PrepareBundle;
-      if RunBridge then MsgBox('已核验的卸载／重装状态：' + LifecycleState + #13#10 +
-        '没有执行恢复或初始化业务数据。', mbInformation, MB_OK)
-      else MsgBox('状态未通过核验，请保留原记录。' + #13#10 + LastStableCode, mbError, MB_OK);
-    finally InstallProgress.Hide; end;
+    InspectSelectedMaintenance(True);
   end;
   if (CurPageID = OperationPage.ID) and (MaintenanceOperation = 'inspect-upgrade') then begin
     Result := False;
-    InstallProgress.Show;
-    try
-      PrepareBundle;
-      if RunBridge then MsgBox('本包核验的离线升级状态：' + UpgradeState + #13#10 +
-        '未执行升级或恢复，也未初始化业务数据。', mbInformation, MB_OK)
-      else MsgBox('资格或恢复状态未通过核验；请保留原记录。' + #13#10 + LastStableCode, mbError, MB_OK);
-    finally InstallProgress.Hide; end;
+    InspectSelectedMaintenance(True);
+  end;
+  if (CurPageID = OperationPage.ID) and (MaintenanceOperation = 'upgrade-retained') then begin
+    Result := InspectSelectedMaintenance(False);
   end;
   if (CurPageID = OperationPage.ID) and (MaintenanceOperation = 'inspect-program') then begin
     InspectMaintenance(nil);
@@ -1375,7 +1437,10 @@ begin
         Result := '安装目录过深，请选择较短的本机路径；尚未初始化安装或业务数据。' + #13#10
       else if LastStableCode = 'INSTALL_PROGRAM_VIEW_DETACHED' then
         Result := '已关闭进度查看，后台作业可能仍在继续；关闭此安装包，重开后选择刷新维护状态。不要重复提交。' + #13#10
-      else Result := '操作未完成；不会把原目录当作新安装重建。请保留诊断与恢复记录。' + #13#10;
+      else begin
+        Result := '操作未完成；不会把原目录当作新安装重建。' + #13#10 + MaintenanceFailureCaption;
+        exit;
+      end;
       Result := Result +
         '错误代码：' + LastStableCode;
       exit;

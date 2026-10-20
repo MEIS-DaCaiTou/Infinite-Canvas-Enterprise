@@ -37,29 +37,38 @@ from pathlib import Path
 sys.path.insert(0, sys.argv[1])
 from enterprise import install_upgrade as u, install_lifecycle as lifecycle
 from enterprise.ops.update import mvp
-app, root, assets, native, setup, local, operation, fault = map(str, sys.argv[1:])
+app, root, assets, native, setup, local, operation, fault, empty_logs = map(str, sys.argv[1:])
+database = Path(root)/'data/enterprise.db'
+before_database = database.read_bytes() if empty_logs == 'yes' else None
+preparation_verified = False
 def checkpoint(stage):
+    global preparation_verified
+    if empty_logs == 'yes' and stage == 'database_prepared':
+        assert database.read_bytes() == before_database, 'empty preparation changed main database'
+        preparation_verified = True
     if fault == 'death' and stage == 'entry_published': os._exit(93)
     if fault == 'health' and stage == 'target_health':
         target = Path(root)/'releases'/u.verify_release_assets(Path(assets)).manifest.release_id
         code, result = mvp._run_launcher(target, 'stop')
         assert code == 0 and result, 'owned target stop failed'
 u._checkpoint = checkpoint
+if fault == 'database-death':
+    u.database_preparation._checkpoint = lambda stage: os._exit(93) if stage == 'database_locked' else None
 try:
     args = dict(install_root=root,release_dir=assets,local_app_data_base=local,confirm_no_active_tasks=True)
     if operation == 'uninstall': result = lifecycle.uninstall_retaining_data(**args)
     elif operation == 'recover': result = u.recover_upgrade(**args)
     else: result = u.upgrade_retained(**args,native_entry_dir=native,setup_executable=setup)
-    print(json.dumps(result,separators=(',',':')),flush=True)
+    print(json.dumps({**result, 'empty_preparation_verified': preparation_verified},separators=(',',':')),flush=True)
 except Exception as exc:
     print(json.dumps({'code':getattr(exc,'code',type(exc).__name__)}),flush=True)
     raise SystemExit(2)
 '''
 
 
-def _run(app, root, assets, native, setup, local, operation, fault=""):
+def _run(app, root, assets, native, setup, local, operation, fault="", *, empty_logs=False):
     return subprocess.run([str(app / "python/python.exe"), "-I", "-B", "-c", RUNNER,
-        str(app), str(root), str(assets), str(native), str(setup), str(local), operation, fault],
+        str(app), str(root), str(assets), str(native), str(setup), str(local), operation, fault, "yes" if empty_logs else "no"],
         cwd=app, env=_environment(), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
         stderr=subprocess.PIPE, timeout=600, creationflags=subprocess.CREATE_NO_WINDOW)
 
@@ -87,9 +96,34 @@ def _http(port, path):
         return exc.code
 
 
+def _empty_log_fixture(app, root):
+    """Seed only the freshly installed synthetic source, never a customer root."""
+    code = r'''
+import sqlite3, sys
+from contextlib import closing
+from pathlib import Path
+db=Path(sys.argv[1])/'data/enterprise.db'
+with closing(sqlite3.connect(db)) as conn:
+    assert conn.execute('PRAGMA journal_mode=WAL').fetchone() == ('wal',)
+with closing(sqlite3.connect(db.as_uri()+'?mode=ro', uri=True)) as conn:
+    conn.execute('SELECT name FROM sqlite_master LIMIT 1').fetchone()
+assert db.with_name(db.name+'-wal').stat().st_size == 0
+assert db.with_name(db.name+'-shm').stat().st_size == 32768
+'''
+    result = subprocess.run([str(app / "python/python.exe"), "-I", "-B", "-c", code, str(root)],
+                            env=_environment(), capture_output=True, timeout=30,
+                            creationflags=subprocess.CREATE_NO_WINDOW)
+    if result.returncode != 0:
+        raise RuntimeError("OFFLINE_EMPTY_LOG_FIXTURE_FAILED")
+
+
 def run(args):
     if os.name != "nt":
         raise RuntimeError("OFFLINE_DRILL_WINDOWS_REQUIRED")
+    # Reject a wrong build-output path before materializing or preserving roots.
+    files._safe(args.target_setup, missing=True)
+    if not args.target_setup.is_file():
+        raise RuntimeError("OFFLINE_DRILL_SETUP_MISSING")
     output = args.evidence_root.absolute()
     files._safe(output, missing=True); output.mkdir(exist_ok=False)
     source = _asset_view(args.source_build, output / "source-assets")
@@ -104,6 +138,9 @@ def run(args):
     report = {"schema_version": "c6-offline-drill-v1", "production_touched": False,
         "source_manifest_sha256": source.manifest.raw_sha256, "target_manifest_sha256": target.manifest.raw_sha256,
         "windows_registration_gui_verified": False, "online_handoff_tested": False, "scenarios": []}
+    empty_logs = getattr(args, "empty_wal_residue", False)
+    if empty_logs and "retained" in args.scenarios:
+        raise RuntimeError("OFFLINE_EMPTY_LOG_FIXTURE_REQUIRES_INSTALLED_SOURCE")
     # Offline maintenance starts only from a verified stopped source. It does
     # not spawn an online handoff worker; that package's breakaway prerequisite
     # cannot substitute for these actual native boot/health/exit checks.
@@ -136,23 +173,28 @@ def run(args):
                 if code != 0: raise RuntimeError("OFFLINE_DRILL_SOURCE_HEALTH_FAILED")
                 _stop(root, evidence, ports)
                 print("C6 source verified stopped: " + scenario, flush=True)
+                if empty_logs:
+                    _empty_log_fixture(app, root)
                 if scenario == "retained":
                     result = _result(_run(app, root, source.manifest_path.parent, args.source_native_entry, args.target_setup, local, "uninstall"), evidence, "uninstall")
                     assert result["lifecycle_state"] == "UNINSTALLED" and not (root / "InfiniteCanvas.exe").exists()
-                fault = "death" if scenario == "interrupted" else "health" if scenario == "rollback" else ""
-                process = _run(app, root, target.manifest_path.parent, args.target_native_entry, args.target_setup, local, "upgrade", fault)
+                fault = ("database-death" if empty_logs else "death") if scenario == "interrupted" else "health" if scenario == "rollback" else ""
+                process = _run(app, root, target.manifest_path.parent, args.target_native_entry, args.target_setup, local, "upgrade", fault, empty_logs=empty_logs)
                 (evidence / "upgrade-process.json").write_text(json.dumps({"return_code": process.returncode,
                     "stdout": process.stdout.decode("utf-8", "replace")[-2048:]}, indent=2), encoding="utf-8")
                 (evidence / "upgrade-process-stderr.log").write_bytes(process.stderr)
-                if fault == "death":
+                if fault in {"death", "database-death"}:
                     if process.returncode != 93:
                         raise RuntimeError("OFFLINE_INTERRUPT_NOT_REACHED:" + str(process.returncode) + ":" + process.stdout.decode("utf-8", "replace")[-250:])
                     (evidence / "interrupted-stderr.log").write_bytes(process.stderr)
-                    result = _result(_run(app, root, target.manifest_path.parent, args.target_native_entry, args.target_setup, local, "recover"), evidence, "recovered")
+                    result = _result(_run(app, root, target.manifest_path.parent, args.target_native_entry, args.target_setup, local, "recover", empty_logs=empty_logs), evidence, "recovered")
                 else:
                     result = _result(process, evidence, "upgraded")
                 expected = "ROLLED_BACK" if scenario in {"interrupted", "rollback"} else "AWAITING_REGISTRATION"
                 assert result["upgrade_state"] == expected and result["installation_id"] == installed.installation_id
+                if empty_logs:
+                    assert result["empty_preparation_verified"] is True
+                preparation_verified = result.get("empty_preparation_verified", False)
                 print("C6 upgrade result: " + scenario + " " + expected, flush=True)
                 for relative, contents in protected.items():
                     assert (root / relative).read_bytes() == contents, relative
@@ -169,6 +211,7 @@ def run(args):
                     assert result["upgrade_state"] == "AWAITING_REGISTRATION"
                 _stop(root, evidence, ports)
                 report["scenarios"].append({"name": scenario, "state": expected, "business_files_retained": True,
+                    "empty_preparation_verified": preparation_verified,
                     "installation_id_retained": True, "ports_closed": True,
                     "native_original_object_restored": expected == "ROLLED_BACK"})
             finally:
@@ -185,6 +228,7 @@ def main():
     for field in ("source-build", "source-native-entry", "target-build", "target-native-entry", "target-setup", "evidence-root"):
         p.add_argument("--" + field, type=Path, required=True)
     p.add_argument("--preserve-existing-local-roots", action="store_true")
+    p.add_argument("--empty-wal-residue", action="store_true", help="Owned stopped source: WAL=0/SHM=32768 and interruption inside SQLite mutex")
     p.add_argument("--scenarios", nargs="+", choices=("in-place", "retained", "interrupted", "rollback"), default=["in-place", "retained", "interrupted", "rollback"])
     args = p.parse_args()
     try:

@@ -73,3 +73,61 @@ Draft [#155](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/15
 自动多跳、在线原生 EXE/Setup 更新、完整业务维护态、未知未来 Schema 迁移、长期恢复副本/资产保留政策及旧 v1/未知锁接管仍是路线图中的独立工程能力。本包的离线原生工具更新不等于这些范围已完成；专业服务器/云部署和 500+/200+ 约束继续适用。
 
 身份无法证明、目标停止无法确认或 fence 写入中遭遇未覆盖的电源/文件系统故障时仍安全阻断；检查点进程退出演练不能扩写为任意电源故障自动恢复。完整维护 GUI 矩阵、客户历史版本和生产服务验收分别保留边界。
+
+
+## 2026-10-19 页面升级来源的登记预检与维护提示候选
+
+基线 main `e0dfa843d4bec3ff9c05a6f2ee25337a3687fc3e`，独立分支 `codex/install-upgrade-preflight-20261019`，运行代码 `a8ec5268fc3eda4bc0a7ab247f62c89815ba217a`。正式 v2026.10.3 已发布；本节是后续维护候选，不替换该正式资产、不承诺任意历史来源可升级，也没有客户操作。
+
+负责人反馈正式 10.2 经页面升级、installation.json 缺失而旧 native-entry.json 存在，离线升级返回 IDENTITY_REQUIRED。旧来源升级不会凭空创建安装身份。原入口修复已有兼容路径，但必须核验完整来源/旧 EXE 归属并停机；未知 EXE 不认领。客户提供日志在北京时间 13:55:26 仍有业务/网关 HTTP 200，且当天没有停止完成，解释了首次 RUNTIME_BUSY；该副本日志不证明客户后来机器的实时状态。原生诊断 ZIP 只含上次操作摘要，不能独立证明停机。负责人随后确认停机后固定 EXE 窗口仍打开，出现通用 REPAIR_FAILED；本地真实 Windows 句柄拒绝替换可复现该码及 PermissionError/WinError 5，但客户错误仍须关闭窗口后的结果确认，不把本地条件复现当现场唯一原因。
+
+增量只做：Setup v2 新增无凭据 inspect-entry，共用原归属检查且不写登记；刷新按入口/程序/生命周期/离线升级操作选择检查，不再固定跑同版程序检查；离线升级在进入确认页前预检；缺登记、Runtime 占用与写入被拒绝给出明确下一步。PermissionError 在原事务回退及清理成功后返回 INSTALL_ENTRY_WRITE_DENIED；恢复不明确继续 RECOVERY_REQUIRED。没有自动停机、删除锁、绕过身份、重建账号/Schema、安装策略或升级引擎变更。
+
+验证证据保存在受管 artifact 的 install-103-identity-fix-20261019 和 t/I19B：
+
+- 相关五模块首次 179 passed / 1 failed；失败是新增回退测试错误要求指针时间字节不变。修正为核验原 Release/Manifest/根及回退目标身份后，两个新来源场景定向 2 passed；后续桥接/GUI 静态契约/新来源定向 3 passed。没有将首次失败改写为首次全绿，也未因文案重复全量回归。
+- Windows 真实文件句柄阻止替换测试 1 passed：写入失败保留原入口/登记/业务，关闭句柄后同一入口修复成功。Runtime 在该单元夹具中替代，不是实际运行 EXE 窗口点击证据。
+- 写点审计继续通过，原登记摘要未变化。固定 CPython 3.14.6、编译器和依赖不升级；准确代码 a8ec526 的 ZIP/Manifest、固定 EXE、Setup 和维护资产构建成功，EXE/Setup 各自双构建一致。
+- 冻结目标 CP314 工具对正式 ice-2026.10.2-7da593b52f3d 新建的合成副本验证，使用中文安装路径：缺登记→REGISTRATION_REQUIRED/IDENTITY_REQUIRED；本轮自建模拟 Runtime 锁仍阻断为 RUNTIME_BUSY；清除该自建测试标记后原入口事务 SUCCEEDED、REGISTERED、离线资格 ELIGIBLE，原业务/配置/指针字节保持。没有修改真实 Runtime 目录或客户文件。
+- 既有单跳引擎的成功及目标失败恢复仅由新来源定向测试覆盖；本候选未执行真实 GUI 离线升级/Windows 登记矩阵，也未完成客户停机关闭窗口后的实测。上述冻结包只证明登记修复和离线资格，不等于完整客户升级验收。
+
+独立技术 Review 对当前运行 Diff 及新增写入错误映射的定向复审均为 NO_ACTIONABLE_BUGS_FOUND；该结论不是 GitHub Approval 或无缺陷保证。准确 PR Head CI 单独见原 PR。候选可关闭/弃用；合并后如需回退源码，使用正常 revert PR。补丁版本、正式发布和客户升级另行批准，不覆盖 v2026.10.3。
+
+
+## 2026-10-20 空 WAL/SHM 受控预处理候选
+
+负责人提供完整测试安装快照后，确认入口登记已补齐，当前仍为正式 `ice-2026.10.2-7da593b52f3d`；WAL=0、SHM=32768、无 journal。停机完成日志与隔离快照的 quick_check/Schema READY-v2 证明限定状态，不替代执行时进程/端口/Runtime 锁检查，也不承诺所有业务内容正确。客户原 ZIP、数据库、配置及素材不入 Git/PR；原库未处理。
+
+负责人已明确批准新增写连接的候选开发，终点仍是独立 Review/Draft PR，不合并、不发布、不操作测试主机原库。候选 `codex/install-database-preparation-20261020` 以 #178 Head `26299e11d35e2dc813d44cb425ed15b33f8dec1b` 为 Base，保留该 PR 与历史工作区；不是替换已发布 10.3 资产。
+
+- `install_database_preparation` 只接受 WAL 模式、空 WAL 与 32768 字节 SHM 同时存在的受证文件对象；非空 WAL、journal、不完整/陌生旁路文件及非 READY 元数据拒绝。资格检查只读，返回 `database_preparation_required`，不删除日志或调用 checkpoint。
+- 写阶段复用原 `install_upgrade` 的不可变计划、runner lease、active receipt 和 system-update fence；绑定原来源、安装登记、主库对象/字节及 Schema/ledger。停机及身份再核验后才记录 PREPARING_DATABASE、调用既有版本化 SQLite checkpoint helper，不新增恢复引擎或数据库表。
+- helper 的可选 guard 只在本路径启用，迁移/备份默认行为不变。先禁止失败关闭时隐式 checkpoint，再取得 SQLite exclusive mutex，锁内复验 WAL 仍为空、主库字节与旁路对象仍匹配，之后才允许 TRUNCATE。仅成功且主库字节不变时恢复正常 SQLite close 清理。SHM 是 SQLite 自管锁/索引，其内容可变化但文件身份与长度必须匹配；不得手工 unlink。
+- 进程中断保留原事务 fence/计划；现有 inspect-upgrade 只报告 RECOVERY_REQUIRED，只有用户显式 recover-upgrade 才在准确计划/租约下重验并清理受证空日志、回到原版本。未知非空日志及字节变化继续阻断，不自动重试、重建数据或回旧快照。无该字段的旧 v1 计划仍可读取。
+- 固定 CP314 Runtime 的 SQLite setconfig/NO_CKPT_ON_CLOSE 是必要能力；旧 Python 工具缺失时在发布维护记录前拒绝。保留数据卸载/同版重装等其他生命周期操作的原旁路文件拒绝语义不放宽。
+
+定向验证：冻结 CPython 3.14.6/SQLite 3.50.4 下新模块 15 passed / 1 skipped（旧工具专属分支）；含真实第二连接写入互斥、检查后提交非空 WAL 保持原主库/WAL，以及持 SQLite 锁时子进程实际 os._exit(93) 后显式恢复。Python3.11 的同模块 2 passed / 14 capability skips；默认迁移 backup/restore 9 passed。原生命周期/桥接/Setup 静态契约 84 passed。原离线升级 35 个无残留场景的有效证据沿用本轮初次短路径运行；没有为文案或 Review 重跑无关全套。
+
+首次长 artifact 测试目录触及 Windows 路径限制，产生 21 项路径失败，另 1 项是新增占用用例在 Windows 锁字节读取处未映射的错误；缩短目录并修正后，后续新增测试又发现 hook 错误复用已关闭 writer，修正该测试。独立 Review 随后用真实提交复现 1 项 P1：最后检查与 checkpoint 间新出现非空 WAL，事后检查过晚。已按上述互斥/失败 close 保护修复，具体并发回归通过，定向复审 NO_ACTIONABLE_BUGS_FOUND；不是 GitHub Approval 或无缺陷保证。未把早期失败改写为首次全绿。
+
+证据位于产品专用 artifact 的 install-database-preparation-20261020；客户数据只在仓库外隔离副本。新增 CI 只在现有 Runtime3.14 作业加入该小模块，本地约13秒，不加作业、依赖或新门禁。准确 Head CI 与候选构建结果在 PR 记录；GUI、Windows 登记及现场 10.2→目标完整升级仍 NOT_VERIFIED。合并/补丁发布/现场执行需分别批准。
+
+## 2026-10-20 组合候选的完整冻结副本验收
+
+独立组合分支汇集 #177、#178→#181、#179→#180；Base main `e0dfa843d4bec3ff9c05a6f2ee25337a3687fc3e`。完整构建与原生演练源码准确为 `b0fcb067aaf6deff3ff372a7a10ba911d6947780`，内部目标 `ice-2026.10.3-b0fcb067aaf6`；后续只补文档和演练Setup路径提前检查，最终PR Head/CI另记。此10.3候选未替换公开10.3资产，不是新正式Release。
+
+固定CPython3.14.6/依赖和原编译工具链构建ZIP/Manifest、固定EXE、Setup及维护资产成功。复用原C6完整副本演练，新增显式 `--empty-wal-residue --scenarios in-place interrupted rollback`：正式 `ice-2026.10.2-7da593b52f3d` 源资产新建合成账号/画布/素材，实际固定EXE启动、健康和停机后生成限定空WAL/SHM，冻结目标Python执行原升级事务。无客户ZIP/原库执行、无付费调用。
+
+| 场景 | 实际结果 | 证据边界 |
+| --- | --- | --- |
+| 正常升级 | AWAITING_REGISTRATION；新目标真实健康200、业务入口503；显式recover不把成功目标降回旧版 | 受控准备阶段主库字节保持，业务文件/安装身份保持；不含Windows登记 |
+| SQLite锁内中断 | 进程在database_locked实际退出93；显式recover处理受证空日志后ROLLED_BACK | 原native对象恢复、主库字节和业务文件保持；不是任意电源故障覆盖 |
+| 目标健康失败 | 目标start成功后在真实health前受控停止；health返回PORTABLE_STARTUP_NOT_READY，原引擎停止目标并重启正式10.2，source_health成功，ROLLED_BACK | Runtime phases/events记录完整，不以任意提前回滚冒充注入到达；原native对象和安装身份保持 |
+
+三个场景的测试端口关闭，既有本机两处KnownFolder原树字节/mtime及目录身份完整恢复。开发宿主第一次保全移开原树后出现历史空占位目录而安全拒绝，未创建安装fixture；空占位单独保留后原树恢复。第二次传入不存在的Setup文件名，事务发布前返回INSTALL_CACHE_UNPROVEN；只读资格仍ELIGIBLE，修正为实际构建文件并在演练前增加文件存在检查。失败和恢复记录保留，不算首次全绿。普通桌面上下文最终三场景退出0；没有修改应用Job/Runtime保护。
+
+同一源码业务组合定向127项通过；新增三进程排队MiniMax-H3验证一次选定POST、GET原ID、终态重开无供应商请求。测试自身最初误读结果响应层级，定向修正后1项通过，原五项四类任务恢复场景通过。写点审计7项通过，513处完整登记、无失效映射，增删正好为已审候选并集；文档检查及17项契约通过。其余仍有效的单包CP314、Browser及真实Provider证据只按原范围复用，不重复全量本机测试。
+
+组合运行交界及新增演练/测试独立Review为NO_ACTIONABLE_BUGS_FOUND。仓库外演练驱动一处普通文件可能被空目录快照误接纳的P2，已增加目录类型/对象身份复验，定向拒绝及复审通过；不是应用源码缺陷，也不是GitHub Approval。证据仍放产品既有artifact的candidate-integration-20261020与t/C20，不新增治理文档；35个其他工作区原状态保持。
+
+当前新条件的Setup GUI、Windows登记、在线更新及现场完整升级仍NOT_VERIFIED，不以本节覆盖；常规CI跳过固定EXE opt-in也不算通过。候选准确Head CI/合并状态见新PR，main及正式10.3不变。新增演练是手动opt-in，未增加常规PR作业/依赖/门禁。下一完整包在获准合并后固定补丁版本/源码，补Setup登记、更新中心来源副本和现场复测边界；发行及客户操作分别批准。未知恢复继续原fence与显式recover，不删除日志或强行重装。

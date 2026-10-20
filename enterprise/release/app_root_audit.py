@@ -571,6 +571,10 @@ def _flow_for_operation(file: str, symbol: str) -> str:
         # Atomic task receipts/results live under DATA_ROOT/canvas-tasks;
         # neither an immutable Release nor a provider configuration is written.
         return "W48"
+    if file == "enterprise/canvas_task_dispatch.py" and symbol == "CanvasTaskDispatch._remove_input":
+        # Private queued input artifacts share the existing DATA_ROOT task
+        # boundary; cleanup never deletes referenced media or public results.
+        return "W48"
     if file == "enterprise/migrations/versioned.py" and symbol in {
         "_write_new_file", "create_database_backup", "restore_database_backup",
         "preview_legacy_schema_enrollment",
@@ -660,8 +664,9 @@ def _flow_for_operation(file: str, symbol: str) -> str:
         # same-volume; native handle-bound rename/deletion is manually reviewed
         # (not discovered by this AST scanner). No install/business/backup writes.
         return "W47"
-    if file == "enterprise/install_lifecycle.py" and symbol in {"_database_inspection", "uninstall_retaining_data", "refresh_installed_proof"}:
-        # Offline readonly SQLite (sidecars rejected) and immutable lifecycle
+    if file == "enterprise/install_lifecycle.py" and symbol in {"_immutable_database_inspection", "uninstall_retaining_data", "refresh_installed_proof"}:
+        # Offline readonly SQLite (default: sidecars rejected; the upgrade
+        # qualifier separately proves empty WAL residue) and immutable lifecycle
         # plans/fences only in STATE_ROOT. Windows object-bound program moves
         # and release_fence are manually reviewed, not discovered by this AST.
         # No database initialization, business overwrite or recursive delete.
@@ -670,7 +675,8 @@ def _flow_for_operation(file: str, symbol: str) -> str:
         # Offline same-schema upgrade delegates app activation to the existing
         # MVP engine. Own STATE journal/lease/fences and exact original/candidate
         # native objects only; Windows owned renames are reviewed separately.
-        # No customer database restore/delete or unidentified file overwrite.
+        # Recovery may create-only relink this exact plan's startup fence before
+        # empty-WAL preparation; no DB restore/delete or unknown file overwrite.
         return "W47"
     if file.startswith("tools/validation/windows/env_1b3/"):
         # ENV-1B3 writes only to explicit test-host roots, isolated tamper
@@ -687,7 +693,7 @@ def _flow_for_operation(file: str, symbol: str) -> str:
 # Wxx flow). Line numbers are deliberately excluded, while duplicate identical
 # calls remain duplicate records. Any added/removed/changed call drifts it.
 # W15 replaces the generic URL fallback with removal of this invocation's generated partial output.
-EXPECTED_SITE_MANIFEST_DIGEST = "e04ec8f513bfbbf4b4692906ab6f84724d6fe8f9fd6c46118eb0be9d5f9e2c6b"
+EXPECTED_SITE_MANIFEST_DIGEST = "2de2f946c55b4347a5381cdc8b8410f2d0660cd3802c9c6cd3744f92d416a122"
 
 FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W01", "main.py", "startup_event"),

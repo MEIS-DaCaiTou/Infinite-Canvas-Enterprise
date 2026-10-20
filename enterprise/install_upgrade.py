@@ -15,6 +15,7 @@ from pathlib import Path
 import uuid
 
 from enterprise import install_cache as files, install_lifecycle as lifecycle
+from enterprise import install_database_preparation as database_preparation
 from enterprise.fresh_install import verify_release_assets
 from enterprise.install_entry import ENTRY_NAME, _record, _snapshot, verify_entry_bundle, validate_installation_record
 from enterprise.ops.update import mvp
@@ -33,7 +34,7 @@ ACTIVE_NAME = "install-upgrade-active.json"
 SLOTS = {"entry": ENTRY_NAME, "record": "state/installation.json",
          "setup": "state/windows-maintenance/maintenance-setup.exe",
          "support": "state/windows-maintenance/support.ini"}
-STATES = {"PREPARED", "SOURCE_RESTORED", "READY", "EXECUTING", "AWAITING_REGISTRATION",
+STATES = {"PREPARED", "SOURCE_RESTORED", "PREPARING_DATABASE", "READY", "EXECUTING", "AWAITING_REGISTRATION",
           "COMPLETE", "ROLLING_BACK", "ROLLED_BACK", "RECOVERY_REQUIRED"}
 PLAN_KEYS = {"schema_version", "operation_id", "installation_id", "install_root", "root_identity",
              "local_app_data_base", "retained_source", "data_identity", "config_identity", "config",
@@ -108,7 +109,7 @@ def _eligible(roots, source, target):
             or source.section("database_contract")["schema_snapshot_sha256"]
             != target.section("database_contract")["schema_snapshot_sha256"]):
         _fail("INSTALL_UPGRADE_DATABASE_CONTRACT_UNSUPPORTED")
-    metadata = lifecycle._database_contract(roots)
+    metadata, preparation = database_preparation.inspect(roots)
     if metadata["schema_version"] not in {1, 2}:
         _fail("INSTALL_UPGRADE_DATABASE_CONTRACT_UNSUPPORTED")
     program = roots.APP_ROOT
@@ -119,7 +120,7 @@ def _eligible(roots, source, target):
     if (evidence.get("schema_version") != metadata["schema_version"]
             or metadata["schema_sha256"] != evidence.get("schema_objects_sha256")):
         _fail("INSTALL_UPGRADE_DATABASE_CONTRACT_UNSUPPORTED")
-    return metadata
+    return metadata, preparation
 
 
 def inspect_upgrade(*, install_root, release_dir, local_app_data_base):
@@ -130,11 +131,12 @@ def inspect_upgrade(*, install_root, release_dir, local_app_data_base):
         return tx.public("AWAITING_REGISTRATION" if state["state"] in {"AWAITING_REGISTRATION", "COMPLETE"}
                          else "RECOVERY_REQUIRED")
     roots, record, source = lifecycle.current_source(install_root=install_root, local_app_data_base=local_app_data_base)
-    _eligible(roots, source, assets.manifest)
+    _metadata, preparation = _eligible(roots, source, assets.manifest)
     _support(roots.INSTALL_ROOT, record["installation_id"])
     return {"installation_id": record["installation_id"], "source_release_id": source.release_id,
             "target_release_id": assets.manifest.release_id, "upgrade_state": "ELIGIBLE",
-            "database_update_mode": "same-schema-no-migration"}
+            "database_update_mode": "same-schema-no-migration",
+            "database_preparation_required": preparation is not None}
 
 
 class _Transaction:
@@ -255,6 +257,28 @@ class _Transaction:
             _fail("INSTALL_UPGRADE_DATABASE_CHANGED")
         return metadata
 
+    def prepare_database(self):
+        proof = self.plan.get("database_preparation")
+        if proof is None:
+            return
+        self.basics()
+        common = self.roots.STATE_ROOT / "system-update-active.lock"
+        if not files._exists(common) or lifecycle._marker(common) != self.plan["system_fence"]:
+            _fail("INSTALL_UPGRADE_FENCE_CHANGED")
+        pointer = read_current_release_result_from_state_root(self.roots.STATE_ROOT)
+        source = read_release_manifest_v2(self.roots.APP_ROOT / "release-manifest.json")
+        if (pointer.raw_sha256 != self.plan["source_pointer"]
+                or source.raw_sha256 != self.plan["source_manifest_sha256"]
+                or files._file(self.roots.STATE_ROOT / "installation.json") != self.plan["slots"]["record"]["before"]
+                or files._exists(self.roots.RUNTIME_ROOT / "runtime-reconcile.lock")):
+            _fail("INSTALL_UPGRADE_SOURCE_CHANGED")
+        lifecycle._runtime_quiescent(self.roots)
+        self.state("PREPARING_DATABASE")
+        _checkpoint("database_preparing")
+        database_preparation.prepare(self.roots, proof, self.plan["database_contract"])
+        _checkpoint("database_prepared")
+        self.state("SOURCE_RESTORED")
+
     def published_tools(self):
         """Only Inno's proven support-object registration fields may change."""
         self.basics()
@@ -320,7 +344,7 @@ def upgrade_retained(*, install_root, release_dir, native_entry_dir, setup_execu
         _fail("INSTALL_UPGRADE_EXPLICIT_RECOVERY_REQUIRED")
     assets = verify_release_assets(Path(release_dir))
     roots, record, source = lifecycle.current_source(install_root=root, local_app_data_base=local_app_data_base)
-    _eligible(roots, source, assets.manifest)
+    metadata, preparation = _eligible(roots, source, assets.manifest)
     _support(root, record["installation_id"])
     identity = assets.manifest.section("enterprise_source")
     entry = verify_entry_bundle(Path(native_entry_dir), commit=identity["commit"], tree=identity["tree"])
@@ -377,8 +401,10 @@ def upgrade_retained(*, install_root, release_dir, native_entry_dir, setup_execu
         "target_release_id": assets.manifest.release_id, "target_manifest_sha256": assets.manifest.raw_sha256,
         "slots": slots, "system_fence": fence,
         "database_identity": lifecycle._plain_file_identity(roots.DATA_ROOT / "enterprise.db"),
-        "database_contract": lifecycle._database_contract(roots),
+        "database_contract": {key: metadata[key] for key in ("schema_version", "schema_sha256", "ledger_sha256")},
         "lease": files._file(directory / "runner.lock")["identity"]}
+    if preparation is not None:
+        plan["database_preparation"] = preparation
     files._new_json(directory / "plan.json", plan)
     files._new_json(directory / "active.json", {"schema_version": ACTIVE_SCHEMA, "operation_id": operation,
         "installation_id": record["installation_id"], "plan_sha256": hashlib.sha256(canonical_json(plan)).hexdigest()})
@@ -398,6 +424,7 @@ def upgrade_retained(*, install_root, release_dir, native_entry_dir, setup_execu
             lifecycle._reinstall(roots, record, keep_fence=True)
         tx.state("SOURCE_RESTORED")
         lifecycle._runtime_quiescent(roots)
+        tx.prepare_database()
         _checkpoint("source_fenced")
         prepared = mvp.UpdateMvpService(roots, database_inspector=tx.inspect_database).prepare_from_artifacts(actor_user_id="local-installation-owner:" + record["installation_id"],
             manifest_path=assets.manifest_path, archive_path=assets.archive_path, inventory_path=assets.inventory_path)
@@ -448,7 +475,7 @@ def _load(install_root, local_app_data_base, assets):
         _fail()
     directory = root / "state/install-upgrades" / active["operation_id"]
     plan, digest = _read(directory / "plan.json")
-    if (set(plan) != PLAN_KEYS or plan["schema_version"] != PLAN_SCHEMA
+    if (set(plan) not in (PLAN_KEYS, PLAN_KEYS | {"database_preparation"}) or plan["schema_version"] != PLAN_SCHEMA
             or plan["operation_id"] != active["operation_id"] or plan["installation_id"] != active["installation_id"]
             or digest != active["plan_sha256"] or plan["install_root"] != str(root)
             or plan["local_app_data_base"] != str(Path(local_app_data_base))
@@ -467,6 +494,16 @@ def _load(install_root, local_app_data_base, assets):
             or any(type(plan["database_contract"][name]) is not str or not files.SHA.fullmatch(plan["database_contract"][name])
                    for name in ("schema_sha256", "ledger_sha256"))):
         _fail()
+    if "database_preparation" in plan:
+        proof = plan["database_preparation"]
+        if (plan["retained_source"] or type(proof) is not dict or set(proof) != {"database", "sidecars"}
+                or not _valid_file(proof["database"]) or proof["database"]["identity"] != plan["database_identity"]
+                or type(proof["sidecars"]) is not dict or set(proof["sidecars"]) != {"-wal", "-shm"}
+                or not any(proof["sidecars"].values())
+                or any(token is not None and (not _valid_file(token) or token["size_bytes"] != size)
+                       for suffix, size in (("-wal", 0), ("-shm", 32768))
+                       for token in (proof["sidecars"][suffix],))):
+            _fail()
     for spec in plan["slots"].values():
         if (type(spec) is not dict or set(spec) != {"before", "candidate"}
                 or not _valid_file(spec["candidate"]) or (spec["before"] is not None and not _valid_file(spec["before"]))):
@@ -518,6 +555,14 @@ def recover_upgrade(*, install_root, release_dir, local_app_data_base, confirm_n
                 record = validate_installation_record(tx.roots.INSTALL_ROOT, _snapshot(tx.roots.STATE_ROOT / "installation.json"))
                 lifecycle._reinstall(tx.roots, record, keep_fence=True)
             lifecycle._runtime_quiescent(tx.roots)
+            if "database_preparation" in tx.plan:
+                lock = tx.roots.STATE_ROOT / "system-update-active.lock"
+                if not files._exists(lock):
+                    # Explicit recovery of death between active and fence
+                    # publication; create-only linking never adopts a foreign lock.
+                    os.link(files._io(tx.directory / "system-fence.json"), files._io(lock))
+                    sync_state_root_directory(tx.roots.STATE_ROOT)
+                tx.prepare_database()
             tx.restore()
             pointer = read_current_release_result_from_state_root(tx.roots.STATE_ROOT)
             source = read_release_manifest_v2(tx.roots.APP_ROOT / "release-manifest.json")
