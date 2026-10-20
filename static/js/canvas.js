@@ -159,7 +159,8 @@ function syncCanvasSelectedImageResolution(root=nodesEl){
     root.querySelectorAll?.('.node img[data-preview-src][data-original-src]').forEach(img => {
         if(img.dataset.previewKind === 'video') return;
         const nodeEl = img.closest('.node');
-        const selectedNode = Boolean(nodeEl?.dataset?.id && selected.has(nodeEl.dataset.id));
+        const node = nodes.find(value=>value.id===nodeEl?.dataset.id);
+        const selectedNode = Boolean(['image','output'].includes(node?.type) && selected.has(node.id));
         const preview = img.dataset.previewSrc || '';
         const original = img.dataset.originalSrc || img.dataset.url || '';
         if(!selectedNode){
@@ -994,12 +995,13 @@ async function generatorSizeForRun(gen, refs){
         const ref = refs?.[0];
         if(ref?.url){
             try {
-                const dims = await getImageDimensions(ref.url);
+                const known=pendingPreviewSizeFromRefs([ref]);
+                const dims=known?{width:known.w,height:known.h}:await getImageDimensions(ref.url);
                 const parts = ratioPartsFromDimensions(dims.width, dims.height);
                 gen.customRatioWidth = String(parts.width);
                 gen.customRatioHeight = String(parts.height);
                 gen.customRatio = `${parts.width}:${parts.height}`;
-            } catch(_) {}
+            } catch(error) { throw new Error('参考图尺寸读取失败，本次未提交生成任务'); }
         }
     }
     const ratio = (gen.ratio === 'source' && !gen.customRatio)
@@ -2068,7 +2070,13 @@ function applyRemoteCanvasData(remote){
         resetTransientRunState(nodes);
         sanitizeConnections();
         pruneMissingComfyWorkflows();
-        refreshMissingCanvasAssets().then(() => render());
+        const syncedCanvasId=canvas.id;
+        refreshMissingCanvasAssets().then(changed=>{
+            if(canvas?.id!==syncedCanvasId || !changed?.length)return;
+            const affected=new Set(changed);
+            refreshNodes(nodes.filter(node=>[node.url,...(node.images || []).map(outputUrlValue),...(node.generatedOutputs || []).map(outputUrlValue)]
+                .some(url=>affected.has(url))).map(node=>node.id));
+        });
         selected = new Set([...localSelectedIds].filter(id => nodes.some(node => node.id === id)));
         renderCanvasList();
         render();
@@ -2112,21 +2120,20 @@ function canvasLocalAssetUrls(){
     });
     return [...urls];
 }
+let canvasAssetCheckSeq=0;
 async function refreshMissingCanvasAssets(){
-    missingAssetUrls.clear();
-    const urls = canvasLocalAssetUrls();
-    if(!urls.length) return;
+    const currentId=canvas?.id,seq=++canvasAssetCheckSeq;
+    const urls=canvasLocalAssetUrls();
     try {
-        const data = await fetch('/api/canvas-assets/check', {
-            method:'POST',
-            headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({urls})
-        }).then(r => r.json());
-        const exists = data.exists || {};
-        Object.entries(exists).forEach(([url, ok]) => { if(!ok) missingAssetUrls.add(url); });
-    } catch(e) {
-        console.warn('canvas asset check failed', e);
-    }
+        const data=urls.length?await fetch('/api/canvas-assets/check',{
+            method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({urls})
+        }).then(r=>{if(!r.ok)throw new Error('asset check failed');return r.json();}):{exists:{}};
+        if(canvas?.id!==currentId || seq!==canvasAssetCheckSeq)return [];
+        const missing=new Set(Object.entries(data.exists || {}).filter(([,ok])=>!ok).map(([url])=>url));
+        const changed=[...new Set([...missingAssetUrls,...missing])].filter(url=>missingAssetUrls.has(url)!==missing.has(url));
+        missingAssetUrls.clear();missing.forEach(url=>missingAssetUrls.add(url));
+        return changed;
+    }catch(e){console.warn('canvas asset check failed',e);return [];}
 }
 async function syncRemoteCanvasNow(){
     if(!canvas) return;
@@ -5755,9 +5762,6 @@ function applyImageEdit(){
     return applyImageCrop();
 }
 
-function nodeHasLiveMedia(node){
-    return node?.type === 'image' && node.url && ['video','audio'].includes(mediaKindForNode(node));
-}
 function captureMediaPlaybackState(media){
     if(!media) return null;
     return {
@@ -5785,41 +5789,8 @@ function restoreMediaPlaybackState(media, state){
     if(media.readyState >= 1) applyTime();
     else media.addEventListener('loadedmetadata', applyTime, {once:true});
 }
-function mediaSignatureFromElement(el){
-    const media = el?.querySelector?.('video,audio');
-    if(!media) return '';
-    const tag = media.tagName.toLowerCase();
-    const url = media.dataset?.url || media.getAttribute('src') || '';
-    return url ? `${tag}:${url}` : '';
-}
-function transplantNodeMediaElement(oldNodeEl, newNodeEl){
-    const oldMedia = oldNodeEl?.querySelector?.('video,audio');
-    const newMedia = newNodeEl?.querySelector?.('video,audio');
-    if(!oldMedia || !newMedia) return;
-    const oldSignature = mediaSignatureFromElement(oldNodeEl);
-    const newSignature = mediaSignatureFromElement(newNodeEl);
-    if(!oldSignature || oldSignature !== newSignature) return;
-    const state = captureMediaPlaybackState(oldMedia);
-    newMedia.replaceWith(oldMedia);
-    restoreMediaPlaybackState(oldMedia, state);
-    requestAnimationFrame(() => restoreMediaPlaybackState(oldMedia, state));
-}
-function captureMediaPlaybackStates(){
-    const states = new Map();
-    nodesEl.querySelectorAll('video[data-url], audio[data-url]').forEach(media => {
-        const tag = media.tagName.toLowerCase();
-        const url = media.dataset.url || media.getAttribute('src') || '';
-        if(url) states.set(`${tag}:${url}`, captureMediaPlaybackState(media));
-    });
-    return states;
-}
-function restoreMediaPlaybackStates(states){
-    if(!states?.size) return;
-    nodesEl.querySelectorAll('video[data-url], audio[data-url]').forEach(media => {
-        const tag = media.tagName.toLowerCase();
-        const url = media.dataset.url || media.getAttribute('src') || '';
-        restoreMediaPlaybackState(media, states.get(`${tag}:${url}`));
-    });
+function transplantNodeMediaElement(oldNodeEl,newNodeEl){
+    CanvasMediaRetention.transplant(oldNodeEl,newNodeEl,captureMediaPlaybackState,restoreMediaPlaybackState);
 }
 function measureCanvasOriginalImageNodes(root=nodesEl){
     root.querySelectorAll?.('.image-node img[data-original-src]').forEach(imgEl => {
@@ -5842,11 +5813,10 @@ function measureCanvasOriginalImageNodes(root=nodesEl){
 
 function render(){
     const outputScrolls = captureOutputScrolls();
-    const mediaStates = captureMediaPlaybackStates();
     const reusableMediaNodes = new Map();
     nodesEl.querySelectorAll('.node').forEach(el => {
         const node = nodes.find(n => n.id === el.dataset.id);
-        if(nodeHasLiveMedia(node)) reusableMediaNodes.set(node.id, el);
+        if(node && el.querySelector('video,audio')) reusableMediaNodes.set(node.id, el);
     });
     applyViewport();
     [...nodesEl.children].forEach(child => {
@@ -5867,7 +5837,6 @@ function render(){
             console.error('[canvas] renderNode 失败，已跳过该节点：', node?.id, node?.type, err);
         }
     });
-    restoreMediaPlaybackStates(mediaStates);
     restoreOutputScrolls(outputScrolls);
     refreshGeometry();
     refreshGeometryAfterLayout();
@@ -5893,8 +5862,9 @@ function refreshNodes(ids=[]){
         }
         try {
             const fresh = renderNode(node);
-            if(nodeHasLiveMedia(node)) transplantNodeMediaElement(current, fresh);
-            current.replaceWith(fresh);
+            nodesEl.insertBefore(fresh,current);
+            transplantNodeMediaElement(current, fresh);
+            current.remove();
         } catch(err){
             console.error('[canvas] refreshNode 失败，已跳过该节点：', id, err);
         }
@@ -6046,6 +6016,7 @@ function renderNode(node){
     el.style.width = `${node.w || size.w}px`;
     if(node.h || size.h) el.style.height = `${node.h || size.h}px`;
     el.dataset.id = node.id;
+    el.dataset.canvasId = canvas?.id || '';
     el.onclick = (e) => {
         e.stopPropagation();
         if(isNodeControl(e.target)) return;
@@ -6346,8 +6317,8 @@ function bindOutputWrap(wrap, node){
         };
     }
 }
-function outputDomKeyForItem(item){
-    return `url:${outputUrlValue(item)}`;
+function outputDomKeyForItem(item,index=0){
+    return item?.result_id?`result:${item.result_id}`:`url:${outputUrlValue(item)}:${index}`;
 }
 function outputDomKeyForPending(pending){
     return `pending:${pending?.id || ''}`;
@@ -6363,8 +6334,9 @@ function refreshOutputNodeContent(node){
     if(layout) grid.style.setProperty('--grid-cols', String(Math.max(1, Number(layout.cols || 1))));
     else grid.style.removeProperty('--grid-cols');
     const items = [
-        ...(node.images || []).map(item => ({
-            key:outputDomKeyForItem(item),
+        ...(node.images || []).map((item,index) => ({
+            key:outputDomKeyForItem(item,index),
+            missing:isMissingAssetUrl(outputUrlValue(item)),
             html:renderOutputMedia(item, !!layout)
         })),
         ...(node._pending || []).map(p => ({
@@ -6373,12 +6345,12 @@ function refreshOutputNodeContent(node){
         }))
     ];
     const wanted = new Set(items.map(item => item.key));
-    [...grid.children].forEach(child => {
-        const key = child.dataset.pendingId ? outputDomKeyForPending({id:child.dataset.pendingId}) : `url:${child.dataset.outputUrl || child.dataset.missingUrl || child.querySelector('img,video,audio')?.dataset.url || ''}`;
+    [...grid.children].forEach((child,index) => {
+        const key = child.dataset.pendingId ? outputDomKeyForPending({id:child.dataset.pendingId}) : outputDomKeyForItem({result_id:child.dataset.resultId,url:child.dataset.outputUrl || child.dataset.missingUrl || child.querySelector('img,video,audio')?.dataset.url || ''},index);
         if(!wanted.has(key)) child.remove();
         else child.dataset.outputKey = key;
     });
-    items.forEach(item => {
+    items.forEach((item,index) => {
         let child = [...grid.children].find(el => el.dataset.outputKey === item.key);
         if(!child){
             grid.insertAdjacentHTML('beforeend', item.html);
@@ -6386,7 +6358,7 @@ function refreshOutputNodeContent(node){
             child.dataset.outputKey = item.key;
             child.dataset.outputHtml = item.html;
             bindOutputWrap(child, node);
-        } else if(item.key.startsWith('pending:') && child.dataset.outputHtml !== item.html){
+        } else if((item.key.startsWith('pending:') && child.dataset.outputHtml !== item.html) || Boolean(child.dataset.missingUrl)!==Boolean(item.missing)){
             const tpl = document.createElement('template');
             tpl.innerHTML = item.html.trim();
             const fresh = tpl.content.firstElementChild;
@@ -6398,7 +6370,11 @@ function refreshOutputNodeContent(node){
                 bindOutputWrap(child, node);
             }
         }
-        grid.appendChild(child);
+        const before=grid.children[index] || null;
+        if(before!==child){
+            if(grid.moveBefore && child.isConnected)grid.moveBefore(child,before);
+            else grid.insertBefore(child,before);
+        }
     });
     bindCanvasPreviewImageFallbacks(grid);
     syncCanvasSelectedImageResolution(el);
@@ -8279,7 +8255,7 @@ function renderGeneratorBody(node){
             </div>
         </div>
         <div class="gen-run-row">
-            <button class="gen-btn ${node.running ? 'running' : ''}" ${node.running ? 'disabled' : ''}><i data-lucide="zap" class="w-4 h-4"></i>${node.running ? tr('canvas.generating') : tr('canvas.apiGenerate')}</button>
+            <button class="gen-btn ${node.running ? 'running' : ''}" ${node.running || CanvasRunPreparation.has(node) ? 'disabled' : ''}><i data-lucide="zap" class="w-4 h-4"></i>${CanvasRunPreparation.has(node) ? (langIsEn()?'Preparing…':'准备中…') : node.running ? tr('canvas.generating') : tr('canvas.apiGenerate')}</button>
             ${cascadeBtnHtml(node)}
         </div>
         ${retryBarHtml(node)}
@@ -8670,7 +8646,7 @@ function renderVideoBody(node){
             node[field] = !node[field];
             if(field === 'multimodal' && node.multimodal) node.useFrameRoles = false;
             if(field === 'useFrameRoles' && node.useFrameRoles) node.multimodal = false;
-            render();
+            refreshNodes([node.id]);
             scheduleSave();
         };
     });
@@ -10482,7 +10458,7 @@ function refreshGeneratorInputViews(){
 }
 async function runGenerator(genId, opts={}){
     const gen = nodes.find(n => n.id === genId);
-    if(!gen || (gen.running && !opts.cascade)) return;
+    if(!gen || CanvasRunPreparation.has(gen) || (gen.running && !opts.cascade)) return;
     if(!checkTextSelection(gen,opts))return;
     const cascadeTargetId = cascadeTargetIdFromOptions(opts);
     const sources = orderedSources(gen, generatorSources(gen));
@@ -10492,18 +10468,27 @@ async function runGenerator(genId, opts={}){
     const count = Math.max(1, Math.min(8, Number(gen.count || 1)));
     let out = outputForNode(gen, 460);
     const run = runSnapshot(gen, prompt || 'Edit the reference images.', refs);
-    const payload = {
-        prompt: prompt || 'Edit the reference images.',
-        provider_id:resolveImageProviderId(gen.apiProvider || 'comfly'),
-        model:resolveImageModel(gen.model),
-        size:await generatorSizeForRun(gen, refs),
-        reference_images:refs.slice(0, CANVAS_REFERENCE_IMAGE_MAX),
-        ...(window.CanvasModelPicker?.imageParameters(gen) || {}),
-    };
-    const quality = normalizedImageQuality(gen.quality);
-    if(quality) payload.quality = quality;
+    if(!CanvasRunPreparation.begin(gen))return;
+    const originId=canvas?.id;
+    let payload,source,startedAt;
+    refreshRunNodes(gen,out);
+    try {
+        payload={prompt:prompt || 'Edit the reference images.',
+            provider_id:resolveImageProviderId(gen.apiProvider || 'comfly'),model:resolveImageModel(gen.model),
+            size:await generatorSizeForRun(gen,refs),reference_images:refs.slice(0,CANVAS_REFERENCE_IMAGE_MAX),
+            ...(window.CanvasModelPicker?.imageParameters(gen) || {})};
+        const quality=normalizedImageQuality(gen.quality);if(quality)payload.quality=quality;
+        if(canvas?.id!==originId || !nodes.some(node=>node.id===genId))throw new Error('已离开来源画布或节点，本次未提交生成任务');
+        startedAt=nowMs();
+        source=await taskCanvasSource(gen);
+    }catch(error){
+        if(opts.cascade)throw error;
+        showErrorModal(error.message || tr('canvas.generationFailed'),tr('canvas.apiFailed'));return;
+    }finally{
+        CanvasRunPreparation.end(gen);
+        if(canvas?.id===originId)refreshRunNodes(gen,out);
+    }
     let pendingIds = [];
-    const startedAt = nowMs();
     if(!opts.cascade){
         gen.running = true;
         refreshRunNodes(gen, out);
@@ -10511,7 +10496,7 @@ async function runGenerator(genId, opts={}){
         setTimeout(() => { gen.running = false; refreshRunNodes(gen, out); }, 2000);
     }
     try {
-        const taskInfos = await Promise.all(Array.from({length:count}, () => createCanvasImageTask(payload, {cascadeTargetId,sourceNode:gen})));
+        const taskInfos = await Promise.all(Array.from({length:count}, () => createCanvasImageTask(payload, {cascadeTargetId,sourceNode:gen,confirmedSource:source})));
         if(!out){
             let outputs = [];
             for(const task of taskInfos){
@@ -12417,7 +12402,8 @@ function focusTaskSource(){
     });
 }
 async function createCanvasImageTask(payload, options={}){
-    const source=await taskCanvasSource(options.sourceNode);
+    const source=options.confirmedSource || await taskCanvasSource(options.sourceNode);
+    if(source && (canvas?.id!==source.canvas_id || !nodes.some(node=>node.id===source.node_id)))throw new Error('已离开来源画布或节点，本次未提交生成任务');
     const res = await cascadeFetch('/api/canvas-image-tasks', {
         method:'POST',
         headers:{'Content-Type':'application/json'},
@@ -12684,24 +12670,25 @@ function renderOutputMedia(item, useGridLayout=false){
     const meta = item && typeof item === 'object' ? item : {};
     const kind = mediaKindForOutputItem(item);
     const grid = useGridLayout ? (meta.grid || null) : null;
+    const resultIdentity=meta.result_id?` data-result-id="${escapeAttr(meta.result_id)}"`:'';
     const gridStyle = grid ? ` style="grid-row:${Number(grid.row || 0) + 1};grid-column:${Number(grid.col || 0) + 1};aspect-ratio:${Math.max(1, Number(grid.w || 1))}/${Math.max(1, Number(grid.h || 1))}"` : '';
     const timePill = meta.runMs && !meta.viewed ? `<span class="output-time-pill">${formatRunDuration(meta.runMs)}</span>` : '';
     if(isMissingAssetUrl(url)){
-        return `<div class="output-img-wrap" data-output-url="${safe}" data-missing-url="${safe}"${gridStyle}>${missingAssetHtml(url, true)}${timePill}<button class="output-del" title="${tr('common.delete')}">×</button></div>`;
+        return `<div class="output-img-wrap" data-output-url="${safe}"${resultIdentity} data-missing-url="${safe}"${gridStyle}>${missingAssetHtml(url, true)}${timePill}<button class="output-del" title="${tr('common.delete')}">×</button></div>`;
     }
     if(kind === 'video'){
-        return `<div class="output-img-wrap" data-output-url="${safe}"${gridStyle}>${canvasVideoPreviewHtml(url, useGridLayout ? 512 : 768, 'alt="video output" data-video-fallback-attrs="controls data-output-video-fallback=&quot;1&quot;"')}${timePill}<button class="canvas-video-play output-video-play" type="button" title="播放"><i data-lucide="play"></i></button><div class="output-video-badge"><i data-lucide="play" class="w-3 h-3"></i>VIDEO</div><button class="output-del" title="${tr('common.delete')}">×</button></div>`;
+        return `<div class="output-img-wrap" data-output-url="${safe}"${resultIdentity}${gridStyle}>${canvasVideoPreviewHtml(url, useGridLayout ? 512 : 768, 'alt="video output" data-video-fallback-attrs="controls data-output-video-fallback=&quot;1&quot;"')}${timePill}<button class="canvas-video-play output-video-play" type="button" title="播放"><i data-lucide="play"></i></button><div class="output-video-badge"><i data-lucide="play" class="w-3 h-3"></i>VIDEO</div><button class="output-del" title="${tr('common.delete')}">×</button></div>`;
     }
     if(kind === 'audio'){
-        return `<div class="output-img-wrap output-audio-wrap" data-output-url="${safe}"${gridStyle}><div class="output-audio-card"><i data-lucide="file-audio" class="w-7 h-7"></i><span>${escapeHtml(outputImageName(url))}</span><audio src="${safe}" data-url="${safe}" controls preload="metadata"></audio></div>${timePill}<button class="output-del" title="${tr('common.delete')}">×</button></div>`;
+        return `<div class="output-img-wrap output-audio-wrap" data-output-url="${safe}"${resultIdentity}${gridStyle}><div class="output-audio-card"><i data-lucide="file-audio" class="w-7 h-7"></i><span>${escapeHtml(outputImageName(url))}</span><audio src="${safe}" data-url="${safe}" controls preload="metadata"></audio></div>${timePill}<button class="output-del" title="${tr('common.delete')}">×</button></div>`;
     }
-    if(kind==='text')return `<div class="output-img-wrap output-file-wrap" data-output-url="${safe}"${gridStyle}><div class="output-file-card">${ComfyOutputs.card({...meta,url,kind})}</div>${timePill}<button class="output-del" title="${tr('common.delete')}">×</button></div>`;
+    if(kind==='text')return `<div class="output-img-wrap output-file-wrap" data-output-url="${safe}"${resultIdentity}${gridStyle}><div class="output-file-card">${ComfyOutputs.card({...meta,url,kind})}</div>${timePill}<button class="output-del" title="${tr('common.delete')}">×</button></div>`;
     if(kind === 'file'){
         const icon = kind === 'text' ? 'file-text' : 'file';
         const label = kind === 'text' ? 'TEXT' : 'FILE';
-        return `<div class="output-img-wrap output-file-wrap" data-output-url="${safe}"${gridStyle}><div class="output-file-card"><i data-lucide="${icon}" class="w-7 h-7"></i><span>${escapeHtml(meta.name || outputImageName(url))}</span><small>${label}</small></div>${timePill}<button class="output-del" title="${tr('common.delete')}">×</button></div>`;
+        return `<div class="output-img-wrap output-file-wrap" data-output-url="${safe}"${resultIdentity}${gridStyle}><div class="output-file-card"><i data-lucide="${icon}" class="w-7 h-7"></i><span>${escapeHtml(meta.name || outputImageName(url))}</span><small>${label}</small></div>${timePill}<button class="output-del" title="${tr('common.delete')}">×</button></div>`;
     }
-    return `<div class="output-img-wrap" data-output-url="${safe}"${gridStyle}>${canvasPreviewImgHtml(url, useGridLayout ? 512 : 768, 'alt="generated output"')}${timePill}<button class="output-del" title="${tr('common.delete')}">×</button></div>`;
+    return `<div class="output-img-wrap" data-output-url="${safe}"${resultIdentity}${gridStyle}>${canvasPreviewImgHtml(url, useGridLayout ? 512 : 768, 'alt="generated output"')}${timePill}<button class="output-del" title="${tr('common.delete')}">×</button></div>`;
 }
 function outputGridLayout(node){
     const images = node?.images || [];

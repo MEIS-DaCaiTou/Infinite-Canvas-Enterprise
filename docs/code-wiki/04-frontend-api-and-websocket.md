@@ -173,3 +173,7 @@ static/js/comfy-workflow-session.js 提供共享输入、上传互斥、运行�
 ### 视频任务候选接线（2026-10-16，依赖 #163）
 
 两类画布沿用视频生成交互，共用 `canvas-task-query.js` 的 `runVideo`：一次创建平台视频任务，之后 GET 本地记录，失败/未知提示到现有日志核对。任务中心增加 `API 视频` 筛选，复用已有详情、结果预览与“继续查询原任务”；续查 URL 仅含本地 task ID。刷新后从本人目录找回服务器记录，不自动补造当前画布节点或重新生成。HTML 同步缓存版本；布局、组件和设置页面保持原设计。Browser 证据验证实际画布、固定夹具账号和受控查询，不代表真实付费视频或播放验收。
+
+### 2026-10-21 经典画布性能候选
+
+`codex/issue-canvas-performance-10-4`（Base main `0d0078f`，未合并）新增 `static/js/canvas-media-retention.js`。`CanvasMediaRetention.transplant` 在同画布、同节点内按结果身份/媒体 URL 及重复槽区分播放器；现代浏览器使用原子移动，旧路径保留已有逐元素播放状态恢复，不再使用全局 URL 状态覆盖多个卡片。`CanvasRunPreparation` 用临时 WeakSet 保护尺寸与来源保存阶段，不持久写入任务或画布、不限制受理后的既有并发。经典 `runGenerator` 保存一次来源后传给该批子任务，`createCanvasImageTask` 提交前仍核对当前画布/节点；冲突和失败继续由既有保存/任务契约处理。范围与准确状态见 [CURRENT](../CURRENT_PROJECT_STATUS.md) 和 [Issue #188](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/188)。
