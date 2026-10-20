@@ -53,7 +53,8 @@ def prepare_task_binding(service, record, selection, user_id, provider):
     try:
         snapshot = service.accept_context({'user_id':user_id,'auth_version':actor['auth_version']},
             task_id=record['id'], provider_id=provider['id'], model=record['model'],
-            source_id=selection.get('call_source_id'), project_id=selection.get('business_project_id'))
+            source_id=selection.get('call_source_id'), project_id=selection.get('business_project_id'),
+            expected_attempts=record.get('expected_attempts',1))
         return {'snapshot':snapshot, 'provider':safe_provider}
     except GovernanceError as exc:
         raise HTTPException(exc.status_code, {'code':exc.code}) from None
@@ -173,11 +174,7 @@ def refresh_cost_projection(service, principal, scope, department_id, journal):
     costs = DepartmentCosts(service)
     with service.session(principal) as (conn, actor):
         where, params = costs._filter(conn, actor, scope, department_id)
-        task_ids = [row[0] for row in conn.execute('SELECT c.task_id FROM generation_billing_context c WHERE '+where+
-            " AND (NOT EXISTS (SELECT 1 FROM generation_cost_entries e WHERE e.task_id=c.task_id AND e.kind='charge')"
-            " OR EXISTS (SELECT 1 FROM generation_cost_entries u WHERE u.task_id=c.task_id AND u.kind='unknown'"
-            " AND NOT EXISTS (SELECT 1 FROM generation_cost_entries p WHERE p.task_id=u.task_id"
-            " AND p.attempt_index=u.attempt_index AND p.kind='charge')))", params)]
+        task_ids = [row[0] for row in conn.execute('SELECT c.task_id FROM generation_billing_context c WHERE '+where, params)]
     for task_id in task_ids:
         try:
             record = journal.get(task_id)

@@ -36,6 +36,23 @@ key=service.create_source(admin,provider_id='zhenzhen',name='fixture department 
 service.grant_source(admin,key['id'],'employee',True)
 main.CANVAS_TASK_DISPATCH.paused=lambda:True
 async def scenario():
+    from fastapi import HTTPException
+    invalid={'canvas_id':'unowned-fixture','node_id':'not-saved'}
+    requests=[
+        (main.create_canvas_image_task,main.OnlineImageRequest(prompt='rejected',provider_id='zhenzhen',source=invalid)),
+        (main.create_canvas_video_task,main.CanvasVideoRequest(prompt='rejected',provider_id='zhenzhen',source=invalid)),
+        (main.create_canvas_llm_task,main.CanvasLLMTaskRequest(message='rejected',provider='zhenzhen',source=invalid)),
+    ]
+    for create,rejected in requests:
+        try:
+            await create(rejected,'employee')
+        except HTTPException as exc:
+            assert exc.status_code==403
+        else:
+            raise AssertionError('inaccessible source must be rejected')
+    assert not list(main.CANVAS_TASK_JOURNAL.root.glob('*.json'))
+    assert DepartmentCosts(service).summary(employee)['pending_reconciliation']==0
+    assert not trace.exists()
     payload=main.OnlineImageRequest(prompt='fixture private prompt',provider_id='zhenzhen',model='nano-banana-2')
     task=await main.create_canvas_image_task(payload,'employee')
     id_path.write_text(task['task_id'])

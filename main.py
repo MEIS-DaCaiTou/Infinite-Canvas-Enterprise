@@ -2508,6 +2508,9 @@ CANVAS_COMFY_ACCEPT_LOCK = asyncio.Lock()
 
 
 def prepare_canvas_call_binding(task_id, payload, owner):
+    from enterprise.task_canvas_context import accepted_source
+    # Reject unsaved/inaccessible provenance before making any billing entry.
+    accepted_source(getattr(payload, 'source', None), owner, CANVAS_TASK_JOURNAL.root.parent / 'canvases')
     provider_id = getattr(payload, 'provider_id', None) or getattr(payload, 'provider', 'comfly')
     provider = get_api_provider(provider_id)
     if isinstance(payload, CanvasLLMRequest):
@@ -2517,7 +2520,9 @@ def prepare_canvas_call_binding(task_id, payload, owner):
     else:
         fallback = (provider.get('image_models') or [IMAGE_MODEL])[0]
     binding = prepare_task_binding(DepartmentGovernance(),
-        {'id':task_id, 'model':payload.model or fallback}, payload.model_dump(), owner, provider)
+        {'id':task_id, 'model':payload.model or fallback,
+         'expected_attempts':max(1,min(8,int(payload.n or 1))) if isinstance(payload,OnlineImageRequest) else 1},
+        payload.model_dump(), owner, provider)
     if binding:
         payload.call_source_id = binding['snapshot']['source_id']
         payload.model = binding['snapshot']['model']

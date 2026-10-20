@@ -32,10 +32,11 @@ def bound(business,monkeypatch,tmp_path):
     company=source(service,p)
     department=source(service,p,design,name='design')
     journal=CanvasTaskJournal(tmp_path/'canvas-tasks')
-    def create(task_id='bound-task',source_id=None):
+    def create(task_id='bound-task',source_id=None,attempts=1):
         record={'id':task_id,'type':'online-image','enterprise_user_id':'employee','provider_id':'comfly',
                 'model':'gpt-image-2','status':'queued','created_at':time.time(),
-                'provider_receipts':[{'index':0,'state':'started'}]}
+                'expected_attempts':attempts,
+                'provider_receipts':[{'index':index,'state':'started'} for index in range(attempts)]}
         record['billing_context']=binding.prepare_task_binding(service,record,{'call_source_id':source_id},'employee',PROVIDER)
         journal.create(record)
         return journal.get(task_id)
@@ -170,3 +171,21 @@ def test_legacy_direct_generation_cannot_bypass_managed_sources(bound,monkeypatc
         binding.require_bound_generation(PROVIDER)
     with binding.credential_scope(create(),service=service):
         binding.require_bound_generation(PROVIDER)
+
+
+def test_partial_batch_projection_does_not_hide_missing_attempt_costs(bound,monkeypatch):
+    service,p,design,ops,journal,company,department,create=bound
+    record=create(attempts=2)
+    costs=DepartmentCosts(service)
+    assert journal.mark_running(record['id'])
+    monkeypatch.setattr(binding,'project_record_costs',lambda _:None)
+    for index in range(2):
+        journal.record_provider_request(record['id'],index,{'state':'generated',
+            'reported_usage':{'reported_cost':'0.5','currency':'USD'}})
+    costs.record_fact(record['id'],0,'supplier-charge',kind='charge',amount='0.5',unit='USD')
+    partial=costs.summary(p['employee'])
+    assert partial['groups'][0]['actual']=='0.5' and partial['pending_reconciliation']==1
+    binding.refresh_cost_projection(service,p['employee'],'me',None,journal)
+    complete=costs.summary(p['employee'])
+    assert complete['groups'][0]['actual']=='1.0' and complete['pending_reconciliation']==0
+    assert len(costs.entries(p['employee'])['entries'])==2

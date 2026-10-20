@@ -133,10 +133,10 @@ class DepartmentCosts:
             groups = {}
             # A missing projection is unknown, not zero expenditure. Keep it
             # visible even if a process stopped after saving its task receipt.
-            unprojected = conn.execute('SELECT c.task_id FROM generation_billing_context c WHERE ' + where +
-                ' AND c.created_at>=? AND c.created_at<? AND NOT EXISTS '
-                '(SELECT 1 FROM generation_cost_entries e WHERE e.task_id=c.task_id)', (*params, starts_at, ends_at))
-            pending = {(row[0],0) for row in unprojected}
+            contexts = conn.execute('SELECT c.task_id,c.snapshot_json FROM generation_billing_context c WHERE ' + where +
+                ' AND c.created_at>=? AND c.created_at<?', (*params, starts_at, ends_at))
+            pending = {(row[0],index) for row in contexts
+                       for index in range(json.loads(row[1]).get('expected_attempts',1))}
             resolved = set()
             for row in rows:
                 context = json.loads(row['snapshot_json'])
