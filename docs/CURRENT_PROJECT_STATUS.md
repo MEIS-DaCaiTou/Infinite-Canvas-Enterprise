@@ -4,17 +4,17 @@
 
 ## 当前结论（2026-10-20）
 
-正式版本仍为 [v2026.10.3](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.10.3)，main `e0dfa843d4bec3ff9c05a6f2ee25337a3687fc3e`，发行源码 `d8ffe55b48fdb9944aa1dac71f21e772ec06d3eb`；准确发行/主线CI与现场边界见 [发行记录](./ops/RELEASE-2026.10.3-RECORD.md)。本轮只做开发机候选集成，不修改正式资产、main或测试主机原库。
+正式版本仍为 [v2026.10.3](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.10.3)，发行源码 `d8ffe55b48fdb9944aa1dac71f21e772ec06d3eb`，公开资产未替换。负责人批准后，组合 [#182](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/182) 已按准确 Head `7370af1ee3518cd118cd18f91d686ca5e66dc8c5` 合入 main `5582c9f3094e052bee889835cae1aca065210992`。该 main 自身 Enterprise/Runtime [39351798091](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/39351798091)、文档 [39351798247](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/39351798247)、Native [39351798243](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/39351798243) 最终 SUCCESS；与 PR CI 分开，固定 EXE opt-in 的跳过不是验收。原 #180/#181 仍为历史 Draft，组合代码已在 main，不再次合并这些分支。
 
-业务处于唯一路线图4.2。集成分支 `codex/candidate-integration-20261020` 从已核验main的后代汇集准确候选：#177 `3ce811b3bb19d8e938be7dec977c488f8726f1d3` 的队列持久执行/重启恢复；#178→#181 `4f100cc4a15655bac59ef33aa81e9a39720d71da` 的维护预检/受控空WAL处理；#179→#180 `0350053846a4ab745bb9ca05abd1f5c8ff5cba56` 的视频协议路由/JSON编辑与图层输出。所有原PR保持Draft、未合并，原分支与其他工作区保持。独立Review和各自CI沿用原PR的准确范围；组合后的代码另做集成验证，不以原CI替代组合验收。
+当前仍属唯一路线图4.2。主线已包含排队任务持久执行/启动恢复、受控空 WAL/SHM 准备、Grok imagine/MiniMax-H3/Wan3 路由，以及图片 JSON 编辑/图层结果的协议增量。其组合源码与有效业务/原生恢复证据见 [C6记录](./ops/OFFLINE-RETAINED-UPGRADE-2026-10-12.md#2026-10-20-组合候选的完整冻结副本验收)，不等于所有模型和客户升级均已通过。
 
-入口修复已有现场成功反馈；原10.2安装快照的空WAL/SHM在隔离副本中可由候选安全处理，尚无现场完整离线升级通过反馈。同一组合源码 `b0fcb067aaf6deff3ff372a7a10ba911d6947780` 已构建完整候选，以正式10.2和合成业务安装副本验证：空日志正常升级到AWAITING_REGISTRATION、SQLite互斥持有中退出后的显式恢复、目标健康失败恢复正式10.2均通过；业务文件/安装身份保留、端口关闭、原本机目录完整恢复。新条件下Setup GUI/Windows登记仍NOT_VERIFIED，不把原生事务通过当现场完整安装验收。受控预处理不扩展到非空WAL/journal或未知恢复，见 [C6记录](./ops/OFFLINE-RETAINED-UPGRADE-2026-10-12.md#2026-10-20-组合候选的完整冻结副本验收)。
+负责人批准简化安装器后，独立 `codex/installer-simple-flow-20261020` 从该 main 开展，包含内部 VERSION=2026.10.4。向导用一个位置页替代原“位置模式+自选位置”，后台核验已有安装；常用入口只有升级/同版修复、启动修复和高级维护。环境说明页及附加任务页取消；首次安装保留创建管理员，维护停机确认与快捷方式选项合并到最终确认页。十三项恢复/卸载/清理能力只在主动进入高级维护时显示。安装身份、数据库、Runtime、升级恢复及权限规则继续由原后端执行。
 
-业务组合定向127项通过，新增三进程排队视频测试确认选定协议只提交一次、查询原ID、完成后重开零供应商请求；写点审计7项和文档契约17项通过。独立Review对组合源码/新测试结论NO_ACTIONABLE_BUGS_FOUND；演练驱动的目录类型边界修正并定向复审通过，不是GitHub Approval。原候选Browser/真实Provider证据按其范围沿用；组合准确Head CI以新Draft PR记录为准，不冒充main CI。35个其他工作区原状态保持。
+准确构建源码 `2859a2aefbac5d30829eb7f7aa73c82ee1eb2583`，内部目标 `ice-2026.10.4-2859a2aefbac`；ZIP、固定EXE、Setup及维护资产同源构建成功，既有工具链/Runtime/依赖保持。此前8ab5b90的未发布内部候选已被本次界面改动取代，不用于正式交付。定向单元94 passed/14 Windows opt-in skipped，真实窗口与副本升级/恢复结果及失败尝试按 [本轮C6记录](./ops/OFFLINE-RETAINED-UPGRADE-2026-10-12.md#2026-10-20-安装向导简化候选) 区分；准确 Head CI 记录在新 Draft PR。未新建 Release、更新目录或操作测试主机原库。
 
-Grok imagine、MiniMax-H3、Wan3各一次真实提交/原任务续查已在视频候选归档；图片真实文生图成功，双参考JSON编辑上游500且无受理ID，保留待核对、未自动重提，不能称已验收。此前累计用量差额6.710022/原总预算10平台额度，未知调用保留余量；本轮初始新增付费调用0。模型能力、模拟/Browser与真实边界见 [产品记录](./ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md)。
+真实模型边界：此前 Grok imagine、MiniMax-H3、Wan3 各一次提交/原任务续查已成功；图片文生图成功，双参考 JSON 编辑 HTTP500 无受理ID，仍为 PROVIDER_SUBMISSION_UNKNOWN。只读用量核对累计6.710022/原总预算10，消费日志仅找到已成功文生图记录，未找到编辑明确终态；未扣费/无日志不能证明未受理。当前官方编辑文档仍含“未开放”分类及示例不一致，不能证明账号通道或多图协议已可用。没有自动重提，本轮新增付费生成0；图层收费上界未明，未作真实付费拆层，详见 [产品记录](./ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md)。
 
-下一完整工作包是修复版本交付与模型可用性收口：获准合并后固定补丁身份/准确源码，完成Setup登记和更新中心来源副本验收；JSON编辑500先核对上游通道与未知请求，不自动重提；正式资产和现场复测分别批准。4.3部门/项目和费用治理依赖不变；RunningHub #170、Linux/云/多实例继续暂缓。合并、正式补丁与客户升级分别等待负责人授权。
+下一完整包是修复版本交付：先收口简化候选的审查/CI与准确资产、升级路由和复测步骤，获准后合并并发布补丁；现场复测另行授权。模型 JSON 编辑先澄清原未知请求及可用通道，再在原预算内安排有界真实复测，不承诺全目录统一兼容。4.3部门/项目与费用治理、RunningHub #170、Linux/云/多实例尚未启动。
 
 ## 工作包历史快照
 

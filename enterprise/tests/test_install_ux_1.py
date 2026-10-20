@@ -457,7 +457,9 @@ def test_installer_source_is_single_user_gui_and_keeps_credentials_off_process_s
     assert "ExistingEntryRepair" in source
     assert "InstallationId" in source
     request_body = source[source.index("function RequestJson:") : source.index("function WaitForPipeServer")]
-    assert "and not ExistingEntryRepair and not MultipleInstalls" in request_body
+    assert "Mode := 'custom'" in request_body
+    assert "JsonEscape(SelectedInstallRoot)" in request_body
+    assert "Mode := 'quick'" not in request_body
     assert "RegGetSubkeyNames(HKCU" in source
 
 
@@ -466,8 +468,24 @@ def test_setup_summary_distinguishes_entry_repair_from_new_install_before_confir
     source = (root / "installer/windows/InfiniteCanvasEnterprise.iss").read_text(encoding="utf-8")
     assert "TargetPage.Add('安装根目录：')" in source
     page = source[source.index("procedure CurPageChanged(") : source.index("function UpdateReadyMemo(")]
-    assert "CurPageID = EnvironmentPage.ID" in page
-    assert "ValidateTarget(SelectedInstallRoot, Code) then ShowMaintenanceScope" in page
+    assert "CurPageID = wpReady" in page
+    assert "StopConfirmation.Checked := False" in page
+    next_page = source[source.index("function NextButtonClick("):source.index("function HasReparseAncestors(")]
+    assert "Result := ValidateTarget(SelectedInstallRoot, Code)" in next_page
+    assert next_page.index("ValidateTarget(SelectedInstallRoot, Code)") < next_page.index("RecommendMaintenance;")
+    skip = source[source.index("function ShouldSkipPage("):source.index("procedure CurPageChanged(")]
+    assert "ActionPage.SelectedValueIndex <> 2" in skip and "PageID = wpSelectTasks" in skip
+    recommend = source[source.index("procedure RecommendMaintenance;"):source.index("function RequiresStoppedService:")]
+    assert "InspectingEntry := True" in recommend and "Verified := RunBridge" in recommend
+    assert "EntryState = 'REGISTRATION_REQUIRED'" in recommend
+    assert "MatchingLifecycleRelease" in recommend
+    assert "ModePage" not in source and "EnvironmentPage" not in source
+    assert "TaskConfirmationPage" not in source
+    # Visible common paths must preflight upgrades just like the advanced path.
+    assert "(ActionPage.SelectedValueIndex = 0) and (MaintenanceOperation = 'upgrade-retained')" in next_page
+    assert "Result := InspectSelectedMaintenance(False)" in next_page
+    prepare = source[source.index("function PrepareToInstall("):source.index("procedure CurStepChanged(")]
+    assert prepare.index("RequiresStoppedService and not StopConfirmation.Checked") < prepare.index("PrepareBundle;")
     memo = source[source.index("function UpdateReadyMemo(") : source.index("function NextButtonClick(")]
     assert "只修复固定入口（不是业务升级）" in memo
     assert "首次安装" in memo and "SelectedInstallRoot" in memo
