@@ -1,8 +1,8 @@
 {
   "schema_version": "enterprise-documents-v1",
   "reviewed_at": "2026-10-20",
-  "audit_base_commit": "e0dfa843d4bec3ff9c05a6f2ee25337a3687fc3e",
-  "scope": "Owner-authorized candidate integration of #177, #178->#181 and #179->#180 on verified main e0dfa84. Reuse existing status, roadmap, C6 and product/task records; review only conflicts and integration changes. Preserve original PRs and historical evidence; no new documents, schema, dependencies, merge, Release or customer-device operation. Complete owned frozen-copy and scoped business compatibility evidence are recorded separately from prior single-PR CI.",
+  "audit_base_commit": "5582c9f3094e052bee889835cae1aca065210992",
+  "scope": "Owner-authorized installer simplification and internal 2026.10.4 candidate from merged #182. Reuse current status, roadmap and C6 record; preserve backend identity, quiescence, database and recovery contracts. No formal Release or customer-device operation.",
   "documents": [
     {
       "path": ".github/PULL_REQUEST_TEMPLATE.md",
