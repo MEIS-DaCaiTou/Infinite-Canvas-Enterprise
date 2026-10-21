@@ -179,12 +179,17 @@ def test_original_routes_enforce_project_write_after_demotion(business,tmp_path,
     monkeypatch.setattr(db,'can_use_feature',lambda *args,**kwargs:True)
     for route,body in [('api/canvases',{'project':'down'}),
                        ('api/canvases/personal/meta',{'project':'down'}),
-                       ('api/canvases/video/meta',{'project':'old-root'})]:
+                       ('api/canvases/video/meta',{'project':'old-root'}),
+                       ('api/canvases/video/meta',{'project':'default'}),
+                       ('api/canvases/video/meta',{'project':''}),
+                       ('api/canvases/video/meta',{'project':' \t '})]:
         denial=interceptors._pre_process_sync(route,'POST',p['employee'],body=json.dumps(body).encode())
         assert denial.status_code==403
     # Editing the original canvas without changing its folder remains an owner operation.
     assert interceptors._pre_process_sync('api/canvases/video/meta','POST',p['employee'],
         body=json.dumps({'project':'style-a','title':'本人仍可编辑'}).encode()) is None
+    assert interceptors._pre_process_sync('api/canvases/video/meta','POST',p['employee'],
+        body=json.dumps({'project':None,'title':'保持原目录'}).encode()) is None
     # Original create always assigns the current user, so reject an admin's mismatching target.
     admin={**p['admin'],'is_admin':True}
     denial=interceptors._pre_process_sync('api/canvases','POST',admin,body=b'{"project":"down"}')
