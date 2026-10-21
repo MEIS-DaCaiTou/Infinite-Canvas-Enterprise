@@ -5,6 +5,7 @@ Joining a department project exposes directory metadata only. Full shared
 canvas/result preview remains a separate, explicit content-authority path.
 """
 import json
+from contextlib import closing
 from pathlib import Path
 
 from enterprise.config import PATH_ROOTS
@@ -35,6 +36,30 @@ class CanvasWorkspace:
         with self.governance.session(principal) as (conn, actor):
             ready = conn.execute("SELECT 1 FROM sqlite_master WHERE name='canvas_workspace_projects'").fetchone()
         return {**context, 'enabled':bool(ready), 'reason':'' if ready else 'CANVAS_WORKSPACE_UPGRADE_REQUIRED'}
+
+    def check_canvas_target(self, principal, target_id, source_id=None, creating=False):
+        """Apply project membership to new directory associations in old routes.
+
+        Unchanged folder metadata/content edits retain original ownership rules.
+        Old schemas do not activate this feature or change their contract.
+        """
+        with closing(self.governance.connect()) as conn:
+            ready = conn.execute("SELECT 1 FROM sqlite_master WHERE name='canvas_workspace_projects'").fetchone()
+        if not ready or (not creating and target_id == source_id):
+            return
+        with self.governance.session(principal) as (conn, actor):
+            folders = self._folders(conn)
+            target = folders.get(target_id)
+            if creating and target:
+                _require(target['owner_id'] == actor['id'], 'WORKSPACE_CREATE_IN_OWN_FOLDER')
+            for folder_id in {target_id, source_id} - {None, '', 'default'}:
+                folder = folders.get(folder_id)
+                if not folder:
+                    continue  # Existing route checks still govern ordinary ownership/existence.
+                business_id, _ = self._effective(folders, folder_id)
+                if business_id:
+                    project = conn.execute('SELECT * FROM business_projects WHERE id=?', (business_id,)).fetchone()
+                    _require(self.governance._project_access(conn, actor, project, write=True))
 
     def _folders(self, conn):
         raw = _json(self.root / 'projects.json', {})

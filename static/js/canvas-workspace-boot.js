@@ -13,6 +13,9 @@
     if (!legacy) window.CanvasWorkspaceContext = context;
     const script = document.createElement('script');
     script.src = legacy ? '/static/js/canvas-list.js?v=2026.07.5.1783077284' : '/static/js/canvas-workspace.js?v=20261022.1';
+    if (legacy && new URLSearchParams(location.search).get('trash') === '1') {
+        script.onload = () => window.openTrashView?.();
+    }
     document.body.append(script);
     if (legacy && context?.enabled) {
         const back = document.createElement('a');

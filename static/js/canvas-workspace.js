@@ -20,7 +20,7 @@
       <select id="cwDepartment" class="cw-department" aria-label="选择部门">${options(context.departments.map(d=>[d.id,d.name]))}</select>
       <div class="cw-side-head"><span>项目与文件夹</span><button class="cw-btn" id="cwNewProject" title="新建部门项目">＋</button></div>
       <nav id="cwTree" class="cw-tree" aria-label="项目目录"></nav>
-      <div class="cw-side-footer"><a class="cw-btn" href="/enterprise/business">${context.company_admin||context.departments.some(d=>d.can_manage)?'成员、来源与费用':'任务与费用'}</a></div></aside>
+      <div class="cw-side-footer"><a class="cw-btn" href="/enterprise/business">${context.company_admin||context.departments.some(d=>d.can_manage)?'成员、来源与费用':'任务与费用'}</a><a class="cw-btn" href="?layout=board&trash=1">回收站</a></div></aside>
       <main class="cw-main"><header class="cw-toolbar"><nav id="cwBreadcrumb" class="cw-breadcrumb" aria-label="当前位置"></nav>
       <div class="cw-controls"><input id="cwSearch" class="cw-search" type="search" placeholder="搜索画布或文件夹" aria-label="搜索画布或文件夹">
       <button class="cw-btn" id="cwRefresh" title="刷新">刷新</button><button class="cw-btn" id="cwNewFolder">新建文件夹</button><button class="cw-btn primary" id="cwNewCanvas">新建画布</button></div></header>
@@ -43,7 +43,7 @@
     const businessId=()=>folder.startsWith('business:')?folder.slice(9):activeFolder()?.business_project_id||null;
     const projectName=id=>data.projects.find(p=>p.id===id)?.name||'个人目录';
     const date=value=>value?new Date(Number(value)).toLocaleDateString('zh-CN'):'';
-    function canCreate(){if(scope==='me'&&!folder)return true;const current=activeFolder();if(current)return !current.archived&&(current.id.startsWith('default:')?current.owner_id===context.user_id:current.can_manage);const id=businessId();return !!id&&data.projects.some(p=>p.id===id&&p.can_write);}
+    function canCreate(){if(scope==='me'&&!folder)return true;const current=activeFolder();if(current)return !current.archived&&current.owner_id===context.user_id&&(current.id.startsWith('default:')||current.can_manage);const id=businessId();return !!id&&data.projects.some(p=>p.id===id&&p.can_write&&p.department_id===context.department_id);}
     function remember(){save();document.querySelectorAll('[data-scope]').forEach(b=>{b.setAttribute('aria-pressed',String(b.dataset.scope===scope));if(b.dataset.scope==='department')b.disabled=!context.departments.length;});$('cwDepartment').hidden=scope!=='department';$('cwNewProject').hidden=scope!=='department'||!department;$('cwBoard').hidden=scope!=='me';}
     async function load(){
         const token=++epoch;status('正在读取目录…');remember();
@@ -83,13 +83,14 @@
     function render(){
         renderTree();crumbs();$('cwGrid').setAttribute('aria-pressed',String(view==='grid'));$('cwList').setAttribute('aria-pressed',String(view==='list'));
         $('cwNewCanvas').disabled=!canCreate();$('cwNewFolder').disabled=!canCreate()||!!activeFolder()?.id.startsWith('default:');
+        $('cwNewCanvas').title=$('cwNewFolder').title=canCreate()?'':'请在本人可写目录或本人所属部门的项目中创建';
         $('cwBoard').href='?layout=board'+(activeFolder()&&!activeFolder().id.startsWith('default:')?'&project='+encodeURIComponent(folder):'');
-        const bp=businessId();let items=data.canvases.filter(c=>(!folder||(folder.startsWith('business:')?c.business_project_id===bp:c.folder_id===folder))&&
+        const bp=businessId();let items=data.canvases.filter(c=>(!folder||query||(folder.startsWith('business:')?c.business_project_id===bp:c.folder_id===folder))&&
             (archived==='all'||(archived==='archived'?c.archived:!c.archived))&&(!query||[c.title,c.owner_name,projectName(c.business_project_id)].some(v=>v.toLowerCase().includes(query))));
         items.sort($('cwSort').value==='name'?(a,b)=>a.title.localeCompare(b.title,'zh'):(a,b)=>Number(b.updated_at)-Number(a.updated_at));
         $('cwCount').textContent=items.length+' 张画布'+(selected.size?' · 已选 '+selected.size:'');
         $('cwMove').hidden=!selected.size;$('cwArchiveSelected').hidden=!selected.size;$('cwArchiveSelected').textContent=archived==='archived'?'恢复所选':'归档所选';
-        const children=data.folders.filter(f=>(folder.startsWith('business:')?!f.parent_id&&f.business_project_id===bp:f.parent_id===folder)&&
+        const children=data.folders.filter(f=>(query?true:!folder?!f.parent_id:folder.startsWith('business:')?!f.parent_id&&f.business_project_id===bp:f.parent_id===folder)&&
             (archived==='all'||(archived==='archived'?f.archived:!f.archived))&&(!query||f.name.toLowerCase().includes(query)));
         $('cwFolders').innerHTML=children.map(f=>`<button class="cw-folder-card" data-folder="${esc(f.id)}"><i data-lucide="folder" class="cw-icon"></i> ${esc(f.name)}</button>`).join('');
         if(!items.length){$('cwItems').innerHTML=`<div class="cw-empty"><h2>${query?'没有匹配的画布':archived==='archived'?'暂无归档画布':'这里还没有画布'}</h2><p>${scope==='me'?'选择文件夹，或直接新建画布开始创作。':'只显示获授权项目中明确关联的画布目录。'}</p></div>`;icons();return;}

@@ -162,6 +162,35 @@ def test_http_rejects_forged_owner_and_old_schema_stays_inactive(business,tmp_pa
         assert response.status_code==400
 
 
+def test_original_routes_enforce_project_write_after_demotion(business,tmp_path,monkeypatch):
+    from types import SimpleNamespace
+    from enterprise import db, interceptors, canvas_workspace
+    service,p,design,_,path=business;migrate_workspace(path,tmp_path)
+    root=tmp_path/'data';workspace,_=seed_workspace(service,p,design,root)
+    managed=service.create_project(p['design'],design,'负责人项目')['id']
+    service.grant_project(p['design'],managed,'employee',True)
+    workspace.update_folder(p['employee'],'down',business_project_id=managed)
+    service.grant_project(p['design'],managed,'employee',False)
+    def connect():
+        connection=service.connect();connection.row_factory=sqlite3.Row;return connection
+    monkeypatch.setattr(db,'get_db',connect)
+    monkeypatch.setattr(db,'CANVAS_DATA_DIR',str(root/'canvases'))
+    monkeypatch.setattr(canvas_workspace,'PATH_ROOTS',SimpleNamespace(DATA_ROOT=root))
+    monkeypatch.setattr(db,'can_use_feature',lambda *args,**kwargs:True)
+    for route,body in [('api/canvases',{'project':'down'}),
+                       ('api/canvases/personal/meta',{'project':'down'}),
+                       ('api/canvases/video/meta',{'project':'old-root'})]:
+        denial=interceptors._pre_process_sync(route,'POST',p['employee'],body=json.dumps(body).encode())
+        assert denial.status_code==403
+    # Editing the original canvas without changing its folder remains an owner operation.
+    assert interceptors._pre_process_sync('api/canvases/video/meta','POST',p['employee'],
+        body=json.dumps({'project':'style-a','title':'本人仍可编辑'}).encode()) is None
+    # Original create always assigns the current user, so reject an admin's mismatching target.
+    admin={**p['admin'],'is_admin':True}
+    denial=interceptors._pre_process_sync('api/canvases','POST',admin,body=b'{"project":"down"}')
+    assert denial.status_code==403 and b'WORKSPACE_CREATE_IN_OWN_FOLDER' in denial.body
+
+
 def test_metadata_move_reads_latest_canvas_inside_existing_lock(tmp_path):
     import ast
     import asyncio
