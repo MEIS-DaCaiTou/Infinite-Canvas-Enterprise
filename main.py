@@ -14419,27 +14419,27 @@ async def get_canvas_meta(canvas_id: str):
 async def update_canvas_meta(canvas_id: str, payload: CanvasMetaUpdate):
     """更新画布的轻量元数据（标题/图标/负责人/颜色/置顶）。
     刻意不走 save_canvas（它会刷新 updated_at），以免打标签/置顶把画布顶到列表最前。"""
-    canvas = load_canvas(canvas_id)
-    if payload.title is not None:
-        canvas["title"] = (payload.title or canvas.get("title") or "未命名画布")[:80]
-    if payload.icon is not None:
-        canvas["icon"] = (payload.icon or "layers")[:32]
-    if payload.owner is not None:
-        canvas["owner"] = str(payload.owner).strip()[:40]
-    if payload.color is not None:
-        canvas["color"] = normalize_canvas_color(payload.color)
-    if payload.pinned is not None:
-        canvas["pinned"] = bool(payload.pinned)
-    if payload.project is not None:
-        canvas["project"] = str(payload.project).strip() or DEFAULT_PROJECT_ID
-    if payload.board_x is not None:
-        canvas["board_x"] = float(payload.board_x)
-    if payload.board_y is not None:
-        canvas["board_y"] = float(payload.board_y)
     with CANVAS_LOCK:
+        canvas = load_canvas(canvas_id)
+        if payload.title is not None:
+            canvas["title"] = (payload.title or canvas.get("title") or "未命名画布")[:80]
+        if payload.icon is not None:
+            canvas["icon"] = (payload.icon or "layers")[:32]
+        if payload.owner is not None:
+            canvas["owner"] = str(payload.owner).strip()[:40]
+        if payload.color is not None:
+            canvas["color"] = normalize_canvas_color(payload.color)
+        if payload.pinned is not None:
+            canvas["pinned"] = bool(payload.pinned)
+        if payload.project is not None:
+            canvas["project"] = str(payload.project).strip() or DEFAULT_PROJECT_ID
+        if payload.board_x is not None:
+            canvas["board_x"] = float(payload.board_x)
+        if payload.board_y is not None:
+            canvas["board_y"] = float(payload.board_y)
         with open(canvas_path(canvas["id"]), 'w', encoding='utf-8') as f:
             json.dump(canvas, f, ensure_ascii=False, indent=2)
-    return {"canvas": canvas_record(canvas)}
+        return {"canvas": canvas_record(canvas)}
 
 @app.get("/api/canvases/{canvas_id}")
 async def get_canvas(canvas_id: str):

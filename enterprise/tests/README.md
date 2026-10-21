@@ -1,5 +1,8 @@
 # Enterprise Test Scripts
 
+
+2026-10-22 画布首页目录候选：`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 py -3.11 -B -m pytest enterprise/tests/test_canvas_workspace.py -q` 验证原 SQLite/父级/所有权、部门与企业范围、成员过滤、归档、v2/v3→候选v4及备份恢复、Update Center预置计划和元数据并发保存；默认 registry 仍不激活。Browser 受控真实 main/所有权策略验证存放产品 artifacts/t/D23，未运行真实付费或客户升级。旧个人入口与业务策略回归复用 `test_business_workspace.py`、`test_department_governance.py`，不为目录 UI 重建完整测试作业。
+
 Reviewed: 2026-10-20
 
 Queued task dispatch: `py -3.11 -B -m pytest -q enterprise/tests/test_canvas_task_dispatch.py enterprise/tests/test_canvas_task_dispatch_policy.py enterprise/tests/test_canvas_task_dispatch_main.py enterprise/tests/test_canvas_video_tasks_main.py` uses isolated v1 receipts/SQLite and controlled generators in actual main subprocesses. It checks all four never-started requests survive a hard restart and run once, claimed work never replays, current permissions/configuration/maintenance are rechecked, sensitive Comfy fields are not saved, and pending inputs are cleaned safely. No real paid Provider, GPU or Browser; normal submission concurrency and existing accepted-task query recovery remain unchanged. Scope/review/rollback stay in the [existing task record](../../docs/ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md#2026-10-19-未开始任务持久执行与重启恢复候选). This candidate is outside the frozen 10.3 release.

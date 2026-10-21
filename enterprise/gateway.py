@@ -1387,7 +1387,7 @@ def _build_user_bar(user: dict) -> str:
         'backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);">'
         f'<span style="font-weight:600;max-width:120px;overflow:hidden;'
         f'text-overflow:ellipsis;white-space:nowrap;" title="{display}">{display}</span>'
-        '<a href="/enterprise/business" style="padding:4px 10px;border-radius:8px;'
+        '<a href="/static/canvas-list.html?scope=department" style="padding:4px 10px;border-radius:8px;'
         'border:1px solid var(--line,#e8ecf2);color:var(--muted,#64748b);'
         'text-decoration:none;font-size:12px;font-weight:600;white-space:nowrap;">部门项目</a>'
         f'{admin_btn}'

@@ -1,6 +1,6 @@
 {
   "schema_version": "enterprise-documents-v1",
-  "reviewed_at": "2026-10-20",
+  "reviewed_at": "2026-10-22",
   "audit_base_commit": "5582c9f3094e052bee889835cae1aca065210992",
   "scope": "Owner-authorized installer simplification and internal 2026.10.4 candidate from merged #182. Reuse current status, roadmap and C6 record; preserve backend identity, quiescence, database and recovery contracts. No formal Release or customer-device operation.",
   "documents": [
@@ -158,7 +158,7 @@
       "path": "docs/CURRENT_PROJECT_STATUS.md",
       "kind": "authority",
       "authority": "status",
-      "reviewed_at": "2026-10-20"
+      "reviewed_at": "2026-10-22"
     },
     {
       "path": "docs/data/DATA-MVP-1-INDEPENDENT-REVIEW-2026-09.md",
