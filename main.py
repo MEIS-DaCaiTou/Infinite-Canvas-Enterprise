@@ -2658,7 +2658,8 @@ class ApiProviderPayload(BaseModel):
     clear_volcengine_access_key_id: bool = False
     clear_volcengine_secret_access_key: bool = False
 
-class ChatRequest(BaseModel):
+class ChatRequest(CallSourceSelection):
+    image_call_source_id: Optional[str] = Field(default=None, max_length=200)
     conversation_id: str = ""
     message: str = Field(min_length=1, max_length=LLM_MESSAGE_MAX_LENGTH)
     system_prompt: str = ""
@@ -10461,7 +10462,38 @@ def parse_agent_decision(raw_text, message, refs, has_previous_image):
         action = "generate_image" if any(key.lower() in str(message).lower() for key in AGENT_IMAGE_KEYWORDS) else "chat"
     return {"action": action, "prompt": prompt, "reply": reply}
 
-async def decide_chat_agent_action(payload, conversation, refs):
+async def legacy_chat_completion(payload, body, owner):
+    provider=get_api_provider(payload.provider) if payload.provider!='modelscope' else {'id':'modelscope'}
+    async def submit():
+        base,hdrs,model=resolve_chat_provider(payload.provider,payload.model,payload.ms_model)
+        await llm_submitting(model)
+        async with httpx.AsyncClient(timeout=AI_REQUEST_TIMEOUT) as client:
+            response=await client.post(f"{base}/chat/completions",headers=hdrs,json={**body,'model':model})
+            await llm_response(response.status_code)
+            response.raise_for_status()
+            raw=response.json()
+        if credential_bound():
+            raw=json.loads(task_error(json.dumps(raw,ensure_ascii=False)))
+        data=unwrap_apimart_response(raw) if isinstance(raw,dict) else raw
+        from enterprise.providers.submission import reported_usage
+        return {'text':text_from_chat_response(raw),'raw_usage':data.get('usage') if isinstance(data,dict) else None,
+                'reported_usage':reported_usage(raw),'raw':raw}
+    result=await LEGACY_TEXT_CALLS.call(payload,owner,provider,body['model'],submit)
+    return result['raw']
+
+async def legacy_chat_image(payload, owner, prompt, size, model, refs, provider_id):
+    selection={'call_source_id':(payload.image_call_source_id or (payload.call_source_id if payload.provider==provider_id else None)) if payload.mode=='agent' else payload.call_source_id,
+               'business_project_id':payload.business_project_id}
+    request=OnlineImageRequest(prompt=prompt,size=size,quality=payload.quality,model=model,
+        provider_id=provider_id,reference_images=refs,**selection)
+    from enterprise.legacy_call_sources import managed_selection
+    if not managed_selection(DepartmentGovernance(),get_api_provider(provider_id),selection):
+        data,raw=await generate_ai_image(prompt,size,payload.quality,model,refs,provider_id)
+        return {'images':[await save_ai_image_to_output(data,prefix='chat_')],
+                'raw_usage':raw.get('usage') if isinstance(raw,dict) else None}
+    return await online_image(request,owner)
+
+async def decide_chat_agent_action(payload, conversation, refs, owner=None):
     has_previous_image = bool(latest_chat_image_refs(conversation, 1))
     fallback = heuristic_agent_decision(payload.message, refs, has_previous_image)
     provider_cfg = get_api_provider(payload.provider) if payload.provider not in ("modelscope",) else {}
@@ -10471,7 +10503,7 @@ async def decide_chat_agent_action(payload, conversation, refs):
     if is_gemini_cli_provider(provider_cfg):
         fallback["router_model"] = selected_model(payload.model, (provider_cfg.get("chat_models") or GEMINI_CLI_DEFAULT_CHAT_MODELS)[0])
         return fallback
-    chat_base, chat_hdrs, model = resolve_chat_provider(payload.provider, payload.model, payload.ms_model)
+    model = selected_model(payload.ms_model or payload.model, (MODELSCOPE_CHAT_MODELS[0] if MODELSCOPE_CHAT_MODELS else 'MiniMax/MiniMax-M2.7')) if payload.provider=='modelscope' else selected_model(payload.model,preferred_chat_model(provider_cfg))
     history = conversation["messages"][-MAX_HISTORY_MESSAGES:]
     custom_system_prompt = str(getattr(payload, "system_prompt", "") or "").strip()
     system = (
@@ -10499,26 +10531,20 @@ async def decide_chat_agent_action(payload, conversation, refs):
         )
     })
     try:
-        async with httpx.AsyncClient(timeout=AI_REQUEST_TIMEOUT) as client:
-            req_body = {"model": model, "messages": upstream_messages}
-            if is_apimart_provider(provider_cfg):
-                req_body["stream"] = False
-            response = await client.post(
-                f"{chat_base}/chat/completions",
-                headers=chat_hdrs,
-                json=req_body,
-            )
-            response.raise_for_status()
-            raw = response.json()
-            decision = parse_agent_decision(text_from_chat_response(raw), payload.message, refs, has_previous_image)
-            decision["router_model"] = model
-            return decision
+        req_body={"model":model,"messages":upstream_messages}
+        if is_apimart_provider(provider_cfg):req_body['stream']=False
+        raw=await legacy_chat_completion(payload,req_body,owner)
+        decision = parse_agent_decision(text_from_chat_response(raw), payload.message, refs, has_previous_image)
+        decision["router_model"] = model
+        return decision
+    except HTTPException:
+        raise
     except Exception as exc:
         print(f"[chat-agent] intent router fallback: {exc}")
         fallback["router_model"] = model
         return fallback
 
-async def build_chat_text_reply(payload, conversation):
+async def build_chat_text_reply(payload, conversation, owner=None):
     provider_cfg = get_api_provider(payload.provider) if payload.provider not in ("modelscope",) else {}
     if is_codex_provider(provider_cfg):
         model = selected_model(payload.model, (provider_cfg.get("chat_models") or CODEX_DEFAULT_CHAT_MODELS)[0])
@@ -10546,7 +10572,7 @@ async def build_chat_text_reply(payload, conversation):
             "raw_usage": None,
             "raw": raw,
         }
-    chat_base, chat_hdrs, model = resolve_chat_provider(payload.provider, payload.model, payload.ms_model)
+    model = selected_model(payload.ms_model or payload.model, (MODELSCOPE_CHAT_MODELS[0] if MODELSCOPE_CHAT_MODELS else 'MiniMax/MiniMax-M2.7')) if payload.provider=='modelscope' else selected_model(payload.model,preferred_chat_model(provider_cfg))
     is_apimart = is_apimart_provider(provider_cfg)
     upstream_messages = [{"role": "system", "content": chat_system_prompt(payload)}]
     for item in conversation["messages"][-MAX_HISTORY_MESSAGES:]:
@@ -10554,13 +10580,9 @@ async def build_chat_text_reply(payload, conversation):
         if msg:
             upstream_messages.append(msg)
     try:
-        async with httpx.AsyncClient(timeout=AI_REQUEST_TIMEOUT) as client:
-            req_body = {"model": model, "messages": upstream_messages}
-            if is_apimart:
-                req_body["stream"] = False
-            response = await client.post(f"{chat_base}/chat/completions", headers=chat_hdrs, json=req_body)
-            response.raise_for_status()
-            raw = response.json()
+        req_body={"model":model,"messages":upstream_messages}
+        if is_apimart:req_body['stream']=False
+        raw=await legacy_chat_completion(payload,req_body,owner)
     except httpx.HTTPStatusError as exc:
         body = exc.response.text or ""
         friendly = friendly_chat_error_detail(body, model, provider_cfg)
@@ -12839,8 +12861,37 @@ async def build_online_image_result(payload: OnlineImageRequest, *, receipt_task
     return result
 
 @app.post("/api/online-image")
-async def online_image(payload: OnlineImageRequest):
+async def online_image(payload: OnlineImageRequest, x_enterprise_user_id: Optional[str] = Header(default=None)):
+    from enterprise.legacy_call_sources import managed_selection, wait_image_result
+    provider=get_api_provider(payload.provider_id)
+    if managed_selection(DepartmentGovernance(),provider,payload.model_dump()):
+        task=await create_canvas_image_task(payload,x_enterprise_user_id)
+        return await wait_image_result(CANVAS_TASK_JOURNAL,task['task_id'])
     return await build_online_image_result(payload)
+
+class AdoptCallSourceRequest(BaseModel):
+    provider_id: str
+    name: str
+    scope: str
+    department_id: Optional[str] = None
+    procurement: str
+    account_ref: str
+
+@app.post('/api/call-sources/adopt')
+async def adopt_call_source(payload: AdoptCallSourceRequest, x_enterprise_user_id: Optional[str] = Header(default=None)):
+    from enterprise import db as enterprise_db
+    from enterprise.legacy_call_sources import adopt_shared_source
+    from enterprise.department_governance import GovernanceError
+    from enterprise.credential_vault import VaultUnavailable
+    actor=await asyncio.to_thread(enterprise_db.get_user_by_id,x_enterprise_user_id)
+    principal={'user_id':x_enterprise_user_id,'auth_version':actor['auth_version'] if actor else None}
+    try:
+        return await asyncio.to_thread(adopt_shared_source,DepartmentGovernance(),principal,
+            payload.model_dump(),provider_env_key_value)
+    except GovernanceError as exc:
+        raise HTTPException(exc.status_code,{'code':exc.code}) from None
+    except (VaultUnavailable,ValueError):
+        raise HTTPException(400,{'code':'CALL_SOURCE_ADOPTION_FAILED'}) from None
 
 @app.post("/api/image-task-query")
 async def query_image_task(payload: ImageTaskQueryRequest):
@@ -14237,6 +14288,9 @@ CANVAS_LLM_TASKS = CanvasLLMTasks(CANVAS_TASK_JOURNAL, canvas_llm,
     lambda owner, urls: _publish_llm_resources(owner, "canvas_llm_task", urls), schedule_canvas_task,
     enqueue=lambda task_id, payload: CANVAS_TASK_DISPATCH.enqueue(task_id, payload), prepare_binding=prepare_canvas_call_binding)
 
+from enterprise.legacy_call_sources import LegacyTextCalls
+LEGACY_TEXT_CALLS = LegacyTextCalls(CANVAS_LLM_TASKS, DepartmentGovernance())
+
 from enterprise.canvas_task_dispatch_app import create_dispatch as _create_task_dispatch, dispatch_paused as _task_dispatch_paused
 from enterprise.config import JWT_SECRET as _task_dispatch_secret
 CANVAS_TASK_DISPATCH = _create_task_dispatch(CANVAS_TASK_JOURNAL,
@@ -15544,7 +15598,7 @@ async def purge_canvas(canvas_id: str):
 # --- GPT 对话 ---
 
 @app.post("/api/chat")
-async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(default="")):
+async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(default=""), x_enterprise_user_id: Optional[str] = Header(default=None)):
     user_id = safe_user_id(x_user_id, request)
     conversation = (
         load_conversation(user_id, payload.conversation_id)
@@ -15575,8 +15629,9 @@ async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(d
         model = selected_model(payload.image_model or payload.model, default_model)
         image_size = chat_prompt_size_override(payload.message, payload.size) or payload.size
         try:
-            image_data, raw = await generate_ai_image(payload.message, image_size, payload.quality, model, image_refs, provider["id"])
-            local_url = await save_ai_image_to_output(image_data, prefix="chat_")
+            result=await legacy_chat_image(payload,x_enterprise_user_id,payload.message,image_size,model,image_refs,provider['id'])
+            local_url=result['images'][0]
+            raw={'usage':result.get('raw_usage')}
         except httpx.HTTPStatusError as exc:
             text = exc.response.text or ""
             detail = friendly_image_error_detail(text, image_size, model) or f"上游生图接口错误：{text[:300]}"
@@ -15596,77 +15651,7 @@ async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(d
             "raw_usage": raw.get("usage") if isinstance(raw, dict) else None,
         }
     else:
-        _codex_provider = get_api_provider(payload.provider)
-        if is_codex_provider(_codex_provider):
-            model = selected_model(payload.model, (_codex_provider.get("chat_models") or CODEX_DEFAULT_CHAT_MODELS)[0])
-            payload.model = model
-            text, raw = await codex_chat_text(payload, conversation["messages"][-MAX_HISTORY_MESSAGES:])
-            assistant_message = {
-                "id": uuid.uuid4().hex,
-                "role": "assistant",
-                "content": text,
-                "created_at": now_ms(),
-                "model": model,
-                "raw_usage": None,
-                "raw": raw,
-            }
-            conversation["messages"].append(assistant_message)
-            conversation["updated_at"] = now_ms()
-            save_conversation(user_id, conversation)
-            return {"conversation": conversation, "message": assistant_message}
-        if is_gemini_cli_provider(_codex_provider):
-            model = selected_model(payload.model, (_codex_provider.get("chat_models") or GEMINI_CLI_DEFAULT_CHAT_MODELS)[0])
-            payload.model = model
-            text, raw = await gemini_cli_chat_text(payload, conversation["messages"][-MAX_HISTORY_MESSAGES:])
-            assistant_message = {
-                "id": uuid.uuid4().hex,
-                "role": "assistant",
-                "content": text,
-                "created_at": now_ms(),
-                "model": model,
-                "raw_usage": None,
-                "raw": raw,
-            }
-            conversation["messages"].append(assistant_message)
-            conversation["updated_at"] = now_ms()
-            save_conversation(user_id, conversation)
-            return {"conversation": conversation, "message": assistant_message}
-        chat_base, chat_hdrs, model = resolve_chat_provider(payload.provider, payload.model, payload.ms_model)
-        _conv_provider = get_api_provider(payload.provider) if payload.provider not in ("modelscope",) else {}
-        _conv_is_apimart = is_apimart_provider(_conv_provider)
-        history = conversation["messages"][-MAX_HISTORY_MESSAGES:]
-        upstream_messages = [{"role": "system", "content": chat_system_prompt(payload)}]
-        for item in history:
-            msg = upstream_message_from_record(item)
-            if msg:
-                upstream_messages.append(msg)
-        try:
-            async with httpx.AsyncClient(timeout=AI_REQUEST_TIMEOUT) as client:
-                conv_req_body = {"model": model, "messages": upstream_messages}
-                if _conv_is_apimart:
-                    conv_req_body["stream"] = False
-                response = await client.post(
-                    f"{chat_base}/chat/completions",
-                    headers=chat_hdrs,
-                    json=conv_req_body,
-                )
-                response.raise_for_status()
-                raw = response.json()
-        except httpx.HTTPStatusError as exc:
-            body = exc.response.text or ""
-            friendly = friendly_chat_error_detail(body, model, _conv_provider)
-            raise HTTPException(status_code=exc.response.status_code, detail=friendly or f"上游接口错误：{body}") from exc
-        except httpx.HTTPError as exc:
-            raise HTTPException(status_code=502, detail=f"请求上游接口失败：{exc}") from exc
-        raw_data = unwrap_apimart_response(raw) if isinstance(raw, dict) else raw
-        assistant_message = {
-            "id": uuid.uuid4().hex,
-            "role": "assistant",
-            "content": text_from_chat_response(raw).strip() or "接口返回了空回复。",
-            "created_at": now_ms(),
-            "model": model,
-            "raw_usage": raw_data.get("usage") if isinstance(raw_data, dict) else None,
-        }
+        assistant_message = await build_chat_text_reply(payload,conversation,x_enterprise_user_id)
 
     conversation["messages"].append(assistant_message)
     conversation["updated_at"] = now_ms()
@@ -15674,7 +15659,7 @@ async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(d
     return {"conversation": conversation, "message": assistant_message}
 
 @app.post("/api/chat/agent")
-async def chat_agent(payload: ChatRequest, request: Request, x_user_id: str = Header(default="")):
+async def chat_agent(payload: ChatRequest, request: Request, x_user_id: str = Header(default=""), x_enterprise_user_id: Optional[str] = Header(default=None)):
     user_id = safe_user_id(x_user_id, request)
     conversation = (
         load_conversation(user_id, payload.conversation_id)
@@ -15698,7 +15683,7 @@ async def chat_agent(payload: ChatRequest, request: Request, x_user_id: str = He
     conversation["updated_at"] = now_ms()
     save_conversation(user_id, conversation)
 
-    decision = await decide_chat_agent_action(payload, conversation, image_refs)
+    decision = await decide_chat_agent_action(payload, conversation, image_refs, x_enterprise_user_id)
     action = decision.get("action") or "chat"
     tool_refs = image_refs[:]
     inherited_size = ""
@@ -15721,9 +15706,9 @@ async def chat_agent(payload: ChatRequest, request: Request, x_user_id: str = He
         raw_items = []
         try:
             for item_prompt in prompts:
-                image_data, raw = await generate_ai_image(item_prompt, image_size, payload.quality, model, tool_refs, image_provider["id"])
-                local_urls.append(await save_ai_image_to_output(image_data, prefix="chat_"))
-                raw_items.append(raw)
+                result=await legacy_chat_image(payload,x_enterprise_user_id,item_prompt,image_size,model,tool_refs,image_provider['id'])
+                local_urls.extend(result['images'])
+                raw_items.append({'usage':result.get('raw_usage')})
         except httpx.HTTPStatusError as exc:
             text = exc.response.text or ""
             detail = friendly_image_error_detail(text, image_size, model) or f"上游生图接口错误：{text[:300]}"
@@ -15751,7 +15736,7 @@ async def chat_agent(payload: ChatRequest, request: Request, x_user_id: str = He
             "raw_usage": raw_items[0].get("usage") if raw_items and isinstance(raw_items[0], dict) else None,
         }
     else:
-        assistant_message = await build_chat_text_reply(payload, conversation)
+        assistant_message = await build_chat_text_reply(payload, conversation, x_enterprise_user_id)
         assistant_message["agent_action"] = "chat"
 
     conversation["messages"].append(assistant_message)
@@ -15760,7 +15745,13 @@ async def chat_agent(payload: ChatRequest, request: Request, x_user_id: str = He
     return {"conversation": conversation, "message": assistant_message, "agent": {"action": action, "decision": decision}}
 
 @app.post("/api/chat/stream")
-async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = Header(default="")):
+async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = Header(default=""), x_enterprise_user_id: Optional[str] = Header(default=None)):
+    provider=get_api_provider(payload.provider) if payload.provider!='modelscope' else {'id':'modelscope'}
+    model=selected_model(payload.model,preferred_chat_model(provider))
+    return await LEGACY_TEXT_CALLS.stream(payload,x_enterprise_user_id,provider,model,
+        lambda tracking: build_chat_stream(payload,request,x_user_id,tracking))
+
+async def build_chat_stream(payload, request, x_user_id, tracking=None):
     if payload.mode == "image":
         raise HTTPException(status_code=400, detail="图片模式请使用 /api/chat")
 
@@ -15857,6 +15848,7 @@ async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = H
         raw_usage = None
         yield sse_event({"type": "meta", "conversation": conversation})
         try:
+            await llm_submitting(model)
             async with httpx.AsyncClient(timeout=AI_REQUEST_TIMEOUT) as client:
                 async with client.stream(
                     "POST",
@@ -15864,9 +15856,11 @@ async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = H
                     headers=chat_hdrs,
                     json={"model": model, "messages": upstream_messages, "stream": True},
                 ) as response:
+                    await llm_response(response.status_code)
                     if response.status_code >= 400:
                         detail = await response.aread()
                         body = detail.decode("utf-8", errors="ignore")
+                        if tracking:body=task_error(body)
                         friendly = friendly_chat_error_detail(body, model, _stream_provider)
                         yield sse_event({"type": "error", "detail": friendly or f"上游接口错误：{body}"})
                         return
@@ -15881,10 +15875,12 @@ async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = H
                             chunk = json.loads(line)
                         except json.JSONDecodeError:
                             continue
+                        if tracking:tracking.observe(chunk)
                         if isinstance(chunk, dict) and chunk.get("usage"):
                             raw_usage = chunk.get("usage")
                         delta = text_delta_from_chat_chunk(chunk)
                         if delta:
+                            if tracking:delta=task_error(delta)
                             content_parts.append(delta)
                             yield sse_event({"type": "delta", "delta": delta})
         except httpx.HTTPError as exc:
@@ -15892,6 +15888,9 @@ async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = H
             yield sse_event({"type": "error", "detail": f"请求上游接口失败：{exc}"})
             return
 
+        if tracking and not "".join(content_parts).strip():
+            yield sse_event({'type':'error','detail':'上游没有返回可确认的正文，请核对原生成任务；不会自动重新生成。'})
+            return
         assistant_message = {
             "id": uuid.uuid4().hex,
             "role": "assistant",
@@ -15900,6 +15899,9 @@ async def chat_stream(payload: ChatRequest, request: Request, x_user_id: str = H
             "model": model,
             "raw_usage": raw_usage,
         }
+        if tracking:
+            assistant_message['content']=task_error(assistant_message['content'])
+            await tracking.complete(assistant_message['content'],raw_usage)
         conversation["messages"].append(assistant_message)
         conversation["updated_at"] = now_ms()
         save_conversation(user_id, conversation)
