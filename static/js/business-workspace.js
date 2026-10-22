@@ -3,7 +3,8 @@
     'use strict';
     const $=s=>document.querySelector(s),esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     const status=$('#businessStatus'),panel=$('#businessPanel'),scope=$('#businessScope'),department=$('#businessDepartment');
-    const api='/enterprise/api/business';let context,tab='projects',epoch=0,directory=[];
+    const api='/enterprise/api/business';let context,tab=new URLSearchParams(location.search).get('tab')==='costs'?'costs':'projects',epoch=0,directory=[],costRows=[],costCursor=null;
+    let requestedScope=new URLSearchParams(location.search).get('scope'),requestedDepartment=new URLSearchParams(location.search).get('department_id');
     const names={DEPARTMENT_PERMISSION_DENIED:'当前账号没有此操作权限',NO_AUTHORIZED_CALL_SOURCE:'尚未获授权使用调用来源',STALE_AUTHENTICATION:'登录已失效，请重新登录',INVALID_BUSINESS_REQUEST:'请检查填写内容',CREDENTIAL_VAULT_UNAVAILABLE:'当前运行身份无法使用凭据存储，请联系管理员',DEPARTMENT_SCHEMA_UPGRADE_REQUIRED:'请先完成支持部门项目的受控版本升级'};
     const visibility={private:'私有',department_readonly:'本部门只读',company_readonly:'企业内部只读'};
     const state={queued:'排队中',running:'运行中',succeeded:'已完成',failed:'失败',unknown:'待核对',partial:'部分完成',unavailable:'回执不可读'};
@@ -33,11 +34,14 @@
         };document.body.append(d);d.showModal();return d;
     }
     async function reload(){
-        const token=++epoch;status.textContent='正在更新视图…';
+        const token=++epoch;costCursor=null;
+        const more=panel.querySelector('[data-action="cost-more"]');if(more)more.disabled=true;
+        status.textContent='正在更新视图…';
         try{
             context=await json('/context');if(token!==epoch)return;
             if(!context.enabled){$('#businessContent').hidden=true;status.textContent='部门项目功能尚未启用；请等待正式版本升级，现有个人创作继续使用。';return;}
-            const managed=context.departments.filter(d=>d.can_manage),oldScope=scope.value,oldDepartment=department.value;
+            const managed=context.departments.filter(d=>d.can_manage),oldScope=requestedScope||scope.value,oldDepartment=requestedDepartment||department.value;
+            requestedScope=requestedDepartment=null;
             scope.innerHTML=options([['me','我的创作'],...(managed.length?[['department','本部门']]:[]),...(context.company_admin?[['company','全公司']]:[])]);
             if([...scope.options].some(o=>o.value===oldScope))scope.value=oldScope;
             department.innerHTML=options(managed.map(d=>[d.id,d.name]));if(managed.some(d=>d.id===oldDepartment))department.value=oldDepartment;
@@ -55,8 +59,8 @@
             const [summary,entries]=await Promise.all([json('/costs/summary'+query()),json('/costs'+query())]);if(token!==epoch)return;
             panel.innerHTML=`<div class="business-card-head"><div><h2>费用记录</h2><p class="business-note">实际与预估分开；供应商没有明确金额或单位时保留待核对，不同单位不相加。</p></div><span class="business-tag">待核对 ${summary.pending_reconciliation} 笔</span></div>`+
                 (summary.groups.length?table(['业务归属','员工 / 模型','采购与支付账户','已知实际','预估'],summary.groups.map(g=>`<tr><td>${esc(deptName(g.department_id))}<small>${esc(projectName(g.project_id))}</small></td><td>${esc(personName(g.user_id))}<small>${esc(g.provider_id)} / ${esc(g.model)}</small></td><td>${g.procurement==='company'?'公司采购':'部门自购'} · ${g.scope==='company'?'公司共享':'部门专用'}<small>${esc(g.account_ref)}</small></td><td>${esc(g.actual)} ${esc(unitName(g.unit))}</td><td>${esc(g.estimated)} ${esc(unitName(g.unit))}</td></tr>`)):empty('暂无已核实的费用事实。没有费用记录不代表供应商一定未扣费。'))+
-                `<p class="business-note">${entries.entries.length} 条最近费用事件（每次最多 50 条）；退款与修正保留独立记录。</p>`+
-                (entries.entries.length?table(['记录时间','任务','事件','金额'],entries.entries.map(e=>`<tr><td>${esc(date(e.created_at))}</td><td>${esc(e.task_id)}</td><td>${esc({charge:'实际扣费',refund:'退款',adjustment:'修正',estimate:'预估',unknown:'待核对'}[e.kind])}</td><td>${e.amount===null?'待核对':esc(e.amount)+' '+esc(unitName(e.unit))}</td></tr>`)):'');
+                '<section id="costEntries"></section>';
+            costRows=entries.entries;costCursor=entries.next_cursor;drawCostEntries();
             if(scope.value==='department')await budgets(token);
         }else if(tab==='tasks'){
             const data=await json('/tasks'+query());if(token!==epoch)return;
@@ -72,6 +76,20 @@
             }
         }
     }
+    function drawCostEntries(){
+        const target=$('#costEntries');if(!target)return;
+        target.innerHTML=`<p class="business-note">已显示 ${costRows.length} 条费用事件；退款与修正保留独立记录。</p>`+
+            (costRows.length?table(['记录时间','任务 / 归属','事件','金额'],costRows.map(e=>`<tr><td>${esc(date(e.created_at))}</td><td>${esc(e.task_id)}<small>${esc(personName(e.context.user_id))} · ${esc(projectName(e.context.project_id))}</small></td><td>${esc({charge:'实际扣费',refund:'退款',adjustment:'修正',estimate:'预估',unknown:'待核对'}[e.kind])}</td><td>${e.amount===null?'待核对':esc(e.amount)+' '+esc(unitName(e.unit))}</td></tr>`)):'')+
+            (costCursor?btn('cost-more','加载更早记录'):'<p class="business-note">已显示全部费用事件</p>');
+    }
+    async function moreCosts(button){
+        if(!costCursor||button.disabled)return;const token=epoch,cursor=costCursor;button.disabled=true;
+        try{
+            const data=await json('/costs'+query()+'&before='+encodeURIComponent(cursor));
+            if(token!==epoch||tab!=='costs')return;
+            costRows.push(...data.entries);costCursor=data.next_cursor;drawCostEntries();
+        }finally{button.disabled=false;}
+    }
     async function budgets(token){
         const id=department.value,data=await json('/departments/'+id+'/budgets');if(token!==epoch)return;
         const el=document.createElement('section');el.className='business-card';el.innerHTML=`<div class="business-card-head"><h3>部门预算提醒</h3>${btn('budget','设置提醒',id)}</div>`+(data.length?data.map(b=>`<div class="${b.exceeded?'business-warning':'business-note'}">${esc(b.period)}：预算 ${esc(b.amount)} ${esc(unitName(b.unit))} · 已知实际 ${esc(b.actual)} ${esc(unitName(b.unit))} · 待核对 ${b.pending_reconciliation} 笔${b.exceeded?' · 超出 '+esc(b.over_amount)+' '+esc(unitName(b.unit))+'，生成继续可用':''}</div>`).join(''):'<p class="muted">尚未设置预算提醒。预算不会阻断生产。</p>');panel.append(el);
@@ -81,6 +99,7 @@
         const managed=context.departments.filter(d=>d.can_manage),memberOptions=directory.map(m=>[m.id,m.display_name]);
         const fields=(...rows)=>rows.map(([name,label,extra={}])=>({name,label,...extra}));
         try{
+            if(action==='cost-more'){await moreCosts(b);return;}
             if(action==='new-department')dialog('新建部门',fields(['name','部门名称']),v=>json('/departments','POST',v));
             if(action==='assign-member')dialog('分配部门成员',fields(['user','成员',{options:memberOptions}],['manager','部门身份',{options:[['false','部门成员'],['true','部门负责人']]}]),v=>json('/departments/'+id+'/members/'+v.user,'PUT',{manager:v.manager==='true'}),'调部门会影响后续任务权限；历史费用与已受理任务保留原归属。');
             if(action==='remove-member')dialog('移出部门',[],()=>{const [dept,user]=id.split(':');return json('/departments/'+dept+'/members/'+user,'DELETE');},'移出后不再具备本部门专用来源权限；历史任务与归属不会被删除。');
@@ -99,5 +118,6 @@
         }catch(error){status.textContent=error.message;}
     });
     $('.business-tabs').onclick=e=>{const b=e.target.closest('[data-tab]');if(!b)return;tab=b.dataset.tab;document.querySelectorAll('[data-tab]').forEach(v=>v.classList.toggle('active',v===b));reload();};
+    document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));
     scope.onchange=reload;department.onchange=reload;$('#businessRefresh').onclick=reload;reload();
 })();

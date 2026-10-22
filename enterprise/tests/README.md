@@ -1,5 +1,7 @@
 # Enterprise Test Scripts
 
+2026-10-22 费用分页/站内提醒候选：`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 py -3.11 -B -m pytest enterprise/tests/test_department_cost_views.py enterprise/tests/test_department_governance.py enterprise/tests/test_business_workspace.py -q` 验证真实SQLite下cursor跨新费用插入不重不漏、现任管理权限、当期/过期提醒、单位精度/未知与非阻断、旧Schema只读不激活。实际main夹具Edge的50→61明细、部门/公司深链、提醒已知晓/预算变化、普通员工/他部门隔离、浅暗色及窄屏证据在产品artifacts/t/D26。夹具替代身份，未测正式登录、真实付费或客户升级；不新增CI作业。
+
 2026-10-22 项目内容候选：`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 py -3.11 -B -m pytest enterprise/tests/test_project_results.py enterprise/tests/test_business_workspace.py enterprise/tests/test_canvas_workspace.py enterprise/tests/test_admin_member_list_filters.py enterprise/tests/test_task_canvas_context.py enterprise/tests/test_canvas_persistence.py -q` 验证完整创作共享、费用角色独立、Range媒体读取及撤回、私有素材副本、任务按项复用和部门成员管理。回环 Edge 使用实际 main/原所有权拦截及管理页面handler，身份/功能开关为受控夹具；两类原编辑器只读打开/复制、桌面/窄屏、共享撤回和无生成请求证据在产品 artifacts/t/D24/browser-editor。未测试真实登录、付费供应商或客户升级；不将浏览器夹具视为发行级联合验收。无新增重型CI作业。
 
 

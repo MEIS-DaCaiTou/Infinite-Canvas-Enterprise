@@ -8,6 +8,8 @@
 
 [返回索引](./README.md)
 
+2026-10-22 费用候选：原业务页按 `/api/business/costs?before=...` 加载更早事件，范围切换用原epoch丢弃过期响应。`GET /api/business/budget-alerts` 复用原预算/费用投影，仅返回授权负责人/公司管理员的当前期间超额提醒；`budget-alerts.js` 在原首页、后台、费用页载入和每分钟可见时读取。链接携带费用tab和授权范围，已知晓为账号浏览器设置；不调用生成、任务恢复、消息发送或业务写入API。
+
 2026-10-22 未合并项目内容候选：`project-results.js` 在原首页请求 `/enterprise/api/business/workspace/tasks` 及任务详情、`outputs/{index}` 和显式 `/reuse`；完整画布通过 `/workspace/canvases/{id}`、`resources/{index}/{filename}` 读取，由 `shared_canvases` 每次检查项目权限。共享项直接打开原 `canvas.html` / `smart-canvas.html` 的只读模式，`shared-canvas.js` 复用原节点/连线/媒体，不增加画布预览器；副本走原创建/保存API。`department-members.js` 在既有 admin 成员页使用 `/member-workspace` 和原部门分配API，费用仍走原角色授权。此增量补齐下文目录快照中尚未接入的创作内容，不激活Schema3/4。
 
 2026-10-22 未合并目录候选：`canvas-list.html` 经 `canvas-workspace-boot.js` 按已激活 schema 能力加载原脚本或 `canvas-workspace.js`。后者请求 `/enterprise/api/business/workspace/context`、`/workspace`，并通过 `/workspace/folders/{id}`、`/workspace/archive` 更新树关联/归档；原项目创建、画布创建及 `/api/canvases/{id}/meta` 保持原协议。目录服务位于 `enterprise/canvas_workspace.py`，不由前端授予资源访问；完整成果只读预览尚未接入。
