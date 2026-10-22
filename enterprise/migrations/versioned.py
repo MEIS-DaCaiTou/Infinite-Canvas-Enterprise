@@ -560,11 +560,14 @@ def plan_migrations(
     *,
     target_version: int,
     registry: Sequence[MigrationStep] = DEFAULT_MIGRATIONS,
+    database_inspector: Callable[[Path], dict[str, Any]] | None = None,
 ) -> MigrationPlan:
     if type(target_version) is not int or target_version < BASELINE_SCHEMA_VERSION:
         _fail("DATA_TARGET_SCHEMA_VERSION_INVALID")
     steps = validate_registry(registry)
-    inspection = inspect_schema_metadata(database_path)
+    # Offline callers already prove a stopped database and supply an immutable
+    # read. Keep that read through planning, rather than creating empty WAL/SHM.
+    inspection = (database_inspector or inspect_schema_metadata)(database_path)
     if inspection.get("current_state") != STATE_READY:
         _fail("DATA_SCHEMA_METADATA_NOT_READY")
     current_version = int(inspection["schema_version"])

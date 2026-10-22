@@ -39,6 +39,7 @@ from enterprise.migrations.versioned import (
     preview_legacy_schema_enrollment,
     schema_snapshot_sha256,
     validate_registry,
+    verify_database_backup,
 )
 from enterprise.migrations.sqlite_existing import open_existing_sqlite
 from enterprise.migrations.canvas_workspace import release_registry
@@ -754,6 +755,7 @@ def _database_update_plan(
             database_path,
             target_version=target_version,
             registry=steps,
+            database_inspector=database_inspector,
         )
     except DataMigrationError as exc:
         raise UpdateMvpError(exc.code) from exc
@@ -1027,6 +1029,37 @@ def restore_source_pointer(roots: PathRoots, source_manifest: ReleaseManifestV2,
     )
 
 
+def verified_job_database_backup(roots: PathRoots, job_id: str):
+    """Read an interrupted worker's result against its plan and verified backup.
+
+    The caller owns the execution fence and proves Runtime stop. Restoring still
+    uses restore_database_backup's exact post-migration identity check, so data
+    written after target startup cannot be silently overwritten.
+    """
+    store = UpdateJobStore(roots)
+    plan = store.read_plan(job_id)
+    update = plan.get("database_update", {})
+    result = store.read_database_result(job_id)
+    relative = f"system-update/{job_id}/database-backup-manifest.json"
+    if (update.get("mode") != "versioned-forward-migration"
+            or result.get("operation_id") != job_id
+            or result.get("backup_manifest_relative_path") != relative
+            or any(result.get(key) != update.get(key) for key in (
+                "source_schema_version", "target_schema_version", "source_schema_sha256",
+                "target_schema_sha256", "migration_ids"))
+            or not SHA256_RE.fullmatch(str(result.get("post_migration_database_sha256")))):
+        raise UpdateMvpError("SYSTEM_UPDATE_DATABASE_MIGRATION_RESULT_MISMATCH")
+    manifest = roots.BACKUP_ROOT / relative
+    assert_no_reparse_ancestors(manifest)
+    backup = verify_database_backup(manifest)
+    if (backup.manifest_sha256 != result.get("backup_manifest_sha256")
+            or backup.backup_sha256 != result.get("backup_database_sha256")
+            or backup.source_schema_version != update.get("source_schema_version")
+            or backup.source_schema_sha256 != update.get("source_schema_sha256")):
+        raise UpdateMvpError("SYSTEM_UPDATE_DATABASE_MIGRATION_RESULT_MISMATCH")
+    return result, backup
+
+
 def execute_update_job(
     roots: PathRoots,
     job_id: str,
@@ -1136,6 +1169,7 @@ def execute_update_job(
                     database_path,
                     target_version=int(database_update.get("target_schema_version")),
                     registry=registry,
+                    database_inspector=database_inspector,
                 ).steps]
             if (
                 database_update.get("operation_id") != job_id
