@@ -92,12 +92,12 @@ class SharedCanvases:
     def _file(self,url):
         # resource_urls already normalizes/decodes once. Do not decode a second
         # time, and keep every file inside its original media subtree.
-        path=urlsplit(url).path.replace('\\','/')
+        name=urlsplit(url).path
         prefix=next((p for p in ('/assets/input/','/assets/output/','/assets/uploads/',
-            '/assets/library/','/assets/images/','/output/') if path.startswith(p)),None)
+            '/assets/library/','/assets/images/','/output/') if name.startswith(p)),None)
         _require(prefix,'RESULT_FILE_UNAVAILABLE',404)
         root=(self.roots.UPLOAD_ROOT/prefix.lstrip('/')).resolve()
-        file=(root/path[len(prefix):]).resolve()
+        file=(root/name[len(prefix):]).resolve()
         _require(file.is_relative_to(root) and file.is_file(),'RESULT_FILE_UNAVAILABLE',404)
         return file
 
