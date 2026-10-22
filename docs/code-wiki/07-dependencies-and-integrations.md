@@ -4,6 +4,8 @@
 
 [返回索引](./README.md)
 
+2026-10-22 视频成片续包：`providers/video_outputs.video_output_urls` 复用原嵌套字段解析，明确成片优先，尾帧、来源视频身份及图片/音频不是视频列表。`video_task_result`先处理失败/排队/运行，再处理成片；提交回包有预览仍先持久受理再GET原ID。main实际下载为image/audio MIME时保留未知，不存为MP4；URL无扩展名仍支持。旧回执/路由/权限不变，准确候选与真实平台可用性见CURRENT及原PR，不将供应商目录的“未开放”标签解释为所有账号均不可用。
+
 ## 1. Python 依赖
 
 根 `requirements.txt` 是开发/旧运行依赖入口，包含 FastAPI、Uvicorn、Requests、Pydantic、PyJWT、python-multipart、HTTPX 和 Pillow。

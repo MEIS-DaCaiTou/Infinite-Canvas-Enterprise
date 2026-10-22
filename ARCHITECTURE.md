@@ -8,6 +8,8 @@
 
 ## 1. 当前形态
 
+2026-10-22 视频结果候选：`providers/video_outputs.py` 承接main原成片URL解析，排除尾帧/封面等明确非视频结果，保留旧嵌套与签名下载。`video_tasks`及原JSON提交/轮询使用同一状态判定，运行中不因预览链接提前成功；归档继续由main的资源路径/权限边界负责，无新Provider体系或任务队列。
+
 当前是面向 Windows 单机/LAN 部署的模块化单体：
 
 ```text

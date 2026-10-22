@@ -4,6 +4,8 @@ Reviewed: 2026-10-22
 
 离线部门迁移增加 WAL 模式来源参数，覆盖升级准备不产生旁路、成功启用和目标失败恢复。真实 Setup/Runtime 的首次 fc5d3a8 失败暴露普通只读规划创建空 WAL/SHM；修正与重新包验收记录于#195，不能由旧默认日志模式的受控Runtime用例推导通过。
 
+2026-10-22 视频结果：`py -3.11 -B -m pytest -q enterprise/tests/test_video_results.py enterprise/tests/test_zhenzhen_video_adapter.py enterprise/tests/test_zhenzhen_model_routing.py enterprise/tests/test_canvas_video_tasks.py enterprise/tests/test_canvas_video_tasks_main.py` 覆盖受理预览后原ID轮询、运行状态不提前成功、成片与封面/尾帧分离、签名视频及实际main下载类型/归档。只使用MockTransport及合成素材，不调用真实付费模型；无前端页面/交互变化，不重复既有Browser矩阵。
+
 2026-10-22 离线部门迁移：`py -3.11 -B -m pytest -q enterprise/tests/test_install_department_upgrade.py enterprise/tests/test_install_upgrade.py enterprise/tests/test_windows_install_registration.py` 在已有资产/Windows对象夹具上覆盖已预置2→4、目标失败先还原数据库、安装中断、恢复替换后再次中断、登记失败续接及新增业务写入不被覆盖。只将Runtime/Windows登记回调受控；实际CP314安装副本、真实Windows登记、Setup GUI分别记录，不能从单元通过推导。未新增CI门禁或依赖。
 
 2026-10-22 部门发行接线：`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 py -3.11 -B -m pytest enterprise/tests/test_department_release.py enterprise/tests/test_versioned_release_snapshot.py enterprise/tests/test_install_mvp_1.py enterprise/tests/test_update_mvp_1.py enterprise/tests/test_install_upgrade.py enterprise/tests/test_data_mvp_1.py -q` 覆盖真实DDL快照、Schema2预置/Schema4声明新装、未预置阻断、已知目录前缀维护、共享worker成功/目标失败恢复及离线同结构预置。进程/指针/原生单元入口为受控夹具，准确CP314包、真实登录和客户验收另记PR；不新增CI作业。默认构建Schema2，不因测试或启动激活旧库。

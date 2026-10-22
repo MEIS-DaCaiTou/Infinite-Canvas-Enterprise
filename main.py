@@ -62,6 +62,7 @@ from enterprise.generation_task_routes import create_router as create_generation
 from enterprise.canvas_image_recovery import CanvasImageRecovery, ImageReceiptSink, public_receipt
 from enterprise.canvas_video_tasks import CanvasVideoTasks, public_video_task, record_video_acceptance
 from enterprise.providers.video_tasks import inspect_video, encoded_task_id
+from enterprise.providers.video_outputs import video_output_urls
 from enterprise.providers.video_generation import json_video_body, generate_json_video, poll_video, video_error_detail
 from enterprise.canvas_comfy_recovery import CanvasComfyRecovery
 from enterprise.accepted_task_recovery import AcceptedTaskRecovery, validate_owned_task
@@ -8508,6 +8509,8 @@ async def save_remote_video_to_output(url, prefix="video_", category="output"):
             response = await client.get(url)
             response.raise_for_status()
             content_type = (response.headers.get("Content-Type") or "").lower()
+            if content_type.startswith(("image/", "audio/")):
+                raise provider_submission_unknown("供应商返回的是图片或音频，尚未取得可归档视频；已保留原任务，请继续查询原任务")
             if "text/html" in content_type or "application/json" in content_type:
                 raise RuntimeError(f"unexpected video content type: {content_type}")
             ext = clean_ext
@@ -8531,6 +8534,8 @@ async def save_remote_video_to_output(url, prefix="video_", category="output"):
             if os.path.getsize(path) <= 0:
                 raise RuntimeError("empty video response")
             return output_url_for(filename, category)
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"保存上游视频失败: {e}")
         try:
@@ -13323,75 +13328,6 @@ async def image_params(provider_id: str = "", model: str = ""):
     }
 
 # --- Canvas Video ---
-
-VIDEO_URL_KEYS = (
-    "url", "video_url", "videoUrl", "mp4_url", "mp4Url",
-    "output", "output_url", "outputUrl", "download_url", "downloadUrl",
-    "video", "src", "uri", "preview_url", "previewUrl", "path",
-    "last_frame_url", "lastFrameUrl", "remixed_from_video_id",
-)
-
-def _collect_video_url(value, urls):
-    if not value:
-        return
-    if isinstance(value, str):
-        if value.startswith("http://") or value.startswith("https://") or value.startswith("/output/") or value.startswith("/assets/"):
-            urls.append(value)
-        return
-    if isinstance(value, list):
-        for item in value:
-            _collect_video_url(item, urls)
-        return
-    if isinstance(value, dict):
-        for key in ("videos", "outputs", "data", "result", "content"):
-            if key in value:
-                _collect_video_url(value.get(key), urls)
-        for key in VIDEO_URL_KEYS:
-            if key in value:
-                _collect_video_url(value.get(key), urls)
-
-def video_output_urls(raw):
-    urls = []
-    if not isinstance(raw, dict):
-        return urls
-    candidates = [raw]
-    data = raw.get("data")
-    content = raw.get("content")
-    if isinstance(data, dict):
-        candidates.append(data)
-    elif isinstance(data, list):
-        for item in data:
-            if isinstance(item, dict):
-                candidates.append(item)
-    if isinstance(content, dict):
-        candidates.append(content)
-    elif isinstance(content, list):
-        for item in content:
-            if isinstance(item, dict):
-                candidates.append(item)
-    for node in list(candidates):
-        result = node.get("result") if isinstance(node, dict) else None
-        if isinstance(result, dict):
-            candidates.append(result)
-        elif isinstance(result, list):
-            for item in result:
-                if isinstance(item, dict):
-                    candidates.append(item)
-    for node in candidates:
-        if not isinstance(node, dict):
-            continue
-        for key in ("videos", "outputs", "content"):
-            value = node.get(key)
-            if value:
-                _collect_video_url(value, urls)
-        for key in VIDEO_URL_KEYS:
-            if key in node:
-                _collect_video_url(node.get(key), urls)
-    deduped = []
-    for url in urls:
-        if isinstance(url, str) and url and url not in deduped:
-            deduped.append(url)
-    return deduped
 
 def video_api_root(provider):
     base_url = (provider.get("base_url") or AI_BASE_URL).rstrip("/")

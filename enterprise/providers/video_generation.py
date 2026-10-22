@@ -62,7 +62,7 @@ async def generate_json_video(client, urls, headers, body, *, extract_task_id, o
     task_id = extract_task_id(raw) or raw.get("task_id") or raw.get("id")
     await accepted(task_id, submit_url)
     result = raw
-    if task_id and not output_urls(raw):
+    if task_id and video_task_result(raw, output_urls, str)["status"] != "succeeded":
         try:
             result = await poll(task_id, submit_url)
         except (HTTPException, httpx.HTTPError, ValueError) as exc:
