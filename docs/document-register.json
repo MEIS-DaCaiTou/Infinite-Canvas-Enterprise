@@ -82,7 +82,7 @@
       "path": "ARCHITECTURE.md",
       "kind": "authority",
       "authority": "architecture",
-      "reviewed_at": "2026-10-14"
+      "reviewed_at": "2026-10-22"
     },
     {
       "path": "CODE_BOUNDARIES.md",
@@ -561,7 +561,7 @@
       "path": "enterprise/tests/README.md",
       "kind": "authority",
       "authority": "testing",
-      "reviewed_at": "2026-10-20"
+      "reviewed_at": "2026-10-22"
     },
     {
       "path": "enterprise/tests/SMOKE_CHECKLIST.md",

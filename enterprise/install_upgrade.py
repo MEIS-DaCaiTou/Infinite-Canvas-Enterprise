@@ -105,12 +105,13 @@ def _eligible(roots, source, target):
     if compare_versions(str(source.section("identity")["release_version"]),
                         str(target.section("identity")["release_version"])) != "newer":
         _fail("INSTALL_UPGRADE_TARGET_NOT_NEWER")
-    if (mvp._database_contract_mode(source, target) != "same-schema-no-migration"
-            or source.section("database_contract")["schema_snapshot_sha256"]
-            != target.section("database_contract")["schema_snapshot_sha256"]):
+    # Registry pre-staging changes the evidence bytes while leaving the actual
+    # schema unchanged. The shared preparer verifies both schema shapes before
+    # execution; an evidence-file digest is not a schema identity.
+    if mvp._database_contract_mode(source, target) != "same-schema-no-migration":
         _fail("INSTALL_UPGRADE_DATABASE_CONTRACT_UNSUPPORTED")
     metadata, preparation = database_preparation.inspect(roots)
-    if metadata["schema_version"] not in {1, 2}:
+    if metadata["schema_version"] not in {1, 2, 3, 4}:
         _fail("INSTALL_UPGRADE_DATABASE_CONTRACT_UNSUPPORTED")
     program = roots.APP_ROOT
     if not files._exists(program):
@@ -490,7 +491,7 @@ def _load(install_root, local_app_data_base, assets):
             or type(plan["database_contract"]) is not dict
             or set(plan["database_contract"]) != {"schema_version", "schema_sha256", "ledger_sha256"}
             or type(plan["database_contract"]["schema_version"]) is not int
-            or plan["database_contract"]["schema_version"] not in {1, 2}
+            or plan["database_contract"]["schema_version"] not in {1, 2, 3, 4}
             or any(type(plan["database_contract"][name]) is not str or not files.SHA.fullmatch(plan["database_contract"][name])
                    for name in ("schema_sha256", "ledger_sha256"))):
         _fail()

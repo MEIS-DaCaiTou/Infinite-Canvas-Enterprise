@@ -109,6 +109,26 @@ def finish(fixture):
         local_app_data_base=fixture["local"], verify_registration=lambda *_: None)
 
 
+def test_offline_registry_prestaging_preserves_database_and_native_recovery(installed,tmp_path):
+    from enterprise.migrations.canvas_workspace import release_registry
+    f=installed;area=tmp_path/'target-area'
+    path=area/'payload/release-evidence/database-schema.json'
+    evidence=json.loads(path.read_bytes());registry=release_registry()
+    evidence.update(migration_registry_sha256=migration_registry_sha256(registry),
+                    versioned_migration_ids=[step.migration_id for step in registry])
+    path.write_bytes(canonical_json(evidence))
+    manifest=area/'ops-release-manifest-v2.json';doc=json.loads(manifest.read_bytes())
+    archive=area/doc['archive']['filename'];inventory=area/'release-payload-inventory.json'
+    _rebind_fixture(manifest,archive,inventory,doc)
+    for source in (manifest,archive,inventory):shutil.copyfile(source,f['target_assets']/source.name)
+    before=protected(f)
+    assert upgrade.inspect_upgrade(install_root=f['roots'].INSTALL_ROOT,release_dir=f['target_assets'],
+        local_app_data_base=f['local'])['upgrade_state']=='ELIGIBLE'
+    assert upgrade.upgrade_retained(**arguments(f))['upgrade_state']=='AWAITING_REGISTRATION'
+    assert finish(f)['upgrade_state']=='COMPLETE'
+    assert protected(f)==before
+
+
 @pytest.mark.parametrize("target_failure", [False, True])
 def test_page_upgraded_source_without_registration_uses_existing_entry_repair(installed, monkeypatch, target_failure):
     from enterprise import install_entry_repair

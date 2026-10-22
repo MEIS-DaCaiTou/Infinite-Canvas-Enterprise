@@ -36,6 +36,8 @@ def _parser() -> argparse.ArgumentParser:
     build.add_argument("--runtime-root", type=Path, required=True)
     build.add_argument("--runtime-evidence-root", type=Path, required=True)
     build.add_argument("--commit")
+    build.add_argument("--database-schema-version", type=int, choices=(2, 4), default=2,
+                       help="2 stages the department registry without activation; 4 builds the activation candidate")
     build.add_argument(
         "--database-contract-mode",
         choices=("same-schema-no-migration", "versioned-forward-migration", "same-versioned-schema-no-migration"),
@@ -65,7 +67,7 @@ def main(argv: list[str] | None = None) -> int:
             if isinstance(value, Path) and not value.is_absolute():
                 raise ReleaseManifestV2Error("RELEASE_CLI_PATH_NOT_ABSOLUTE")
         if args.command == "build":
-            payload = build_release_v2(repo=args.repo, output_root=args.output_root, runtime_root=args.runtime_root, runtime_evidence_root=args.runtime_evidence_root, commit=args.commit, database_contract_mode=args.database_contract_mode)
+            payload = build_release_v2(repo=args.repo, output_root=args.output_root, runtime_root=args.runtime_root, runtime_evidence_root=args.runtime_evidence_root, commit=args.commit, database_contract_mode=args.database_contract_mode, database_schema_version=args.database_schema_version)
         elif args.command == "verify":
             payload = verify_release_manifest_v2(args.manifest, args.archive, args.inventory).as_dict()
         elif args.command == "materialize-fixture":

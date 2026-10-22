@@ -1,8 +1,10 @@
 # Infinite Canvas Enterprise 当前架构
 
-更新时间：2026-10-14
+更新时间：2026-10-22
 
 本文描述 main 已合并的运行架构、明确标注的开发候选与已确定的演进边界。实现状态以 [docs/CURRENT_PROJECT_STATUS.md](docs/CURRENT_PROJECT_STATUS.md) 为准，未来顺序以 [开发路线图](docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md) 为准。
+
+2026-10-22 发行接线候选：`migrations/canvas_workspace.release_registry()` 复用已审部门/目录DDL，供打包、全新安装及更新控制器使用。`build_release_manifest_v2.py --database-schema-version 2|4` 默认预置旧结构、显式选择部门结构；新装依据已验证Manifest初始化对应前缀，不在普通启动迁移。更新沿用原同结构预置、版本化迁移/备份恢复，已知旧目录按准确前缀维护；离线维护仍只接受相同实际结构。源码、准确候选包、正式启用分别记录于CURRENT。
 
 ## 1. 当前形态
 

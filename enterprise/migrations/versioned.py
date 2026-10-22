@@ -971,7 +971,10 @@ def _apply_steps_in_transaction(conn: sqlite3.Connection, steps: Sequence[Migrat
             _fail("DATA_SCHEMA_METADATA_WRITE_FAILED")
 
 
-def initialize_current_schema_in_transaction(conn: sqlite3.Connection) -> dict[str, object]:
+def initialize_current_schema_in_transaction(
+    conn: sqlite3.Connection, *, registry: Sequence[MigrationStep] = DEFAULT_MIGRATIONS,
+    target_version: int | None = None,
+) -> dict[str, object]:
     """Enroll a greenfield database into the shipped versioned schema.
 
     The caller owns the transaction and must already have created the normal
@@ -980,8 +983,14 @@ def initialize_current_schema_in_transaction(conn: sqlite3.Connection) -> dict[s
     """
     if not isinstance(conn, sqlite3.Connection) or not conn.in_transaction:
         _fail("DATA_SCHEMA_TRANSACTION_REQUIRED")
-    steps = validate_registry(DEFAULT_MIGRATIONS)
+    steps = validate_registry(registry)
+    if target_version is not None:
+        if type(target_version) is not int:
+            _fail("DATA_MIGRATION_PATH_UNAVAILABLE")
+        steps = tuple(step for step in steps if step.to_version <= target_version)
     if not steps:
+        _fail("DATA_MIGRATION_PATH_UNAVAILABLE")
+    if target_version is not None and steps[-1].to_version != target_version:
         _fail("DATA_MIGRATION_PATH_UNAVAILABLE")
     initialize_schema_metadata_in_transaction(conn)
     _apply_steps_in_transaction(conn, steps)

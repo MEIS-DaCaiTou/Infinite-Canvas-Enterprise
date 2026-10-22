@@ -22,7 +22,6 @@ from pathlib import Path
 from typing import Any, Callable
 
 from enterprise.migrations.versioned import (
-    DEFAULT_MIGRATIONS,
     MIGRATION_ID_RE,
     SHA256_RE,
     STATE_MISSING,
@@ -42,6 +41,7 @@ from enterprise.migrations.versioned import (
     validate_registry,
 )
 from enterprise.migrations.sqlite_existing import open_existing_sqlite
+from enterprise.migrations.canvas_workspace import release_registry
 from enterprise.paths import PathRoots, validate_release_component
 from enterprise.path_safety import PathSafetyError, assert_no_reparse_ancestors, assert_path_within_root
 from enterprise.release.current_release import (
@@ -68,6 +68,7 @@ from enterprise.ops.update.versions import compare_versions
 from enterprise.ops.update.updater import prepared_updater_binding, sealed_updater_binding
 
 
+RELEASE_MIGRATIONS = release_registry()
 JOB_SCHEMA = "enterprise-update-mvp-job-v1"
 PLAN_SCHEMA = "enterprise-update-mvp-plan-v1"
 EVENT_SCHEMA = "enterprise-update-mvp-event-v1"
@@ -630,6 +631,15 @@ def _database_update_plan(
     steps = validate_registry(registry)
     source_evidence = _database_evidence(source_root, source_manifest)
     target_evidence = _database_evidence(target_root, target_manifest)
+    # A newer controller must still maintain an older published registry. Only
+    # exact known prefixes are usable; a forward migration still requires both
+    # releases to declare the same pre-staged registry below.
+    target_ids = target_evidence.get("versioned_migration_ids")
+    if type(target_ids) is list:
+        prefix = steps[:len(target_ids)]
+        if ([step.migration_id for step in prefix] == target_ids
+                and migration_registry_sha256(prefix) == target_evidence.get("migration_registry_sha256")):
+            steps = prefix
     if "schema_version" not in source_evidence:
         try:
             with open_existing_sqlite(database_path, mode="ro", error_type=sqlite3.OperationalError) as conn:
@@ -695,25 +705,33 @@ def _database_update_plan(
     inspection = inspect_database(database_path)
     registry_sha = migration_registry_sha256(steps)
     registry_ids = [step.migration_id for step in steps]
+    source_steps = steps
+    if mode == "same-schema-no-migration":
+        source_ids = source_evidence.get("versioned_migration_ids")
+        if type(source_ids) is list:
+            prefix = steps[:len(source_ids)]
+            if [step.migration_id for step in prefix] == source_ids:
+                source_steps = prefix
     if (
         inspection.get("current_state") != STATE_READY
         or inspection.get("schema_version") != source_evidence.get("schema_version")
         or inspection.get("schema_sha256") != source_evidence.get("schema_objects_sha256")
-        or source_evidence.get("migration_registry_sha256") != registry_sha
-        or source_evidence.get("versioned_migration_ids") != registry_ids
+        or source_evidence.get("migration_registry_sha256") != migration_registry_sha256(source_steps)
+        or source_evidence.get("versioned_migration_ids") != [step.migration_id for step in source_steps]
     ):
         raise UpdateMvpError("SYSTEM_UPDATE_DATABASE_SOURCE_IDENTITY_MISMATCH")
     if mode == "same-schema-no-migration":
         target_registry_ids = target_evidence["versioned_migration_ids"]
+        source_registry_ids = [step.migration_id for step in source_steps]
         if (
             target_evidence["schema_version"] != source_evidence["schema_version"]
             or target_evidence["schema_objects_sha256"] != source_evidence["schema_objects_sha256"]
-            or target_registry_ids[: len(registry_ids)] != registry_ids
+            or target_registry_ids[: len(source_registry_ids)] != source_registry_ids
         ):
             raise UpdateMvpError("SYSTEM_UPDATE_DATABASE_CONTRACT_UNSUPPORTED")
         return {
             "mode": mode,
-            "registry_staged": target_registry_ids != registry_ids,
+            "registry_staged": target_registry_ids != source_registry_ids,
             "target_migration_registry_sha256": target_evidence["migration_registry_sha256"],
             "target_versioned_migration_ids": target_registry_ids,
         }
@@ -810,7 +828,7 @@ class UpdateMvpService:
         roots: PathRoots,
         *,
         database_path: Path | None = None,
-        migration_registry: tuple[MigrationStep, ...] = DEFAULT_MIGRATIONS,
+        migration_registry: tuple[MigrationStep, ...] = RELEASE_MIGRATIONS,
         database_inspector: Callable[[Path], dict[str, Any]] | None = None,
     ) -> None:
         self.roots = roots
@@ -1015,7 +1033,7 @@ def execute_update_job(
     *,
     launcher: Callable[[Path, str], tuple[int, dict[str, Any]]] = _run_launcher,
     database_path: Path | None = None,
-    migration_registry: tuple[MigrationStep, ...] = DEFAULT_MIGRATIONS,
+    migration_registry: tuple[MigrationStep, ...] = RELEASE_MIGRATIONS,
     database_inspector: Callable[[Path], dict[str, Any]] | None = None,
 ) -> int:
     """Execute one READY job after the source supervisor has handed off."""
@@ -1062,6 +1080,14 @@ def execute_update_job(
     database_mode = database_update.get("mode")
     if database_mode not in {"same-schema-no-migration", "versioned-forward-migration"}:
         raise UpdateMvpError("SYSTEM_UPDATE_DATABASE_MIGRATION_PLAN_INVALID")
+    if database_mode == "versioned-forward-migration":
+        # Re-executing an older valid plan uses its exact known registry, not
+        # the additional future steps shipped by this controller.
+        for length in range(len(registry) + 1):
+            prefix = registry[:length]
+            if migration_registry_sha256(prefix) == database_update.get("migration_registry_sha256"):
+                registry = prefix
+                break
     lock = store.acquire_execution_lock(job_id)
     validation_failure = "start_failed"
     try:
