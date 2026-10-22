@@ -755,6 +755,7 @@ def _database_update_plan(
             database_path,
             target_version=target_version,
             registry=steps,
+            database_inspector=database_inspector,
         )
     except DataMigrationError as exc:
         raise UpdateMvpError(exc.code) from exc
@@ -1168,6 +1169,7 @@ def execute_update_job(
                     database_path,
                     target_version=int(database_update.get("target_schema_version")),
                     registry=registry,
+                    database_inspector=database_inspector,
                 ).steps]
             if (
                 database_update.get("operation_id") != job_id

@@ -59,8 +59,18 @@ def accounts(f):
 
 
 @pytest.mark.parametrize('target_failure', [False, True])
-def test_offline_department_activation_and_target_failure(department_install, monkeypatch, target_failure):
+@pytest.mark.parametrize('wal_source', [False, True])
+def test_offline_department_activation_and_target_failure(department_install, monkeypatch, target_failure, wal_source):
     f = department_install; before = accounts(f)
+    database = f['roots'].DATA_ROOT/'enterprise.db'
+    if wal_source:
+        with closing(sqlite3.connect(database)) as conn:
+            assert conn.execute('PRAGMA journal_mode=WAL').fetchone()[0] == 'wal'
+        def no_planning_sidecars(phase):
+            if phase == 'upgrade_ready':
+                assert all(not database.with_name(database.name + suffix).exists()
+                           for suffix in ('-wal', '-shm', '-journal'))
+        monkeypatch.setattr(upgrade, '_checkpoint', no_planning_sidecars)
     media = (f['roots'].DATA_ROOT/'media.bin').read_bytes()
     original_launch = upgrade.mvp._run_launcher
     if target_failure:

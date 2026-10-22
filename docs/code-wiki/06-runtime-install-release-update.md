@@ -6,6 +6,8 @@
 
 [返回索引](./README.md)
 
+离线版本化规划继续使用安装事务传入的 database_inspector：`plan_migrations` 的可选检查器在 mvp 准备/执行两处传递，防止 WAL 源的普通只读查询产生空旁路后被后续来源核验拒绝。默认在线读取、实际迁移和备份恢复不变；不是允许忽略 WAL。真实 Setup 首次失败及准确修正包验收回记#195。
+
 2026-10-22 离线部门升级续包：#193/#194 已合入main2655bd5；`install_upgrade` 后续候选允许已预置的版本化升级，调用同一个 prepare/execute，不复制DDL或备份器。`mvp.verified_job_database_backup()` 将持久迁移结果与原计划、备份身份交叉核验；恢复仍使用既有 exact-current 检查。恢复数据库文件替换后只登记经原备份证明的新对象身份，再恢复 EXE/Setup；成功任务只继续Windows登记。原Setup页面和权限/停机保护沿用，普通启动不激活新结构。准确候选证据和正式发行仍分别见CURRENT/原PR，下段保留原发行接线时点。
 
 2026-10-22 部门发行接线候选：`canvas_workspace.release_registry()` 为打包/新装/更新提供同一登记目录；`tools/build_release_manifest_v2.py build --database-schema-version 2` 预置目录但保持旧结构，`--database-schema-version 4 --database-contract-mode versioned-forward-migration` 生成启用候选。新安装依包声明应用对应DDL，普通启动不迁移；同结构维护识别已知前缀，跨结构更新要求来源已预置同目录并执行原备份恢复。Legacy migration_ids 沿用正式10.4四项，新增DDL属于 versioned_migration_ids。离线同结构预置/维护复用 install_upgrade，跨结构离线仍拒绝；准确版本/构建/验证状态见CURRENT和新PR，不表示已有正式10.5/10.6发布。

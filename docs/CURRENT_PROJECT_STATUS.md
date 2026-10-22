@@ -2,6 +2,12 @@
 
 更新时间：2026-10-22
 
+## 2026-10-22 离线部门升级真实 Runtime 验收补修
+
+#195 首次准确 fc5d3a8 的真实 Setup/Runtime 演练在已启动并停止过的 Schema2 来源阻断，错误为 INSTALL_UPGRADE_RECOVERY_REQUIRED / INSTALL_LIFECYCLE_DATABASE_RECOVERY_REQUIRED，尚未迁移或切换版本。原定向/冻结包用例的 Runtime 为受控且数据库为默认日志模式，不能替代该场景；首次失败保留在原PR。
+
+定位为共享迁移规划两处未沿用离线 immutable 检查器，普通只读连接在 WAL 模式留下空 WAL/SHM，再次来源检查将其拒绝。本次只让现有 plan_migrations 接收并沿用已有检查器，在线未传参保持原行为，不删除旁路、不放宽数据库身份和停机保护。新增 WAL 来源成功/目标失败参数用例先在旧代码复现2失败/2通过；修正后定向结果、准确新Head审查/CI和重新打包的Setup验收继续记录于#195。main仍2655bd5、正式Release仍10.4；未合并、未操作客户设备、无新增付费。
+
 ## 2026-10-22 费用与发行接线已合并，离线部门升级继续收口
 
 负责人批准后，#193、#194 已依次合入 main `cddaf99f95d37960e9f88eeb42cd8f888612a3ad`、`2655bd54deeae4c87fe49f1d8d284fd780f33f71`。费用分页、负责人非阻断预算提醒、Schema2 预置/Schema4 新装及在线迁移接线已在主线；正式 Release 仍为 v2026.10.4，不能将代码合并当作已启用部门新版。
