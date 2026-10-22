@@ -65,6 +65,7 @@ from enterprise.route_policy import (
 from enterprise.admin_api import router as admin_router
 from enterprise.user_model_api import router as user_model_router
 from enterprise.generation_task_api import router as generation_task_router
+from enterprise.department_api import create_router as create_department_router
 from enterprise.update_api import router as update_router
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.concurrency import run_in_threadpool
@@ -279,6 +280,7 @@ app.add_middleware(InstallMaintenanceMiddleware, state_root=PATH_ROOTS.STATE_ROO
 app.include_router(admin_router, prefix="/enterprise")
 app.include_router(user_model_router, prefix="/enterprise")
 app.include_router(generation_task_router, prefix="/enterprise")
+app.include_router(create_department_router(), prefix="/enterprise")
 app.include_router(update_router, prefix="/enterprise")
 
 # 共享业务代理客户端（保持连接池）。健康探测不复用该连接池，避免长请求或
