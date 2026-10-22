@@ -1,8 +1,8 @@
 {
   "schema_version": "enterprise-documents-v1",
-  "reviewed_at": "2026-10-20",
-  "audit_base_commit": "0d0078f2243bbacf6b24200e0a22a30d94b2a64e",
-  "scope": "Owner-authorized PR183 merge and formal10.4 release closeout; fixed source2859a2a, immutable assets and exact main CI verified, public103 direct and102 intermediate checks read-only. Reuse existing authority documents; test host operated by owner, no customer operation.",
+  "reviewed_at": "2026-10-22",
+  "audit_base_commit": "10d42868b153da274bc929e6f4f8df0c49f0f958",
+  "scope": "Owner-authorized integration of department candidates with merged performance PR189 and release record PR184. Candidate schema remains inactive; formal Release and customer operations unchanged.",
   "documents": [
     {
       "path": ".github/PULL_REQUEST_TEMPLATE.md",
@@ -158,7 +158,7 @@
       "path": "docs/CURRENT_PROJECT_STATUS.md",
       "kind": "authority",
       "authority": "status",
-      "reviewed_at": "2026-10-20"
+      "reviewed_at": "2026-10-22"
     },
     {
       "path": "docs/data/DATA-MVP-1-INDEPENDENT-REVIEW-2026-09.md",

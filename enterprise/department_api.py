@@ -168,4 +168,28 @@ def create_router(governance=None):
         names = ['period', 'starts_at', 'ends_at', 'unit', 'amount']
         return await call(request, costs.set_budget, department_id=department_id, **await fields(request, names, names))
 
+    from enterprise.canvas_workspace import CanvasWorkspace
+    workspace_service = CanvasWorkspace(service)
+
+    @router.get('/workspace/context')
+    async def canvas_workspace_context(request: Request):
+        return await call(request, workspace_service.context)
+
+    @router.get('/workspace')
+    async def canvas_workspace(request: Request, scope: str = 'me', department_id: str | None = None,
+                               member_id: str | None = None):
+        return await call(request, workspace_service.listing, scope=scope,
+                          department_id=department_id, member_id=member_id)
+
+    @router.put('/workspace/folders/{folder_id}')
+    async def workspace_folder(request: Request, folder_id: str):
+        names = ['parent_id', 'business_project_id', 'archived']
+        return await call(request, workspace_service.update_folder, folder_id=folder_id,
+                          **await fields(request, names, names))
+
+    @router.put('/workspace/archive')
+    async def workspace_archive(request: Request):
+        return await call(request, workspace_service.archive,
+                          **await fields(request, ['canvas_ids', 'archived'], ['canvas_ids', 'archived']))
+
     return router

@@ -2013,6 +2013,26 @@ def _pre_process_sync(
     if canvas_id and not can_access_canvas(user, canvas_id):
         return _deny_not_found("画布不存在或无权限访问")
 
+    if method.upper() == "POST" and (
+        path == "api/canvases" or (canvas_id and path == f"api/canvases/{canvas_id}/meta")
+    ):
+        from enterprise.canvas_workspace import CanvasWorkspace
+        from enterprise.department_governance import DepartmentGovernance, GovernanceError
+        data = _json_from_body(body)
+        target_project = data.get("project") if isinstance(data, dict) else None
+        creating = path == "api/canvases"
+        # Match the route: explicit blank targets move to default; None on
+        # metadata updates leaves the folder unchanged.
+        if creating or target_project is not None:
+            try:
+                CanvasWorkspace(DepartmentGovernance(connect=edb.get_db)).check_canvas_target(
+                    user, str(target_project or "").strip() or DEFAULT_PROJECT_ID,
+                    source_id=edb.get_canvas_project(canvas_id) if canvas_id else None,
+                    creating=creating,
+                )
+            except GovernanceError as exc:
+                return JSONResponse({"error": "当前目录或部门项目不允许此新增/移动操作", "code": exc.code}, status_code=exc.status_code)
+
     conversation_id = _conversation_id_from_path(path) or _conversation_id_from_body(path, body)
     if conversation_id and not can_access_conversation(user, conversation_id):
         return _deny_not_found("对话不存在或无权限访问")

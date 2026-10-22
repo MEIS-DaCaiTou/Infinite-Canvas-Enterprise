@@ -557,7 +557,8 @@ def test_release_database_snapshot_binds_versioned_schema_contract(tmp_path: Pat
     assert payload["schema_objects_sha256"] == sha256_bytes(canonical_json(payload["objects"]))
     assert payload["migration_registry_sha256"] == "34dedc0c49d4cb4b9f69231bdcbe24a3ebb49fb04199544aab531d7602fc7774"
     assert payload["migration_ids"] == [
-        "department_costs",  # Candidate module inventory; active registry remains v2 above.
+        "canvas_workspace",  # Candidate module inventory; active registry remains v2 above.
+        "department_costs",
         "sec_1b1_role_auth",
         "sec_1b2_activation",
         "sec_1f0_security_audit",
