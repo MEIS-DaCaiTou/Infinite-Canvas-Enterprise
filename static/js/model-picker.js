@@ -139,6 +139,10 @@
         return (!query || model.toLowerCase().includes(query)) && (view !== 'favorites' || isFavorite(config, model));
     }
     function mountSelect(select, config) {
+        if(config.callSource){
+            const picker=window.CanvasCallSources?.mount(select.closest('.generator-body') || select.parentElement,{getProvider:config.getProvider,...config.callSource});
+            config.providerSelect?.addEventListener('change',()=>picker?.refresh());
+        }
         const controls = tools(config, query => {
             const selected = config.getSelected();
             const models = [...new Set(config.getModels())];

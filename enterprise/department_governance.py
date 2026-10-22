@@ -102,6 +102,54 @@ class DepartmentGovernance:
             rows = conn.execute('SELECT * FROM departments WHERE active=1 ORDER BY name').fetchall()
             return [dict(row) for row in rows if _company(actor) or (member and row['id'] == member['department_id'])]
 
+    def workspace(self, principal):
+        """One permission-filtered snapshot for the existing account UI."""
+        try:
+            with self.session(principal) as (conn, actor):
+                member = _member(conn, actor['id'])
+                departments = [{**dict(r), 'can_manage':_manages(conn, actor, r['id'])}
+                    for r in conn.execute('SELECT * FROM departments WHERE active=1 ORDER BY name')
+                    if _company(actor) or (member and r['id'] == member['department_id'])]
+                projects = [{**dict(r), 'can_write':self._project_access(conn, actor, r, write=True),
+                    'can_manage':bool(_manages(conn, actor, r['department_id']) or
+                        (r['owner_id'] == actor['id'] and self._project_access(conn, actor, r, write=True)))}
+                    for r in conn.execute('SELECT * FROM business_projects WHERE active=1 ORDER BY name')
+                    if self._project_access(conn, actor, r)]
+                sources = [dict(r) for r in conn.execute('SELECT * FROM credential_sources ORDER BY scope DESC,name,id')
+                           if self._source_access(conn, actor, r)]
+                return {'enabled':True, 'company_admin':_company(actor), 'user_id':actor['id'],
+                    'department_id':member['department_id'] if member else None,
+                    'departments':departments, 'projects':projects, 'sources':sources,
+                    'configured_providers':[r[0] for r in conn.execute('SELECT DISTINCT provider_id FROM credential_sources')]}
+        except GovernanceError as exc:
+            if exc.code != 'DEPARTMENT_SCHEMA_UPGRADE_REQUIRED':
+                raise
+            return {'enabled':False, 'reason':exc.code}
+
+    def source_grants(self, principal, source_id):
+        with self.session(principal) as (conn, actor):
+            self._managed_source(conn, actor, source_id)
+            return [dict(r) for r in conn.execute('SELECT g.user_id,u.display_name FROM credential_grants g '
+                'JOIN users u ON u.id=g.user_id WHERE g.source_id=? ORDER BY u.display_name', (source_id,))]
+
+    def directory(self, principal):
+        with self.session(principal) as (conn, actor):
+            member = _member(conn, actor['id'])
+            _require(_company(actor) or (member and member['manager']))
+            return [dict(r) for r in conn.execute('SELECT u.id,u.display_name,m.department_id,m.manager FROM users u '
+                'LEFT JOIN department_members m ON m.user_id=u.id WHERE u.is_active=1 '+
+                ('' if _company(actor) else 'AND m.department_id=? ')+'ORDER BY u.display_name',
+                () if _company(actor) else (member['department_id'],))]
+
+    def project_members(self, principal, project_id):
+        with self.session(principal) as (conn, actor):
+            project = conn.execute('SELECT * FROM business_projects WHERE id=?', (project_id,)).fetchone()
+            _require(project and (_manages(conn, actor, project['department_id']) or
+                (project['owner_id'] == actor['id'] and self._project_access(conn, actor, project, write=True))))
+            return [dict(r) for r in conn.execute('SELECT u.id,u.display_name,g.can_write FROM department_members m '
+                'JOIN users u ON u.id=m.user_id LEFT JOIN business_project_members g ON g.user_id=m.user_id AND g.project_id=? '
+                'WHERE m.department_id=? AND u.is_active=1 ORDER BY u.display_name', (project_id, project['department_id']))]
+
     def create_department(self, principal, name):
         name, department_id = label(name), uuid.uuid4().hex
         with self.session(principal, write=True) as (conn, actor):
