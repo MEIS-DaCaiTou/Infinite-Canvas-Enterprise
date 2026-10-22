@@ -64,6 +64,7 @@ function contextFor(data) {
         document:{getElementById:()=>({textContent:''})},
         setTimeout:()=>{throw new Error('unexpected save retry');}, clearTimeout:()=>{},
         fetch:async()=>{throw new Error('unexpected HTTP request');},
+        CanvasSharedView:{enabled:false,readUrl:id=>'/api/canvases/'+encodeURIComponent(id)},
     });
     context.window=context;
     context.location.replace=()=>{throw new Error('unexpected navigation after failed reopen');};

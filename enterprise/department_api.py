@@ -2,7 +2,7 @@
 import json
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse, Response
 from starlette.concurrency import run_in_threadpool
 
 from enterprise.credential_vault import VaultUnavailable
@@ -45,6 +45,8 @@ def create_router(governance=None):
                         kwargs.get('scope', 'department' if function.__name__ == 'budgets' else 'me'),
                         kwargs.get('department_id'), CanvasTaskJournal(journal_root))
             value = await run_in_threadpool(function, principal, **kwargs)
+            if isinstance(value, Response):
+                return value
             return JSONResponse(value, headers={'Cache-Control':'no-store'})
         except GovernanceError as exc:
             raise HTTPException(exc.status_code, {'code':exc.code}) from None
@@ -191,5 +193,62 @@ def create_router(governance=None):
     async def workspace_archive(request: Request):
         return await call(request, workspace_service.archive,
                           **await fields(request, ['canvas_ids', 'archived'], ['canvas_ids', 'archived']))
+
+    from enterprise.project_results import ProjectResults
+    results = ProjectResults(service)
+
+    @router.get('/workspace/tasks')
+    async def project_tasks(request: Request, scope: str = 'me', department_id: str | None = None,
+                            project_id: str | None = None, member_id: str | None = None,
+                            before: str | None = None, canvas_id: str | None = None):
+        return await call(request, results.page, scope=scope, department_id=department_id,
+                          project_id=project_id, member_id=member_id, before=before, canvas_id=canvas_id)
+
+    @router.get('/workspace/tasks/{task_id}')
+    async def project_task(request: Request, task_id: str):
+        return await call(request, results.detail, task_id=task_id)
+
+    @router.get('/workspace/tasks/{task_id}/outputs/{index}')
+    async def project_output(request: Request, task_id: str, index: int):
+        def output(principal):
+            import mimetypes
+            file = results.output(principal, task_id, index)
+            inline = file.suffix.lower() in {'.png','.jpg','.jpeg','.webp','.gif','.bmp','.mp4','.webm','.mov','.mp3','.wav','.ogg','.txt'}
+            return FileResponse(file, media_type=mimetypes.guess_type(file.name)[0] if inline else 'application/octet-stream',
+                filename=None if inline else file.name,
+                headers={'Cache-Control':'private, no-store', 'X-Content-Type-Options':'nosniff'})
+        return await call(request, output)
+
+    from enterprise.shared_canvases import SharedCanvases
+    shared_canvases = SharedCanvases(service)
+
+    @router.get('/workspace/canvases/{canvas_id}')
+    async def shared_canvas(request: Request, canvas_id: str):
+        return await call(request, shared_canvases.detail, canvas_id=canvas_id)
+
+    @router.get('/workspace/canvases/{canvas_id}/resources/{index}')
+    @router.get('/workspace/canvases/{canvas_id}/resources/{index}/{filename}')
+    async def shared_canvas_resource(request: Request, canvas_id: str, index: int, filename: str = ''):
+        def resource(principal):
+            import mimetypes
+            file = shared_canvases.resource(principal,canvas_id,index)
+            inline = file.suffix.lower() in {'.png','.jpg','.jpeg','.webp','.gif','.bmp','.mp4','.webm','.mov','.mp3','.wav','.ogg','.txt'}
+            return FileResponse(file, media_type=mimetypes.guess_type(file.name)[0] if inline else 'application/octet-stream',
+                filename=None if inline else file.name, headers={'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'})
+        return await call(request, resource)
+
+    @router.post('/workspace/canvases/{canvas_id}/reuse')
+    async def reuse_shared_canvas(request: Request, canvas_id: str):
+        await fields(request, [], [])
+        return await call(request, shared_canvases.reuse, canvas_id=canvas_id)
+
+    @router.post('/workspace/tasks/{task_id}/reuse')
+    async def reuse_project_result(request: Request, task_id: str):
+        return await call(request, results.reuse, task_id=task_id,
+                          **await fields(request, ['keys'], ['keys']))
+
+    @router.get('/member-workspace')
+    async def member_workspace(request: Request):
+        return await call(request, service.member_workspace)
 
     return router

@@ -1068,7 +1068,11 @@ async def admin_page(request: Request):
     if not user:
         return RedirectResponse(f"/enterprise/login?next=/enterprise/admin")
     if not user.get("is_admin"):
-        return HTMLResponse("<h2>无权限访问管理后台</h2>", status_code=403)
+        from enterprise.department_governance import DepartmentGovernance, GovernanceError
+        try:
+            await run_in_threadpool(DepartmentGovernance().member_workspace, user)
+        except GovernanceError:
+            return HTMLResponse("<h2>无权限访问管理后台</h2>", status_code=403)
     admin_html = ENTERPRISE_STATIC_DIR / "admin.html"
     return HTMLResponse(admin_html.read_text(encoding="utf-8"))
 

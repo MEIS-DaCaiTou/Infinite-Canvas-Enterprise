@@ -97,6 +97,12 @@
     .user-table th:nth-child(5) { width: 132px; }
     .user-table th:nth-child(6) { width: 132px; }
     .user-table th:nth-child(7) { width: 430px; }
+    .user-table.department-enabled { min-width: 1360px; }
+    .user-table.department-enabled th:nth-child(3) { width: 160px; }
+    .user-table.department-enabled th:nth-child(4) { width: 120px; }
+    .user-table.department-enabled th:nth-child(5) { width: 86px; }
+    .user-table.department-enabled th:nth-child(6),.user-table.department-enabled th:nth-child(7) { width: 132px; }
+    .user-table.department-enabled th:nth-child(8) { width: 430px; }
     th, td { padding: 11px 22px; text-align: left; }
     th {
       color: var(--faint); font-size: 10.5px; font-weight: 900;
@@ -311,6 +317,7 @@
     #closeUpdateProgressBtn:disabled { opacity:.45; cursor:not-allowed; }
     @media(max-width:820px){ .update-grid{grid-template-columns:1fr;} }
   </style>
+  <script src="/static/js/department-members.js?v=20261022.1"></script>
 </head>
 <body>
 
@@ -1033,6 +1040,7 @@
   function getFilteredUsers() {
     syncMemberFiltersFromDom();
     let users = [..._users];
+    if (DepartmentMembers.data) users = users.filter(u => DepartmentMembers.match(u));
     if (_memberStatusFilter === 'active') {
       users = users.filter(u => boolFlag(u.is_active));
     } else if (_memberStatusFilter === 'disabled') {
@@ -1102,7 +1110,7 @@
 
   async function loadUsers() {
     try {
-      _users = await fetchUsers();
+      _users = DepartmentMembers.departmentOnly ? await DepartmentMembers.members() : await fetchUsers();
       renderUsers();
     } catch (e) { showToast('加载失败: ' + e.message, 'error'); }
   }
@@ -1146,6 +1154,7 @@
       <tr class="${isActive ? '' : 'disabled-user-row'}">
         <td class="truncate-cell" style="font-weight:800;" title="${usernameHtml}">${usernameHtml}</td>
         <td class="truncate-cell" style="color:var(--muted);" title="${displayNameHtml === '—' ? '' : displayNameHtml}">${displayNameHtml}</td>
+        ${DepartmentMembers.cell(u)}
         <td><span class="badge ${roleInfo.badge}">${roleInfo.label}</span></td>
         <td><span class="badge ${isActive ? 'badge-active' : 'badge-disabled'}">${isActive ? '正常' : '已禁用'}</span></td>
         <td style="color:var(--muted);font-size:12px;">${fmtDate(u.created_at)}</td>
@@ -2407,6 +2416,7 @@
   async function initializeAdmin() {
     try {
       await loadCurrentUser();
+      await DepartmentMembers.initialize(_currentUser);
       await loadUsers();
     } catch (e) {
       showToast('初始化管理后台失败: ' + e.message, 'error');
