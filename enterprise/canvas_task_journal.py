@@ -211,6 +211,9 @@ class CanvasTaskJournal:
             if changes.get("upstream_task_id") and not record.get("upstream_task_id"):
                 updates["upstream_task_id"] = changes["upstream_task_id"]
             self._write({**record, **updates, "updated_at": time.time()})
+            if record.get('billing_context'):
+                from enterprise.task_credentials import project_record_costs
+                project_record_costs({**record, **updates})
 
     def reopen_image_archives(self, task_id: str, indexes: list[int]) -> None:
         """Correct completed receipts whose bytes were never archived; never queue work."""

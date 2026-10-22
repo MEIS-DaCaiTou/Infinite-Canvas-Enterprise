@@ -281,8 +281,10 @@ class DepartmentGovernance:
             conn.execute('UPDATE credential_sources SET enabled=? WHERE id=?', (enabled, source_id))
             _audit(conn, actor, 'credential_source_enabled_changed', source_id)
 
-    def accept_context(self, principal, *, task_id, provider_id, model, source_id=None, project_id=None, pricing_version=None):
+    def accept_context(self, principal, *, task_id, provider_id, model, source_id=None, project_id=None, pricing_version=None, expected_attempts=1):
         task_id, provider_id, model = identifier(task_id), identifier(provider_id), label(model)
+        if type(expected_attempts) is not int or not 1 <= expected_attempts <= 8:
+            raise GovernanceError('INVALID_EXPECTED_ATTEMPTS')
         if pricing_version is not None:
             pricing_version = identifier(pricing_version)
         with self.session(principal, write=True) as (conn, actor):
@@ -292,7 +294,8 @@ class DepartmentGovernance:
                 snap = json.loads(old['snapshot_json'])
                 _require(snap['provider_id'] == provider_id and snap['model'] == model
                          and (source_id is None or source_id == old['source_id']) and project_id == old['project_id']
-                         and pricing_version == snap['pricing_version'],
+                         and pricing_version == snap['pricing_version']
+                         and expected_attempts == snap.get('expected_attempts',1),
                          'TASK_BILLING_CONTEXT_CONFLICT', 409)
                 return snap
             member = _member(conn, actor['id'])
@@ -314,6 +317,7 @@ class DepartmentGovernance:
                     'source_name':chosen['name'], 'scope':chosen['scope'], 'procurement':chosen['procurement'],
                     'account_ref':chosen['account_ref'], 'revision_id':chosen['current_revision']}
             snap['pricing_version'] = pricing_version  # Unknown pricing stays explicit; no guessed rate.
+            snap['expected_attempts'] = expected_attempts
             conn.execute('INSERT INTO generation_billing_context VALUES (?,?,?,?,?,?,?,?)',
                 (task_id, actor['id'], snap['department_id'], project_id, chosen['id'], chosen['current_revision'],
                  json.dumps(snap, ensure_ascii=False), int(time.time())))

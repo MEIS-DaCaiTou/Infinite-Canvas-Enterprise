@@ -72,6 +72,7 @@ class ImageReceiptSink:
                                 {"state": "succeeded", "finished_at": time.time(), "error": "", "result": {"images": images, "image_items": image_items}})
 
     async def interrupted(self, exc):
+        from enterprise.task_credentials import task_error
         ambiguous = getattr(exc, "submission_unknown", False) or getattr(exc, "status_code", 0) >= 500 or isinstance(exc, httpx.HTTPError)
         if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code < 500:
             ambiguous = False
@@ -83,7 +84,7 @@ class ImageReceiptSink:
             ambiguous = False
         await asyncio.to_thread(self.journal.record_image_request, self.task_id, self.index,
                                 {"state": "unknown" if ambiguous else "failed", "finished_at": None if ambiguous else time.time(),
-                                 "error": redact_text(getattr(exc, "detail", None) or str(exc))[:1200]})
+                                 "error": task_error(getattr(exc, "detail", None) or str(exc))[:1200]})
 
 
 class CanvasImageRecovery:
@@ -162,7 +163,11 @@ class CanvasImageRecovery:
             if index not in providers:
                 continue
             try:
-                result = await self.query(providers[index], receipt["upstream_task_id"])
+                from enterprise.task_credentials import credential_scope
+                with credential_scope(record):
+                    result = await self.query(providers[index], receipt["upstream_task_id"])
+                    from enterprise.task_credentials import task_error
+                    result = {**result, **{key:task_error(result[key]) for key in ('message','error') if key in result}}
             except (HTTPException, httpx.HTTPError, ValueError, OSError) as exc:
                 query_unknown = True
                 if isinstance(exc, HTTPException):

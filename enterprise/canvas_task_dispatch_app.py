@@ -26,6 +26,10 @@ def dispatch_paused(state_root):
 
 
 def create_dispatch(journal, models, runners, schedule, paused, *, secret, provider, headers, workflow, backend, default_model):
+    from enterprise.task_credentials import bound_runner, validate_pending_binding
+    from enterprise.department_governance import DepartmentGovernance
+    billing = DepartmentGovernance()
+    runners = {kind:bound_runner(journal, runner, service=billing) for kind, runner in runners.items()}
     def binding(kind, payload):
         try:
             if kind == "comfy":
@@ -39,7 +43,9 @@ def create_dispatch(journal, models, runners, schedule, paused, *, secret, provi
                 if not is_zhenzhen(selected):
                     return None  # CLI/other suppliers retain their current path.
                 model = payload.model or (default_model(kind, selected) if kind in {"llm", "online-image"} else "veo3-fast")
-                scope = {**provider_scope(selected), "model": model, "headers": headers(provider=selected, model=model),
+                call_source = getattr(payload, 'call_source_id', None)
+                auth_binding = {'call_source_id':call_source} if call_source else {'headers':headers(provider=selected, model=model)}
+                scope = {**provider_scope(selected), "model": model, **auth_binding,
                          "model_protocol": selected.get("model_protocols", {}).get(model)}
                 if kind == "online-image":
                     scope.update({key: selected.get(key) for key in (
@@ -50,6 +56,8 @@ def create_dispatch(journal, models, runners, schedule, paused, *, secret, provi
             return None
 
     async def validate(record, payload):
+        if not await asyncio.to_thread(validate_pending_binding, billing, record):
+            return False
         owner = record.get("enterprise_user_id")
         user = await asyncio.to_thread(db.get_user_by_id, owner)
         if (not user or await asyncio.to_thread(db.get_task_owner, OWNER_TYPES[record["type"]], record["id"]) != owner
