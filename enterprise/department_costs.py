@@ -189,3 +189,24 @@ class DepartmentCosts:
                           over_amount=str(max(Decimal(0), _add_money(actual, Decimal(budget['amount']).copy_negate()))),
                           pending_reconciliation=summary['pending_reconciliation'], blocking=False)
         return budgets
+
+    def alerts(self, principal):
+        """Current-period advisory notices for authorized department managers."""
+        try:
+            with self.governance.session(principal) as (conn, actor):
+                departments = [dict(r) for r in conn.execute('SELECT id,name FROM departments WHERE active=1')
+                               if _manages(conn, actor, r['id'])]
+                user_id, company = actor['id'], _company(actor)
+        except GovernanceError as exc:
+            if exc.code == 'DEPARTMENT_SCHEMA_UPGRADE_REQUIRED':
+                return {'enabled':False, 'alerts':[]}
+            raise
+        now, alerts = int(time.time()), []
+        for department in departments:
+            for budget in self.budgets(principal, department['id']):
+                if budget['starts_at'] <= now < budget['ends_at'] and budget['exceeded']:
+                    identity = [department['id'], budget['period'], budget['unit'], budget['starts_at'],
+                                budget['ends_at'], budget['amount']]
+                    alerts.append({**budget, 'department_id':department['id'], 'department_name':department['name'],
+                                   'id':json.dumps(identity, ensure_ascii=False, separators=(',', ':'))})
+        return {'enabled':True, 'user_id':user_id, 'company_admin':company, 'alerts':alerts}

@@ -79,6 +79,8 @@ Code Wiki 提供更细的文件、类和函数导航：[docs/code-wiki/README.md
 
 ## 3. 安全与权限边界
 
+费用分页及站内预算提醒候选复用 `DepartmentCosts.entries/budgets/summary`：`alerts` 只投影现任可管理部门的当期超额预算，不参与任务受理，也不生成费用。`business-workspace.js` 使用原cursor分批显示明细；`budget-alerts.js` 在现有首页/后台/费用页显示非模态提醒，按账号在浏览器保存本期已知晓状态。无新Schema、队列或后台通知服务，费用仍由原角色授权，页面不可见时暂停定期读取。
+
 - 对外仅暴露 Gateway；`:3001` 必须绑定 loopback。
 - UI 隐藏不是权限控制，API、WebSocket、后台任务和资源访问必须服务端授权。
 - 普通用户对未知 owner、未知路由和未知事件应默认拒绝。

@@ -1,0 +1,3 @@
+.budget-notice{position:fixed;right:18px;bottom:58px;z-index:80;box-sizing:border-box;width:340px;max-height:45vh;overflow:auto;padding:16px 18px;border:1px solid #e8cd95;border-radius:16px;background:var(--panel,var(--card,#fffaf0));color:var(--text,#17202f);box-shadow:0 8px 28px #17202f16;font:13px/1.6 system-ui,sans-serif}
+.budget-notice p{margin:10px 0}.budget-notice small{opacity:.75}.budget-notice div{display:flex;gap:14px;align-items:center}.budget-notice a{color:inherit}.budget-notice button{margin-left:auto;border:1px solid #d9cba9;border-radius:14px;background:transparent;color:inherit;padding:5px 10px;cursor:pointer}
+@media(max-width:600px){.budget-notice{right:12px;left:12px;width:auto;bottom:58px}}
