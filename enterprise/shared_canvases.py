@@ -22,7 +22,7 @@ def public_document(value, *, copying=False):
                     ('apikey','apikeys','password','secret','accesstoken','refreshtoken')):
                 if not copying:
                     result[key] = '[REDACTED]'
-            elif copying and (key.startswith('_') or key in {'pendingTasks','llmTask','callSources','businessProjectId',
+            elif copying and (key.startswith('_') or key in {'pendingTasks','llmTask','jimengPending','callSources','businessProjectId',
                     'canvasTaskId','upstreamTaskId','recoverTaskId','task_id','upstream_task_id','provider_receipts','billing_context'}):
                 continue
             else:
@@ -90,8 +90,14 @@ class SharedCanvases:
             return {'canvas':replace_urls(data,mapping),'readonly':True}
 
     def _file(self,url):
-        path=unquote(urlsplit(url).path).replace('\\','/');root=self.roots.UPLOAD_ROOT.resolve()
-        file=(root/path.lstrip('/')).resolve()
+        # resource_urls already normalizes/decodes once. Do not decode a second
+        # time, and keep every file inside its original media subtree.
+        path=urlsplit(url).path.replace('\\','/')
+        prefix=next((p for p in ('/assets/input/','/assets/output/','/assets/uploads/',
+            '/assets/library/','/assets/images/','/output/') if path.startswith(p)),None)
+        _require(prefix,'RESULT_FILE_UNAVAILABLE',404)
+        root=(self.roots.UPLOAD_ROOT/prefix.lstrip('/')).resolve()
+        file=(root/path[len(prefix):]).resolve()
         _require(file.is_relative_to(root) and file.is_file(),'RESULT_FILE_UNAVAILABLE',404)
         return file
 

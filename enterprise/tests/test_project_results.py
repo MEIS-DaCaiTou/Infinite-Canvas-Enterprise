@@ -32,6 +32,7 @@ def results(business,tmp_path,monkeypatch):
                   {'id':'api','type':'api','apiSettings':{'apiKey':'fixture-private-key','max_tokens':200,'businessProjectId':project,'callSources':{'comfly':'original-source'}},
                    '_pending':[{'canvasTaskId':'original'}],'running':True}]
     doc['connections']=[{'from':'prompt','to':'api'},{'from':'ref','to':'api'}]
+    doc['nodes'][2]['jimengPending']={'submitId':'fixture-original-submission','kind':'image'}
     (roots.DATA_ROOT/'canvases/video.json').write_text(json.dumps(doc),encoding='utf8')
     def connect():
         c=service.connect();c.row_factory=sqlite3.Row;return c
@@ -72,6 +73,7 @@ def test_full_canvas_context_and_private_copy_survive_unsharing(results):
     assert shared.resource(p['outsider'],'video',0).read_bytes()==b'controlled original reference'
     copied=shared.reuse(p['outsider'],'video')['canvas']
     assert not copied['nodes'][2]['running'] and '_pending' not in copied['nodes'][2]
+    assert 'jimengPending' not in copied['nodes'][2]
     assert 'businessProjectId' not in copied['nodes'][2]['apiSettings']
     assert 'apiKey' not in copied['nodes'][2]['apiSettings']
     url=copied['nodes'][1]['url'];assert db.get_resource_owner(url)=='outsider'
@@ -123,6 +125,20 @@ def test_member_administration_filters_and_keeps_role_authority(results):
     with pytest.raises(GovernanceError):service.assign_member(p['design'],design,'employee',True)
     service.assign_member(p['admin'],ops,'employee')
     assert {m['id'] for m in service.member_workspace(p['design'])['members']}=={'design'}
+
+
+def test_shared_resources_do_not_decode_outside_media_subtrees(results):
+    service,p,_,_,_,project,roots,_=results;shared=SharedCanvases(service,roots)
+    service.share_project(p['employee'],project,'company_readonly')
+    (roots.UPLOAD_ROOT/'private-config.txt').write_text('synthetic private file',encoding='utf8')
+    (roots.UPLOAD_ROOT/'assets/images').mkdir()
+    path=roots.DATA_ROOT/'canvases/video.json';doc=json.loads(path.read_text())
+    doc['nodes']=[{'id':'ref','type':'image','url':'/assets/images/%252e%252e/%252e%252e/private-config.txt'}]
+    path.write_text(json.dumps(doc),encoding='utf8')
+    with pytest.raises(GovernanceError,match='RESULT_FILE_UNAVAILABLE'):
+        shared.resource(p['outsider'],'video',0)
+    with pytest.raises(GovernanceError,match='RESULT_FILE_UNAVAILABLE'):
+        shared.reuse(p['outsider'],'video')
 
 
 def test_http_preview_range_revocation_and_fee_permissions(results,monkeypatch):
