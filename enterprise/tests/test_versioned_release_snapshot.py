@@ -9,13 +9,14 @@ from pathlib import Path
 from enterprise.db import ensure_db_schema_in_connection
 from enterprise.migrations.sec_1b2_activation import ensure_bootstrap_lifecycle_schema_in_transaction
 from enterprise.migrations.versioned import (
-    DEFAULT_MIGRATIONS,
     initialize_current_schema_in_transaction,
     schema_objects,
     schema_snapshot_sha256,
 )
 from enterprise.release.release_builder_v2 import _database_snapshot, _versioned_database_snapshot
 from enterprise.security_audit import ensure_security_audit_schema_in_transaction
+from enterprise.migrations.canvas_workspace import release_registry
+from enterprise.migrations.versioned import migration_registry_sha256
 
 
 def test_builder_versioned_evidence_matches_greenfield_schema(tmp_path: Path) -> None:
@@ -23,9 +24,9 @@ def test_builder_versioned_evidence_matches_greenfield_schema(tmp_path: Path) ->
     evidence = json.loads(_versioned_database_snapshot(repository, tmp_path / "schema.json"))
     assert evidence["schema_version"] == 2
     assert evidence["legacy_source_schema_sha256"] == "28b7a7d5994303fdfc7a1186cde19aa1d09312c2985b13427317b04af7a97691"
-    assert evidence["versioned_migration_ids"] == ["ice_096_security_schema_v2"]
+    assert evidence["versioned_migration_ids"] == [step.migration_id for step in release_registry()]
     assert evidence["schema_objects_sha256"] == "cd8790a1ef22a97b96c76105b26f14c309ed02396249ab97d36034bb88d25284"
-    assert evidence["migration_registry_sha256"] == "34dedc0c49d4cb4b9f69231bdcbe24a3ebb49fb04199544aab531d7602fc7774"
+    assert evidence["migration_registry_sha256"] == migration_registry_sha256(release_registry())
     assert json.loads(_database_snapshot(repository, tmp_path / "default-schema.json")) == evidence
     conn = sqlite3.connect(":memory:")
     try:
@@ -77,7 +78,7 @@ def test_official_v2_contract_can_prepare_same_schema_update_without_database_wr
     original = database.read_bytes()
     plan = _database_update_plan(
         source_root=source, target_root=target, source_manifest=Manifest(), target_manifest=Manifest(),
-        database_path=database, registry=DEFAULT_MIGRATIONS, operation_id="mainline-contract-check",
+        database_path=database, registry=release_registry(), operation_id="mainline-contract-check",
     )
     assert plan["mode"] == "same-schema-no-migration"
     assert plan["registry_staged"] is False

@@ -6,6 +6,8 @@
 
 [返回索引](./README.md)
 
+2026-10-22 部门发行接线候选：`canvas_workspace.release_registry()` 为打包/新装/更新提供同一登记目录；`tools/build_release_manifest_v2.py build --database-schema-version 2` 预置目录但保持旧结构，`--database-schema-version 4 --database-contract-mode versioned-forward-migration` 生成启用候选。新安装依包声明应用对应DDL，普通启动不迁移；同结构维护识别已知前缀，跨结构更新要求来源已预置同目录并执行原备份恢复。Legacy migration_ids 沿用正式10.4四项，新增DDL属于 versioned_migration_ids。离线同结构预置/维护复用 install_upgrade，跨结构离线仍拒绝；准确版本/构建/验证状态见CURRENT和新PR，不表示已有正式10.5/10.6发布。
+
 Windows 交接实现 [#157](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/157) 准确 551f433 四项常规 CI 成功、独立审查后已随 `519b1da0` 合并。正式入口“启动并打开”只用当前已安装版本；更新由管理员在更新中心单独确认，不要求每次启动更新。必要安装审查不扩成任意宿主/历史/GUI 工程，业务原任务恢复可并行推进；正式 10.1 资产未改变，新发行另行验证。
 
 更新时间：2026-10-13。主线、维护线和固定入口边界见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，生命周期设计见 [统一交付 ADR](../decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md)。

@@ -1,4 +1,4 @@
-"""Candidate workspace metadata, following the unactivated department schema.
+"""Workspace release registry; the verified payload decides its schema target.
 
 Reuse user_project_map.parent_project_id; canvas bytes and billing facts stay
 in their existing stores. Ordinary startup never invokes this migration.
@@ -37,7 +37,11 @@ def validate_in_transaction(conn):
     return conn.execute('PRAGMA foreign_key_check').fetchone() is None
 
 
-def candidate_registry():
+def release_registry():
     step = MigrationStep('ice_canvas_workspace_v4', 3, 4,
         hashlib.sha256('\n'.join(DDL).encode()).hexdigest(), apply_in_transaction, validate_in_transaction)
     return (*department_registry(), step)
+
+
+def candidate_registry():
+    return release_registry()

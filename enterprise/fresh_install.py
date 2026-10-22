@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from enterprise import db
+from enterprise.migrations.canvas_workspace import release_registry
 from enterprise.install_entry import (
     EntryPublication, publish_fixed_entry, validate_entry_target_paths, verify_entry_bundle,
 )
@@ -36,7 +37,6 @@ from enterprise.migrations.sec_1f0_security_audit import (
 )
 from enterprise.migrations.versioned import (
     BASELINE_SCHEMA_VERSION,
-    DEFAULT_MIGRATIONS,
     STATE_READY as VERSIONED_SCHEMA_READY,
     initialize_current_schema_in_transaction,
     initialize_schema_metadata_in_transaction,
@@ -363,10 +363,12 @@ def _release_database_evidence(app_root: Path, manifest: ReleaseManifestV2) -> d
             _fail("INSTALL_DATABASE_CONTRACT_UNSUPPORTED")
         evidence = json.loads(data)
         version = evidence.get("schema_version")
-        expected_ids = [] if version == BASELINE_SCHEMA_VERSION else [step.migration_id for step in DEFAULT_MIGRATIONS]
-        expected_registry = () if version == BASELINE_SCHEMA_VERSION else DEFAULT_MIGRATIONS
+        identifiers = evidence.get("versioned_migration_ids")
+        known_registry = release_registry()
+        expected_registry = known_registry[:len(identifiers)] if type(identifiers) is list else known_registry
+        expected_ids = [step.migration_id for step in expected_registry]
         if (
-            type(version) is not int or version not in {BASELINE_SCHEMA_VERSION, DEFAULT_MIGRATIONS[-1].to_version}
+            type(version) is not int or version not in {BASELINE_SCHEMA_VERSION, *(step.to_version for step in expected_registry)}
             or evidence.get("schema_id") != contract["schema_id"]
             or evidence.get("migration_ids") != contract["migration_ids"]
             or evidence.get("versioned_migration_ids") != expected_ids
@@ -437,7 +439,9 @@ def _create_greenfield_database(
         if schema_evidence["schema_version"] == BASELINE_SCHEMA_VERSION:
             initialize_schema_metadata_in_transaction(conn, schema_version=BASELINE_SCHEMA_VERSION)
         else:
-            initialize_current_schema_in_transaction(conn)
+            registry = release_registry()[:len(schema_evidence["versioned_migration_ids"])]
+            initialize_current_schema_in_transaction(conn, registry=registry,
+                                                     target_version=schema_evidence["schema_version"])
         marker = (
             1,
             now,
@@ -532,7 +536,8 @@ def _create_greenfield_database(
         if (
             versioned.get("current_state") != VERSIONED_SCHEMA_READY
             or versioned.get("schema_version") != schema_evidence["schema_version"]
-            or versioned.get("migration_ids") != schema_evidence["versioned_migration_ids"]
+            or versioned.get("migration_ids") != [step.migration_id for step in release_registry()
+                                                  if step.to_version <= schema_evidence["schema_version"]]
             or versioned.get("schema_sha256") != schema_evidence["schema_objects_sha256"]
         ):
             _fail("INSTALL_DATABASE_VERSION_METADATA_INVALID")

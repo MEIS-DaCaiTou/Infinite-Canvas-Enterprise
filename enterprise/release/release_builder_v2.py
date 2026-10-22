@@ -434,23 +434,25 @@ def _config_contract() -> bytes:
     return canonical_json(result)
 
 
-def _database_snapshot(repo: Path, destination: Path) -> bytes:
+def _database_snapshot(repo: Path, destination: Path, *, schema_version: int = 2) -> bytes:
     """The unified mainline ships the same v2 contract as official 09.9/10.1.
 
     Historical unversioned releases must be rebuilt from their frozen refs.
     Never infer a downgrade from the mainline VERSION marker.
     """
-    return _versioned_database_snapshot(repo, destination)
+    return _versioned_database_snapshot(repo, destination, schema_version=schema_version)
 
 
-def _versioned_database_snapshot(repo: Path, destination: Path) -> bytes:
-    """Build real v2 evidence by applying the shipped migration to a fixture.
+def _versioned_database_snapshot(repo: Path, destination: Path, *, schema_version: int = 2) -> bytes:
+    """Build a v2 registry-staging or v4 department snapshot from real DDL.
 
     The legacy source is pinned to the exact 18-object 09.6/09.8 schema.  This
     does not claim that the immutable 09.6 updater can migrate a database: the
     normal online route starts from the 09.8 bridge, while an independent
     controlled bridge handles the security-activated 09.6 variant.
     """
+    if type(schema_version) is not int or schema_version not in {2, 4}:
+        raise ReleaseManifestV2Error("RELEASE_DATABASE_SCHEMA_INVALID")
     script = r'''import json, os, sqlite3, sys
 from pathlib import Path
 sys.path.insert(0, os.environ["ICE_REPO_ROOT"])
@@ -460,7 +462,9 @@ from enterprise.migrations.versioned import (
     DEFAULT_MIGRATIONS, _apply_steps_in_transaction,
     initialize_schema_metadata_in_transaction, migration_registry_sha256,
     preview_legacy_schema_enrollment, schema_objects, schema_snapshot_sha256,
+    inspect_schema_metadata_connection,
 )
+from enterprise.migrations.canvas_workspace import release_registry
 from enterprise.security_audit import ensure_security_audit_schema_in_transaction
 from enterprise.migrations.sec_1b2_activation import ensure_bootstrap_lifecycle_schema_in_transaction
 root=Path(os.environ["ICE_DB_SNAPSHOT_ROOT"])
@@ -491,18 +495,21 @@ con.execute("BEGIN IMMEDIATE")
 enrolled=initialize_schema_metadata_in_transaction(con)
 if enrolled["schema_sha256"]!=enrolled_sha:
     raise RuntimeError("VERSIONED_ENROLLMENT_UNEXPECTED")
-_apply_steps_in_transaction(con,DEFAULT_MIGRATIONS)
+registry=release_registry()
+target_version=int(os.environ["ICE_DB_TARGET_VERSION"])
+_apply_steps_in_transaction(con,tuple(step for step in registry if step.to_version<=target_version))
 target_objects=schema_objects(con)
 target_sha=schema_snapshot_sha256(con)
+inspection=inspect_schema_metadata_connection(con)
 con.commit()
 con.close()
-if len(target_objects)!=30 or len(DEFAULT_MIGRATIONS)!=1:
+if inspection["schema_version"]!=target_version or (target_version==2 and len(target_objects)!=30):
     raise RuntimeError("VERSIONED_TARGET_SCHEMA_UNEXPECTED")
-payload={"migration_ids":sorted(p.stem for p in (Path(os.environ["ICE_REPO_ROOT"])/"enterprise"/"migrations").glob("*.py") if p.name not in {"__init__.py","versioned.py"}),"objects":target_objects,"schema_id":"enterprise-database-contract-v1","schema_version":2,"schema_objects_sha256":target_sha,"migration_registry_sha256":migration_registry_sha256(DEFAULT_MIGRATIONS),"versioned_migration_ids":[step.migration_id for step in DEFAULT_MIGRATIONS],"legacy_source_schema_sha256":legacy_sha,"legacy_enrolled_schema_sha256":enrolled_sha,"legacy_security_variant_schema_sha256":variant_sha,"legacy_security_variant_enrolled_schema_sha256":variant_enrolled_sha}
+payload={"migration_ids":["sec_1b1_role_auth","sec_1b2_activation","sec_1f0_security_audit","sqlite_existing"],"objects":target_objects,"schema_id":"enterprise-database-contract-v1","schema_version":target_version,"schema_objects_sha256":target_sha,"migration_registry_sha256":migration_registry_sha256(registry),"versioned_migration_ids":[step.migration_id for step in registry],"legacy_source_schema_sha256":legacy_sha,"legacy_enrolled_schema_sha256":enrolled_sha,"legacy_security_variant_schema_sha256":variant_sha,"legacy_security_variant_enrolled_schema_sha256":variant_enrolled_sha}
 Path(os.environ["ICE_DB_SNAPSHOT_OUTPUT"]).write_text(json.dumps(payload,ensure_ascii=False,sort_keys=True,separators=(",",":"))+"\n",encoding="utf-8")
 '''
     temp_root = destination.parent / "database-versioned-fixture"
-    env = os.environ.copy(); env.update({"ICE_DB_SNAPSHOT_ROOT": os.fspath(temp_root), "ICE_REPO_ROOT": os.fspath(repo), "ICE_DB_SNAPSHOT_OUTPUT": os.fspath(destination), "PYTHONDONTWRITEBYTECODE": "1", "PYTHONNOUSERSITE": "1", "ENTERPRISE_ENV": "development", "JWT_SECRET": "fixture-jwt-secret-not-production", "ADMIN_PASSWORD": "fixture-only-not-a-secret"})
+    env = os.environ.copy(); env.update({"ICE_DB_TARGET_VERSION":str(schema_version), "ICE_DB_SNAPSHOT_ROOT": os.fspath(temp_root), "ICE_REPO_ROOT": os.fspath(repo), "ICE_DB_SNAPSHOT_OUTPUT": os.fspath(destination), "PYTHONDONTWRITEBYTECODE": "1", "PYTHONNOUSERSITE": "1", "ENTERPRISE_ENV": "development", "JWT_SECRET": "fixture-jwt-secret-not-production", "ADMIN_PASSWORD": "fixture-only-not-a-secret"})
     result = subprocess.run([sys.executable, "-B", "-c", script], cwd=repo, env=env, capture_output=True, text=True)
     if result.returncode or not destination.is_file():
         raise ReleaseManifestV2Error("RELEASE_VERSIONED_DATABASE_SNAPSHOT_FAILED")
@@ -523,7 +530,7 @@ def _deterministic_zip(payload: Path, archive: Path, root_prefix: str, epoch: in
                 shutil.copyfileobj(source, target, 1024 * 1024)
 
 
-def build_release_v2(*, repo: Path, output_root: Path, runtime_root: Path, runtime_evidence_root: Path, commit: str | None = None, database_contract_mode: str = "same-schema-no-migration") -> dict[str, object]:
+def build_release_v2(*, repo: Path, output_root: Path, runtime_root: Path, runtime_evidence_root: Path, commit: str | None = None, database_contract_mode: str = "same-schema-no-migration", database_schema_version: int = 2) -> dict[str, object]:
     repo = Path(repo).resolve(); output_root = Path(output_root).resolve(); runtime_root = Path(runtime_root).resolve(); runtime_evidence_root = Path(runtime_evidence_root).resolve()
     _assert_build_directory(repo); _assert_build_directory(runtime_root); _assert_build_directory(runtime_evidence_root)
     try:
@@ -534,6 +541,8 @@ def build_release_v2(*, repo: Path, output_root: Path, runtime_root: Path, runti
     if output_root.exists(): raise ReleaseManifestV2Error("RELEASE_BUILD_OUTPUT_EXISTS")
     if database_contract_mode not in {"same-schema-no-migration", "versioned-forward-migration", "same-versioned-schema-no-migration"}:
         raise ReleaseManifestV2Error("RELEASE_DATABASE_MODE_INVALID")
+    if type(database_schema_version) is not int or database_schema_version not in {2, 4}:
+        raise ReleaseManifestV2Error("RELEASE_DATABASE_SCHEMA_INVALID")
     # A maintenance release preserves an already-versioned schema, rather than
     # silently publishing the legacy unversioned database evidence. This is a
     # build-time choice; the installed updater keeps its existing wire mode.
@@ -600,7 +609,7 @@ def build_release_v2(*, repo: Path, output_root: Path, runtime_root: Path, runti
         (evidence / "third-party-licenses.json").write_bytes(machine); (payload / "THIRD-PARTY-LICENSES.txt").write_bytes(notice)
         config_bytes = _config_contract(); (evidence / "config-contract.json").write_bytes(config_bytes)
         snapshot_builder = _versioned_database_snapshot if versioned_snapshot else _database_snapshot
-        db_bytes = snapshot_builder(repo, output_root / ".database-snapshot.tmp"); (evidence / "database-schema.json").write_bytes(db_bytes)
+        db_bytes = snapshot_builder(repo, output_root / ".database-snapshot.tmp", schema_version=database_schema_version); (evidence / "database-schema.json").write_bytes(db_bytes)
         inventory = build_inventory(payload)
         inventory_path = output_root / "release-payload-inventory.json"; inventory_path.write_bytes(inventory.canonical_bytes)
         (payload / inventory_path.name).write_bytes(inventory.canonical_bytes)
