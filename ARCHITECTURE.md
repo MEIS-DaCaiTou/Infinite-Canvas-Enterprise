@@ -52,7 +52,7 @@ Runtime Supervisor
 | Runtime | launcher、supervisor、health、ownership、state/log | `enterprise/runtime/` |
 | Release/update | Manifest v2、资产校验、prepare、pointer switch、rollback foundation | `enterprise/release/`，`enterprise/ops/update/`，`enterprise/update_api.py` |
 | 部门项目界面候选（未激活） | 权限过滤的来源/项目控件、成员和密钥管理、三级费用视图；复用原任务元数据，不建任务队列 | `enterprise/business_workspace.py`，`enterprise-static/business.html`，`static/js/business-workspace.js`，`static/js/call-source-picker.js` |
-| 经典画布媒体复用候选（#188，未合并） | 按画布/节点/结果槽保留播放器；生成准备状态不写入持久画布 | `static/js/canvas-media-retention.js`，`static/js/canvas.js` |
+| 经典画布媒体复用（#189已合并，未正式发布） | 按画布/节点/结果槽保留播放器；生成准备状态不写入持久画布 | `static/js/canvas-media-retention.js`，`static/js/canvas.js` |
 | Enterprise UI | 登录、管理后台、个人中心、更新中心 | `enterprise-static/` |
 
 Code Wiki 提供更细的文件、类和函数导航：[docs/code-wiki/README.md](docs/code-wiki/README.md)。
@@ -68,6 +68,14 @@ Code Wiki 提供更细的文件、类和函数导航：[docs/code-wiki/README.md
 ### 画布首页目录候选（2026-10-22）
 
 `enterprise/canvas_workspace.py` 在原文件/所有权与部门项目策略上投影目录元数据，`department_api` 只接 HTTP；现有父级字段用于树，`migrations/canvas_workspace.py` 追加未激活 v4 的两张关联/归档表。没有第二任务队列或画布副本。`canvas-workspace-boot.js` 按已受控升级的能力选择新目录 UI，旧 schema/独立 main 保留原脚本；网格/列表用现有主题、图标和原编辑器，个人范围仍可进入旧自由布局。公开项目只返回明确关联的目录元数据；原资源和完整画布继续由既有所有权策略约束，完整只读预览另行接线。
+
+### 项目任务与完整画布共享候选（2026-10-22）
+
+`enterprise/project_results.py` 在既有任务所有权、journal与冻结业务归属上投影任务/归档成果；`shared_canvases.py` 依据明确项目关联与现行项目策略读取完整创作结构，过滤凭据，按请求重查资源授权。复用以独立资源所有权落在现有存储及原画布创建/保存流程，不执行供应商请求、不继承待运行任务。既有费用接口和角色权限保持，目录共享本身不授予全局资源访问。
+
+前端 `project-results.js` 接原首页任务/成果及共享设置；共享画布直接导航原编辑器，`shared-canvas.js` 仅提供只读控件与保存副本，原编辑器停止自动保存和任务续查，保留原渲染/连线/媒体查看。`department-members.js` 增强现有管理后台成员页；`department_governance.member_workspace` 返回角色可管理范围，Gateway只允许现任部门负责人进入此受限页面，原公司管理API不放权。本包依赖未激活v3/v4，无新增Schema或第二业务页面。
+
+两类显式素材副本的写入沿用 W15 的 `UPLOAD_ROOT/assets/output` 流程，并登记到既有写入清单；异常清理只删除该次创建的文件，不清理原项目素材。
 
 ## 3. 安全与权限边界
 

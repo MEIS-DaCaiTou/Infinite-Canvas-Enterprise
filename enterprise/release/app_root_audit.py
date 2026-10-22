@@ -493,6 +493,10 @@ _MAIN_FLOW_BY_SYMBOL.update(
 )
 
 _OTHER_FLOW_BY_SYMBOL: dict[tuple[str, str], str] = {
+    # Explicit private media copies use the existing W15 output storage flow.
+    # Only this invocation's newly created files are removed after failure.
+    ("enterprise/project_results.py", "ProjectResults.reuse"): "W15",
+    ("enterprise/shared_canvases.py", "SharedCanvases.reuse"): "W15",
     # Personal UI preferences live under DATA_ROOT, never APP_ROOT. Replacement
     # is atomic within the account directory; cleanup unlinks only its own temp.
     ("enterprise/user_model_preferences.py", "save_preferences"): "W50",
@@ -693,7 +697,7 @@ def _flow_for_operation(file: str, symbol: str) -> str:
 # Wxx flow). Line numbers are deliberately excluded, while duplicate identical
 # calls remain duplicate records. Any added/removed/changed call drifts it.
 # W15 replaces the generic URL fallback with removal of this invocation's generated partial output.
-EXPECTED_SITE_MANIFEST_DIGEST = "2de2f946c55b4347a5381cdc8b8410f2d0660cd3802c9c6cd3744f92d416a122"
+EXPECTED_SITE_MANIFEST_DIGEST = "64acf1ced87b2884c8f67b3d4d4f0f7afa840ab2310f616f15c8c8defea62c13"
 
 FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W01", "main.py", "startup_event"),

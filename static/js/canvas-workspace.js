@@ -20,7 +20,7 @@
       <select id="cwDepartment" class="cw-department" aria-label="选择部门">${options(context.departments.map(d=>[d.id,d.name]))}</select>
       <div class="cw-side-head"><span>项目与文件夹</span><button class="cw-btn" id="cwNewProject" title="新建部门项目">＋</button></div>
       <nav id="cwTree" class="cw-tree" aria-label="项目目录"></nav>
-      <div class="cw-side-footer"><a class="cw-btn" href="/enterprise/business">${context.company_admin||context.departments.some(d=>d.can_manage)?'成员、来源与费用':'任务与费用'}</a><a class="cw-btn" href="?layout=board&trash=1">回收站</a></div></aside>
+      <div class="cw-side-footer">${context.company_admin||context.departments.some(d=>d.can_manage)?'<a class="cw-btn" href="/enterprise/admin">成员管理</a>':''}<a class="cw-btn" href="/enterprise/business">来源与费用</a><a class="cw-btn" href="?layout=board&trash=1">回收站</a></div></aside>
       <main class="cw-main"><header class="cw-toolbar"><nav id="cwBreadcrumb" class="cw-breadcrumb" aria-label="当前位置"></nav>
       <div class="cw-controls"><input id="cwSearch" class="cw-search" type="search" placeholder="搜索画布或文件夹" aria-label="搜索画布或文件夹">
       <button class="cw-btn" id="cwRefresh" title="刷新">刷新</button><button class="cw-btn" id="cwNewFolder">新建文件夹</button><button class="cw-btn primary" id="cwNewCanvas">新建画布</button></div></header>
@@ -35,13 +35,14 @@
     async function request(path, method='GET', body){
         const response=await fetch(path,{method,headers:body?{'Content-Type':'application/json'}:undefined,body:body?JSON.stringify(body):undefined});
         const result=await response.json().catch(()=>({}));
-        if(!response.ok){const code=result.detail?.code||result.code||result.detail;const messages={DEPARTMENT_PERMISSION_DENIED:'当前账号没有此操作权限',WORKSPACE_FOLDER_CYCLE:'上级目录不能是本目录或其子目录',WORKSPACE_PROJECT_PARENT_MISMATCH:'子目录沿用上级目录的部门项目，请选择相同项目',WORKSPACE_OWNER_DEPARTMENT_MISMATCH:'该目录所有者不属于所选项目的部门',CANVAS_WORKSPACE_UPGRADE_REQUIRED:'请先完成支持项目目录的版本升级'};throw new Error(messages[code]||(typeof code==='string'?code:'操作未完成，请刷新重试'));}
+        if(!response.ok){const code=result.detail?.code||result.code||result.detail;const messages={DEPARTMENT_PERMISSION_DENIED:'当前账号没有此操作权限',WORKSPACE_FOLDER_CYCLE:'上级目录不能是本目录或其子目录',WORKSPACE_PROJECT_PARENT_MISMATCH:'子目录沿用上级目录的部门项目，请选择相同项目',WORKSPACE_OWNER_DEPARTMENT_MISMATCH:'该目录所有者不属于所选项目的部门',CANVAS_WORKSPACE_UPGRADE_REQUIRED:'请先完成支持项目目录的版本升级',SHARED_CANVAS_NOT_FOUND:'画布已删除、共享已撤回或当前无权查看',RESULT_FILE_UNAVAILABLE:'原始素材暂不可读，请联系项目作者核对文件',RESULT_RECEIPT_UNAVAILABLE:'任务回执暂不可读，请稍后刷新',RESULT_REUSE_UNSUPPORTED:'所选成果格式暂不支持放入画布，可使用下载入口',INVALID_RESULT_SELECTION:'所选成果已变化，请重新打开任务后选择'};throw new Error(messages[code]||(typeof code==='string'?code:'操作未完成，请刷新重试'));}
         return result;
     }
     const status=(text,error=false)=>{$('cwStatus').textContent=text;$('cwStatus').classList.toggle('cw-error',error);};
     const activeFolder=()=>data.folders.find(f=>f.id===folder);
     const businessId=()=>folder.startsWith('business:')?folder.slice(9):activeFolder()?.business_project_id||null;
     const projectName=id=>data.projects.find(p=>p.id===id)?.name||'个人目录';
+    const results=ProjectResults.attach({request,dialog,refresh:load,state:()=>({scope,department,member,project:businessId(),projects:data.projects,query,selected:selected.size})});
     const date=value=>value?new Date(Number(value)).toLocaleDateString('zh-CN'):'';
     function canCreate(){if(scope==='me'&&!folder)return true;const current=activeFolder();if(current)return !current.archived&&current.owner_id===context.user_id&&(current.id.startsWith('default:')||current.can_manage);const id=businessId();return !!id&&data.projects.some(p=>p.id===id&&p.can_write&&p.department_id===context.department_id);}
     function remember(){save();document.querySelectorAll('[data-scope]').forEach(b=>{b.setAttribute('aria-pressed',String(b.dataset.scope===scope));if(b.dataset.scope==='department')b.disabled=!context.departments.length;});$('cwDepartment').hidden=scope!=='department';$('cwNewProject').hidden=scope!=='department'||!department;$('cwBoard').hidden=scope!=='me';}
@@ -93,14 +94,14 @@
         const children=data.folders.filter(f=>(query?true:!folder?!f.parent_id:folder.startsWith('business:')?!f.parent_id&&f.business_project_id===bp:f.parent_id===folder)&&
             (archived==='all'||(archived==='archived'?f.archived:!f.archived))&&(!query||f.name.toLowerCase().includes(query)));
         $('cwFolders').innerHTML=children.map(f=>`<button class="cw-folder-card" data-folder="${esc(f.id)}"><i data-lucide="folder" class="cw-icon"></i> ${esc(f.name)}</button>`).join('');
-        if(!items.length){$('cwItems').innerHTML=`<div class="cw-empty"><h2>${query?'没有匹配的画布':archived==='archived'?'暂无归档画布':'这里还没有画布'}</h2><p>${scope==='me'?'选择文件夹，或直接新建画布开始创作。':'只显示获授权项目中明确关联的画布目录。'}</p></div>`;icons();return;}
+        if(!items.length){$('cwItems').innerHTML=`<div class="cw-empty"><h2>${query?'没有匹配的画布':archived==='archived'?'暂无归档画布':'这里还没有画布'}</h2><p>${scope==='me'?'选择文件夹，或直接新建画布开始创作。':'只显示获授权项目中明确关联的画布目录。'}</p></div>`;icons();results.update();return;}
         const groups=new Map();for(const c of items){const name=grouping==='member'?c.owner_name:grouping==='project'?projectName(c.business_project_id):'';if(!groups.has(name))groups.set(name,[]);groups.get(name).push(c);}
         $('cwItems').innerHTML=[...groups].map(([name,rows])=>(name?`<h2 class="cw-group">${esc(name)}</h2>`:'')+(view==='grid'?`<div class="cw-grid">${rows.map(card).join('')}</div>`:`<table class="cw-list"><thead><tr><th></th><th>画布名称</th><th>成员</th><th>更新时间</th><th>操作</th></tr></thead><tbody>${rows.map(row).join('')}</tbody></table>`)).join('');
-        icons();
+        icons();results.update();
     }
     function check(c){return c.can_edit?`<input class="cw-check" type="checkbox" data-select="${esc(c.id)}" aria-label="选择 ${esc(c.title)}" ${selected.has(c.id)?'checked':''}>`:'';}
-    function card(c){return `<article class="cw-card">${check(c)}<div class="cw-cover">${c.thumbnail_url?`<img loading="lazy" src="${esc(c.thumbnail_url)}" alt="" onerror="this.remove()">`:(c.kind==='smart'?'✧':'▦')}</div><button class="cw-card-main" data-open="${esc(c.id)}"><h3>${esc(c.title)}</h3><div class="cw-card-meta">${c.kind==='smart'?'智能画布':'经典画布'} · ${c.node_count} 节点<br>${esc(c.owner_name)} · ${date(c.updated_at)}</div></button><div class="cw-card-foot"><span>${c.archived?'已归档':c.can_edit?'可编辑':'只读目录'}</span>${c.can_edit?`<button class="cw-folder-menu" data-item="${esc(c.id)}" aria-label="管理 ${esc(c.title)}">···</button>`:''}</div></article>`;}
-    function row(c){return `<tr><td style="position:relative;width:32px">${check(c)}</td><td><button class="cw-open" data-open="${esc(c.id)}">${esc(c.title)}</button><div class="cw-card-meta">${c.kind==='smart'?'智能画布':'经典画布'}${c.archived?' · 已归档':''}</div></td><td>${esc(c.owner_name)}</td><td>${date(c.updated_at)}</td><td>${c.can_edit?`<button class="cw-folder-menu" data-item="${esc(c.id)}" aria-label="管理 ${esc(c.title)}">···</button>`:'只读目录'}</td></tr>`;}
+    function card(c){return `<article class="cw-card">${check(c)}<div class="cw-cover">${c.thumbnail_url?`<img loading="lazy" src="${esc(c.thumbnail_url)}" alt="" onerror="this.remove()">`:(c.kind==='smart'?'✧':'▦')}</div><button class="cw-card-main" data-open="${esc(c.id)}"><h3>${esc(c.title)}</h3><div class="cw-card-meta">${c.kind==='smart'?'智能画布':'经典画布'} · ${c.node_count} 节点<br>${esc(c.owner_name)} · ${date(c.updated_at)}</div></button><div class="cw-card-foot"><span>${c.archived?'已归档':c.can_edit?'可编辑':'只读共享'}</span>${c.can_edit?`<button class="cw-folder-menu" data-item="${esc(c.id)}" aria-label="管理 ${esc(c.title)}">···</button>`:''}</div></article>`;}
+    function row(c){return `<tr><td style="position:relative;width:32px">${check(c)}</td><td><button class="cw-open" data-open="${esc(c.id)}">${esc(c.title)}</button><div class="cw-card-meta">${c.kind==='smart'?'智能画布':'经典画布'}${c.archived?' · 已归档':''}</div></td><td>${esc(c.owner_name)}</td><td>${date(c.updated_at)}</td><td>${c.can_edit?`<button class="cw-folder-menu" data-item="${esc(c.id)}" aria-label="管理 ${esc(c.title)}">···</button>`:'只读共享'}</td></tr>`;}
     function dialog(title,fields,submit,note=''){
         const el=document.createElement('dialog');el.className='cw-dialog cw-shell';el.style.display='block';el.style.height='auto';
         el.innerHTML=`<form><h2>${esc(title)}</h2>${fields.map(f=>`<label>${esc(f.label)}${f.options?`<select name="${f.name}">${options(f.options)}</select>`:`<input name="${f.name}" value="${esc(f.value||'')}" maxlength="80" ${f.required?'required':''}>`}</label>`).join('')}${note?`<p>${esc(note)}</p>`:''}<p class="cw-error" role="alert"></p><div class="cw-dialog-actions"><button type="button" class="cw-btn" data-cancel>取消</button><button type="submit" class="cw-btn primary">确定</button></div></form>`;
@@ -126,7 +127,7 @@
         dialog('整理文件夹',[{name:'name',label:'文件夹名称',value:f.name,required:true},{name:'parent',label:'上级目录',value:f.parent_id||'',options:[['','根目录'],...data.folders.filter(p=>p.can_manage&&p.owner_id===f.owner_id&&!descendants.has(p.id)).map(p=>[p.id,p.name])]},{name:'project',label:'部门项目归属',value:f.business_project_id||'',options:[['','个人目录'],...data.projects.filter(p=>p.can_write).map(p=>[p.id,p.name])]},{name:'archived',label:'归档状态',value:f.own_archived?'true':'false',options:[['false','进行中'],['true','归档目录及其内容']]}],async v=>{
             await request(base+'/workspace/folders/'+encodeURIComponent(id),'PUT',{parent_id:v.parent||null,business_project_id:v.project||null,archived:v.archived==='true'});
             if(v.name!==f.name)await request('/api/projects/'+encodeURIComponent(id),'POST',{name:v.name});
-        },'加入部门项目会让该目录及子目录的画布目录信息按项目权限可见。原画布编辑权和已发生费用归属保持；完整成果共享预览另行接入。');
+        },'加入部门项目后，按项目权限共享画布、提示词、参考图与成果。原画布编辑权、密钥及费用查看权限保持。');
     }
     function move(ids){const owners=new Set(ids.map(id=>data.canvases.find(c=>c.id===id)?.owner_id));const targets=data.folders.filter(f=>owners.size===1&&owners.has(f.owner_id)&&!f.archived&&(f.can_manage||f.id==='default:'+context.user_id));if(!targets.length){status('请先选择同一成员的画布，并准备可编辑的目标文件夹。',true);return;}dialog('移动画布',[{name:'target',label:'目标文件夹',options:targets.map(f=>[f.id,(f.business_project_id?projectName(f.business_project_id)+' / ':'')+f.name])}],async v=>{
         const destination=data.folders.find(f=>f.id===v.target);if(!destination)throw new Error('请选择目标文件夹');
@@ -144,14 +145,14 @@
         else if(b.hasAttribute('data-folder'))choose(b.dataset.folder);
         else if(b.dataset.manage)manageFolder(b.dataset.manage);
         else if(b.dataset.item)itemMenu(b.dataset.item);
-        else if(b.dataset.open){const c=data.canvases.find(c=>c.id===b.dataset.open);if(!c.can_edit){status('当前仅共享画布目录信息，完整只读成果预览将在后续工作包接入。');return;}location.href='/static/'+(c.kind==='smart'?'smart-canvas.html':'canvas.html')+'?'+new URLSearchParams({id:c.id,project:c.project});}
+        else if(b.dataset.open){const c=data.canvases.find(c=>c.id===b.dataset.open);location.href='/static/'+(c.kind==='smart'?'smart-canvas.html':'canvas.html')+'?'+new URLSearchParams({id:c.id,project:c.project,...(!c.can_edit?{readonly:'1'}:{})});}
     };
     $('canvasWorkspace').onchange=e=>{if(e.target.dataset.select){e.target.checked?selected.add(e.target.dataset.select):selected.delete(e.target.dataset.select);$('cwCount').textContent=data.canvases.filter(c=>selected.has(c.id)).length+' 张已选';$('cwMove').hidden=!selected.size;$('cwArchiveSelected').hidden=!selected.size;}};
     $('cwSearch').oninput=e=>{query=e.target.value.trim().toLowerCase();render();};$('cwSort').onchange=render;
     $('cwArchive').onchange=e=>{archived=e.target.value;selected.clear();render();};$('cwGroup').onchange=e=>{grouping=e.target.value;render();};
     $('cwDepartment').onchange=e=>{department=e.target.value;folder='';member='';load();};$('cwMember').onchange=e=>{member=e.target.value;folder='';load();};
     $('cwGrid').onclick=()=>{view='grid';save();render();};$('cwList').onclick=()=>{view='list';save();render();};
-    $('cwRefresh').onclick=load;$('cwNewFolder').onclick=newFolder;$('cwNewCanvas').onclick=newCanvas;
+    $('cwRefresh').onclick=()=>{results.invalidate();load();};$('cwNewFolder').onclick=newFolder;$('cwNewCanvas').onclick=newCanvas;
     $('cwMove').onclick=()=>move([...selected]);$('cwArchiveSelected').onclick=()=>dialog(archived==='archived'?'恢复所选画布':'归档所选画布',[],()=>request(base+'/workspace/archive','PUT',{canvas_ids:[...selected],archived:archived!=='archived'}),'归档保留画布和结果，可在已归档列表恢复。');
     $('cwNewProject').onclick=()=>dialog('新建部门项目',[{name:'name',label:'项目名称',required:true}],async v=>{const result=await request(base+'/projects','POST',{department_id:department,name:v.name});folder='business:'+result.id;});
     load();

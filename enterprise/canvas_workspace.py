@@ -184,7 +184,9 @@ class CanvasWorkspace:
                 for owner in roots)
             for folder in directory:
                 folder['owner_name'] = people.get(folder['owner_id'], {}).get('display_name', folder['owner_id'])
-            allowed_projects = [dict(p, can_write=self.governance._project_access(conn, actor, p, write=True))
+            allowed_projects = [dict(p, can_write=self.governance._project_access(conn, actor, p, write=True),
+                can_manage=bool(_manages(conn, actor, p['department_id']) or
+                    (p['owner_id'] == actor['id'] and self.governance._project_access(conn, actor, p, write=True))))
                 for p in projects.values() if self.governance._project_access(conn, actor, p) and
                 (scope == 'me' or (p['department_id'] == department_id if scope == 'department' else
                                   (_company(actor) or p['visibility'] == 'company_readonly')))]

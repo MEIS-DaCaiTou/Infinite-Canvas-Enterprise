@@ -5275,7 +5275,7 @@ async function mergeReloadCanvasNow(){
         return;
     }
     try {
-        const res = await fetch(`/api/canvases/${encodeURIComponent(canvasId)}`);
+        const res = await fetch(CanvasSharedView.readUrl(canvasId));
         if(!res.ok) return;
         const data = await res.json();
         if(data && data.canvas) applyMergedServerCanvas(data.canvas);
@@ -5295,6 +5295,7 @@ function handleCanvasUpdatedMessage(data={}){
     scheduleCanvasMergeReload(200);
 }
 function startCanvasMetaPoll(){
+    if(window.CanvasSharedView?.enabled) return;
     // WS / iframe 转发不可靠时的兜底：定期看服务器 updated_at 是否变新，变新就合并拉取
     if(canvasMetaPollTimer) return;
     canvasMetaPollTimer = setInterval(async () => {
@@ -5309,6 +5310,7 @@ function startCanvasMetaPoll(){
     }, 8000);
 }
 function connectAssetLibrarySyncSocket(){
+    if(window.CanvasSharedView?.enabled) return;
     if(window.parent && window.parent !== window) return;
     const host = window.location.host;
     if(!host) return;
@@ -5822,9 +5824,12 @@ function migrateSmartGroupImageMembers(){
     return changed;
 }
 async function loadCanvas(){
+    if(window.CanvasSharedView?.enabled) CanvasSharedView.selectNode=id=>{
+        selectedId=id;selectedIds=[];selectedImage={nodeId:'',index:-1};syncSelectionUi();updateComposer();
+    };
     if(!canvasId) return;
     try {
-        const res = await fetch(`/api/canvases/${encodeURIComponent(canvasId)}`);
+        const res = await fetch(CanvasSharedView.readUrl(canvasId));
         if(!res.ok) return;
         const data = await res.json();
         canvas = data.canvas;
@@ -5874,10 +5879,12 @@ async function loadCanvas(){
     } catch(e) { toast(tr('smart.toastCanvasFail')); }
 }
 function scheduleSave(){
+    if(window.CanvasSharedView?.enabled) return;
     clearTimeout(saveTimer);
     saveTimer = setTimeout(saveCanvas, 450);
 }
 async function saveCanvas(){
+    if(window.CanvasSharedView?.enabled) return;
     if(!canvasId || !canvas) return;
     savePromptDraftForCurrent();
     nodes.forEach(node => {
@@ -14660,6 +14667,7 @@ async function runSmartLLMTask(node,payload){
     });
 }
 function resumeSmartLLMTasks(){
+    if(window.CanvasSharedView?.enabled) return;
     nodes.filter(node=>node.type==='smart-prompt' && CanvasLLMTasks.pending(node.llmTask)).forEach(node=>{
         node.running=true;
         runSmartLLMTask(node,null).catch(error=>{
@@ -15234,6 +15242,7 @@ function startJimengPoll(node){
     })();
 }
 function resumeJimengPendingNodes(){
+    if(window.CanvasSharedView?.enabled) return;
     nodes.filter(n => n && n.jimengPending && n.jimengPending.submitId).forEach(n => {
         n.jimengPending.querying = false;
         startJimengPoll(n);
@@ -15443,6 +15452,7 @@ async function resumeSmartPendingNode(node, logContext={}){
     }
 }
 function resumeSmartPendingTasks(){
+    if(window.CanvasSharedView?.enabled) return;
     nodes.filter(node => smartPendingTasks(node).length).forEach(node => {
         resumeSmartPendingNode(node);
     });

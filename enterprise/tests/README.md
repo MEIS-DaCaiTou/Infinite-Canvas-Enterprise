@@ -1,5 +1,7 @@
 # Enterprise Test Scripts
 
+2026-10-22 项目内容候选：`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 py -3.11 -B -m pytest enterprise/tests/test_project_results.py enterprise/tests/test_business_workspace.py enterprise/tests/test_canvas_workspace.py enterprise/tests/test_admin_member_list_filters.py enterprise/tests/test_task_canvas_context.py enterprise/tests/test_canvas_persistence.py -q` 验证完整创作共享、费用角色独立、Range媒体读取及撤回、私有素材副本、任务按项复用和部门成员管理。回环 Edge 使用实际 main/原所有权拦截及管理页面handler，身份/功能开关为受控夹具；两类原编辑器只读打开/复制、桌面/窄屏、共享撤回和无生成请求证据在产品 artifacts/t/D24/browser-editor。未测试真实登录、付费供应商或客户升级；不将浏览器夹具视为发行级联合验收。无新增重型CI作业。
+
 
 2026-10-22 画布首页目录候选：`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 py -3.11 -B -m pytest enterprise/tests/test_canvas_workspace.py -q` 验证原 SQLite/父级/所有权、部门与企业范围、成员过滤、归档、v2/v3→候选v4及备份恢复、Update Center预置计划和元数据并发保存；默认 registry 仍不激活。Browser 受控真实 main/所有权策略验证存放产品 artifacts/t/D23，未运行真实付费或客户升级。旧个人入口与业务策略回归复用 `test_business_workspace.py`、`test_department_governance.py`，不为目录 UI 重建完整测试作业。
 

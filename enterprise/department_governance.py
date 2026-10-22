@@ -141,6 +141,20 @@ class DepartmentGovernance:
                 ('' if _company(actor) else 'AND m.department_id=? ')+'ORDER BY u.display_name',
                 () if _company(actor) else (member['department_id'],))]
 
+    def member_workspace(self, principal):
+        """Existing member administration, with department-only manager reads."""
+        with self.session(principal) as (conn, actor):
+            member = _member(conn, actor['id'])
+            _require(_company(actor) or (member and member['manager']))
+            company = _company(actor)
+            departments = [dict(r) for r in conn.execute('SELECT id,name FROM departments WHERE active=1 ORDER BY name')
+                           if company or r['id'] == member['department_id']]
+            rows = conn.execute('SELECT u.id,u.username,u.display_name,u.is_active,u.role,u.created_at,u.last_login,m.department_id,m.manager '
+                'FROM users u LEFT JOIN department_members m ON m.user_id=u.id '+
+                ('' if company else 'WHERE m.department_id=? ')+'ORDER BY u.display_name',
+                () if company else (member['department_id'],)).fetchall()
+            return {'company_admin':company, 'departments':departments, 'members':[dict(r) for r in rows]}
+
     def project_members(self, principal, project_id):
         with self.session(principal) as (conn, actor):
             project = conn.execute('SELECT * FROM business_projects WHERE id=?', (project_id,)).fetchone()

@@ -206,7 +206,7 @@ function applyLanguage(lang){
 }
 async function refreshCanvasConfigFromSettings(){
     await loadConfig();
-    pruneMissingComfyWorkflows();
+    if(!window.CanvasSharedView?.enabled) pruneMissingComfyWorkflows();
     (nodes || []).forEach(node => {
         sanitizeImageNodeProviderModel(node);
         sanitizeVideoNodeProviderModel(node);
@@ -1349,6 +1349,7 @@ function refreshGeometryAfterLayout(){
     });
 }
 function scheduleSave(){
+    if(window.CanvasSharedView?.enabled) return;
     if(!canvas || applyingRemoteCanvas) return;
     localCanvasDirty = true;
     setStatus('Saving...');
@@ -1401,6 +1402,7 @@ function serializableCanvasNodes(list=nodes){
     return (list || []).map(serializableCanvasNode);
 }
 async function saveCanvas(){
+    if(window.CanvasSharedView?.enabled) return;
     if(!canvas || applyingRemoteCanvas) return;
     if(savingCanvasNow){
         saveCanvasAgain = true;
@@ -1642,6 +1644,7 @@ function updateCanvasListRecord(record){
     renderCanvasList();
 }
 async function touchCanvasOpened(id){
+    if(window.CanvasSharedView?.enabled) return;
     if(!id) return null;
     try {
         const res = await fetch(`/api/canvases/${encodeURIComponent(id)}/touch`, {method:'POST'});
@@ -2007,7 +2010,7 @@ async function setCanvasTitle(id, title){
 async function openCanvas(id){
     setStatus('Opening...');
     try {
-        const res = await fetch(`/api/canvases/${id}`);
+        const res = await fetch(CanvasSharedView.readUrl(id));
         if(!res.ok) throw new Error(tr('canvas.openFailed'));
         const data = await res.json();
         resetCascadeRuntimeState();
@@ -2028,7 +2031,7 @@ async function openCanvas(id){
         localCanvasDirty = false;
         resetTransientRunState(nodes);
         sanitizeConnections();
-        pruneMissingComfyWorkflows();
+        if(!window.CanvasSharedView?.enabled) pruneMissingComfyWorkflows();
         await refreshMissingCanvasAssets();
         selected.clear();
         setCanvasMode(true);
@@ -2068,7 +2071,7 @@ function applyRemoteCanvasData(remote){
         localCanvasDirty = false;
         resetTransientRunState(nodes);
         sanitizeConnections();
-        pruneMissingComfyWorkflows();
+        if(!window.CanvasSharedView?.enabled) pruneMissingComfyWorkflows();
         const syncedCanvasId=canvas.id;
         refreshMissingCanvasAssets().then(changed=>{
             if(canvas?.id!==syncedCanvasId || !changed?.length)return;
@@ -2121,6 +2124,7 @@ function canvasLocalAssetUrls(){
 }
 let canvasAssetCheckSeq=0;
 async function refreshMissingCanvasAssets(){
+    if(window.CanvasSharedView?.enabled) return [];
     const currentId=canvas?.id,seq=++canvasAssetCheckSeq;
     const urls=canvasLocalAssetUrls();
     try {
@@ -2168,6 +2172,7 @@ async function checkRemoteCanvasVersion(){
     }
 }
 function startCanvasRemotePolling(){
+    if(window.CanvasSharedView?.enabled) return;
     stopCanvasRemotePolling();
     remoteSyncInterval = setInterval(checkRemoteCanvasVersion, 2500);
 }
@@ -11575,6 +11580,7 @@ async function runCanvasLLMTask(node,payload,options={}){
     });
 }
 function resumeCanvasLLMTasks(){
+    if(window.CanvasSharedView?.enabled) return;
     nodes.filter(node=>node.type==='llm' && CanvasLLMTasks.pending(node.llmTask)).forEach(node=>{
         node.running=true;refreshNodes([node.id]);
         runCanvasLLMTask(node,null).catch(error=>{
@@ -12665,6 +12671,7 @@ function failCanvasImageTask(taskId, message, taskData={}){
     scheduleSave();
 }
 function resumeCanvasImageTasks(){
+    if(window.CanvasSharedView?.enabled) return;
     nodes.filter(n => n.type === 'output').forEach(out => {
         (out._pending || []).forEach(p => {
             if(p.canvasTaskType === 'video' && p.canvasTaskId && !p.failed) resumeCanvasVideoTask(out, p);
@@ -14974,7 +14981,7 @@ window.onload = async () => {
     initOutputPreviewZoomEvents();
     applyViewport();
     await loadConfig();
-    pruneMissingComfyWorkflows();
+    if(!window.CanvasSharedView?.enabled) pruneMissingComfyWorkflows();
     // 编辑器页只负责打开单个画布：必须带 ?id；没有 id 就回到独立的选画布页面。
     const openId = new URLSearchParams(window.location.search).get('id');
     if(openId){

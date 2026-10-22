@@ -17,6 +17,8 @@ const context = vm.createContext({
   document: {getElementById: element, querySelectorAll: selector => selector === '.update-dangerous' ? dangerous : []},
   sessionStorage: {getItem: () => null}, clearTimeout() {}, setTimeout() {},
 });
+context.window = context;
+vm.runInContext(fs.readFileSync(path.join(__dirname, '../../static/js/department-members.js'), 'utf8'), context);
 vm.runInContext(script.replace('\n  initializeAdmin();', ''), context);
 element('memberStatusFilter').value = 'active';
 element('memberRoleFilter').value = 'all';
