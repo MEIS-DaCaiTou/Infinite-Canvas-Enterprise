@@ -833,6 +833,8 @@ begin
   else if LastStableCode = 'INSTALL_LIFECYCLE_DATABASE_RECOVERY_REQUIRED' then
     Result := '数据库日志尚不能证明可安全处理，本次未执行升级。这不等于已确认数据库损坏。' + #13#10 +
       '请保留数据库、WAL、SHM、journal 和维护记录并导出诊断；不要手工删除这些文件。'
+  else if LastStableCode = 'INSTALL_UPGRADE_REGISTRY_STAGING_REQUIRED' then
+    Result := '当前版本需要先完成一次过渡升级。请按发行说明安装过渡版本，再运行本安装包；账号、画布和素材会保留。'
   else if LastStableCode = 'INSTALL_UPGRADE_DATABASE_PREPARATION_REQUIRED' then
     Result := 'SQLite 未能完成受控日志预处理，维护阻断和恢复记录已保留。' + #13#10 +
       '请确认服务停止后选择“显式恢复本包上次中断的离线升级”；仍失败时保留诊断，不要删除锁或数据库日志。';

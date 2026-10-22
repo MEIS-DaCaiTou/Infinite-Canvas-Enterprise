@@ -2,6 +2,8 @@
 
 Reviewed: 2026-10-22
 
+2026-10-22 离线部门迁移：`py -3.11 -B -m pytest -q enterprise/tests/test_install_department_upgrade.py enterprise/tests/test_install_upgrade.py enterprise/tests/test_windows_install_registration.py` 在已有资产/Windows对象夹具上覆盖已预置2→4、目标失败先还原数据库、安装中断、恢复替换后再次中断、登记失败续接及新增业务写入不被覆盖。只将Runtime/Windows登记回调受控；实际CP314安装副本、真实Windows登记、Setup GUI分别记录，不能从单元通过推导。未新增CI门禁或依赖。
+
 2026-10-22 部门发行接线：`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 py -3.11 -B -m pytest enterprise/tests/test_department_release.py enterprise/tests/test_versioned_release_snapshot.py enterprise/tests/test_install_mvp_1.py enterprise/tests/test_update_mvp_1.py enterprise/tests/test_install_upgrade.py enterprise/tests/test_data_mvp_1.py -q` 覆盖真实DDL快照、Schema2预置/Schema4声明新装、未预置阻断、已知目录前缀维护、共享worker成功/目标失败恢复及离线同结构预置。进程/指针/原生单元入口为受控夹具，准确CP314包、真实登录和客户验收另记PR；不新增CI作业。默认构建Schema2，不因测试或启动激活旧库。
 
 2026-10-22 费用分页/站内提醒候选：`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 py -3.11 -B -m pytest enterprise/tests/test_department_cost_views.py enterprise/tests/test_department_governance.py enterprise/tests/test_business_workspace.py -q` 验证真实SQLite下cursor跨新费用插入不重不漏、现任管理权限、当期/过期提醒、单位精度/未知与非阻断、旧Schema只读不激活。实际main夹具Edge的50→61明细、部门/公司深链、提醒已知晓/预算变化、普通员工/他部门隔离、浅暗色及窄屏证据在产品artifacts/t/D26。夹具替代身份，未测正式登录、真实付费或客户升级；不新增CI作业。

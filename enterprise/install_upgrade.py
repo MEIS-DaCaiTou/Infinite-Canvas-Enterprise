@@ -1,8 +1,8 @@
-"""Owned offline same-schema upgrade/reinstall through the shared update engine.
+"""Owned offline upgrade/reinstall through the shared update engine.
 
 Application, native entry, retained Setup, and Windows registration have separate
 checkpoints. Original native objects stay in the installation's recovery journal.
-An interrupted operation never guesses a lock's age or restores a business DB.
+Database migrations and exact backup recovery reuse the shared update engine.
 """
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ from enterprise import install_database_preparation as database_preparation
 from enterprise.fresh_install import verify_release_assets
 from enterprise.install_entry import ENTRY_NAME, _record, _snapshot, verify_entry_bundle, validate_installation_record
 from enterprise.ops.update import mvp
+from enterprise.migrations.versioned import restore_database_backup
 from enterprise.ops.update.versions import compare_versions
 from enterprise.paths import PortableRootInputs, derive_portable_path_roots, validate_path_roots_for_use
 from enterprise.release.current_release import (
@@ -31,6 +32,7 @@ PLAN_SCHEMA = "enterprise-offline-upgrade-plan-v1"
 STATE_SCHEMA = "enterprise-offline-upgrade-state-v1"
 ACTIVE_SCHEMA = "enterprise-offline-upgrade-active-v1"
 ACTIVE_NAME = "install-upgrade-active.json"
+DATABASE_MODES = {"same-schema-no-migration", "versioned-forward-migration"}
 SLOTS = {"entry": ENTRY_NAME, "record": "state/installation.json",
          "setup": "state/windows-maintenance/maintenance-setup.exe",
          "support": "state/windows-maintenance/support.ini"}
@@ -108,7 +110,8 @@ def _eligible(roots, source, target):
     # Registry pre-staging changes the evidence bytes while leaving the actual
     # schema unchanged. The shared preparer verifies both schema shapes before
     # execution; an evidence-file digest is not a schema identity.
-    if mvp._database_contract_mode(source, target) != "same-schema-no-migration":
+    mode = mvp._database_contract_mode(source, target)
+    if mode not in DATABASE_MODES:
         _fail("INSTALL_UPGRADE_DATABASE_CONTRACT_UNSUPPORTED")
     metadata, preparation = database_preparation.inspect(roots)
     if metadata["schema_version"] not in {1, 2, 3, 4}:
@@ -121,6 +124,10 @@ def _eligible(roots, source, target):
     if (evidence.get("schema_version") != metadata["schema_version"]
             or metadata["schema_sha256"] != evidence.get("schema_objects_sha256")):
         _fail("INSTALL_UPGRADE_DATABASE_CONTRACT_UNSUPPORTED")
+    if mode == "versioned-forward-migration" and (
+            evidence.get("migration_registry_sha256") != mvp.migration_registry_sha256(mvp.RELEASE_MIGRATIONS)
+            or evidence.get("versioned_migration_ids") != [step.migration_id for step in mvp.RELEASE_MIGRATIONS]):
+        _fail("INSTALL_UPGRADE_REGISTRY_STAGING_REQUIRED")
     return metadata, preparation
 
 
@@ -136,7 +143,7 @@ def inspect_upgrade(*, install_root, release_dir, local_app_data_base):
     _support(roots.INSTALL_ROOT, record["installation_id"])
     return {"installation_id": record["installation_id"], "source_release_id": source.release_id,
             "target_release_id": assets.manifest.release_id, "upgrade_state": "ELIGIBLE",
-            "database_update_mode": "same-schema-no-migration",
+            "database_update_mode": mvp._database_contract_mode(source, assets.manifest),
             "database_preparation_required": preparation is not None}
 
 
@@ -155,7 +162,6 @@ class _Transaction:
         if (files._identity(r.INSTALL_ROOT) != p["root_identity"]
                 or files._identity(r.DATA_ROOT) != p["data_identity"]
                 or files._identity(r.CONFIG_ROOT) != p["config_identity"]
-                or lifecycle._plain_file_identity(r.DATA_ROOT / "enterprise.db") != p["database_identity"]
                 or files._file(r.CONFIG_ROOT / "enterprise.env") != p["config"]):
             _fail("INSTALL_UPGRADE_SOURCE_CHANGED")
         active, digest = _read(r.STATE_ROOT / ACTIVE_NAME)
@@ -176,6 +182,38 @@ class _Transaction:
                 if (payload.get("schema_version") != mvp.LOCK_SCHEMA
                         or "job_id" not in status or payload.get("job_id") != status["job_id"]):
                     _fail("INSTALL_UPGRADE_FENCE_CHANGED")
+        self.database_identity()
+
+    def database_identity(self, *, remember=False):
+        """A shared-engine restore replaces the SQLite file, but not its owner.
+
+        Only exact verified backup bytes can establish the replacement identity.
+        Remember it before restarting the source, whose normal writes may then
+        change bytes. Old same-schema plans retain their original object check.
+        """
+        current = lifecycle._plain_file_identity(self.roots.DATA_ROOT / "enterprise.db")
+        receipt_path = self.directory / "database-restored.json"
+        if files._exists(receipt_path):
+            receipt, _ = _read(receipt_path)
+            if receipt != {"operation_id": self.plan["operation_id"], "database_identity": current}:
+                _fail("INSTALL_UPGRADE_DATABASE_CHANGED")
+            return
+        if current == self.plan["database_identity"]:
+            return
+        if self.plan.get("database_update_mode") != "versioned-forward-migration":
+            _fail("INSTALL_UPGRADE_DATABASE_CHANGED")
+        binding, _ = _read(self.directory / "job.json")
+        store = mvp.UpdateJobStore(self.roots)
+        job_plan = store.read_plan(binding["job_id"])
+        if (binding.get("plan_sha256") != hashlib.sha256(canonical_json(self.plan)).hexdigest()
+                or binding.get("job_plan_sha256") != hashlib.sha256(canonical_json(job_plan)).hexdigest()):
+            _fail("INSTALL_UPGRADE_JOB_CHANGED")
+        _result, backup = mvp.verified_job_database_backup(self.roots, binding["job_id"])
+        if (files._file(self.roots.DATA_ROOT / "enterprise.db")["sha256"] != backup.backup_sha256
+                or lifecycle._database_contract(self.roots) != self.plan["database_contract"]):
+            _fail("INSTALL_UPGRADE_DATABASE_CHANGED")
+        if remember:
+            files._new_json(receipt_path, {"operation_id": self.plan["operation_id"], "database_identity": current})
 
     def slots(self):
         self.basics()
@@ -298,6 +336,7 @@ class _Transaction:
             if app_root.name == self.plan["target_release_id"]:
                 self.publish()
             elif app_root.name == self.plan["source_release_id"]:
+                self.database_identity(remember=True)
                 self.restore()
             else:
                 _fail()
@@ -315,7 +354,7 @@ class _Transaction:
     def public(self, name):
         return {"operation_id": self.plan["operation_id"], "installation_id": self.plan["installation_id"],
                 "source_release_id": self.plan["source_release_id"], "target_release_id": self.plan["target_release_id"],
-                "upgrade_state": name, "database_update_mode": "same-schema-no-migration"}
+                "upgrade_state": name, "database_update_mode": self.plan.get("database_update_mode", "same-schema-no-migration")}
 
 
 def _transfer_lock(roots, token, job_id):
@@ -403,6 +442,7 @@ def upgrade_retained(*, install_root, release_dir, native_entry_dir, setup_execu
         "slots": slots, "system_fence": fence,
         "database_identity": lifecycle._plain_file_identity(roots.DATA_ROOT / "enterprise.db"),
         "database_contract": {key: metadata[key] for key in ("schema_version", "schema_sha256", "ledger_sha256")},
+        "database_update_mode": mvp._database_contract_mode(source, assets.manifest),
         "lease": files._file(directory / "runner.lock")["identity"]}
     if preparation is not None:
         plan["database_preparation"] = preparation
@@ -430,7 +470,7 @@ def upgrade_retained(*, install_root, release_dir, native_entry_dir, setup_execu
         prepared = mvp.UpdateMvpService(roots, database_inspector=tx.inspect_database).prepare_from_artifacts(actor_user_id="local-installation-owner:" + record["installation_id"],
             manifest_path=assets.manifest_path, archive_path=assets.archive_path, inventory_path=assets.inventory_path)
         store = mvp.UpdateJobStore(roots)
-        if prepared.database_update_mode != "same-schema-no-migration":
+        if prepared.database_update_mode != plan["database_update_mode"]:
             _fail("INSTALL_UPGRADE_DATABASE_CONTRACT_UNSUPPORTED")
         files._new_json(directory / "job.json", {"schema_version": "enterprise-offline-upgrade-job-v1",
             "operation_id": operation, "plan_sha256": hashlib.sha256(canonical_json(plan)).hexdigest(),
@@ -476,7 +516,8 @@ def _load(install_root, local_app_data_base, assets):
         _fail()
     directory = root / "state/install-upgrades" / active["operation_id"]
     plan, digest = _read(directory / "plan.json")
-    if (set(plan) not in (PLAN_KEYS, PLAN_KEYS | {"database_preparation"}) or plan["schema_version"] != PLAN_SCHEMA
+    if (set(plan) - {"database_preparation", "database_update_mode"} != PLAN_KEYS or plan["schema_version"] != PLAN_SCHEMA
+            or plan.get("database_update_mode", "same-schema-no-migration") not in DATABASE_MODES
             or plan["operation_id"] != active["operation_id"] or plan["installation_id"] != active["installation_id"]
             or digest != active["plan_sha256"] or plan["install_root"] != str(root)
             or plan["local_app_data_base"] != str(Path(local_app_data_base))
@@ -538,7 +579,7 @@ def _load(install_root, local_app_data_base, assets):
 
 
 def recover_upgrade(*, install_root, release_dir, local_app_data_base, confirm_no_active_tasks=False):
-    """Explicit interrupted-operation recovery; same-schema data is never restored.
+    """Explicit interrupted-operation recovery; shared backups prove DB restore.
 
     Stop a proven target before reverting its pointer/tools. A successful engine
     result is only finalized, never downgraded after it may have served data.
@@ -589,7 +630,7 @@ def recover_upgrade(*, install_root, release_dir, local_app_data_base, confirm_n
                 or plan.get("target_release_id") != tx.plan["target_release_id"]
                 or plan.get("target_manifest_sha256") != tx.plan["target_manifest_sha256"]
                 or job.get("actor_user_id") != plan.get("actor_user_id")
-                or plan.get("database_update", {}).get("mode") != "same-schema-no-migration"):
+                or plan.get("database_update", {}).get("mode") != tx.plan.get("database_update_mode", "same-schema-no-migration")):
             _fail()
         if job["state"] == "SUCCEEDED":
             tx.published_tools()
@@ -615,7 +656,7 @@ def recover_upgrade(*, install_root, release_dir, local_app_data_base, confirm_n
             # Exception unwind can release the MVP handle before its terminal
             # status is written. The separate active marker and kernel runner
             # lease still prove this exact offline operation; never use age/PID.
-            if job["state"] not in {"READY", "UPDATING", "RESTARTING", "VERIFYING", "ROLLING_BACK", "FAILED", "ROLLED_BACK", "RECOVERY_REQUIRED"}:
+            if job["state"] not in {"READY", "UPDATING", "MIGRATING", "RESTARTING", "VERIFYING", "ROLLING_BACK", "FAILED", "ROLLED_BACK", "RECOVERY_REQUIRED"}:
                 _fail()
             recovery = tx.directory / "recovery-fence.json"
             if files._exists(recovery):
@@ -639,7 +680,16 @@ def recover_upgrade(*, install_root, release_dir, local_app_data_base, confirm_n
                 _fail("INSTALL_UPGRADE_TARGET_STOP_UNCONFIRMED")
         lifecycle._runtime_quiescent(tx.roots)
         if lifecycle._database_contract(tx.roots) != tx.plan["database_contract"]:
-            _fail("INSTALL_UPGRADE_DATABASE_CHANGED")
+            if plan["database_update"]["mode"] != "versioned-forward-migration":
+                _fail("INSTALL_UPGRADE_DATABASE_CHANGED")
+            result, backup = mvp.verified_job_database_backup(tx.roots, job_id)
+            restore_database_backup(tx.roots.DATA_ROOT / "enterprise.db", backup.manifest_path,
+                expected_current_database_sha256=result["post_migration_database_sha256"],
+                expected_backup_manifest_sha256=backup.manifest_sha256)
+            _checkpoint("database_restored")
+            if lifecycle._database_contract(tx.roots) != tx.plan["database_contract"]:
+                _fail("INSTALL_UPGRADE_DATABASE_CHANGED")
+        tx.database_identity(remember=True)
         source = read_release_manifest_v2(tx.roots.APP_ROOT / "release-manifest.json")
         if source.raw_sha256 != tx.plan["source_manifest_sha256"]:
             _fail()
