@@ -1,8 +1,8 @@
 {
   "schema_version": "enterprise-documents-v1",
   "reviewed_at": "2026-10-22",
-  "audit_base_commit": "5582c9f3094e052bee889835cae1aca065210992",
-  "scope": "Owner-authorized installer simplification and internal 2026.10.4 candidate from merged #182. Reuse current status, roadmap and C6 record; preserve backend identity, quiescence, database and recovery contracts. No formal Release or customer-device operation.",
+  "audit_base_commit": "10d42868b153da274bc929e6f4f8df0c49f0f958",
+  "scope": "Owner-authorized integration of department candidates with merged performance PR189 and release record PR184. Candidate schema remains inactive; formal Release and customer operations unchanged.",
   "documents": [
     {
       "path": ".github/PULL_REQUEST_TEMPLATE.md",
@@ -664,6 +664,10 @@
     },
     {
       "path": "docs/ops/RELEASE-2026.10.3-RECORD.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/ops/RELEASE-2026.10.4-RECORD.md",
       "kind": "record"
     }
   ],
