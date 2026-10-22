@@ -34,7 +34,9 @@
         };document.body.append(d);d.showModal();return d;
     }
     async function reload(){
-        const token=++epoch;status.textContent='正在更新视图…';
+        const token=++epoch;costCursor=null;
+        const more=panel.querySelector('[data-action="cost-more"]');if(more)more.disabled=true;
+        status.textContent='正在更新视图…';
         try{
             context=await json('/context');if(token!==epoch)return;
             if(!context.enabled){$('#businessContent').hidden=true;status.textContent='部门项目功能尚未启用；请等待正式版本升级，现有个人创作继续使用。';return;}
