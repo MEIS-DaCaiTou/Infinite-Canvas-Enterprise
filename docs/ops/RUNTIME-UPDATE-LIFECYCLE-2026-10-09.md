@@ -20,7 +20,13 @@
 
 后续候选仅统一外层时间预算：handoff_lifecycle中就绪最大60秒、请求有效120秒、control等待135秒；Supervisor使用同组常量。正常完成立即返回；保留3秒OS探测、完整资产校验、原进程身份、取消后拒绝提交、未知清理及预约保护，无协议/Schema变化。旧发行源码不被覆盖，10.4原控制器仍保持原时限，客户须先按原事务恢复再安排经验证交付路径。新增真实管道6秒延迟、30秒请求与控制ACK三项在旧代码失败，修正后三个定向文件178项通过。独立Review检查预算、commit/cancel及90秒源退出等待，结论NO_ACTIONABLE_BUGS_FOUND；新Head CI另记#199，未宣称完整安装包或客户升级通过。
 
-下一步需两类维护标记及原作业plan/status/预约锁，按原作业恢复业务；不直接删除标记、不重复执行升级，也不将恢复检查409解释为数据库损坏。
+后续原state/job副本确认在线序列标记、plan/status和预约同属一条作业，指针原字节身份匹配plan，handoff_committed、runtime_phases和database-result均不存在，没有离线维护标记。现有assess_recovery遇到残留预约首先拒绝，因此该409阻断条件已可确认；未据此声称客户数据库完整性通过。
+
+新增显式本机工具tools/recover_uncommitted_update.py，只处理这类未提交、原source不变的首跳失败。默认check不更改业务数据或升级状态；--recover核对原升级管理员当前active/super_admin/system_update和密码，密码不落盘。工具复用已安装source模块，不覆盖Release payload：在HandoffCommitGate内验证plan/指针/序列零检查点/无数据结果/contract4 worker；原数据库完整性及正式健康通过后采用原acquire/release释放同作业预约并记录事件，再调用原clear_recovery写恢复审计，原sequence.stop执行原生工具还原/必要启停/健康及对象绑定fence释放。contract4 worker仍要求UPDATING+handoff_committed才执行，已持久取消且无提交的worker不能因预约解除或服务重启继续迁移。没有新HTTP入口、Schema、后台恢复或直接unlink维护标记。
+
+工具9项定向覆盖默认检查不写、源业务/工具保留、重复操作、已提交/有执行阶段/有DB结果/外来锁/迁移中拒绝、健康失败保留预约、clearance中断后继续。连同原recovery-clearance回归15项通过；复用原fixture并缩短测试根名避免本机Windows路径上限，未扩大生产文件路径规则。独立Review为NO_ACTIONABLE_BUGS_FOUND。准确正式10.4-2859a2aefbac、其CPython及原模块还完成真实SQLite审计和Windows文件槽位、CLI密码确认/重复执行验证；源账号/指针/工具字节保持。Runtime命令和Windows登记在该专项中注入，未证明客户启停或恢复成功，源码/PR/发行/客户执行分开记录。原附件和专项输出均仅仓库外私有保存。
+
+工具用法：从安装内的原Python执行工具，默认不加--recover只检查；显式恢复会校验管理员密码，并可能短暂启停原服务。完成后刷新画布，保留10.4继续使用，不重复触发原在线升级。合并与修复包发行仍另行授权。
 
 - Base：`main@76cc43d2a5fea8c40adf49c52eb66751e01411e4`，基线收口 #146 已合并。
 - 分支：`codex/runtime-update-lifecycle-mainline-20261009`，合并/CI 以本记录所在 PR 的准确 Head 为准。
