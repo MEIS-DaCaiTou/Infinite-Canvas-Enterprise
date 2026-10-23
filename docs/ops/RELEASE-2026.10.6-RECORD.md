@@ -1,6 +1,16 @@
-# 部门首版组合发行候选记录（10.5 预置／10.6 启用）
+# 部门首版组合发行记录（10.5 预置／10.6 启用）
 
-核验日期：2026-10-23。本文固定发行源码、资产、验收边界和升级说明；当前正式版本仍为 v2026.10.4，尚未发布下列候选。动态进度只见 [CURRENT](../CURRENT_PROJECT_STATUS.md)。
+核验日期：2026-10-23。本文固定发行源码、资产、验收边界和升级说明；10.5与10.6已正式发布，10.6为Latest。动态进度只见 [CURRENT](../CURRENT_PROJECT_STATUS.md)。以下冻结候选和早期验收按原时点保留。
+
+## 正式发布收口（2026-10-23）
+
+负责人明确批准#197合并及正式发布10.5/10.6，测试主机由负责人自行操作。#197准确Head05323e6通过CI后合入main`892f32a762bb6c96afe07e9e74a1c3c58d529013`，本地main同步；该main自身[Enterprise/Runtime](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/39886795376)及[Docs](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/39886795360)均SUCCESS，固定EXE opt-in仍SKIPPED，本地验收另列。
+
+[v2026.10.5](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.10.5)于02:11:39 UTC发布，[v2026.10.6](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.10.6)于02:11:49 UTC发布，均非Draft、非预发布，10.6为Latest。标签分别固定到下表31e68cb与90b55c4；每版九项原资产直接上传，GitHub回传摘要与冻结记录一致，不重新打包、不覆盖旧正式版本资产。
+
+18项核心资产经无Token的公开下载链接回读，原大小和摘要全部匹配；复用产品原atomic_download，未另建下载器。两个目标ZIP内的数据库证据与公开路由一致。产品GitHubReleasesProvider读取完整21条公开目录，路由规划为正式10.4→10.5→10.6；再以两种准确冻结来源的原_check_update_sync读取公开目录，正式10.4显示stable/requires_intermediate，10.5显示stable/direct，最新均为10.6。后两项仅只读检查，不启动Runtime、不准备或执行升级，不是Browser/客户验收。
+
+发布及回读证据在仓库外D43：preflight.json、draft-upload-result.json、main-ci.json、publish-result.json、public-verification.json及frozen-source-public-checks.json。资产回读夹具首次默认GBK解码中文元数据、随后将stream迭代器误当上下文管理器，均发生在相应下载前；修正夹具并复用产品atomic_download后完成，不改已发布字节或产品代码。本轮没有供应商付费生成，也没有客户安装/数据库操作。
 
 ## 变更原因与交付内容
 
@@ -12,11 +22,11 @@
 
 ## 固定源码及资产
 
-负责人授权后，[#195](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/195)、[#196](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/196) 依次合入 main `419405c58934052aca976b00ebdab110e72e4447`、`1d85f5440f28ae79fe35e84eeb6acc2c162aa94e`。最终 main 的 Git tree 与准确10.6构建源相同；后续发行记录提交不替换构建身份。原独立技术审查均为 NO_ACTIONABLE_BUGS_FOUND；准确 Head CI 成功，固定EXE real opt-in跳过。
+负责人授权后，[#195](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/195)、[#196](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/196) 依次合入 main `419405c58934052aca976b00ebdab110e72e4447`、`1d85f5440f28ae79fe35e84eeb6acc2c162aa94e`。该1d85f54时点的Git tree与准确10.6构建源相同；之后#197仅改五份文档，不替换构建身份。原独立技术审查均为 NO_ACTIONABLE_BUGS_FOUND；准确 Head CI 成功，固定EXE real opt-in跳过。
 
-准确最终main的[Enterprise/Runtime CI](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/39827022962)和[文档CI](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/39827023056)均SUCCESS；#195合并提交的[固定EXE CI](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/39826951895)也为SUCCESS。#196未改原生入口，最终main没有额外触发该工作流；不把先前运行记作最终main的新执行。
+合并#196后的1d85f54主线[Enterprise/Runtime CI](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/39827022962)和[文档CI](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/39827023056)均SUCCESS；#195合并提交的[固定EXE CI](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/39826951895)也为SUCCESS。#196及后续发行记录未改原生入口，没有额外触发该工作流；不把先前运行记作892f32a的新执行。
 
-| 候选 | 准确源码 | Release ID | 数据结构 |
+| 版本 | 准确源码 | Release ID | 数据结构 |
 | --- | --- | --- | --- |
 | 2026.10.5 预置 | `31e68cb6739d27647ea47a414d17667895cabd43` | `ice-2026.10.5-31e68cb6739d` | 保持 Schema2 |
 | 2026.10.6 部门启用 | `90b55c4e7f66fd078bb0bf3aae0cd043de2e09a2` | `ice-2026.10.6-90b55c4e7f66` | 声明迁移到 Schema4 |
@@ -30,7 +40,7 @@
 | Setup | `fa3e0d59e4bd59b1386de1bc312f7700f4f7f351119cc6ba2b33164e172c1b64` | `9c09c5a4dc907d980aed10c3ac69b618dfa40a18b8c56660eda2558fa3e14c69` |
 | 路由 | `f131f42d684d59e86017ef66d10630c10dbefb0abb5989013f62d261ee274af7` | `ae0767033ca517a15634813ca52e0795ebad6a69796a16a1fb69dc43b7780afd` |
 
-仓库外 `D:/CodeProject/Infinite-Canvas-Enterprise-Artifacts/t/D36/release/frozen-assets.json` 固定各文件的上传名、原路径、大小及已有发行完整性摘要。10.5构建在 `t/D28/bridge`，10.6在 `t/D34/final`，路由在 `t/D36/release`。这些是本地候选，不是公开下载链接。两份准确路由和目标归档已核验：正式10.4→10.5→10.6，10.5→10.6；缺少预置包时不会伪造直接路径。公开GitHub目录须在获准发布后另行回读。
+仓库外 `D:/CodeProject/Infinite-Canvas-Enterprise-Artifacts/t/D36/release/frozen-assets.json` 固定各文件的上传名、原路径、大小及已有发行完整性摘要。10.5构建在 `t/D28/bridge`，10.6在 `t/D34/final`，路由在 `t/D36/release`。这些原字节已上传上述正式Release。两份准确路由和目标归档沿原验证：正式10.4→10.5→10.6，10.5→10.6；缺少预置包时不会伪造直接路径。
 
 ## 联合验收
 
@@ -62,14 +72,14 @@ Grok imagine、MiniMax-H3、Wan3及图片文生图沿用此前真实成功记录
 
 证据在仓库外`D:/CodeProject/Infinite-Canvas-Enterprise-Artifacts/t/D42`的connectivity.json、accepted.json、result.json及两阶段请求记录；实际prompt_id和结果字节仅留本地。首次夹具调用旧用户创建接口被现有角色治理拒绝，发生在提交前；改用仓库既有显式测试管理员初始化后继续，产品权限未改。补验覆盖真实GPU图、原任务身份、进程中断及图片归档，不是再次固定EXE/安装升级、画布浏览器或全部客户工作流验收。测试进程已经结束；仅在已授权远端执行该测试图，未操作客户安装/数据库、未修改云防火墙，贞贞新增付费调用0。
 
-## 简明升级说明（候选评审稿）
+## 简明升级说明
 
-发布获准前不在客户设备执行。发布后，正式10.4来源使用以下路径：
+正式10.4来源由负责人在测试主机执行以下路径；本轮未代操作客户安装或数据库：
 
 1. 确认生成任务完成，备份按原更新流程保留。在线更新选择部门启用版本，由已声明路径经过10.5；公开目录与完整路径可用性以发布后核验结果为准。
-2. 使用离线Setup时，从原固定窗口停止服务并关闭启动窗口；先运行10.5预置包，选择原安装位置并升级，再对同一位置运行10.6启用包。保留原账号、画布、素材和配置，无需打开高级维护。
+2. 使用离线Setup时，从原固定窗口停止服务并关闭启动窗口；先运行[10.5预置包](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/download/v2026.10.5/InfiniteCanvasSetup.exe)，选择原安装位置并升级，再对同一位置运行[10.6启用包](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/download/v2026.10.6/InfiniteCanvasSetup.exe)。两包同名，分别保存到10.5/10.6文件夹；10.5完成后若打开启动窗口，先停止服务并关闭窗口再运行10.6。保留原账号、画布、素材和配置，无需打开高级维护。
 3. 从原入口启动并使用原账号登录。公司管理员在既有成员管理中创建部门、分配成员及负责人；旧私人内容保持原归属，需要时明确关联项目或共享。
 
 升级失败遵循原作业状态：已自动回退时确认原版本健康；RECOVERY_REQUIRED保留诊断与原作业，使用匹配恢复流程，不覆盖原目录、不删除锁/WAL或重新提交生成。业务在新结构继续写入后的任意无损降级不在本候选承诺范围。
 
-下一交付动作是合并发行记录，再按单独批准发布10.5预置和10.6启用资产、回读公开更新目录。10.5是同结构升级准备版本，继续完成10.6启用，不作为部门首版终点。客户设备由负责人自行验收；真实ComfyUI生成/重启续查已补，旧图片未知请求澄清后再做对应有界验收。
+下一完整工作包是测试主机升级及部门功能实际使用反馈：确认页面2026.10.6、原账号/画布/素材、已有视频播放和一个常用ComfyUI工作流；随后检查部门成员、完整项目共享、两类调用来源及角色费用视图，并按真实缺陷定向处理。10.5只作同结构升级准备，继续完成10.6启用。真实ComfyUI生成/重启续查已补，旧图片未知请求澄清后再做对应有界验收。
