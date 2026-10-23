@@ -800,6 +800,58 @@ def test_diagnostics_absent_logs_are_optional_and_filters_still_apply(tmp_path):
     assert payload["records"] == [{"source": "supervisor.log", "line": "ERROR second"}]
 
 
+def test_busy_business_logs_do_not_evict_handoff_and_update_events(tmp_path):
+    roots = _roots(tmp_path)
+    logs = roots.LOG_ROOT / "runtime"
+    logs.mkdir(parents=True)
+    for name in ("upstream.stdout.log", "upstream.stderr.log"):
+        (logs / name).write_text("\n".join(f"business {n}" for n in range(700)), encoding="utf-8")
+    (logs / "supervisor.log").write_text("update_handoff_worker_cleanup confirmed=false\n", encoding="utf-8")
+    (logs / "launcher.log").write_text("handoff wait failed token=fixture-secret\n", encoding="utf-8")
+    job_id = "a" * 32
+    job = roots.STAGING_ROOT / "update-mvp" / "jobs" / job_id
+    job.mkdir(parents=True)
+    (job / "events.jsonl").write_text("PREPARING\nREADY\nUPDATING\nRECOVERY_REQUIRED\n", encoding="utf-8")
+
+    payload = recent_diagnostics(roots, job_id=job_id, limit=500, secret_values=("fixture-secret",))
+    with zipfile.ZipFile(io.BytesIO(diagnostics_zip(payload))) as archive:
+        report = json.loads(archive.read("update-diagnostics.json"))
+    grouped = {name: [r["line"] for r in report["records"] if r["source"] == name]
+               for name in ("supervisor.log", "launcher.log", "update-events.jsonl",
+                            "upstream.stdout.log", "upstream.stderr.log")}
+    assert grouped["supervisor.log"] == ["update_handoff_worker_cleanup confirmed=false"]
+    assert grouped["launcher.log"] and "fixture-secret" not in json.dumps(report)
+    assert grouped["update-events.jsonl"] == ["PREPARING", "READY", "UPDATING", "RECOVERY_REQUIRED"]
+    assert report["record_count"] == len(report["records"]) == 500
+    for name in ("upstream.stdout.log", "upstream.stderr.log"):
+        assert grouped[name][-1] == "business 699"
+    assert report["log_collection"] == {"partial": True, "warnings": [
+        {"source": "upstream.stderr.log", "code": "SOURCE_LINE_LIMIT"},
+        {"source": "upstream.stdout.log", "code": "SOURCE_LINE_LIMIT"},
+    ]}
+
+
+def test_small_diagnostic_limit_keeps_latest_control_evidence_first(tmp_path):
+    roots = _roots(tmp_path)
+    logs = roots.LOG_ROOT / "runtime"
+    logs.mkdir(parents=True)
+    for name in ("supervisor.log", "launcher.log", "upstream.stdout.log"):
+        (logs / name).write_text("old\nlatest\n", encoding="utf-8")
+    job_id = "b" * 32
+    job = roots.STAGING_ROOT / "update-mvp" / "jobs" / job_id
+    job.mkdir(parents=True)
+    (job / "events.jsonl").write_text("READY\nRECOVERY_REQUIRED\n", encoding="utf-8")
+    payload = recent_diagnostics(roots, job_id=job_id, limit=3)
+    assert payload["records"] == [
+        {"source": "update-events.jsonl", "line": "RECOVERY_REQUIRED"},
+        {"source": "supervisor.log", "line": "latest"},
+        {"source": "launcher.log", "line": "latest"},
+    ]
+    assert payload["log_collection"]["partial"] is True
+    assert {w["source"] for w in payload["log_collection"]["warnings"]} == {
+        "update-events.jsonl", "supervisor.log", "launcher.log", "upstream.stdout.log"}
+
+
 def test_diagnostics_unreadable_update_events_keeps_job_summary(tmp_path, monkeypatch):
     roots = _roots(tmp_path)
     job_id = "a" * 32
