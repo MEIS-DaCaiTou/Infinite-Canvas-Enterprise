@@ -552,8 +552,12 @@ def _database_contract_mode(source: ReleaseManifestV2, target: ReleaseManifestV2
     if (
         right.get("migration_compatibility") == "versioned-forward-migration"
         and right.get("rollback_classification") == "database-backup-restore"
-        and left.get("schema_snapshot_sha256") != right.get("schema_snapshot_sha256")
     ):
+        # An activation package can also maintain an already activated source.
+        # The existing same-schema planner still verifies the live database and
+        # both complete registry/evidence documents before authorizing execution.
+        if left.get("schema_snapshot_sha256") == right.get("schema_snapshot_sha256"):
+            return "same-schema-no-migration"
         return "versioned-forward-migration"
     return None
 

@@ -44,6 +44,23 @@ def plan(root,database,source,target,*,forward=False,registry=None):
         database_path=database,registry=release_registry() if registry is None else registry,operation_id='department-release')
 
 
+def test_activation_package_also_maintains_an_already_activated_database(tmp_path,snapshots):
+    from enterprise.migrations.versioned import apply_versioned_migrations
+    database=baseline(tmp_path/'enterprise.db')
+    apply_versioned_migrations(database,tmp_path/'backups',operation_id='activate-fixture',
+        target_version=4,expected_target_schema_sha256=snapshots[4]['schema_objects_sha256'],
+        registry=release_registry())
+    original=database.read_bytes()
+    ready=plan(tmp_path,database,snapshots[4],snapshots[4],forward=True)
+    assert ready['mode']=='same-schema-no-migration' and not ready['registry_staged']
+    assert database.read_bytes()==original
+    # Identical release evidence does not authorize a changed live database.
+    with closing(sqlite3.connect(database)) as conn:
+        conn.execute('CREATE TABLE unexpected_table(value TEXT)')
+    with pytest.raises(UpdateMvpError,match='SYSTEM_UPDATE_DATABASE_SOURCE_IDENTITY_MISMATCH'):
+        plan(tmp_path,database,snapshots[4],snapshots[4],forward=True)
+
+
 def test_staging_keeps_v2_and_requires_pre_staged_registry_for_activation(tmp_path,snapshots):
     database=baseline(tmp_path/'enterprise.db');original=database.read_bytes()
     old={**snapshots[2],'migration_registry_sha256':migration_registry_sha256(DEFAULT_MIGRATIONS),
