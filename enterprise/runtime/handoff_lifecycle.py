@@ -40,6 +40,13 @@ _PROBE_SECONDS = 3.0
 _CLEANUP_SECONDS = 0.5
 _WAIT_TIMEOUT = 0x102
 
+# The worker verifies complete release/maintenance assets before readiness.
+# Cold filesystem validation can exceed five seconds; keep all three outer
+# deadlines aligned while the existing three-second OS probe stays bounded.
+HANDOFF_READY_SECONDS = 60
+HANDOFF_REQUEST_SECONDS = 120
+HANDOFF_CONTROL_SECONDS = 135
+
 
 class HandoffLifecycleError(JobObjectError):
     """A failed or unconfirmed readiness/cleanup condition; never a fallback."""
@@ -262,9 +269,9 @@ def _identity_field(identity, name: str):
 
 
 def read_worker_ready(process, job_id: str, source_identity, worker_identity,
-                      timeout_seconds: float = 5, *, updater_binding: dict | None = None) -> bool:
+                      timeout_seconds: float = HANDOFF_READY_SECONDS, *, updater_binding: dict | None = None) -> bool:
     """Accept only a live, identity-bound worker's strict readiness JSON."""
-    timeout = min(_duration(timeout_seconds), 5.0)
+    timeout = min(_duration(timeout_seconds), HANDOFF_READY_SECONDS)
     if process.poll() is not None:
         return False
     message = _read_json_line(process, time.monotonic() + timeout)

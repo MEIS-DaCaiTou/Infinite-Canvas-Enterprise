@@ -10,9 +10,17 @@
 
 诊断确有可复现缺陷：按文件名拼接再统一取最后500条，业务stdout/stderr占496条，仅余4条作业事件，supervisor.log/launcher.log完全丢失，log_collection.partial仍false。EXE摘要仅含worker_exit_code=0；这不是更新worker或目标版本成功的证明。原始客户ZIP仅保留仓库外D44，不上传原日志、用户身份、业务内容或配置。
 
-候选从运行代码main892f32a继续，文档基于待合并#198的9bcff32，避免重写正式发行记录。仅修改原diagnostics.py：先按来源收集有界尾窗口，再分配各来源最新记录，低limit优先update-events/supervisor/launcher；维持MAX_LINES=500、单源字节限制、原脱敏/状态摘要/ZIP结构。有匹配记录未进入结果时标记SOURCE_LINE_LIMIT并置partial=true，读取失败沿用SOURCE_READ_FAILED。不增加日志系统、页面、后台worker或自动恢复，交接确认/锁/数据库代码不变。
+候选从运行代码main892f32a继续，文档基于待合并#198的9bcff32，避免重写正式发行记录。初版仅修改原diagnostics.py：先按来源收集有界尾窗口，再分配各来源最新记录，低limit优先update-events/supervisor/launcher；维持MAX_LINES=500、单源字节限制、原脱敏/状态摘要/ZIP结构。有匹配记录未进入结果时标记SOURCE_LINE_LIMIT并置partial=true，读取失败沿用SOURCE_READ_FAILED。不增加日志系统、页面、后台worker或自动恢复，锁/数据库代码不变；后续外层时限补修见下文。
 
-两项回归先在旧代码复现失败，覆盖繁忙业务流挤掉控制日志、低limit下控制来源最新记录。修正后test_runtime_update_diagnostics.py共93项通过；独立Review为NO_ACTIONABLE_BUGS_FOUND。这是日志选择/导出证据，不是现场交接或升级恢复成功；下一步需要原supervisor/launcher日志及两类维护标记，确认实际触发分支并优先恢复业务，不清锁、不重复发起升级。候选合并与发布另行批准，正式10.5/10.6资产未修改。
+两项回归先在旧代码复现失败，覆盖繁忙业务流挤掉控制日志、低limit下控制来源最新记录。修正后test_runtime_update_diagnostics.py共93项通过；初版独立Review为NO_ACTIONABLE_BUGS_FOUND，b57c737的常规CI通过、固定EXE opt-in跳过。这是初版日志选择/导出证据，不是现场交接或升级恢复成功；候选合并与发布另行批准，正式10.5/10.6资产未修改。
+
+补充现场日志：北京时间10:45:04.152创建worker，10:45:09.212记录worker_stop_confirmed=true；没有readiness失败明细、handoff接受或源服务停止。11:55重启正常完成，不能清除持久维护标记。负责人更正早前可用反馈，当前业务维护阻断未恢复。源码确认worker在就绪消息前重复执行完整资产验证，源服务仅等5秒，整体请求10秒过期、控制器15秒结束；杀掉原worker仍不足以证明探测子进程清理，因而保留RECOVERY_REQUIRED及预约，现有恢复核验又拒绝仍存在的预约锁。后一点是符合代码的阻断条件，现场409的具体原因仍须原plan/status/lock确认，不凭通用错误下结论。
+
+仓库外D45用准确10.5 CP314、正式5的原发布资产和已有隔离materialized副本复用select_verified_updater/prepare_worker_ready实测：首次import0.613秒、校验27.369秒、OS探测0.413秒，总28.419秒；再次0.157/4.067/0.410，总4.636秒。不访问客户安装、不开业务库、不启动Runtime。该测量证明有界等待不足，现场缺worker内部记录仍不能断言其唯一内部耗时阶段。
+
+后续候选仅统一外层时间预算：handoff_lifecycle中就绪最大60秒、请求有效120秒、control等待135秒；Supervisor使用同组常量。正常完成立即返回；保留3秒OS探测、完整资产校验、原进程身份、取消后拒绝提交、未知清理及预约保护，无协议/Schema变化。旧发行源码不被覆盖，10.4原控制器仍保持原时限，客户须先按原事务恢复再安排经验证交付路径。新增真实管道6秒延迟、30秒请求与控制ACK三项在旧代码失败，修正后三个定向文件178项通过。独立Review检查预算、commit/cancel及90秒源退出等待，结论NO_ACTIONABLE_BUGS_FOUND；新Head CI另记#199，未宣称完整安装包或客户升级通过。
+
+下一步需两类维护标记及原作业plan/status/预约锁，按原作业恢复业务；不直接删除标记、不重复执行升级，也不将恢复检查409解释为数据库损坏。
 
 - Base：`main@76cc43d2a5fea8c40adf49c52eb66751e01411e4`，基线收口 #146 已合并。
 - 分支：`codex/runtime-update-lifecycle-mainline-20261009`，合并/CI 以本记录所在 PR 的准确 Head 为准。

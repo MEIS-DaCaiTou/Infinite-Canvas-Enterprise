@@ -337,7 +337,7 @@ def test_handoff_reservation_read_is_nonmutating_and_fail_closed(tmp_path, monke
     assert store.read_status(job_id) == status and calls == [] and pointer.release.release_id == "release-A"
 
 
-@pytest.mark.parametrize("age", [11, -1, None])
+@pytest.mark.parametrize("age", [121, -1, None])
 def test_late_or_invalid_handoff_request_never_resolves_install_roots(monkeypatch, age):
     from datetime import datetime, timedelta, timezone
     from enterprise.runtime.supervisor import RuntimeSupervisor
@@ -347,6 +347,39 @@ def test_late_or_invalid_handoff_request_never_resolves_install_roots(monkeypatc
     with patch("enterprise.runtime.portable.windows_local_app_data_known_folder",
                side_effect=AssertionError("late request must not touch roots")):
         assert supervisor._handoff_reservation("a" * 32, request) is None
+
+
+def test_handoff_reservation_survives_slow_validation_but_still_checks_job(monkeypatch):
+    from unittest.mock import Mock
+    from datetime import datetime, timedelta, timezone
+    from enterprise.runtime.supervisor import RuntimeSupervisor
+    supervisor = RuntimeSupervisor.__new__(RuntimeSupervisor)
+    supervisor.config = SimpleNamespace(app_root=Path("release-A"))
+    store = Mock()
+    store.active_handoff_reservation.return_value = (1, 2)
+    monkeypatch.setattr(supervisor, "_handoff_store", lambda: store)
+    request = {"issued_at": (datetime.now(timezone.utc) - timedelta(seconds=30)).isoformat()}
+    assert supervisor._handoff_reservation("a" * 32, request) == (1, 2)
+    store.active_handoff_reservation.assert_called_once_with("a" * 32, "release-A")
+
+
+def test_handoff_controller_waits_for_slow_validation_ack(monkeypatch):
+    from unittest.mock import Mock
+    from enterprise.runtime import control
+    controller = control.RuntimeController.__new__(control.RuntimeController)
+    controller.config = object()
+    controller.store = Mock()
+    snapshot = {"portable_ownership_valid": True, "running_release_mismatch": False,
+                "readiness": {"ready": True}, "runtime_state": {
+                    "supervisor_instance_id": "fixture", "state_generation": 1}}
+    monkeypatch.setattr(control, "inspect_runtime", lambda _: snapshot)
+    ticks = iter((0, 10, 20, 30))
+    monkeypatch.setattr(control.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(control.time, "sleep", lambda _: None)
+    controller.store.read_ack.side_effect = [None, None, {"result": "update_handoff_started"}]
+    result = controller.send_update_handoff("a" * 32)
+    assert result["result"] == "update_handoff_started"
+    controller.store.remove_ack.assert_called_once()
 
 
 @pytest.mark.skipif(os.name != "nt", reason="real owned Windows child")
