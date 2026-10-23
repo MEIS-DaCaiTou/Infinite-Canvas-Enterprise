@@ -673,6 +673,10 @@
     {
       "path": "docs/ops/RELEASE-2026.10.6-RECORD.md",
       "kind": "record"
+    },
+    {
+      "path": "docs/ops/RELEASE-2026.10.7-RECORD.md",
+      "kind": "record"
     }
   ],
   "tabular_resources": [
