@@ -6,6 +6,8 @@
 
 ### 2026-10-23 现场反馈：保留受限诊断中的控制日志
 
+最新结果：负责人执行已固定恢复包后确认原画布恢复，回执recovered=true/upgrade_executed=false，仍为正式10.4。原作业FAILED/SYSTEM_UPDATE_SEQUENCE_STOPPED是明确终止原升级的结果。#199的35a7a2b常规CI全部成功，固定EXE opt-in跳过。按批准已保留10.5/10.6记录与原资产并撤下稳定推荐；准确旧10.4/10.5公开目录检查不再提供该路径。后续10.7先验证离线交付，不能靠新目标修复旧源的时间预算。下文故障、候选和未恢复描述保留其原时点。
+
 负责人提供两份诊断副本。在线10.4→10.5于北京时间10:44:10准备、10:44:37 READY/UPDATING、10:45:09进入SYSTEM_UPDATE_HANDOFF_CLEANUP_UNCONFIRMED/RECOVERY_REQUIRED；11:12:41快照仍是10.4，Gateway/Upstream均healthy。随后根页面截图明确返回INSTALL_UPGRADE_MAINTENANCE，当前业务被503拦截；该中间件同时识别install-upgrade-active.json和upgrade-sequence-active.json，保留健康检查，因此healthy不等于业务可用。需核对实际标记及后续操作，不将新截图直接当作另一场故障。没有目标启动/迁移成功记录，不据此判断数据库损坏或具体Windows创建失败。恢复按钮409只有通用错误，缺具体核验失败阶段，尚不能确认其唯一原因。
 
 诊断确有可复现缺陷：按文件名拼接再统一取最后500条，业务stdout/stderr占496条，仅余4条作业事件，supervisor.log/launcher.log完全丢失，log_collection.partial仍false。EXE摘要仅含worker_exit_code=0；这不是更新worker或目标版本成功的证明。原始客户ZIP仅保留仓库外D44，不上传原日志、用户身份、业务内容或配置。

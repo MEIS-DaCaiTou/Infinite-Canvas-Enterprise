@@ -216,7 +216,7 @@ main 派生的生命周期诊断增量为每个实际执行的 `target_start/tar
 
 同日后续候选在`handoff_lifecycle`统一就绪/请求/控制等待为60/120/135秒，供Supervisor和Controller复用。正式10.5原完整校验/探测隔离实测首次28.419秒，超过原5秒就绪时限；新预算保持身份、完整性、提交取消及未知清理判定，OS探测仍3秒，不自动重试。三个定向文件178项通过，尚非已发行修改或客户恢复；10.4原控制器不因此改变，具体边界见原实施记录。
 
-现场未提交首跳的显式恢复候选为`tools/recover_uncommitted_update.py`：使用安装内source Python和原模块，默认check，`--recover`需原升级超级管理员密码。限定原指针/未提交/无执行数据/同作业预约；核验source数据库和正式健康后在原commit gate中释放该预约，复用clearance审计及sequence.stop，不直接删fence或执行版本升级。工具及原clearance合计15项定向通过，准确10.4 CP314/SQLite/文件槽位兼容专项通过；Runtime启停与登记仍为注入，客户结果待反馈。
+现场未提交首跳的显式恢复候选为`tools/recover_uncommitted_update.py`：使用安装内source Python和原模块，默认check，`--recover`需原升级超级管理员密码。限定原指针/未提交/无执行数据/同作业预约；核验source数据库和正式健康后在原commit gate中释放该预约，复用clearance审计及sequence.stop，不直接删fence或执行版本升级。工具及原clearance合计15项定向通过，准确10.4 CP314/SQLite/文件槽位兼容专项通过；该本机专项的Runtime启停与登记为注入。负责人随后执行恢复包并确认原画布恢复，回执仍为10.4且upgrade_executed=false，补齐单台现场结果。10.5/10.6原资产保留，预发布标记使原稳定路由不再匹配；旧10.4/10.5公开目录实查均不提供升级。10.7修复交付先走离线，旧源程序不会因发布新目标自动获得补丁。
 
 ## 8. 更新限制
 
