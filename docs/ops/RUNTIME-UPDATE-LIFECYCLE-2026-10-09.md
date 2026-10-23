@@ -4,6 +4,38 @@
 
 ## 1. 来源与范围
 
+### 2026-10-24 准确修复包联合验收
+
+准确10.7-1b4808f的原Setup完成Schema2→4、实际Windows登记、原账号/两类画布/素材保留及Runtime健康。新来源以未发布10.8测试包完成真实固定EXE/认证HTTP/独立worker的在线成功和目标端口失败后原7恢复；两项原视频/ComfyUI仅查询原ID并归档，没有生成POST。后者为Schema4同结构恢复，跨结构备份/恢复沿用独立证据。10.8不发布；首跳脚本超时及原函数续登记限制仍保留。准确范围和后续发行状态见[10.7记录](RELEASE-2026.10.7-RECORD.md)，下文历史候选时点不改写。
+
+### 2026-10-23 现场反馈：保留受限诊断中的控制日志
+
+最新结果：负责人执行已固定恢复包后确认原画布恢复，回执recovered=true/upgrade_executed=false，仍为正式10.4。原作业FAILED/SYSTEM_UPDATE_SEQUENCE_STOPPED是明确终止原升级的结果。#199的35a7a2b常规CI全部成功，固定EXE opt-in跳过。按批准已保留10.5/10.6记录与原资产并撤下稳定推荐；准确旧10.4/10.5公开目录检查不再提供该路径。后续10.7先验证离线交付，不能靠新目标修复旧源的时间预算。下文故障、候选和未恢复描述保留其原时点。
+
+修复包维护性检查补齐Schema4→Schema4：原_database_contract_mode仅在schema证据不同才接受versioned-forward-migration包，导致正常10.6无法离线取得修复。现在相同完整证据转入原same-schema规划；真实数据库、registry及证据仍重验。新增SQLite用例旧代码复现拒绝，修正后同时覆盖正常维护不写数据库和实际schema被改时拒绝；部门发行/离线18项、共享更新60项通过，独立Review无可证实缺陷。没有增加新Schema或维护框架。
+
+负责人提供两份诊断副本。在线10.4→10.5于北京时间10:44:10准备、10:44:37 READY/UPDATING、10:45:09进入SYSTEM_UPDATE_HANDOFF_CLEANUP_UNCONFIRMED/RECOVERY_REQUIRED；11:12:41快照仍是10.4，Gateway/Upstream均healthy。随后根页面截图明确返回INSTALL_UPGRADE_MAINTENANCE，当前业务被503拦截；该中间件同时识别install-upgrade-active.json和upgrade-sequence-active.json，保留健康检查，因此healthy不等于业务可用。需核对实际标记及后续操作，不将新截图直接当作另一场故障。没有目标启动/迁移成功记录，不据此判断数据库损坏或具体Windows创建失败。恢复按钮409只有通用错误，缺具体核验失败阶段，尚不能确认其唯一原因。
+
+诊断确有可复现缺陷：按文件名拼接再统一取最后500条，业务stdout/stderr占496条，仅余4条作业事件，supervisor.log/launcher.log完全丢失，log_collection.partial仍false。EXE摘要仅含worker_exit_code=0；这不是更新worker或目标版本成功的证明。原始客户ZIP仅保留仓库外D44，不上传原日志、用户身份、业务内容或配置。
+
+候选从运行代码main892f32a继续，文档基于待合并#198的9bcff32，避免重写正式发行记录。初版仅修改原diagnostics.py：先按来源收集有界尾窗口，再分配各来源最新记录，低limit优先update-events/supervisor/launcher；维持MAX_LINES=500、单源字节限制、原脱敏/状态摘要/ZIP结构。有匹配记录未进入结果时标记SOURCE_LINE_LIMIT并置partial=true，读取失败沿用SOURCE_READ_FAILED。不增加日志系统、页面、后台worker或自动恢复，锁/数据库代码不变；后续外层时限补修见下文。
+
+两项回归先在旧代码复现失败，覆盖繁忙业务流挤掉控制日志、低limit下控制来源最新记录。修正后test_runtime_update_diagnostics.py共93项通过；初版独立Review为NO_ACTIONABLE_BUGS_FOUND，b57c737的常规CI通过、固定EXE opt-in跳过。这是初版日志选择/导出证据，不是现场交接或升级恢复成功；候选合并与发布另行批准，正式10.5/10.6资产未修改。
+
+补充现场日志：北京时间10:45:04.152创建worker，10:45:09.212记录worker_stop_confirmed=true；没有readiness失败明细、handoff接受或源服务停止。11:55重启正常完成，不能清除持久维护标记。负责人更正早前可用反馈，当前业务维护阻断未恢复。源码确认worker在就绪消息前重复执行完整资产验证，源服务仅等5秒，整体请求10秒过期、控制器15秒结束；杀掉原worker仍不足以证明探测子进程清理，因而保留RECOVERY_REQUIRED及预约，现有恢复核验又拒绝仍存在的预约锁。后一点是符合代码的阻断条件，现场409的具体原因仍须原plan/status/lock确认，不凭通用错误下结论。
+
+仓库外D45用准确10.5 CP314、正式5的原发布资产和已有隔离materialized副本复用select_verified_updater/prepare_worker_ready实测：首次import0.613秒、校验27.369秒、OS探测0.413秒，总28.419秒；再次0.157/4.067/0.410，总4.636秒。不访问客户安装、不开业务库、不启动Runtime。该测量证明有界等待不足，现场缺worker内部记录仍不能断言其唯一内部耗时阶段。
+
+后续候选仅统一外层时间预算：handoff_lifecycle中就绪最大60秒、请求有效120秒、control等待135秒；Supervisor使用同组常量。正常完成立即返回；保留3秒OS探测、完整资产校验、原进程身份、取消后拒绝提交、未知清理及预约保护，无协议/Schema变化。旧发行源码不被覆盖，10.4原控制器仍保持原时限，客户须先按原事务恢复再安排经验证交付路径。新增真实管道6秒延迟、30秒请求与控制ACK三项在旧代码失败，修正后三个定向文件178项通过。独立Review检查预算、commit/cancel及90秒源退出等待，结论NO_ACTIONABLE_BUGS_FOUND；新Head CI另记#199，未宣称完整安装包或客户升级通过。
+
+后续原state/job副本确认在线序列标记、plan/status和预约同属一条作业，指针原字节身份匹配plan，handoff_committed、runtime_phases和database-result均不存在，没有离线维护标记。现有assess_recovery遇到残留预约首先拒绝，因此该409阻断条件已可确认；未据此声称客户数据库完整性通过。
+
+新增显式本机工具tools/recover_uncommitted_update.py，只处理这类未提交、原source不变的首跳失败。默认check不更改业务数据或升级状态；--recover核对原升级管理员当前active/super_admin/system_update和密码，密码不落盘。工具复用已安装source模块，不覆盖Release payload：在HandoffCommitGate内验证plan/指针/序列零检查点/无数据结果/contract4 worker；原数据库完整性及正式健康通过后采用原acquire/release释放同作业预约并记录事件，再调用原clear_recovery写恢复审计，原sequence.stop执行原生工具还原/必要启停/健康及对象绑定fence释放。contract4 worker仍要求UPDATING+handoff_committed才执行，已持久取消且无提交的worker不能因预约解除或服务重启继续迁移。没有新HTTP入口、Schema、后台恢复或直接unlink维护标记。
+
+工具9项定向覆盖默认检查不写、源业务/工具保留、重复操作、已提交/有执行阶段/有DB结果/外来锁/迁移中拒绝、健康失败保留预约、clearance中断后继续。连同原recovery-clearance回归15项通过；复用原fixture并缩短测试根名避免本机Windows路径上限，未扩大生产文件路径规则。独立Review为NO_ACTIONABLE_BUGS_FOUND。准确正式10.4-2859a2aefbac、其CPython及原模块还完成真实SQLite审计和Windows文件槽位、CLI密码确认/重复执行验证；源账号/指针/工具字节保持。Runtime命令和Windows登记在该专项中注入，未证明客户启停或恢复成功，源码/PR/发行/客户执行分开记录。原附件和专项输出均仅仓库外私有保存。
+
+工具用法：从安装内的原Python执行工具，默认不加--recover只检查；显式恢复会校验管理员密码，并可能短暂启停原服务。完成后刷新画布，保留10.4继续使用，不重复触发原在线升级。合并与修复包发行仍另行授权。
+
 - Base：`main@76cc43d2a5fea8c40adf49c52eb66751e01411e4`，基线收口 #146 已合并。
 - 分支：`codex/runtime-update-lifecycle-mainline-20261009`，合并/CI 以本记录所在 PR 的准确 Head 为准。
 - 选择性复用维护候选 #145 的 `d0861f907e0d33cd18f14e65eb44bbe19bdfac94` 中有效诊断/路径增量；没有合并整条分支、10.2 VERSION、旧交接文档或其未提交测试修改。

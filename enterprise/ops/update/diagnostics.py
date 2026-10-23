@@ -77,27 +77,54 @@ def recent_diagnostics(
     limit = min(max(int(limit), 1), MAX_LINES)
     level = str(level or "").strip().casefold()[:32]
     keyword = str(keyword or "").strip().casefold()[:128]
-    records: list[dict[str, str]] = []
+    batches: list[tuple[str, list[str]]] = []
     warnings: list[dict[str, str]] = []
     sources = [(name, roots.LOG_ROOT / "runtime" / name) for name in sorted(LOG_NAMES)]
     if job_id:
         events = roots.STAGING_ROOT / "update-mvp" / "jobs" / job_id / "events.jsonl"
         sources.append(("update-events.jsonl", events))
+    priority = {name: index for index, name in enumerate((
+        "update-events.jsonl", "supervisor.log", "launcher.log", "crash-events.jsonl", "health.log"))}
+    sources.sort(key=lambda source: (priority.get(source[0], len(priority)), source[0]))
     for name, path in sources:
         try:
-            lines = _tail_lines(path, limit=limit, secret_values=secret_values)
+            # One extra matching line can prove truncation without enlarging
+            # the public record cap or reading an entire business log.
+            lines = _tail_lines(path, limit=limit + 1, secret_values=secret_values)
         except OSError:
             # Keep other sources and saved state usable during a sharing/ACL
             # failure or log rotation. Never export exception text or paths.
             warnings.append({"source": name, "code": "SOURCE_READ_FAILED"})
             continue
+        matching = []
         for line in lines:
             folded = line.casefold()
             if level and level not in folded:
                 continue
             if keyword and keyword not in folded:
                 continue
-            records.append({"source": name, "line": line})
+            matching.append(line)
+        if matching:
+            batches.append((name, matching))
+    # Allocate newest lines across sources before returning each source's
+    # selected tail in order. A busy child stream cannot evict control logs.
+    counts = [0] * len(batches)
+    remaining = limit
+    for offset in range(max((len(lines) for _, lines in batches), default=0)):
+        for index, (_, lines) in enumerate(batches):
+            if offset < len(lines):
+                counts[index] += 1
+                remaining -= 1
+                if remaining == 0:
+                    break
+        if remaining == 0:
+            break
+    records = []
+    for (name, lines), count in zip(batches, counts):
+        if count:
+            records.extend({"source": name, "line": line} for line in lines[-count:])
+        if count < len(lines):
+            warnings.append({"source": name, "code": "SOURCE_LINE_LIMIT"})
     summary: dict[str, Any] = {}
     state_path = roots.RUNTIME_ROOT / "runtime-state.json"
     state = _read_small_json(state_path)
@@ -117,8 +144,8 @@ def recent_diagnostics(
         "generated_at": utc_now(),
         "log_collection": {"partial": bool(warnings), "warnings": warnings},
         "summary": redact_value(summary, secret_values=secret_values),
-        "record_count": min(len(records), limit),
-        "records": redact_value(records[-limit:], secret_values=secret_values),
+        "record_count": len(records),
+        "records": redact_value(records, secret_values=secret_values),
     }
 
 

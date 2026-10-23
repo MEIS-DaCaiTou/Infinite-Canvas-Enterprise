@@ -6,7 +6,7 @@
 
 ## 文档入口
 
-更新时间：2026-10-13。本页不复制整份状态和任务队列。
+更新时间：2026-10-24。本页不复制整份状态和任务队列。
 
 | 需要了解 | 入口 |
 | --- | --- |
@@ -17,7 +17,7 @@
 | 完整文档导航与维护规则 | [文档索引](docs/README.md) / [登记表](docs/document-register.json) |
 | 开发、代码边界和安全 | [工作流](CODEX_WORKFLOW.md) / [代码边界](CODE_BOUNDARIES.md) / [安全基线](SECURITY_BASELINE.md) |
 
-当前主线已接入 Runtime、安全、数据升级/恢复、固定入口、同版维护、保留数据卸载/重装和发布目录分页；阶段 3 仍在收口。最新正式应用为 [v2026.10.2](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.10.2)，准确 source 为 `7da593b`；正式 10.1 已登记 v2 来源的本机准确包升级与必要失败恢复通过，客户部署尚未操作；准确 PR/CI、GUI 限制和现场范围只见当前状态。
+最新正式应用为 [v2026.10.7](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.10.7)，准确源码为 `1b4808f`，包含部门项目、画布共享、调用来源、费用预算及升级交接修复。该版本已按独立授权发布并完成开发机实包验收，发布时 #198/#199 尚未合入 main；主线、CI 和现场验证分别见[当前状态](docs/CURRENT_PROJECT_STATUS.md)。旧10.4先离线安装10.5预置包，再对原目录安装10.7，具体见[升级说明及验收边界](docs/ops/RELEASE-2026.10.7-RECORD.md#简明升级操作)。客户测试主机已恢复10.4，10.7现场升级结果待反馈。
 
 当前企业部署仍采用单台 Windows 主机、SQLite 和本地文件。专业服务器/云部署、500+ 员工与 200+ 活跃创作保留为长期约束；Linux、容器和容量扩展待负责人实际需求再实施，业务核心保持可演进边界。方案 Accepted 不等于已经实现。
 

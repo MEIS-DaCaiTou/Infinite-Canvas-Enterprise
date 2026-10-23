@@ -35,7 +35,7 @@ from .process import (
 )
 from .state import STARTUP_LOCK_GRACE_SECONDS, RuntimeStateError, RuntimeStateStore, initial_state
 from .windows import JobObjectError, ProcessJob, current_job_diagnostics, process_in_any_job
-from .handoff_lifecycle import read_worker_ready, worker_creation_flags
+from .handoff_lifecycle import HANDOFF_REQUEST_SECONDS, read_worker_ready, worker_creation_flags
 from .handoff_commit import HandoffCommitGate
 from .error_contract import public_lifecycle_details
 
@@ -998,7 +998,7 @@ class RuntimeSupervisor:
                 pass
             self._reject_update_worker(request, process, before, "update_handoff_job_blocked")
             return
-        if not read_worker_ready(process, job_id, source_identity, identity, timeout_seconds=5,
+        if not read_worker_ready(process, job_id, source_identity, identity,
                                  updater_binding=updater_binding):
             failure = getattr(process, "handoff_ready_failure", None)
             if type(failure) is dict:
@@ -1099,9 +1099,9 @@ class RuntimeSupervisor:
         try:
             issued = datetime.fromisoformat(request["issued_at"].replace("Z", "+00:00"))
             age = (datetime.now(timezone.utc) - issued).total_seconds()
-            # send_update_handoff waits 15 seconds. Leave margin for the ack;
+            # Leave margin before the controller deadline for the ack;
             # this is an operation safety deadline, not an investigation limit.
-            if issued.tzinfo is None or not 0 <= age < 10:
+            if issued.tzinfo is None or not 0 <= age < HANDOFF_REQUEST_SECONDS:
                 return None
             return self._handoff_store().active_handoff_reservation(job_id, self.config.app_root.name)
         except Exception:

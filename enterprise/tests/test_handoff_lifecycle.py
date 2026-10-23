@@ -112,10 +112,30 @@ def test_read_worker_ready_deadline_is_bounded_and_exit_rejected(monkeypatch):
                         deadlines.append(deadline) or None)
     assert not lifecycle.read_worker_ready(SimpleNamespace(pid=22, poll=lambda: None),
                                             JOB_ID, SOURCE, WORKER, 100)
-    assert deadlines == [105]
+    assert deadlines == [160]
     assert not lifecycle.read_worker_ready(SimpleNamespace(pid=22, poll=lambda: 0),
                                             JOB_ID, SOURCE, WORKER)
-    assert deadlines == [105]
+    assert deadlines == [160]
+
+
+def test_read_worker_ready_accepts_slow_validation_on_original_pipe():
+    import json
+    process = subprocess.Popen(
+        [sys.executable, "-I", "-B", "-c",
+         "import sys,time; value=sys.stdin.readline(); time.sleep(6); "
+         "sys.stdout.write(value); sys.stdout.flush(); time.sleep(15)"],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    try:
+        worker = SimpleNamespace(pid=process.pid, created_at=222)
+        message = {**ready(), "worker_pid": process.pid}
+        process.stdin.write((json.dumps(message) + "\n").encode())
+        process.stdin.close()
+        assert lifecycle.read_worker_ready(process, JOB_ID, SOURCE, worker) is True
+    finally:
+        if process.poll() is None:
+            process.terminate()
+        process.wait(timeout=5)
+        process.stdout.close()
 
 
 def test_prepare_rejects_unknown_job_before_lease_or_spawn(monkeypatch):

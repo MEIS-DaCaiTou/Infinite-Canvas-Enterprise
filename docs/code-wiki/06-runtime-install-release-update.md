@@ -212,8 +212,16 @@ sequenceDiagram
 
 main 派生的生命周期诊断增量为每个实际执行的 `target_start/target_health/target_stop/source_start/source_health` 保存 started/result 事件及 status 摘要，绑定 Release、命令、退出码与白名单 stage/errno/winerror/bootstrap 类别；不存原始 stderr、异常正文、环境或密钥。`failure_code` 保留最初失败，最终 `result_code` 表示更新/恢复结果，两个码不能互相替代。未执行阶段不补猜测值。准确实现/验证边界见 [实施记录](../ops/RUNTIME-UPDATE-LIFECYCLE-2026-10-09.md)。
 
+2026-10-23诊断导出候选只调整`recent_diagnostics()`的尾记录选择：500条总上限按来源分配最新记录，低limit优先升级事件及supervisor/launcher，截断返回SOURCE_LINE_LIMIT/partial；原字节上限、过滤、脱敏、状态摘要和ZIP结构复用。该修复未进入正式10.5/10.6，不能据此宣布现场handoff故障解决；范围及93项定向结果见同一实施记录。
+
+同日后续候选在`handoff_lifecycle`统一就绪/请求/控制等待为60/120/135秒，供Supervisor和Controller复用。正式10.5原完整校验/探测隔离实测首次28.419秒，超过原5秒就绪时限；新预算保持身份、完整性、提交取消及未知清理判定，OS探测仍3秒，不自动重试。三个定向文件178项通过，尚非已发行修改或客户恢复；10.4原控制器不因此改变，具体边界见原实施记录。
+
+现场未提交首跳的显式恢复候选为`tools/recover_uncommitted_update.py`：使用安装内source Python和原模块，默认check，`--recover`需原升级超级管理员密码。限定原指针/未提交/无执行数据/同作业预约；核验source数据库和正式健康后在原commit gate中释放该预约，复用clearance审计及sequence.stop，不直接删fence或执行版本升级。工具及原clearance合计15项定向通过，准确10.4 CP314/SQLite/文件槽位兼容专项通过；该本机专项的Runtime启停与登记为注入。负责人随后执行恢复包并确认原画布恢复，回执仍为10.4且upgrade_executed=false，补齐单台现场结果。10.5/10.6原资产保留，预发布标记使原稳定路由不再匹配；旧10.4/10.5公开目录实查均不提供升级。10.7修复交付先走离线，旧源程序不会因发布新目标自动获得补丁。
+
 ## 8. 更新限制
 
+- 2026-10-24准确10.7的Setup登记/Schema2→4及真实在线交接成功、目标失败恢复、原任务GET续查已验证，已按冻结源码1b4808f正式发布并完成8项公开回读。发布时实现仍在#199，主线合并另行确认。测试目标10.8未发布，在线补验是Schema4同结构程序恢复；原跨结构恢复证据单列。实际状态及首跳脚本限制见[10.7记录](../ops/RELEASE-2026.10.7-RECORD.md)，不能据此认为旧10.4源控制器已获在线修复。
+- 10.7的`mvp._database_contract_mode()`将完整Schema证据相同的forward目标交给既有同结构规划，覆盖已激活10.6的维护；实际数据库和完整registry仍验证。目标包按离线交付且不声明旧源在线路径，不能靠新目标改变旧源控制器。准确包/验证边界见[10.7发行记录](../ops/RELEASE-2026.10.7-RECORD.md)。
 - Update Center 支持相同 Schema 单跳升级，以及经过 registry、Manifest v2 和当前数据库身份共同约束的版本化前向迁移。
 - 版本化迁移在 pointer 切换前创建一致性备份；目标启动或健康失败时按 expected-current 约束恢复数据库、pointer 和 source Runtime。
 - 如果迁移已提交但结果尚未返回就发生异常，不能凭 `MigrationResult` 缺失推断数据库未改变；执行器必须复核持久化的 source pointer 与 schema 身份，无法证明一致时进入 `RECOVERY_REQUIRED`，不得启动旧版。

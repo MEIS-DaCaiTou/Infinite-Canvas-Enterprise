@@ -15,7 +15,7 @@ from enterprise.path_safety import PathSafetyError, assert_no_reparse_ancestors
 from .health import gateway_health, tcp_check, upstream_health
 from .error_contract import public_lifecycle_details
 from .windows import current_job_diagnostics
-from .handoff_lifecycle import host_creation_flags
+from .handoff_lifecycle import HANDOFF_CONTROL_SECONDS, host_creation_flags
 from .logging import RuntimeLogs
 from .ownership import (
     ProcessIdentity,
@@ -891,7 +891,7 @@ class RuntimeController:
             time.sleep(0.2)
         return {"result": "control_timeout", "status": inspect_runtime(self.config)}
 
-    def send_update_handoff(self, job_id: str, *, wait_seconds: int = 15) -> dict[str, Any]:
+    def send_update_handoff(self, job_id: str, *, wait_seconds: int = HANDOFF_CONTROL_SECONDS) -> dict[str, Any]:
         """Ask the owned supervisor to launch one fixed update worker."""
         if not isinstance(job_id, str) or len(job_id) != 32 or any(ch not in "0123456789abcdef" for ch in job_id):
             raise RuntimeControlError("runtime update job identifier is invalid")

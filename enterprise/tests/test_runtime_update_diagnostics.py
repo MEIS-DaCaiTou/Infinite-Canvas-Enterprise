@@ -337,7 +337,7 @@ def test_handoff_reservation_read_is_nonmutating_and_fail_closed(tmp_path, monke
     assert store.read_status(job_id) == status and calls == [] and pointer.release.release_id == "release-A"
 
 
-@pytest.mark.parametrize("age", [11, -1, None])
+@pytest.mark.parametrize("age", [121, -1, None])
 def test_late_or_invalid_handoff_request_never_resolves_install_roots(monkeypatch, age):
     from datetime import datetime, timedelta, timezone
     from enterprise.runtime.supervisor import RuntimeSupervisor
@@ -347,6 +347,39 @@ def test_late_or_invalid_handoff_request_never_resolves_install_roots(monkeypatc
     with patch("enterprise.runtime.portable.windows_local_app_data_known_folder",
                side_effect=AssertionError("late request must not touch roots")):
         assert supervisor._handoff_reservation("a" * 32, request) is None
+
+
+def test_handoff_reservation_survives_slow_validation_but_still_checks_job(monkeypatch):
+    from unittest.mock import Mock
+    from datetime import datetime, timedelta, timezone
+    from enterprise.runtime.supervisor import RuntimeSupervisor
+    supervisor = RuntimeSupervisor.__new__(RuntimeSupervisor)
+    supervisor.config = SimpleNamespace(app_root=Path("release-A"))
+    store = Mock()
+    store.active_handoff_reservation.return_value = (1, 2)
+    monkeypatch.setattr(supervisor, "_handoff_store", lambda: store)
+    request = {"issued_at": (datetime.now(timezone.utc) - timedelta(seconds=30)).isoformat()}
+    assert supervisor._handoff_reservation("a" * 32, request) == (1, 2)
+    store.active_handoff_reservation.assert_called_once_with("a" * 32, "release-A")
+
+
+def test_handoff_controller_waits_for_slow_validation_ack(monkeypatch):
+    from unittest.mock import Mock
+    from enterprise.runtime import control
+    controller = control.RuntimeController.__new__(control.RuntimeController)
+    controller.config = object()
+    controller.store = Mock()
+    snapshot = {"portable_ownership_valid": True, "running_release_mismatch": False,
+                "readiness": {"ready": True}, "runtime_state": {
+                    "supervisor_instance_id": "fixture", "state_generation": 1}}
+    monkeypatch.setattr(control, "inspect_runtime", lambda _: snapshot)
+    ticks = iter((0, 10, 20, 30))
+    monkeypatch.setattr(control.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(control.time, "sleep", lambda _: None)
+    controller.store.read_ack.side_effect = [None, None, {"result": "update_handoff_started"}]
+    result = controller.send_update_handoff("a" * 32)
+    assert result["result"] == "update_handoff_started"
+    controller.store.remove_ack.assert_called_once()
 
 
 @pytest.mark.skipif(os.name != "nt", reason="real owned Windows child")
@@ -798,6 +831,58 @@ def test_diagnostics_absent_logs_are_optional_and_filters_still_apply(tmp_path):
     assert payload["log_collection"] == {"partial": False, "warnings": []}
     assert payload["record_count"] == 1
     assert payload["records"] == [{"source": "supervisor.log", "line": "ERROR second"}]
+
+
+def test_busy_business_logs_do_not_evict_handoff_and_update_events(tmp_path):
+    roots = _roots(tmp_path)
+    logs = roots.LOG_ROOT / "runtime"
+    logs.mkdir(parents=True)
+    for name in ("upstream.stdout.log", "upstream.stderr.log"):
+        (logs / name).write_text("\n".join(f"business {n}" for n in range(700)), encoding="utf-8")
+    (logs / "supervisor.log").write_text("update_handoff_worker_cleanup confirmed=false\n", encoding="utf-8")
+    (logs / "launcher.log").write_text("handoff wait failed token=fixture-secret\n", encoding="utf-8")
+    job_id = "a" * 32
+    job = roots.STAGING_ROOT / "update-mvp" / "jobs" / job_id
+    job.mkdir(parents=True)
+    (job / "events.jsonl").write_text("PREPARING\nREADY\nUPDATING\nRECOVERY_REQUIRED\n", encoding="utf-8")
+
+    payload = recent_diagnostics(roots, job_id=job_id, limit=500, secret_values=("fixture-secret",))
+    with zipfile.ZipFile(io.BytesIO(diagnostics_zip(payload))) as archive:
+        report = json.loads(archive.read("update-diagnostics.json"))
+    grouped = {name: [r["line"] for r in report["records"] if r["source"] == name]
+               for name in ("supervisor.log", "launcher.log", "update-events.jsonl",
+                            "upstream.stdout.log", "upstream.stderr.log")}
+    assert grouped["supervisor.log"] == ["update_handoff_worker_cleanup confirmed=false"]
+    assert grouped["launcher.log"] and "fixture-secret" not in json.dumps(report)
+    assert grouped["update-events.jsonl"] == ["PREPARING", "READY", "UPDATING", "RECOVERY_REQUIRED"]
+    assert report["record_count"] == len(report["records"]) == 500
+    for name in ("upstream.stdout.log", "upstream.stderr.log"):
+        assert grouped[name][-1] == "business 699"
+    assert report["log_collection"] == {"partial": True, "warnings": [
+        {"source": "upstream.stderr.log", "code": "SOURCE_LINE_LIMIT"},
+        {"source": "upstream.stdout.log", "code": "SOURCE_LINE_LIMIT"},
+    ]}
+
+
+def test_small_diagnostic_limit_keeps_latest_control_evidence_first(tmp_path):
+    roots = _roots(tmp_path)
+    logs = roots.LOG_ROOT / "runtime"
+    logs.mkdir(parents=True)
+    for name in ("supervisor.log", "launcher.log", "upstream.stdout.log"):
+        (logs / name).write_text("old\nlatest\n", encoding="utf-8")
+    job_id = "b" * 32
+    job = roots.STAGING_ROOT / "update-mvp" / "jobs" / job_id
+    job.mkdir(parents=True)
+    (job / "events.jsonl").write_text("READY\nRECOVERY_REQUIRED\n", encoding="utf-8")
+    payload = recent_diagnostics(roots, job_id=job_id, limit=3)
+    assert payload["records"] == [
+        {"source": "update-events.jsonl", "line": "RECOVERY_REQUIRED"},
+        {"source": "supervisor.log", "line": "latest"},
+        {"source": "launcher.log", "line": "latest"},
+    ]
+    assert payload["log_collection"]["partial"] is True
+    assert {w["source"] for w in payload["log_collection"]["warnings"]} == {
+        "update-events.jsonl", "supervisor.log", "launcher.log", "upstream.stdout.log"}
 
 
 def test_diagnostics_unreadable_update_events_keeps_job_summary(tmp_path, monkeypatch):
