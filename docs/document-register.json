@@ -1,8 +1,8 @@
 {
   "schema_version": "enterprise-documents-v1",
-  "reviewed_at": "2026-10-23",
-  "audit_base_commit": "10d42868b153da274bc929e6f4f8df0c49f0f958",
-  "scope": "Owner-authorized integration of department candidates with merged performance PR189 and release record PR184. Candidate schema remains inactive; formal Release and customer operations unchanged.",
+  "reviewed_at": "2026-10-24",
+  "audit_base_commit": "892f32a762bb6c96afe07e9e74a1c3c58d529013",
+  "scope": "Owner-authorized 10.7 repair release from reviewed frozen source 1b4808f, exact-package acceptance and public asset verification. PR198/199 mainline integration and customer operations remain separately authorized actions.",
   "documents": [
     {
       "path": ".github/PULL_REQUEST_TEMPLATE.md",
@@ -158,7 +158,7 @@
       "path": "docs/CURRENT_PROJECT_STATUS.md",
       "kind": "authority",
       "authority": "status",
-      "reviewed_at": "2026-10-23"
+      "reviewed_at": "2026-10-24"
     },
     {
       "path": "docs/data/DATA-MVP-1-INDEPENDENT-REVIEW-2026-09.md",
@@ -482,7 +482,7 @@
       "path": "docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md",
       "kind": "authority",
       "authority": "roadmap",
-      "reviewed_at": "2026-10-23"
+      "reviewed_at": "2026-10-24"
     },
     {
       "path": "docs/runbooks/SEC-1B2-PRODUCTION-ACTIVATION-RUNBOOK-2026-07.md",

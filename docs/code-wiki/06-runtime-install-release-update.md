@@ -220,7 +220,8 @@ main 派生的生命周期诊断增量为每个实际执行的 `target_start/tar
 
 ## 8. 更新限制
 
-- 10.7候选的`mvp._database_contract_mode()`将完整Schema证据相同的forward目标交给既有同结构规划，覆盖已激活10.6的维护；实际数据库和完整registry仍验证。目标包按离线交付且不声明旧源在线路径，不能靠新目标改变旧源控制器。准确包/验证边界见[10.7发行记录](../ops/RELEASE-2026.10.7-RECORD.md)。
+- 2026-10-24准确10.7的Setup登记/Schema2→4及真实在线交接成功、目标失败恢复、原任务GET续查已验证，已按冻结源码1b4808f正式发布并完成8项公开回读。发布时实现仍在#199，主线合并另行确认。测试目标10.8未发布，在线补验是Schema4同结构程序恢复；原跨结构恢复证据单列。实际状态及首跳脚本限制见[10.7记录](../ops/RELEASE-2026.10.7-RECORD.md)，不能据此认为旧10.4源控制器已获在线修复。
+- 10.7的`mvp._database_contract_mode()`将完整Schema证据相同的forward目标交给既有同结构规划，覆盖已激活10.6的维护；实际数据库和完整registry仍验证。目标包按离线交付且不声明旧源在线路径，不能靠新目标改变旧源控制器。准确包/验证边界见[10.7发行记录](../ops/RELEASE-2026.10.7-RECORD.md)。
 - Update Center 支持相同 Schema 单跳升级，以及经过 registry、Manifest v2 和当前数据库身份共同约束的版本化前向迁移。
 - 版本化迁移在 pointer 切换前创建一致性备份；目标启动或健康失败时按 expected-current 约束恢复数据库、pointer 和 source Runtime。
 - 如果迁移已提交但结果尚未返回就发生异常，不能凭 `MigrationResult` 缺失推断数据库未改变；执行器必须复核持久化的 source pointer 与 schema 身份，无法证明一致时进入 `RECOVERY_REQUIRED`，不得启动旧版。

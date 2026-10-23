@@ -1,6 +1,14 @@
-# 10.7 升级交接修复发行候选
+# 10.7 升级交接修复发行记录
 
-核验日期：2026-10-23。当前为未发布候选，动态进度见[CURRENT](../CURRENT_PROJECT_STATUS.md)。负责人已批准保留10.5/10.6原记录和资产、撤下受影响推荐及发布新修复版本；客户测试主机仍由负责人操作。
+核验日期：2026-10-24。[v2026.10.7已正式发布](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.10.7)，动态进度见[CURRENT](../CURRENT_PROJECT_STATUS.md)。负责人已批准保留10.5/10.6原记录和资产、撤下受影响推荐及发布新修复版本；客户测试主机仍由负责人操作。
+
+## 正式发布与主线边界
+
+北京时间2026-10-24 02:59:22（UTC 2026-10-23 18:59:22）按独立授权发布，为非Draft、非预发布、稳定Latest。标签固定下述1b4808f源码，程序已经独立Review、准确源码常规CI及实际包验收。发布时main仍892f32a，#198/#199均未合并；发布与主线合并分别记录，后续合并结果以这两个PR为准，不把分支CI写成新main CI。没有因发布覆盖原5/6资产。
+
+八项公开资产经产品原atomic_download无Token回读，原大小/摘要全部匹配；公开ZIP内Schema4证据与Manifest声明一致。原10.4/10.5的冻结控制器读取真实公开目录均无升级提供；10.7为stable/route_missing，旧5/6为development/route_invalid。这样保留离线下载，不让旧源再次获得未经修复的在线路径。
+
+仓库外D49/source-ci、publish-result、public-verification及frozen-withdrawal-checks固定发布证据。原5/6页只调整说明与通道标记，资产ID/名称/大小/摘要/URL均保持。GitHub Latest为10.7，产品旧控制器不提供在线升级，两种状态不是同一个判断。
 
 ## 原因、需求与解决思路
 
@@ -18,13 +26,22 @@
 | Release ID | `ice-2026.10.7-1b4808fcf6ab` |
 | 数据结构 | Schema4；旧2→4使用原预置迁移，既有4保持原结构 |
 | 运行时与工具 | 沿用CPython3.14.6、固定EXE、原Setup及原维护包，Windows x64，未签名 |
-| 发布状态 | GitHub Draft，尚未正式发布；早期d6271e6候选不交付 |
+| 发布状态 | 正式稳定Latest，八项原资产；早期d6271e6候选不交付 |
 
-八项资产为Manifest v2、对应ZIP、payload inventory、固定EXE及构建记录、InfiniteCanvasSetup.exe及构建记录、maintenance-tools-v1.json。没有upgrade-routes-v1.json，不能据版本号推断在线可达。D47/fixed2保留原构建，fixed-frozen-assets.json固定原路径/上传名/大小/已有完整性摘要；GitHub Draft上传回传与这八项一致。只替换过未公开Draft中的早期候选，不覆盖10.5/10.6正式资产。
+八项资产为Manifest v2、对应ZIP、payload inventory、固定EXE及构建记录、InfiniteCanvasSetup.exe及构建记录、maintenance-tools-v1.json。没有upgrade-routes-v1.json，不能据版本号推断在线可达。D47/fixed2保留原构建，fixed-frozen-assets.json固定原路径/上传名/大小/已有完整性摘要；GitHub上传及匿名公开回读均与这八项一致。只替换过未公开Draft中的早期候选，不覆盖10.5/10.6正式资产。
 
 ## 交付验证与边界
 
-准确1b4808f候选的CI、安装链及在线验收结果随#199收口。现有定向结果不累加成完整场景覆盖，固定EXE opt-in跳过不记为通过。
+准确程序源1b4808f及文档Head538d0c8的Docs、Enterprise/Runtime CI均SUCCESS，固定EXE opt-in跳过；后续文档更新按准确Head另核对。现有定向结果不累加成完整场景覆盖。
+
+| 准确场景 | 结果与边界 |
+| --- | --- |
+| 10.7 Setup及最终登记 | 原10.5预置完成后，对同一安装运行准确1b4808f Setup；真实Schema2→4、固定EXE/CP314启动、Windows登记及维护解除完成，原账号/经典和智能画布/素材/安装身份保留。负责人只取消系统防火墙窗口，安装操作在开发机自有副本实施 |
+| 修复来源在线切换 | 准确10.7→未发布10.8同结构测试包，真实管理员认证HTTP执行、原Supervisor和独立worker完成SUCCEEDED；原账号/两类画布/配置/素材保持 |
+| 目标失败后来源恢复 | 复用原故障监听器占用目标端口，记录PORTABLE_RUNTIME_OWNERSHIP_UNTRUSTED后ROLLED_BACK，原10.7固定入口和服务健康；Schema4保持。这是同结构程序恢复，未执行跨结构数据库恢复 |
+| 两项中的原任务 | 原视频ID和ComfyUI prompt_id查询、结果归档均成功；视频RUNNING预览继续查。请求记录没有生成POST或预览/尾帧下载；供应商及视频字节为本机合成夹具，不替代真实GPU或视频播放验收 |
+
+D47的CHAIN-PASS/verified-2026.10.7及D48的success-result、rollback-result、SUMMARY固定上述证据。D48自建Runtime全部停止、端口关闭，嵌套验收前保存的目录已按字节/mtime/对象身份还原。D47/SESSION-COMPLETE及原preservation的RESTORED进一步确认外层开发机原目录字节/mtime/对象身份还原，验收安装已保留业务数据卸载并清理其Windows登记；首轮部分缓存另存，不删除原证据。没有客户安装/数据库操作或供应商付费生成。
 
 准确正式10.6资产另创建隔离安装与真实Schema4，修复后的10.7只读维护资格返回ELIGIBLE/same-schema-no-migration，数据库字节保持；未启动该来源Runtime或执行该组合完整GUI升级。新包实际运行、旧2→4和同结构资格分列。
 
@@ -38,6 +55,6 @@
 2. 已正常运行10.5或10.6：停止服务并关闭窗口，对原位置运行10.7包；不降级，不创建替代安装。
 3. 新安装直接使用10.7；完成后从原入口启动并使用原账号。公司管理员在现有成员管理中配置部门、员工和负责人；共享不开放密钥，费用保持原角色权限，预算超额只提醒。
 
-上述新包步骤在正式发布及最终验收前不交给客户执行。仍有维护状态时先按匹配作业恢复原业务，不重复点击升级、不删除锁/WAL或覆盖原目录。已经在Schema4继续写入后不承诺任意无损降级。
+本版已发布，上述步骤由负责人在测试主机执行；现场结果仍待反馈。仍有维护状态时先按匹配作业恢复原业务，不重复点击升级、不删除锁/WAL或覆盖原目录。已经在Schema4继续写入后不承诺任意无损降级。
 
-下一完整包：收口准确安装/交接及必要失败恢复，完成发布和匿名公开资产/旧源推荐回读，再由负责人在测试主机升级并验证部门成员、完整画布共享、两类来源、费用视图及非阻断提醒；旧图片编辑未知请求继续单独核对，RunningHub暂缓。
+下一完整包：明确提交#198→#199主线合并事项，由负责人在测试主机升级并验证部门成员、完整画布共享、两类来源、费用视图及非阻断提醒，按真实问题修正；旧图片编辑未知请求继续单独核对，RunningHub暂缓。完整工作任务/交付验收、资产版本与跨工具联通仍属后续核心路线。
