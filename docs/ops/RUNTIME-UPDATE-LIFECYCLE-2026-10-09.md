@@ -4,6 +4,16 @@
 
 ## 1. 来源与范围
 
+### 2026-10-23 现场反馈：保留受限诊断中的控制日志
+
+负责人提供两份诊断副本。在线10.4→10.5于北京时间10:44:10准备、10:44:37 READY/UPDATING、10:45:09进入SYSTEM_UPDATE_HANDOFF_CLEANUP_UNCONFIRMED/RECOVERY_REQUIRED；11:12:41快照仍是10.4，Gateway/Upstream均healthy。随后根页面截图明确返回INSTALL_UPGRADE_MAINTENANCE，当前业务被503拦截；该中间件同时识别install-upgrade-active.json和upgrade-sequence-active.json，保留健康检查，因此healthy不等于业务可用。需核对实际标记及后续操作，不将新截图直接当作另一场故障。没有目标启动/迁移成功记录，不据此判断数据库损坏或具体Windows创建失败。恢复按钮409只有通用错误，缺具体核验失败阶段，尚不能确认其唯一原因。
+
+诊断确有可复现缺陷：按文件名拼接再统一取最后500条，业务stdout/stderr占496条，仅余4条作业事件，supervisor.log/launcher.log完全丢失，log_collection.partial仍false。EXE摘要仅含worker_exit_code=0；这不是更新worker或目标版本成功的证明。原始客户ZIP仅保留仓库外D44，不上传原日志、用户身份、业务内容或配置。
+
+候选从运行代码main892f32a继续，文档基于待合并#198的9bcff32，避免重写正式发行记录。仅修改原diagnostics.py：先按来源收集有界尾窗口，再分配各来源最新记录，低limit优先update-events/supervisor/launcher；维持MAX_LINES=500、单源字节限制、原脱敏/状态摘要/ZIP结构。有匹配记录未进入结果时标记SOURCE_LINE_LIMIT并置partial=true，读取失败沿用SOURCE_READ_FAILED。不增加日志系统、页面、后台worker或自动恢复，交接确认/锁/数据库代码不变。
+
+两项回归先在旧代码复现失败，覆盖繁忙业务流挤掉控制日志、低limit下控制来源最新记录。修正后test_runtime_update_diagnostics.py共93项通过；独立Review为NO_ACTIONABLE_BUGS_FOUND。这是日志选择/导出证据，不是现场交接或升级恢复成功；下一步需要原supervisor/launcher日志及两类维护标记，确认实际触发分支并优先恢复业务，不清锁、不重复发起升级。候选合并与发布另行批准，正式10.5/10.6资产未修改。
+
 - Base：`main@76cc43d2a5fea8c40adf49c52eb66751e01411e4`，基线收口 #146 已合并。
 - 分支：`codex/runtime-update-lifecycle-mainline-20261009`，合并/CI 以本记录所在 PR 的准确 Head 为准。
 - 选择性复用维护候选 #145 的 `d0861f907e0d33cd18f14e65eb44bbe19bdfac94` 中有效诊断/路径增量；没有合并整条分支、10.2 VERSION、旧交接文档或其未提交测试修改。

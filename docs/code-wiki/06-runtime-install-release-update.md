@@ -212,6 +212,8 @@ sequenceDiagram
 
 main 派生的生命周期诊断增量为每个实际执行的 `target_start/target_health/target_stop/source_start/source_health` 保存 started/result 事件及 status 摘要，绑定 Release、命令、退出码与白名单 stage/errno/winerror/bootstrap 类别；不存原始 stderr、异常正文、环境或密钥。`failure_code` 保留最初失败，最终 `result_code` 表示更新/恢复结果，两个码不能互相替代。未执行阶段不补猜测值。准确实现/验证边界见 [实施记录](../ops/RUNTIME-UPDATE-LIFECYCLE-2026-10-09.md)。
 
+2026-10-23诊断导出候选只调整`recent_diagnostics()`的尾记录选择：500条总上限按来源分配最新记录，低limit优先升级事件及supervisor/launcher，截断返回SOURCE_LINE_LIMIT/partial；原字节上限、过滤、脱敏、状态摘要和ZIP结构复用。该修复未进入正式10.5/10.6，不能据此宣布现场handoff故障解决；范围及93项定向结果见同一实施记录。
+
 ## 8. 更新限制
 
 - Update Center 支持相同 Schema 单跳升级，以及经过 registry、Manifest v2 和当前数据库身份共同约束的版本化前向迁移。
