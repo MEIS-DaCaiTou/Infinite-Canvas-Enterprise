@@ -1,5 +1,7 @@
 # 前端、API 与 WebSocket
 
+2026-10-24导航候选：canvas-list在index的frame-canvas中运行，成员管理链接进入顶层/enterprise/admin；后台“返回画布”也指定_top回根首页。两处使用浏览器原生链接target，不让根首页进入子frame；Gateway原守卫仅在子frame隐藏重复账号栏，继续执行权限治理，不改变经典/智能画布编辑或目录在原frame中的导航。两级JS缓存版本同步更新，连续往返及项目/两类画布的验证边界见[CURRENT](../CURRENT_PROJECT_STATUS.md)。
+
 2026-10-18 LLM 任务续包（开发候选）：`canvas-llm-tasks.js` 共用提交前保存 ticket、单次 POST、刷新后 GET 原任务和导航守卫。经典 LLM 节点/聊天与智能画布 Prompt 的原操作不变；节点 `llmTask` 保留平台 ID/状态，保存重开后回填输出正文或聊天记录。任务中心增加「LLM 文本」筛选，复用原正文弹窗和 Prompt 复用入口；有待执行回执的运行按钮改为「查询原任务」，未知时「新建运行」提示可能重复费用，只有用户主动新建运行才再提交。正常轮询状态不变时不重复安排画布保存。保留旧文本直到新结果到达，不将结果写入已经切换的画布。当前状态/模拟与真实调用限制见 [CURRENT](../CURRENT_PROJECT_STATUS.md)。
 
 2026-10-18 来源关联增量（开发候选）：`task-canvas-context.js` 共用来源构造与 `focus_node` 识别；两类画布在新持久生成请求附带来源，在打开来源画布时选中并居中原节点。现有 `generation-task-center.js` 详情增加「定位原画布」与按项「放入当前画布」；采用原日志面板、主题变量与胶囊按钮，不增加页面。复用前重新读取有权限的详情，异步完成后检查仍在同一目标画布；文本使用原 Prompt 节点，其他媒体使用原素材节点，保存 `sourceTaskId/sourceResultId` 并沿用原保存重开逻辑。不再调用生成接口。无来源旧任务和不可访问来源明确提示；缺失原节点仅打开画布。真实状态见 [CURRENT](../CURRENT_PROJECT_STATUS.md)。

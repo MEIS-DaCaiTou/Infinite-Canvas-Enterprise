@@ -1,8 +1,8 @@
 {
   "schema_version": "enterprise-documents-v1",
   "reviewed_at": "2026-10-24",
-  "audit_base_commit": "892f32a762bb6c96afe07e9e74a1c3c58d529013",
-  "scope": "Owner-authorized 10.7 repair release from reviewed frozen source 1b4808f, exact-package acceptance and public asset verification. PR198/199 mainline integration and customer operations remain separately authorized actions.",
+  "audit_base_commit": "728b4bc21915d89044d9cb0a1858be1a37453799",
+  "scope": "Owner-reported 10.7 canvas-admin roundtrip regression; minimal top-level navigation and cache-version repair, targeted browser acceptance, and separate 10.8 delivery candidate. Customer upgrade and release approval remain distinct.",
   "documents": [
     {
       "path": ".github/PULL_REQUEST_TEMPLATE.md",
