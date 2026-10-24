@@ -20,7 +20,7 @@
       <select id="cwDepartment" class="cw-department" aria-label="选择部门">${options(context.departments.map(d=>[d.id,d.name]))}</select>
       <div class="cw-side-head"><span>项目与文件夹</span><button class="cw-btn" id="cwNewProject" title="新建部门项目">＋</button></div>
       <nav id="cwTree" class="cw-tree" aria-label="项目目录"></nav>
-      <div class="cw-side-footer">${context.company_admin||context.departments.some(d=>d.can_manage)?'<a class="cw-btn" href="/enterprise/admin">成员管理</a>':''}<a class="cw-btn" href="/enterprise/business">来源与费用</a><a class="cw-btn" href="?layout=board&trash=1">回收站</a></div></aside>
+      <div class="cw-side-footer">${context.company_admin||context.departments.some(d=>d.can_manage)?'<a class="cw-btn" href="/enterprise/admin" target="_top">成员管理</a>':''}<a class="cw-btn" href="/enterprise/business">来源与费用</a><a class="cw-btn" href="?layout=board&trash=1">回收站</a></div></aside>
       <main class="cw-main"><header class="cw-toolbar"><nav id="cwBreadcrumb" class="cw-breadcrumb" aria-label="当前位置"></nav>
       <div class="cw-controls"><input id="cwSearch" class="cw-search" type="search" placeholder="搜索画布或文件夹" aria-label="搜索画布或文件夹">
       <button class="cw-btn" id="cwRefresh" title="刷新">刷新</button><button class="cw-btn" id="cwNewFolder">新建文件夹</button><button class="cw-btn primary" id="cwNewCanvas">新建画布</button></div></header>
