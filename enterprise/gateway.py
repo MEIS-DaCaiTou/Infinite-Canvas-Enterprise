@@ -944,6 +944,8 @@ def _build_enterprise_shell_guard(user: dict) -> str:
   function install(){
     if(installed) return;
     installed = true;
+    const accountBar = byId('__ent_bar__');
+    if(window.top !== window && accountBar) accountBar.style.display = 'none';
     installStyles();
     if(!cfg.updateEnabled) disableUpdateFunctions();
     else wrapAdminUpdateText();

@@ -139,3 +139,34 @@ def _run_checks() -> None:
 
 if __name__ == "__main__":
     _run_checks()
+
+
+def test_account_bar_only_renders_in_the_outer_shell_but_frame_guards_still_run():
+    script = _shell_guard_script(_source())
+    harness = r"""
+const vm = require('node:vm');
+const source = __SCRIPT__;
+for (const framed of [false, true]) {
+  const bar = {style:{display:'flex'}};
+  const classes = [];
+  const document = {
+    readyState:'complete',
+    body:{classList:{toggle:(name)=>classes.push(name)}},
+    head:{appendChild:()=>{}},
+    getElementById:(id)=>id==='__ent_bar__'?bar:null,
+    querySelector:()=>null, querySelectorAll:()=>[],
+    createElement:()=>({style:{},setAttribute:()=>{}}),
+    addEventListener:()=>{}
+  };
+  const window = {setInterval:()=>{},addEventListener:()=>{}};
+  window.top = framed ? {} : window;
+  const context = {window,document,console,MutationObserver:class{observe(){}},
+    localStorage:{getItem:()=>null,setItem:()=>{}},
+    fetch:async()=>({ok:false}),setTimeout:()=>{},clearTimeout:()=>{}};
+  vm.runInNewContext(source,context,{timeout:1000});
+  if (bar.style.display !== (framed?'none':'flex')) throw Error('duplicate or missing account bar');
+  if (!classes.includes('enterprise-normal-user') || !classes.includes('enterprise-api-settings-denied')) throw Error('frame permission guard did not run');
+}
+""".replace('__SCRIPT__',json.dumps(script))
+    result = subprocess.run(['node','-e',harness],capture_output=True,text=True,check=False)
+    assert result.returncode == 0, result.stderr or result.stdout
