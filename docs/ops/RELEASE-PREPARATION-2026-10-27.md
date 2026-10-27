@@ -2,12 +2,21 @@
 
 更新时间：2026-10-27
 
-本文是负责人要求的变更汇总与发行准备记录，不是已发布记录。负责人已确认本轮本地页面和功能人工验收，批准源码冻结、PR和候选打包；候选版本定为2026.10.9，准确源码与资产正在固定。提交/PR、合并、正式发布、测试主机及生产升级分别记录。当前正式版仍为 [v2026.10.8](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.10.8)。
+本文是负责人要求的变更汇总与发行准备记录，不是已发布记录。负责人已确认本轮本地页面和功能人工验收，批准源码冻结、PR和候选打包；候选版本为2026.10.9，准确源码和八项本地安装资产已固定。提交/PR、合并、正式发布、测试主机及生产升级分别记录。当前正式版仍为 [v2026.10.8](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.10.8)。
+
+## 冻结与PR状态
+
+- [Draft PR #201](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/201)已创建，包含变更原因、已批准需求取舍、设计边界、数据影响及未验证范围。
+- 首次冻结提交587e0692fe9ad39fe3181d0c05faf27c28220843；CI发现三份已变更文件的CRLF被Linux空白检查认定为行尾空格，独立格式提交修正，未降低检查要求。最终产品冻结源码为b7a83cd639679fe123fa70f1fe8d0c6bdc82ffab；后续仅记录结果的文档提交不改变这组资产身份。
+- 候选Release ID：ice-2026.10.9-b7a83cd63967；由干净隔离Git副本构建。程序ZIP、Manifest、inventory、固定EXE、Setup和三份维护/构建记录共8项，通过原发行契约核验；原生入口与安装器相同输入的双次构建一致。未上传或创建正式Release；初次587e候选已被此候选替代。
+- 准确b7a83cd的[Enterprise/Runtime CI](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/40531346979)通过：企业2120 passed、51 skipped、12 subtests；Runtime396 passed、1 skipped。[固定EXE](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/40531346984)与[文档](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/40531346965)通过。固定EXE真实门禁opt-in未启用，属于跳过，不能称已执行。
+- D66/final-candidate-assets.json记录最终身份；D66/candidate2/ready保存8项候选资产。准确来源实际升级/恢复的持续结果在上述PR补录，独立审查及初始化异常归因仍未完成，PR保持Draft。
+- 已完成准确10.8→候选的实际EXE/Runtime/SQLite正常升级，原账号与两类画布、配置/素材保留，升级后登录及后台可用；真实HKCU登记验证器配合隔离登记夹具完成闭环，不能代替Setup GUI。首轮关键切换中断后指针/入口恢复原10.8；因在服务切换前中断，恢复正确保留原已停止状态，首轮脚本直接HTTP连接失败。后续补原固定入口启动和业务读取，原失败日志保留，不更改产品恢复语义。
 
 ## 基线与范围
 
 - 项目：MEIS-DaCaiTou/Infinite-Canvas-Enterprise；开发分支 codex/manual-acceptance-workflow-20261024。
-- 本轮已重新fetch，main与当前HEAD为7b003905565b8e1be5fb2faee8982498abe47d6f；产品树与10.8发布源码相同。本地未提交增量才是下一版的拟交付内容。
+- 本轮已重新fetch，Base main为7b003905565b8e1be5fb2faee8982498abe47d6f，其产品树与10.8发布源码相同；本轮已验收增量在上述产品冻结提交中。
 - 上一正式产品源码：5ee0e0522a64051a86c2f4b25211b248114152fa，Release ice-2026.10.8-5ee0e0522a64。
 - 保留Schema4及历史记录，不为恢复10.4页面反向迁移数据库。部门项目等模块按负责人取舍退出；不恢复被舍弃的旧范围。
 - 不包含本地api_providers.json、data、state、真实工作流配置/素材、凭据或验收日志。发行输入沿用现有payload policy，不将整个dirty目录直接打包。
@@ -45,8 +54,8 @@
 
 | 设备来源 | 已核对的结构/约束 | 下一版准备路径 | 最终包执行状态 |
 | --- | --- | --- | --- |
-| ice-2026.10.4-2859a2aefbac / 2026.10.4 | 原始包Schema2，迁移登记仅含安全v2；旧在线更新器交接问题不能由目标包反向修复 | 原10.5离线预置 → 最终Schema4新包，均选原安装目录；不强制经过10.6/10.7/10.8 | 待候选冻结后真实Setup/Runtime与失败恢复 |
-| ice-2026.10.8-5ee0e0522a64 / 2026.10.8 | 原始包Schema4，完整迁移登记与当前代码一致 | 最终Schema4新包原位离线维护一次；在线路径只在准确原更新器实测成功后提供 | 待候选冻结后真实Setup/Runtime与失败恢复 |
+| ice-2026.10.4-2859a2aefbac / 2026.10.4 | 原始包Schema2，迁移登记仅含安全v2；旧在线更新器交接问题不能由目标包反向修复 | 原10.5离线预置 → 最终Schema4新包，均选原安装目录；不强制经过10.6/10.7/10.8 | 最终Runtime/SQLite迁移及故障结果逐项记PR #201；Setup GUI单列 |
+| ice-2026.10.8-5ee0e0522a64 / 2026.10.8 | 原始包Schema4，完整迁移登记与当前代码一致 | 最终Schema4新包原位离线维护一次；在线路径只在准确原更新器实测成功后提供 | Runtime正常升级/业务读取通过；故障及Setup GUI按PR准确结果分列 |
 
 本轮在D65建立两份准确已发布来源的全新隔离安装/真实SQLite，只进行只读资格检查；没有操作客户设备、注册全局安装项或启动这些副本的业务服务。10.4对已发布10.7的真实forward-migration契约仍明确要求REGISTRY_STAGING；原10.5预置契约通过。10.8实际数据库/源证据/当前迁移登记一致；检查前后业务文件字节保持。
 
@@ -80,7 +89,7 @@
 - enterprise-final.xml、upgrade-sequence.xml、remaining.xml：分批源码回归、失败和短路径复核去重，2108项通过、62项跳过、12项子用例通过，无剩余失败。regression-summary.json对照2171项收集清单，唯一未运行项是等待Git清单冻结的写入审计；不是一次全套全绿运行。
 - 内置浏览器：根首页→原目录→隔离经典画布读取/返回→平台管理成员加载→返回根入口，无新增外壳嵌套；没有发起生成。初始化MutationObserver异常再次捕获，尚未归因，不写成控制台全绿。原Tailwind CDN生产构建警告仍在。
 
-负责人本轮UI/功能人工验收已完成。技术工作仍需：初始化异常归因、真实GPU多用户/取消专项证据、源码冻结/审查、最终安装资产的两条升级/恢复矩阵、正式发布批准。5000次分类受理压测、NAS十分钟恢复点与OSS异地副本是后续已规划任务，尚未实现或验证，不包装为本次容量/高可用交付。
+负责人本轮UI/功能人工验收及源码冻结、PR和本地候选构建已完成。技术工作仍需：初始化异常归因、真实GPU多用户/取消专项证据、独立审查、最终安装资产的两条升级/恢复矩阵、正式发布批准。5000次分类受理压测、NAS十分钟恢复点与OSS异地副本是后续已规划任务，尚未实现或验证，不包装为本次容量/高可用交付。
 
 ## 审批边界与收益
 
