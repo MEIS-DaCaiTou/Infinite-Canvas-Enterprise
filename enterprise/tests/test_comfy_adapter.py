@@ -16,6 +16,7 @@ import requests
 
 from enterprise.canvas_task_journal import CanvasTaskJournal
 from enterprise.providers.comfyui import ComfyClient, ComfyExecutionError, base_url, endpoint
+from enterprise.providers.comfy_workflow import workflow_seed
 
 
 @pytest.fixture
@@ -138,7 +139,8 @@ def test_imported_graph_keeps_original_nodes_and_rejects_obsolete_field_mapping(
         "144": {"class_type": "SaveImage", "inputs": {"filename_prefix": "output"}},
     }), encoding="utf-8")
     scope = {"os": os, "json": json, "random": random, "BUILTIN_WORKFLOWS": set(),
-             "workflow_path_from_name": lambda _: str(path), "ComfyExecutionError": ComfyExecutionError}
+             "workflow_path_from_name": lambda _: str(path), "ComfyExecutionError": ComfyExecutionError,
+             "workflow_seed": workflow_seed}
     exec(compile(ast.Module(body=[prepare], type_ignores=[]), str(source), "exec"), scope)
     request = SimpleNamespace(type="zimage", workflow_json="custom/tool.json", prompt="do not overwrite unrelated node",
                               width=1024, height=1024, params={"14": {"image": "bound/selected.png"}})

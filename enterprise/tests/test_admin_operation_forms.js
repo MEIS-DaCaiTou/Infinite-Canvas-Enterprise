@@ -11,7 +11,7 @@ const element = id => {
     return elements.get(id);
 };
 const calls = [];
-const context = vm.createContext({
+const context = vm.createContext({adminT:value=>value,adminTF:(text,values)=>text.replace(/\{(\w+)\}/g,(_,key)=>String(values[key])),
     document:{getElementById:element, querySelectorAll:() => []},
     sessionStorage:{getItem:() => null}, setTimeout(){}, clearTimeout(){},
     confirm:() => true, prompt:() => 'fixture-member',

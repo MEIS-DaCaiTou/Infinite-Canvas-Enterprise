@@ -86,6 +86,8 @@ def _require_current_super_admin(request: Request) -> dict:
 
 
 def _reject_system_update_user_override(feature_key: str) -> None:
+    if feature_key == "project_homepage":
+        raise HTTPException(status_code=400, detail="项目主页跳转仅支持全局设置")
     if feature_key == "system_update":
         raise HTTPException(
             status_code=403,
@@ -577,7 +579,7 @@ async def list_user_feature_overrides(user_id: str, request: Request):
     override_map = {
         item["feature_key"]: item
         for item in edb.get_user_feature_overrides(user_id)
-        if item.get("feature_key") != "system_update"
+        if item.get("feature_key") not in {"system_update", "project_homepage"}
     }
     actor = {
         "user_id": target["id"],
@@ -589,7 +591,7 @@ async def list_user_feature_overrides(user_id: str, request: Request):
     features = []
     for feature in edb.list_feature_flags():
         key = feature["feature_key"]
-        if key == "system_update":
+        if key in {"system_update", "project_homepage"}:
             continue
         override = override_map.get(key)
         effective = edb.get_effective_feature_value(actor, key)

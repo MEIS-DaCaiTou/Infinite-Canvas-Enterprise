@@ -28,7 +28,7 @@ def test_member_filter_controls_are_present():
     html = read_admin_html()
 
     assert_contains(html, 'id="memberStatusFilter"')
-    assert re.search(r'<option\s+value="active"\s+selected>\s*正常用户\s*</option>', html)
+    assert re.search(r'<option\s+value="active"\s+selected[^>]*>\s*正常用户\s*</option>', html)
     assert_option(html, "memberStatusFilter", "all", "全部用户")
     assert_option(html, "memberStatusFilter", "active", "正常用户")
     assert_option(html, "memberStatusFilter", "disabled", "已停用用户")
@@ -40,7 +40,7 @@ def test_member_filter_controls_are_present():
     assert_option(html, "memberRoleFilter", "user", "普通成员")
 
     assert_contains(html, 'id="memberSearchInput"')
-    assert_contains(html, 'placeholder="搜索用户名 / 展示名"')
+    assert_contains(html, 'placeholder="搜索成员…"')
 
     assert_contains(html, 'id="memberSortMode"')
     assert_option(html, "memberSortMode", "last_login", "最近登录优先")
@@ -52,10 +52,12 @@ def test_member_filter_controls_are_present():
 def test_member_stats_and_empty_state_are_present():
     html = read_admin_html()
 
-    for label in ["全部用户", "正常用户", "已停用", "管理员", "超级管理员", "当前显示"]:
+    for label in ["全部用户", "正常用户", "已停用", "管理员", "超级管理员"]:
         assert_contains(html, label)
-    assert_contains(html, "没有符合当前筛选条件的成员")
-    assert_contains(html, "请调整状态、角色或搜索关键词")
+    presenter = (ROOT / "static/js/admin-members.js").read_text(encoding="utf-8")
+    assert_contains(presenter, "没有符合当前筛选条件的成员")
+    assert_contains(presenter, "请调整状态、角色或搜索关键词")
+    assert '<div class="member-stat-card">' not in html
 
 
 def test_member_filter_search_sort_logic_is_present():
@@ -73,10 +75,10 @@ def test_member_filter_search_sort_logic_is_present():
     assert_contains(html, "localeCompare")
     assert_contains(html, "last_login")
     assert_contains(html, "created_at")
-    assert_contains(html, "disabled-user-row")
+    assert_contains((ROOT / "static/js/admin-members.js").read_text(encoding="utf-8"), "disabled-user-row")
     assert_contains(html, "function roleOf(user)")
     assert_contains(html, "function canChangeMemberRole(user)")
-    assert_contains(html, "受固定角色策略保护")
+    assert_contains(html, "canManageMember(user)")
 
 
 def test_fixed_role_governance_controls_are_present():
@@ -123,11 +125,11 @@ def test_admin_list_pagination_controls_are_present():
     assert_contains(html, "[25, '25']")
     assert_contains(html, "[50, '50']")
     assert_contains(html, "[100, '100']")
-    assert_contains(html, "['all', '全部']")
+    assert_contains(html, "['all', adminT('全部')]")
     assert_contains(html, "上一页")
     assert_contains(html, "下一页")
-    assert_contains(html, "第 ${pageInfo.page} / ${pageInfo.totalPages} 页")
-    assert_contains(html, "显示 ${pageInfo.start}-${pageInfo.end} / 共 ${pageInfo.total}")
+    assert_contains(html, "adminTF('第 {page} / {pages} 页'")
+    assert_contains(html, "adminTF('显示 {start}-{end} / 共 {total}'")
     assert_contains(html, "topContainer.innerHTML")
     assert_contains(html, "bottomContainer.innerHTML")
 
@@ -142,7 +144,7 @@ def test_pagination_controls_are_split_around_their_tables():
     html = read_admin_html()
 
     sections = [
-        ("成员管理", section_between(html, 'id="tab-users"', "<!-- /tab-users -->"), 'id="memberPagination"', 'id="memberPaginationBottom"', '<table class="user-table">'),
+        ("成员管理", section_between(html, 'id="tab-users"', "<!-- /tab-users -->"), 'id="memberPagination"', 'id="memberPaginationBottom"', '<table class="member-table">'),
         ("项目归属", section_between(html, 'id="tab-projects"', "<!-- /tab-projects -->"), 'id="projectPagination"', 'id="projectPaginationBottom"', "<table>"),
         ("画布归属", section_between(html, 'id="tab-canvases"', "<!-- /tab-canvases -->"), 'id="canvasPagination"', 'id="canvasPaginationBottom"', "<table>"),
         ("对话归属", section_between(html, 'id="tab-conversations"', "<!-- /tab-conversations -->"), 'id="conversationPagination"', 'id="conversationPaginationBottom"', "<table>"),
@@ -159,7 +161,7 @@ def test_member_pagination_happens_after_filter_search_sort():
     visible_index = html.index("const visibleUsers = getFilteredUsers();", render_start)
     paged_index = html.index("const pagedUsers = paginateRows(visibleUsers, 'member');", render_start)
     stats_index = html.index("renderMemberStats(visibleUsers);", render_start)
-    rows_index = html.index("pagedUsers.rows.map", render_start)
+    rows_index = html.index("AdminMembers.render({allUsers:_users, rows:pagedUsers.rows", render_start)
 
     assert visible_index < paged_index < rows_index
     assert visible_index < stats_index < rows_index

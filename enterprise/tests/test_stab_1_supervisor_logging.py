@@ -1005,8 +1005,22 @@ def test_static_runtime_boundary() -> None:
             environment = os.environ.copy()
             environment["PYTHONPATH"] = str(probe_root)
             environment["ICE_STAB1_LOGGING_ORIGIN"] = str(probe_output)
+            arguments = [sys.executable, str(entry), "--help"]
+            embedded = Path(sys.executable).with_name(f"python{sys.version_info.major}{sys.version_info.minor}._pth").is_file()
+            if embedded:
+                # The release runtime intentionally ignores PYTHONPATH/sitecustomize.
+                # Install only this test probe explicitly and recreate a direct
+                # script's sys.path[0] so shadowing is still actually exercised.
+                probe = (
+                    "import runpy,sys;"
+                    f"runpy.run_path({str(probe_root / 'sitecustomize.py')!r});"
+                    f"sys.path.insert(0,{str(entry.parent)!r});"
+                    f"sys.argv=[{str(entry)!r},'--help'];"
+                    f"runpy.run_path({str(entry)!r},run_name='__main__')"
+                )
+                arguments = [sys.executable, "-c", probe]
             direct = subprocess.run(
-                [sys.executable, str(entry), "--help"],
+                arguments,
                 cwd=ROOT,
                 env=environment,
                 text=True,
@@ -1832,7 +1846,9 @@ def test_detached_service_host_lifecycle() -> None:
 def test_auth_jwt_dependency_is_declared() -> None:
     """The enterprise gateway's direct JWT import must be installable from the manifest."""
     auth_source = (ROOT / "enterprise" / "auth.py").read_text(encoding="utf-8")
-    requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
+    entry = (ROOT / "requirements.txt").read_text(encoding="utf-8")
+    assert "-r runtime/windows/requirements.lock" in entry
+    requirements = (ROOT / "runtime/windows/requirements.lock").read_text(encoding="utf-8").splitlines()
     declared = {line.strip().split("=", 1)[0].split("[", 1)[0].casefold() for line in requirements if line.strip()}
     assert "import jwt" in auth_source
     assert "pyjwt" in declared

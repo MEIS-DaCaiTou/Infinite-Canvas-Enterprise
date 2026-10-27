@@ -15,6 +15,8 @@ function element(id) {
   return elements.get(id);
 }
 const context = vm.createContext({
+  adminT: value => value,
+  adminTF: (text, values) => text.replace(/\{(\w+)\}/g, (_, key) => String(values[key])),
   document: {getElementById: element, createElement: () => ({value: '', textContent: ''}), querySelectorAll: () => []},
   sessionStorage: {getItem: () => null}, clearTimeout() {}, setTimeout() {},
 });

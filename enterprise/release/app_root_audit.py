@@ -493,6 +493,8 @@ _MAIN_FLOW_BY_SYMBOL.update(
 )
 
 _OTHER_FLOW_BY_SYMBOL: dict[tuple[str, str], str] = {
+    # Shared atomic primitive; W07/W08/W09 callers retain their own locks/roots.
+    ("enterprise/local_json.py", "atomic_write_json"): "W09",
     # Explicit private media copies use the existing W15 output storage flow.
     # Only this invocation's newly created files are removed after failure.
     ("enterprise/project_results.py", "ProjectResults.reuse"): "W15",
@@ -697,7 +699,7 @@ def _flow_for_operation(file: str, symbol: str) -> str:
 # Wxx flow). Line numbers are deliberately excluded, while duplicate identical
 # calls remain duplicate records. Any added/removed/changed call drifts it.
 # W15 replaces the generic URL fallback with removal of this invocation's generated partial output.
-EXPECTED_SITE_MANIFEST_DIGEST = "64acf1ced87b2884c8f67b3d4d4f0f7afa840ab2310f616f15c8c8defea62c13"
+EXPECTED_SITE_MANIFEST_DIGEST = "bcdc7bbb10f7fed430eccf1a8dd94361175e97ffffa209b11a1409dac390fb3e"
 
 FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W01", "main.py", "startup_event"),

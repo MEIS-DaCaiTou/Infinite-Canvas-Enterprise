@@ -1,12 +1,22 @@
 # Infinite Canvas Enterprise 当前架构
 
-更新时间：2026-10-22
+更新时间：2026-10-27
+
+2026-10-27本地可靠性包：`enterprise/local_json.py`只承担同目录临时文件、刷新和原子替换，调用方继续负责路径、锁与保存冲突；画布、项目目录、对话和历史复用该模块，单文件原子性不等于多文件事务或备份。`enterprise/proxy_transport.py`只负责有界请求读取、响应头和流式连接生命周期，Gateway/interceptors继续负责鉴权、隔离和逐SSE事件归属记录。JSON/HTML仍经原过滤/注入，媒体按段透传，不读完整下载后才响应；本轮无新服务、数据库或通用队列。
 
 本文描述 main 已合并的运行架构、明确标注的开发候选与已确定的演进边界。实现状态以 [docs/CURRENT_PROJECT_STATUS.md](docs/CURRENT_PROJECT_STATUS.md) 为准，未来顺序以 [开发路线图](docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md) 为准。
 
 2026-10-22 发行接线已随 #194 合入 main：`migrations/canvas_workspace.release_registry()` 复用已审部门/目录DDL，供打包、全新安装及更新控制器使用。`build_release_manifest_v2.py --database-schema-version 2|4` 默认预置旧结构、显式选择部门结构；新装依据已验证Manifest初始化对应前缀，不在普通启动迁移。更新沿用原同结构预置、版本化迁移/备份恢复，已知旧目录按准确前缀维护。后续离线候选将相同引擎的已预置2→4接入原安装事务；共享 job/备份结果证明数据库替换，原槽位事务继续维护 EXE、Setup 和 Windows 登记。无新页面、迁移器或启动自动升级；源码、准确候选包、正式启用分别记录于CURRENT。
 
+2026-10-24本地预览按负责人新取舍收缩：canvas-list恢复10.4原目录；HTTP管理适配器department_api仅注册成员、部门及渠道密钥，不注册项目/共享/费用/预算工作台路由。管理后台department-members与department-credentials分别调用组织和凭据服务；成员改版的admin-members呈现、admin-navigation导航、admin-embedded-pages既有页面容器和admin-members.css样式独立于业务服务，原账号操作经回调复用。个人中心和日志使用原页面的显式内嵌模式，不复制密码或审计API。management_context不再依赖项目列表。原画布所有权与任务身份/供应商适配继续独立运行，Schema4及历史事实保留，不做反向迁移。下文被退出的候选/早期模块说明保留历史角色，准确本地与正式状态见CURRENT。
+
+## 2026-10-26 本地ComfyUI队列边界
+
+comfy_queue只负责ComfyUI准入、同算力分组名额和用户轮转，等待输入/任务仍由CanvasTaskDispatch及CanvasTaskJournal持久保存，Comfy已受理恢复不进入再次提交。journal按原写入刷新轻量内存索引，正常调度不反复扫描历史文件或复制结果正文；轮转顺序在重启时从同一任务的派发事实重建。comfy_queue_api将后台配置和本人用量经原Gateway上游客户端代理，管理员权限与执行身份仍由Gateway确定。admin-comfy-queue仅呈现设置，canvas-comfy-tasks仅呈现原输出状态和操作，不将调度逻辑塞入页面。配置使用state/comfy-queue的原子JSON存储，无新增Schema、Redis或独立Worker。当前仅本地未提交增量。
+
 ## 1. 当前形态
+
+2026-10-25本地共享控件：studio-select集中处理单选select与既有富参数面板的顶层显示、定位、键盘及互斥关闭，17个HTML入口显式依赖该组件。原表单和input/change处理继续负责业务动作；智能画布及聊天仅调用共享面板接口，不将组织、凭据、生成或存储规则放入控件。不使用全画布观察/重绘、不改任务与供应商链路；当前未提交发布。
 
 2026-10-22 视频结果候选：`providers/video_outputs.py` 承接main原成片URL解析，排除尾帧/封面等明确非视频结果，保留旧嵌套与签名下载。`video_tasks`及原JSON提交/轮询使用同一状态判定，运行中不因预览链接提前成功；归档继续由main的资源路径/权限边界负责，无新Provider体系或任务队列。
 

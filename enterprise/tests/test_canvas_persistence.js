@@ -58,6 +58,8 @@ function contextFor(data) {
         localCanvasDirty:true, lastCanvasUpdatedAt:data.updated_at, currentCanvasTime:null,
         selected:new Set(), saveTimer:null, canvasSyncInFlight:false, smartLoopContext:null,
         comfyWorkflows:[{name:workflow}], comfyWorkflowCache:{},
+        comfyTaskControls:{load:()=>{}},
+        canvasListUrlForProject:()=>'/static/canvas-list.html',
         smartNodeRunTokens:new Map(), nowMs:()=>3000, safeScale:value=>value,
         tr:key=>key, setStatus:value=>context.status=value,
         toast:message=>{throw new Error(message);},

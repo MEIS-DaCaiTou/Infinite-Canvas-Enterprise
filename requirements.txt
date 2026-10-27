@@ -1,8 +1,2 @@
-fastapi
-uvicorn
-requests
-pydantic
-PyJWT
-python-multipart
-httpx
-pillow
+# One application dependency source for development, acceptance and release.
+-r runtime/windows/requirements.lock

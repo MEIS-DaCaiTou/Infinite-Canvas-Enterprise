@@ -2,7 +2,7 @@
 (function(root){
     'use strict';
     const esc=value=>String(value ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-    const labels={queued:'排队中',running:'运行中',succeeded:'已完成',failed:'明确失败',unknown:'待核对',partial:'部分结果',unavailable:'记录不可读'};
+    const labels={queued:'排队中',running:'运行中',succeeded:'已完成',failed:'明确失败',cancelled:'已取消',unknown:'待核对',partial:'部分结果',unavailable:'记录不可读'};
     const attemptLabels={...labels,started:'已登记',submitting:'提交中',accepted:'已受理',generated:'待归档',querying:'核对中',manual:'需人工核对'};
     const label=value=>attemptLabels[value] || value;
     async function json(url,options={}){

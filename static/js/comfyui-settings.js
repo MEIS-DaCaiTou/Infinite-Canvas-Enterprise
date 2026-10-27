@@ -139,6 +139,7 @@ let miniView = { k: 1, x: 0, y: 0 };
 let miniCards = {};
 let miniTestNodes = [];
 let miniDrag = null;
+let miniLinks = null;
 
 const statusEl = document.getElementById('status');
 const listEl = document.getElementById('workflowList');
@@ -231,10 +232,32 @@ function renderBackendChoice(){
     if(!box){box=document.createElement('div');box.id='workflowBackendChoice';subEl.after(box);}
     const normalize=addr=>{try{return new URL(addr.includes('://')?addr:'http://'+addr).href.replace(/\/$/,'');}catch{return addr;}};
     const selected=normalize(currentConfig.backend || comfyInstances[0] || '');
-    box.innerHTML=`<label>执行后端 <select aria-label="工作流执行后端" onchange="changeWorkflowBackend(this.value)">${comfyInstances.map(addr=>`<option value="${escapeAttr(addr)}" ${normalize(addr)===selected?'selected':''}>${escapeHtml(addr)}</option>`).join('')}</select></label><div>${escapeHtml(currentDefinitionWarning)}</div>`;
+    box.innerHTML=`<label>执行后端 <select aria-label="工作流执行后端" onchange="changeWorkflowBackend(this.value)">${comfyInstances.map(addr=>`<option value="${escapeAttr(addr)}" ${normalize(addr)===selected?'selected':''}>${escapeHtml(addr)}</option>`).join('')}</select></label> <button class="ghost-btn" type="button" onclick="refreshWorkflowDefinitions(this)">${tr('comfy.refreshChoices')}</button><div>${escapeHtml(currentDefinitionWarning)}</div>`;
+}
+async function refreshWorkflowDefinitions(button){
+    if(!selectedName || !currentConfig) return;
+    const name=selectedName, backend=currentConfig.backend || '';
+    if(button) button.disabled=true;
+    try {
+        const response=await fetch(`/api/workflows/${encodeURIComponent(name)}?`+new URLSearchParams({include_definitions:'true',backend}));
+        if(!response.ok) throw new Error(tr('comfy.choicesFailed'));
+        const data=await response.json();
+        if(selectedName!==name || currentConfig.backend!==backend) return;
+        currentDefinitions=data.definitions || {};
+        currentDefinitionWarning=data.definition_warning || '';
+        currentConfig=ComfyWorkflowFields.normalizeWorkflow({...data,config:currentConfig}).config;
+        for(const field of currentConfig.fields.filter(field=>field.type==='dropdown')){
+            const node=currentWorkflow[field.node];
+            const profile=ComfyWorkflowFields.definitionField(node?.inputs?.[field.input],field.input,currentDefinitions[node?.class_type]);
+            if(profile.options?.length) field.options=[...new Set([...profile.options,...(field.options || [])])];
+        }
+        renderEditor();renderPreview();renderWorkspaceView();
+    } catch(error){setStatus(error.message);}
+    finally {if(button) button.disabled=false;}
 }
 function changeWorkflowBackend(value){
     currentConfig.backend=value;
+    currentDefinitions={};
     testSession.uploads.clear();
     ComfyWorkflowFields.runtimeFields(currentConfig).filter(isMediaField).forEach(f=>{
         testSession.set(f.id,f.type==='image_group'?[]:'');
@@ -242,6 +265,7 @@ function changeWorkflowBackend(value){
         delete testSession.urls[f.id];
     });
     refreshTestViews();
+    refreshWorkflowDefinitions();
     setStatus('执行后端已更改，请重新上传测试素材并保存配置');
 }
 function addComfyInstance(){
@@ -269,6 +293,7 @@ async function saveComfyInstances(){
         const data = await res.json();
         comfyInstances = data.instances || cleaned;
         renderComfyInstances();
+        if(currentConfig) renderBackendChoice();
         try { new BroadcastChannel('studio-api').postMessage({ type: 'comfy-instances-changed' }); } catch(e) {}
         try { window.parent?.postMessage({ type: 'comfy-instances-changed' }, '*'); } catch(e) {}
         setStatus('ComfyUI 后端地址已保存');
@@ -388,6 +413,7 @@ function toggleField(node, input){
             if(type === 'number') f.random_enabled = false;
         }
         Object.assign(f,profile);
+        if(!['text','textarea'].includes(f.type))f.role='parameter';
         currentConfig.fields.push(f);
         if(f.default !== undefined && f.default !== null) previewValues[f.id] = f.default;
     }
@@ -405,7 +431,7 @@ function refreshPopupBody(){
     const body = popup.querySelector('.popup-body');
     if(!body) return;
     const inputs = Object.entries(node.inputs || {}).filter(([k,v]) => {
-        return !(Array.isArray(v) && v.length === 2 && typeof v[0] === 'string' && typeof v[1] === 'number');
+        return !ComfyWorkflowFields.isLink(currentWorkflow,v);
     });
     body.innerHTML = inputs.length === 0
         ? `<div class="popup-empty">${tr('comfy.noConfigFields')}</div>`
@@ -421,12 +447,22 @@ function updateField(fieldId, key, value){
     if(!f) return;
     f[key] = value;
     if(key === 'type'){
-        previewValues[fieldId] = (value === 'boolean') ? false : (value === 'number' || value === 'slider' ? 0 : '');
+        if(value === 'dropdown'){
+            const node = currentWorkflow[f.node];
+            f.options = ComfyWorkflowFields.dropdownOptions(f, node?.inputs?.[f.input], currentDefinitions[node?.class_type]);
+            f.default = f.default ?? node?.inputs?.[f.input] ?? f.options[0] ?? '';
+        }
+        // Changing a widget must not replace a valid workflow value with false/0.
+        previewValues[fieldId] = ComfyWorkflowFields.coerceValue(f, f.default ?? currentWorkflow[f.node]?.inputs?.[f.input]);
         f.random_enabled = value === 'number' ? !!f.random_enabled : false;
         delete previewRandomActive[fieldId];
     }
     if(key === 'random_enabled'){
         delete previewRandomActive[fieldId];
+    }
+    if(key === 'default') previewValues[fieldId] = ComfyWorkflowFields.coerceValue(f,value);
+    if(key === 'default' && f.type==='boolean'){
+        renderEditor();renderPreview();if(popupNodeId===f.node)refreshPopupBody();return;
     }
     // 文本/数字输入过程中不能重建浮窗，否则输入框会失焦，表现成每次只能输入 1 个字。
     // 这些字段只影响预览或运行参数，直接同步数据即可；切换 type 才需要重建表单结构。
@@ -483,6 +519,13 @@ function renderEditor(){
     }
     availability.querySelector('input').checked = currentConfig.enabled !== false;
 
+    let parameterStatus=document.getElementById('workflowParameterStatus');
+    if(!parameterStatus){
+        parameterStatus=document.createElement('div');parameterStatus.id='workflowParameterStatus';
+        parameterStatus.className='workflow-parameter-status';parameterStatus.setAttribute('role','status');
+        availability.after(parameterStatus);
+    }
+
     renderGraph();
     renderWorkspaceView();
 
@@ -494,7 +537,7 @@ function renderEditor(){
 
     nodeListEl.innerHTML = nodes.map(([nodeId, node])=>{
         const inputs = Object.entries(node.inputs || {}).filter(([k,v])=>{
-            return !(Array.isArray(v) && v.length === 2 && typeof v[0] === 'string' && typeof v[1] === 'number');
+            return !ComfyWorkflowFields.isLink(currentWorkflow,v);
         });
         const exposedCount = inputs.filter(([k])=>fieldFor(nodeId,k)).length;
         const expanded = exposedCount > 0;
@@ -520,7 +563,43 @@ function renderEditor(){
             </div>
         `;
     }).join('');
+    refreshParameterActivity();
     refreshIcons();
+}
+
+function refreshParameterActivity(){
+    if(!currentWorkflow || !currentConfig)return;
+    let state;
+    try{state=ComfyWorkflowFields.executionState(currentWorkflow,currentConfig,previewValues);}
+    catch(error){state={fields:{},errors:[error.message]};}
+    const inactive=Object.values(state.fields).filter(s=>!s.active).length;
+    const status=document.getElementById('workflowParameterStatus');
+    if(status){
+        status.textContent=state.errors[0] || (inactive ? `${inactive} 个参数位于未启用的分支；展开对应节点查看。` : '勾选表示在画布中显示参数；参数默认值和分支开关分别设置。');
+        status.classList.toggle('has-warning',!!state.errors.length);
+    }
+    document.querySelectorAll('[data-field-activity]').forEach(el=>{
+        const field=currentConfig.fields.find(f=>f.id===el.dataset.fieldActivity), usage=state.fields[field?.id];
+        el.replaceChildren();
+        if(!usage || usage.active)return;
+        const gate=usage.gate;
+        const label=document.createElement('span');
+        label.textContent=gate ? `当前分支不使用此参数。需要 #${gate.node}.${gate.input} ${gate.value?'开启':'关闭'}。` : '此参数没有连接到当前输出。';
+        el.append(label);
+        if(gate && typeof currentWorkflow[gate.node]?.inputs?.[gate.input]==='boolean'){
+            const button=document.createElement('button');button.type='button';button.textContent='切换到此分支';
+            button.onclick=()=>activateFieldBranch(field.id);el.append(button);
+        }
+    });
+}
+
+function activateFieldBranch(fieldId){
+    const gate=ComfyWorkflowFields.executionState(currentWorkflow,currentConfig,previewValues).fields[fieldId]?.gate;
+    if(!gate || typeof currentWorkflow[gate.node]?.inputs?.[gate.input]!=='boolean')return;
+    if(!fieldFor(gate.node,gate.input))toggleField(gate.node,gate.input);
+    const selector=fieldFor(gate.node,gate.input);
+    updateField(selector.id,'default',gate.value);
+    renderEditor();renderPreview();renderWorkspaceView();
 }
 
 // 计算节点拓扑层级（按从入度 0 的源节点向下游传播）
@@ -532,7 +611,7 @@ function computeLayers(){
     ids.forEach(id => {
         const inputs = currentWorkflow[id].inputs || {};
         Object.values(inputs).forEach(v => {
-            if(Array.isArray(v) && v.length === 2 && typeof v[0] === 'string'){
+            if(ComfyWorkflowFields.isLink(currentWorkflow,v)){
                 if(currentWorkflow[v[0]]){
                     incoming[id].add(v[0]);
                     outgoing[v[0]].add(id);
@@ -590,7 +669,7 @@ function renderGraph(){
         const inputs = currentWorkflow[toId].inputs || {};
         const seen = new Set();
         Object.values(inputs).forEach(v => {
-            if(Array.isArray(v) && v.length === 2 && typeof v[0] === 'string' && positions[v[0]]){
+            if(ComfyWorkflowFields.isLink(currentWorkflow,v) && positions[v[0]]){
                 if(seen.has(v[0])) return;
                 seen.add(v[0]);
                 const from = positions[v[0]];
@@ -718,7 +797,7 @@ function openNodePopup(nodeId, gEl){
     const popup = document.getElementById('nodePopup');
     const backdrop = document.getElementById('popupBackdrop');
     const inputs = Object.entries(node.inputs || {}).filter(([k,v]) => {
-        return !(Array.isArray(v) && v.length === 2 && typeof v[0] === 'string' && typeof v[1] === 'number');
+        return !ComfyWorkflowFields.isLink(currentWorkflow,v);
     });
     const icon = nodeIcon(node);
     const label = nodeLabel(node);
@@ -788,7 +867,8 @@ document.addEventListener('keydown', e => {
 function renderInputRow(nodeId, inputKey, rawValue){
     const f = fieldFor(nodeId, inputKey);
     const active = !!f;
-    const showExtras = active && (['slider','number','dropdown'].includes(f.type) || (['text','textarea'].includes(f.type) && f.input!=='filename_prefix'));
+    if(active && f.default!=null)rawValue=f.default;
+    const showExtras = active && (['slider','number','dropdown','boolean'].includes(f.type) || (['text','textarea'].includes(f.type) && f.input!=='filename_prefix'));
     // 原始值类型徽章
     let valueBadge = '';
     const typeOf = typeof rawValue;
@@ -806,7 +886,7 @@ function renderInputRow(nodeId, inputKey, rawValue){
     const showOriginal = friendlyName !== inputKey;
     return `
         <div class="input-row ${active?'is-active':''} ${showExtras?'has-extras':''}">
-            <div class="check-toggle ${active?'checked':''}" onclick="toggleField('${escapeAttr(nodeId)}','${escapeAttr(inputKey)}')">
+            <div class="check-toggle ${active?'checked':''}" role="checkbox" aria-checked="${active}" tabindex="0" aria-label="在画布中显示 ${escapeAttr(friendlyName)} (#${escapeAttr(nodeId)}.${escapeAttr(inputKey)})" title="在画布中显示此参数，不会自动开启功能" onclick="toggleField('${escapeAttr(nodeId)}','${escapeAttr(inputKey)}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}">
                 ${active ? '<i data-lucide="check" class="w-3 h-3"></i>' : ''}
             </div>
             <div class="input-info">
@@ -818,11 +898,13 @@ function renderInputRow(nodeId, inputKey, rawValue){
                 ${TYPES.map(t=>`<option value="${t.v}" ${active && f.type===t.v?'selected':''}>${typeLabel(t.v)}</option>`).join('')}
             </select>
             ${active ? renderExtras(f) : ''}
+            ${active ? `<div class="field-activity" data-field-activity="${escapeAttr(f.id)}"></div>` : ''}
         </div>
     `;
 }
 
 function renderExtras(f){
+    if(f.type==='boolean')return `<div class="extras-row"><label>默认状态 <input type="checkbox" ${ComfyWorkflowFields.coerceValue(f,f.default)?'checked':''} aria-label="${escapeAttr(f.name)} 默认开启" onchange="updateField('${f.id}','default',this.checked)"><span>${ComfyWorkflowFields.coerceValue(f,f.default)?'开启':'关闭'}</span></label></div>`;
     if(['text','textarea'].includes(f.type) && f.input!=='filename_prefix') return `<div class="extras-row"><label>输入用途 <select class="small-select" onchange="updateField('${f.id}','role',this.value)">${[['prompt','创作提示词'],['negative','负面提示词'],['system','系统提示词'],['parameter','普通参数']].map(([value,label])=>`<option value="${value}" ${f.role===value?'selected':''}>${label}</option>`).join('')}</select></label></div>`;
     if(f.type === 'slider' || f.type === 'number'){
         const randomToggle = f.type === 'number'
@@ -855,11 +937,11 @@ function renderExtras(f){
                 </div>
             `;
         }).join('');
-        return `<div class="extras-row" style="flex-direction:column;align-items:stretch;gap:6px">
+        return `<div class="extras-row" data-dropdown-field="${fid}" style="flex-direction:column;align-items:stretch;gap:6px">
             <div style="font-size:11px;color:var(--muted);font-weight:700">
                 下拉选项 <span style="color:var(--faint)">· 数字形式自动作为数值传给 ComfyUI</span>
             </div>
-            ${rows}
+            <div class="dropdown-options-list">${rows}</div>
             <button class="ghost-btn" type="button" onclick="event.stopPropagation();addDropdownOption('${fid}')" style="height:34px;padding:0 16px;font-size:12px;font-weight:800;align-self:flex-start;gap:6px"><i data-lucide="plus" class="w-3.5 h-3.5"></i><span>添加选项</span></button>
         </div>`;
     }
@@ -869,6 +951,7 @@ function updateDropdownOption(fieldId, index, value, inputEl){
     const f = currentConfig.fields.find(x => x.id === fieldId); if(!f) return;
     f.options = f.options || [];
     f.options[index] = value;
+    testSession.revision++;
     // 不重渲浮窗，只更新当前行右侧「数字/文本」标签
     if(inputEl){
         const tag = inputEl.parentElement?.querySelector('.opt-type-tag');
@@ -878,18 +961,33 @@ function updateDropdownOption(fieldId, index, value, inputEl){
             tag.textContent = looksNumber ? '数字' : '文本';
         }
     }
-    renderPreview();  // 右侧预览的下拉选项实时同步
+    syncDropdownPreview(f);
+}
+function syncDropdownPreview(f){
+    const options=f.options || [], contains=value=>options.some(option=>String(option)===String(value));
+    if(!contains(f.default)) f.default=options[0] ?? '';
+    if(!contains(previewValues[f.id])) previewValues[f.id]=f.default;
+    document.querySelectorAll(`[data-comfy-field="${CSS.escape(f.id)}"] select`).forEach(select=>{
+        select.innerHTML=options.map(option=>`<option value="${escapeAttr(option)}">${escapeHtml(option)}</option>`).join('');
+        select.value=previewValues[f.id];
+    });
 }
 function addDropdownOption(fieldId){
     const f = currentConfig.fields.find(x => x.id === fieldId); if(!f) return;
     f.options = [...(f.options || []), ''];
-    renderPreview();
+    testSession.revision++;
+    renderEditor();
+    syncDropdownPreview(f);
     if(popupNodeId === f.node) refreshPopupBody();
+    const editor=popupNodeId===f.node ? document.getElementById('nodePopup') : nodeListEl;
+    editor?.querySelector(`[data-dropdown-field="${CSS.escape(fieldId)}"] .dropdown-opt-row:last-child input`)?.focus();
 }
 function removeDropdownOption(fieldId, index){
     const f = currentConfig.fields.find(x => x.id === fieldId); if(!f) return;
     f.options = (f.options || []).filter((_, i) => i !== index);
-    renderPreview();
+    testSession.revision++;
+    renderEditor();
+    syncDropdownPreview(f);
     if(popupNodeId === f.node) refreshPopupBody();
 }
 
@@ -900,8 +998,9 @@ function setPreviewValue(fieldId, value){
         if(el !== document.activeElement) el.value = value;
     });
     document.querySelectorAll(`[data-slider-val="${CSS.escape(fieldId)}"]`).forEach(el => {el.textContent=value;});
-    document.querySelectorAll(`[data-comfy-field="${CSS.escape(fieldId)}"] .pfield-bool-track`).forEach(el=>el.classList.toggle('on',!!value));
+    document.querySelectorAll(`[data-comfy-field="${CSS.escape(fieldId)}"] .pfield-bool-track`).forEach(el=>{el.classList.toggle('on',!!value);el.setAttribute('aria-checked',String(!!value));});
     document.querySelectorAll('[data-comfy-result-status]').forEach(el => {el.textContent=resultStatus();});
+    refreshParameterActivity();
 }
 function randomValueForField(f){
     const isFloat = Number(f.step) > 0 && Number(f.step) < 1;
@@ -989,6 +1088,7 @@ function renderPreview(){
     `;
     refreshIcons();
     refreshTestState();
+    refreshParameterActivity();
 }
 
 function renderPreviewField(f){
@@ -1022,9 +1122,9 @@ function renderPreviewField(f){
     }
     if(f.type === 'boolean'){
         return `<div class="pfield" data-comfy-field="${escapeAttr(f.id)}">${label}<div class="pfield-bool">
-            <div class="pfield-bool-track ${v?'on':''}" onclick="setPreviewValue('${f.id}',!previewValues['${f.id}'])">
+            <button type="button" role="switch" aria-label="${escapeAttr(f.name)}" aria-checked="${!!v}" class="pfield-bool-track ${v?'on':''}" onclick="setPreviewValue('${f.id}',!ComfyWorkflowFields.coerceValue(currentConfig.fields.find(f=>f.id==='${f.id}'),previewValues['${f.id}']))">
                 <div class="pfield-bool-thumb"></div>
-            </div>
+            </button>
         </div></div>`;
     }
     return `<div class="pfield" data-comfy-field="${escapeAttr(f.id)}">${label}<input class="pfield-input" type="text" value="${escapeAttr(v)}" oninput="setPreviewValue('${f.id}',this.value)"></div>`;
@@ -1084,8 +1184,7 @@ function renderMiniCanvasPreview(target = previewCard, large = false){
         <div id="miniCanvas" class="mini-canvas ${large ? 'large' : ''}">
             <div class="mini-toolbar"><span>与左侧共用输入；按字段名称对应素材</span></div>
             <div id="miniWorld" class="mini-world" style="transform:translate(${miniView.x}px,${miniView.y}px) scale(${miniView.k})">
-                ${[...prompts, ...mediaNodes].map(n => miniLineBetween(n, comfy)).join('')}
-                ${miniLineBetween(comfy, output)}
+                <svg class="mini-links" aria-hidden="true">${[...prompts, ...mediaNodes].map(n => miniLineBetween(n, comfy)).join('')}${miniLineBetween(comfy, output)}</svg>
                 ${prompts.map((n,i) => `
                     <div class="mini-card" data-node="${n.id}" style="left:${n.x}px;top:${n.y}px">
                         <span class="mini-port out"></span>
@@ -1125,6 +1224,7 @@ function renderMiniCanvasPreview(target = previewCard, large = false){
     bindMiniCanvas();
     refreshIcons();
     refreshTestState();
+    refreshParameterActivity();
 }
 
 function renderMiniField(f){
@@ -1154,7 +1254,7 @@ function renderMiniField(f){
         return `<div class="pfield" data-comfy-field="${escapeAttr(f.id)}">${label}<select class="pfield-select" onchange="setPreviewValue('${f.id}',this.value)">${opts || `<option value="">${tr('comfy.noOptions')}</option>`}</select></div>`;
     }
     if(f.type === 'boolean'){
-        return `<div class="pfield" data-comfy-field="${escapeAttr(f.id)}">${label}<div class="pfield-bool"><div class="pfield-bool-track ${v?'on':''}" onclick="setPreviewValue('${f.id}',!previewValues['${f.id}'])"><div class="pfield-bool-thumb"></div></div></div></div>`;
+        return renderPreviewField(f);
     }
     return `<div class="pfield" data-comfy-field="${escapeAttr(f.id)}">${label}<input class="mini-input" type="text" value="${escapeAttr(v)}" oninput="setPreviewValue('${f.id}',this.value)"></div>`;
 }
@@ -1165,11 +1265,7 @@ function miniDeleteButton(node){
 
 function miniLineBetween(a, b){
     if(!a || !b) return '';
-    const x1 = a.x + 230, y1 = a.y + 72, x2 = b.x, y2 = b.y + 72;
-    const dx = x2 - x1, dy = y2 - y1;
-    const len = Math.sqrt(dx*dx + dy*dy);
-    const deg = Math.atan2(dy, dx) * 180 / Math.PI;
-    return `<div class="mini-line" style="left:${x1}px;top:${y1}px;width:${len}px;transform:rotate(${deg}deg)"></div>`;
+    return `<path data-mini-from="${escapeAttr(a.id)}" data-mini-to="${escapeAttr(b.id)}"></path>`;
 }
 
 function addMiniNode(type){
@@ -1198,6 +1294,8 @@ function bindMiniCanvas(){
     const canvas = document.getElementById('miniCanvas');
     const world = document.getElementById('miniWorld');
     if(!canvas || !world) return;
+    miniLinks?.dispose();
+    miniLinks = ComfyPreviewLinks.mount(world);
     const sync = () => { world.style.transform = `translate(${miniView.x}px,${miniView.y}px) scale(${miniView.k})`; };
     canvas.onwheel = e => {
         e.preventDefault();
@@ -1245,14 +1343,13 @@ function bindMiniCanvas(){
                 const p = node || miniCards[miniDrag.id];
                 card.style.left = `${p.x}px`;
                 card.style.top = `${p.y}px`;
+                miniLinks.update();
             }
         }
     };
     window.onmouseup = () => {
         if(miniDrag?.type === 'pan') canvas.classList.remove('is-panning');
-        const shouldRefresh = miniDrag?.type === 'card';
         miniDrag = null;
-        if(shouldRefresh) renderWorkspaceView();
     };
 }
 
@@ -1351,6 +1448,8 @@ async function onRun(){
         const missing = runtimeFields.filter(f => isMediaField(f) && (f.type==='image_group' ? !Array.isArray(runFields[f.id]) || runFields[f.id].length<f.min_images || runFields[f.id].length>f.max_images : !runFields[f.id]));
         if(missing.length) throw new Error(ComfyWorkflowFields.missingMessage(missing,currentLang()==='en'));
         config.fields.forEach(f => {runFields[f.id]=ComfyWorkflowFields.coerceValue(f,runFields[f.id]);});
+        const state=ComfyWorkflowFields.executionState(currentWorkflow,config,runFields);
+        if(state.errors.length)throw new Error(state.errors[0]);
         const requestId=ComfyWorkflowSession.requestId();
         session.taskId='canvas_comfy_'+requestId; changed();
         const res = await fetch(`/api/workflows/${encodeURIComponent(name)}/run`,{

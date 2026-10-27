@@ -55,9 +55,9 @@ def test_notice_http_auth_and_old_schema_read_never_migrates(business,tmp_path):
         request.state.user=p.get(request.headers.get('x-user'));return await next(request)
     app.include_router(create_router(service),prefix='/enterprise')
     with TestClient(app) as client:
-        assert client.get('/enterprise/api/business/budget-alerts').status_code==401
+        assert client.get('/enterprise/api/business/budget-alerts').status_code==404
         response=client.get('/enterprise/api/business/budget-alerts',headers={'x-user':'employee'})
-        assert response.status_code==200 and response.json()['alerts']==[]
+        assert response.status_code==404
     path=baseline(tmp_path/'old.db');before=inspect_schema_metadata(path)
     old=DepartmentCosts(DepartmentGovernance(connect=lambda:sqlite3.connect(path)))
     assert old.alerts(p['design'])=={'enabled':False,'alerts':[]}
@@ -82,7 +82,9 @@ def test_notice_replays_received_cost_fact_once_without_new_generation(bound,tmp
     app.include_router(create_router(service),prefix='/enterprise')
     with TestClient(app) as client:
         for _ in range(2):
-            data=client.get('/enterprise/api/business/budget-alerts').json()
-            assert data['alerts'][0]['actual']=='0.5'
+            assert client.get('/enterprise/api/business/budget-alerts').status_code==404
+    # Existing receipt projection stays usable internally; it has no public fee view.
+    for _ in range(2):
+        binding.refresh_cost_projection(service,p['design'],'department',design,journal)
     assert len(costs.entries(p['employee'])['entries'])==1
     assert journal.get(record['id'])['provider_receipts'][0]['state']=='generated'

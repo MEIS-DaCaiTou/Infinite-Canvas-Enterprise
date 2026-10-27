@@ -254,8 +254,12 @@ def test_direct_launcher_requires_complete_python_isolation_flags(
     completed = _run_direct_launcher(tmp_path, flags)
     assert completed.returncode == 2
     assert completed.stderr == ""
+    # The release's embedded interpreter is already isolated by python314._pth,
+    # even without -I. It should proceed to the layout gate, not be rejected.
+    embedded = Path(sys.executable).with_name(f"python{sys.version_info.major}{sys.version_info.minor}._pth").is_file()
+    code = "PORTABLE_RELEASE_LAYOUT_INVALID" if embedded and flags == ("-s", "-B") else "PORTABLE_PYTHON_ISOLATION_REQUIRED"
     assert completed.stdout.splitlines() == [
-        '{"code":"PORTABLE_PYTHON_ISOLATION_REQUIRED","status":"blocked"}'
+        json.dumps({"code": code, "status": "blocked"}, separators=(",", ":"))
     ]
 
 

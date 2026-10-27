@@ -47,6 +47,9 @@
         root.querySelectorAll('[data-i18n-title]').forEach(el => {
             el.setAttribute('title', t(el.dataset.i18nTitle));
         });
+        root.querySelectorAll('[data-i18n-aria-label]').forEach(el => {
+            el.setAttribute('aria-label', t(el.dataset.i18nAriaLabel));
+        });
         root.documentElement?.setAttribute('lang', lang() === 'en' ? 'en' : 'zh-CN');
         window.dispatchEvent(new CustomEvent('studio-lang-change', { detail:{ lang:lang() } }));
     }
@@ -66,4 +69,5 @@
 
     window.StudioI18n = { t, apply, set, toggle, lang, register, entries };
     document.addEventListener('DOMContentLoaded', () => apply());
+    window.addEventListener('storage', event => { if(event.key === KEY) apply(); });
 })();

@@ -1,8 +1,0 @@
-.canvas-share-bar{position:fixed;z-index:90;right:18px;top:18px;display:flex;align-items:center;gap:12px;padding:10px 14px;font-size:12px;background:var(--panel,var(--card,#fff));color:var(--text,#17202f);border:1px solid var(--border,#e1e7ef);border-radius:24px}
-.canvas-share-bar button{font:inherit;color:inherit;background:transparent;border:1px solid var(--border,#e1e7ef);padding:7px 12px;border-radius:18px;cursor:pointer}
-.canvas-share-bar [role=status]{max-width:220px;overflow-wrap:anywhere}
-.canvas-readonly #quickToolbar,.canvas-readonly .smart-shortcut-toggle,.canvas-readonly .smart-workflow-toggle,.canvas-readonly .asset-toggle,.canvas-readonly .smart-log-toggle,.canvas-readonly #canvasArrangeBtn,.canvas-readonly #smartArrangeBtn,.canvas-readonly .node-delete,.canvas-readonly .node-resize,.canvas-readonly .conn-cut{display:none!important}
-.canvas-readonly .port,.canvas-readonly .node-input-port,.canvas-readonly .node-output-port{visibility:hidden;pointer-events:none}
-.canvas-readonly .node textarea,.canvas-readonly .node input,.canvas-readonly .smart-node textarea,.canvas-readonly .prompt-node-text{cursor:text}
-.canvas-readonly .node,.canvas-readonly .smart-node,.canvas-readonly .prompt-node,.canvas-readonly .image-node{cursor:default}
-@media(max-width:600px){.canvas-share-bar{top:auto;bottom:16px;left:12px;right:12px;justify-content:center;flex-wrap:wrap}}

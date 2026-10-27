@@ -1,5 +1,5 @@
 from enterprise.providers.comfyui import (
-    ComfyClient, ComfyExecutionError, base_url as comfy_base_url,
+    ComfyClient, ComfyExecutionError, ComfyCancelledError, base_url as comfy_base_url,
     endpoint as comfy_endpoint, view_path as comfy_view_path,
 )
 import json
@@ -42,7 +42,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response, StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field, PrivateAttr
 from enterprise.providers.comfy_workflow import (
-    image_group_candidates, validate_image_groups, apply_workflow_values, field_role, select_history_outputs,
+    image_group_candidates, validate_image_groups, apply_workflow_values, field_role, select_history_outputs, workflow_seed,
 )
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -54,6 +54,7 @@ from enterprise.config import PATH_ROOTS as _CONFIG_PATH_ROOTS
 from enterprise.paths import get_path_roots, prepare_application_directories
 from enterprise.app_paths import AppPathLayout
 from enterprise.canvas_task_journal import CanvasTaskJournal, create_task_receipt
+from enterprise.local_json import atomic_write_json, read_json
 from enterprise.task_credentials import CallSourceSelection, credential_bound, scoped_api_key, prepare_task_binding, require_bound_generation, task_error
 from enterprise.department_governance import DepartmentGovernance
 from enterprise.task_canvas_context import TaskCanvasSource
@@ -154,12 +155,15 @@ class ConnectionManager:
         print(f"WS Connected. Total: {len(self.active_connections)}, Online: {self.online_count()}")
         await self.broadcast_count()
 
-    async def disconnect(self, websocket: WebSocket, client_id: str = None):
+    def _forget(self, websocket: WebSocket):
         if websocket in self.active_connections:
             self.active_connections.remove(websocket)
-        self.connection_clients.pop(websocket, None)
+        client_id = self.connection_clients.pop(websocket, None)
         if client_id and self.user_connections.get(client_id) is websocket:
             del self.user_connections[client_id]
+
+    async def disconnect(self, websocket: WebSocket, client_id: str = None):
+        self._forget(websocket)
         print(f"WS Disconnected. Total: {len(self.active_connections)}, Online: {self.online_count()}")
         await self.broadcast_count()
 
@@ -178,7 +182,7 @@ class ConnectionManager:
                 await connection.send_text(data)
             except Exception as e:
                 print(f"Broadcast error: {e}")
-                self.active_connections.remove(connection)
+                self._forget(connection)
 
     async def broadcast_new_image(self, image_data: dict):
         data = json.dumps({"type": "new_image", "data": image_data})
@@ -187,7 +191,7 @@ class ConnectionManager:
                 await connection.send_text(data)
             except Exception as e:
                 print(f"Broadcast image error: {e}")
-                self.active_connections.remove(connection)
+                self._forget(connection)
 
     async def broadcast_canvas_updated(self, canvas_id: str, updated_at: int, client_id: str = ""):
         data = json.dumps({
@@ -201,7 +205,7 @@ class ConnectionManager:
                 await connection.send_text(data)
             except Exception as e:
                 print(f"Broadcast canvas error: {e}")
-                self.active_connections.remove(connection)
+                self._forget(connection)
 
     async def broadcast_asset_library_updated(self, updated_at: int = 0):
         data = json.dumps({
@@ -1374,6 +1378,7 @@ def public_provider(provider):
         "has_key": bool(key),
         "key_preview": mask_secret(key),
         "key_env": provider_key_env(provider["id"]),
+        "managed_source_supported": is_zhenzhen(provider),
         "builtin_model_image_profiles": zhenzhen_public_image_profiles(provider),
         "builtin_model_video_profiles": zhenzhen_public_video_profiles(provider),
     }
@@ -2505,7 +2510,6 @@ class ImageTaskQueryRequest(BaseModel):
 CANVAS_TASK_JOURNAL = CanvasTaskJournal(PATH_ROOTS.DATA_ROOT / "canvas-tasks")
 app.include_router(create_generation_task_router(CANVAS_TASK_JOURNAL))
 CANVAS_TASK_RUNNERS: set = set()
-CANVAS_COMFY_ACCEPT_LOCK = asyncio.Lock()
 
 
 def prepare_canvas_call_binding(task_id, payload, owner):
@@ -3148,14 +3152,12 @@ def save_to_history(record):
         history = []
         if os.path.exists(HISTORY_FILE):
             try:
-                with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
-                    history = json.load(f)
+                history = read_json(HISTORY_FILE)
             except: pass
         if "timestamp" not in record:
             record["timestamp"] = time.time()
         history.insert(0, record)
-        with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
-            json.dump(history[:5000], f, ensure_ascii=False, indent=4)
+        atomic_write_json(HISTORY_FILE, history[:5000], indent=4)
 
 def get_comfy_history(comfy_address, prompt_id):
     try:
@@ -3190,8 +3192,7 @@ def now_ms():
 def save_conversation(user_id, conversation):
     with CONVERSATION_LOCK:
         path = conversation_path(user_id, conversation["id"])
-        with open(path, 'w', encoding='utf-8') as f:
-            json.dump(conversation, f, ensure_ascii=False, indent=2)
+        atomic_write_json(path, conversation)
 
 def new_conversation(user_id, title="新对话"):
     timestamp = now_ms()
@@ -3209,8 +3210,7 @@ def load_conversation(user_id, conversation_id):
     path = conversation_path(user_id, conversation_id)
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail="对话不存在")
-    with open(path, 'r', encoding='utf-8') as f:
-        return json.load(f)
+    return read_json(path)
 
 def list_conversations(user_id):
     records = []
@@ -3219,8 +3219,7 @@ def list_conversations(user_id):
             continue
         path = os.path.join(user_dir(user_id), filename)
         try:
-            with open(path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
+            data = read_json(path)
         except Exception:
             continue
         messages = data.get("messages", [])
@@ -3243,8 +3242,7 @@ def canvas_path(canvas_id):
 def save_canvas(canvas):
     canvas["updated_at"] = now_ms()
     with CANVAS_LOCK:
-        with open(canvas_path(canvas["id"]), 'w', encoding='utf-8') as f:
-            json.dump(canvas, f, ensure_ascii=False, indent=2)
+        atomic_write_json(canvas_path(canvas["id"]), canvas)
 
 def normalize_canvas_kind(kind="classic"):
     return "smart" if str(kind or "").strip().lower() == "smart" else "classic"
@@ -3255,8 +3253,7 @@ DEFAULT_PROJECT_ID = "default"
 
 def load_projects():
     try:
-        with open(PROJECTS_PATH, 'r', encoding='utf-8') as f:
-            data = json.load(f)
+        data = read_json(PROJECTS_PATH)
         projects = data.get("projects") if isinstance(data, dict) else data
         if isinstance(projects, list):
             return [p for p in projects if isinstance(p, dict) and p.get("id")]
@@ -3266,8 +3263,7 @@ def load_projects():
 
 def save_projects(projects):
     with CANVAS_LOCK:
-        with open(PROJECTS_PATH, 'w', encoding='utf-8') as f:
-            json.dump({"projects": projects}, f, ensure_ascii=False, indent=2)
+        atomic_write_json(PROJECTS_PATH, {"projects": projects})
 
 def project_record(p):
     return {
@@ -3342,8 +3338,7 @@ def load_canvas(canvas_id):
     path = canvas_path(canvas_id)
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail="画布不存在")
-    with open(path, 'r', encoding='utf-8') as f:
-        canvas = json.load(f)
+    canvas = read_json(path)
     if canvas.get("deleted_at"):
         raise HTTPException(status_code=404, detail="画布已在回收站")
     return canvas
@@ -3352,8 +3347,7 @@ def load_canvas_any(canvas_id):
     path = canvas_path(canvas_id)
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail="画布不存在")
-    with open(path, 'r', encoding='utf-8') as f:
-        return json.load(f)
+    return read_json(path)
 
 CANVAS_COLORS = {"", "red", "orange", "amber", "green", "teal", "blue", "violet", "pink", "slate"}
 
@@ -3387,8 +3381,7 @@ def cleanup_expired_canvas_trash():
                 continue
             path = os.path.join(CANVAS_DIR, filename)
             try:
-                with open(path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
+                data = read_json(path)
                 deleted_at = int(data.get("deleted_at") or 0)
                 if deleted_at and deleted_at < cutoff:
                     os.remove(path)
@@ -3402,8 +3395,7 @@ def iter_canvas_records(include_deleted=False):
         if not filename.endswith(".json"):
             continue
         try:
-            with open(os.path.join(CANVAS_DIR, filename), 'r', encoding='utf-8') as f:
-                data = json.load(f)
+            data = read_json(os.path.join(CANVAS_DIR, filename))
         except Exception:
             continue
         is_deleted = bool(data.get("deleted_at"))
@@ -3540,8 +3532,7 @@ def canvas_assets_index():
         if not filename.endswith(".json"):
             continue
         try:
-            with open(os.path.join(CANVAS_DIR, filename), "r", encoding="utf-8") as f:
-                canvas = json.load(f)
+            canvas = read_json(os.path.join(CANVAS_DIR, filename))
         except Exception:
             continue
         if canvas.get("deleted_at"):
@@ -10687,7 +10678,9 @@ async def upload_image(files: List[UploadFile] = File(...), workflow: str = "Z-I
     client = ComfyClient(target)
     uploaded = []
     for file in files:
-        content = await file.read()
+        content = await file.read(50 * 1024 * 1024 + 1)
+        if len(content) > 50 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="素材超过 50MB，无法上传")
         # Unique input name, preserving extension; unrelated users' filenames cannot collide.
         name = f"canvas_{uuid.uuid4().hex}{os.path.splitext(file.filename or '')[1]}"
         try:
@@ -10706,7 +10699,7 @@ async def upload_ai_reference(files: List[UploadFile] = File(...)):
     doc_exts = {".pdf", ".txt", ".md", ".markdown", ".doc", ".docx", ".xls", ".xlsx", ".csv", ".json", ".zip", ".yaml", ".yml", ".log"}
     max_upload_bytes = 50 * 1024 * 1024
     for file in files:
-        content = await file.read()
+        content = await file.read(max_upload_bytes + 1)
         if not content:
             continue
         if len(content) > max_upload_bytes:
@@ -13140,6 +13133,9 @@ async def run_canvas_comfy_task(task_id: str, payload: GenerateRequest):
             "result": result,
             "error": "",
         }
+    except ComfyCancelledError:
+        await asyncio.to_thread(CANVAS_TASK_JOURNAL.record_comfy, task_id, {"phase": "cancelled"})
+        changes = {"status": "cancelled", "error": "", "error_code": "COMFY_CANCELLED", "recovery_required": False}
     except Exception as exc:
         detail = getattr(exc, "detail", None) or str(exc)
         status_code = getattr(exc, "status_code", 500)
@@ -13165,13 +13161,15 @@ async def create_canvas_comfy_task(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid ComfyUI request identity") from exc
     task_id = f"canvas_comfy_{nonce}"
-    async with CANVAS_COMFY_ACCEPT_LOCK:
+    async with COMFY_QUEUE.lock:
         existing = await asyncio.to_thread(CANVAS_TASK_JOURNAL.get, task_id)
         if existing:
             user_id = x_enterprise_user_id if isinstance(x_enterprise_user_id, str) else ""
             if existing.get("type") != "comfy" or existing.get("enterprise_user_id", "") != user_id:
                 raise HTTPException(status_code=403, detail="Task owner mismatch")
             return {"task_id": task_id, "status": existing["status"]}
+        await asyncio.to_thread(CANVAS_TASK_DISPATCH.check_comfy_input, payload)
+        queue_metadata = await asyncio.to_thread(COMFY_QUEUE.admission, payload, payload._enterprise_user_id)
         await asyncio.to_thread(create_task_receipt, CANVAS_TASK_JOURNAL, {
             "id": task_id,
             "type": "comfy",
@@ -13181,10 +13179,12 @@ async def create_canvas_comfy_task(
             "result": None,
             "error": "",
             "workflow_json": payload.workflow_json,
+            "comfy_queue": queue_metadata,
+            "enterprise_user_id": payload._enterprise_user_id,
             "source": payload.source.model_dump() if payload.source else None,
         }, x_enterprise_user_id)
         await CANVAS_TASK_DISPATCH.enqueue(task_id, payload)
-        return {"task_id": task_id, "status": "queued"}
+        return {"task_id": task_id, "status": "queued", "phase": "platform_queued", "can_cancel": True}
 
 def validate_comfy_receipt(receipt):
     if comfy_base_url(receipt["backend"]) not in {comfy_base_url(addr) for addr in COMFYUI_INSTANCES}:
@@ -13230,6 +13230,12 @@ async def resume_canvas_comfy_task(task_id):
     await CANVAS_ACCEPTED_RECOVERY.after_manual_query(task_id, result)
 
 
+from enterprise.canvas_comfy_control import create_router as comfy_control_router
+app.include_router(comfy_control_router(CANVAS_TASK_JOURNAL, validate_comfy_receipt,
+    lambda task_id: schedule_canvas_task(resume_canvas_comfy_task(task_id)),
+    cancel_waiting=lambda task_id: COMFY_QUEUE.cancel_waiting(task_id)))
+
+
 @app.get("/api/canvas-comfy-tasks/{task_id}")
 async def get_canvas_comfy_task(task_id: str, resume: bool = False):
     task = await asyncio.to_thread(CANVAS_TASK_JOURNAL.get, task_id)
@@ -13243,7 +13249,9 @@ async def get_canvas_comfy_task(task_id: str, resume: bool = False):
     if resuming:
         schedule_canvas_task(resume_canvas_comfy_task(task_id))
     # Internal backend/class metadata stays in the journal, not the polling response.
-    return public_comfy_task(task, resuming=resuming)
+    result = public_comfy_task(task, resuming=resuming)
+    result['queue'] = await asyncio.to_thread(COMFY_QUEUE.task_queue, task)
+    return result
 
 # --- 图像生成参数 schema（供客户端动态渲染参数表单，避免把参数写死在前端） ---
 IMAGE_PARAM_RATIOS = [
@@ -14229,12 +14237,17 @@ LEGACY_TEXT_CALLS = LegacyTextCalls(CANVAS_LLM_TASKS, DepartmentGovernance())
 
 from enterprise.canvas_task_dispatch_app import create_dispatch as _create_task_dispatch, dispatch_paused as _task_dispatch_paused
 from enterprise.config import JWT_SECRET as _task_dispatch_secret
+from enterprise.comfy_queue import ComfyQueue
+from enterprise.comfy_queue_api import create_internal_router as comfy_queue_internal_router
+COMFY_QUEUE = ComfyQueue(CANVAS_TASK_JOURNAL, PATH_ROOTS.STATE_ROOT, lambda: COMFYUI_INSTANCES,
+    lambda: [row['name'] for row in list_workflows(include_disabled=True)['workflows']])
+app.include_router(comfy_queue_internal_router(COMFY_QUEUE))
 CANVAS_TASK_DISPATCH = _create_task_dispatch(CANVAS_TASK_JOURNAL,
     {"online-image": OnlineImageRequest, "comfy": GenerateRequest, "video": CanvasVideoRequest, "llm": CanvasLLMTaskRequest},
     {"online-image": run_canvas_image_task, "comfy": run_canvas_comfy_task,
      "video": CANVAS_VIDEO_TASKS.run, "llm": CANVAS_LLM_TASKS.run},
     schedule_canvas_task, lambda: _task_dispatch_paused(PATH_ROOTS.STATE_ROOT),
-    secret=_task_dispatch_secret, provider=get_api_provider_exact, headers=api_headers,
+    secret=_task_dispatch_secret, provider=get_api_provider_exact, headers=api_headers, comfy_queue=COMFY_QUEUE,
     workflow=lambda name: get_workflow(name), backend=lambda name, override: workflow_backend(name, override),
     default_model=lambda kind, provider: preferred_chat_model(provider) if kind == "llm" else (provider.get("image_models") or [IMAGE_MODEL])[0])
 
@@ -14321,14 +14334,12 @@ async def delete_project(project_id: str):
                 continue
             path = os.path.join(CANVAS_DIR, filename)
             try:
-                with open(path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
+                data = read_json(path)
             except Exception:
                 continue
             if str(data.get("project") or "") == project_id:
                 data["project"] = DEFAULT_PROJECT_ID
-                with open(path, 'w', encoding='utf-8') as f:
-                    json.dump(data, f, ensure_ascii=False, indent=2)
+                atomic_write_json(path, data)
                 moved += 1
     return {"ok": True, "moved": moved}
 
@@ -14373,8 +14384,7 @@ async def update_canvas_meta(canvas_id: str, payload: CanvasMetaUpdate):
             canvas["board_x"] = float(payload.board_x)
         if payload.board_y is not None:
             canvas["board_y"] = float(payload.board_y)
-        with open(canvas_path(canvas["id"]), 'w', encoding='utf-8') as f:
-            json.dump(canvas, f, ensure_ascii=False, indent=2)
+        atomic_write_json(canvas_path(canvas["id"]), canvas)
         return {"canvas": canvas_record(canvas)}
 
 @app.get("/api/canvases/{canvas_id}")
@@ -15884,8 +15894,7 @@ async def delete_history(req: DeleteHistoryRequest):
         return {"success": False, "message": "History file not found"}
     try:
         with HISTORY_LOCK:
-            with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
-                history = json.load(f)
+            history = read_json(HISTORY_FILE)
             target_record = None
             new_history = []
             for item in history:
@@ -15901,8 +15910,7 @@ async def delete_history(req: DeleteHistoryRequest):
                 else:
                     new_history.append(item)
             if target_record:
-                with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
-                    json.dump(new_history, f, ensure_ascii=False, indent=4)
+                atomic_write_json(HISTORY_FILE, new_history, indent=4)
 
         if target_record:
             for img_url in target_record.get("images", []):
@@ -16323,12 +16331,12 @@ def prepare_comfy_workflow(req):
     if getattr(req, "workflow_values", None) is not None:
         config = getattr(req, "_workflow_config", None) or get_workflow(req.workflow_json)["config"]
         try:
-            workflow = apply_workflow_values(workflow, config, req.workflow_values)
+            workflow = apply_workflow_values(workflow, config, req.workflow_values, prompt=req.prompt)
             from enterprise.comfy_input_policy import authorize_workflow_media
             authorize_workflow_media(getattr(req, "_enterprise_user_id", ""), workflow, config, req.workflow_values)
         except (ValueError, TypeError) as exc:
             raise ComfyExecutionError(str(exc)) from exc
-        return workflow, seed
+        return workflow, workflow_seed(workflow, seed)
 
     for node_id, node_inputs in req.params.items():
         if req.workflow_json not in BUILTIN_WORKFLOWS:
@@ -16341,7 +16349,7 @@ def prepare_comfy_workflow(req):
                 workflow[node_id]["inputs"] = {}
             for input_name, value in node_inputs.items():
                 workflow[node_id]["inputs"][input_name] = value
-    return workflow, seed
+    return workflow, workflow_seed(workflow, seed)
 
 
 def archive_comfy_history(history_data, workflow, req, prompt_id, target_backend, task_id, seed):
@@ -16476,7 +16484,8 @@ def _execute_comfy_generation(req, journal_id=None):
     if journal_id:
         CANVAS_TASK_JOURNAL.record_comfy(journal_id, {"prompt_id": prompt_id, "phase": "queued"})
     history = client.wait(prompt_id, timeout=COMFYUI_HISTORY_TIMEOUT,
-                          progress=lambda phase: CANVAS_TASK_JOURNAL.record_comfy(journal_id, {"phase": phase}) if journal_id else None)
+                          progress=lambda phase: CANVAS_TASK_JOURNAL.record_comfy(journal_id, {"phase": phase}) if journal_id else None,
+                          cancelled=lambda: bool(journal_id and ((CANVAS_TASK_JOURNAL.get(journal_id) or {}).get('cancellation') or {}).get('acknowledged')))
     return archive_comfy_history(history, workflow, req, prompt_id, backend, journal_id or prompt_id, seed)
 
 
@@ -16494,14 +16503,18 @@ def execute_comfy_generation(req, journal_id=None):
 
 
 @app.post("/api/generate")
-def generate(req: GenerateRequest, x_enterprise_user_id: Optional[str] = Header(default=None)):
-    req._enterprise_user_id = x_enterprise_user_id if isinstance(x_enterprise_user_id, str) else ""
-    try:
-        return execute_comfy_generation(req)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        return {"images": [], "error": str(exc)}
+async def generate(req: GenerateRequest, x_enterprise_user_id: Optional[str] = Header(default=None)):
+    # Legacy pages keep their result contract but join the same durable fair queue.
+    accepted = await create_canvas_comfy_task(req, x_enterprise_user_id)
+    while True:
+        task = await get_canvas_comfy_task(accepted['task_id'])
+        if task['status'] == 'succeeded':
+            return task['result']
+        if task['status'] in {'failed', 'cancelled'}:
+            if task.get('status_code'):
+                raise HTTPException(task['status_code'], task.get('error') or 'ComfyUI 生成失败')
+            return {'images': [], 'error': task.get('error') or 'ComfyUI 任务已取消', 'task_id': task['id']}
+        await asyncio.sleep(1)
 
 # --- ComfyUI 工作流管理 ---
 
@@ -16523,6 +16536,7 @@ class WorkflowField(BaseModel):
     options: List[str] = []
     random_enabled: bool = False
     role: str = ""
+    value_type: str = ""
 
 class WorkflowImageGroup(BaseModel):
     id: str
@@ -17054,7 +17068,7 @@ def list_workflows(include_disabled: bool = False):
     return {"workflows": items}
 
 @app.get("/api/workflows/{name:path}")
-def get_workflow(name: str, include_definitions: bool = False):
+def get_workflow(name: str, include_definitions: bool = False, backend: str = ""):
     if not WORKFLOW_NAME_RE.match(name):
         raise HTTPException(status_code=400, detail="Invalid workflow name")
     workflow_path = workflow_path_from_name(name)
@@ -17078,7 +17092,7 @@ def get_workflow(name: str, include_definitions: bool = False):
                              for nid, node in workflow.items() if isinstance(node, dict) for key in node.get("inputs", {})}
     if include_definitions:
         try:
-            response = requests.get(comfy_endpoint(workflow_backend(name), "/object_info"), timeout=(5, 15))
+            response = requests.get(comfy_endpoint(workflow_backend(name, backend), "/object_info"), timeout=(5, 15))
             response.raise_for_status()
             definitions = response.json()
             classes = {node.get("class_type") for node in workflow.values()}
@@ -17152,32 +17166,13 @@ async def run_workflow(name: str, payload: WorkflowRunRequest, x_enterprise_user
         raise HTTPException(status_code=404, detail="Workflow not found")
     if not get_workflow(name)["config"]["enabled"]:
         raise HTTPException(409, "工作流已停用，请在工作流设置中启用或选择其他工作流")
-    # 根据 config 的字段把值映射成 params 节点覆盖
+    # Keep legacy media metadata; the shared mapper applies types exactly once.
     params: Dict[str, Dict[str, Any]] = {}
     for field in payload.config.fields:
         if not field.node or not field.input:
             continue
         if field.id in payload.fields:
             value = payload.fields[field.id]
-            # 类型转换
-            if field.type in ("number", "slider"):
-                try:
-                    value = float(value) if (field.step and field.step < 1) else int(float(value))
-                except Exception:
-                    pass
-            elif field.type == "boolean":
-                value = bool(value)
-            elif field.type == "dropdown":
-                # 下拉值如果看起来是数字（如 "1024" / "2048" / "0.8"），自动转成 int/float
-                if isinstance(value, str):
-                    s = value.strip()
-                    try:
-                        if s and ('.' in s or 'e' in s.lower()):
-                            value = float(s)
-                        elif s and (s.lstrip('-').isdigit()):
-                            value = int(s)
-                    except (ValueError, TypeError):
-                        pass
             params.setdefault(field.node, {})[field.input] = value
     req = GenerateRequest(
         prompt="",
@@ -17192,7 +17187,7 @@ async def run_workflow(name: str, payload: WorkflowRunRequest, x_enterprise_user
     req._workflow_config = payload.config.dict()
     if payload.async_task:
         return await create_canvas_comfy_task(req, x_enterprise_user_id)
-    return await asyncio.to_thread(generate, req, x_enterprise_user_id)
+    return await generate(req, x_enterprise_user_id)
 
 if __name__ == "__main__":
     import uvicorn

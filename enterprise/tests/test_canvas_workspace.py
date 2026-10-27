@@ -143,7 +143,7 @@ def test_scopes_tree_members_archive_and_owner_change(business,tmp_path):
     assert 'video' not in {c['id'] for c in workspace.listing(p['design'],scope='department')['canvases']}
 
 
-def test_http_rejects_forged_owner_and_old_schema_stays_inactive(business,tmp_path):
+def test_retired_workspace_http_is_absent_before_and_after_migration(business,tmp_path):
     service,p,design,_,path=business
     app=FastAPI()
     @app.middleware('http')
@@ -151,18 +151,17 @@ def test_http_rejects_forged_owner_and_old_schema_stays_inactive(business,tmp_pa
         request.state.user=p.get(request.headers.get('x-fixture-user'));return await next(request)
     app.include_router(create_router(service),prefix='/enterprise')
     with TestClient(app) as client:
-        assert client.get('/enterprise/api/business/workspace/context').status_code==401
         before=inspect_schema_metadata(path)
-        assert not client.get('/enterprise/api/business/workspace/context',headers={'x-fixture-user':'employee'}).json()['enabled']
+        assert client.get('/enterprise/api/business/workspace/context').status_code==404
         assert inspect_schema_metadata(path)==before
         migrate_workspace(path,tmp_path)
-        assert client.get('/enterprise/api/business/workspace/context',headers={'x-fixture-user':'employee'}).json()['enabled']
-        response=client.put('/enterprise/api/business/workspace/archive',headers={'x-fixture-user':'employee'},
-            json={'canvas_ids':['foreign'],'archived':True,'owner_id':'admin'})
-        assert response.status_code==400
+        for route in ['/workspace/context','/workspace','/projects','/tasks','/costs','/budget-alerts']:
+            assert client.get('/enterprise/api/business'+route,headers={'x-fixture-user':'admin'}).status_code==404
+        assert client.put('/enterprise/api/business/workspace/archive',headers={'x-fixture-user':'employee'},
+            json={'canvas_ids':['foreign'],'archived':True}).status_code==404
 
 
-def test_original_routes_enforce_project_write_after_demotion(business,tmp_path,monkeypatch):
+def test_original_owner_routes_ignore_retired_business_project_restrictions(business,tmp_path,monkeypatch):
     from types import SimpleNamespace
     from enterprise import db, interceptors, canvas_workspace
     service,p,design,_,path=business;migrate_workspace(path,tmp_path)
@@ -184,19 +183,23 @@ def test_original_routes_enforce_project_write_after_demotion(business,tmp_path,
                        ('api/canvases/video/meta',{'project':''}),
                        ('api/canvases/video/meta',{'project':' \t '})]:
         denial=interceptors._pre_process_sync(route,'POST',p['employee'],body=json.dumps(body).encode())
-        assert denial.status_code==403
+        assert denial is None
     # Editing the original canvas without changing its folder remains an owner operation.
     assert interceptors._pre_process_sync('api/canvases/video/meta','POST',p['employee'],
         body=json.dumps({'project':'style-a','title':'本人仍可编辑'}).encode()) is None
     assert interceptors._pre_process_sync('api/canvases/video/meta','POST',p['employee'],
         body=json.dumps({'project':None,'title':'保持原目录'}).encode()) is None
-    # Original create always assigns the current user, so reject an admin's mismatching target.
+    # Original admin folder access remains available without business-project rules.
     admin={**p['admin'],'is_admin':True}
     denial=interceptors._pre_process_sync('api/canvases','POST',admin,body=b'{"project":"down"}')
-    assert denial.status_code==403 and b'WORKSPACE_CREATE_IN_OWN_FOLDER' in denial.body
+    assert denial is None
+    # Removing project policy does not permit another employee to edit private canvases.
+    denial=interceptors._pre_process_sync('api/canvases/ops-private/meta','POST',p['employee'],body=b'{}')
+    assert denial.status_code==404
 
 
 def test_metadata_move_reads_latest_canvas_inside_existing_lock(tmp_path):
+    from enterprise.local_json import atomic_write_json
     import ast
     import asyncio
     import threading
@@ -216,7 +219,8 @@ def test_metadata_move_reads_latest_canvas_inside_existing_lock(tmp_path):
         def __exit__(self,*args):raw_lock.release()
     namespace={'CanvasMetaUpdate':object,'CANVAS_LOCK':ExistingLock(),
         'load_canvas':lambda _:json.loads(path.read_text()),'canvas_path':lambda _:path,
-        'json':json,'canvas_record':lambda value:value}
+        'json':json,'canvas_record':lambda value:value,
+        'atomic_write_json':atomic_write_json}
     exec(compile(module,str(source),'exec'),namespace)
     payload=SimpleNamespace(title=None,icon=None,owner=None,color=None,pinned=None,project='new',board_x=None,board_y=None)
     with ThreadPoolExecutor(max_workers=1) as pool:

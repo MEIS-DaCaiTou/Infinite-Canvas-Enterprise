@@ -1,5 +1,23 @@
 # 前端、API 与 WebSocket
 
+2026-10-26本地队列增量：管理员GET/PUT /enterprise/api/admin/comfy-queue配置算力分组/并发、个人额度和逐工作流等待；GET /enterprise/api/me/comfy-queue只返回本人用量，内部调度由原Upstream执行。经典画布按钮为加入队列，OUTPUT区分platform_queued与后端queued，右键本地取消等待不调用远端。输出详情复用原浮层，后续放大拒绝时保留前一步结果及任务ID。原本地工具及智能画布服务端同样共用限额；其他供应商保持原调度。仅本地未提交，根入口人工验收优先。
+
+2026-10-25 ComfyUI长任务：public_comfy_task复用原回执phase弥合本地超时→续查调度接管窗口，已受理且仍可跟踪的任务不对外返回终态失败或旧500字段；人工暂停及明确执行失败保留原处理。CanvasComfyRecovery只查询原backend/prompt_id，未新增POST或恢复状态表。经典画布runComfyNode的忙状态覆盖整个await，finally才解除，避免2秒后重复点击；生成结果及来源仍走原链路。
+
+2026-10-25经典画布Comfy素材输入：renderComfyImages委托原renderImageInputList呈现缩略图、序号及同一拖拽处理；refreshComfyInputViews按runtimeFields识别图片组、保持连接刷新时的媒体预览。排序仍保存gen.inputs、运行仍由orderedSources→canvasValues构造请求；reorderInput只刷新当前节点，不新增数据模型或重新生成。对应实际交互与请求顺序检查纳入test_comfy_io.py调用的test_comfy_input_order.js。
+
+2026-10-25自定义ComfyUI指令映射：`comfy-workflow-fields.js`在上传前检查连线提示词的输入映射，明确role=prompt的多个字段接收同一创作指令；未分类旧次要文本保持配置。服务端`enterprise/providers/comfy_workflow.py`依据可信配置写入创作字段，缺少映射时报错，保留系统/负面提示词及分支开关。main.py只向原领域函数传递prompt，不增加提交或重试分支。开发副本普通/增强指令通过原设置页配置，未改原工作流图；出图效果待人工实测。
+
+2026-10-25设置反馈边界：企业注入账号栏由`enterprise-shell-ui.js/css`负责文字及配色，后台词表`i18n/admin.js`复用既有i18n-core及studio-lang-change/storage事件，动态数量/标题不附着初始占位翻译。project_homepage复用原feature flags和审计入口，仅允许全局设置；网关注入canOpenProject控制项目主页按钮，关闭时管理员也不绕过，不改变系统更新接口。ComfyUI定义刷新仍使用原工作流GET入口并通过workflow_backend校验所选后端，选项编辑仅作用于字段配置及对应预览select；`comfy-preview-links.js`只维护测试画布实际端口的SVG曲线和尺寸监听，不涉及生成、保存或供应商适配。
+
+2026-10-25渠道密钥平台选择：`department-credentials.js`复用原GET /api/config平台目录，仅保留id/name/enabled/managed_source_supported用于呈现；新建仍向原业务来源接口提交provider_id，不新增路由或自建供应商配置。public_provider能力标记复用当前任务受理的is_zhenzhen判定，非管理员脱敏继续过滤地址和密钥，不过滤能力布尔值；该标记不授予调用权限。当前非贞贞平台不宣称渠道密钥调用已接通。
+
+2026-10-25共享下拉呈现：17个HTML入口显式载入`studio-select.js/css`，事件委托接管现有单选select的弹层，原select仍是表单值与业务事件的来源；不为每个动态节点绑定监听或增加全树观察器。纯定位函数处理视口边缘、有限高度及展开方向，原生popover顶层避免祖先缩放/overflow影响。`StudioDropdowns.openPanel/closePanel`供智能画布既有参数面板及聊天模型/尺寸面板复用，保留原业务按钮与回调，不复制模型、任务或供应商规则。当前仍为本地人工预览，未提交/发布。
+
+2026-10-24成员后台本地预览：`admin-members.css`只负责后台样式；`admin-navigation.js`组织原管理分组，`admin-members.js`负责列表/详情选择与筛选呈现，通过回调复用admin.html原账号操作和department-members组织服务，不直接增加业务API。`admin-embedded-pages.js`只承载个人中心dialog与日志内容区，复用原profile/logs页面和认证接口；`admin-embedded-mode.js`及`admin-embedded.css`仅在embedded=admin时启用内嵌外观。组织/凭据服务、任务身份及安装模块不依赖这些呈现组件。当前未提交和发布，效果待负责人确认。
+
+2026-10-24本地收缩：无限画布原目录直接加载canvas-list.js；workspace/project-results/shared-canvas/call-source-picker/budget-alerts的界面与脚本退出。department_api只保留部门、成员、来源授权/轮换及精简管理context；department-credentials.js使用原后台组件，不加载原business工作台。原两类画布回到既有读取、所有权和保存接口，媒体复用与任务身份模块保留。以下旧工作台接口/脚本记述仅为历史实现，不代表当前本地仍可访问；尚未提交/发布，状态见[CURRENT](../CURRENT_PROJECT_STATUS.md)。
+
 2026-10-24导航候选：canvas-list在index的frame-canvas中运行，成员管理链接进入顶层/enterprise/admin；后台“返回画布”也指定_top回根首页。两处使用浏览器原生链接target，不让根首页进入子frame；Gateway原守卫仅在子frame隐藏重复账号栏，继续执行权限治理，不改变经典/智能画布编辑或目录在原frame中的导航。两级JS缓存版本同步更新，连续往返及项目/两类画布的验证边界见[CURRENT](../CURRENT_PROJECT_STATUS.md)。
 
 2026-10-18 LLM 任务续包（开发候选）：`canvas-llm-tasks.js` 共用提交前保存 ticket、单次 POST、刷新后 GET 原任务和导航守卫。经典 LLM 节点/聊天与智能画布 Prompt 的原操作不变；节点 `llmTask` 保留平台 ID/状态，保存重开后回填输出正文或聊天记录。任务中心增加「LLM 文本」筛选，复用原正文弹窗和 Prompt 复用入口；有待执行回执的运行按钮改为「查询原任务」，未知时「新建运行」提示可能重复费用，只有用户主动新建运行才再提交。正常轮询状态不变时不重复安排画布保存。保留旧文本直到新结果到达，不将结果写入已经切换的画布。当前状态/模拟与真实调用限制见 [CURRENT](../CURRENT_PROJECT_STATUS.md)。
@@ -194,3 +212,7 @@ static/js/comfy-workflow-session.js 提供共享输入、上传互斥、运行�
 ### 2026-10-21 经典画布性能候选
 
 `codex/issue-canvas-performance-10-4`（Base main `0d0078f`，未合并）新增 `static/js/canvas-media-retention.js`。`CanvasMediaRetention.transplant` 在同画布、同节点内按结果身份/媒体 URL 及重复槽区分播放器；现代浏览器使用原子移动，旧路径保留已有逐元素播放状态恢复，不再使用全局 URL 状态覆盖多个卡片。`CanvasRunPreparation` 按画布与节点 ID 临时标记尺寸与来源保存阶段，并沿用远端同步延后机制，不持久写入任务或画布、不限制受理后的既有并发。经典 `runGenerator` 保存一次来源后传给该批子任务，`createCanvasImageTask` 提交前仍核对当前画布/节点；冲突和失败继续由既有保存/任务契约处理。范围与准确状态见 [CURRENT](../CURRENT_PROJECT_STATUS.md) 和 [Issue #188](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/188)。
+
+### 本地预览补充：ComfyUI逐笔取消（2026-10-25）
+
+`enterprise/canvas_comfy_control.py`提供本人画布任务列表与取消编排，Gateway仅转发可信登录身份；原后端和prompt_id由既有journal读取。`providers/comfyui.py`负责单job取消协议及execution_interrupted解释，不使用全局中断回退。`static/js/canvas-comfy-tasks.js`只负责OUTPUT卡片状态、悬停详情与右键逐笔操作，复用StudioDropdowns定位；画布主脚本连接已有占位卡和结果呈现，原任务ID与运行快照随结果保留；完成/取消继续走原journal、CanvasComfyRecovery与AcceptedTaskRecovery，无另建任务系统或Schema变更。代码目前仅在manual-acceptance工作区，未进入main。

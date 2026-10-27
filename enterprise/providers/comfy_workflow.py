@@ -1,5 +1,6 @@
 """Comfy workflow input groups and result selection; no IO or platform dependencies."""
 from copy import deepcopy
+import math
 import re
 
 
@@ -10,6 +11,128 @@ IMAGE_GROUPS = {
 }
 TEXT_KEYS = ("text", "texts", "prompt", "prompts", "string", "strings", "caption", "captions")
 TEXT_EXTENSIONS = (".txt", ".md", ".csv", ".json", ".srt", ".vtt")
+
+
+def workflow_link(graph, value):
+    return (isinstance(value, list) and len(value) == 2 and type(value[1]) is int
+            and str(value[0]) in graph)
+
+
+def field_activity(graph, fields):
+    """Trace wiring, resolving only the verified core lazy switch contract.
+
+    Unknown custom selectors keep both paths possible. Never guess their meaning
+    or rewrite a user's workflow to force a branch on.
+    """
+    def literal(value, seen=()):
+        if not workflow_link(graph, value):
+            return value
+        nid = str(value[0])
+        if nid in seen or value[1] != 0:
+            return None
+        node = graph[nid]
+        if node.get("class_type") in {"PrimitiveBoolean", "PrimitiveInt", "PrimitiveFloat"}:
+            return literal(node.get("inputs", {}).get("value"), (*seen, nid))
+        return None
+
+    consumed, blocked, parents = set(), {}, {}
+    for nid, node in graph.items():
+        inputs = node.get("inputs", {})
+        choice = literal(inputs.get("switch")) if node.get("class_type") == "ComfySwitchNode" else None
+        if type(choice) is bool:
+            blocked[(nid, "on_false" if choice else "on_true")] = {
+                "node": nid, "input": "switch", "value": not choice,
+            }
+        for key, value in inputs.items():
+            if workflow_link(graph, value):
+                source = str(value[0])
+                consumed.add(source)
+                parents.setdefault(source, []).append((nid, key))
+    roots = set(graph) - consumed
+    active, pending = set(), list(roots or graph)
+    while pending:
+        nid = pending.pop()
+        if nid in active:
+            continue
+        active.add(nid)
+        pending.extend(str(v[0]) for key, v in graph[nid].get("inputs", {}).items()
+                       if (nid, key) not in blocked and workflow_link(graph, v))
+
+    def blocking_gate(nid, seen):
+        if nid in seen:
+            return None
+        seen.add(nid)
+        for target, key in parents.get(nid, []):
+            gate = blocked.get((target, key)) or blocking_gate(target, seen)
+            if gate:
+                return gate
+        return None
+
+    return {f["id"]: {"active": str(f.get("node", "")) in active
+                       and (str(f.get("node", "")), f.get("input")) not in blocked,
+                       "gate": blocked.get((str(f.get("node", "")), f.get("input")))
+                       or blocking_gate(str(f.get("node", "")), set())}
+            for f in fields}
+
+
+def coerce_field_value(field, value, original=None):
+    """Keep Comfy primitive types; never turn 'false' on or a model ID into a number."""
+    if value is None:
+        value = field.get("default")
+    kind = field.get("type")
+    numeric = kind in {"number", "slider"}
+    target = field.get("value_type")
+    if kind == "dropdown":
+        target = ("boolean" if type(original) is bool else "integer" if type(original) is int
+                  else "number" if type(original) is float else "string" if isinstance(original, str) else target)
+        if field.get("options"):
+            def token(v):
+                if target == "boolean":
+                    return str(v).lower()
+                if target in {"integer", "number"}:
+                    try:
+                        return float(v)
+                    except (ValueError, TypeError):
+                        return v
+                return str(v)
+            if token(value) not in [token(v) for v in field["options"]]:
+                raise ValueError(f"{field.get('name') or field.get('input')}：请选择已配置的选项")
+    if kind == "boolean" or target == "boolean":
+        if type(value) is bool:
+            return value
+        if value in (0, 1):
+            return bool(value)
+        if isinstance(value, str) and value.lower() in {"true", "false", "0", "1"}:
+            return value.lower() in {"true", "1"}
+        raise ValueError(f"{field.get('name') or field.get('input')}：需要开启或关闭")
+    if numeric or target in {"integer", "number"}:
+        integer = target == "integer" or (not target and type(original) is int
+                  and kind != "slider" and not (field.get("step") and field["step"] < 1))
+        try:
+            if type(value) is bool or value is None or value == "":
+                raise ValueError()
+            number = int(value) if integer and re.fullmatch(r"[+-]?\d+", str(value)) else float(value)
+            if not math.isfinite(number) or (integer and number != int(number)):
+                raise ValueError()
+            if integer:
+                number = int(number)
+            if field.get("min") is not None and number < field["min"]:
+                raise ValueError()
+            if field.get("max") is not None and number > field["max"]:
+                raise ValueError()
+            return number
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError(f"{field.get('name') or field.get('input')}：数值无效或超出配置范围") from exc
+    return str(value) if kind == "dropdown" and target == "string" else value
+
+
+def workflow_seed(graph, fallback):
+    fields = [{"id": f"{nid}.{key}", "node": nid, "input": key}
+              for nid, node in graph.items() for key, value in node.get("inputs", {}).items()
+              if (key == "seed" or key == "noise_seed" or key.endswith(".seed")) and type(value) is int]
+    usage = field_activity(graph, fields)
+    fields.sort(key=lambda f: 0 if "Sampler" in graph[f["node"]].get("class_type", "") else 1)
+    return next((graph[f["node"]]["inputs"][f["input"]] for f in fields if usage[f["id"]]["active"]), fallback)
 
 
 def image_group_candidates(workflow):
@@ -71,31 +194,53 @@ def validate_image_groups(workflow, groups):
 
 
 def field_role(workflow, field):
-    if field.get("role"):
-        return field["role"]
     key = str(field.get("input", "")).lower()
     name = str(field.get("name", "")).lower()
-    if key == "filename_prefix" or field.get("type") in {"image", "video", "audio", "number", "slider", "boolean", "dropdown"}:
+    raw = workflow.get(str(field.get("node", "")), {}).get("inputs", {}).get(field.get("input"))
+    if key == "filename_prefix" or type(raw) in {bool, int, float} or field.get("type") in {"image", "video", "audio", "number", "slider", "boolean", "dropdown"}:
         return "parameter"
+    if field.get("role"):
+        return field["role"]
     if "negative" in key or "negative" in name or "负向" in name or "负面" in name:
         return "negative"
     if "system" in key or "system" in name or "系统" in name:
         return "system"
+    if key in {"prompt", "positive_prompt", "text"}:
+        return "prompt"
+    if key not in {"value", "string", "on_false", "on_true"}:
+        return "parameter"
     node_id = str(field.get("node", ""))
-    destinations = [key.lower() for node in workflow.values() if isinstance(node, dict) for key, link in node.get("inputs", {}).items()
-                    if isinstance(link, list) and len(link) == 2 and str(link[0]) == node_id and link[1] == 0]
+    destinations, pending, seen = [], [node_id], set()
+    if key in {"on_false", "on_true"} and workflow.get(node_id, {}).get("class_type") == "ComfySwitchNode":
+        pending.append(node_id)
+    while pending:
+        source = pending.pop()
+        if source in seen:
+            continue
+        seen.add(source)
+        for target, node in workflow.items():
+            for dest, link in node.get("inputs", {}).items():
+                if workflow_link(workflow, link) and str(link[0]) == source and link[1] == 0:
+                    destinations.append(dest.lower())
+                    if node.get("class_type") in {"PreviewAny", "Reroute", "ComfySwitchNode"}:
+                        pending.append(target)
     if "system_prompt" in destinations:
         return "system"
-    if "negative" in destinations:
+    if any(dest in {"negative", "negative_prompt"} for dest in destinations):
         return "negative"
     if any(key in {"prompt", "positive_prompt", "text", "positive"} for key in destinations):
         return "prompt"
     return "prompt" if key in {"prompt", "positive_prompt", "text"} else "parameter"
 
 
-def apply_workflow_values(workflow, config, values):
+def apply_workflow_values(workflow, config, values, *, prompt=""):
     """Construct one request graph, retaining the original loaders/ordering where possible."""
     graph = deepcopy(workflow)
+    if prompt:
+        prompt_fields = [field for field in config.get("fields", []) if field_role(workflow, field) == "prompt"]
+        if not prompt_fields:
+            raise ValueError("此工作流未配置创作提示词映射；请在工作流设置中暴露实际指令字段，并将输入用途设为“创作提示词”。")
+        values = {**values, **{field["id"]: prompt for field in prompt_fields}}
     groups = config.get("image_groups", [])
     candidates = validate_image_groups(graph, groups)
     grouped = {source for group in groups for source in group["source_nodes"]}
@@ -107,17 +252,23 @@ def apply_workflow_values(workflow, config, values):
             continue
         if node_id not in graph or key not in graph[node_id].get("inputs", {}):
             raise ValueError(f"工作流参数映射已失效：#{node_id}.{key}")
+        original = graph[node_id]["inputs"][key]
+        if workflow_link(graph, original):
+            raise ValueError(f"参数 #{node_id}.{key} 已改为节点连线，请重新选择上游的实际输入字段")
         value = values.get(field["id"], field.get("default"))
-        if field.get("type") in {"number", "slider"}:
-            value = float(value) if field.get("step") and field["step"] < 1 else int(float(value))
-        elif field.get("type") == "boolean":
-            value = bool(value)
-        elif field.get("type") == "dropdown" and isinstance(value, str):
-            try:
-                value = float(value) if any(c in value.lower() for c in ".e") else int(value)
-            except ValueError:
-                pass
-        graph[node_id]["inputs"][key] = value
+        graph[node_id]["inputs"][key] = coerce_field_value(field, value, original)
+    prompt_fields = [f for f in config.get("fields", []) if field_role(workflow, f) == "prompt"
+                     and values.get(f["id"], f.get("default"))]
+    usage = field_activity(graph, prompt_fields)
+    active_prompts = {str(values.get(f["id"], f.get("default"))) for f in prompt_fields if usage[f["id"]]["active"]}
+    ignored = [f for f in prompt_fields if not usage[f["id"]]["active"]
+               and values.get(f["id"], f.get("default")) != f.get("default")
+               and str(values.get(f["id"])) not in active_prompts]
+    if prompt_fields and (not active_prompts or ignored):
+        field = (ignored or prompt_fields)[0]
+        gate = usage[field["id"]]["gate"]
+        hint = f"；请将 #{gate['node']}.{gate['input']} 设为 {'开启' if gate['value'] else '关闭'}，或映射当前分支的提示词" if gate else "；请映射连接到输出的提示词输入"
+        raise ValueError(f"创作提示词未进入当前执行分支：{field.get('name') or field['input']}{hint}")
     for group_index, group in enumerate(groups):
         names = values.get(group["id"], [])
         if (not isinstance(names, list) or not group["min_images"] <= len(names) <= group["max_images"]

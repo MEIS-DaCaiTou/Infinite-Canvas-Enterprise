@@ -19,7 +19,7 @@
     <script src="/static/vendor/js/tailwindcss-cdn.js?v=2026.07.5.1782696751"></script>
     <script src="/static/vendor/js/lucide.js?v=2026.07.5.1782696749"></script>
     <script src="/static/js/theme.js?v=2026.07.5.1783117645"></script>
-    <script src="/static/js/i18n.js?v=2026.07.5.1783116068"></script>
+    <script src="/static/js/i18n.js?v=20261025.1"></script>
     <link rel="stylesheet" href="/static/css/theme.css?v=2026.07.5.1782696682">
     <style>
         @import url('/static/vendor/css/fonts.css?v=2026.07.5.1782696732');
@@ -459,8 +459,8 @@
             background:transparent !important;
         }
     </style>
-    <link rel="stylesheet" href="/static/css/call-source-picker.css?v=20261021.1">
-    <script src="/static/js/call-source-picker.js?v=20261020.1"></script>
+  <link rel="stylesheet" href="/static/css/studio-select.css?v=20261025.2">
+  <script src="/static/js/studio-select.js?v=20261025.2" defer></script>
 </head>
 <body>
     <div class="chat-shell">
@@ -504,7 +504,6 @@
 
             <div class="composer-wrap">
                 <div class="composer">
-                    <div id="legacyCallSources"></div>
                     <div id="composerBody" class="composer-body">
                         <textarea id="messageInput" rows="4" placeholder="输入消息，Enter 发送..." data-i18n-placeholder="chat.inputPlaceholder" oninput="autoGrow(this)" onkeydown="handleKey(event)"></textarea>
                         <div id="refStrip" class="ref-strip"></div>
@@ -663,9 +662,6 @@
         let conversations = [];
         let currentConversation = null;
         let mode = 'agent';
-        let callSourceState={},callSourcePicker;
-        const callSelection=id=>CanvasCallSources.selection(callSourceState,id);
-        function refreshCallSources(){callSourcePicker?.refresh();}
         let provider = savedChatSettings.provider || 'comfly';
         let msModel = savedChatSettings.msModel || '';
         let activeChatModel = savedChatSettings.activeChatModel || '';
@@ -908,35 +904,14 @@
                 positionModelPicker();
                 lucide.createIcons();
             } else if(pop && modelPickerHome && pop.parentElement === document.body) {
+                StudioDropdowns.closePanel(pop);
                 modelPickerHome.appendChild(pop);
             }
         }
 
         function positionModelPicker(){
-            const btn = document.getElementById('modelPickerBtn');
-            const pop = document.getElementById('modelPickerPopover');
-            if(!btn || !pop) return;
-            const rect = btn.getBoundingClientRect();
-            const viewportW = (window.visualViewport?.width || window.innerWidth);
-            const viewportH = (window.visualViewport?.height || window.innerHeight);
-            const width = Math.min(380, Math.max(300, viewportW - 32));
-            const estimatedHeight = Math.min(390, Math.max(260, viewportH * .62));
-            const availableAbove = Math.max(180, rect.top - 14);
-            const maxHeight = Math.min(390, availableAbove, viewportH - 32);
-            const left = Math.min(Math.max(16, rect.left), Math.max(16, viewportW - width - 16));
-            const top = Math.max(12, rect.top - maxHeight - 10);
-            pop.style.setProperty('--model-picker-left', `${Math.round(left)}px`);
-            pop.style.setProperty('--model-picker-top', `${Math.round(Math.max(16, top))}px`);
-            pop.style.setProperty('--model-picker-width', `${Math.round(width)}px`);
-            pop.style.setProperty('--model-picker-max-height', `${Math.round(maxHeight)}px`);
-            requestAnimationFrame(() => {
-                const box = pop.getBoundingClientRect();
-                const nextLeft = box.right > viewportW - 12 ? (left - (box.right - viewportW + 12)) : left;
-                const overlap = box.bottom - (rect.top - 8);
-                const nextTop = overlap > 0 ? (top - overlap - 2) : top;
-                pop.style.setProperty('--model-picker-left', `${Math.round(Math.max(12, nextLeft))}px`);
-                pop.style.setProperty('--model-picker-top', `${Math.round(Math.max(12, nextTop))}px`);
-            });
+            StudioDropdowns.openPanel(document.getElementById('modelPickerPopover'),
+                document.getElementById('modelPickerBtn'), () => toggleModelPicker(false));
         }
         function toggleResolutionPicker(force){
             const picker = document.getElementById('resolutionPicker');
@@ -955,48 +930,14 @@
                 positionResolutionPicker();
                 lucide.createIcons();
             } else if(pop && resolutionPickerHome && pop.parentElement === document.body){
+                StudioDropdowns.closePanel(pop);
                 resolutionPickerHome.appendChild(pop);
             }
         }
 
         function positionResolutionPicker(){
-            const btn = document.getElementById('resolutionPickerBtn');
-            const pop = document.getElementById('resolutionPickerPopover');
-            if(!btn || !pop) return;
-            const rect = btn.getBoundingClientRect();
-            const viewportW = (window.visualViewport?.width || window.innerWidth);
-            const viewportH = (window.visualViewport?.height || window.innerHeight);
-            const desiredWidth = chatResolution === 'auto' ? 300 : (chatResolution === 'custom' ? 340 : 420);
-            const width = Math.min(desiredWidth, Math.max(260, viewportW - 32));
-            const safeX = 12;
-            const safeTop = 12;
-            const safeBottom = 18;
-            const gap = 10;
-            const left = Math.min(Math.max(safeX, rect.left + rect.width / 2 - width / 2), Math.max(safeX, viewportW - width - safeX));
-            const availableAbove = Math.max(96, rect.top - safeTop - gap);
-            const initialHeight = Math.min(chatResolution === 'auto' ? 220 : 390, availableAbove, viewportH - safeTop - safeBottom);
-            const initialTop = Math.max(safeTop, rect.top - initialHeight - gap);
-            pop.style.setProperty('--resolution-picker-left', `${Math.round(left)}px`);
-            pop.style.setProperty('--resolution-picker-top', `${Math.round(initialTop)}px`);
-            pop.style.setProperty('--resolution-picker-width', `${Math.round(width)}px`);
-            pop.style.setProperty('--resolution-picker-max-height', `${Math.round(initialHeight)}px`);
-            pop.style.setProperty('--resolution-picker-list-height', '320px');
-            requestAnimationFrame(() => {
-                const naturalHeight = Math.ceil(pop.scrollHeight || pop.getBoundingClientRect().height || 160);
-                const maxHeight = Math.max(96, Math.min(naturalHeight, availableAbove, viewportH - safeTop - safeBottom));
-                const headHeight = Math.ceil(pop.querySelector('.resolution-picker-head')?.getBoundingClientRect().height || 50);
-                const listHeight = Math.max(58, maxHeight - headHeight - 20);
-                const top = Math.max(safeTop, rect.top - maxHeight - gap);
-                pop.style.setProperty('--resolution-picker-max-height', `${Math.round(maxHeight)}px`);
-                pop.style.setProperty('--resolution-picker-list-height', `${Math.round(listHeight)}px`);
-                pop.style.setProperty('--resolution-picker-top', `${Math.round(top)}px`);
-                const box = pop.getBoundingClientRect();
-                const nextLeft = box.right > viewportW - 12 ? (left - (box.right - viewportW + 12)) : left;
-                const overlap = box.bottom - (rect.top - 8);
-                const nextTop = overlap > 0 ? (top - overlap - 2) : top;
-                pop.style.setProperty('--resolution-picker-left', `${Math.round(Math.max(12, nextLeft))}px`);
-                pop.style.setProperty('--resolution-picker-top', `${Math.round(Math.max(12, nextTop))}px`);
-            });
+            StudioDropdowns.openPanel(document.getElementById('resolutionPickerPopover'),
+                document.getElementById('resolutionPickerBtn'), () => toggleResolutionPicker(false));
         }
 
         function setModelPickerScope(kind){
@@ -1144,7 +1085,6 @@
         }
 
         function updateModelLabel(){
-            refreshCallSources();
             let label = '';
             if (mode === 'image') {
                 label = activeImageModel || config.image_model || 'Image';
@@ -1521,8 +1461,6 @@
                         method:'POST',
                         headers:headers(),
                         body:JSON.stringify({
-                            ...callSelection(mode==='image'?activeImageProvider:provider),
-                            image_call_source_id:callSourceState.callSources?.[activeImageProvider] || null,
                             conversation_id: currentConversation.id || '',
                             message,
                             system_prompt: currentSystemPrompt(),
@@ -1544,8 +1482,6 @@
                         method:'POST',
                         headers:headers(),
                         body:JSON.stringify({
-                            ...callSelection(mode==='image'?activeImageProvider:provider),
-                            image_call_source_id:callSourceState.callSources?.[activeImageProvider] || null,
                             conversation_id: currentConversation.id || '',
                             message,
                             system_prompt: currentSystemPrompt(),
@@ -1569,8 +1505,6 @@
                         method:'POST',
                         headers:headers(),
                         body:JSON.stringify({
-                            ...callSelection(mode==='image'?activeImageProvider:provider),
-                            image_call_source_id:callSourceState.callSources?.[activeImageProvider] || null,
                             conversation_id: currentConversation.id || '',
                             message,
                             system_prompt: currentSystemPrompt(),
@@ -1605,9 +1539,7 @@
                 method:'POST',
                 headers:headers(),
                 body:JSON.stringify({
-                    ...callSelection(mode==='image'?activeImageProvider:provider),
-                            image_call_source_id:callSourceState.callSources?.[activeImageProvider] || null,
-                            conversation_id: currentConversation.id || '',
+                    conversation_id: currentConversation.id || '',
                     message,
                     system_prompt: currentSystemPrompt(),
                     mode:'chat',
@@ -1668,11 +1600,6 @@
             await loadConversations();
             updateComposerOverflow();
         };
-        window.addEventListener('DOMContentLoaded',()=>{
-            const options={getValue:()=>callSourceState,onChange:value=>{callSourceState=value;refreshCallSources();}};
-            callSourcePicker=CanvasCallSources.mount(document.getElementById('legacyCallSources'),{
-                ...options,getProvider:()=>mode==='image'?activeImageProvider:provider});
-        });
     </script>
 </body>
 </html>

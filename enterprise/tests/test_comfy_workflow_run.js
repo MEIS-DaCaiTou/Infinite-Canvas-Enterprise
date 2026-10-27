@@ -17,6 +17,10 @@ async function runRace(scenario='race'){
     const end = source.indexOf('async function callCanvasLLM(', start);
     assert.ok(start > 0 && end > start);
     let release, fail;
+    let finishGeneration, generationStarted;
+    const generationReady = new Promise(resolve=>{generationStarted=resolve;});
+    const generationComplete = new Promise(resolve=>{finishGeneration=resolve;});
+    const timers = [];
     const workflowReady = new Promise((resolve,reject) => { release = resolve; fail = reject; });
     const config = {fields:[{id:'image',node:'8',input:'image',type:'image',default:'sample.png'}, {id:'prompt',node:'1',input:'text',type:'textarea',default:'default'}]};
     const node = {id:'node', type:'comfy', mode:'custom', comfyWorkflow:'custom/review.json', comfyParams:{}};
@@ -37,10 +41,11 @@ async function runRace(scenario='race'){
         langIsEn:()=>false, alert:message=>alerts.push(message), tr:key=>key,
         outputForNode:()=>out, uid:()=> 'pending-' + ++pendingSeq,
         runSnapshot:()=>({}), comfyRunLabel:()=> 'review', makePendingForRun:id=>({id}),
-        refreshRunNodes:()=>{}, setTimeout:()=>0,
-        runQueuedComfyGenerate:async()=>{ submissions++; return {images:[{url:'review-output.png'}]}; },
+        refreshRunNodes:()=>{}, setTimeout:callback=>{timers.push(callback);return timers.length;},
+        runQueuedComfyGenerate:async()=>{ submissions++; generationStarted(); if(scenario==='long-running')await generationComplete;return {images:[{url:'review-output.png'}]}; },
         requestMetaFromResult:()=>({}), comfyResultOutputs:result=>result.images,
-        collectRunMeta:()=>({runMs:0}), appendOutputImages:()=>{}, mergeGeneratedOutputs:()=>{},
+        collectRunMeta:()=>({runMs:0,run:{}}), nowMs:()=>1, pendingById:()=>null,
+        comfyTaskControls:{releasePending:()=>{},active:()=>[]}, appendOutputImages:()=>{}, mergeGeneratedOutputs:()=>{},
         addGenerationLog:()=>{}, scheduleSave:()=>{}, isCascadeAbortError:()=>false,
         actionFailed:(_key,msg)=>msg || 'failed', noReturnedImage:()=> 'empty'
     });
@@ -48,8 +53,16 @@ async function runRace(scenario='race'){
     const first = context.runComfyNode('node', {cascade:scenario === 'workflow-failure'});
     const second = scenario === 'race' ? context.runComfyNode('node') : Promise.resolve();
     const runningBeforeWorkflowReady = !!node.running;
-    if(scenario === 'race') release({config});
+    if(scenario === 'race' || scenario === 'long-running') release({config});
     else fail(new Error('workflow unavailable'));
+    if(scenario==='long-running'){
+        await generationReady;
+        timers.forEach(callback=>callback());
+        assert.equal(node.running,true,'accepted work keeps the run button busy after the old two-second timer');
+        await context.runComfyNode('node');
+        assert.equal(submissions,1,'clicking while the original job runs must not enqueue another GPU job');
+        finishGeneration();
+    }
     const settled = await Promise.allSettled([first,second]);
     return {submissions,uploads,runningBeforeWorkflowReady,alerts,runStatus:node.runStatus || '',firstCompletion:settled[0].status,runningAfterCompletion:!!node.running};
 }
@@ -116,6 +129,10 @@ async function smartRetiredWorkflowDoesNotReload(){
     assert.equal(race.uploads, 1);
     assert.equal(race.runningBeforeWorkflowReady, true);
     assert.deepEqual(race.alerts, []);
+    const longRunning = await runRace('long-running');
+    assert.equal(longRunning.submissions,1);
+    assert.equal(longRunning.runningAfterCompletion,false);
+    assert.equal(longRunning.runStatus,'done');
     const cascadeFailure = await runRace('workflow-failure');
     assert.equal(cascadeFailure.firstCompletion, 'rejected');
     assert.equal(cascadeFailure.runStatus, 'failed');

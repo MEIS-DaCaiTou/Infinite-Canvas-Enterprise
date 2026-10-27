@@ -33,8 +33,13 @@ interceptors._resource_in_user_conversation_scope=lambda *args:False
 workflow={'a':{'class_type':'LoadImage','inputs':{'image':'default.png'}},'edit':{'class_type':'TextEncodeQwenImage21','inputs':{'images.image_1':['a',0]}},'save':{'class_type':'SaveImage','inputs':{'filename_prefix':'result.png'}}}
 config={'fields':[{'id':'f_random','node':'a','input':'image','type':'image'}, {'id':'prefix','node':'save','input':'filename_prefix','type':'image','default':'result.png'}]}
 path=roots.DATA_ROOT/'workflows/custom/shared.json';path.parent.mkdir(parents=True,exist_ok=True);path.write_text(json.dumps(workflow))
-main.get_workflow=lambda *a,**k:{'config':{**config,'enabled':True}}
+main.get_workflow=lambda *a,**k:{'workflow':workflow,'config':{**config,'enabled':True}}
 main.workflow_backend=lambda *a:'http://127.0.0.1:8188'
+main.COMFYUI_INSTANCES=['http://127.0.0.1:8188']
+async def empty_backend(backend):return set()
+async def validate_fixture_owner(record,payload):return True
+main.COMFY_QUEUE.probe=empty_backend
+main.CANVAS_TASK_DISPATCH.validate=validate_fixture_owner
 main.create_task_receipt=lambda journal,record,user_id:journal.create({**record,'enterprise_user_id':user_id})
 submits=[]
 class NoProvider:
@@ -45,11 +50,11 @@ def request(name='foreign.png'):
     req._enterprise_user_id='alice'
     return req
 req=request('own.png');assert main.prepare_comfy_workflow(req)[0]['a']['inputs']['image']=='own.png'
-for name in ['foreign.png','nested/private-other.png']:
-    try:main.generate(request(name),'alice')
-    except HTTPException as exc:assert exc.status_code==403
-    else:raise AssertionError('direct generate bypass')
 async def scenario():
+    for name in ['foreign.png','nested/private-other.png']:
+        try:await main.generate(request(name),'alice')
+        except HTTPException as exc:assert exc.status_code==403
+        else:raise AssertionError('direct generate bypass')
     task=await main.create_canvas_comfy_task(request(),'alice')
     await asyncio.gather(*main.CANVAS_TASK_RUNNERS)
     record=main.CANVAS_TASK_JOURNAL.get(task['task_id']);assert record['status']=='failed' and record['status_code']==403
@@ -60,18 +65,19 @@ async def scenario():
     payload.async_task=True
     task=await main.run_workflow('custom/shared.json',payload,'alice');await asyncio.gather(*main.CANVAS_TASK_RUNNERS)
     assert main.CANVAS_TASK_JOURNAL.get(task['task_id'])['status_code']==403
+    config['fields'][0]['type']='text'
+    try:await main.generate(request(),'alice')
+    except HTTPException as exc:assert exc.status_code==403
+    else:raise AssertionError('image renamed as text bypass')
+    config['image_groups']=[{'id':'images:a','source_nodes':['a'],'min_images':1,'max_images':10}]
+    req=request();req.workflow_values={'images:a':['own.png']}
+    assert main.prepare_comfy_workflow(req)[0]['a']['inputs']['image']=='own.png'
+    req.workflow_values={'images:a':['foreign.png']}
+    try:await main.generate(req,'alice')
+    except HTTPException as exc:assert exc.status_code==403
+    else:raise AssertionError('image group bypass')
+    await main.CANVAS_TASK_DISPATCH.stop()
 asyncio.run(scenario())
-config['fields'][0]['type']='text'
-try:main.generate(request(),'alice')
-except HTTPException as exc:assert exc.status_code==403
-else:raise AssertionError('image renamed as text bypass')
-config['image_groups']=[{'id':'images:a','source_nodes':['a'],'min_images':1,'max_images':10}]
-req=request();req.workflow_values={'images:a':['own.png']}
-assert main.prepare_comfy_workflow(req)[0]['a']['inputs']['image']=='own.png'
-req.workflow_values={'images:a':['foreign.png']}
-try:main.generate(req,'alice')
-except HTTPException as exc:assert exc.status_code==403
-else:raise AssertionError('image group bypass')
 assert submits==[]
 print('mapped owner checks: fixed/grouped/direct/sync/async/settings; provider calls 0')
 '''

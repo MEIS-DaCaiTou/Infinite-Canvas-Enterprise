@@ -216,6 +216,13 @@ body.studio-theme-dark .pfield-bool-track:not(.on) .pfield-bool-thumb { backgrou
 .mini-canvas.large { height:760px; }
 .mini-canvas.is-panning { cursor:grabbing; }
 .mini-world { position:absolute; left:0; top:0; transform-origin:0 0; width:900px; height:620px; }
+.mini-links { position:absolute; inset:0; width:100%; height:100%; overflow:visible; pointer-events:none; }
+.mini-links path { fill:none; stroke:var(--muted); stroke-width:2; vector-effect:non-scaling-stroke; }
+#workflowBackendChoice { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:12px; font-size:12px; color:var(--muted); }
+#workflowBackendChoice>div { flex-basis:100%; line-height:1.6; }
+.extras-row .ghost-btn, #workflowBackendChoice .ghost-btn { display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border:1px solid var(--line); border-radius:8px; color:var(--text); background:var(--panel); }
+.extras-row .ghost-btn:hover, #workflowBackendChoice .ghost-btn:hover { background:var(--soft); }
+.dropdown-options-list { display:grid; gap:6px; max-height:240px; overflow:auto; }
 .mini-toolbar { position:absolute; top:12px; left:12px; display:flex; gap:8px; z-index:4; }
 .mini-tool { height:32px; padding:0 10px; border-radius:999px; background:var(--panel); border:1px solid var(--line); color:var(--muted); display:flex; align-items:center; gap:6px; font-size:11px; font-weight:850; box-shadow:0 8px 18px rgba(15,23,42,.08); }
 .mini-tool:hover { color:var(--text); border-color:var(--text); }
@@ -261,3 +268,10 @@ body.studio-theme-dark .pfield-bool-track:not(.on) .pfield-bool-thumb { backgrou
 .workflow-availability { display:flex; align-items:center; flex-wrap:wrap; gap:7px; margin-top:12px; color:var(--text); font-size:11px; font-weight:600; cursor:pointer; }
 .workflow-availability input { accent-color:var(--text); }
 .workflow-availability small { flex-basis:100%; color:var(--muted); font-size:10px; font-weight:400; }
+.workflow-parameter-status { margin-top:12px; color:var(--muted); font-size:12px; line-height:1.6; }
+.workflow-parameter-status.has-warning { color:var(--text); padding:10px 12px; border:1px solid #c98a35; border-radius:10px; }
+.field-activity { grid-column:1/-1; display:flex; align-items:center; flex-wrap:wrap; gap:8px; color:var(--muted); font-size:11px; line-height:1.6; }
+.field-activity:empty { display:none; }
+.field-activity button { border:1px solid var(--line); border-radius:7px; padding:4px 8px; background:var(--panel); color:var(--text); font:inherit; cursor:pointer; }
+.pfield-bool-track { border:0; padding:0; cursor:pointer; }
+.check-toggle:focus-visible,.pfield-bool-track:focus-visible { outline:2px solid var(--text); outline-offset:3px; }

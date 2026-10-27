@@ -173,7 +173,7 @@ class AcceptedTaskRecovery:
         state = result.get("status", "unknown")
         code = result.get("http_status")
         reason = redact_text(result.get("message") or "")[:1200]
-        if state in {"succeeded", "partial", "failed"}:
+        if state in {"succeeded", "partial", "failed", "cancelled"}:
             await self._record(task_id, {"status": "complete", "next_query_at": None, "reason": reason})
         elif state == "manual" or (code is not None and 300 <= code < 500 and code not in {408, 429}):
             await self._record(task_id, {"status": "manual", "next_query_at": None,

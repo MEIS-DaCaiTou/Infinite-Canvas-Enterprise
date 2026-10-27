@@ -167,8 +167,9 @@ body.studio-theme-dark .key-btn:hover { background:#323540; border-color:#f5f6f8
 .key-btn.key-clear:hover { color:#dc2626; border-color:#fca5a5; background:#fff5f5; }
 body.studio-theme-dark .key-btn.key-clear:hover { background:rgba(127,29,29,.18); border-color:rgba(248,113,113,.3); color:#fca5a5; }
 /* Models */
-.block.models-toolbar { display:flex; flex-direction:row; align-items:center; justify-content:space-between; gap:12px; padding:8px 18px 12px; }
-.models-toolbar > div:first-child { min-width:0; flex:1 1 320px; }
+#modelsHead.models-toolbar { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:16px; padding:16px 20px; }
+#modelsHead > div { min-width:0; }
+@media(max-width:680px) { #modelsHead.models-toolbar { grid-template-columns:minmax(0,1fr); } #modelsHead .models-toolbar-actions { justify-content:flex-start; flex-wrap:wrap; } }
 .models-toolbar-actions { display:flex; gap:8px; align-items:center; justify-content:flex-end; flex:0 0 auto; }
 .model-grid { display:grid; grid-template-columns:1fr; gap:20px; }
 .model-list { display:flex; flex-direction:column; gap:6px; }

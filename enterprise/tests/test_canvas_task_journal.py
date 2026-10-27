@@ -141,6 +141,13 @@ def fake_comfy(payload, journal_id=None):
     return {'images': ['/output/comfy.png']}
 main.build_online_image_result = fake_provider
 main.execute_comfy_generation = fake_comfy
+# A restorable workflow and an empty controlled backend queue are required by
+# the current Comfy admission path; no real backend participates in this test.
+main.get_workflow = lambda name: {'workflow': {'1': {'class_type': 'LoadImage', 'inputs': {'image': 'fixture.png'}}}, 'config': {'fields': [], 'enabled': True}}
+main.workflow_backend = lambda name, override='': override or 'http://127.0.0.1:59999'
+main.COMFYUI_INSTANCES = ['http://127.0.0.1:59999']
+async def empty_queue(backend): return set()
+main.COMFY_QUEUE.probe = empty_queue
 async def run():
     request = main.OnlineImageRequest(prompt='private fixture prompt')
     reply = await main.create_canvas_image_task(request)
