@@ -102,5 +102,37 @@ const event=()=>({preventDefault(){this.prevented=true;},stopPropagation(){this.
     };
     await assert.rejects(()=>chain.runComfyNode('enhance',{cascade:true}),error=>error.code==='COMFY_QUEUE_LIMIT');
     assert.equal(retained.id,'completed-first');assert.equal(retained.result.images[0],'enhanced.png');
-    console.log('Output task controls passed: hover, exact-card cancel, confirmation, persistence, terminal card, keyboard and media identity.');
+    // A finished summary contains no result bytes. Both restoration reads may fail once.
+    for(const failedRead of ['list','receipt']){
+        const retries=[],reads=[];let pending=true,applied=0,unavailable=true;
+        const task={id:'restored-result',status:'succeeded',source:{canvas_id:'restored',node_id:'comfy'}};
+        const restoredContext={document:{documentElement:{lang:'zh'},querySelectorAll:()=>[]},
+            setTimeout:fn=>(retries.push(fn),retries.length),clearTimeout(){},Date,Map,Set,WeakMap,Promise};
+        vm.runInNewContext(fs.readFileSync('static/js/canvas-comfy-tasks.js','utf8'),restoredContext);
+        const restoredControls=restoredContext.CanvasComfyTasks.create({onChange(){},hasPending:()=>pending,
+            onTerminal:value=>{assert.equal(value.result.images[0],'/output/restored.png');pending=false;applied++;},
+            fetcher:async url=>{
+                if(url==='/enterprise/api/me/comfy-queue')return {ok:true,json:async()=>({})};
+                const kind=url.includes('?canvas_id=')?'list':'receipt';reads.push(kind);
+                if(unavailable&&kind===failedRead){unavailable=false;return {ok:false,json:async()=>({detail:'temporary 503'})};}
+                return {ok:true,json:async()=>kind==='list'?{items:[task]}:{...task,result:{images:['/output/restored.png']}}};
+            }});
+        await restoredControls.load('restored');
+        assert.equal(applied,0);assert.equal(retries.length,1,failedRead+' failure schedules original-receipt recovery');
+        await retries.shift()();
+        assert.equal(applied,1);assert.equal(pending,false);assert.equal(retries.length,0,'settled output stops polling');
+        assert.equal(reads.filter(kind=>kind===failedRead).length,2);
+    }
+    const staleRetries=[],listed=[];
+    const staleContext={document:{documentElement:{lang:'zh'},querySelectorAll:()=>[]},
+        setTimeout:fn=>(staleRetries.push(fn),staleRetries.length),clearTimeout(){},Date,Map,Set,WeakMap,Promise};
+    vm.runInNewContext(fs.readFileSync('static/js/canvas-comfy-tasks.js','utf8'),staleContext);
+    const staleControls=staleContext.CanvasComfyTasks.create({onChange(){},hasPending:()=>false,onTerminal(){},fetcher:async url=>{
+        if(url==='/enterprise/api/me/comfy-queue')return {ok:true,json:async()=>({})};
+        listed.push(url);return {ok:!url.endsWith('old'),json:async()=>({items:[],detail:'temporary 503'})};
+    }});
+    await staleControls.load('old');const staleRetry=staleRetries.shift();
+    await staleControls.load('new');await staleRetry();
+    assert.equal(listed.length,2,'a delayed retry cannot reopen the previous canvas');
+    console.log('Output task controls passed, including list/receipt outage recovery and stale-canvas isolation.');
 })().catch(error=>{console.error(error);process.exitCode=1});

@@ -54,7 +54,7 @@
                     if(token===epoch)update(data);
                 }catch(_){ /* A query outage is not evidence of generation failure. */ }
             }));
-            if(token===epoch&&[...tasks.values()].some(task=>!terminal(task)))timer=setTimeout(()=>poll(token),3000);
+            if(token===epoch&&[...tasks.values()].some(task=>!terminal(task)||hasPending(task.id)))timer=setTimeout(()=>poll(token),3000);
         }
         async function load(id){
             const token=++epoch;clearTimeout(timer);canvasId=id;tasks.clear();errors.clear();
@@ -68,7 +68,10 @@
                 new Set(data.items.map(task=>task.source?.node_id).filter(Boolean)).forEach(nodeId=>onChange(nodeId,active(nodeId).length>0));
                 paintOutputs();
                 await poll(token);
-            }catch(_){ /* Existing generation receipts remain intact if the list is unavailable. */ }
+            }catch(_){
+                // A list outage must not leave saved pending cards without their original receipts.
+                if(token===epoch)timer=setTimeout(()=>{if(token===epoch)return load(id);},3000);
+            }
         }
         function track(task,nodeId,pendingId){
             waiting.set(task.task_id,pendingId);
