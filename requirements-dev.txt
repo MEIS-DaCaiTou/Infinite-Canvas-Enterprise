@@ -1,0 +1,3 @@
+# Application dependencies are exactly the Windows release closure.
+-r runtime/windows/requirements.lock
+-r runtime/windows/test-tools.lock

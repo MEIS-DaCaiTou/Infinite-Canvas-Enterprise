@@ -13,6 +13,7 @@ import re
 import threading
 import time
 import uuid
+from copy import deepcopy
 from pathlib import Path
 
 from enterprise.paths import _assert_no_reparse
@@ -24,6 +25,7 @@ class CanvasTaskJournal:
         if not self.root.is_absolute():
             raise ValueError("Canvas task root must be absolute")
         self._lock = threading.RLock()
+        self._comfy_queue_index = None
 
     def _path(self, task_id: str) -> Path:
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,160}", task_id):
@@ -47,6 +49,8 @@ class CanvasTaskJournal:
                 os.fsync(stream.fileno())
             self._path(record["id"])
             os.replace(temporary, path)
+            if self._comfy_queue_index is not None and record.get('type') == 'comfy':
+                self._comfy_queue_index[record['id']] = self._queue_projection(record)
         finally:
             temporary.unlink(missing_ok=True)
 
@@ -60,6 +64,42 @@ class CanvasTaskJournal:
             if not isinstance(data, dict) or data.get("id") != task_id or data.get("journal_version") != 1:
                 raise ValueError("Invalid canvas task record")
             return data
+
+    @staticmethod
+    def _queue_projection(record):
+        return deepcopy({key: record[key] for key in ('id', 'type', 'status', 'created_at', 'enterprise_user_id',
+            'workflow_json', 'comfy_queue', 'comfy_receipt', 'recovery_required', 'dispatch_version',
+            'dispatch_started_at', 'provider_receipts') if key in record})
+
+    def comfy_queue_records(self):
+        """Rebuild once; normal queue ticks do not scan history or copy result bodies."""
+        with self._lock:
+            if self._comfy_queue_index is None:
+                self._comfy_queue_index = {}
+                _assert_no_reparse(self.root, 'CANVAS_TASK_ROOT')
+                for path in self.root.glob('*.json'):
+                    try:
+                        record = self.get(path.stem)
+                        if record and record.get('type') == 'comfy':
+                            self._comfy_queue_index[record['id']] = self._queue_projection(record)
+                    except (ValueError, UnicodeError):
+                        continue
+            return deepcopy(list(self._comfy_queue_index.values()))
+
+    def claim_comfy_dispatch(self, task_id):
+        with self._lock:
+            record = self.get(task_id)
+            if not record or not pending_dispatch(record) or not record.get('comfy_queue'):
+                return None
+            record['comfy_queue']['dispatched_at'] = time.time()
+            self._write(record)
+            return record
+
+    def attach_comfy_queue(self, task_id, backend):
+        with self._lock:
+            record = self.get(task_id)
+            if record and record.get('type') == 'comfy' and pending_dispatch(record):
+                self._write({**record, 'comfy_queue': {'backend': backend}})
 
     def create(self, record: dict) -> None:
         with self._lock:
@@ -115,9 +155,30 @@ class CanvasTaskJournal:
     def finish(self, task_id: str, changes: dict) -> None:
         with self._lock:
             record = self.get(task_id)
+            if record and record.get("type") == "comfy" and record.get("status") == "cancelled":
+                return
             if record is None or record.get("status") != "running":
                 raise ValueError("Canvas task is not running")
             self._write({**record, **changes, "id": task_id, "updated_at": time.time()})
+
+    def record_comfy_cancellation(self, task_id: str, acknowledged: bool):
+        with self._lock:
+            record = self.get(task_id)
+            if not record or record.get("type") != "comfy":
+                raise ValueError("ComfyUI task unavailable")
+            self._write({**record, "cancellation": {"acknowledged": acknowledged, "requested_at": time.time()},
+                         "updated_at": time.time()})
+
+    def confirm_comfy_cancelled(self, task_id: str):
+        """Caller has verified an interruption receipt for this exact prompt ID."""
+        with self._lock:
+            record = self.get(task_id)
+            if not record or record.get("type") != "comfy" or record.get("status") == "succeeded":
+                return
+            self._write({**record, "status": "cancelled", "error": "", "error_code": "COMFY_CANCELLED",
+                         "recovery_required": False, "comfy_receipt": {**record.get("comfy_receipt", {}), "phase": "cancelled"},
+                         "auto_recovery": {**record.get("auto_recovery", {}), "status": "complete", "next_query_at": None},
+                         "updated_at": time.time()})
 
     def record_comfy(self, task_id: str, changes: dict) -> None:
         """Additive v1 receipt; immutable backend/prompt identity, no credentials or prompt text."""

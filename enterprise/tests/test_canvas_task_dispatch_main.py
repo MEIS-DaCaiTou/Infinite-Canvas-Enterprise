@@ -20,6 +20,8 @@ main.provider_env_key_value=lambda _:'fixture-key-never-stored'
 main.get_workflow=lambda name:{'workflow':{'1':{'class_type':'LoadImage','inputs':{'image':'fixture.png'}}},'config':{'fields':[],'enabled':True}}
 main.workflow_backend=lambda name,override='':override or 'http://127.0.0.1:59999'
 main.COMFYUI_INSTANCES=['http://127.0.0.1:59999']
+async def empty_comfy_queue(backend):return set()
+main.COMFY_QUEUE.probe=empty_comfy_queue
 trace=roots.DATA_ROOT/'dispatch-calls.jsonl'
 exit_kind=os.environ.get('DISPATCH_EXIT_KIND','')
 def generated(kind):
@@ -205,3 +207,46 @@ asyncio.run(reopen())
 '''
     third=invoke(tmp_path,final)
     assert third.returncode==0,third.stdout+third.stderr
+
+
+def test_all_comfy_entrypoints_share_atomic_user_quota_and_local_cancellation(tmp_path):
+    code=r'''
+from enterprise.canvas_comfy_control import create_router
+from fastapi import FastAPI
+from enterprise import canvas_comfy_control
+owners={}
+db.record_task_owner=lambda uid,kind,key,*args,**kwargs:owners.__setitem__(key,uid)
+db.record_canvas_image_task_owner=lambda uid,key,*args,**kwargs:owners.__setitem__(key,uid)
+db.get_task_owner=lambda kind,key:owners.get(key)
+db.get_canvas_image_task_owner=lambda key:owners.get(key)
+main.CANVAS_TASK_DISPATCH.paused=lambda:True
+async def scenario():
+    app=main.app
+    async with original_client(transport=httpx.ASGITransport(app=app),base_url='http://fixture') as client:
+        headers={'X-Enterprise-User-ID':'alice'}
+        payload={'prompt':'quota-fixture','workflow_json':'custom/test.json','backend':'http://127.0.0.1:59999'}
+        ids=[]
+        for i in range(3):
+            response=await client.post('/api/canvas-comfy-tasks',json=payload,headers=headers)
+            assert response.status_code==200,response.text
+            ids.append(response.json()['task_id'])
+        # Legacy synchronous pages must fail admission immediately, without POST or a phantom task.
+        response=await client.post('/api/generate',json=payload,headers=headers)
+        assert response.status_code==429,response.text
+        assert len(main.CANVAS_TASK_JOURNAL.comfy_queue_records())==3
+        response=await client.post('/_enterprise_internal/comfy-tasks/'+ids[-1]+'/cancel',headers=headers)
+        assert response.status_code==200,response.text
+        assert response.json()['task']['status']=='cancelled'
+        assert main.CANVAS_TASK_JOURNAL.get(ids[-1]).get('comfy_receipt',{}).get('prompt_id') is None
+        # Cancellation frees the same user budget; reopening uses the same receipt.
+        response=await client.post('/api/canvas-comfy-tasks',json=payload,headers=headers)
+        assert response.status_code==200,response.text
+        detail=(await client.get('/api/canvas-comfy-tasks/'+response.json()['task_id'])).json()
+        assert detail['phase']=='platform_queued' and detail['can_cancel']
+        assert 'backend' not in detail.get('queue',{}) and 'comfy_queue' not in detail
+        assert not trace.exists()
+    await main.shutdown_task_recovery()
+asyncio.run(scenario())
+'''
+    result=invoke(tmp_path,code)
+    assert result.returncode==0,result.stdout+result.stderr

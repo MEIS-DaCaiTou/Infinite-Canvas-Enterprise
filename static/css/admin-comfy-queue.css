@@ -1,0 +1,16 @@
+.queue-toolbar{display:flex;align-items:center;gap:8px;margin-bottom:16px;flex-wrap:wrap}
+.queue-toolbar [role=status]{flex:1;font-size:13px;color:var(--muted)}
+.queue-toolbar [data-error=true]{color:#c34338}
+.queue-section{padding:18px 0;border-top:1px solid var(--line)}
+.queue-section h2{font-size:15px;font-weight:600;margin:0 0 8px}
+.queue-note{color:var(--muted);font-size:13px;line-height:1.6;margin:0 0 14px}
+.queue-limits{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}
+.queue-limits label{font-size:13px;color:var(--text);display:grid;gap:8px}
+#tab-comfy-queue input{box-sizing:border-box;font:inherit;font-size:13px;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:8px 10px;min-width:0;max-width:100%}
+#tab-comfy-queue input[type=number]{width:100px;font-variant-numeric:tabular-nums}
+#tab-comfy-queue table{min-width:0;width:100%;font-size:13px}
+#tab-comfy-queue th,#tab-comfy-queue td{padding:10px 12px;white-space:normal;overflow-wrap:anywhere;font-weight:400}
+#tab-comfy-queue th{font-size:12px;color:var(--muted)}
+#tab-comfy-queue .queue-address{max-width:220px}
+#tab-comfy-queue .queue-empty{text-align:center;padding:25px;color:var(--muted)}
+@media(max-width:700px){.queue-limits{grid-template-columns:1fr}.queue-section .table-scroll{overflow-x:auto}#tab-comfy-queue table{min-width:510px}}

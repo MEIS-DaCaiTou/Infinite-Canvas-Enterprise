@@ -103,6 +103,7 @@ async def _run_checks() -> None:
 
         default_deny = {"api_settings_access", "workflow_settings_access", "system_update"}
         default_allow = {
+            "project_homepage",
             "runninghub_generation",
             "video_generation",
             "image_tools_generation",
@@ -123,6 +124,18 @@ async def _run_checks() -> None:
             assert edb.can_use_feature(actor_admin, key) is True, key
 
         # Admin API writes global flags and audit logs.
+        await admin_api.update_feature_flag("project_homepage", FakeRequest(actor_admin, {"enabled": False}))
+        for actor in [actor_a, actor_admin, actor_super]:
+            assert edb.can_use_feature(actor, "project_homepage") is False
+        edb.set_user_feature_override(user_a["id"], "project_homepage", "allow", admin["id"])
+        assert edb.can_use_feature(actor_a, "project_homepage") is False
+        try:
+            await admin_api.update_user_feature_override(user_a["id"], "project_homepage", FakeRequest(actor_admin, {"mode": "allow"}))
+        except Exception as exc:
+            assert getattr(exc, "status_code", None) == 400
+        else:
+            raise AssertionError("Project homepage must stay a global setting")
+        await admin_api.update_feature_flag("project_homepage", FakeRequest(actor_admin, {"enabled": True}))
         await admin_api.update_feature_flag(
             "runninghub_generation",
             FakeRequest(actor_admin, {"enabled": False}),

@@ -1,8 +1,8 @@
 {
   "schema_version": "enterprise-documents-v1",
-  "reviewed_at": "2026-10-24",
-  "audit_base_commit": "728b4bc21915d89044d9cb0a1858be1a37453799",
-  "scope": "Owner-reported 10.7 canvas-admin roundtrip regression; minimal top-level navigation and cache-version repair, targeted browser acceptance, and separate 10.8 delivery candidate. Customer upgrade and release approval remain distinct.",
+  "reviewed_at": "2026-10-28",
+  "audit_base_commit": "7b003905565b8e1be5fb2faee8982498abe47d6f",
+  "scope": "Owner-accepted 10.9 candidate in PR 201: original canvas restoration, administration, Comfy fixes and bounded persistence/transport reliability. Independent review, initialization control, real GPU quotas/cancellation and three final Setup upgrades qualified; original environment restored. Separate merge and formal release approval pending; no customer operation.",
   "documents": [
     {
       "path": ".github/PULL_REQUEST_TEMPLATE.md",
@@ -82,19 +82,19 @@
       "path": "ARCHITECTURE.md",
       "kind": "authority",
       "authority": "architecture",
-      "reviewed_at": "2026-10-22"
+      "reviewed_at": "2026-10-27"
     },
     {
       "path": "CODE_BOUNDARIES.md",
       "kind": "authority",
       "authority": "code-boundaries",
-      "reviewed_at": "2026-10-13"
+      "reviewed_at": "2026-10-27"
     },
     {
       "path": "CODEX_WORKFLOW.md",
       "kind": "authority",
       "authority": "workflow",
-      "reviewed_at": "2026-10-16"
+      "reviewed_at": "2026-10-27"
     },
     {
       "path": "docs/architecture/ARCH-2A-ARCHITECTURE-ASSESSMENT-AND-EVOLUTION-2026-07.md",
@@ -158,7 +158,7 @@
       "path": "docs/CURRENT_PROJECT_STATUS.md",
       "kind": "authority",
       "authority": "status",
-      "reviewed_at": "2026-10-24"
+      "reviewed_at": "2026-10-28"
     },
     {
       "path": "docs/data/DATA-MVP-1-INDEPENDENT-REVIEW-2026-09.md",
@@ -482,7 +482,7 @@
       "path": "docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md",
       "kind": "authority",
       "authority": "roadmap",
-      "reviewed_at": "2026-10-24"
+      "reviewed_at": "2026-10-28"
     },
     {
       "path": "docs/runbooks/SEC-1B2-PRODUCTION-ACTIVATION-RUNBOOK-2026-07.md",
@@ -588,7 +588,7 @@
       "path": "PROJECT_SCOPE_LOCK.md",
       "kind": "authority",
       "authority": "scope",
-      "reviewed_at": "2026-10-13"
+      "reviewed_at": "2026-10-27"
     },
     {
       "path": "README.md",
@@ -611,6 +611,10 @@
     },
     {
       "path": "requirements.txt",
+      "kind": "reference"
+    },
+    {
+      "path": "requirements-dev.txt",
       "kind": "reference"
     },
     {
@@ -676,6 +680,10 @@
     },
     {
       "path": "docs/ops/RELEASE-2026.10.7-RECORD.md",
+      "kind": "record"
+    },
+    {
+      "path": "docs/ops/RELEASE-PREPARATION-2026-10-27.md",
       "kind": "record"
     }
   ],

@@ -1,0 +1,30 @@
+/* Top-layer menus use viewport coordinates, independent of scaled canvas ancestors. */
+select:not([multiple]) { appearance:none!important; -webkit-appearance:none!important; padding-inline-end:28px!important; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%236e6e73' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m7 10 5 5 5-5'/%3E%3C/svg%3E")!important; background-position:right 9px center!important; background-repeat:no-repeat!important; background-size:12px!important; }
+.studio-select-menu[popover] { position:fixed; inset:auto; margin:0; box-sizing:border-box; padding:5px; max-height:340px; border:1px solid var(--line,#dedee3); border-radius:10px; background:var(--panel,#fff); color:var(--text,#1d1d1f); box-shadow:0 8px 32px #00000020,0 2px 5px #00000008; font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei UI","Microsoft YaHei",sans-serif; text-align:left; overflow:hidden; }
+.studio-select-menu:popover-open { display:flex; flex-direction:column; }
+.studio-select-options { min-height:0; overflow:auto; overscroll-behavior:contain; scrollbar-width:thin; }
+.studio-select-menu button[role=option] { display:flex; justify-content:space-between; align-items:center; gap:22px; width:100%; min-height:34px; padding:7px 10px; border:0; border-radius:6px; background:transparent; color:inherit; font:inherit; text-align:left; cursor:pointer; box-shadow:none; white-space:normal; overflow-wrap:anywhere; }
+.studio-select-menu button[role=option]:is(:hover,:focus-visible) { outline:none; background:var(--soft,#f5f5f7); }
+.studio-select-menu button[aria-selected=true] { background:var(--soft,#f5f5f7); font-weight:600; }
+.studio-select-menu button:disabled { color:var(--muted,#66666d); opacity:.5; cursor:default; }
+.studio-select-check { width:14px; flex:none; font-size:13px; }
+.studio-select-group { padding:8px 10px 4px; font-size:12px; font-weight:600; color:var(--muted,#66666d); }
+.studio-select-search { box-sizing:border-box; width:100%; flex:none; min-height:34px; padding:6px 9px; margin:0 0 5px; border:1px solid var(--line,#dedee3); border-radius:6px; background:var(--soft,#f5f5f7); color:inherit; font:inherit; outline:none; }
+.studio-select-search:focus { border-color:var(--line-strong,#aaaab2); }
+.studio-select-empty { padding:15px 10px; margin:0; color:var(--muted,#66666d); font-size:13px; }
+html:is(.studio-theme-dark,.theme-dark) .studio-select-menu { background:var(--panel,#242426); color:var(--text,#f5f5f7); border-color:var(--line,#44444a); }
+html:is(.studio-theme-dark,.theme-dark) .studio-select-menu :is(button[aria-selected=true],button[role=option]:hover,button[role=option]:focus-visible) { background:var(--soft,#35353a); }
+.studio-dropdown-panel[popover] { position:fixed!important; inset:auto; margin:0; box-sizing:border-box; bottom:auto!important; transform:none!important; transition:none!important; }
+.studio-dropdown-panel[popover]:not(:popover-open) { display:none!important; }
+.studio-dropdown-panel[popover]:popover-open { display:block; opacity:1!important; visibility:visible!important; pointer-events:auto!important; overflow:auto; overscroll-behavior:contain; border-radius:10px; box-shadow:0 8px 32px #00000020; }
+.studio-dropdown-panel .smart-popover-title { color:var(--muted); font-size:12px; letter-spacing:0; text-transform:none; }
+.studio-dropdown-panel :is(.direct-option,.model-option,.segmented button,.size-picker-option) { font-size:13px; font-weight:500; }
+.studio-dropdown-panel .size-picker-option small { font-size:11px; }
+.studio-dropdown-panel:is(.model-picker-popover,.resolution-picker-popover):popover-open { display:grid; }
+.studio-dropdown-panel.size-picker-popover:popover-open { display:flex; flex-direction:column; overflow:hidden; }
+.studio-dropdown-panel .size-picker-head { flex:none; }
+.studio-dropdown-panel .size-picker-pane { min-height:0; overflow:auto; }
+.studio-dropdown-panel :is(.model-picker-option,.resolution-picker-option,.size-picker-option) span { font-size:13px; font-weight:500; }
+.studio-dropdown-panel :is(.model-picker-title,.resolution-picker-title) { font-size:14px; font-weight:600; }
+.studio-dropdown-panel :is(.model-picker-scope,.resolution-picker-scope,.size-picker-scope) button { font-size:12px; font-weight:500; }
+.studio-dropdown-panel :is(.size-picker-note,.resolution-auto-note) :is(strong,span) { font-size:12px; font-weight:400; }

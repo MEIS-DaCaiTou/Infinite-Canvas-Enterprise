@@ -49,20 +49,35 @@ def _contains_credentials(value):
 
 
 class CanvasTaskDispatch:
-    def __init__(self, journal, models, runners, binding, validate, paused, schedule, *, concurrency=2):
+    def __init__(self, journal, models, runners, binding, validate, paused, schedule, *, concurrency=2, comfy_queue=None):
         self.journal, self.models, self.runners = journal, models, runners
         self.binding, self.validate, self.paused, self.schedule = binding, validate, paused, schedule
         self.inputs = CanvasTaskJournal(journal.root / "inputs")
         self.active = {}
         self.semaphore = asyncio.Semaphore(concurrency)
         self.closed = False
+        self.comfy_queue = comfy_queue
+
+    def check_comfy_input(self, payload):
+        binding = self.binding('comfy', payload)
+        data = payload.model_dump(mode='json')
+        private = {'workflow_config': payload._workflow_config}
+        if not binding:
+            from fastapi import HTTPException
+            raise HTTPException(409, '工作流配置不可用，请重新选择并保存配置')
+        if _contains_credentials(data) or _contains_credentials(private):
+            from fastapi import HTTPException
+            raise HTTPException(400, '工作流包含不适合持久排队的凭据字段，请先调整工作流配置')
+        if len(json.dumps({'payload': data, 'private': private}, ensure_ascii=False).encode('utf8')) > MAX_INPUT_BYTES:
+            from fastapi import HTTPException
+            raise HTTPException(413, '任务输入过大，请先上传素材再加入队列')
 
     async def enqueue(self, task_id, payload):
         record = await asyncio.to_thread(self.journal.get, task_id)
         kind = record["type"]
         # Anonymous legacy/CLI integrations keep their existing immediate path.
         # Only authenticated requests with a restorable model/config get opt-in.
-        binding = await asyncio.to_thread(self.binding, kind, payload) if record.get("enterprise_user_id") else None
+        binding = await asyncio.to_thread(self.binding, kind, payload) if record.get("enterprise_user_id") or kind == 'comfy' and self.comfy_queue else None
         if not binding:
             self.schedule(self.runners[kind](task_id, payload))
             return
@@ -90,7 +105,14 @@ class CanvasTaskDispatch:
 
     async def start(self):
         self.closed = False
+        if self.comfy_queue:
+            await self.comfy_queue.start()
         for record in await asyncio.to_thread(self.journal.pending_dispatches):
+            if self.comfy_queue and record.get('type') == 'comfy' and not record.get('comfy_queue'):
+                item = await asyncio.to_thread(self.inputs.get, record['id'])
+                backend = (item or {}).get('payload', {}).get('backend')
+                if backend:
+                    await asyncio.to_thread(self.journal.attach_comfy_queue, record['id'], backend)
             self._schedule(record["id"], restored=True)
         await asyncio.to_thread(self._clean_inactive_inputs)
 
@@ -111,6 +133,17 @@ class CanvasTaskDispatch:
                 continue
 
     async def _one(self, task_id, *, restored=False):
+        record = await asyncio.to_thread(self.journal.get, task_id)
+        if self.comfy_queue and record.get('type') == 'comfy' and record.get('comfy_queue'):
+            async with self.comfy_queue.turn(task_id) as granted:
+                if granted:
+                    await self._dispatch_one(task_id)
+                else:
+                    await self._cleanup(task_id)
+            return
+        await self._dispatch_one(task_id, restored=restored)
+
+    async def _dispatch_one(self, task_id, *, restored=False):
         # Bound restart bursts only; retain normal submission concurrency.
         async with self.semaphore if restored else nullcontext():
             while True:
@@ -171,3 +204,5 @@ class CanvasTaskDispatch:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         self.active.clear()
+        if self.comfy_queue:
+            await self.comfy_queue.stop()

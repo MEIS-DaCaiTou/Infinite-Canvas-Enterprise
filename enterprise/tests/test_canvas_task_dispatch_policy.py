@@ -66,3 +66,18 @@ def test_key_or_default_model_change_invalidates_opaque_binding(context):
     assert queue.binding("llm", Request(model="")) != original
     state["key"] = "never-persist-key";state["default"] = "more-expensive-model"
     assert queue.binding("llm", Request(model="")) != original
+
+
+def test_builtin_local_tools_can_queue_when_hidden_from_canvas_library(context):
+    from types import SimpleNamespace
+    _, journal, _ = context
+    async def run(*_):
+        pytest.fail('binding-only test submitted generation')
+    configured = {'config': {'enabled': False}, 'workflow': {'1': {'inputs': {}}}, 'builtin': True}
+    queue = create_dispatch(journal, {}, {'comfy': run}, asyncio.create_task, lambda: False,
+        secret='fixture-secret', provider=lambda _: {}, headers=lambda **_: {},
+        workflow=lambda _: configured, backend=lambda *_: 'http://fixture:8188', default_model=lambda *_: '')
+    payload = SimpleNamespace(workflow_json='Z-Image.json', backend='http://fixture:8188')
+    assert queue.binding('comfy', payload)
+    configured['builtin'] = False
+    assert queue.binding('comfy', payload) is None

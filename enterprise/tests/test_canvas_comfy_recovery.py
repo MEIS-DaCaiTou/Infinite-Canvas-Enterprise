@@ -17,6 +17,18 @@ def journal_for(tmp_path):
     return journal
 
 
+@pytest.mark.parametrize("phase", ["queued", "running", "reconnecting", "retrieving"])
+def test_timeout_handoff_does_not_publish_false_failure_before_scheduler_claim(phase):
+    record = {"status": "failed", "error": "local tracking timed out", "status_code": 500,
+              "recovery_required": True, "comfy_receipt": {"prompt_id": "accepted-27", "phase": phase}}
+    public = public_comfy_task(record)
+    assert public["status"] == "running" and public["error"] == "" and public["phase"] == phase
+    assert "status_code" not in public and "comfy_receipt" not in public
+    assert record["status"] == "failed", "the existing original-task scheduler still owns internal recovery state"
+    assert public_comfy_task({**record, "auto_recovery": {"status": "manual"}})["status"] == "failed"
+    assert public_comfy_task({**record, "recovery_required": False})["status"] == "failed"
+
+
 @pytest.mark.parametrize("phase", ["queued", "running"])
 def test_polling_original_task_stays_nonterminal_until_archive(tmp_path, phase):
     async def run():
@@ -77,6 +89,7 @@ def test_manual_and_background_share_query_and_retry_archive_only(tmp_path):
 
 @pytest.mark.parametrize("error,expected,code", [
     (ComfyExecutionError("execution rejected"), "failed", None),
+    (httpx.ReadTimeout(""), "unknown", None),
     (httpx.HTTPStatusError("query denied", request=httpx.Request("GET", "https://comfy.invalid"),
                            response=httpx.Response(401)), "unknown", 401),
 ])
@@ -87,6 +100,7 @@ def test_terminal_execution_and_query_authentication_are_distinct(tmp_path, erro
         recovery = CanvasComfyRecovery(journal, inspect, lambda *_: pytest.fail("must not archive"), lambda _: None)
         result = await recovery.reconcile("comfy-original")
         assert result["status"] == expected and result["http_status"] == code
+        assert result["message"], "query timeouts must have an explanatory message, not a generic generation failure"
         assert journal.get("comfy-original")["recovery_required"] == (expected != "failed")
     asyncio.run(run())
 

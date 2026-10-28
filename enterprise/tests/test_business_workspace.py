@@ -82,7 +82,8 @@ def test_http_workspace_auth_and_metadata_endpoints(business):
         grants=client.get('/enterprise/api/business/sources/'+key['id']+'/grants',headers={'x-fixture-user':'design'})
         assert grants.status_code==200 and grants.json()[0]['user_id']=='employee'
         assert client.get('/enterprise/api/business/sources/'+key['id']+'/grants',headers={'x-fixture-user':'ops'}).status_code==403
-        assert client.get('/enterprise/api/business/costs/summary?scope=company',headers={'x-fixture-user':'design'}).status_code==403
+        # The owner retired the cost UI/routes; do not revive it for this test.
+        assert client.get('/enterprise/api/business/costs/summary?scope=company',headers={'x-fixture-user':'design'}).status_code==404
 
 
 def test_one_corrupt_receipt_does_not_hide_remaining_tasks(business,tmp_path):

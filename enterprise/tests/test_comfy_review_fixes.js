@@ -15,7 +15,7 @@ function setup(extra={}){
 (async()=>{
     let posts=0,body;
     const http=setup({crypto:{getRandomValues:require('node:crypto').webcrypto.getRandomValues.bind(require('node:crypto').webcrypto)},
-        selectedName:'custom/test.json',currentConfig:{fields:[]},sessionStorage:{setItem(){},removeItem(){}},
+        selectedName:'custom/test.json',currentWorkflow:{},currentConfig:{fields:[]},sessionStorage:{setItem(){},removeItem(){}},
         refreshTestViews(){},currentLang:()=> 'zh',applyActiveRandomValues:values=>values,tr:key=>key,
         fetch:async(url,options)=>{posts++;body=JSON.parse(options.body);return {ok:true,json:async()=>({task_id:'canvas_comfy_'+body.request_id})};}});
     http.testSession=new http.ComfyWorkflowSession();http.pollTestTask=async()=>({status:'succeeded',result:{images:[]}});
@@ -37,12 +37,23 @@ function setup(extra={}){
     let warning='';smart.nodes=[{id:'llm',type:'smart-prompt'}];smart.validateSmartTextInputs=()=>{throw Error('选择上游文本');};smart.toast=text=>warning=text;
     vm.runInContext(fn('smart-canvas.js','runPromptLLMNode'),smart);await smart.runPromptLLMNode('llm');assert.equal(warning,'选择上游文本');
     const group=setup({currentConfig:{backend:'http://a:8188',fields:[{id:'a',node:'a',input:'image',type:'image',default:'admin-old.png'}],
-        image_groups:[{id:'images:a',source_nodes:['a'],min_images:1,max_images:10}]},refreshTestViews(){},setStatus(){}});
+        image_groups:[{id:'images:a',source_nodes:['a'],min_images:1,max_images:10}]},refreshTestViews(){},refreshWorkflowDefinitions(){},setStatus(){}});
     group.isMediaField=field=>['image','video','audio','file'].includes(group.ComfyWorkflowFields.kind(field));
     group.testSession=new group.ComfyWorkflowSession();group.testSession.values['images:a']=['old-backend.png'];group.testSession.urls['images:a']=['blob:old'];
     vm.runInContext(fn('comfyui-settings.js','changeWorkflowBackend'),group);group.changeWorkflowBackend('http://b:8188');
     assert.equal(group.testSession.values['images:a'].length,0);assert.equal(group.testSession.urls['images:a'],undefined);
     const values=await group.ComfyWorkflowFields.canvasValues(group.currentConfig,{media:{image:['own.png']},mediaName:async x=>x});
     assert.equal(Object.keys(group.ComfyWorkflowFields.paramsFromValues(group.currentConfig,values)).length,0);
+    const editor=setup({currentWorkflow:{node:{inputs:{flag:false,cfg:0.65}}},
+        currentConfig:{fields:[{id:'flag',node:'node',input:'flag',type:'boolean',default:false},
+            {id:'cfg',node:'node',input:'cfg',type:'number',value_type:'number',default:0.65}]},
+        testSession:{revision:0},previewValues:{flag:false,cfg:0.65},previewRandomActive:{},
+        popupNodeId:null,workspaceMode:'graph',renderEditor(){},renderPreview(){},refreshPopupBody(){}});
+    vm.runInContext(fn('comfyui-settings.js','updateField'),editor);
+    editor.updateField('flag','default',true);
+    assert.equal(editor.currentConfig.fields[0].default,true);
+    assert.equal(editor.previewValues.flag,true,'edited boolean defaults take effect in the current preview');
+    editor.updateField('cfg','type','slider');
+    assert.equal(editor.previewValues.cfg,0.65,'changing widget type retains the actual value');
     console.log('HTTP LAN identity, both LLM text readers, ambiguity, group reset and old defaults passed');
 })().catch(error=>{console.error(error);process.exitCode=1;});

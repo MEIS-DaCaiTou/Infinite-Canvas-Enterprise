@@ -703,6 +703,10 @@ def test_direct_formal_installer_fails_in_install_domain_before_business_import(
     )
     assert completed.returncode == 2
     assert completed.stderr == ""
+    # Embedded release Python is isolated by its _pth file before parsing -I.
+    embedded = Path(sys.executable).with_name(f"python{sys.version_info.major}{sys.version_info.minor}._pth").is_file()
+    if embedded and flags == ("-s", "-B"):
+        expected_code = "INSTALL_PYTHON_MISSING"
     assert json.loads(completed.stdout) == {
         "schema_version": "install-mvp-1-result-v1",
         "status": "blocked",

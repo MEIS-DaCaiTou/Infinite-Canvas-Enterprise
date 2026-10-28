@@ -45,11 +45,21 @@ class ComfyExecutionError(RuntimeError):
     pass
 
 
+class ComfyCancelledError(ComfyExecutionError):
+    pass
+
+
+class ComfyCancellationUnsupported(RuntimeError):
+    pass
+
+
 def history_result(payload, prompt_id):
     entry = payload.get(prompt_id)
     if entry is None:
         return None
     status = entry.get("status") or {}
+    if any(len(message) > 0 and message[0] == "execution_interrupted" for message in status.get("messages") or []):
+        raise ComfyCancelledError("ComfyUI 任务已取消")
     if status.get("status_str") == "error":
         messages = status.get("messages") or []
         detail = next((m[1].get("exception_message") for m in messages
@@ -91,6 +101,18 @@ class ComfyClient:
             raise RuntimeError("ComfyUI 未返回 prompt_id；受理情况不明，请先核对后端队列")
         return data["prompt_id"]
 
+    def cancel(self, prompt_id: str):
+        """Atomic single-job cancellation; never fall back to global /interrupt."""
+        response = requests.post(endpoint(self.backend, "/api/jobs/" + quote(prompt_id, safe="") + "/cancel"),
+                                 json={}, timeout=(10, 30), allow_redirects=False)
+        if response.status_code in {404, 405}:
+            raise ComfyCancellationUnsupported("该 ComfyUI 不支持按任务取消，请在后端取消原任务")
+        response.raise_for_status()
+        value = response.json().get("cancelled")
+        if not isinstance(value, bool):
+            raise ValueError("后端取消回执不可读，请核对原任务；不会自动再次发送取消")
+        return value
+
     def inspect(self, prompt_id: str):
         response = requests.get(endpoint(self.backend, "/history/" + quote(prompt_id, safe="")), timeout=(10, 30))
         response.raise_for_status()
@@ -112,7 +134,7 @@ class ComfyClient:
         response.raise_for_status()
         return queue_result(response.json(), prompt_id)
 
-    def wait(self, prompt_id: str, *, timeout=1800, progress=lambda phase: None):
+    def wait(self, prompt_id: str, *, timeout=1800, progress=lambda phase: None, cancelled=lambda: False):
         deadline = time.monotonic() + timeout
         previous = None
         while time.monotonic() < deadline:
@@ -120,6 +142,11 @@ class ComfyClient:
                 phase, history = self.inspect(prompt_id)
             except (requests.RequestException, ValueError):
                 phase, history = "reconnecting", None
+            if phase == "unknown" and cancelled():
+                # Completion can land between the first history and queue reads.
+                phase, history = self.inspect(prompt_id)
+                if phase == "unknown":
+                    raise ComfyCancelledError("ComfyUI 排队任务已取消")
             if phase != previous:
                 progress(phase)
                 previous = phase

@@ -10,16 +10,18 @@ assert.equal((script.match(/\n  initializeAdmin\(\);/g) || []).length, 1);
 const elements = new Map();
 const dangerous = [{style: {}}, {style: {}}, {style: {}}];
 function element(id) {
-  if (!elements.has(id)) elements.set(id, {value: '', innerHTML: '', textContent: '', disabled: false, style: {}, dataset: {}, classList:{add(){}}});
+  if (!elements.has(id)) elements.set(id, {value: '', innerHTML: '', textContent: '', disabled: false, style: {}, dataset: {}, classList:{add(){},toggle(){}}, replaceChildren(){this.innerHTML='';}, insertAdjacentHTML(_where,text){this.innerHTML+=text;}});
   return elements.get(id);
 }
-const context = vm.createContext({
-  document: {getElementById: element, querySelectorAll: selector => selector === '.update-dangerous' ? dangerous : []},
+const context = vm.createContext({adminT:value=>value,adminTF:(text,values)=>text.replace(/\{(\w+)\}/g,(_,key)=>String(values[key])),
+  document: {getElementById: element, querySelector:selector=>element(selector), querySelectorAll: selector => selector === '.update-dangerous' ? dangerous : []},
   sessionStorage: {getItem: () => null}, clearTimeout() {}, setTimeout() {},
 });
 context.window = context;
 vm.runInContext(fs.readFileSync(path.join(__dirname, '../../static/js/department-members.js'), 'utf8'), context);
+vm.runInContext(fs.readFileSync(path.join(__dirname, '../../static/js/admin-members.js'), 'utf8'), context);
 vm.runInContext(script.replace('\n  initializeAdmin();', ''), context);
+vm.runInContext('AdminMembers.actions={canManage:canManageMember,canChangeRole:canChangeMemberRole};', context);
 element('memberStatusFilter').value = 'active';
 element('memberRoleFilter').value = 'all';
 element('memberSortMode').value = 'username';
@@ -32,24 +34,27 @@ vm.runInContext(`
   ];
   renderUsers();
 `, context);
-function row(username) {
+function row(id) {
   const rows = element('userTable').innerHTML.match(/<tr\b[\s\S]*?<\/tr>/g) || [];
-  return rows.find(r => r.includes(`title="${username}"`)) || '';
+  return rows.find(r => r.includes(`data-member-row="${id}"`)) || '';
 }
-assert.match(row('Aidan02'), /badge-super-admin">超级管理员<\/span>/);
-assert.match(row('Aidan02'), /受固定角色策略保护/);
-assert.doesNotMatch(row('Aidan02'), /降级为普通成员|撤销管理员|重置密码|>禁用</);
-assert.match(row('Operator'), /badge-admin">管理员<\/span>/);
-assert.match(row('Member'), /badge-user">普通成员<\/span>/);
+assert.match(row('super'), /超级管理员/);
+assert.match(row('admin'), /管理员/);
+assert.match(row('user'), /普通成员/);
+vm.runInContext("AdminMembers.selected='super';AdminMembers.drawDetail();",context);
+assert.doesNotMatch(element('memberInspector').innerHTML,/重置密码|停用账号|变更系统角色/);
 element('memberRoleFilter').value = 'super_admin';
 vm.runInContext('applyMemberFilters()', context);
-assert.match(row('Aidan02'), /超级管理员/);
-assert.equal(row('Operator'), '');
-assert.equal(row('Member'), '');
+assert.match(row('super'), /超级管理员/);
+assert.equal(row('admin'), '');
+assert.equal(row('user'), '');
 element('memberRoleFilter').value = 'all';
 vm.runInContext("_currentUser = {user_id:'admin', role:'admin'}; renderUsers();", context);
-assert.doesNotMatch(row('Aidan02'), /重置密码|>禁用</);
-assert.doesNotMatch(row('Member'), /提升为管理员/);
+vm.runInContext("AdminMembers.selected='super';AdminMembers.drawDetail();",context);
+assert.doesNotMatch(element('memberInspector').innerHTML,/重置密码|停用账号|变更系统角色/);
+vm.runInContext("AdminMembers.selected='user';AdminMembers.drawDetail();",context);
+assert.match(element('memberInspector').innerHTML,/编辑名称/);
+assert.doesNotMatch(element('memberInspector').innerHTML,/变更系统角色/);
 
 function explanation(access) {
   context.fixtureAccess = access;

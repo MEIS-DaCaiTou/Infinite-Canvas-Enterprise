@@ -165,6 +165,7 @@ async def _run_checks() -> None:
                     "id": "custom-api",
                     "name": "Custom API",
                     "enabled": True,
+                    "managed_source_supported": True,
                     "protocol": "openai",
                     "base_url": "https://provider.example/v1",
                     "key_preview": "sk-...cret",
@@ -204,6 +205,7 @@ async def _run_checks() -> None:
         assert filtered_config["tokenizer"] == "cl100k_base"
         assert filtered_config["comfy_instances"] == ["configured"]
         assert filtered_config["api_providers"][0]["id"] == "custom-api"
+        assert filtered_config["api_providers"][0]["managed_source_supported"] is True
         assert "127.0.0.1:8188" not in json.dumps(filtered_config, ensure_ascii=False)
         _assert_no_sensitive_config(filtered_config)
 

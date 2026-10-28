@@ -92,6 +92,7 @@ let panState = null;
 let didPan = false;
 let portDragState = null;
 let saveTimer = null;
+let smartSaveRevision = 0;
 let apiProviders = [];
 let comfyWorkflows = [];
 let comfyInstanceCount = 1;
@@ -1199,9 +1200,21 @@ function canvasListUrlForProject(projectId){
     const pid = rememberCanvasListProject(projectId);
     return `/static/canvas-list.html?project=${encodeURIComponent(pid)}`;
 }
-function backToCanvasList(){
+async function backToCanvasList(){
     savePromptDraftForCurrent();
-    window.location.href = canvasListUrlForProject(canvas?.project || sourceProjectId || 'default');
+    if(!canvas){
+        window.location.href = canvasListUrlForProject(sourceProjectId || 'default');
+        return;
+    }
+    const revision = smartSaveRevision;
+    await CanvasSaveNavigation.leave({
+        cancelDebounce:()=>{ clearTimeout(saveTimer); saveTimer = null; },
+        isSaving:()=>canvasSyncInFlight,
+        save:saveCanvas,
+        hasPending:()=>canvasSyncInFlight || smartSaveRevision !== revision,
+        failed:()=>toast(window.StudioI18n?.lang?.() === 'en' ? 'Save incomplete. Please try returning again.' : '保存尚未完成，请稍后再返回'),
+        navigate:()=>{ window.location.href = canvasListUrlForProject(canvas.project); }
+    });
 }
 function promptPlainText(){
     return originalPromptTextFromParts(collectPromptParts());
@@ -2729,6 +2742,7 @@ function restoreOpenControl(state){
     if(!match) return;
     if(state.pinned) match.classList.add('pinned');
     if(state.interacting) match.classList.add('interacting');
+    showSmartControlMenu(match);
 }
 function dynamicParamsScrollSnapshot(){
     if(!dynamicParams) return null;
@@ -2794,10 +2808,6 @@ function renderDynamicParams(){
             getSelected:() => video ? settings.videoModel : settings.model,
         });
     }
-    if(settings.engine==='api')window.CanvasCallSources?.mount(dynamicParams,{
-        getProvider:()=>settings.apiKind==='video'?settings.videoProvider:settings.provider_id,
-        getValue:()=>settings,onChange:value=>{settings.callSources=value.callSources;settings.businessProjectId=value.businessProjectId;persistActiveSmartSettings();scheduleSave();}
-    });
     restoreOpenControl(keepOpen);
     restoreDynamicParamsScroll(scrollState);
     updatePromptPlaceholder();
@@ -3969,7 +3979,14 @@ function setDynamicSetting(key, value){
     scheduleSave();
 }
 function closeAllSmartPopovers(){
+    window.StudioDropdowns.closePanel();
     document.querySelectorAll('.smart-control.pinned, .smart-control.interacting').forEach(c => c.classList.remove('pinned', 'interacting'));
+}
+function showSmartControlMenu(control){
+    const panel = control.querySelector(':scope > .smart-popover');
+    const anchor = control.querySelector(':scope > .smart-pill');
+    if(panel && anchor) window.StudioDropdowns.openPanel(panel, anchor,
+        () => control.classList.remove('pinned', 'interacting'));
 }
 // 悬浮打开弹层后点了里面的参数：标记 interacting，让它熬过重渲染不收起；鼠标真正离开该控件时才关闭。
 function markControlInteracting(el){
@@ -3978,6 +3995,8 @@ function markControlInteracting(el){
 }
 function bindDynamicParams(){
     dynamicParams.querySelectorAll('.smart-control').forEach(ctrl => {
+        const panel = ctrl.querySelector(':scope > .smart-popover');
+        if(panel) { panel.setAttribute('popover','manual'); panel.classList.add('studio-dropdown-panel'); }
         // 悬浮态的多选：鼠标移出整个控件（含上方弹层，弹层是 DOM 子节点）才解除，途中点参数不收起。
         ctrl.onmouseleave = () => ctrl.classList.remove('interacting');
     });
@@ -3988,7 +4007,7 @@ function bindDynamicParams(){
             const ctrl = pill.parentElement;
             const wasPinned = ctrl.classList.contains('pinned');
             closeAllSmartPopovers();
-            if(!wasPinned) ctrl.classList.add('pinned');
+            if(!wasPinned) { ctrl.classList.add('pinned'); showSmartControlMenu(ctrl); }
         };
     });
     dynamicParams.querySelectorAll('[data-smart-param]').forEach(btn => {
@@ -5275,7 +5294,7 @@ async function mergeReloadCanvasNow(){
         return;
     }
     try {
-        const res = await fetch(CanvasSharedView.readUrl(canvasId));
+        const res = await fetch(`/api/canvases/${canvasId}`);
         if(!res.ok) return;
         const data = await res.json();
         if(data && data.canvas) applyMergedServerCanvas(data.canvas);
@@ -5295,7 +5314,6 @@ function handleCanvasUpdatedMessage(data={}){
     scheduleCanvasMergeReload(200);
 }
 function startCanvasMetaPoll(){
-    if(window.CanvasSharedView?.enabled) return;
     // WS / iframe 转发不可靠时的兜底：定期看服务器 updated_at 是否变新，变新就合并拉取
     if(canvasMetaPollTimer) return;
     canvasMetaPollTimer = setInterval(async () => {
@@ -5310,7 +5328,6 @@ function startCanvasMetaPoll(){
     }, 8000);
 }
 function connectAssetLibrarySyncSocket(){
-    if(window.CanvasSharedView?.enabled) return;
     if(window.parent && window.parent !== window) return;
     const host = window.location.host;
     if(!host) return;
@@ -5824,12 +5841,9 @@ function migrateSmartGroupImageMembers(){
     return changed;
 }
 async function loadCanvas(){
-    if(window.CanvasSharedView?.enabled) CanvasSharedView.selectNode=id=>{
-        selectedId=id;selectedIds=[];selectedImage={nodeId:'',index:-1};syncSelectionUi();updateComposer();
-    };
     if(!canvasId) return;
     try {
-        const res = await fetch(CanvasSharedView.readUrl(canvasId));
+        const res = await fetch(`/api/canvases/${canvasId}`);
         if(!res.ok) return;
         const data = await res.json();
         canvas = data.canvas;
@@ -5879,12 +5893,11 @@ async function loadCanvas(){
     } catch(e) { toast(tr('smart.toastCanvasFail')); }
 }
 function scheduleSave(){
-    if(window.CanvasSharedView?.enabled) return;
+    smartSaveRevision++;
     clearTimeout(saveTimer);
     saveTimer = setTimeout(saveCanvas, 450);
 }
 async function saveCanvas(){
-    if(window.CanvasSharedView?.enabled) return;
     if(!canvasId || !canvas) return;
     savePromptDraftForCurrent();
     nodes.forEach(node => {
@@ -7791,9 +7804,6 @@ function bindPromptNodeControls(el, node){
         render();
         scheduleSave();
     };
-    const llmPanel=el.querySelector('.prompt-node-llm');
-    if(llmPanel)window.CanvasCallSources?.mount(llmPanel,{getProvider:()=>node.llmProvider,getValue:()=>node,
-        onChange:value=>{node.callSources=value.callSources;node.businessProjectId=value.businessProjectId;scheduleSave();}});
     const providerEl = el.querySelector('.prompt-llm-provider');
     if(providerEl) providerEl.onchange = e => {
         e.stopPropagation();
@@ -13850,6 +13860,7 @@ async function waitSmartComfyTaskResult(taskId){
         const readyResult = data?.result || data?.outputs || data?.images || data?.videos || data?.audios || data?.texts;
         if(readyResult && resultMediaUrls(readyResult).length) return data.result || data;
         if(data.status === 'succeeded') return data.result || {};
+        if(data.status === 'cancelled') throw new Error('ComfyUI 任务已取消');
         if(data.status === 'failed') throw new Error(data.error || tr('smart.errRunFailed'));
         await sleep(1600);
     }
@@ -13940,7 +13951,7 @@ async function generateComfyUrlsWithSettings(runSettings, prompt, refs,node){
         return r.json().then(ComfyWorkflowFields.normalizeWorkflow);
     });
     const values = await ComfyWorkflowFields.canvasValues(wf.config, {
-        prompt, media:{image:imageRefs, video:videoRefsOnly(allRefs), audio:audioRefsOnly(allRefs)},
+        prompt, workflow:wf.workflow, media:{image:imageRefs, video:videoRefsOnly(allRefs), audio:audioRefsOnly(allRefs)},
         parameters:runSettings.comfyParams || {}, mediaName:ref=>comfyNameForRef(ref,workflowName,wf.config.backend), english:window.StudioI18n?.lang?.() === 'en',
         randomValue:field => comfyRandomEnabledField(field) && smartComfyRandomActiveFor(runSettings, field.id) ? smartComfyRandomValue(field) : undefined
     });
@@ -14649,7 +14660,7 @@ async function runGeneration(){
 async function runSmartLLMTask(node,payload){
     const originId=canvas?.id,nodeId=node.id;
     const current=()=>canvas?.id===originId ? nodes.find(value=>value.id===nodeId) : null;
-    return CanvasLLMTasks.run({...payload,...window.CanvasCallSources?.selection(node,payload.provider)},{
+    return CanvasLLMTasks.run({...payload},{
         task:CanvasLLMTasks.pending(node.llmTask)?node.llmTask:null,
         isCurrent:()=>Boolean(current()),prepare:async()=>taskCanvasSource(current()),
         onState:ticket=>{
@@ -14667,7 +14678,6 @@ async function runSmartLLMTask(node,payload){
     });
 }
 function resumeSmartLLMTasks(){
-    if(window.CanvasSharedView?.enabled) return;
     nodes.filter(node=>node.type==='smart-prompt' && CanvasLLMTasks.pending(node.llmTask)).forEach(node=>{
         node.running=true;
         runSmartLLMTask(node,null).catch(error=>{
@@ -14713,7 +14723,7 @@ async function runApiGeneration(prompt, refs, runSettings=settings,{node}={}){
     const count = Math.max(1, Math.min(8, Number(runSettings.count || 1)));
     const source=await taskCanvasSource(node);
     const payload = {source,prompt, provider_id:runSettings.provider_id, model:runSettings.model, size:sizeForRun(runSettings), quality:runSettings.quality || 'auto', n:1, reference_images:imageRefsOnly(refs).slice(0, SMART_REFERENCE_IMAGE_MAX)};
-    Object.assign(payload, window.CanvasModelPicker?.imageParameters(runSettings) || {},window.CanvasCallSources?.selection(runSettings,payload.provider_id));
+    Object.assign(payload, window.CanvasModelPicker?.imageParameters(runSettings) || {});
     const tasks = await Promise.all(Array.from({length:count}, () => fetch('/api/canvas-image-tasks', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)}).then(async r => {
         if(!r.ok) throw new Error(await r.text());
         return r.json();
@@ -14802,7 +14812,6 @@ async function runApiVideoGeneration(prompt, refs, runSettings=settings, {node}=
         const refAudios = audioRefsOnly(uploadedRefs).map(ref => effUrl(ref)).filter(Boolean).slice(0, 3);
         if(mismatchedAsset) toast('部分认证素材属于其它平台，已回退为普通素材。切换到对应平台的视频接口才能用 asset:// 认证地址。');
         const payload = {
-            ...window.CanvasCallSources?.selection(runSettings,runSettings.videoProvider || 'comfly'),
             source:await taskCanvasSource(node),
             prompt,
             provider_id: runSettings.videoProvider || 'comfly',
@@ -14915,7 +14924,7 @@ async function runComfyGeneration(node, prompt, refs, pendingNode, meta){
         return r.json().then(ComfyWorkflowFields.normalizeWorkflow);
     });
     const values = await ComfyWorkflowFields.canvasValues(wf.config, {
-        prompt, media:{image:refs, video:videoRefsOnly(allRefs), audio:audioRefsOnly(allRefs)},
+        prompt, workflow:wf.workflow, media:{image:refs, video:videoRefsOnly(allRefs), audio:audioRefsOnly(allRefs)},
         parameters:settings.comfyParams || {}, mediaName:ref=>comfyNameForRef(ref,workflowName,wf.config.backend), english:window.StudioI18n?.lang?.() === 'en',
         randomValue:field => comfyRandomEnabledField(field) && smartComfyRandomActive(field.id) ? smartComfyRandomValue(field) : undefined
     });
@@ -15242,7 +15251,6 @@ function startJimengPoll(node){
     })();
 }
 function resumeJimengPendingNodes(){
-    if(window.CanvasSharedView?.enabled) return;
     nodes.filter(n => n && n.jimengPending && n.jimengPending.submitId).forEach(n => {
         n.jimengPending.querying = false;
         startJimengPoll(n);
@@ -15452,7 +15460,6 @@ async function resumeSmartPendingNode(node, logContext={}){
     }
 }
 function resumeSmartPendingTasks(){
-    if(window.CanvasSharedView?.enabled) return;
     nodes.filter(node => smartPendingTasks(node).length).forEach(node => {
         resumeSmartPendingNode(node);
     });

@@ -32,7 +32,7 @@ jobs:
           fetch-depth: 2
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.14.6'
       - name: Documentation contract (read-only)
         run: python -B tools/check_docs.py
       - name: Checker negative and positive fixtures

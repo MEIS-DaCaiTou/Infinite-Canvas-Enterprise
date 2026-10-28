@@ -188,6 +188,10 @@ def inspect_port_listeners(port: int) -> PortListenerSnapshot:
         result = subprocess.run(
             ["netstat", "-ano", "-p", "tcp"],
             text=True,
+            # netstat uses the Windows console code page, independently of
+            # Python UTF-8 mode. Its localized heading must not break a stop.
+            encoding="oem",
+            errors="replace",
             capture_output=True,
             timeout=3,
             check=False,

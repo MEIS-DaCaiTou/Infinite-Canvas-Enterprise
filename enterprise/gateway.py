@@ -35,6 +35,8 @@ ROOT_DIR = Path(__file__).parent.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
+from enterprise.proxy_transport import read_request_body, response_headers, streaming_response, needs_body_filter
+
 from enterprise.config import (
     DB_PATH,
     ENTERPRISE_HIDE_UPSTREAM_AUTHOR,
@@ -65,6 +67,7 @@ from enterprise.route_policy import (
 from enterprise.admin_api import router as admin_router
 from enterprise.user_model_api import router as user_model_router
 from enterprise.generation_task_api import router as generation_task_router
+from enterprise.comfy_queue_api import router as comfy_queue_router
 from enterprise.department_api import create_router as create_department_router
 from enterprise.update_api import router as update_router
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -280,6 +283,7 @@ app.add_middleware(InstallMaintenanceMiddleware, state_root=PATH_ROOTS.STATE_ROO
 app.include_router(admin_router, prefix="/enterprise")
 app.include_router(user_model_router, prefix="/enterprise")
 app.include_router(generation_task_router, prefix="/enterprise")
+app.include_router(comfy_queue_router, prefix="/enterprise")
 app.include_router(create_department_router(), prefix="/enterprise")
 app.include_router(update_router, prefix="/enterprise")
 
@@ -456,6 +460,7 @@ def _build_enterprise_shell_guard(user: dict) -> str:
         "isAdmin": bool(user.get("is_admin")),
         "canApiSettings": bool(can_use_feature(user, "api_settings_access")),
         "canWorkflowSettings": bool(can_use_feature(user, "workflow_settings_access")),
+        "canOpenProject": bool(can_use_feature(user, "project_homepage")),
         # The upstream in-place updater is permanently disabled. Authorized
         # operators use the separate Manifest v2 Update Center instead.
         "updateEnabled": False,
@@ -498,21 +503,20 @@ def _build_enterprise_shell_guard(user: dict) -> str:
     const btn = byId('github-entry-btn');
     if(!btn) return;
     btn.classList.remove('update-available');
-    btn.title = '企业版项目主页';
-    btn.setAttribute('aria-label', '企业版项目主页');
+    const english = localStorage.getItem('studio_lang') === 'en';
+    const label = english ? 'Enterprise project homepage' : '企业版项目主页';
+    btn.disabled = !cfg.canOpenProject;
+    btn.title = cfg.canOpenProject ? label : (english ? 'Project homepage is disabled by the administrator' : '管理员已关闭项目主页跳转');
+    btn.setAttribute('aria-label', btn.title);
+    const openRepo = function(){ if(cfg.canOpenProject) window.open(cfg.repoUrl, '_blank', 'noopener'); return false; };
     btn.onclick = function(){
-      window.open(cfg.repoUrl, '_blank', 'noopener');
-      return false;
+      return openRepo();
     };
-    setText(btn.querySelector('.side-pill-text'), '企业版项目主页');
+    setText(btn.querySelector('.side-pill-text'), label);
     try {
-      window.openProjectPage = openProjectPage = function(){
-        window.open(cfg.repoUrl, '_blank', 'noopener');
-      };
+      window.openProjectPage = openProjectPage = openRepo;
     } catch(e) {
-      window.openProjectPage = function(){
-        window.open(cfg.repoUrl, '_blank', 'noopener');
-      };
+      window.openProjectPage = openRepo;
     }
   }
   function setVersionBadgeText(version){
@@ -950,6 +954,7 @@ def _build_enterprise_shell_guard(user: dict) -> str:
     if(!cfg.updateEnabled) disableUpdateFunctions();
     else wrapAdminUpdateText();
     applyGovernance();
+    window.addEventListener('studio-lang-change', setProjectEntry);
     enterpriseVersionOnly();
     ensureStatsWebSocket();
     const target = document.body || document.documentElement;
@@ -1054,13 +1059,6 @@ async def logout(request: Request):
         samesite="lax",
     )
     return resp
-
-
-@app.get('/enterprise/business', include_in_schema=False)
-async def business_page(request: Request):
-    if not _get_user(request):
-        return RedirectResponse('/enterprise/login?next=/enterprise/business')
-    return HTMLResponse((ENTERPRISE_STATIC_DIR / 'business.html').read_text(encoding='utf-8'))
 
 
 @app.get("/enterprise/admin", include_in_schema=False)
@@ -1347,7 +1345,7 @@ async def reverse_proxy(path: str, request: Request):
             return RedirectResponse(f"/enterprise/login?next=/{path}")
         return JSONResponse({"error": "未授权，请先登录", "code": 401}, status_code=401)
 
-    body = await request.body()
+    body = await read_request_body(request)
 
     # ── 6. 前置拦截（访问控制） ───────────────────────────
     err = await pre_process(
@@ -1373,39 +1371,28 @@ def _build_user_bar(user: dict) -> str:
     from html import escape
     display = escape(user.get("display_name") or user.get("username", ""))
     admin_btn = ""
-    if user.get("is_admin"):
-        admin_btn = (
-            '<a href="/enterprise/admin" '
-            'style="padding:4px 10px;border-radius:8px;border:1px solid var(--line,#e8ecf2);'
-            'background:transparent;color:var(--muted,#64748b);text-decoration:none;'
-            'font-size:12px;font-weight:600;white-space:nowrap;">管理后台</a>'
-        )
-    enterprise_shell_guard = _build_enterprise_shell_guard(user)
+    if _can_open_management(user):
+        admin_btn = '<a href="/enterprise/admin" target="_top" data-ent-label="admin">管理后台</a>'
     return (
-        '<div id="__ent_bar__" '
-        'style="position:fixed;bottom:20px;right:20px;z-index:99999;'
-        'display:flex;align-items:center;gap:8px;'
-        'background:var(--panel,#fff);border:1px solid var(--line,#e8ecf2);'
-        'border-radius:24px;padding:5px 10px 5px 14px;'
-        'box-shadow:0 4px 20px rgba(0,0,0,.12);'
-        'font-family:Inter,-apple-system,BlinkMacSystemFont,sans-serif;'
-        'font-size:13px;color:var(--text,#0f172a);'
-        'backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);">'
-        f'<span style="font-weight:600;max-width:120px;overflow:hidden;'
-        f'text-overflow:ellipsis;white-space:nowrap;" title="{display}">{display}</span>'
-        '<a href="/static/canvas-list.html?scope=department" style="padding:4px 10px;border-radius:8px;'
-        'border:1px solid var(--line,#e8ecf2);color:var(--muted,#64748b);'
-        'text-decoration:none;font-size:12px;font-weight:600;white-space:nowrap;">部门项目</a>'
+        '<link rel="stylesheet" href="/static/css/enterprise-shell.css?v=20261025.1">'
+        '<div id="__ent_bar__">'
+        f'<span class="ent-user-name" title="{display}">{display}</span>'
         f'{admin_btn}'
-        '<form action="/enterprise/logout" method="post" style="margin:0;display:inline-flex;">'
-        '<button type="submit" '
-        'style="padding:4px 10px;border-radius:20px;border:none;'
-        'background:var(--text,#0f172a);color:var(--bg,#f7f8fa);text-decoration:none;'
-        'font:inherit;font-size:12px;font-weight:600;white-space:nowrap;cursor:pointer;">退出</button>'
-        '</form>'
-        '</div>'
-        f'{enterprise_shell_guard}'
+        '<form action="/enterprise/logout" method="post">'
+        '<button type="submit" data-ent-label="logout">退出</button></form></div>'
+        '<script src="/static/js/enterprise-shell-ui.js?v=20261025.1"></script>'
+        f'{_build_enterprise_shell_guard(user)}'
     )
+
+
+def _can_open_management(user: dict) -> bool:
+    if user.get('is_admin'):
+        return True
+    from enterprise.department_governance import DepartmentGovernance, GovernanceError
+    try:
+        return bool(DepartmentGovernance().management_context(user).get('can_manage'))
+    except GovernanceError:
+        return False
 
 
 async def _forward(
@@ -1417,7 +1404,7 @@ async def _forward(
 ) -> Response:
     """向上游转发请求，可选进行后置过滤"""
     if body is None:
-        body = await request.body()
+        body = await read_request_body(request)
 
     # 企业版由启动脚本管理 3001/8000 双服务。上游自带更新接口的
     # auto_restart 会启动普通版 3000，因此经企业网关触发时强制改为手动重启。
@@ -1473,12 +1460,13 @@ async def _forward(
         upstream_path += f"?{qs}"
 
     try:
-        upstream_resp = await _http_client.request(
+        upstream_request = _http_client.build_request(
             method=request.method,
             url=upstream_path,
             headers=headers,
             content=body,
         )
+        upstream_resp = await _http_client.send(upstream_request, stream=True)
     except httpx.ConnectError:
         return JSONResponse(
             {"error": "上游服务未启动，请先运行主程序", "code": 503},
@@ -1487,21 +1475,36 @@ async def _forward(
     except Exception as e:
         return JSONResponse({"error": str(e), "code": 502}, status_code=502)
 
-    # 构建响应 headers（过滤掉逐字节传输头）
-    skip_resp_headers = {"transfer-encoding", "connection", "keep-alive"}
-    resp_headers = {
-        k: v for k, v in upstream_resp.headers.items()
-        if k.lower() not in skip_resp_headers
-    }
+    content_type = upstream_resp.headers.get("content-type", "")
+    if "text/event-stream" in content_type:
+        async def observe_sse(line):
+            if not skip_intercept and user:
+                await post_process(path=path, method=request.method,
+                    status_code=upstream_resp.status_code, response_body=line,
+                    content_type=content_type, user=user, request_body=body,
+                    query_params=request.query_params)
+        return streaming_response(upstream_resp, observe_sse=observe_sse,
+                                  head=request.method == "HEAD")
+    if not needs_body_filter(content_type) or (skip_intercept and "text/html" not in content_type):
+        return streaming_response(upstream_resp, head=request.method == "HEAD")
+
+    # JSON needs the existing ownership filter; HTML needs the existing shell.
+    # httpx decodes the body, so never retain compressed lengths/encodings.
+    try:
+        raw_content = await upstream_resp.aread()
+    except httpx.HTTPError:
+        return JSONResponse({"error": "读取上游响应中断，请核对原任务状态", "code": 502}, status_code=502)
+    finally:
+        await upstream_resp.aclose()
+    resp_headers = response_headers(upstream_resp, decoded=True)
 
     # ── 后置过滤 ──────────────────────────────────────────
     if not skip_intercept and user:
-        content_type = upstream_resp.headers.get("content-type", "")
         new_body, header_overrides = await post_process(
             path=path,
             method=request.method,
             status_code=upstream_resp.status_code,
-            response_body=upstream_resp.content,
+            response_body=raw_content,
             content_type=content_type,
             user=user,
             request_body=body,
@@ -1521,9 +1524,8 @@ async def _forward(
             media_type=content_type,
         )
 
-    # ── 流式透传（静态资源/下载） ──────────────────────────
+    # ── 其余需要 HTML 注入的响应 ─────────────────────────
     raw_ct = upstream_resp.headers.get("content-type", "")
-    raw_content = upstream_resp.content
     # 对非静态资源的 HTML 也注入用户信息栏
     if user and "text/html" in raw_ct:
         bar_html = _build_user_bar(user).encode("utf-8")

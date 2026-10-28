@@ -25,7 +25,7 @@ def dispatch_paused(state_root):
         return True
 
 
-def create_dispatch(journal, models, runners, schedule, paused, *, secret, provider, headers, workflow, backend, default_model):
+def create_dispatch(journal, models, runners, schedule, paused, *, secret, provider, headers, workflow, backend, default_model, comfy_queue=None):
     from enterprise.task_credentials import bound_runner, validate_pending_binding
     from enterprise.department_governance import DepartmentGovernance
     billing = DepartmentGovernance()
@@ -34,7 +34,7 @@ def create_dispatch(journal, models, runners, schedule, paused, *, secret, provi
         try:
             if kind == "comfy":
                 configured = workflow(payload.workflow_json)
-                if not configured["config"].get("enabled", True):
+                if not configured["config"].get("enabled", True) and not configured.get('builtin'):
                     return None
                 scope = {"backend": backend(payload.workflow_json, payload.backend),
                          "workflow": configured["workflow"], "config": configured["config"]}
@@ -59,6 +59,8 @@ def create_dispatch(journal, models, runners, schedule, paused, *, secret, provi
         if not await asyncio.to_thread(validate_pending_binding, billing, record):
             return False
         owner = record.get("enterprise_user_id")
+        if record['type'] == 'comfy' and not owner:
+            return True  # Standalone loopback use shares one local quota; Gateway still requires login.
         user = await asyncio.to_thread(db.get_user_by_id, owner)
         if (not user or await asyncio.to_thread(db.get_task_owner, OWNER_TYPES[record["type"]], record["id"]) != owner
                 or await asyncio.to_thread(db.get_canvas_image_task_owner, record["id"]) != owner):
@@ -71,4 +73,4 @@ def create_dispatch(journal, models, runners, schedule, paused, *, secret, provi
             {**user, "user_id": owner}, {}, payload.model_dump_json().encode("utf8"))
         return denied is None
 
-    return CanvasTaskDispatch(journal, models, runners, binding, validate, paused, schedule)
+    return CanvasTaskDispatch(journal, models, runners, binding, validate, paused, schedule, comfy_queue=comfy_queue)

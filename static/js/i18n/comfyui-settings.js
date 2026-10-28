@@ -1,6 +1,8 @@
 (function(){
     if(!window.StudioI18n) return;
     window.StudioI18n.register({
+        "comfy.refreshChoices": { zh:"刷新后端选项", en:"Refresh backend options" },
+        "comfy.choicesFailed": { zh:"读取后端选项失败", en:"Could not load backend options" },
         "comfy.title": { zh: "工作流设置", en: "Workflow Settings" },
         "comfy.subtitle": { zh: "选择本地 ComfyUI 工作流，配置可暴露到画布的输入参数。", en: "Choose local ComfyUI workflows, then configure the inputs exposed to Canvas." },
         "comfy.localWorkflowMode": { zh: "本地 ComfyUI 工作流", en: "Local ComfyUI Workflow" },

@@ -78,7 +78,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.14.6'
       - name: Prepare verified compiler outside the checkout
         shell: pwsh
         run: |
@@ -103,7 +103,8 @@ jobs:
           "ICE_NATIVE_ARTIFACT_ROOT=$output" | Add-Content -LiteralPath $env:GITHUB_ENV
       - name: Run scoped compiler and compiled EXE contracts
         run: |
-          python -m pip install pytest
+          python -m pip install --require-hashes -r requirements-dev.txt
+          python -B tools/check_development_runtime.py
           python -B -m pytest -q enterprise/tests/test_native_entry_build.py enterprise/tests/test_native_entry_windows.py
       - name: Prepare pinned portable Inno compiler and immutable public test assets
         shell: pwsh

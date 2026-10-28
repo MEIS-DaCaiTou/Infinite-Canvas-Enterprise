@@ -141,10 +141,8 @@ def test_shared_resources_do_not_decode_outside_media_subtrees(results):
         shared.reuse(p['outsider'],'video')
 
 
-def test_http_preview_range_revocation_and_fee_permissions(results,monkeypatch):
+def test_retired_shared_result_routes_do_not_expose_contents(results):
     service,p,design,_,_,project,roots,journal=results
-    from enterprise import project_results, shared_canvases
-    monkeypatch.setattr(project_results,'PATH_ROOTS',roots);monkeypatch.setattr(shared_canvases,'PATH_ROOTS',roots)
     app=FastAPI()
     @app.middleware('http')
     async def identity(request:Request,next):
@@ -152,12 +150,5 @@ def test_http_preview_range_revocation_and_fee_permissions(results,monkeypatch):
     app.include_router(create_router(service),prefix='/enterprise')
     service.share_project(p['employee'],project,'company_readonly')
     with TestClient(app) as client:
-        headers={'x-user':'outsider'}
-        url='/enterprise/api/business/workspace/tasks/task/outputs/0'
-        assert client.get(url).status_code==401
-        response=client.get(url,headers={**headers,'range':'bytes=0-9'})
-        assert response.status_code==206 and response.content==b'controlled'
-        assert client.get('/enterprise/api/business/workspace/canvases/video',headers=headers).status_code==200
-        assert client.get('/enterprise/api/business/costs?scope=company',headers=headers).status_code==403
-        service.share_project(p['employee'],project,'private')
-        assert client.get(url,headers=headers).status_code==404
+        for route in ['/workspace/tasks/task/outputs/0','/workspace/canvases/video','/costs?scope=company']:
+            assert client.get('/enterprise/api/business'+route,headers={'x-user':'admin'}).status_code==404

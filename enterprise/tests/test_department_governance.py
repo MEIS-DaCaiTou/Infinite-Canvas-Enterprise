@@ -239,7 +239,7 @@ def test_api_does_not_accept_plaintext_reads_or_leak_rejected_input(business):
     assert response.status_code == 400 and 'fixture-secret-echo' not in response.text
     key=source(service,p)
     assert client.get('/enterprise/api/business/sources/'+key['id']+'/secret',headers={'x-fixture-user':'admin'}).status_code == 405
-    assert client.get('/enterprise/api/business/costs/summary?scope=company',headers={'x-fixture-user':'employee'}).status_code == 403
+    assert client.get('/enterprise/api/business/costs/summary?scope=company',headers={'x-fixture-user':'employee'}).status_code == 404
     assert client.post('/enterprise/api/business/sources',headers={'x-fixture-user':'admin'},content=b'x'*32769).status_code == 413
 
 
@@ -359,3 +359,12 @@ def test_cost_precision_is_preserved_across_sum_refund_and_budget(business):
     now=int(time.time())
     costs.set_budget(p['design'],design,'本期',now-5,now+100,'CNY','999999999999999999.123456789121')
     assert costs.budgets(p['design'],design)[0]['over_amount']=='1E-12'
+
+
+def test_management_context_does_not_include_retired_project_or_cost_views(business):
+    service,p,_,_,path=business
+    before=inspect_schema_metadata(path)
+    assert service.management_context(p['admin']) == {'enabled':True,'company_admin':True,'can_manage':True}
+    assert service.management_context(p['design']) == {'enabled':True,'company_admin':False,'can_manage':True}
+    assert service.management_context(p['employee']) == {'enabled':True,'company_admin':False,'can_manage':False}
+    assert inspect_schema_metadata(path)==before

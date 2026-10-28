@@ -12,13 +12,13 @@ from enterprise.accepted_task_recovery import recovery_candidate
 from enterprise.runtime.logging import redact_text
 
 TYPES = {"canvas_image": "online-image", "canvas_comfy": "comfy", "canvas_video": "video", "canvas_llm": "llm"}
-STATES = {"queued", "running", "succeeded", "failed", "unknown", "partial", "unavailable"}
+STATES = {"queued", "running", "succeeded", "failed", "cancelled", "unknown", "partial", "unavailable"}
 
 
 def task_state(record):
     state = record.get("status")
-    if state == "succeeded":
-        return "succeeded"
+    if state in {"succeeded", "cancelled"}:
+        return state
     if state in {"queued", "running", "jimeng_pending"}:
         return "queued" if state == "queued" else "running"
     receipts = record.get("provider_receipts") or []
@@ -87,7 +87,7 @@ def describe_task(record, *, detail=False):
     if automatic:
         data["auto_recovery"] = {key: automatic[key] for key in (
             "status", "count", "last_query_at", "next_query_at", "reason") if key in automatic}
-        if state in {"succeeded", "failed", "partial"} and not recovery_candidate(record):
+        if state in {"succeeded", "failed", "partial", "cancelled"} and not recovery_candidate(record):
             data["auto_recovery"].update(status="complete", next_query_at=None, reason="")
     if detail:
         snapshot = (record.get('billing_context') or {}).get('snapshot')

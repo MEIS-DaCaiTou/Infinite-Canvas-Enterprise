@@ -33,6 +33,11 @@ from enterprise.roles import (
 
 
 FEATURE_FLAG_DEFINITIONS = {
+    "project_homepage": {
+        "default_enabled": True,
+        "title": "项目主页跳转",
+        "description": "控制首页项目主页按钮是否可打开企业版 GitHub 仓库，对所有账号统一生效；刷新首页后应用。",
+    },
     "api_settings_access": {
         "default_enabled": False,
         "title": "API 设置访问",
@@ -829,8 +834,8 @@ def read_canvas_json(canvas_id: str) -> Optional[dict]:
     if not path:
         return None
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        from enterprise.local_json import read_json
+        data = read_json(path)
     except Exception:
         return None
     return data if isinstance(data, dict) else None
@@ -1934,6 +1939,11 @@ def get_effective_feature_value(user: dict, feature_key: str) -> dict:
     flag = get_feature_flag(key)
     uid = str((user or {}).get("user_id") or (user or {}).get("id") or "").strip()
     override = get_user_feature_override(uid, key) if uid else None
+
+    if key == "project_homepage":
+        return {"feature_key": key, "allowed": bool(flag["enabled"]), "mode": "inherit",
+                "source": "global", "global_enabled": bool(flag["enabled"]),
+                "default_enabled": bool(flag["default_enabled"])}
 
     # ``system_update`` changes the running trusted Release.  USER-GOV-MVP-1
     # therefore binds it only to the current persisted super-admin role.

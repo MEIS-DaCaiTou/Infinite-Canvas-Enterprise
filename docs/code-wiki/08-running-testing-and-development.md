@@ -1,10 +1,20 @@
 # 运行、测试与开发方式
 
+2026-10-27现行开发基线：CPython **3.14.6**与`runtime/windows/requirements.lock`的30项发行依赖。下文较早的3.11命令仅是历史验证记录，不是当前强制兼容目标。应用依赖不再分别在根目录与enterprise维护；两个旧requirements入口均指向同一发行锁。
+
+新开发环境使用独立3.14.6解释器/虚拟环境，执行`python -m pip install --require-hashes -r requirements-dev.txt`，再运行`python -B tools/check_development_runtime.py`；测试前设置`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`。test-tools.lock只添加测试工具，不改变发行闭包。复制现有固定Runtime用于开发时，保留原发行依赖，将测试工具单独置于开发路径，不修改已安装的原Runtime或全局Python。
+
+本机固定预览沿用18000/18001和原测试数据，使用独立3.14.6开发Runtime，服务均只监听127.0.0.1。前端、权限、任务与数据路径不因解释器切换而重建；没有新提交/Release。
+
+2026-10-26队列定向验证：PYTEST_DISABLE_PLUGIN_AUTOLOAD=1，py -3.11 -B -m pytest -q enterprise/tests/test_comfy_queue.py enterprise/tests/test_canvas_task_dispatch_main.py enterprise/tests/test_canvas_task_dispatch_policy.py enterprise/tests/test_comfy_cancellation.py enterprise/tests/test_canvas_comfy_recovery.py enterprise/tests/test_comfy_io.py。使用真实journal、受控后端队列和HTTP受理路径，覆盖多用户轮转及持续加入、跨工作流/地址额度、外部占用、重启、取消和阶段拒绝。浏览器从根首页进入后台验证配置保存，再从原目录进入经典画布；隔离卡片验证平台等待与本地取消、刷新终态。该组不向真实GPU提交任务，保留原开发服务供负责人验收。
+
 > 源码参考快照（2026-10-13）：main@e89a288（已合并 #154/#155/#156）；产品功能源码基点 #156@4bdd9a1 保留；C5/C6/C7 已合并，构建与验收范围仍引用其准确记录。本文是代码/运行参考，当前 PR/CI、Release 和验收只见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，实施顺序只认路线图。
 
 [返回索引](./README.md)
 
 更新时间：2026-10-13。命令为源码/旧安装参考；产品交付和现场状态回到 [CURRENT](../CURRENT_PROJECT_STATUS.md)。
+
+2026-10-24本地流程调整：开发增量先启动原Gateway和业务服务，在固定内置浏览器入口交负责人手工测试；保留测试数据，反馈先在同一源码工作区修订。真实登录/角色实例与模拟身份的自动测试夹具分开；源码预览不要求每次打包或升级正式版本。人工确认后再提交PR，实际候选包与准确升级路径另验收。入口状态见[CURRENT](../CURRENT_PROJECT_STATUS.md)，具体规则见[开发工作流](../../CODEX_WORKFLOW.md#31-开发机人工验收与反复修订负责人2026-10-24要求)。
 
 ## 1. 前置条件
 

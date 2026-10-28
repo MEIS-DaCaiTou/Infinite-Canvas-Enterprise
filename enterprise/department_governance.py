@@ -102,6 +102,18 @@ class DepartmentGovernance:
             rows = conn.execute('SELECT * FROM departments WHERE active=1 ORDER BY name').fetchall()
             return [dict(row) for row in rows if _company(actor) or (member and row['id'] == member['department_id'])]
 
+    def management_context(self, principal):
+        """Department administration capability, independent of project views."""
+        try:
+            with self.session(principal) as (conn, actor):
+                member = _member(conn, actor['id'])
+                return {'enabled': True, 'company_admin': _company(actor),
+                        'can_manage': bool(_company(actor) or (member and member['manager']))}
+        except GovernanceError as exc:
+            if exc.code != 'DEPARTMENT_SCHEMA_UPGRADE_REQUIRED':
+                raise
+            return {'enabled': False, 'reason': exc.code}
+
     def workspace(self, principal):
         """One permission-filtered snapshot for the existing account UI."""
         try:
