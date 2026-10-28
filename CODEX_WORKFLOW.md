@@ -1,6 +1,6 @@
 # Infinite Canvas Enterprise 开发工作流
 
-更新时间：2026-10-27
+更新时间：2026-10-28
 
 协作与反馈入口见 [贡献指南](CONTRIBUTING.md)；本文件继续管理开发流程。
 
@@ -20,7 +20,7 @@
 
 ## 2. 路线门禁
 
-任务顺序只认 [路线图](docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md)，当前优先统一安装更新。[统一交付 ADR](docs/decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md) 是认可的设计，不是实现完成。
+任务顺序只认 [路线图](docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md)：先处理10.9测试机反馈，再按已确认顺序推进分类容量、NAS恢复和OSS；安装维护按实际阻断与准确来源处理。[统一交付 ADR](docs/decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md) 是认可的设计，不是实现完成。
 
 - 横向测试、日志、性能和模块化可以随当前阶段实施。
 - 后续阶段可做只读调研或小型 spike，但不得把未完成前置能力包装成可交付产品。

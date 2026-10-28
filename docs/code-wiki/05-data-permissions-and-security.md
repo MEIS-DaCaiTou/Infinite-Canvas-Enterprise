@@ -8,13 +8,21 @@
 
 | 数据类别 | 当前存储 | 说明 |
 | --- | --- | --- |
-| 用户、角色、会话版本 | SQLite `enterprise.db` | 企业身份事实源 |
+| 用户、系统权限角色、会话版本 | SQLite `enterprise.db` | 企业身份事实源，与创作角色档案不同 |
 | 资源归属、功能开关、用量 | SQLite `enterprise.db` | Gateway 权限索引 |
 | 安全审计、schema 状态/迁移账本 | SQLite | 由安全/迁移模块扩展 |
 | 项目、画布、对话 | JSON/业务文件 | 旧内核持久化 |
 | 图片、视频、上传、输出、素材 | 文件目录 | 数据库只存归属与引用 |
 | Provider/工作流配置 | 配置与工作流目录 | 返回前经企业层脱敏 |
 | Runtime/更新状态 | STATE_ROOT/LOG_ROOT/STAGING_ROOT | 与 APP_ROOT 分离 |
+| Comfy队列策略 | `STATE_ROOT/comfy-queue` 的原子 JSON | 保存配置，任务回执仍使用原 journal；不是第二套持久队列 |
+| 个人模型选择 | `DATA_ROOT/user-model-preferences/<user_id>.json` | 从认证会话确定用户；保存偏好不授予供应商管理权限 |
+| 个人创作角色档案（未发布） | `DATA_ROOT/characters/<user_id>.json`，schema_version1 | 原子保存图片引用/资料及revision，按认证账号隔离；单实例锁，不是多进程数据库 |
+| 官方创作角色目录（未发布） | `APP_ROOT/static/characters/catalog.json`，schema_version1 | 本地只读参考目录；10个公开参考角色，来源/正式分发限制见架构7.6 |
+
+画布、目录、对话和历史复用 `enterprise/local_json.py` 的单文件原子替换；调用方仍负责锁和冲突校验。该能力不构成数据库与素材的跨文件事务，也不替代备份。
+
+个人角色读取会隐藏当前不可访问的图片并报告数量，存档原引用保留；图片与cover_url保存均重新授权，旧记录无cover_url时沿用首图；归档不删除媒体。角色账号清理、正式备份恢复及后续schema迁移尚未交付，不能把本地文件原子替换当作这些生命周期验收。现行契约见[角色接口](./04-frontend-api-and-websocket.md#本地角色库接口未发布)。
 
 ## 2. 企业数据库表
 
@@ -48,7 +56,7 @@
 
 这样可以在改密、改角色、停用用户后主动废止旧会话，而不是等 JWT 自然过期。
 
-配置中的 `JWT_SECRET` 与初始管理员密码不得使用示例占位值。`ENTERPRISE_ENV=production` 或 `ENTERPRISE_STRICT_SECURITY=1` 会启用更严格的启动防护。
+`enterprise.env` 位于 CONFIG_ROOT；已有进程环境变量优先于文件中同名配置。`JWT_SECRET` 不应使用占位值或短密钥：`ENTERPRISE_ENV=production` 或 `ENTERPRISE_STRICT_SECURITY=1` 会拒绝已知占位值，短于32字符会告警，不应将告警误述成代码中的拒绝条件。`ADMIN_USERNAME` / `ADMIN_PASSWORD` 是历史显式 bootstrap 兼容配置，正常启动和新装不以其重置管理员；新装凭据走安装流程。端口、`DB_PATH`、更新开关的默认值和路径限制以 `enterprise/config.py` 与 `enterprise/paths.py` 为准，不把示例配置覆盖到旧安装。
 
 ## 4. 固定三角色
 
@@ -58,7 +66,7 @@
 | `admin` | 普通成员治理、资源归属和管理页面，但不能执行超级管理员专属治理 |
 | `super_admin` | 管理管理员、系统更新等高风险操作 |
 
-当前是固定角色矩阵，不是动态 RBAC，也没有组织/部门层级权限模型。
+系统角色仍为固定矩阵；部门、成员及渠道密钥另有业务归属和授权规则，部门负责人不自动成为系统管理员。10.9不提供被收缩的部门项目共享、费用或预算工作台；这不构成动态 RBAC 或跨企业多租户隔离。
 
 ## 5. 功能开关
 

@@ -699,7 +699,7 @@ def _flow_for_operation(file: str, symbol: str) -> str:
 # Wxx flow). Line numbers are deliberately excluded, while duplicate identical
 # calls remain duplicate records. Any added/removed/changed call drifts it.
 # W15 replaces the generic URL fallback with removal of this invocation's generated partial output.
-EXPECTED_SITE_MANIFEST_DIGEST = "bcdc7bbb10f7fed430eccf1a8dd94361175e97ffffa209b11a1409dac390fb3e"
+EXPECTED_SITE_MANIFEST_DIGEST = "f519577a2551768267157632889675ad0ee62b6892cb9cafd300ee3930737af2"
 
 FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W01", "main.py", "startup_event"),

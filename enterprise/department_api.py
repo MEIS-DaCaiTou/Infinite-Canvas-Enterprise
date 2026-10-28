@@ -88,6 +88,10 @@ def create_router(governance=None):
     async def sources(request: Request, manage: bool = False):
         return await call(request, service.sources, manage=manage)
 
+    @router.get('/source-preview')
+    async def source_preview(request: Request, provider_id: str):
+        return await call(request, service.source_preview, provider_id=provider_id)
+
     @router.post('/sources')
     async def create_source(request: Request):
         names = ['provider_id', 'name', 'scope', 'department_id', 'procurement', 'account_ref', 'secret']

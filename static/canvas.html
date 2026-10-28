@@ -21,13 +21,15 @@
     <script src="/static/js/theme.js?v=2026.07.5.1783117645"></script>
     <script src="/static/js/touch-mouse.js?v=2026.07.5.1783079819"></script>
     <script src="/static/js/i18n.js?v=20261026.1"></script>
-    <link rel="stylesheet" href="/static/css/canvas.css?v=20261026.3">
+    <link rel="stylesheet" href="/static/css/canvas.css?v=20261028.4">
     <link rel="stylesheet" href="/static/css/theme.css?v=2026.07.5.1782696682">
     <link rel="stylesheet" href="/static/css/comfy-outputs.css?v=20261015.2">
     <link rel="stylesheet" href="/static/css/model-picker.css?v=20261016.1">
     <link rel="stylesheet" href="/static/css/generation-task-center.css?v=20261015.1">
-  <link rel="stylesheet" href="/static/css/studio-select.css?v=20261025.2">
-  <script src="/static/js/studio-select.js?v=20261025.2" defer></script>
+  <link rel="stylesheet" href="/static/css/studio-select.css?v=20261028.4">
+  <script src="/static/js/studio-select.js?v=20261028.4" defer></script>
+    <link rel="stylesheet" href="/static/css/canvas-dock.css?v=20261029.1">
+    <link rel="stylesheet" href="/static/css/character-studio.css?v=20261029.6">
 </head>
 <body>
     <div id="shell" class="shell no-canvas">
@@ -62,6 +64,38 @@
                     <button id="canvasLogToggle" class="tool-btn toolbar-log" type="button" onclick="openCanvasLog(event)" title="日志" aria-label="日志" data-i18n-title="canvas.logs"><i data-lucide="list-todo" class="w-4 h-4"></i><span data-i18n="canvas.logs">日志</span></button>
                 </div>
             </div>
+        </div>
+        <div id="canvasDock" class="canvas-dock editor-only collapsed" role="toolbar" aria-label="画布工具栏">
+            <button class="dock-button dock-add" type="button" title="添加节点" aria-label="添加节点" aria-expanded="false" aria-controls="canvasAddMenu"><i data-lucide="plus"></i></button>
+            <div class="dock-actions">
+                <button class="dock-button" type="button" onclick="addImageNode()" title="上传素材" aria-label="上传素材"><i data-lucide="image-plus"></i></button>
+                <button class="dock-button" type="button" onclick="addPromptNode()" title="提示词" aria-label="提示词"><i data-lucide="text-cursor-input"></i></button>
+                <button class="dock-button" type="button" onclick="addGeneratorNode()" title="API 生成" aria-label="API 生成"><i data-lucide="sparkles"></i></button>
+                <button class="dock-button" type="button" data-character-studio aria-label="角色造型室"><i data-lucide="smile"></i></button>
+                <span class="dock-divider" aria-hidden="true"></span>
+                <button data-dock-target="workflowTransferToggle" aria-controls="workflowTransferModal" aria-expanded="false" class="dock-button" type="button" title="导入导出工作流" aria-label="导入导出工作流"><i data-lucide="package-open"></i></button>
+                <button data-dock-target="canvasAssetToggle" aria-controls="canvasAssetPanel" aria-expanded="false" class="dock-button" type="button" title="资产库" aria-label="资产库"><i data-lucide="library"></i></button>
+                <button data-dock-target="canvasLogToggle" aria-controls="logModal" aria-expanded="false" class="dock-button" type="button" title="日志" aria-label="日志"><i data-lucide="history"></i></button>
+                <button class="dock-button" type="button" onclick="fitAllNodesViewport()" title="适配全部节点" aria-label="适配全部节点"><i data-lucide="scan"></i></button>
+            </div>
+            <button class="dock-button dock-scroll" type="button" aria-label="更多工具" hidden><i data-lucide="chevron-right"></i></button>
+                <div id="canvasAddMenu" class="canvas-add-menu" popover="manual" aria-label="添加节点">
+                    <div class="dock-menu-heading">添加节点<span>选择要放入画布的内容</span></div>
+                    <div class="dock-node-grid">
+                    <button class="tool-btn" onclick="addImageNode()"><i data-lucide="image-plus" class="w-4 h-4"></i><span data-i18n="canvas.image">图片</span></button>
+                    <button class="tool-btn" onclick="addPromptNode()"><i data-lucide="text-cursor-input" class="w-4 h-4"></i><span data-i18n="canvas.prompt">提示词</span></button>
+                    <button class="tool-btn" onclick="addLoopNode()"><i data-lucide="repeat-2" class="w-4 h-4"></i><span data-i18n="canvas.loop">循环</span></button>
+                    <button class="tool-btn" onclick="addLLMNode()"><i data-lucide="message-square-text" class="w-4 h-4"></i>LLM</button>
+                    <button class="tool-btn" onclick="addGeneratorNode()"><i data-lucide="wand-sparkles" class="w-4 h-4"></i><span data-i18n="canvas.apiGenerate">API生成</span></button>
+                    <button class="tool-btn" onclick="addMsGenNode()"><i data-lucide="cloud-lightning" class="w-4 h-4"></i><span data-i18n="canvas.msGenerate">MS生成</span></button>
+                    <button class="tool-btn" onclick="addVideoNode()"><i data-lucide="clapperboard" class="w-4 h-4"></i><span data-i18n="canvas.videoGenerate">视频生成</span></button>
+                    <button class="tool-btn" onclick="addRhNode()"><i data-lucide="workflow" class="w-4 h-4"></i><span data-i18n="canvas.rhGenerate">RH生成</span></button>
+                    <button class="tool-btn" onclick="addComfyNode()"><i data-lucide="workflow" class="w-4 h-4"></i>ComfyUI</button>
+                    <button class="tool-btn" onclick="addLTXDirectorNode()"><i data-lucide="film" class="w-4 h-4"></i><span data-i18n="canvas.ltxDirector">LTX Director</span></button>
+                    <button class="tool-btn" onclick="addOutputNode()"><i data-lucide="circle-dot" class="w-4 h-4"></i>Output</button>
+                    <button class="tool-btn" onclick="groupSelectedImages()"><i data-lucide="group" class="w-4 h-4"></i><span data-i18n="canvas.group">分组</span></button>
+                </div>
+                </div>
         </div>
 
         <!-- 选画布 gate 已拆分到独立页面 static/canvas-list.html（更轻量）。本页只负责编辑器，通过 ?id 打开。 -->
@@ -362,10 +396,17 @@
     <script src="/static/js/comfy-outputs.js?v=20261015.2"></script>
     <script src="/static/js/canvas-llm-tasks.js?v=20261018.5"></script>
     <script src="/static/js/task-canvas-context.js?v=20261018.5"></script>
-    <script src="/static/js/generation-task-center.js?v=20261026.3"></script>
+    <script src="/static/js/generation-task-center.js?v=20261028.2"></script>
     <script src="/static/js/canvas-media-retention.js?v=20261021.1"></script>
     <script src="/static/js/canvas-comfy-tasks.js?v=20261026.3"></script>
     <script src="/static/js/canvas-save-navigation.js?v=20261027.1"></script>
-    <script src="/static/js/canvas.js?v=20261027.4"></script>
+    <script src="/static/js/character-carousel.js?v=20261028.2"></script>
+    <script src="/static/js/character-motion-preview.js?v=20261029.4"></script>
+    <script src="/static/js/character-library-view.js?v=20261029.4"></script>
+<script src="/static/js/character-creation-task.js?v=20261029.2"></script>
+    <script src="/static/js/character-creation-view.js?v=20261029.2"></script>
+    <script src="/static/js/character-studio.js?v=20261029.3"></script>
+    <script src="/static/js/canvas.js?v=20261029.1"></script>
+    <script src="/static/js/canvas-dock.js?v=20261029.2" defer></script>
 </body>
 </html>

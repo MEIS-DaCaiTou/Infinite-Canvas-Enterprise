@@ -1,7 +1,7 @@
 /* Shared select presentation. Native values, forms and change handlers remain authoritative. */
 (function () {
-    function placeMenu(rect, size, viewport) {
-        const edge = 8, gap = 6;
+    function placeMenu(rect, size, viewport, gap = 6) {
+        const edge = 8;
         const width = Math.min(size.width, viewport.width - edge * 2);
         const below = Math.max(0, viewport.height - rect.bottom - gap - edge);
         const above = Math.max(0, rect.top - gap - edge);
@@ -125,11 +125,20 @@
         renderOptions();
         const rect = select.getBoundingClientRect();
         const viewport = {width: document.documentElement.clientWidth, height: innerHeight};
+        // Menus live in the top layer, outside the canvas transform. Match the
+        // canvas scale once when opening so their typography and rows match the node.
+        const canvasScale = select.closest('#world') && select.offsetWidth ? rect.width / select.offsetWidth : 1;
+        const scale = Number.isFinite(canvasScale) && canvasScale > 0 ? canvasScale : 1;
+        if (select.closest('#world')) {
+            menu.style.setProperty('--studio-menu-scale', scale);
+            menu.style.setProperty('--studio-menu-font', (parseFloat(getComputedStyle(select).fontSize) || 12) * scale + 'px');
+            menu.style.width = Math.min(rect.width, viewport.width - 16) + 'px';
+        }
         menu.style.minWidth = Math.min(rect.width, viewport.width - 16) + 'px';
-        menu.style.maxWidth = Math.min(420, viewport.width - 16) + 'px';
+        menu.style.maxWidth = Math.min(420 * scale, viewport.width - 16) + 'px';
         menu.showPopover();
         const natural = menu.getBoundingClientRect();
-        const position = placeMenu(rect, {width: natural.width, height: Math.min(natural.height, 340)}, viewport);
+        const position = placeMenu(rect, {width: natural.width, height: Math.min(natural.height, 340 * scale)}, viewport, 6 * scale);
         Object.assign(menu.style, {left: position.left + 'px', top: position.top + 'px',
             width: position.width + 'px', maxHeight: position.height + 'px'});
         select.setAttribute('aria-expanded', 'true'); select.setAttribute('aria-controls', menu.id);
@@ -188,6 +197,18 @@
         if (current && !current.menu.contains(event.target)) close();
         if (panelState && !panelState.panel.contains(event.target)) closePanel();
     }, true);
+    // The canvas moves with a CSS transform rather than a scroll event. Do not
+    // leave a top-layer menu behind when its anchor moves or changes scale.
+    const world = document.getElementById('world');
+    if (world) {
+        let transform = world.style.transform;
+        new MutationObserver(() => {
+            if (world.style.transform === transform) return;
+            transform = world.style.transform;
+            if (current && world.contains(current.select)) close();
+            if (panelState && world.contains(panelState.anchor)) closePanel();
+        }).observe(world, {attributes:true, attributeFilter:['style']});
+    }
     window.addEventListener('resize', () => { close(); closePanel(); });
     window.addEventListener('blur', () => { close(); closePanel(); });
     document.addEventListener('submit', () => close(), true);

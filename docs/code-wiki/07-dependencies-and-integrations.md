@@ -30,8 +30,8 @@
 
 ## 2. Python 版本
 
-- 开发解释器依当前工作区环境；企业 CI 为 Python 3.11，Runtime 专项为 3.14，不假定所有源码树自带同一 Python。
-- 正式 Runtime 策略：CPython 3.14.x、Windows x64、固定来源与闭合 wheelhouse。
+- 当前开发、企业 CI 与 Runtime 专项对齐 CPython 3.14.6 和发行应用依赖；测试工具由 `runtime/windows/test-tools.lock` 单独锁定，通过 `requirements-dev.txt` 安装。
+- 正式 Runtime 策略：CPython 3.14.6、Windows x64、固定来源与闭合 wheelhouse；具体依赖以 `runtime/windows/requirements.lock` 和构建策略为准。
 
 两者目的不同。测试通过开发 Python 不等于正式固定 Runtime 已验证；反过来，Runtime provenance 测试也不证明业务功能全部通过。
 
@@ -95,9 +95,9 @@ Provider 凭据存于服务端配置，不应通过设置读取接口回传明�
 | `UPSTREAM_PORT` | `3001` | loopback 旧内核 |
 | `JWT_SECRET` | 必须替换 | JWT 签名秘密，生产至少 32 字符 |
 | `JWT_EXPIRE_HOURS` | `168` | 会话有效期 |
-| `ADMIN_USERNAME` | `admin` | 旧兼容初始管理员配置 |
-| `ADMIN_PASSWORD` | 必须替换 | 旧兼容初始密码 |
-| `DB_PATH` | `data/enterprise.db` | 相对 DATA_ROOT 解析 |
+| `ADMIN_USERNAME` | `admin` | 历史显式 bootstrap 兼容项；正常启动和新装不使用它重置管理员 |
+| `ADMIN_PASSWORD` | 示例占位 | 历史显式 bootstrap 兼容项；不应把示例密码用于实际凭据 |
+| `DB_PATH` | 未设置时 `DATA_ROOT/enterprise.db` | 相对值从 DATA_ROOT 解析；portable 路径必须留在 DATA_ROOT 内 |
 | `ENTERPRISE_REPO_URL` | 本项目 GitHub URL | 更新仓库绑定 |
 | `ENTERPRISE_UPDATE_ENABLED` | `true` | 更新紧急总开关 |
 | `ENTERPRISE_HIDE_UPSTREAM_AUTHOR` | `true` | 页面品牌覆盖 |
@@ -105,6 +105,8 @@ Provider 凭据存于服务端配置，不应通过设置读取接口回传明�
 | `ENTERPRISE_STRICT_SECURITY` | 可选 `1` | 显式严格安全模式 |
 
 真实 `enterprise.env`、Provider Key 和 GitHub Token 不得提交 Git。
+
+注意：当前 `enterprise.env.example` 写有 `DB_PATH=data/enterprise.db`；按现行代码它会解析为 `DATA_ROOT/data/enterprise.db`，不是默认的 `DATA_ROOT/enterprise.db`。这是示例与常见预期之间的差异，不要把示例直接覆盖到既有安装或为修正路径创建空库；确认数据位置及迁移方案后再处理。是否调整示例文件本身待另行评估其被交付和引用的影响。
 
 ## 8. 依赖变更规则
 

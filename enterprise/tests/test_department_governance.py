@@ -128,6 +128,16 @@ def test_department_preference_explicit_company_and_immutable_identity(business)
         context(service, p, 'must-not-fallback')
 
 
+def test_authorized_source_list_matches_default_binding_order_with_duplicate_names(business):
+    service, p, design, _, _ = business
+    source(service, p, name='company')
+    left = source(service, p, design, name='same', account='a')
+    right = source(service, p, design, name='same', account='b')
+    rows = [row for row in service.sources(p['employee']) if row['provider_id'] == 'comfly']
+    assert [row['id'] for row in rows[:2]] == sorted([left['id'], right['id']])
+    assert context(service, p)['source_id'] == rows[0]['id']
+
+
 def test_credential_permissions_rotation_cas_and_no_plaintext(business):
     service, p, design, ops, path = business
     key = source(service, p, design, 'department', 'design-own', 'account-design')
@@ -241,6 +251,31 @@ def test_api_does_not_accept_plaintext_reads_or_leak_rejected_input(business):
     assert client.get('/enterprise/api/business/sources/'+key['id']+'/secret',headers={'x-fixture-user':'admin'}).status_code == 405
     assert client.get('/enterprise/api/business/costs/summary?scope=company',headers={'x-fixture-user':'employee'}).status_code == 404
     assert client.post('/enterprise/api/business/sources',headers={'x-fixture-user':'admin'},content=b'x'*32769).status_code == 413
+
+
+def test_source_preview_matches_real_binding_and_reports_missing_grant(business):
+    service,p,design,_,path=business
+    app=FastAPI()
+    @app.middleware('http')
+    async def identity(request:Request,next):
+        request.state.user=p.get(request.headers.get('x-fixture-user',''))
+        return await next(request)
+    app.include_router(create_router(service),prefix='/enterprise')
+    client=TestClient(app)
+    url='/enterprise/api/business/source-preview?provider_id=comfly'
+    assert client.get(url).status_code == 401
+    headers={'x-fixture-user':'employee'}
+    assert client.get(url,headers=headers).json() == {'state':'legacy'}
+    key=service.create_source(p['admin'],provider_id='comfly',name='team',scope='department',
+        department_id=design,procurement='company',account_ref='test',secret='fixture-secret')
+    assert client.get(url,headers=headers).json() == {'state':'not_authorized'}
+    service.grant_source(p['admin'],key['id'],'employee',True)
+    preview=client.get(url,headers=headers).json()
+    assert preview == {'state':'available','name':'team','scope':'department'}
+    assert context(service,p)['source_id'] == key['id']
+    assert 'fixture-secret' not in json.dumps(preview)
+    service.enable_source(p['admin'],key['id'],False)
+    assert client.get(url,headers=headers).json() == {'state':'not_authorized'}
 
 
 def test_migration_is_explicit_preserves_old_users_and_can_restore(tmp_path):

@@ -37,6 +37,10 @@
 | `paths.py` | development/portable 路径根模型与安全校验 |
 | `app_paths.py` | 把旧业务逻辑中的文件位置映射到 PathRoots |
 | `config.py` | `enterprise.env` 读取、端口、JWT、DB、仓库、更新开关 |
+| `local_json.py` / `proxy_transport.py` | 单文件原子保存与有界/流式代理；权限和冲突规则仍由调用方负责 |
+| `comfy_queue.py` / `comfy_queue_api.py` / `canvas_comfy_control.py` | ComfyUI单上游公平派发、配置/本人用量和原任务逐笔取消 |
+| `department_api.py` / `department_governance.py` | 当前部门、成员与渠道密钥管理；已退出工作台不注册 |
+| `character_api.py` / `characters.py` / `character_repository.py` | 未发布的个人创作角色API、字段/素材/版本规则与单Gateway本地仓储；不管理系统权限角色 |
 | `resource_index.py` | 从结构化数据中提取本地资源 URL |
 | `canvas_task_journal.py` | 画布任务受理回执的追加日志与恢复；已通过 PR #108 合并主线，不等于统一费用任务中心 |
 | `runtime/` | 双进程生命周期、健康、身份、控制、日志、便携启动 |
@@ -58,6 +62,10 @@
 | `install_setup_bridge.py` | 安装器与固定 Python 间的受控 named-pipe 桥接 |
 
 ## 3. 静态前端结构
+
+2026-10-29本地增量：`character-studio.js`管理会话，`character-creation-view.js`呈现生成/导入流程，`character-creation-task.js`作为原受理/本人任务查询客户端，`character-library-view.js`展示角色库，`character-carousel.js`负责独立控制，`character-generation-renderer.js`与`character-motion-preview.js`负责已迁入的本地人体预览；原两类画布提供素材选择/节点插入适配。`static/characters/`保存只读参考目录、公开参考图片、模型/解码器和来源；`static/vendor/three-addons-r160/`保留对应MIT工具。原站打包启动/监控/API未接入，正式分发授权与未完成专业能力见[架构7.6](../../ARCHITECTURE.md#76-2026-10-28-角色库本地实现与资源复用)。
+
+2026-10-29工具栏补齐：经典与智能画布共用`canvas-dock.js`/`canvas-dock.css`，只管理胶囊交互、溢出、定位与角落避让；智能页用`createSmartDockNode/focusSmartDockGeneration`窄适配复用原创建和composer，面板仍由原顶部入口维护，不发起生成请求。
 
 | 页面 | 主要脚本/样式 | 职责 |
 | --- | --- | --- |

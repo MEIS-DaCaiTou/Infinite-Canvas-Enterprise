@@ -14,6 +14,47 @@
         return response.json();
     }
     const date=value=>value?new Date(value*1000).toLocaleString():'未记录';
+    // Advisory only. The server still makes and persists the authoritative
+    // selection at acceptance; this never carries or changes credentials.
+    const sourceRequests=new Map(), sourceHints=new Set();
+    async function authorizedSource(providerId){
+        if(!sourceRequests.has(providerId)){
+            const request=json('/enterprise/api/business/source-preview?'+new URLSearchParams({provider_id:providerId}))
+                .finally(()=>sourceRequests.delete(providerId));
+            sourceRequests.set(providerId,request);
+        }
+        return sourceRequests.get(providerId);
+    }
+    root.CallSourceHint={async update(element, provider, silent=false){
+        if(!element)return;
+        element._sourceHintProvider=provider;sourceHints.add(element);
+        const token=Symbol();element._sourceHintToken=token;
+        if(!provider){element.textContent='调用来源：请先选择可用平台';return;}
+        if(provider.managed_source_supported!==true){
+            element.textContent='调用来源：此平台未接通渠道密钥';return;
+        }
+        if(!silent)element.textContent='正在读取预计调用来源…';
+        try{
+            const result=await authorizedSource(provider.id);
+            if(element._sourceHintToken!==token)return;
+            if(result.state==='available') element.textContent=`预计调用：${result.scope==='department'?'部门专用':'公司共享'} · ${result.name}（实际以任务受理为准）`;
+            else if(result.state==='not_authorized') element.textContent='该平台已配置渠道密钥，但当前账号没有可用授权，请在对应密钥的“授权员工”中核对';
+            else if(result.state==='legacy') element.textContent='此平台未配置渠道密钥，沿用原平台配置（实际以任务受理为准）';
+            else element.textContent='调用来源暂不可确认，请稍后刷新';
+        }catch(_error){if(element._sourceHintToken===token)element.textContent='调用来源暂不可读，请稍后刷新';}
+    }};
+    function refreshSourceHints(){
+        if(typeof document !== 'undefined' && document.visibilityState==='hidden')return;
+        for(const element of sourceHints){
+            if(!element.isConnected){sourceHints.delete(element);continue;}
+            root.CallSourceHint.update(element,element._sourceHintProvider,true);
+        }
+    }
+    if(typeof document !== 'undefined'){
+        document.addEventListener('visibilitychange',refreshSourceHints);
+        root.addEventListener('focus',refreshSourceHints);
+        root.setInterval(refreshSourceHints,10000);
+    }
     function attach({modalId,listId,createPrompt,previewMedia,canvasContext,addResult}){
         const modal=document.getElementById(modalId),logs=document.getElementById(listId);
         if(!modal || !logs)return;
@@ -61,6 +102,7 @@
                     ${usage.reported_cost!==undefined?`<small>供应商报告费用 ${esc(usage.reported_cost)} ${esc(usage.currency || '（币种未提供）')}，尚非平台结算</small>`:''}</div>`;
             }).join('');
             container.innerHTML=`<div class="generation-task-id">平台任务 ID：${esc(data.id)}</div>
+                <p class="generation-task-note">调用密钥：${data.call_source ? esc((data.call_source.scope === 'department' ? '部门专用' : '公司共享') + ' · ' + (data.call_source.source_name || '未命名来源')) : '未记录渠道密钥来源'}</p>
                 ${data.error?`<p class="generation-task-error">${esc(data.error)}</p>`:''}
                 <div class="generation-task-attempts">${attempts}</div>
                 <p class="generation-task-note">${esc(data.cost_note || '')}</p>

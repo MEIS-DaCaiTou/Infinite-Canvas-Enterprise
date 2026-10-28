@@ -1,6 +1,8 @@
 # Infinite Canvas Enterprise 当前架构
 
-更新时间：2026-10-27
+更新时间：2026-10-29
+
+本次架构参考以产品源码 `0dce14f` 和 main `1c22861` 为基线。10.9 已发布；下方按日期记录的候选和状态描述仅代表当时，不能覆盖本段及 CURRENT。2026-10-24 收缩范围继续有效：部门/成员及渠道密钥保留，项目工作台、共享、费用页面和预算提醒不作为当前产品入口。文件级原子写入、媒体流式代理和 ComfyUI 单进程公平队列已随10.9交付，现场和规模验证分列。
 
 2026-10-27本地可靠性包：`enterprise/local_json.py`只承担同目录临时文件、刷新和原子替换，调用方继续负责路径、锁与保存冲突；画布、项目目录、对话和历史复用该模块，单文件原子性不等于多文件事务或备份。`enterprise/proxy_transport.py`只负责有界请求读取、响应头和流式连接生命周期，Gateway/interceptors继续负责鉴权、隔离和逐SSE事件归属记录。JSON/HTML仍经原过滤/注入，媒体按段透传，不读完整下载后才响应；本轮无新服务、数据库或通用队列。
 
@@ -10,13 +12,13 @@
 
 2026-10-24本地预览按负责人新取舍收缩：canvas-list恢复10.4原目录；HTTP管理适配器department_api仅注册成员、部门及渠道密钥，不注册项目/共享/费用/预算工作台路由。管理后台department-members与department-credentials分别调用组织和凭据服务；成员改版的admin-members呈现、admin-navigation导航、admin-embedded-pages既有页面容器和admin-members.css样式独立于业务服务，原账号操作经回调复用。个人中心和日志使用原页面的显式内嵌模式，不复制密码或审计API。management_context不再依赖项目列表。原画布所有权与任务身份/供应商适配继续独立运行，Schema4及历史事实保留，不做反向迁移。下文被退出的候选/早期模块说明保留历史角色，准确本地与正式状态见CURRENT。
 
-## 2026-10-26 本地ComfyUI队列边界
+## 2026-10-26 ComfyUI队列边界（当时的开发记录）
 
-comfy_queue只负责ComfyUI准入、同算力分组名额和用户轮转，等待输入/任务仍由CanvasTaskDispatch及CanvasTaskJournal持久保存，Comfy已受理恢复不进入再次提交。journal按原写入刷新轻量内存索引，正常调度不反复扫描历史文件或复制结果正文；轮转顺序在重启时从同一任务的派发事实重建。comfy_queue_api将后台配置和本人用量经原Gateway上游客户端代理，管理员权限与执行身份仍由Gateway确定。admin-comfy-queue仅呈现设置，canvas-comfy-tasks仅呈现原输出状态和操作，不将调度逻辑塞入页面。配置使用state/comfy-queue的原子JSON存储，无新增Schema、Redis或独立Worker。当前仅本地未提交增量。
+comfy_queue只负责ComfyUI准入、同算力分组名额和用户轮转，等待输入/任务仍由CanvasTaskDispatch及CanvasTaskJournal持久保存，Comfy已受理恢复不进入再次提交。journal按原写入刷新轻量内存索引；轮转顺序在重启时从同一任务的派发事实重建。comfy_queue_api将后台配置和本人用量经原Gateway上游客户端代理，管理员权限与执行身份仍由Gateway确定。admin-comfy-queue仅呈现设置，canvas-comfy-tasks仅呈现原输出状态和操作。配置使用STATE_ROOT/comfy-queue的原子JSON存储，无新增Schema、Redis或独立Worker；此增量现已随10.9交付。
 
 ## 1. 当前形态
 
-2026-10-25本地共享控件：studio-select集中处理单选select与既有富参数面板的顶层显示、定位、键盘及互斥关闭，17个HTML入口显式依赖该组件。原表单和input/change处理继续负责业务动作；智能画布及聊天仅调用共享面板接口，不将组织、凭据、生成或存储规则放入控件。不使用全画布观察/重绘、不改任务与供应商链路；当前未提交发布。
+2026-10-25共享控件：studio-select集中处理单选select与既有富参数面板的顶层显示、定位、键盘及互斥关闭，17个HTML入口显式依赖该组件。原表单和input/change处理继续负责业务动作；智能画布及聊天仅调用共享面板接口，不将组织、凭据、生成或存储规则放入控件。此增量现已随10.9交付。
 
 2026-10-22 视频结果候选：`providers/video_outputs.py` 承接main原成片URL解析，排除尾帧/封面等明确非视频结果，保留旧嵌套与签名下载。`video_tasks`及原JSON提交/轮询使用同一状态判定，运行中不因预览链接提前成功；归档继续由main的资源路径/权限边界负责，无新Provider体系或任务队列。
 
@@ -58,20 +60,22 @@ Runtime Supervisor
 | Enterprise data | 用户、角色、归属、审计、版本化 migration/backup/restore | `enterprise/db.py`，`enterprise/migrations/` |
 | Canvas application | 画布、工作流、模型调用、静态前端和原有业务 API | `main.py`，`static/` |
 | Task journal | 两类画布任务持久回执基础 | `enterprise/canvas_task_journal.py` |
-| 部门/费用候选（未激活） | 单部门/项目策略、DPAPI版本化来源、冻结调用归属、分单位费用和提醒；后续绑定接线候选复用任务回执，不新建队列 | `enterprise/department_governance.py`，`enterprise/department_costs.py`，`enterprise/task_credentials.py` |
-| 旧创作入口来源兼容候选（未合并） | 在线生图复用持久图片执行器；聊天/流式/Agent 文本复用同一来源绑定、LLM 回执与归档；管理员明确接纳原共享密钥 | `enterprise/legacy_call_sources.py`；不新增队列、Schema 或供应商协议 |
+| 部门与凭据 | 当前管理入口保留成员、部门及渠道密钥；Schema4与历史费用事实保留，项目和费用工作台路由不注册 | `enterprise/department_api.py`，`enterprise/department_governance.py`，`enterprise/task_credentials.py` |
+| 旧创作入口来源兼容 | 相关源码和历史身份事实保留；10.9撤下来源选择交互，新调用交互待重新设计 | `enterprise/legacy_call_sources.py`；具体可用路径以实际接线为准 |
 | 供应商图像适配（#156 已合并） | 内置 Zhenzhen 已确认模型协议与能力；新模型临时兼容配置；与存储/Windows 生命周期分离 | `enterprise/providers/zhenzhen.py`，`enterprise/provider_image_profiles.py` |
 | 个人模型显示（#156 已合并） | 当前登录账号的模型选择列表及持久设置；不授予供应商管理权限 | `enterprise/user_model_api.py`，`enterprise/user_model_preferences.py`，`static/js/model-picker.js` |
-| 原任务续查（#123 候选） | 接受 ID 的持久绑定、原任务查询与原回执结果，复用既有 journal/归属 | `enterprise/canvas_image_recovery.py`，`static/js/canvas-task-query.js` |
+| 原任务续查 | 已受理 ID 的持久绑定、原任务查询与原回执结果，复用既有 journal/归属 | `enterprise/canvas_image_recovery.py`，`static/js/canvas-task-query.js` |
+| ComfyUI 队列及取消 | 单上游任务受理、用户轮转、工作流等待限额及按原任务取消；不代表全供应商统一调度 | `enterprise/comfy_queue.py`，`enterprise/comfy_queue_api.py`，`enterprise/canvas_comfy_control.py` |
+| 文件及代理传输 | 同目录临时文件原子替换；请求有界读取及媒体/SSE流式代理，授权和冲突规则由调用方维护 | `enterprise/local_json.py`，`enterprise/proxy_transport.py` |
 | Runtime | launcher、supervisor、health、ownership、state/log | `enterprise/runtime/` |
 | Release/update | Manifest v2、资产校验、prepare、pointer switch、rollback foundation | `enterprise/release/`，`enterprise/ops/update/`，`enterprise/update_api.py` |
-| 部门项目界面候选（未激活） | 权限过滤的来源/项目控件、成员和密钥管理、三级费用视图；复用原任务元数据，不建任务队列 | `enterprise/business_workspace.py`，`enterprise-static/business.html`，`static/js/business-workspace.js`，`static/js/call-source-picker.js` |
-| 经典画布媒体复用（#189已合并，未正式发布） | 按画布/节点/结果槽保留播放器；生成准备状态不写入持久画布 | `static/js/canvas-media-retention.js`，`static/js/canvas.js` |
+| 已退出的部门项目/费用工作台 | 历史实现与数据可留存，不作为10.9已注册界面或API | 历史实现记录及10-24范围决定 |
+| 经典画布媒体复用 | 按画布/节点/结果槽保留播放器；生成准备状态不写入持久画布 | `static/js/canvas-media-retention.js`，`static/js/canvas.js` |
 | Enterprise UI | 登录、管理后台、个人中心、更新中心 | `enterprise-static/` |
 
 Code Wiki 提供更细的文件、类和函数导航：[docs/code-wiki/README.md](docs/code-wiki/README.md)。
 
-以下供应商/个人模型模块存在于 #156 的源码基点 4bdd9a1，已随 e89a288 合并 main，尚未正式发布，准确状态回到 CURRENT。模型调用继续复用现有入口、结果归档和任务回执。长期接入供应商的参数差异由项目维护内置适配，普通用户只选择模型、画幅、参考图等创作参数，无需配置请求模板。Zhenzhen 图像模型的已确认协议分组与别名集中在 `enterprise/providers/zhenzhen.py`，按明确供应商身份及实际请求契约选路；文生图和参考图生成使用文档指定的 JSON Generations，不探测多个付费提交入口。前端读取同一内置能力的公开投影，限制不支持的参数；已支持模型优先于历史临时模板。
+以下供应商/个人模型模块随 #156 合并并进入后续正式版本，准确状态回到 CURRENT。模型调用继续复用现有入口、结果归档和任务回执。长期接入供应商的参数差异由项目维护内置适配，普通用户只选择模型、画幅、参考图等创作参数，无需配置请求模板。Zhenzhen 图像模型的已确认协议分组与别名集中在 `enterprise/providers/zhenzhen.py`，按明确供应商身份及实际请求契约选路；文生图和参考图生成使用相应 JSON Generations，不探测多个付费提交入口。前端读取同一内置能力的公开投影，限制不支持的参数；已支持模型优先于历史临时模板。
 
 临时模板默认折叠，仅供管理员在新上线模型尚未内置适配时配置兼容参数，不作为日常接入流程。该实现覆盖已确认的 Nano Banana、Gemini 3.1 图像、GPT Image 2 和 Seedream v5 Pro 图像契约；不等于供应商所有模型、视频协议、层分解输出或原生 Google 协议已经验收。新增同协议别名主要维护集中目录；新的提交/查询协议才增加适配代码。节点保留明确的画幅/分辨率选择，个人显示列表只影响选择体验。
 
@@ -79,11 +83,11 @@ Code Wiki 提供更细的文件、类和函数导航：[docs/code-wiki/README.md
 
 `main.py` 中已有供应商调用、画布和工作流仍存在集中实现的技术债。本次将 Zhenzhen 新增图像请求构造与能力目录放在独立模块，主入口只连接现有 HTTP、资源转换和结果处理。其余供应商的模块化、统一持久任务/Attempt 和完整费用对账按唯一路线图阶段 4 落实；本次不构成自动最低价选路或不明状态跨供应商再次付费提交。
 
-### 画布首页目录候选（2026-10-22）
+### 画布首页目录候选（2026-10-22 历史记录，10.9已退出）
 
 `enterprise/canvas_workspace.py` 在原文件/所有权与部门项目策略上投影目录元数据，`department_api` 只接 HTTP；现有父级字段用于树，`migrations/canvas_workspace.py` 追加未激活 v4 的两张关联/归档表。没有第二任务队列或画布副本。`canvas-workspace-boot.js` 按已受控升级的能力选择新目录 UI，旧 schema/独立 main 保留原脚本；网格/列表用现有主题、图标和原编辑器，个人范围仍可进入旧自由布局。公开项目只返回明确关联的目录元数据；原资源和完整画布继续由既有所有权策略约束，完整只读预览另行接线。
 
-### 项目任务与完整画布共享候选（2026-10-22）
+### 项目任务与完整画布共享候选（2026-10-22 历史记录，10.9已退出）
 
 `enterprise/project_results.py` 在既有任务所有权、journal与冻结业务归属上投影任务/归档成果；`shared_canvases.py` 依据明确项目关联与现行项目策略读取完整创作结构，过滤凭据，按请求重查资源授权。复用以独立资源所有权落在现有存储及原画布创建/保存流程，不执行供应商请求、不继承待运行任务。既有费用接口和角色权限保持，目录共享本身不授予全局资源访问。
 
@@ -93,7 +97,7 @@ Code Wiki 提供更细的文件、类和函数导航：[docs/code-wiki/README.md
 
 ## 3. 安全与权限边界
 
-费用分页及站内预算提醒候选复用 `DepartmentCosts.entries/budgets/summary`：`alerts` 只投影现任可管理部门的当期超额预算，不参与任务受理，也不生成费用。`business-workspace.js` 使用原cursor分批显示明细；`budget-alerts.js` 在现有首页/后台/费用页显示非模态提醒，按账号在浏览器保存本期已知晓状态。无新Schema、队列或后台通知服务，费用仍由原角色授权，页面不可见时暂停定期读取。
+历史候选曾将费用分页及站内预算提醒接入 `DepartmentCosts.entries/budgets/summary`；按10-24决定，10.9不注册费用/预算工作台路由或展示这些页面。历史费用事实保留，不能据此声称当前提供费用视图。
 
 - 对外仅暴露 Gateway；`:3001` 必须绑定 loopback。
 - UI 隐藏不是权限控制，API、WebSocket、后台任务和资源访问必须服务端授权。
@@ -190,6 +194,104 @@ C6 [离线保留数据升级记录](docs/ops/OFFLINE-RETAINED-UPGRADE-2026-10-12
 持久任务/Provider Attempt/回执/费用/审计、事务与版本冲突、Repository 和 Storage Adapter、格式迁移及失败恢复随 B13/B14/B15/B16/B17、N29/N34/N37 的对应实施授权一并落实。容量和服务器要求不改变当前阶段 3 顺序，也不豁免客户数据与更新恢复门禁。Vue 3＋TypeScript 是局部试做方向，不表示已迁移；桌面框架仍须比较验证。
 
 模块化原则是按业务域逐步提取 Policy、Application Service、Repository、Provider Adapter 和 Storage Adapter；不做一次性重写，也不继续把新业务规则堆入 `gateway.py` 或 `interceptors.py`。
+
+### 7.1 2026-10-28 持续迭代、网站与客户端专项评估
+
+本节核对的是 `manual-acceptance` 工作区、HEAD `89f75d8` 及当日本地未提交代码，不将预览改动写成10.9发行能力。负责人要求提前评估持续新增功能、类似Liblib的网站与平台客户端，并调研角色造型室的完整功能等价实现。结论：业务方向和Python/FastAPI模块化单体路线可继续使用；当前实现尚不足以直接交付可横向扩容的网站平台、完整员工客户端或共享多企业SaaS。现有架构原则基本正确，但代码边界尚未完全落实，必须从本次新增复杂功能开始执行，不能只把整改留在未来规划中。
+
+| 目标 | 本次判断 | 必须先满足的条件 |
+| --- | --- | --- |
+| 在现有单机/LAN产品持续新增功能 | 可继续，复杂功能必须独立成模块 | 明确服务、存储、任务、权限和画布接入边界；保持已有客户数据及入口 |
+| 实现类似Liblib的创作功能与交互 | 可分阶段实现功能等价；当前未完成 | 逐项核对界面、算法/模型和保存复用链路，不以界面相似替代真实能力 |
+| 企业服务器网站与多客户端接入 | 路线可行，当前不是完成态 | 业务API、并发冲突、任务执行边界、服务器交付和兼容测试 |
+| 多服务器或公开多企业平台 | 当前不能直接按此部署 | 共享任务协调、服务端数据库/存储、租户隔离和实测容量；部署形态仍须产品确认 |
+| 平台桌面客户端 | 可复用同一业务核心，尚未交付 | 薄客户端、本机能力桥接、缓存/下载、API版本兼容及独立更新 |
+
+### 7.2 已定位的风险及整改时机
+
+以下是源码证据和由其得出的风险判断，未以文件行数直接判定缺陷，也未执行本轮容量压测或双端并发保存实验。行数按UTF-8源码物理行计算，含空行，只是本地快照。
+
+| 事实/定位 | 风险 | 整改时机与完成依据 |
+| --- | --- | --- |
+| `main.py` 17,198行；`static/js/canvas.js` 15,109行、828个函数声明；`static/js/smart-canvas.js` 17,211行、1,042个函数声明；画布状态在主脚本全局维护 | 新业务易与渲染、保存、模型参数和事件绑定耦合；两个画布可能出现规则差异 | 从角色造型室开始独立UI/状态/服务模块，编辑器只提供窄接口；改旧能力时提取对应完整职责，不机械拆小文件 |
+| `enterprise/gateway.py` 1,546行，HTML壳治理函数约524行；`enterprise/interceptors.py` 3,167行，仍含大量按路径治理逻辑 | 新领域容易继续依赖代理注入和响应过滤 | 新接口显式注册，身份来自Gateway，业务授权在服务/Policy重用；不再为新角色业务扩大HTML注入脚本 |
+| `canvas_task_journal`持久JSON与`RLock`；`canvas_task_dispatch.active/semaphore`、`comfy_queue.lock/reserved/turns`及`enterprise/ws.py`连接注册表为进程内状态 | 当前单写入者模式不能通过直接增加API workers获得分布式任务互斥、统一限额和跨实例推送 | 保持当前单实例约束；启用多实例前落实事务领取/租约、去重、持久回执及跨实例事件。重启/重连必须继续查询原已受理任务 |
+| `local_json`保证单文件原子替换；`main.save_to_history`读改写全局历史并保留最近5000条；数据库、画布与素材文件分开保存 | 原子文件不等于跨记录事务；全量文件读改写和目录扫描需要测量；历史截断不能替代正式角色版本和长期任务事实 | 新角色元数据通过Repository访问；保存/引用/归属定义一致性及恢复规则。按既定容量工作包测量读写和扫描，不直接把SQLite文件放到NAS共享 |
+| `CanvasSaveRequest.base_updated_at`和`update_canvas`已有409冲突检测；经典画布`saveCanvas`在本地仍有改动时提高基线并自动重试整张快照 | 已有检测不能视为多人协同。由此代码路径可推断旧快照重试仍可能覆盖对方编辑；本轮未做双端丢更实测 | 多标签/多客户端同图编辑前完成A/B并发保存测试，明确保留副本、提示冲突或安全合并；采用服务端原子版本比较，不能只提高基线后重发旧快照 |
+| 当前已有资源归属/任务回执、供应商适配、Runtime与更新模块；没有确认可用的通用实时人像塑形或角色音色服务 | 既有底座可以复用，但不能将模型调用接通等同全部专业编辑能力已具备 | 分项验证算法/工作流/供应商能力与参数契约；不做无实际效果的滑杆或用同一提示词假装全部编辑器 |
+
+### 7.3 目标分层与兼容原则
+
+```mermaid
+flowchart TD
+    Web[浏览器与现有画布] --> API[同一业务API与认证授权]
+    Desktop[平台客户端与受限本机能力桥] --> API
+    API --> Domains[画布 / 角色 / 素材 / 任务等领域服务]
+    Domains --> Repositories[元数据Repository与资源存储适配]
+    Domains --> Tasks[持久任务与受理身份]
+    Tasks --> Execution[当前单进程执行 / 后续独立Worker]
+    Execution --> Providers[图像 / ComfyUI / 后续精修与语音适配]
+    Providers --> Repositories
+```
+
+这是目标职责关系，独立Worker、语音、共享存储等节点不是本次新增实现。单机版保留SQLite和本地存储；团队服务器按已确认方向采用PostgreSQL及受管理存储，复用同一领域规则和API，通过具体Repository/Storage Adapter落地，迁移时明确每类数据唯一写入者，不建设长期双写的两套业务系统。JSON仍可用于配置、导入导出、工作流及受控本地格式，不将“平台化”解释为必须消灭所有JSON。
+
+前端保留现有完整项目、画布和iframe入口；新增复杂界面优先沿既有Vue 3＋TypeScript试做方向验证独立组件、生命周期及共享类型，不立即重写两套画布。画布只暴露选择/导入素材、读取选中节点、创建节点组、打开任务详情等明确能力；角色模块不跨页面直接修改`nodes`、DOM或保存标志。跨iframe消息必须限定来源并校验协议；UI主题、菜单、提示和键盘行为复用现有组件体系。
+
+客户端消费同一版本化API，服务端继续决定身份、授权、渠道密钥和任务事实；本地SQLite只承担缓存、设置及明确定义的草稿。关闭客户端不取消已受理的服务器任务，重连不重新付费提交。文件选择、下载、本地目录与Photoshop等系统集成通过受限能力桥接；网页不能获得任意磁盘或命令执行权限。既有Windows服务安装维护入口不等于已具备员工客户端。Electron/Tauri等框架仍需用真实画布、媒体、拖放、下载和内存测试比较，不在本次仅凭包体大小定案。
+
+### 7.4 角色造型室：已观察流程与拟实现边界
+
+2026-10-28通过负责人已有Liblib页面查看了角色库、创建方式、生成页、官方角色编辑及角色资产详情。以下只证明可见产品交互，不证明其内部技术栈、模型、API或服务端架构；未提交收费生成、上传或保存。页面中的积分数字不作为本项目费用规则。导入入口已看到，但文件选择后的校验与保存流程尚未验证。
+
+| 已观察功能 | 本项目拟实现方式 | 仍需验证 |
+| --- | --- | --- |
+| 我的/官方角色库，性别/年龄段/文化区域筛选、搜索、多选、列表/宫格、添加到画布 | 独立角色库UI与查询服务；角色引用现有素材，画布经适配器创建节点/组；内置目录使用本项目可使用的内容 | 分页、筛选枚举、批量操作、角色复用权限；不自动恢复已退出的部门共享模块 |
+| 生成新角色，选择参考图、描述特征；导入已有角色入口 | 角色生成命令复用现有任务受理、渠道授权、ComfyUI/图像适配和结果归档；导入复用上传/素材校验 | 实际生成模型、参考一致性、导入格式/图片数及失败处理 |
+| 脸部精修：皮肤、眉眼、鼻子、嘴唇、脸部、妆造；滑杆、开关，部分调整提示生成后生效 | 参数草稿与预览独立；局部预览由已验证的人像处理引擎承担，需要AI处理的参数进入任务 | 专用引擎/SDK/工作流的可用性、坐标映射、预览与最终结果一致性 |
+| 脸部/身体特征：纹身与疤痕等预设/自定义；身材塑形多项参数 | 对应能力适配器处理，界面依据实际支持能力显示；同一任务和参数快照保存 | 局部编辑、人体关键点/形变质量、遮挡和边缘保护 |
+| 服装造型：造型/服装/AI生成入口，以及发型、发色、妆容和口红 | 独立造型参数组件与模板版本，复用图像编辑或已验证ComfyUI工作流 | 身份保持、换装局部范围、姿态/背景保持、实际服装与AI生成子流程 |
+| 音色音调：音色库、我的音色、AI生成入口；资产详情可选择角色音色 | 音色目录与角色关联，后续语音Provider适配；音频复用素材/任务权限及归档 | 语音接口、音色来源、试听、生成和保存格式；当前未验证实际语音闭环 |
+| 半身/全身切换，撤销/恢复/按住对比，其他年龄版本，保存并添加到画布；保存时生成角色资产 | 编辑会话管理撤销/对比；版本和生成快照关联；资源复用经画布能力接口完成 | 编辑与保存是否触发额外生成、批量部分失败及年龄衍生的实际效果 |
+| 角色资产详情中的全身、头像、表情组、多角度图和音色关联 | 角色元数据引用既有资源ID/固定结果，记录来源任务及资产类型，不重复复制全部媒体字节 | 角色一致性、多视图生成、结果质检与引用删除策略 |
+
+初始设计为独立角色UI、API/Service/Repository及画布适配器。目标数据契约还包括封面/参考/衍生资源引用、音色引用、来源任务及模板版本；编辑会话另存参数草稿和撤销栈。其中实际已实现的字段与本地增量见7.6，其余仍为设计，不是已存在数据库结构或公开接口。新Schema必须带兼容、保留旧数据、备份恢复和失败验证；角色生成继续使用原task_id/受理回执，不能另起角色专用任务事实源。
+
+“完整复刻”按上述功能矩阵逐项验收，不能只做角色列表或弹窗后宣布完成；最终模型质量以双方确认的素材与效果样例验证。Liblib内部专有模型/人像SDK及官方角色内容不能从界面确认可供本项目使用；对应算法、供应商和内容来源是实际依赖，不假设已经获得。
+
+### 7.5 从本次迭代开始执行的交付约束
+
+1. 每个新增完整功能在现有PR说明中明确所属领域、唯一数据源、复用API/任务/素材、权限、格式兼容及受影响验证；开发者负责实现与记录，评审者核对实际依赖和测试，产品负责人确认交互与效果。文档有规则不等于实现已达标。
+2. 角色造型室先锁定功能矩阵、角色/资产/任务契约和画布窄接口，再开发同一完整项目中的可运行增量；界面与相应能力一起验收。它可以在现有单机架构实现，不以等待PostgreSQL或微服务为由暂停全部功能，也不绕过直接相关的数据/任务前置。
+3. 发布多人/多客户端编辑能力前验证双端保存冲突；发布独立Worker/多API实例前验证领取互斥、租约/恢复、统一限额及跨实例事件；正式迁移前验证准确来源、引用一致性与失败恢复。
+4. 容量仍沿原路线图验证50账号10分钟5000次分类提交，以及100/200/300活跃用户目标。受理、限额拒绝、队列等待、真实执行和结果归档分别统计；当前没有本轮压测结果，不能承诺现有代码已达到目标。
+5. 架构调整以功能边界为单位小步完成，复用已有测试；不一次性全仓重写、不建立新任务平台或第二路线图，不将本次设计评估视为PostgreSQL迁移、云资源采购、公开SaaS、PR合并或发行授权。具体阶段仍只在唯一路线图维护。
+
+外部技术依据：SQLite适用边界见[官方说明](https://www.sqlite.org/whentouse.html)，FastAPI多进程内存边界见[部署概念](https://fastapi.tiangolo.com/deployment/concepts/)；客户端本机权限设计参考[Electron安全指引](https://www.electronjs.org/docs/latest/tutorial/security)与[Tauri能力边界](https://v2.tauri.app/security/capabilities/)。这些依据支持技术边界，不证明本产品或Liblib已按目标实现。
+
+### 7.6 2026-10-28 角色库本地实现与资源复用
+
+2026-10-29更新，替代首轮通用Swiper试做的实现说明。适用范围为manual-acceptance完整项目未提交的本地开发增量，不是正式10.9或完整造型室。功能开发者维护会话/API/资料契约，前端维护者维护展示/控制/渲染/画布适配及来源，负责人验收实际效果。
+
+| 边界 | 当前实现及唯一职责 |
+| --- | --- |
+| 会话与原业务复用 | `character-studio.js`负责加载、草稿、资料编辑、上传和保存；原上传/资源授权/图标/画布保存链路不复制。两类画布仅提供`selection()`与`insert(profile)`。 |
+| 角色库展示 | `character-library-view.js`负责双库导航、三类复选筛选、搜索、六列宫格、多选、创建菜单和角色资产展开。1200×760设计尺寸等比缩放，246×434轮播卡片与172×352宫格卡片按解析出的参考规则呈现；主题随项目切换。 |
+| 独立轮播 | `character-carousel.js`将公开编译包中控制逻辑整理为有生命周期的可读模块，保留8px拖动阈值、0.18边缘阻尼、惯性、800ms吸附、连续20%–100%淡化和原曲线；不再加载通用Swiper试做。键盘局限在角色组件，关闭时释放动画与监听。 |
+| 本地WebGL预览 | `character-generation-renderer.js`迁入公开258ckt1vw9j5s.js的975790模块，改用本地ES导入、资源路径和释放函数，剔除打包启动/其他模块/RUM。`character-motion-preview.js`只管理异步挂载、主题、指针和销毁；复用Three r160，加载对应MIT GLTF/Draco工具。预览不是人像塑形算法。 |
+| HTTP与领域规则 | `character_api.py`适配会话/HTTP；`characters.py`负责资料、图片/封面授权与版本；`character_repository.py`负责共享实例锁内比较并原子保存。Gateway显式注册，不将新业务放进HTML注入。 |
+| 个人数据 | `DATA_ROOT/characters/<认证user_id>.json`，schema_version1及characters数组。记录含id、name、description、gender、age_group、region、images、可选cover_url、archived、revision、created_at、updated_at，时间为Unix毫秒。每账号最多500条，每条1–12个图片引用；可独立指定透明封面，旧记录无cover_url时沿用首图。无新增SQLite表。 |
+| 保存与兼容 | 新增生成ID/revision1，更新/归档要求expected_revision，409不覆盖；归档不删除原图或既有节点。沿用`local_json.atomic_write_json(create_parent=True)`和W09写入审计，默认父目录行为不变。损坏/未知格式停止写入，不自行重置；单文件原子替换不是多进程事务或备份。 |
+| 本地参考目录 | `static/characters/catalog.json`只读，本次从原页面已呈现的公开素材补10个参考角色与14张图；封面可与全身/头像/表情组/设定图分离，asset_labels仅用于已存在图片。筛选属性按原站可见结果核对，未知属性不猜测。来源在`reference/SOURCE.json`；未声明这些内容可正式分发或由本项目生成。 |
+| 画布来源 | 适配器调用原编辑器创建图片节点及撤销/保存，节点带可选`characterRef:{id,revision}`快照；不是实时同步或共享授权。 |
+
+原始source map仍返回404；本轮通过格式化编译包和解析模块解决前端效果迁入，不声称还原了原始工程或服务器。代码/模型来源在`static/characters/motion/SOURCE.json`，图片来源在`reference/SOURCE.json`，MIT依赖见[清单](static/vendor/MANIFEST.md)。原站模型、素材和迁入模块的正式分发授权尚未建立，当前只用于负责人明确要求的本地对照；正式提交/发行前须明确授权或替换。原站账号API、打包runtime和监控未接入产品。
+
+2026-10-29公开PR边界：负责人授权资产管理实施前提交现有迭代。公开检出不包含参考站渲染代码、人体模型/解码器、人物参考目录/图片及配套加载器，缺省使用自行绘制的几何占位并返回空官方目录。catalog的local_preview_available只报告本地对照依赖是否齐备，缺省false；UI据此决定是否动态导入可选本地模块，避免依赖未提交文件。个人角色/受理查询和导入链路独立于该对照渲染器。下方原效果描述仍适用于开发机未追踪的对照文件，不能作为PR携带原站内容的声明。
+
+2026-10-29创建流程补充：`character-creation-view.js`独立管理生成屏/参考选择/导入确认，`character-creation-task.js`仅调用原图片受理与本人任务详情。任务缓存按角色列表返回的owner_id隔离于本标签sessionStorage，只用于原编号续查；状态未知不重发，无编号须先在日志核对。结果由使用者命名确认后保存，POST可选create_request_id以同账号32位十六进制编号去重，同编号不同内容409；仍由服务端重查媒体授权，不修改旧schema1或另建任务账本。当前只产生所选模型的角色参考图，不承诺身份一致性、去背景或自动衍生资产。前端维护者负责创建会话/状态和原任务API接线，角色服务维护者负责去重和引用权限；供应商参数仍由原图像能力模块维护。
+
+角色/原子存储27项定向测试及轮播惯性/边界/淡化/曲线检查通过；完整项目已验证人体真实渲染、搜索、官方复制与个人保存、草稿保留和资产展开，两类画布的最新交互仍按受影响面逐项验收。账号删除后的资料清理、正式备份恢复、未来格式迁移、多进程写入未交付。专业精修/塑形/造型、音色和衍生资产任务继续按7.4验证；当前接入的参考图生成仍需真实收费效果验收，不将静态参考资产或动态人体占位当作这些能力已经完成。
 
 ## 8. 历史来源边界
 

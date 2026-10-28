@@ -289,11 +289,24 @@ class DepartmentGovernance:
 
     def sources(self, principal, *, manage=False):
         with self.session(principal) as (conn, actor):
-            rows = conn.execute('SELECT * FROM credential_sources ORDER BY scope DESC,name').fetchall()
+            rows = conn.execute('SELECT * FROM credential_sources ORDER BY scope DESC,name,id').fetchall()
             if manage:
                 return [dict(row) for row in rows if _company(actor) or
                         (row['scope'] == 'department' and _manages(conn, actor, row['department_id']))]
             return [dict(row) for row in rows if self._source_access(conn, actor, row)]
+
+    def source_preview(self, principal, provider_id):
+        """Preview the current actor's default source without binding a task."""
+        provider_id = identifier(provider_id)
+        with self.session(principal) as (conn, actor):
+            rows = conn.execute('SELECT * FROM credential_sources WHERE provider_id=? '
+                                'ORDER BY scope DESC,name,id', (provider_id,)).fetchall()
+            if not rows:
+                return {'state': 'legacy'}
+            source = next((row for row in rows if self._source_access(conn, actor, row)), None)
+            if source is None:
+                return {'state': 'not_authorized'}
+            return {'state': 'available', 'name': source['name'], 'scope': source['scope']}
 
     def create_source(self, principal, *, provider_id, name, scope, department_id, procurement, account_ref, secret):
         provider_id, name, account_ref = identifier(provider_id), label(name), identifier(account_ref)

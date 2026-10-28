@@ -6,7 +6,7 @@
 
 ## 文档入口
 
-更新时间：2026-10-24。本页不复制整份状态和任务队列。
+更新时间：2026-10-28。本页不复制整份状态和任务队列。
 
 | 需要了解 | 入口 |
 | --- | --- |
@@ -17,7 +17,7 @@
 | 完整文档导航与维护规则 | [文档索引](docs/README.md) / [登记表](docs/document-register.json) |
 | 开发、代码边界和安全 | [工作流](CODEX_WORKFLOW.md) / [代码边界](CODE_BOUNDARIES.md) / [安全基线](SECURITY_BASELINE.md) |
 
-最新正式应用为 [v2026.10.8](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.10.8)，准确源码为 `5ee0e05`；[#200](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/200)已合并并记录导航修复、包内浏览器验证和升级边界。后续页面开发先启动本机真实预览，交负责人操作并反复修订，效果确认后再提交PR；详见[开发工作流](CODEX_WORKFLOW.md#31-开发机人工验收与反复修订负责人2026-10-24要求)及[当前状态](docs/CURRENT_PROJECT_STATUS.md)。当前7→8按原目录离线维护一次，旧10.4仍保留必要预置依赖，不按每个中间开发版本逐个升级。
+最新正式应用为 [v2026.10.9](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.10.9)，准确产品源码 `0dce14f`，[#201](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/201) 已合并。负责人反馈测试机已升级并正在使用，发现的问题待进一步明确和处理；生产设备状态见[当前状态](docs/CURRENT_PROJECT_STATUS.md)。10.9采用离线原位升级：10.8直接升级，10.4先经原10.5预置；具体条件和步骤以发行说明为准。后续页面开发遵循[开发工作流](CODEX_WORKFLOW.md#31-开发机人工验收与反复修订负责人2026-10-24要求)。
 
 当前企业部署仍采用单台 Windows 主机、SQLite 和本地文件。专业服务器/云部署、500+ 员工与 200+ 活跃创作保留为长期约束；Linux、容器和容量扩展待负责人实际需求再实施，业务核心保持可演进边界。方案 Accepted 不等于已经实现。
 
@@ -32,7 +32,7 @@
 
 应用入口为 `http://127.0.0.1:8000/`，管理后台为 `/enterprise/admin`，存活/健康为 `/enterprise/live` 和 `/enterprise/health`。内部 Canvas 服务 `:3001` 仅绑定 loopback，不直接暴露给 LAN。
 
-源码首次部署按安全基线配置唯一 JWT 密钥和强凭据；受控新装器管理首次配置；旧安装更新沿用配置/数据库，不复制示例重置管理员。
+源码部署按安全基线配置唯一 JWT 密钥；受控新装器管理首次配置和管理员凭据。`ADMIN_USERNAME`/`ADMIN_PASSWORD` 为历史显式 bootstrap 兼容项，普通启动不会用它们重置管理员；旧安装更新沿用配置/数据库，不复制示例重置管理员。
 
 通用工具接管后的安装可用根目录 `InfiniteCanvas.exe`；未接管旧安装仍可能只有 BAT。固定入口的当前交付与现场验证范围见项目状态，不能把下载或只读检查当作接管完成。
 
@@ -41,8 +41,8 @@
 以 [测试说明](enterprise/tests/README.md) 与既有 GitHub Actions 为准。默认受影响范围，不无理由手动重跑全套门禁；不要求独立干净 Windows 设备。文档检查无需业务依赖：
 
 ```powershell
-py -3.11 -B tools/check_docs.py
-py -3.11 -B -m unittest discover -s enterprise/tests -p test_documentation_contract.py
+python -B tools/check_docs.py
+python -B -m unittest discover -s enterprise/tests -p test_documentation_contract.py
 ```
 
 生命周期和升级测试可能停止服务或修改隔离数据，先读对应测试边界。不得提交真实密钥、数据库、素材、输出、运行日志或 Runtime 构建产物。

@@ -2799,6 +2799,12 @@ function renderDynamicParams(){
     else if(settings.engine === 'runninghub') renderRunningHubParams();
     else renderComfyParams();
     bindDynamicParams();
+    if(settings.engine === 'api') {
+        const sourceHint=document.createElement('span');sourceHint.className='call-source-hint';
+        dynamicParams.append(sourceHint);
+        const providerId=settings.apiKind === 'video' ? settings.videoProvider : settings.provider_id;
+        window.CallSourceHint?.update(sourceHint, apiProviders.find(provider=>provider.id===providerId));
+    }
     const modelList = dynamicParams.querySelector('.model-control .model-list');
     if(modelList && settings.engine === 'api') {
         const video = settings.apiKind === 'video';
@@ -15711,17 +15717,36 @@ function createNodeFromMenu(type){
     createMenuGroupId = '';
     return created;
 }
+// Narrow dock adapters reuse the existing creation/undo/save and composer paths.
+function createSmartDockNode(type){
+    if(!canvas) return;
+    closeCreateMenu();
+    createMenuPoint = viewportCenter();
+    clearSelection();
+    return createNodeFromMenu(type);
+}
+function focusSmartDockGeneration(){
+    if(!canvas) return;
+    closeCreateMenu();
+    if(zoomPreviewState) exitZoomPreview();
+    if(!isSmartRunnableNode(selectedNode())) createSmartDockNode('image');
+    updateComposer();
+    const x = parseFloat(composer.style.left) + composer.offsetWidth / 2;
+    const y = parseFloat(composer.style.top) + composer.offsetHeight / 2;
+    centerViewportOnWorldPoint({x,y});
+    promptInput.focus({preventScroll:true});
+}
 shell.addEventListener('mousedown', e => {
     if(!zoomPreviewState) return;
     if(e.button !== 0) return;
-    if(e.target.closest('.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.smart-workflow-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.smart-minimap')) return;
+    if(e.target.closest('.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.smart-workflow-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.canvas-dock,.canvas-add-menu,.smart-minimap')) return;
     e.preventDefault();
     e.stopPropagation();
 }, true);
 shell.addEventListener('click', e => {
     if(!zoomPreviewState) return;
     if(e.button !== 0) return;
-    if(e.target.closest('.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.smart-workflow-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.smart-minimap')) return;
+    if(e.target.closest('.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.smart-workflow-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.canvas-dock,.canvas-add-menu,.smart-minimap')) return;
     e.preventDefault();
     e.stopPropagation();
     const nodeEl = e.target.closest('.image-node');
@@ -15729,8 +15754,8 @@ shell.addEventListener('click', e => {
     else exitZoomPreview(screenToWorld(e));
 }, true);
 shell.onmousedown = e => {
-    if(zoomPreviewState && e.button === 0 && !e.target.closest('.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.smart-workflow-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.smart-minimap')) return;
-    if(e.target.closest('.image-node,.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.smart-workflow-toggle,.log-modal,.shortcut-modal,.create-menu,.smart-minimap')) return;
+    if(zoomPreviewState && e.button === 0 && !e.target.closest('.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.smart-workflow-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.canvas-dock,.canvas-add-menu,.smart-minimap')) return;
+    if(e.target.closest('.image-node,.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.smart-workflow-toggle,.log-modal,.shortcut-modal,.create-menu,.canvas-dock,.canvas-add-menu,.smart-minimap')) return;
     closeCreateMenu();
     if(e.button === 0 && isRKeyDown){
         e.preventDefault();
@@ -15758,7 +15783,7 @@ shell.oncontextmenu = e => {
         e.stopPropagation();
         return;
     }
-    if(didPan || e.target.closest('.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.smart-workflow-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.smart-minimap')) return;
+    if(didPan || e.target.closest('.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.smart-workflow-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.canvas-dock,.canvas-add-menu,.smart-minimap')) return;
     if(document.getElementById('imageEditModal')?.classList.contains('open')) return;
     e.preventDefault();
     e.stopPropagation();
@@ -15774,14 +15799,14 @@ shell.oncontextmenu = e => {
     openCreateMenu(e);
 };
 shell.ondblclick = e => {
-    if(didPan || e.target.closest('.image-node,.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.smart-workflow-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu')) return;
+    if(didPan || e.target.closest('.image-node,.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.smart-workflow-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.canvas-dock,.canvas-add-menu')) return;
     if(document.getElementById('imageEditModal')?.classList.contains('open')) return;
     e.preventDefault();
     openCreateMenu(e);
 };
 shell.onclick = e => {
     if(selectionJustFinished) return;
-    if(didPan || e.target.closest('.image-node,.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.smart-workflow-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu')) return;
+    if(didPan || e.target.closest('.image-node,.composer,.smart-back,.asset-panel,.asset-toggle,.smart-log-toggle,.smart-shortcut-toggle,.smart-workflow-toggle,.log-modal,.shortcut-modal,.image-edit-modal,.create-menu,.canvas-dock,.canvas-add-menu')) return;
     if(document.getElementById('imageEditModal')?.classList.contains('open')) return;
     closeCreateMenu();
     clearSelection();
@@ -17201,5 +17226,16 @@ GenerationTaskCenter.attach({
         const point=viewportCenter(),node=createPromptNode(point.x,point.y);
         Object.assign(node,{text,sourceResultId:result.result_id || result.url,sourceRunId:result.run_id || ''});
         render();scheduleSave();
+    }
+});
+
+CharacterStudio.mount({
+    selection:()=>nodes.filter(node=>selectedIds.includes(node.id)||node.id===selectedId)
+        .flatMap(node=>node.images || []).filter(item=>!item.kind || item.kind==='image').map(item=>item.url).filter(Boolean),
+    insert:profile=>{
+        if(!canvas) throw new Error('请先选择或创建画布');
+        const node=createImageNodeAt(viewportCenter(),profile.images.map((url,index)=>({url,name:profile.name+' · '+(index+1),kind:'image'})));
+        node.title=profile.name; node.characterRef={id:profile.id,revision:profile.revision};
+        render(); scheduleSave(); return true;
     }
 });

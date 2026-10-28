@@ -1,0 +1,77 @@
+/* Canvas controls sit outside #world and keep their size while zooming. */
+:root {
+    --dock-surface:var(--card-solid,#fff); --dock-ink:var(--muted,#64748b); --dock-active-ink:var(--text,#0f172a);
+    --dock-hover:var(--soft-2,#f1f5f9); --dock-border:var(--line,#e8edf3);
+    --dock-add-surface:#edf0f3; --dock-add-ink:#202329; --dock-add-hover:#e2e8f0;
+    --dock-focus:#4975a8; --dock-shadow:0 8px 32px var(--shadow, #0f172a14), 0 2px 6px #0001;
+}
+:root:is(.theme-dark,.studio-theme-dark) {
+    --dock-surface:#222326; --dock-ink:#d4d6db; --dock-active-ink:#fff;
+    --dock-hover:#383a40; --dock-border:#43454b;
+    --dock-add-surface:#f0f1f3; --dock-add-hover:#fff;
+    --dock-focus:#a8c5f5; --dock-shadow:0 8px 32px #0004, 0 2px 6px #0002;
+}
+/* Keep focus and scroll-into-view from moving the canvas viewport and its dock. */
+.shell:has(> .canvas-dock) { overflow:clip; }
+.canvas-dock {
+    --dock-size:40px;
+    position:absolute; left:50%; bottom:max(var(--canvas-dock-bottom,12px), env(safe-area-inset-bottom)); transform:translateX(-50%); z-index:35;
+    display:flex; align-items:center; gap:8px; width:max-content;
+    max-width:min(var(--canvas-dock-max-width,100%), calc(100% - 24px));
+    padding:8px; border:1px solid var(--dock-border); border-radius:999px;
+    background:var(--dock-surface); color:var(--dock-ink); box-shadow:var(--dock-shadow);
+    font:13px/1.4 'Inter',-apple-system,'Microsoft YaHei',sans-serif;
+}
+.shell.no-canvas .canvas-dock { display:none; }
+.dock-actions { display:flex; align-items:center; gap:4px; min-width:0; overflow-x:auto; overflow-y:hidden; scrollbar-width:none !important; }
+.dock-actions::-webkit-scrollbar { display:none; }
+.dock-button {
+    flex:0 0 auto; display:flex; align-items:center; justify-content:center; width:var(--dock-size); height:var(--dock-size);
+    padding:0; border:0; border-radius:11px; background:transparent; color:inherit; cursor:pointer;
+    transition:background .15s, color .15s;
+}
+.dock-button svg { width:21px; height:21px; stroke-width:1.65; pointer-events:none; }
+.dock-button:hover { background:var(--dock-hover); color:var(--dock-active-ink); }
+.dock-button:active { background:var(--dock-hover); color:var(--dock-active-ink); }
+.dock-button[aria-expanded=true]:not(.dock-add) { background:var(--dock-hover); color:var(--dock-active-ink); }
+.dock-button:focus-visible { outline:2px solid var(--dock-focus); outline-offset:-2px; color:var(--dock-active-ink); }
+.dock-add { background:var(--dock-add-surface); color:var(--dock-add-ink); }
+.dock-add svg { width:25px; height:25px; stroke-width:1.7; transition:transform .15s; }
+.dock-add:hover, .dock-add:focus-visible { background:var(--dock-add-hover); color:var(--dock-add-ink); }
+.dock-add[aria-expanded=true] svg { transform:rotate(45deg); }
+.dock-divider { flex:none; width:1px; height:24px; margin:0 5px; background:var(--dock-border); }
+.dock-scroll { width:24px; }
+.dock-scroll[hidden] { display:none; }
+.dock-scroll[data-back=true] svg { transform:rotate(180deg); }
+.canvas-dock-tooltip[popover] {
+    position:fixed; inset:auto; margin:0; padding:7px 10px; max-width:calc(100vw - 16px);
+    border:1px solid var(--dock-border); border-radius:8px; color:var(--text); background:var(--dock-surface);
+    box-shadow:var(--dock-shadow); pointer-events:none;
+    font:12px/1.5 -apple-system,'Microsoft YaHei',sans-serif;
+}
+.shell.dock-map-stacked :is(.minimap,.smart-minimap) { bottom:var(--canvas-dock-map-bottom); }
+.shell.dock-map-stacked .minimap-arrange-btn { bottom:calc(var(--canvas-dock-map-bottom) + 134px); }
+.canvas-add-menu[popover] {
+    width:370px; max-width:calc(100vw - 24px); margin:0; padding:16px;
+    border:1px solid var(--dock-border); border-radius:16px; background:var(--dock-surface); color:var(--text);
+    box-shadow:var(--dock-shadow); font:13px/1.4 'Inter',-apple-system,'Microsoft YaHei',sans-serif;
+}
+.canvas-add-menu .dock-menu-heading { margin-bottom:14px; font-weight:650; }
+.canvas-add-menu .dock-menu-heading span { display:block; margin-top:4px; color:var(--muted); font-size:11px; font-weight:400; }
+.dock-node-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; }
+.canvas-add-menu .tool-btn {
+    display:flex; align-items:center; justify-content:center;
+    flex-direction:column; gap:9px; height:72px; min-width:0; padding:10px 4px;
+    background:var(--soft); color:var(--dock-ink); border:1px solid transparent; border-radius:12px; font-size:11px; font-weight:500;
+}
+.canvas-add-menu .tool-btn:hover { color:var(--text); background:var(--dock-hover); border-color:var(--dock-border); }
+.canvas-add-menu .tool-btn:focus-visible { outline:2px solid var(--dock-focus); outline-offset:-2px; }
+.canvas-add-menu .tool-btn svg { width:21px; height:21px; stroke-width:1.6; }
+@media (prefers-reduced-motion:reduce) { .dock-button, .dock-add svg { transition:none; } }
+@media (max-width:480px) {
+    .canvas-dock { --dock-size:36px; }
+    .dock-actions { gap:2px; }
+    .canvas-add-menu[popover] { padding:12px; }
+    .canvas-add-menu .tool-btn { height:60px; }
+}
+@media (pointer:coarse) { .canvas-dock { --dock-size:44px; } }

@@ -1459,7 +1459,9 @@ async function saveCanvas(){
         localCanvasDirty = Boolean(saveCanvasAgain);
         if(currentCanvasTime) currentCanvasTime.textContent = formatCanvasTime(canvas.updated_at);
         setStatus('Saved');
-        loadCanvasList(false);
+        // The standalone editor has no gate list; its return destination loads
+        // the directory itself. Do not start an obsolete request before unload.
+        if(gateCanvasList) loadCanvasList(false);
         return true;
     } catch(e) {
         setStatus('Save failed');
@@ -7938,6 +7940,9 @@ function renderLLMBody(node){
     `;
     const providerSelect = wrap.querySelector('.llm-provider-select');
     const modelSelect = wrap.querySelector('.llm-model');
+    const sourceHint = document.createElement('div'); sourceHint.className = 'call-source-hint';
+    wrap.querySelector('.llm-row').after(sourceHint);
+    window.CallSourceHint?.update(sourceHint, apiProviders.find(p => p.id === llmProv));
     providerSelect.value = llmProv;
     modelSelect.value = resolveChatModel(node.model, llmProv);
     [providerSelect, modelSelect].forEach(input => {
@@ -8225,6 +8230,7 @@ function renderGeneratorBody(node){
                 <select class="select-lite provider-select">${providerOptions(node.apiProvider)}</select>
                 <select class="select-lite model-select">${imageModelOptions(node.model, node.apiProvider)}</select>
             </div>
+            <div class="call-source-hint"></div>
             <div class="gen-settings-row api-size-row">
                 <select class="select-lite resolution compact-select" data-field="resolution">
                     <option value="auto">自动</option>
@@ -8290,11 +8296,14 @@ function renderGeneratorBody(node){
     `;
     const providerSelect = wrap.querySelector('.provider-select');
     const modelSelect = wrap.querySelector('.model-select');
+    const sourceHint = wrap.querySelector('.call-source-hint');
+    window.CallSourceHint?.update(sourceHint, apiProviders.find(p => p.id === node.apiProvider));
     providerSelect.onmousedown = e => e.stopPropagation();
     providerSelect.onclick = e => e.stopPropagation();
     providerSelect.onchange = e => {
         e.stopPropagation();
         node.apiProvider = e.target.value;
+        window.CallSourceHint?.update(sourceHint, apiProviders.find(p => p.id === node.apiProvider));
         const providerModels = providerImageModels(node.apiProvider);
         if(!providerModels.includes(resolveImageModel(node.model))) node.model = providerModels[0] || '';
         node._apiResolutionUserSet = false;
@@ -8616,6 +8625,9 @@ function renderVideoBody(node){
     `;
     const providerSelect = wrap.querySelector('.video-provider');
     const modelSelect = wrap.querySelector('.video-model');
+    const sourceHint = document.createElement('div'); sourceHint.className = 'call-source-hint';
+    providerSelect.closest('.gen-settings-row').after(sourceHint);
+    window.CallSourceHint?.update(sourceHint, apiProviders.find(p => p.id === node.apiProvider));
     const durationSelect = wrap.querySelector('.video-duration');
     const aspectSelect = wrap.querySelector('.video-aspect');
     const resolutionSelect = wrap.querySelector('.video-resolution');
@@ -8651,6 +8663,7 @@ function renderVideoBody(node){
     providerSelect.onchange = e => {
         e.stopPropagation();
         node.apiProvider = e.target.value;
+        window.CallSourceHint?.update(sourceHint, apiProviders.find(p => p.id === node.apiProvider));
         const models = providerVideoModels(node.apiProvider);
         if(!models.includes(node.model)) node.model = models[0] || node.model;
         modelSelect.innerHTML = videoModelOptions(node.model, node.apiProvider);
@@ -15094,5 +15107,20 @@ GenerationTaskCenter.attach({
         const node=addPromptNode();if(!node)return;
         Object.assign(node,{text,sourceResultId:result.result_id || result.url,sourceRunId:result.run_id || ''});
         render();scheduleSave();
+    }
+});
+
+CharacterStudio.mount({
+    selection:()=>nodes.filter(node=>selected.has(node.id)).flatMap(node=>node.type==='image' ? [node.url] :
+        node.type==='group' ? (node.items || []).map(id=>nodes.find(item=>item.id===id)?.url) : []).filter(Boolean),
+    insert:profile=>{
+        if(!ensureCanvas()) throw new Error('请先选择或创建画布');
+        pushUndo(); const point=defaultPoint(-150,-100), ids=[];
+        profile.images.forEach((url,index)=>{
+            const node={id:uid('img'),type:'image',x:point.x+(index%3)*300,y:point.y+Math.floor(index/3)*340,
+                url,name:profile.name+' · '+(index+1),characterRef:{id:profile.id,revision:profile.revision}};
+            nodes.push(node); ids.push(node.id);
+        });
+        selected=new Set(ids); render(); scheduleSave(); return true;
     }
 });
