@@ -1,8 +1,8 @@
 {
   "schema_version": "enterprise-documents-v1",
   "reviewed_at": "2026-10-28",
-  "audit_base_commit": "7b003905565b8e1be5fb2faee8982498abe47d6f",
-  "scope": "Owner-accepted 10.9 candidate in PR 201: original canvas restoration, administration, Comfy fixes and bounded persistence/transport reliability. Independent review, initialization control, real GPU quotas/cancellation and three final Setup upgrades qualified; original environment restored. Separate merge and formal release approval pending; no customer operation.",
+  "audit_base_commit": "1c228610359688fedbaa501243adaf99f39fe55b",
+  "scope": "Formal 10.9 delivery: PR 201 merged with exact main CI success; immutable 0d product and eight anonymous public assets verified. Exact-source real Setup and bounded recovery evidence retained. Owner test-device validation and production window remain separate; no customer device operated.",
   "documents": [
     {
       "path": ".github/PULL_REQUEST_TEMPLATE.md",

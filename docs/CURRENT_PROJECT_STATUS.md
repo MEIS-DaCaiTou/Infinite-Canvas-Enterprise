@@ -2,7 +2,15 @@
 
 更新时间：2026-10-28
 
-## 2026-10-28 独立审查、初始化归因、真实GPU与安装专项收口
+## 2026-10-28 10.9正式发布与升级交付
+
+负责人已批准合并、正式发布、公开核验及随后由负责人复测设备的顺序。[PR #201](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/201)已合并为main `1c228610359688fedbaa501243adaf99f39fe55b`，该准确main的[Documentation checks](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/40626151904)、[Native fixed entry checks](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/40626151966)、[Enterprise checks](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/40626151886)均通过，真实EXE opt-in仍跳过。北京时间2026-10-28 11:31:20正式发布[v2026.10.9](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.10.9)，非Draft、非预发布、稳定Latest；标签与八项资产固定产品源码`0dce14fee88baaf451cfd3212043721d26ce83fd`，Release ID为`ice-2026.10.9-0dce14fee88b`，没有重新构建。
+
+八项公开下载已通过产品原匿名下载器逐项回读，大小及已有摘要与验收候选一致，公开ZIP内Schema4与Manifest一致。旧10.5/10.6/10.8发行身份、通道及资产均保持。10.9没有在线路由资产，仅交付离线原位升级；10.4使用原10.5预置→10.9，10.8直接10.9，始终选择原安装目录，安装时取消“完成后打开启动窗口”，每跳点击“完成”并等待向导退出。实际三次Setup、登记/业务/数据及未变引擎失败恢复的边界见[发行准备记录](ops/RELEASE-PREPARATION-2026-10-27.md)。D68保存发布、main CI和公开回读记录。
+
+测试/生产设备均未由开发操作。下一步由负责人先升级10.8测试机，检查原账号、两类画布、素材/视频、模型/后端、原任务和后台返回；确认后再安排10.4生产窗口。5000次分类受理、NAS十分钟恢复点/人工恢复及OSS仍未交付，不以本次发行宣称大规模容量或高可用完成。下列冻结/待批准文字保留发布前时点，由本节覆盖。
+
+## 2026-10-28 独立审查、初始化归因、真实GPU与安装专项收口（发布前记录）
 
 负责人授权收口独立审查、初始化报错、真实GPU多用户/取消和安装向导专项，之后分别申请PR合并与正式发布。独立审查发现一处P2：已完成任务的摘要不含完整结果，首次查询回执暂时失败时不再继续查询，输出可一直转圈；首次摘要列表失败也缺少重查。0dce14fee88baaf451cfd3212043721d26ce83fd仅修正共用Comfy输出控制器的原任务查询恢复，并补列表503、结果503、切换画布后旧查询失效三项Node回归；不重新提交生成。审查方复核后无其他已验证缺陷，未将有限审查等同于无风险。
 
