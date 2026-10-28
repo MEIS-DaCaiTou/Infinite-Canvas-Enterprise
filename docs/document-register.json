@@ -2,7 +2,7 @@
   "schema_version": "enterprise-documents-v1",
   "reviewed_at": "2026-10-28",
   "audit_base_commit": "7b003905565b8e1be5fb2faee8982498abe47d6f",
-  "scope": "Owner-accepted 10.9 candidate in Draft PR 201: original canvas restoration, administration, Comfy fixes and bounded persistence/transport reliability. Independent review fix and real GPU quota/cancellation evidence recorded; final Setup GUI pending. No merge, formal release or customer operation.",
+  "scope": "Owner-accepted 10.9 candidate in PR 201: original canvas restoration, administration, Comfy fixes and bounded persistence/transport reliability. Independent review, initialization control, real GPU quotas/cancellation and three final Setup upgrades qualified; original environment restored. Separate merge and formal release approval pending; no customer operation.",
   "documents": [
     {
       "path": ".github/PULL_REQUEST_TEMPLATE.md",
