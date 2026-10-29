@@ -16,6 +16,7 @@ import uuid
 
 from enterprise import install_cache as files, install_lifecycle as lifecycle
 from enterprise import install_database_preparation as database_preparation
+from enterprise import install_upgrade_support as support_cache
 from enterprise.fresh_install import verify_release_assets
 from enterprise.install_entry import ENTRY_NAME, _record, _snapshot, verify_entry_bundle, validate_installation_record
 from enterprise.ops.update import mvp
@@ -79,28 +80,17 @@ def _file_or_none(path):
 
 
 def _support(root, installation_id):
-    setup, info = root / SLOTS["setup"], root / SLOTS["support"]
-    left, right = _file_or_none(setup), _file_or_none(info)
-    if left is None and right is None:
-        return
-    if left is None or right is None or right["size_bytes"] > 16384:
-        _fail("INSTALL_UPGRADE_SUPPORT_UNPROVEN")
-    raw = files._io(info).read_bytes()
     try:
-        parser = ConfigParser(interpolation=None, strict=True)
-        parser.read_string(raw.decode("utf-16" if raw.startswith((b"\xff\xfe", b"\xfe\xff")) else "utf-8-sig"))
-        values = dict(parser["Lifecycle"])
-        if (parser.sections() != ["Lifecycle"] or set(values) not in (
-                {"product", "installationid", "setupsha256", "setupsize"},
-                {"product", "installationid", "setupsha256", "setupsize", "uninstaller", "uninstallersha256"})
-                or values["product"] != "MEIS-DaCaiTou/Infinite-Canvas-Enterprise"
-                or values["installationid"] != installation_id or values["setupsha256"] != left["sha256"]
-                or values["setupsize"] != str(left["size_bytes"])):
-            _fail("INSTALL_UPGRADE_SUPPORT_UNPROVEN")
-    except (ValueError, KeyError, UnicodeError) as exc:
-        raise InstallUpgradeError("INSTALL_UPGRADE_SUPPORT_UNPROVEN") from exc
-    if files._file(info) != right or files._file(setup) != left:
-        _fail("INSTALL_UPGRADE_SUPPORT_UNPROVEN")
+        support_cache.validate_published_support(root, installation_id)
+    except support_cache.SupportError as exc:
+        raise InstallUpgradeError(exc.code) from exc
+
+
+def _source_support(root, installation_id):
+    try:
+        return support_cache.inspect_source_support(root, installation_id)
+    except support_cache.SupportError as exc:
+        raise InstallUpgradeError(exc.code) from exc
 
 
 def _eligible(roots, source, target):
@@ -140,11 +130,13 @@ def inspect_upgrade(*, install_root, release_dir, local_app_data_base):
                          else "RECOVERY_REQUIRED")
     roots, record, source = lifecycle.current_source(install_root=install_root, local_app_data_base=local_app_data_base)
     _metadata, preparation = _eligible(roots, source, assets.manifest)
-    _support(roots.INSTALL_ROOT, record["installation_id"])
+    support = _source_support(roots.INSTALL_ROOT, record["installation_id"])
     return {"installation_id": record["installation_id"], "source_release_id": source.release_id,
             "target_release_id": assets.manifest.release_id, "upgrade_state": "ELIGIBLE",
             "database_update_mode": mvp._database_contract_mode(source, assets.manifest),
-            "database_preparation_required": preparation is not None}
+            "database_preparation_required": preparation is not None,
+            "maintenance_support_rebuild_required": support.rebuild_required,
+            "maintenance_support_reason": support.reason}
 
 
 class _Transaction:
@@ -385,7 +377,7 @@ def upgrade_retained(*, install_root, release_dir, native_entry_dir, setup_execu
     assets = verify_release_assets(Path(release_dir))
     roots, record, source = lifecycle.current_source(install_root=root, local_app_data_base=local_app_data_base)
     metadata, preparation = _eligible(roots, source, assets.manifest)
-    _support(root, record["installation_id"])
+    support = _source_support(root, record["installation_id"])
     identity = assets.manifest.section("enterprise_source")
     entry = verify_entry_bundle(Path(native_entry_dir), commit=identity["commit"], tree=identity["tree"])
     setup = files._safe(Path(setup_executable))
@@ -425,7 +417,7 @@ def upgrade_retained(*, install_root, release_dir, native_entry_dir, setup_execu
     text = io.StringIO(); parser.write(text)
     payloads = {"entry": entry.data, "record": canonical_json(_record(root, entry, _snapshot(root / SLOTS["record"]))),
                 "setup": setup_bytes, "support": text.getvalue().encode("ascii")}
-    slots = {key: {"before": _file_or_none(entry_source if key == "entry" else root / relative),
+    slots = {key: {"before": support.before[key] if key in support.before else _file_or_none(entry_source if key == "entry" else root / relative),
                    "candidate": _blob(directory / ("candidate-" + key), payloads[key])}
              for key, relative in SLOTS.items()}
     if fence is None:

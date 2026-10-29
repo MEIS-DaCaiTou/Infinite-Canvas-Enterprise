@@ -247,6 +247,144 @@ def test_target_health_failure_restores_native_objects_before_source_start(insta
     assert result["upgrade_state"] == "ROLLED_BACK" and files._file(root / "InfiniteCanvas.exe") == before
 
 
+def source_support(fixture, damage="none"):
+    root = fixture["roots"].INSTALL_ROOT
+    directory = root / "state/windows-maintenance"; directory.mkdir()
+    setup = directory / "maintenance-setup.exe"
+    original = b"MZ-original-maintenance-cache"
+    setup.write_bytes(original)
+    identity = json.loads((root / "state/installation.json").read_bytes())["installation_id"]
+    info = directory / "support.ini"
+    info.write_text("[Lifecycle]\nProduct=MEIS-DaCaiTou/Infinite-Canvas-Enterprise\n"
+        f"InstallationId={identity}\nSetupSha256={hashlib.sha256(original).hexdigest()}\n"
+        f"SetupSize={len(original)}\n", encoding="utf8")
+    if damage == "checksum":
+        setup.write_bytes(original[:-1] + bytes([original[-1] ^ 1]))
+    elif damage == "setup-missing":
+        setup.unlink()
+    elif damage == "info-missing":
+        info.unlink()
+    elif damage == "metadata":
+        info.write_bytes(b"[Lifecycle]\nbroken")
+    return {name: path.read_bytes() if path.exists() else None for name, path in (("setup", setup), ("support", info))}
+
+
+@pytest.mark.parametrize("damage", ["none", "checksum", "setup-missing", "info-missing", "metadata"])
+def test_source_cache_is_read_only_preflight_then_retained_and_replaced_in_same_upgrade(installed, damage):
+    f = installed; root = f["roots"].INSTALL_ROOT
+    original = source_support(f, damage)
+    business = protected(f)
+    state = {p.relative_to(root): p.read_bytes() for p in (root / "state").rglob("*") if p.is_file()}
+    preflight = upgrade.inspect_upgrade(install_root=root, release_dir=f["target_assets"], local_app_data_base=f["local"])
+    assert preflight["maintenance_support_rebuild_required"] is (damage != "none")
+    assert state == {p.relative_to(root): p.read_bytes() for p in (root / "state").rglob("*") if p.is_file()}
+    result = upgrade.upgrade_retained(**arguments(f))
+    directory = root / "state/install-upgrades" / result["operation_id"]
+    for key, expected in original.items():
+        saved = directory / ("original-" + key)
+        assert (saved.read_bytes() if saved.exists() else None) == expected
+    assert (root / upgrade.SLOTS["setup"]).read_bytes() == f["setup"].read_bytes()
+    upgrade._support(root, result["installation_id"])
+    assert finish(f)["upgrade_state"] == "COMPLETE" and protected(f) == business
+
+
+@pytest.mark.parametrize("field,value", [("InstallationId", "f" * 32), ("Product", "another-product")])
+def test_conflicting_source_support_identity_is_not_silently_adopted(installed, field, value):
+    f = installed; root = f["roots"].INSTALL_ROOT; source_support(f)
+    info = root / upgrade.SLOTS["support"]
+    from configparser import ConfigParser
+    parser = ConfigParser(); parser.read(info, encoding="utf8"); parser["Lifecycle"][field] = value
+    with info.open("w", encoding="utf8") as stream: parser.write(stream)
+    with pytest.raises(upgrade.InstallUpgradeError, match="SUPPORT_IDENTITY_CONFLICT"):
+        upgrade.upgrade_retained(**arguments(f))
+    assert not (root / "state/install-upgrades").exists()
+
+
+def test_damaged_old_cache_never_weakens_target_validation(installed):
+    f = installed; root = f["roots"].INSTALL_ROOT; original = source_support(f, "checksum")
+    f["setup"].write_bytes(b"damaged-target")
+    with pytest.raises(upgrade.InstallUpgradeError, match="SETUP_UNPROVEN"):
+        upgrade.upgrade_retained(**arguments(f))
+    assert not (root / "state/install-upgrades").exists()
+    assert (root / upgrade.SLOTS["setup"]).read_bytes() == original["setup"]
+
+
+def test_cache_changed_while_observing_is_not_classified_as_repairable(installed, monkeypatch):
+    from enterprise import install_upgrade_support as support
+    f = installed; root = f["roots"].INSTALL_ROOT; source_support(f)
+    original = support._token
+    calls = []
+    def token(path, limit):
+        result = original(path, limit)
+        calls.append(path)
+        if len(calls) == 2:
+            with (root / upgrade.SLOTS["support"]).open("ab") as stream:
+                stream.write(b"; concurrently changed\n")
+        return result
+    monkeypatch.setattr(support, "_token", token)
+    with pytest.raises(upgrade.InstallUpgradeError, match="SUPPORT_CHANGED"):
+        upgrade.inspect_upgrade(install_root=root, release_dir=f["target_assets"], local_app_data_base=f["local"])
+    assert not (root / "state/install-upgrades").exists()
+
+
+def test_rebuilt_target_cache_tampering_still_blocks_final_registration(installed):
+    f = installed; root = f["roots"].INSTALL_ROOT; source_support(f, "checksum")
+    result = upgrade.upgrade_retained(**arguments(f))
+    setup = root / upgrade.SLOTS["setup"]
+    with setup.open("ab") as stream:
+        stream.write(b"changed-after-publication")
+    with pytest.raises(upgrade.InstallUpgradeError, match="SUPPORT_UNPROVEN"):
+        finish(f)
+    assert (root / "state" / upgrade.ACTIVE_NAME).exists()
+    state = json.loads((root / "state/install-upgrades" / result["operation_id"] / "state.json").read_bytes())
+    assert state["state"] != "COMPLETE"
+
+
+def test_occupied_old_cache_keeps_fence_until_explicit_recovery(installed, monkeypatch):
+    import ctypes
+    f = installed; root = f["roots"].INSTALL_ROOT; original = source_support(f, "checksum")
+    business = protected(f); entry = files._file(root / "InfiniteCanvas.exe")
+    interrupted_at(f, monkeypatch, "upgrade_ready")
+    tx, _state = upgrade._load(root, f["local"], upgrade.verify_release_assets(f["target_assets"]))
+    handle = files._kernel.CreateFileW(str(files._io(root / upgrade.SLOTS["setup"])),
+        0x80000000, 1, None, 3, 0, None)  # Share reads, deny deletion/move.
+    assert handle != ctypes.c_void_p(-1).value
+    try:
+        with pytest.raises(files.CacheError, match="FILE_BUSY"):
+            tx.publish()
+        assert (root / "state" / upgrade.ACTIVE_NAME).exists()
+        assert (root / "state/system-update-active.lock").exists()
+        assert protected(f) == business
+    finally:
+        files._kernel.CloseHandle(handle)
+    result = upgrade.recover_upgrade(install_root=root, release_dir=f["target_assets"],
+        local_app_data_base=f["local"], confirm_no_active_tasks=True)
+    assert result["upgrade_state"] == "ROLLED_BACK"
+    assert files._file(root / "InfiniteCanvas.exe") == entry and protected(f) == business
+    assert (root / upgrade.SLOTS["setup"]).read_bytes() == original["setup"]
+    assert not (root / "state" / upgrade.ACTIVE_NAME).exists()
+
+
+@pytest.mark.parametrize("failure", ["health", "setup_published", "support_published"])
+def test_damaged_cache_upgrade_failure_restores_original_program_and_cache(installed, monkeypatch, failure):
+    f = installed; root = f["roots"].INSTALL_ROOT; original = source_support(f, "checksum")
+    business = protected(f); entry = files._file(root / "InfiniteCanvas.exe")
+    if failure == "health":
+        monkeypatch.setattr(upgrade.mvp, "_run_launcher", lambda app, command:
+            (2, {"code": "RUNTIME_HEALTH_FAILED"}) if app != f["roots"].APP_ROOT and command == "health"
+            else (0, {"result": "ok"}))
+        result = upgrade.upgrade_retained(**arguments(f))
+    else:
+        interrupted_at(f, monkeypatch, failure)
+        monkeypatch.setattr(upgrade, "_checkpoint", lambda _stage: None)
+        result = upgrade.recover_upgrade(install_root=root, release_dir=f["target_assets"], local_app_data_base=f["local"], confirm_no_active_tasks=True)
+    assert result["upgrade_state"] == "ROLLED_BACK"
+    assert files._file(root / "InfiniteCanvas.exe") == entry and protected(f) == business
+    assert (root / upgrade.SLOTS["setup"]).read_bytes() == original["setup"]
+    assert (root / upgrade.SLOTS["support"]).read_bytes() == original["support"]
+    assert not (root / "state" / upgrade.ACTIVE_NAME).exists()
+
+
 @pytest.mark.parametrize("value", [False, 1, "true", None])
 def test_task_confirmation_is_typed_and_required_before_any_upgrade_writes(installed, value):
     f = installed

@@ -163,6 +163,17 @@ def test_setup_preflights_upgrade_and_refreshes_selected_maintenance_scope():
     assert "关闭窗口不会停止后台服务" in source
 
 
+def test_setup_finishes_upgrade_before_success_page_and_suppresses_launch_on_failure():
+    source = (Path(__file__).resolve().parents[2] / "installer/windows/InfiniteCanvasEnterprise.iss").read_text(encoding="utf8")
+    finalizer = source[source.index("procedure CurStepChanged("):source.index("procedure DeinitializeSetup;")]
+    assert "CurStep = ssDone" not in finalizer
+    assert "(CurStep = ssPostInstall) and RegisterLifecycle" in finalizer
+    assert finalizer.index("SetIniString('Lifecycle', 'UninstallerSha256'") < finalizer.index("FinalizingUpgrade := True")
+    assert "InstallProgress.Show" in finalizer and "UpgradeState = 'COMPLETE'" in finalizer
+    assert "WizardForm.RunList.Checked[I] := False" in finalizer
+    assert "maintenance_support_rebuild_required" in source and "无需单独修复" in source
+
+
 def test_result_is_bounded_stable_and_contains_no_credentials() -> None:
     password = "Never-In-Result-2026!"
     payload = _blocked("INSTALL_PASSWORD_INVALID")
