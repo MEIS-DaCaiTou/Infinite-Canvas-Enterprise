@@ -1,8 +1,20 @@
-# 下一版本发布准备：10.8之后的本地增量
+# 发行准备与交付记录：10.9及10.10
 
-更新时间：2026-10-28
+更新时间：2026-10-29
 
-本文保留本轮变更、冻结和验证记录，顶部补充已核验的正式交付事实。负责人已完成人工验收并批准合并及发布；当前正式版为[v2026.10.9](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.10.9)，设备现场验收另列。下列较早候选和待批准文字按历史时点解释。
+本文保留本轮变更、冻结和验证记录，顶部补充已核验的正式交付事实。负责人已完成人工验收并批准合并及发布；当前正式版为[v2026.10.10](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.10.10)，设备现场验收另列。下列较早候选和待批准文字按历史时点解释。
+
+## 正式交付（2026-10-29，10.10）
+
+负责人明确批准合并与正式发布。[PR #203](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/203)已合入main `60b6d687e20e6109dbda23007f8bc14251f7bba8`，产品源码`6688a749d4688be66738952a296bdcba04ce3080`，[v2026.10.10](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.10.10)为稳定Latest，Release ID `ice-2026.10.10-6688a749d468`；八项固定资产已完成上传及匿名公开下载大小/摘要校验，ZIP内Schema4一致。未变更原10.4/10.5/10.8/10.9资产或新增在线升级路线。
+
+本版包含两类画布共用主题胶囊（底部12px且保留顶部功能）、下拉菜单缩放/平移时收起与重新打开定位、预计/实际密钥来源提示、个人角色资料与创建/导入/原任务续查、文档同步。新的左侧资产管理未实现；公开包排除原站渲染/模型/人物图片，使用自绘人物占位及空官方角色目录。专业人像/多视图/音色与真实收费出图质量仍未交付或验收；内置浏览器最终视觉复测仍被Work控制关闭阻断。
+
+准确main [Enterprise checks](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/40805199744)为2145 passed/51 skipped/12 subtests，Runtime396 passed/1 skipped；[原生EXE](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/40805199580)及[文档](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/40805199621)通过。首轮PR四项失败修正并保留原记录，不写成首次全绿；固定EXE opt-in跳过不算通过。本机定向66项及发行/视频/上下文7项通过。
+
+隔离实际三次Setup通过：准确10.9→10.10，准确10.4→原10.5→10.10；正常向导结束后核验实际Windows登记、原安装身份、原账号、两类画布/配置/素材、服务启动及Schema4，原开发机目录完整还原。原10.5首轮在窗口关闭、登记进程尚未退出时被验收脚本过早检查并清理合成登记，导致REGISTRATION_UNPROVEN；原失败及清理受阻日志保留。修正演练等待/清理顺序后，通过原10.5安装器显式恢复继续完成登记并复核，未手工推进事务状态或修改产品引擎。安装/迁移/Runtime引擎与10.9未变，原b7故障恢复证据仅按未变引擎复用，未将其写成本版重新注入故障。证据在开发机artifact的`t/R1010`，不上传合成数据或内部日志。未调用收费模型或操作客户设备。
+
+部署顺序：先验收当前10.9测试机直接原位升级；生产10.4经[原10.5预置安装器](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/download/v2026.10.5/InfiniteCanvasSetup.exe)再到本版。各跳均使用同一原安装目录、停机备份、取消完成后自动启动、点击完成并等待向导完全退出。负责人测试机反馈及生产窗口单列，不能由发行或隔离演练推断现场通过。详见[当前状态](../CURRENT_PROJECT_STATUS.md)。
 
 ## 正式交付（2026-10-28）
 

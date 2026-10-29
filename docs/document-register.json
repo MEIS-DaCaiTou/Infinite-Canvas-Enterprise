@@ -1,8 +1,8 @@
 {
   "schema_version": "enterprise-documents-v1",
   "reviewed_at": "2026-10-29",
-  "audit_base_commit": "1c228610359688fedbaa501243adaf99f39fe55b",
-  "scope": "10.9 main/release snapshot plus uncommitted local UI and character-library development. Test device upgraded with issues reported; owner acceptance and production validation remain separate. Historical and frozen evidence preserved.",
+  "audit_base_commit": "60b6d687e20e6109dbda23007f8bc14251f7bba8",
+  "scope": "10.10 merged and stable Release; eight public assets and exact10.9/direct,10.4/original10.5/target Setup paths verified. Customer device validation pending. Asset-management implementation excluded; reference resources remain local.",
   "documents": [
     {
       "path": ".github/PULL_REQUEST_TEMPLATE.md",
@@ -136,7 +136,8 @@
     },
     {
       "path": "docs/code-wiki/06-runtime-install-release-update.md",
-      "kind": "reference"
+      "kind": "reference",
+      "reviewed_at": "2026-10-29"
     },
     {
       "path": "docs/code-wiki/07-dependencies-and-integrations.md",
@@ -588,11 +589,12 @@
       "path": "PROJECT_SCOPE_LOCK.md",
       "kind": "authority",
       "authority": "scope",
-      "reviewed_at": "2026-10-28"
+      "reviewed_at": "2026-10-29"
     },
     {
       "path": "README.md",
-      "kind": "entry"
+      "kind": "entry",
+      "reviewed_at": "2026-10-29"
     },
     {
       "path": "release/windows/license-evidence/lucide-ISC-and-feather-MIT.txt",
@@ -686,7 +688,8 @@
     },
     {
       "path": "docs/ops/RELEASE-PREPARATION-2026-10-27.md",
-      "kind": "record"
+      "kind": "record",
+      "reviewed_at": "2026-10-29"
     }
   ],
   "tabular_resources": [
