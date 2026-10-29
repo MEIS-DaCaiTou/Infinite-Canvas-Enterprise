@@ -2,9 +2,17 @@
 
 更新时间：2026-10-28
 
-本文是负责人要求的变更汇总与发行准备记录，不是已发布记录。负责人已确认本轮本地页面和功能人工验收，批准源码冻结、PR和候选打包；候选版本为2026.10.9，准确源码和八项本地安装资产已固定。提交/PR、合并、正式发布、测试主机及生产升级分别记录。当前正式版仍为 [v2026.10.8](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.10.8)。
+本文保留本轮变更、冻结和验证记录，顶部补充已核验的正式交付事实。负责人已完成人工验收并批准合并及发布；当前正式版为[v2026.10.9](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.10.9)，设备现场验收另列。下列较早候选和待批准文字按历史时点解释。
 
-## 冻结与PR状态
+## 正式交付（2026-10-28）
+
+- PR #201已按批准合入main `1c228610359688fedbaa501243adaf99f39fe55b`；准确main的[Documentation checks](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/40626151904)、[Native fixed entry checks](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/40626151966)、[Enterprise checks](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/40626151886)均通过。真实EXE opt-in跳过，不冒充已执行。
+- 北京时间2026-10-28 11:31:20发布[v2026.10.9](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.10.9)，稳定Latest；冻结产品`0dce14fee88baaf451cfd3212043721d26ce83fd`、`ice-2026.10.9-0dce14fee88b`及八项资产保持，没有重打包。
+- 八项资产上传记录和匿名公开下载的大小/已有摘要全部与验收候选一致；公开ZIP内Schema4匹配。原10.5/10.6/10.8记录、通道和资产未改。D68/public-verification.json、publish-result.json与main-ci.json保存原始回读。
+- 仅离线原位交付：10.4→原10.5→10.9；10.8→10.9一次。两个安装包同名，按版本分别存放；各跳使用原目录、取消“完成后打开启动窗口”、点击“完成”并等向导退出。三次实际Setup和未变安装引擎的失败恢复证据见下文，不扩大为未知设备或在线路径已验收。
+- 负责人先复测10.8测试机，再确认10.4生产窗口。开发机预览保留，未操作客户设备，新增付费供应商调用为零。后续仍为分类容量、NAS恢复及待预算确认的OSS；不恢复退出的部门项目/费用/预算范围。
+
+## 冻结与PR状态（发布前记录）
 
 ### 2026-10-28 收口更新（覆盖下面较早的b7候选时点）
 

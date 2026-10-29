@@ -1,3 +1,6 @@
 # Native compiler inputs must be byte-identical across Windows Git settings.
 installer/windows/native/* text eol=lf
 installer/windows/native-entry-build-policy.json text eol=lf
+
+# Release license inventory is byte-bound on all build hosts.
+static/vendor/MANIFEST.md text eol=lf

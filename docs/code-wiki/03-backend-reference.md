@@ -1,5 +1,7 @@
 # 后端类与函数参考
 
+2026-10-28 校准：本章各日期的“候选/未发布”保留当时上下文；10.9相关模块的现行接线以源码及[当前状态](../CURRENT_PROJECT_STATUS.md)为准。项目工作台、共享和费用/预算路由不属于10.9当前注册入口。ComfyUI队列、个人用量与逐笔取消参见[接口章节](./04-frontend-api-and-websocket.md#109-comfyui-队列与原任务接口)。
+
 2026-10-18 LLM 任务续包（基于 #174 的独立候选）：`canvas_llm_tasks.CanvasLLMTasks` 使用原 journal、任务归属和调度钩子，在请求断开后执行原 `main.canvas_llm`；`llm_submitting/llm_response` 只在同步 HTTP/CLI 提交边界记录阶段。请求/聊天历史/密钥不写入回执，收到正文通过 `record_llm_result` 先保存，再复用原文本文件归档。平台 GET 读取原任务，reconcile 仅能恢复已收到的本地正文；不会调用供应商或把 chat completion ID 当异步查询 ID。原 `/api/canvas-llm` 兼容保留，新 `canvas-llm-tasks` 入口沿用 Gateway 路由/素材/任务授权；目录增加 `canvas_llm` 类型，无新业务表。状态见 [CURRENT](../CURRENT_PROJECT_STATUS.md)。
 
 2026-10-18 来源关联增量（开发候选）：`task_canvas_context.TaskCanvasSource/accepted_source/describe_source` 复用既有画布文件和 `interceptors.can_access_canvas`，在原 journal 中记录可选来源，不新增业务表。`create_task_receipt` 在执行前校验来源；图片/视频/ComfyUI 请求都可携带此字段，旧调用仍可省略。`GenerationTaskRepository.detail` 仅在当前仍可访问时返回来源标题和定位 URL；原节点删除时保留打开画布入口。`generation_task_routes` 的原详情 GET 可带 `target_canvas_id`，同时核实本人任务、目标画布及具体结果资源后才允许复用，不写入目标画布。Gateway 继续覆盖用户身份；真实状态与限制见 [CURRENT](../CURRENT_PROJECT_STATUS.md)。
@@ -9,6 +11,8 @@
 [返回索引](./README.md)
 
 本文只列出理解主链路所需的关键符号。完整路由以源码装饰器为准。
+
+2026-10-28未发布角色库：`character_api.create_router()`在Gateway显式注册，仅从认证会话获取账号；`Characters`核对资料、原媒体访问、期望版本和归档；`CharacterRepository`在一个共享实例锁内比较并复用`local_json.atomic_write_json(create_parent=True)`保存DATA_ROOT个人文件。它不调用生成供应商，也不具备跨进程事务。接口及字段见[角色库契约](./04-frontend-api-and-websocket.md#本地角色库接口未发布)，适用范围、维护责任及未完成项见[架构7.6](../../ARCHITECTURE.md#76-2026-10-28-角色库本地实现与资源复用)。
 
 ## 1. 旧业务内核：`main.py`
 
@@ -183,11 +187,11 @@ main.py 的 api_headers、generate_ai_image、wait_for_image_task 和结果归�
 
 ## 付费提交与查询规则（#123 已合并）
 
-`enterprise/providers/submission.py` 承担明确 API 拒绝判定、未知结果错误、提交响应结构校验和 GET/HEAD 瞬态重试。入口复用它，不在响应丢失时再次付费生成；已有 ID 在错误和图像持久回执中保留。它不访问业务数据库或文件目录。此包尚未合并，见[工程记录](../ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md)，不等于完整任务中心。
+`enterprise/providers/submission.py` 承担明确 API 拒绝判定、未知结果错误、提交响应结构校验和 GET/HEAD 瞬态重试。入口复用它，不在响应丢失时再次付费生成；已有 ID 在错误和图像持久回执中保留。它不访问业务数据库或文件目录。此包已合并，见[工程记录](../ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md)，不等于完整任务中心。
 
 `enterprise/canvas_image_recovery.py` 的 `ImageReceiptSink` 在通用上游接受后、第一次轮询前保存 ID/查询绑定；`CanvasImageRecovery` 只查询原任务并回写原回执，单飞协调只保留活动查询，不作为任务事实源。已有结果缓存、批量成员结果、供应商配置变更拒绝及部分结果提示在此边界。`main.py` 的 `POST /api/canvas-image-tasks/{task_id}/reconcile` 只接线；Gateway 复用任务归属，结果仍归原用户。旧回执及旧查询路由保留，不意味着全 Provider/视频/自动对账已完成。
 
-## ComfyUI 续修候选（未合并）
+## ComfyUI 续修（2026-10-14 历史候选记录）
 
 enterprise/providers/comfyui.py 的 ComfyClient 分离 upload/submit/inspect/wait；base_url/endpoint 保留 HTTP(S) 和路径前缀。main.prepare_comfy_workflow 只对内置图应用历史编号预设，archive_comfy_history 沿用输出归档；execute_comfy_generation 连接现有本地队列统计与持久回执。CanvasTaskJournal.record_comfy/claim_comfy_query 保存与领取原任务查询，不重新提交。create_canvas_comfy_task 可接受 UUID request_id 并返回同 owner 原回执；默认旧请求仍可用。续修状态见 CURRENT，不将本候选写入正式 10.2 能力。
 

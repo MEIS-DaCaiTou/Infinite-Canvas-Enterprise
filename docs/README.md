@@ -1,8 +1,8 @@
 # Infinite Canvas Enterprise 文档索引
 
-更新时间：2026-10-15
+更新时间：2026-10-28
 
-本文是唯一导航入口。2026-10-13 已核对现行事实源与全部 Code Wiki 章节；main、开发候选和正式发行分别标注。[文档登记表](./document-register.json) 列出仓库全部受管理 Markdown／文本资料的角色；[本轮审查](./ops/DOC-3-DOCUMENT-SYSTEM-AUDIT-2026-10.md) 记录整改依据。文档数量不等于现行规则数量。
+本文是唯一导航入口。[文档登记表](./document-register.json) 列出受管理 Markdown／文本资料的角色；[审查记录](./ops/DOC-3-DOCUMENT-SYSTEM-AUDIT-2026-10.md) 记录历次整改范围及限制。main、开发候选、正式发行和现场反馈分别标注；文档数量不等于现行规则数量。
 
 ## 1. 每个问题只有一个事实源
 
@@ -47,7 +47,7 @@
 - 范围基线下属 [追踪规则](./requirements/TRACEABILITY-CONTRACT.md) 登记 14 BR / 37 历史项 / 104 场景；[N37 草案](./requirements/N37-ASSET-INTEROP-CONTRACT-DRAFT.md) 只提出接口和无正式编号的专项验收方案。追踪完整不是测试通过或新增业务授权。
 
 - [2026-10-13 供应商适配/当前部署补充](./decisions/REQUIREMENTS-DECISION-REGISTER.md#7-2026-10-13-长期供应商适配与临时兼容边界)：长期平台适配由项目维护，模板仅临时兼容新模型；Linux/云/容量实施待实际需求。
-- 最近完整工程包记录：[C4 已合并](./ops/UPDATE-CATALOG-PAGINATION-2026-10-11.md)、[C5 候选](./ops/VERIFIED-UPDATER-HANDOFF-2026-10-11.md)、[C6 候选](./ops/OFFLINE-RETAINED-UPGRADE-2026-10-12.md)、[C7 候选](./ops/ONLINE-UPGRADE-SEQUENCE-2026-10-12.md)、[产品集成修复候选](./ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md)。它们承载实现/验证证据，不形成第二套动态状态或任务队列。
+- 历史工程包记录：[C4](./ops/UPDATE-CATALOG-PAGINATION-2026-10-11.md)、[C5](./ops/VERIFIED-UPDATER-HANDOFF-2026-10-11.md)、[C6](./ops/OFFLINE-RETAINED-UPGRADE-2026-10-12.md)、[C7](./ops/ONLINE-UPGRADE-SEQUENCE-2026-10-12.md)、[产品集成修复](./ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md)。它们承载特定时点的实现/验证证据，不形成第二套动态状态或任务队列。
 
 ## 4. 原有重复入口与分支差异
 
@@ -56,6 +56,8 @@
 客户维护线仍有文档差异；回归主线时采用本索引与登记表，不把旧队列原样复活，也不把主线新记录丢弃。保留有价值的实施证据并分类，不能将原始历史文档伪装成当前规划。
 
 ## 5. 后续维护规范
+
+维护责任按职责划分，不预设具体个人：产品负责人确认范围、现场反馈与业务取舍；负责相应改动的开发者同步状态/架构/接口/配置与 Code Wiki，核对源码、准确版本和文档登记；发行负责人维护发行记录及升级适用范围；评审者核对证据和文档检查结果。角色可由同一人承担，但状态、批准和验收不能互相代替。历史记录作者保留原时点，后续修正附带日期、来源和适用范围，不重写冻结证据。
 
 1. 一次任务只更新受影响事实源；只有阶段/测试入口改变时才改对应路线图/测试说明，避免纯拼写修改也扩散成全仓更新。
 2. 实现 PR 记录准确 Base/Head、通道、兼容、升级/恢复和验证范围；main、维护分支、Release、客户单设备结果分别写。
@@ -69,8 +71,8 @@
 从仓库根运行：
 
 ```powershell
-py -3.11 -B tools/check_docs.py
-py -3.11 -B -m unittest discover -s enterprise/tests -p test_documentation_contract.py
+python -B tools/check_docs.py
+python -B -m unittest discover -s enterprise/tests -p test_documentation_contract.py
 ```
 
-上例用于已有 Python 3.11 的 Windows 开发环境，不是客户安装步骤；其他环境使用已确认的 Python 解释器，不把商店别名空输出当成功。无需安装项目业务依赖，检查只读，不启动/停止服务或访问客户数据。其完整范围见 [审查记录](./ops/DOC-3-DOCUMENT-SYSTEM-AUDIT-2026-10.md)。
+上例使用已确认的开发解释器；当前业务开发与CI基线为 CPython 3.14.6，文档检查仅需标准库，也可用可用的其他兼容解释器。不把商店别名空输出当成功。检查不启动/停止服务或访问客户数据。其完整范围见 [审查记录](./ops/DOC-3-DOCUMENT-SYSTEM-AUDIT-2026-10.md)。

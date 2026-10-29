@@ -1,6 +1,6 @@
 # Infinite Canvas Enterprise 企业层开发指南
 
-更新时间：2026-10-13
+更新时间：2026-10-28
 
 本文是快速开发指南，不是当前状态或路线图。完整导航见 [docs/README.md](docs/README.md)，模块细节见 [Code Wiki](docs/code-wiki/README.md)。
 
@@ -25,7 +25,8 @@
 | Release/Update | `enterprise/release/`、`enterprise/ops/update/`、`enterprise/update_api.py` |
 | 企业页面 | `enterprise-static/` |
 | 画布/工作流 | `main.py`、`static/`、`workflows/`；新增规则进入相应模块 |
-| 候选图像适配/个人模型 | #156 的 `enterprise/providers/zhenzhen.py`、`provider_image_profiles.py`、`user_model_api.py`、`user_model_preferences.py`、`static/js/model-picker.js` |
+| 图像适配/个人模型 | `enterprise/providers/zhenzhen.py`、`provider_image_profiles.py`、`user_model_api.py`、`user_model_preferences.py`、`static/js/model-picker.js` |
+| ComfyUI 准入及逐笔取消 | `enterprise/comfy_queue.py`、`comfy_queue_api.py`、`canvas_comfy_control.py`；继续复用原任务回执 |
 | 测试 | `enterprise/tests/` |
 
 `main.py`、`static/` 和 `workflows/` 可以修改，但属于高影响区域；必须提供接口、交互、数据和升级回归。不要为了保留历史“上游不修改”规则而把不合适的补丁强塞到 Gateway。
@@ -54,7 +55,7 @@
 - liveness 不访问数据库或 Provider；readiness 与依赖健康分开。
 - 短暂依赖故障降级，真实退出才按退避恢复。
 - 更新流程必须包含：授权、兼容检查、通知/排空、下载校验、备份、迁移、切换、健康、提交或恢复。
-- 更新 Job 要持久化；main 已有单跳、恢复和分页目录。#154/#155 的目标执行器、自动多跳、原生工具与检查点属于已实现待审候选，在线 handoff/完整排空和来源/GUI 验收仍有缺口，状态回到 CURRENT。
+- 更新 Job 要持久化；main 已有分页目录、目标执行器和受约束多跳/恢复。10.9仅交付已验证来源的离线原位升级，不能推断所有历史来源或在线路径均可用；状态回到 CURRENT。
 - Release 资产不可变，具备 Manifest、哈希/签名、源版本范围和回滚说明。
 
 当前按单台 Windows 部署；Linux/云/容量实施待负责人后续需求。复用上述 Python 业务边界，平台特有生命周期留在适配层。

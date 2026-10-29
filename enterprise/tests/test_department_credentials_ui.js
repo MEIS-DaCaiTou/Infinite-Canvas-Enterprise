@@ -12,7 +12,8 @@ let config={api_providers:[
 const requests=[];let html,submit,refreshed=0;
 const controls={
     '[name=provider_id]':{value:''}, '[name=secret]':{}, '[type=submit]':{}, '[data-platform-help]':{},
-    '[name=scope]':{value:'company'}, '[name=procurement]':{value:'company',querySelector:()=>({disabled:false})}
+    '[name=scope]':{value:'company'}, '[name=procurement]':{value:'company',querySelector:()=>({disabled:false})},
+    '[name=account_ref]':{value:'',addEventListener:(_event,fn)=>{controls.accountChanged=fn;}}, '[data-duplicate-help]':{textContent:''}
 };
 const form={querySelector:selector=>controls[selector]};
 const context=vm.createContext({adminT:value=>value,
@@ -36,7 +37,12 @@ ui.load=async()=>{refreshed++;};
     assert.equal(controls['[type=submit]'].disabled,true);
     assert.equal(controls['[name=secret]'].disabled,true);
     controls['[name=provider_id]'].value='zhenzhen';
+    ui.rows=[{provider_id:'zhenzhen',account_ref:'company-main',scope:'company'}];
+    controls['[name=account_ref]'].value='company-main';
     controls['[name=provider_id]'].onchange();
+    assert.match(controls['[data-duplicate-help]'].textContent,/已有来源/);
+    controls['[name=account_ref]'].value='another';controls.accountChanged();
+    assert.equal(controls['[data-duplicate-help]'].textContent,'');
     assert.equal(controls['[type=submit]'].disabled,false);
     assert.equal(controls['[name=secret]'].placeholder,'填写贞贞 API的 API Key');
     assert(!('key_preview' in ui.providers[0]));

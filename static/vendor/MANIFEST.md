@@ -7,6 +7,9 @@ This folder contains third-party assets mirrored locally so the app can load wit
 - `js/tailwindcss-cdn.js`: local mirror of `https://cdn.tailwindcss.com`
 - `js/lucide.js`: local mirror of `https://unpkg.com/lucide@latest`
 - `js/three-0.160.0.module.js`: local mirror of `https://unpkg.com/three@0.160.0/build/three.module.js`
+- Optional local comparison only: `three-addons-r160/` contains npm `three@0.160.0` MIT loading helpers. These helpers are not needed by the bundled geometric character placeholder and are excluded from the pre-assets PR together with the optional comparison renderer.
+
+The owner-requested local Liblib comparison is separate from these open-source vendor licenses: recovered preview code and model/image provenance are recorded in `static/characters/motion/SOURCE.json` and `static/characters/reference/SOURCE.json`. Their redistribution rights have not been established; these comparison files remain untracked locally and are excluded from the public PR and formal delivery. No Liblib account API, bundler runtime or analytics code is executed by the adapted modules.
 
 ## CSS
 

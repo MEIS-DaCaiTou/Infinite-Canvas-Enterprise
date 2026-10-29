@@ -24,8 +24,10 @@
     <link rel="stylesheet" href="/static/css/comfy-outputs.css?v=20261015.2">
     <link rel="stylesheet" href="/static/css/model-picker.css?v=20261016.1">
     <link rel="stylesheet" href="/static/css/generation-task-center.css?v=20261015.1">
-  <link rel="stylesheet" href="/static/css/studio-select.css?v=20261025.2">
-  <script src="/static/js/studio-select.js?v=20261025.2" defer></script>
+    <link rel="stylesheet" href="/static/css/character-studio.css?v=20261029.6">
+    <link rel="stylesheet" href="/static/css/canvas-dock.css?v=20261029.1">
+  <link rel="stylesheet" href="/static/css/studio-select.css?v=20261028.4">
+  <script src="/static/js/studio-select.js?v=20261028.4" defer></script>
 </head>
 <body>
     <div id="shell" class="shell">
@@ -69,8 +71,33 @@
         </div>
         <button class="smart-back" type="button" onclick="backToCanvasList()"><i data-lucide="arrow-left"></i><span data-i18n="canvas.backToList">返回画布列表</span></button>
         <div id="smartTitle" class="smart-title" data-i18n="smart.title">智能画布</div>
+        <div id="canvasDock" class="canvas-dock" role="toolbar" aria-label="画布工具栏">
+            <button class="dock-button dock-add" type="button" aria-label="添加节点" aria-expanded="false" aria-controls="canvasAddMenu"><i data-lucide="plus"></i></button>
+            <div class="dock-actions">
+                <button class="dock-button" type="button" onclick="createSmartDockNode('image')" aria-label="上传素材"><i data-lucide="image-plus"></i></button>
+                <button class="dock-button" type="button" onclick="createSmartDockNode('prompt')" aria-label="提示词"><i data-lucide="text-cursor-input"></i></button>
+                <button class="dock-button" type="button" onclick="focusSmartDockGeneration()" aria-label="生成设置"><i data-lucide="sparkles"></i></button>
+                <button class="dock-button" type="button" data-character-studio aria-label="角色造型室"><i data-lucide="smile"></i></button>
+                <span class="dock-divider" aria-hidden="true"></span>
+                <button class="dock-button" type="button" data-dock-target="smartWorkflowToggle" aria-controls="smartWorkflowTransferModal" aria-expanded="false" aria-label="导入导出工作流"><i data-lucide="package-open"></i></button>
+                <button class="dock-button" type="button" data-dock-target="assetToggle" aria-controls="assetPanel" aria-expanded="false" aria-label="资产库"><i data-lucide="library"></i></button>
+                <button class="dock-button" type="button" data-dock-target="smartLogToggle" aria-controls="smartLogModal" aria-expanded="false" aria-label="日志"><i data-lucide="history"></i></button>
+                <button class="dock-button" type="button" onclick="fitAllNodesViewport()" aria-label="适配全部节点"><i data-lucide="scan"></i></button>
+            </div>
+            <button class="dock-button dock-scroll" type="button" aria-label="更多工具" hidden><i data-lucide="chevron-right"></i></button>
+            <div id="canvasAddMenu" class="canvas-add-menu" popover="manual" aria-label="添加节点">
+                <div class="dock-menu-heading">添加节点<span>选择要放入智能画布的内容</span></div>
+                <div class="dock-node-grid">
+                    <button class="tool-btn" type="button" onclick="createSmartDockNode('image')"><i data-lucide="image-plus"></i><span>上传</span></button>
+                    <button class="tool-btn" type="button" onclick="createSmartDockNode('prompt')"><i data-lucide="text-cursor-input"></i><span>提示词</span></button>
+                    <button class="tool-btn" type="button" onclick="createSmartDockNode('loop')"><i data-lucide="repeat-2"></i><span>循环</span></button>
+                    <button class="tool-btn" type="button" onclick="createSmartDockNode('group')"><i data-lucide="group"></i><span>分组</span></button>
+                </div>
+            </div>
+        </div>
         <div id="createMenu" class="create-menu">
             <div class="create-menu-grid">
+                <button class="create-card" type="button" data-character-studio aria-label="角色造型室"><span class="create-card-icon"><i data-lucide="smile"></i></span><span><span class="create-card-title">角色造型室</span><span class="create-card-sub">导入与复用角色参考图</span></span></button>
                 <button class="create-card" type="button" data-create-type="image">
                     <span class="create-card-icon"><i data-lucide="upload-cloud"></i></span>
                     <span>
@@ -448,8 +475,15 @@
     <script src="/static/js/comfy-outputs.js?v=20261015.2"></script>
     <script src="/static/js/canvas-llm-tasks.js?v=20261018.5"></script>
     <script src="/static/js/task-canvas-context.js?v=20261018.5"></script>
-    <script src="/static/js/generation-task-center.js?v=20261025.7"></script>
+    <script src="/static/js/generation-task-center.js?v=20261028.2"></script>
     <script src="/static/js/canvas-save-navigation.js?v=20261027.1"></script>
-    <script src="/static/js/smart-canvas.js?v=20261027.4"></script>
+    <script src="/static/js/character-carousel.js?v=20261028.2"></script>
+    <script src="/static/js/character-motion-preview.js?v=20261029.4"></script>
+    <script src="/static/js/character-library-view.js?v=20261029.4"></script>
+<script src="/static/js/character-creation-task.js?v=20261029.2"></script>
+    <script src="/static/js/character-creation-view.js?v=20261029.2"></script>
+    <script src="/static/js/character-studio.js?v=20261029.3"></script>
+    <script src="/static/js/smart-canvas.js?v=20261029.1"></script>
+    <script src="/static/js/canvas-dock.js?v=20261029.2" defer></script>
 </body>
 </html>

@@ -1,6 +1,36 @@
 # 前端、API 与 WebSocket
 
-2026-10-26本地队列增量：管理员GET/PUT /enterprise/api/admin/comfy-queue配置算力分组/并发、个人额度和逐工作流等待；GET /enterprise/api/me/comfy-queue只返回本人用量，内部调度由原Upstream执行。经典画布按钮为加入队列，OUTPUT区分platform_queued与后端queued，右键本地取消等待不调用远端。输出详情复用原浮层，后续放大拒绝时保留前一步结果及任务ID。原本地工具及智能画布服务端同样共用限额；其他供应商保持原调度。仅本地未提交，根入口人工验收优先。
+2026-10-28 接口核对基线：10.9 产品源码 `0dce14f`。本章下方日期段是历史采集记录，其中“候选/未发布”只代表当时；现行状态见 [CURRENT](../CURRENT_PROJECT_STATUS.md)。10-24退出的项目工作台、共享、费用和预算路由不能按历史段落作为10.9接口调用。
+
+2026-10-26队列增量已随10.9发布：管理员 GET/PUT `/enterprise/api/admin/comfy-queue` 配置算力分组/并发、个人额度和逐工作流等待；GET `/enterprise/api/me/comfy-queue` 返回本人用量，内部调度由原 Upstream 执行。经典画布区分 `platform_queued` 与后端排队；其他供应商保持原调度。
+
+### 本地角色库接口（未发布）
+
+适用于2026-10-29开发预览，不属于正式10.9。`character-studio.js`共用以下同源会话接口，角色接口只管理创作角色资料及已有图片引用；独立创建页使用原API图片任务生成参考图；“角色”不指系统权限角色。开发者维护HTTP/服务契约，前端维护者同步资料表单与两类画布适配器。
+
+| 方法和路径 | 请求/响应与行为 |
+| --- | --- |
+| `GET /enterprise/api/me/characters` | 返回`{schema_version:1,owner_id:当前账号ID,characters:[...]}`，只读本人，按updated_at降序；每次核对素材访问，响应补充`unavailable_images`。 |
+| `GET /enterprise/api/me/characters/catalog` | 返回`{schema_version:1,characters:[...],local_preview_available:布尔}`，只读目录；公开PR缺省目录为空且预览标记false。开发机另有未提交的10个参考角色和可选WebGL对照，仅齐备本地依赖时标记true，不发布私人素材或将原站内容纳入PR。 |
+| `POST /enterprise/api/me/characters` | 完整资料：name（必填1–80字符）、description（≤2000）、gender、age_group、region、images（1–12个本地图片URL）、可选cover_url（本地图片URL）、archived（布尔，默认false）；返回新记录，自动生成id/revision1；可选`create_request_id`为32位小写十六进制，同账号首次将其作为id，相同资料重试返回原记录，资料不同409；PUT禁止此字段。 |
+| `PUT /enterprise/api/me/characters/{id}` | 完整替换资料，并要求正整数`expected_revision`；比较成功后revision加1。传archived=false可恢复，不接受客户端owner。 |
+| `DELETE /enterprise/api/me/characters/{id}` | JSON仅`{expected_revision:正整数}`；执行归档，返回`{archived:true}`，不删除原图或既有画布节点。 |
+
+记录字段为`id/name/description/gender/age_group/region/images/cover_url/archived/revision/created_at/updated_at`，时间为Unix毫秒。gender取`unspecified/female/male/neutral/other`；age_group取`unspecified/child/teen/young/adult/middle/senior`；region取`unspecified/east_asia/south_asia/europe/africa/americas/middle_east/other`。cover_url可与参考图分离，独立核对授权；旧记录缺省时以首图为封面。允许PNG/JPG/JPEG/WebP/GIF，仍由原资源规范化和访问权限校验决定可用性。上传复用`POST /api/ai/upload`，不新增上传接口或任务事实源。创建页POST `/api/canvas-image-tasks`使用已有provider_id/model/prompt/reference_images，n固定1；提示词增加正面全身、简洁背景的角色构图指令，角色资料保存原始用户描述；GET `/enterprise/api/me/generation-tasks/{id}`读取本人状态、输出和实际call_source，再由用户确认保存。待受理回执先存按owner_id隔离的sessionStorage；GET续查不POST生成，明确拒绝（400/401/403/404/413/422/429）可修正后重新提交，网络/5xx/408不自动重发。无编号时只能核对日志后关联本人原任务。生成界面未套用原站14积分，使用原平台计费；原图片接口不支持幂等重发，未知状态不能以重试生成代替查证。
+
+JSON请求上限32KiB，每账号最多500条（含归档）。成功200且no-store；字段/JSON错误400、未登录401、素材越权403、本人记录不存在404、版本冲突/数量上限409、请求超限413、文件损坏/未知格式/存储不可用503。409不自动提高版本重试覆盖；页面草稿仅在同一页面关闭重开时保留，刷新或离开页面不保证保留。官方目录只允许`/static/characters/`公开内置图片。`characterRef:{id,revision}`只是画布节点来源快照，不赋予共享权限或实时更新节点。目录记录可额外返回asset_labels，用于已有参考图名称；它不表示已具备对应资产生成任务。UI筛选按同一维度多选取并集、不同维度取交集，恢复原版筛选枚举，旧adult/other/south_asia/americas存量资料仍可编辑。数据生命周期与专业编辑未完成项见[架构7.6](../../ARCHITECTURE.md#76-2026-10-28-角色库本地实现与资源复用)。
+
+### 10.9 ComfyUI 队列与原任务接口
+
+| 方法和路径 | 契约与权限 |
+| --- | --- |
+| `GET /enterprise/api/admin/comfy-queue` | 管理员读取 `policy` 和 `status`；后端名称与任务状态受管理员权限保护。 |
+| `PUT /enterprise/api/admin/comfy-queue` | 管理员提交完整 policy；字段包括 `user_running`、`user_outstanding`、`default_workflow_waiting`、`backends`、`workflows`。数值为1–128整数，运行上限不大于未结束上限；列表变化或有未结束任务时变更算力分组会返回409。 |
+| `GET /enterprise/api/me/comfy-queue` | 已登录用户读取本人的 `running`、`waiting`、`outstanding` 和 `limits`；不返回其他人的列表或资源健康。 |
+| `GET /enterprise/api/me/comfy-tasks?canvas_id=...` | 按认证用户与画布读取 Comfy 原任务摘要，返回 `items`。 |
+| `POST /enterprise/api/me/comfy-tasks/{task_id}/cancel` | 按认证身份取消本人的指定任务；平台等待可直接取消，已提交后端需等待原任务状态确认。越权/不存在为404，无受理身份为409，不支持逐笔取消为501，结果暂不可确认可为503。 |
+
+队列默认每人运行1、未结束3、每工作流等待6；后端默认容量1，管理员可配置。`backends` 每项为 `url`、`resource`、`capacity`，`workflows` 每项为 `name`、`waiting_limit`；同资源组容量必须一致。配置存于 `STATE_ROOT/comfy-queue`，任务回执仍由原 journal 和所有权映射管理。服务端从会话确定身份；内部 `/_enterprise_internal/` 路由只用于可信进程间调用，不是客户端接口。详情以 `enterprise/comfy_queue.py`、`comfy_queue_api.py` 和 `canvas_comfy_control.py` 为准。
 
 2026-10-25 ComfyUI长任务：public_comfy_task复用原回执phase弥合本地超时→续查调度接管窗口，已受理且仍可跟踪的任务不对外返回终态失败或旧500字段；人工暂停及明确执行失败保留原处理。CanvasComfyRecovery只查询原backend/prompt_id，未新增POST或恢复状态表。经典画布runComfyNode的忙状态覆盖整个await，finally才解除，避免2秒后重复点击；生成结果及来源仍走原链路。
 
@@ -12,11 +42,11 @@
 
 2026-10-25渠道密钥平台选择：`department-credentials.js`复用原GET /api/config平台目录，仅保留id/name/enabled/managed_source_supported用于呈现；新建仍向原业务来源接口提交provider_id，不新增路由或自建供应商配置。public_provider能力标记复用当前任务受理的is_zhenzhen判定，非管理员脱敏继续过滤地址和密钥，不过滤能力布尔值；该标记不授予调用权限。当前非贞贞平台不宣称渠道密钥调用已接通。
 
-2026-10-25共享下拉呈现：17个HTML入口显式载入`studio-select.js/css`，事件委托接管现有单选select的弹层，原select仍是表单值与业务事件的来源；不为每个动态节点绑定监听或增加全树观察器。纯定位函数处理视口边缘、有限高度及展开方向，原生popover顶层避免祖先缩放/overflow影响。`StudioDropdowns.openPanel/closePanel`供智能画布既有参数面板及聊天模型/尺寸面板复用，保留原业务按钮与回调，不复制模型、任务或供应商规则。当前仍为本地人工预览，未提交/发布。
+2026-10-25共享下拉呈现：17个HTML入口显式载入`studio-select.js/css`，事件委托接管现有单选select的弹层，原select仍是表单值与业务事件的来源；不为每个动态节点绑定监听或增加全树观察器。纯定位函数处理视口边缘、有限高度及展开方向，原生popover顶层避免祖先缩放/overflow影响。`StudioDropdowns.openPanel/closePanel`供智能画布既有参数面板及聊天模型/尺寸面板复用，保留原业务按钮与回调，不复制模型、任务或供应商规则。此增量现已随10.9交付。
 
-2026-10-24成员后台本地预览：`admin-members.css`只负责后台样式；`admin-navigation.js`组织原管理分组，`admin-members.js`负责列表/详情选择与筛选呈现，通过回调复用admin.html原账号操作和department-members组织服务，不直接增加业务API。`admin-embedded-pages.js`只承载个人中心dialog与日志内容区，复用原profile/logs页面和认证接口；`admin-embedded-mode.js`及`admin-embedded.css`仅在embedded=admin时启用内嵌外观。组织/凭据服务、任务身份及安装模块不依赖这些呈现组件。当前未提交和发布，效果待负责人确认。
+2026-10-24成员后台：`admin-members.css`只负责后台样式；`admin-navigation.js`组织原管理分组，`admin-members.js`负责列表/详情选择与筛选呈现，通过回调复用admin.html原账号操作和department-members组织服务，不直接增加业务API。`admin-embedded-pages.js`只承载个人中心dialog与日志内容区，复用原profile/logs页面和认证接口；`admin-embedded-mode.js`及`admin-embedded.css`仅在embedded=admin时启用内嵌外观。组织/凭据服务、任务身份及安装模块不依赖这些呈现组件。此增量现已随10.9交付，设备反馈仍分列。
 
-2026-10-24本地收缩：无限画布原目录直接加载canvas-list.js；workspace/project-results/shared-canvas/call-source-picker/budget-alerts的界面与脚本退出。department_api只保留部门、成员、来源授权/轮换及精简管理context；department-credentials.js使用原后台组件，不加载原business工作台。原两类画布回到既有读取、所有权和保存接口，媒体复用与任务身份模块保留。以下旧工作台接口/脚本记述仅为历史实现，不代表当前本地仍可访问；尚未提交/发布，状态见[CURRENT](../CURRENT_PROJECT_STATUS.md)。
+2026-10-24范围收缩：无限画布原目录直接加载canvas-list.js；workspace/project-results/shared-canvas/call-source-picker/budget-alerts的界面与脚本退出。department_api保留部门、成员、来源授权/轮换及精简管理context；department-credentials.js使用原后台组件，不加载原business工作台。原两类画布回到既有读取、所有权和保存接口，媒体复用与任务身份模块保留。以下旧工作台接口/脚本记述仅为历史实现，不代表10.9仍可访问。
 
 2026-10-24导航候选：canvas-list在index的frame-canvas中运行，成员管理链接进入顶层/enterprise/admin；后台“返回画布”也指定_top回根首页。两处使用浏览器原生链接target，不让根首页进入子frame；Gateway原守卫仅在子frame隐藏重复账号栏，继续执行权限治理，不改变经典/智能画布编辑或目录在原frame中的导航。两级JS缓存版本同步更新，连续往返及项目/两类画布的验证边界见[CURRENT](../CURRENT_PROJECT_STATUS.md)。
 
@@ -56,6 +86,8 @@
 负责项目/画布列表、创建、重命名、移动、排序、置顶、回收站和页面跳转。所有列表必须接受 Gateway 返回的当前用户可见集合，不能假设 Upstream 文件目录天然隔离。
 
 ### `static/js/canvas.js`
+
+2026-10-29本地修订：保存成功后只有页面仍含旧gate列表才异步刷新目录；独立编辑页返回由canvas-list自行加载，避免发出即将被导航取消的多余请求。原保存PUT、版本冲突和save-before-return流程保持。
 
 关键函数：
 
@@ -202,6 +234,8 @@ static/js/comfy-workflow-session.js 提供共享输入、上传互斥、运行�
 
 ### 部门项目界面候选（2026-10-20）
 
+本段为历史候选：10.9 中下述 `business.html`、`business-workspace.js` 和 `call-source-picker.js` 已退出源码树，不能作为当前可用文件或入口。
+
 相对 #186 Head `c3d2921` 的未合并候选新增 `enterprise-static/business.html`、`static/js/business-workspace.js` 与 `static/js/call-source-picker.js`。Gateway 的 `/enterprise/business` 是登录后入口；`enterprise/department_api.py` 的 context/directory/project-members/source-grants/tasks 读取继续复用领域权限。来源控件只提交来源 ID 与项目 ID，不取密钥原文；原任务续查不读取当前节点选择。部门任务页面仅元数据，不能从公开项目推导任务/费用或资源访问权限。schema 3 未激活，旧页面兼容与内容授权仍未完成；准确状态以 [CURRENT](../CURRENT_PROJECT_STATUS.md) 为准。
 
 
@@ -215,4 +249,4 @@ static/js/comfy-workflow-session.js 提供共享输入、上传互斥、运行�
 
 ### 本地预览补充：ComfyUI逐笔取消（2026-10-25）
 
-`enterprise/canvas_comfy_control.py`提供本人画布任务列表与取消编排，Gateway仅转发可信登录身份；原后端和prompt_id由既有journal读取。`providers/comfyui.py`负责单job取消协议及execution_interrupted解释，不使用全局中断回退。`static/js/canvas-comfy-tasks.js`只负责OUTPUT卡片状态、悬停详情与右键逐笔操作，复用StudioDropdowns定位；画布主脚本连接已有占位卡和结果呈现，原任务ID与运行快照随结果保留；完成/取消继续走原journal、CanvasComfyRecovery与AcceptedTaskRecovery，无另建任务系统或Schema变更。代码目前仅在manual-acceptance工作区，未进入main。
+`enterprise/canvas_comfy_control.py`提供本人画布任务列表与取消编排，Gateway仅转发可信登录身份；原后端和prompt_id由既有journal读取。`providers/comfyui.py`负责单job取消协议及execution_interrupted解释，不使用全局中断回退。`static/js/canvas-comfy-tasks.js`只负责OUTPUT卡片状态、悬停详情与右键逐笔操作，复用StudioDropdowns定位；画布主脚本连接已有占位卡和结果呈现，原任务ID与运行快照随结果保留；完成/取消继续走原journal、CanvasComfyRecovery与AcceptedTaskRecovery，无另建任务系统或Schema变更。此增量现已随10.9合并和发布；真实GPU验证与GUI覆盖范围见 CURRENT。

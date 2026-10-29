@@ -4,7 +4,7 @@
 
 新开发环境使用独立3.14.6解释器/虚拟环境，执行`python -m pip install --require-hashes -r requirements-dev.txt`，再运行`python -B tools/check_development_runtime.py`；测试前设置`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`。test-tools.lock只添加测试工具，不改变发行闭包。复制现有固定Runtime用于开发时，保留原发行依赖，将测试工具单独置于开发路径，不修改已安装的原Runtime或全局Python。
 
-本机固定预览沿用18000/18001和原测试数据，使用独立3.14.6开发Runtime，服务均只监听127.0.0.1。前端、权限、任务与数据路径不因解释器切换而重建；没有新提交/Release。
+2026-10-27开发预览记录：本机预览沿用18000/18001和原测试数据，使用独立3.14.6开发Runtime，服务均只监听127.0.0.1。该段为历史运行记录，实际预览状态需现场核验。
 
 2026-10-26队列定向验证：PYTEST_DISABLE_PLUGIN_AUTOLOAD=1，py -3.11 -B -m pytest -q enterprise/tests/test_comfy_queue.py enterprise/tests/test_canvas_task_dispatch_main.py enterprise/tests/test_canvas_task_dispatch_policy.py enterprise/tests/test_comfy_cancellation.py enterprise/tests/test_canvas_comfy_recovery.py enterprise/tests/test_comfy_io.py。使用真实journal、受控后端队列和HTTP受理路径，覆盖多用户轮转及持续加入、跨工作流/地址额度、外部占用、重启、取消和阶段拒绝。浏览器从根首页进入后台验证配置保存，再从原目录进入经典画布；隔离卡片验证平台等待与本地取消、刷新终态。该组不向真实GPU提交任务，保留原开发服务供负责人验收。
 
@@ -75,14 +75,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\enterprise\tests\smoke.ps1
 
 ```powershell
 $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = '1'
-py -3.11 -B -m pytest enterprise/tests/test_data_mvp_1.py -q
+python -B -m pytest enterprise/tests/test_data_mvp_1.py -q
 ```
 
 纯文档使用标准库检查：
 
 ```powershell
-py -3.11 -B tools/check_docs.py
-py -3.11 -B -m unittest discover -s enterprise/tests -p test_documentation_contract.py
+python -B tools/check_docs.py
+python -B -m unittest discover -s enterprise/tests -p test_documentation_contract.py
 ```
 
 如果 pytest 不在该开发 Runtime 中，应使用项目已验证的开发环境安装测试依赖；不要为了让测试运行而修改正式 Runtime lock。

@@ -6,7 +6,7 @@
 
 [返回索引](./README.md)
 
-2026-10-23发行参考：#195/#196及发行记录#197已合并，10.5/10.6已正式发布，10.6为Latest。预置包保持Schema2并登记迁移目录，启用包才执行2→4。`build_upgrade_routes.py`为正式10.4→预置10.5及预置10.5→启用10.6生成两份准确路由；更新中心沿用原路径规划和执行，离线沿用同一位置先预置再启用。版本、资产和真实/受控验收分别见[组合发行记录](../ops/RELEASE-2026.10.6-RECORD.md)。下文候选说明保留原时点，不作为当前发行状态。
+2026-10-23历史发行参考：#195/#196及发行记录#197已合并，10.5/10.6当时发布，后因已知问题调整为预发布。预置包保持Schema2并登记迁移目录，启用包才执行2→4。`build_upgrade_routes.py`曾生成准确路由；旧来源现不推荐在线升级。当前正式Latest为10.9，准确10.4→原10.5→10.9及10.8→10.9仅按离线原位路径交付。版本、资产和原时点验收见[组合发行记录](../ops/RELEASE-2026.10.6-RECORD.md)与[CURRENT](../CURRENT_PROJECT_STATUS.md)。下文候选说明保留原时点，不作为当前发行状态。
 
 离线版本化规划继续使用安装事务传入的 database_inspector：`plan_migrations` 的可选检查器在 mvp 准备/执行两处传递，防止 WAL 源的普通只读查询产生空旁路后被后续来源核验拒绝。默认在线读取、实际迁移和备份恢复不变；不是允许忽略 WAL。真实 Setup 首次失败及准确修正包验收回记#195。
 
@@ -113,7 +113,7 @@ flowchart TD
 
 ### Windows Runtime
 
-`windows_runtime_build.py` 和 `runtime/windows/` 策略固定 CPython 3.14 x64、哈希 requirements、wheelhouse 闭包、pip-check、SBOM、来源与可复现构建证据。源码开发解释器由当前环境选择，企业 CI 使用 Python 3.11，Runtime 专项使用 3.14；不假定每个工作区都携带历史 3.10.11，也不与固定 portable Runtime 混为一个信任对象。
+`windows_runtime_build.py` 和 `runtime/windows/` 策略固定 CPython 3.14.6 x64、锁定 requirements、wheelhouse 闭包、pip-check、SBOM、来源与可复现构建证据。当前开发、企业 CI 与 Runtime 专项对齐发行依赖，测试工具另行锁定；开发解释器与已安装 portable Runtime 仍是不同对象，不能修改客户 Runtime 来安装测试工具。
 
 ## 6. 首次安装
 

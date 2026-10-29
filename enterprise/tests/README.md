@@ -1,6 +1,12 @@
 # Enterprise Test Scripts
 
-Reviewed: 2026-10-22
+Reviewed: 2026-10-29
+
+2026-10-29角色库定向验证：`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -B -m pytest -q enterprise/tests/test_characters.py enterprise/tests/test_local_json.py`，覆盖账号隔离、原媒体引用授权、版本并发、归档恢复、损坏/未知格式不覆盖、原子失败和HTTP边界，共28项通过。官方目录夹具验证只读公开引用、独立封面授权与缺省兼容；本地目录使用已记录来源的公开参考内容，正式分发另行处理；真实页面另验两类画布复用、草稿保留、筛选/视图及明暗主题，不调用付费模型。`node enterprise/tests/test_character_creation_task.js`验证受理单次提交、原编号续查、账号缓存隔离、网络/5xx/408不重发、拒绝/存储不可用和保存去重编号；Python新增创建回包重试、冲突不覆盖、跨账号与撤权重查。以上均为受控夹具，不声称真实供应商生成通过。`node enterprise/tests/test_character_carousel.js`另验实际拖动惯性方向、吸附边界、淡化和曲线；人体WebGL以完整项目真实渲染验证。不是完整造型算法、分布式写入、生命周期或发行验收。
+
+2026-10-29智能胶囊补齐：`node enterprise/tests/test_canvas_dock.js`验证两类画布保留原顶部控件、共用面板路由、事件/快捷键隔离及Escape放行、键盘/溢出/账号与地图避让；智能适配直接运行原函数片段，覆盖视口中心创建、重置旧分组、复用选中节点的composer及不提交生成。`node enterprise/tests/test_canvas_save_navigation.js`复用原返回保存检查；真实深色显示/12px/添加菜单/工作流展开已验证，浏览器设置阻断后的其余交互与主题复测另记CURRENT，不由模拟事件推断通过。
+
+Current development and CI baseline: CPython 3.14.6 and the locked release application dependencies, with test tools from `requirements-dev.txt`; use `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1` for targeted pytest. Dated commands and results below describe their original interpreter and evidence, not a requirement to retain Python 3.11 compatibility or a claim that historical candidates remain unmerged. Current release and device status are in [CURRENT](../../docs/CURRENT_PROJECT_STATUS.md).
 
 离线部门迁移增加 WAL 模式来源参数，覆盖升级准备不产生旁路、成功启用和目标失败恢复。真实 Setup/Runtime 的首次 fc5d3a8 失败暴露普通只读规划创建空 WAL/SHM；修正与重新包验收记录于#195，不能由旧默认日志模式的受控Runtime用例推导通过。
 
@@ -49,17 +55,17 @@ The same small scope job tries Ruff 0.14.14 (`F821/F822/F823` and syntax, no fix
 
 Candidate product checks: `test_model_request_contract.py` exercises the actual image request builder with MockTransport; `test_user_model_preferences.py` checks account-owned settings. Backend confirmation contracts and browser-origin protection reuse their existing focused evidence. Coverage and unpaid/host limitations are in [the product record](../../docs/ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md). These tests are not the 104 formal business scenarios or a reason to rerun a full suite for documentation.
 
-C5/C6/C7 installed-copy, GUI and interruption evidence stays tied to [C5](../../docs/ops/VERIFIED-UPDATER-HANDOFF-2026-10-11.md), [C6](../../docs/ops/OFFLINE-RETAINED-UPGRADE-2026-10-12.md) and [C7](../../docs/ops/ONLINE-UPGRADE-SEQUENCE-2026-10-12.md). The candidate branches remain unmerged; frozen synthetic builds and new source-only checks must not be combined into an unsupported customer acceptance claim.
+C5/C6/C7 installed-copy, GUI and interruption evidence stays tied to [C5](../../docs/ops/VERIFIED-UPDATER-HANDOFF-2026-10-11.md), [C6](../../docs/ops/OFFLINE-RETAINED-UPGRADE-2026-10-12.md) and [C7](../../docs/ops/ONLINE-UPGRADE-SEQUENCE-2026-10-12.md). The corresponding implementations have since been merged; frozen synthetic builds and new source-only checks must not be combined into an unsupported customer acceptance claim.
 
 Prefer affected-scope tests and existing CI. Rerun full gates only for a concrete risk, required recheck, merge requirement or explicit request. No independent clean Windows device or paid signing prerequisite. Fixture, installed-copy, real Runtime and customer/production claims stay separate.
 
 C4 catalog verification: `py -3.11 -B -m pytest -q enterprise/tests/test_release_catalog.py enterprise/tests/test_update_catalog_ui.py`. The first uses trusted synthetic metadata and real loopback HTTP for pagination/ETag/failure contracts; the second runs the actual admin script against a synthetic DOM, including out-of-order requests. Runtime Python 3.14 CI also runs the catalog contracts. Neither invokes an upgrade or proves installer GUI acceptance. Real GitHub read-only metadata and desktop/mobile rendered results are recorded separately in [the C4 record](../../docs/ops/UPDATE-CATALOG-PAGINATION-2026-10-11.md); no private token, raw metadata body or customer database is committed.
 
-Documentation-only checks use the standard library, no product startup or network. These Windows commands use an installed Python 3.11 launcher; on other development hosts use the known interpreter. A Windows Store alias named python is not evidence that a check executed:
+Documentation-only checks use the standard library, no product startup or network. Use a known installed interpreter; the current product development baseline is 3.14.6. A Windows Store alias named python is not evidence that a check executed:
 
 ```powershell
-py -3.11 -B tools/check_docs.py
-py -3.11 -B -m unittest discover -s enterprise/tests -p test_documentation_contract.py
+python -B tools/check_docs.py
+python -B -m unittest discover -s enterprise/tests -p test_documentation_contract.py
 ```
 
 They check registration, authority roles/dates, local Markdown file/heading links, replacement headers and frozen evidence/resources. They do not prove prose semantics, external links, customer upgrades or Provider behavior. Historical test descriptions below retain their original evidence scope; latest state belongs in CURRENT.

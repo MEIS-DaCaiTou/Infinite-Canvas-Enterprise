@@ -37,13 +37,15 @@ def read_json(path):
         return _sharing_retry(read)
 
 
-def atomic_write_json(path, payload, *, indent=2):
+def atomic_write_json(path, payload, *, indent=2, create_parent=False):
     """Leave the previous file intact if serialization or replacement fails.
 
     A sibling temporary file keeps replacement on the same volume. This is a
     single-file commit, not a multi-file transaction or a backup mechanism.
     """
     target = Path(path)
+    if create_parent:
+        target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_name(f".{target.name}.{uuid4().hex}.tmp")
     try:
         with temporary.open("x", encoding="utf-8") as stream:

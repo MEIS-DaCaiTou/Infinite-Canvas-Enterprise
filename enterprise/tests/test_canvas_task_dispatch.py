@@ -224,8 +224,10 @@ def test_bounded_concurrency_keeps_waiting_request_unclaimed(tmp_path):
         await queue.start()
         async with asyncio.timeout(2):
             while len(calls) < 2: await asyncio.sleep(.01)
-        assert calls == ["0", "1"]
-        assert journal.get("2")["status"] == "queued" and not journal.get("2").get("dispatch_started_at")
+        # Restart limits claims; concurrent disk reads do not promise FIFO start order.
+        assert len(calls) == len(set(calls)) == 2
+        waiting, = {"0", "1", "2"} - set(calls)
+        assert journal.get(waiting)["status"] == "queued" and not journal.get(waiting).get("dispatch_started_at")
         release.set();await drain(queue);await queue.stop()
-        assert calls == ["0", "1", "2"]
+        assert len(calls) == 3 and set(calls) == {"0", "1", "2"}
     asyncio.run(run())
