@@ -59,7 +59,9 @@ async function run(){
             createImageNodeAt:(_point,items)=>{const n={type:'smart-image',images:items};created.push(n);return n;},
             viewportCenter:()=>({x:0,y:0}),render:()=>{},scheduleSave:()=>savedCount++,
         });
-        vm.runInContext(read(file).slice(read(file).lastIndexOf('GenerationTaskCenter.attach(')),context);
+        const integration=read(file);
+        vm.runInContext(integration.slice(integration.lastIndexOf('GenerationTaskCenter.attach('),
+            integration.lastIndexOf('CharacterStudio.mount(')),context);
         const target=context.options.canvasContext();context.canvas={...context.canvas};
         assert.equal(target.isCurrent(),true,'normal save/poll replacement is the same canvas');
         context.canvas={id:'other'};assert.equal(target.isCurrent(),false);
@@ -78,7 +80,7 @@ async function run(){
             canvasId:'original',applyingRemoteCanvas:false,saveCanvasAgain:false,localCanvasDirty:true,
             lastCanvasUpdatedAt:1,CLIENT_ID:'fixture',smartClientId:'fixture',viewport:{},
             connections:[],canvasDefaultSmartSettings:{},initialSmartSettings:{},saveTimer:null,currentCanvasTime:null,
-            tr:x=>x,setStatus:()=>{},loadCanvasList:()=>{},sanitizeConnections:()=>{},serializableCanvasNodes:()=>context.nodes,
+            tr:x=>x,setStatus:()=>{},gateCanvasList:null,loadCanvasList:()=>{},sanitizeConnections:()=>{},serializableCanvasNodes:()=>context.nodes,
             savePromptDraftForCurrent:()=>{},settingsForStorage:x=>x,canvasForStorage:()=>({...context.canvas,nodes:context.nodes}),
             mediaItemForStorage:x=>x,stripImageGenerationMeta:x=>x,normalizeSmartGenerationLogs:x=>x || [],
             setTimeout:()=>0,clearTimeout:()=>{},mergeSmartImageLists:()=>[],

@@ -75,7 +75,7 @@
     }
   ],
   "project_owned_payload_files": {
-    "static/vendor/MANIFEST.md": "c06dad703d86feee63baa9efce3343b48b3eddf0b6561e735c33a5422cdcaad9",
+    "static/vendor/MANIFEST.md": "3dc05893d52a459252cb563d5c4385872bf0f88e334d877a17574aa2e10569d6",
     "static/vendor/css/fonts.css": "fa703880bd6937f99c03937b661b34531e2fd8d698ced6257524156dcb28866a"
   },
   "schema_version": "ops-third-party-component-policy-v1"

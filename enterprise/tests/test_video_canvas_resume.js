@@ -75,7 +75,7 @@ async function submitAfterSourceSave(kind, conflictAt) {
         lastCanvasUpdatedAt:1,CLIENT_ID:'fixture',smartClientId:'fixture',viewport:{},
         connections:[],canvasDefaultSmartSettings:{},initialSmartSettings:{},saveTimer:null,currentCanvasTime:null,
         setTimeout:()=>0,clearTimeout:()=>{},sleep:async()=>{},
-        setStatus:()=>{},loadCanvasList:()=>{},sanitizeConnections:()=>{},
+        setStatus:()=>{},gateCanvasList:null,loadCanvasList:()=>{},sanitizeConnections:()=>{},
         serializableCanvasNodes:()=>ctx.nodes,savePromptDraftForCurrent:()=>{},settingsForStorage:x=>x,
         canvasForStorage:()=>({...ctx.canvas,nodes:ctx.nodes}),mediaItemForStorage:x=>x,
         normalizeSmartGenerationLogs:x=>x || [],normalizeLegacySmartNode:x=>x,
