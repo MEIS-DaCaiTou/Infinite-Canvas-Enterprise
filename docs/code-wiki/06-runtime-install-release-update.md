@@ -1,8 +1,8 @@
 # Runtime、安装、发布与在线更新
 
-2026-10-29本地候选契约：`install_upgrade_support.inspect_source_support()`只读返回观察到的setup/support原对象、`rebuild_required`和`reason`（`verified`/`missing`/`damaged`）；只在`install_lifecycle.current_source()`已证明完整安装/身份后使用。`inspect_upgrade`的ELIGIBLE响应新增`maintenance_support_rebuild_required: boolean`和`maintenance_support_reason: string`，只读检查不发布修复。旧缓存明确product/installationid冲突返回`INSTALL_UPGRADE_SUPPORT_IDENTITY_CONFLICT`，观察期间变化返回`INSTALL_UPGRADE_SUPPORT_CHANGED`，均不自动接管。
+2026-10-29维护缓存契约（10.11已发行）：`install_upgrade_support.inspect_source_support()`只读返回观察到的setup/support原对象、`rebuild_required`和`reason`（`verified`/`missing`/`damaged`）；只在`install_lifecycle.current_source()`已证明完整安装/身份后使用。`inspect_upgrade`的ELIGIBLE响应新增`maintenance_support_rebuild_required: boolean`和`maintenance_support_reason: string`，只读检查不发布修复。旧缓存明确product/installationid冲突返回`INSTALL_UPGRADE_SUPPORT_IDENTITY_CONFLICT`，观察期间变化返回`INSTALL_UPGRADE_SUPPORT_CHANGED`，均不自动接管。
 
-`upgrade_retained`将同一观察到的原对象绑定到原四文件计划，保留旧文件后发布当前可信Setup及新support.ini；不执行坏缓存或只改摘要。`validate_published_support`及`finish_upgrade`继续严格校验目标缓存、原对象和Windows登记。`ssPostInstall`完成最终登记核验，`CurPageChanged(wpFinished)`再呈现保留的真实结果，避免被框架默认完成文字覆盖；登记失败取消自动启动并保留显式恢复。进度只显示允许列表中的后端阶段，最终核验阶段由安装器自身编排状态显示。原迁移/备份/Runtime/恢复服务不复制，成功激活后的登记恢复不回旧库。上述为10.11本地候选契约，不同源码的实际GUI证据、PR/发行及现场限制只见[CURRENT](../CURRENT_PROJECT_STATUS.md)，模块维护者负责同步此契约。
+`upgrade_retained`将同一观察到的原对象绑定到原四文件计划，保留旧文件后发布当前可信Setup及新support.ini；不执行坏缓存或只改摘要。`validate_published_support`及`finish_upgrade`继续严格校验目标缓存、原对象和Windows登记。`ssPostInstall`完成最终登记核验，`CurPageChanged(wpFinished)`再呈现保留的真实结果，避免被框架默认完成文字覆盖；登记失败取消自动启动并保留显式恢复。进度只显示允许列表中的后端阶段，最终核验阶段由安装器自身编排状态显示。原迁移/备份/Runtime/恢复服务不复制，成功激活后的登记恢复不回旧库。上述已随PR #205及10.11交付，不同源码的实际GUI证据、发行与现场限制只见[CURRENT](../CURRENT_PROJECT_STATUS.md)，模块维护者负责同步此契约。
 
 2026-10-19 补记：#176 已合并 main e0dfa84，正式发行已为 v2026.10.3，准确构建身份见 [发行记录](../ops/RELEASE-2026.10.3-RECORD.md)。当前独立维护候选新增 Setup v2 的只读 inspect-entry；`install_entry_repair.inspect_fixed_entry` 复用当前完整 Release/入口归属证明，缺登记仅返回 REGISTRATION_REQUIRED，不生成 UUID。GUI 按所选操作刷新并提前检查离线升级，明确停机及关闭固定启动窗口；PermissionError 只在原事务成功回退后映射 WRITE_DENIED，回退不明仍阻断。实际补登记仍由显式 repair-entry 原事务完成，不改 Runtime/数据库/在线更新语义。此候选未发布，范围和验证见 [C6 增量](../ops/OFFLINE-RETAINED-UPGRADE-2026-10-12.md#2026-10-19-页面升级来源的登记预检与维护提示候选)。
 
@@ -10,7 +10,7 @@
 
 [返回索引](./README.md)
 
-2026-10-23历史发行参考：#195/#196及发行记录#197已合并，10.5/10.6当时发布，后因已知问题调整为预发布。预置包保持Schema2并登记迁移目录，启用包才执行2→4。`build_upgrade_routes.py`曾生成准确路由；旧来源现不推荐在线升级。当前正式Latest为10.10，准确10.9→10.10及10.4→原10.5→10.10已在隔离副本验证，仅按离线原位路径交付；旧10.5验收脚本过早清理导致登记未完成，原安装器显式恢复后通过，失败记录保留；现场设备验收另列。版本、资产和原时点验收见[组合发行记录](../ops/RELEASE-2026.10.6-RECORD.md)与[CURRENT](../CURRENT_PROJECT_STATUS.md)。下文候选说明保留原时点，不作为当前发行状态。
+2026-10-23历史发行参考：#195/#196及发行记录#197已合并，10.5/10.6当时发布，后因已知问题调整为预发布。预置包保持Schema2并登记迁移目录，启用包才执行2→4。`build_upgrade_routes.py`曾生成准确路由；旧来源现不推荐在线升级。当前正式Latest为10.11，10.9及10.4经原10.5的支持路径仍按离线原位交付；两种候选的准确验证边界见CURRENT；旧10.5验收脚本过早清理导致登记未完成，原安装器显式恢复后通过，失败记录保留；现场设备验收另列。版本、资产和原时点验收见[组合发行记录](../ops/RELEASE-2026.10.6-RECORD.md)与[CURRENT](../CURRENT_PROJECT_STATUS.md)。下文候选说明保留原时点，不作为当前发行状态。
 
 离线版本化规划继续使用安装事务传入的 database_inspector：`plan_migrations` 的可选检查器在 mvp 准备/执行两处传递，防止 WAL 源的普通只读查询产生空旁路后被后续来源核验拒绝。默认在线读取、实际迁移和备份恢复不变；不是允许忽略 WAL。真实 Setup 首次失败及准确修正包验收回记#195。
 
