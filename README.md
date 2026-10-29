@@ -17,7 +17,9 @@
 | 完整文档导航与维护规则 | [文档索引](docs/README.md) / [登记表](docs/document-register.json) |
 | 开发、代码边界和安全 | [工作流](CODEX_WORKFLOW.md) / [代码边界](CODE_BOUNDARIES.md) / [安全基线](SECURITY_BASELINE.md) |
 
-最新正式应用为 [v2026.10.10](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.10.10)，准确产品源码 `6688a74`，[#203](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/203) 已合并，八项公开资产和隔离安装路径已核验。测试机当前10.9，可直接原位升级；生产设备10.4先经原10.5预置，再到10.10。现场设备尚未代操作，先测试机验收再安排生产窗口；具体条件见发行说明和[当前状态](docs/CURRENT_PROJECT_STATUS.md)。后续页面开发遵循[开发工作流](CODEX_WORKFLOW.md#31-开发机人工验收与反复修订负责人2026-10-24要求)。
+最新正式应用为 [v2026.10.10](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.10.10)，准确产品源码 `6688a74`，[#203](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/203) 已合并，八项公开资产和隔离安装路径已核验。10.9的受支持路径为直接原位升级，10.4先经原10.5预置；现场异常及待交付修复见下一段。现场设备尚未代操作，先测试机验收再安排生产窗口；具体条件见发行说明和[当前状态](docs/CURRENT_PROJECT_STATUS.md)。后续页面开发遵循[开发工作流](CODEX_WORKFLOW.md#31-开发机人工验收与反复修订负责人2026-10-24要求)。
+
+2026-10-29现场后续：测试机尝试10.10遇到旧维护缓存校验阻断；已形成自动准备/重建增量的10.11本地候选，完成分层定向和隔离安装验证，准确源码边界见[当前状态](docs/CURRENT_PROJECT_STATUS.md)。这不表示现场升级已成功，也不需手工编辑摘要或覆盖程序；10.11尚未PR、合并或正式发布，已公开资产保持不变。
 
 当前企业部署仍采用单台 Windows 主机、SQLite 和本地文件。专业服务器/云部署、500+ 员工与 200+ 活跃创作保留为长期约束；Linux、容器和容量扩展待负责人实际需求再实施，业务核心保持可演进边界。方案 Accepted 不等于已经实现。
 
