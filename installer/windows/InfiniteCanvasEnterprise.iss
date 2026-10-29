@@ -237,7 +237,9 @@ begin
   else if Pos('"phase":"verifying"', Response) > 0 then ObservedPhase := 'verifying'
   else if Pos('"phase":"committed"', Response) > 0 then ObservedPhase := 'committed'
   else if Pos('"phase":"recovering"', Response) > 0 then ObservedPhase := 'recovering'
-  else if Pos('"phase":"rolled_back"', Response) > 0 then ObservedPhase := 'rolled_back';
+  else if Pos('"phase":"rolled_back"', Response) > 0 then ObservedPhase := 'rolled_back'
+  else if Pos('"phase":"UPGRADING"', Response) > 0 then ObservedPhase := 'UPGRADING'
+  else if Pos('"phase":"AWAITING_REGISTRATION"', Response) > 0 then ObservedPhase := 'AWAITING_REGISTRATION';
 end;
 function UTF8Bytes(const Value: String): AnsiString;
 begin
@@ -641,6 +643,10 @@ begin
   CredentialPage.Values[1] := '';
   CredentialPage.Values[2] := '';
   GraphicalPipeActive := not ShouldMaintainEntry or IsUpgradeOperation;
+  if FinalizingUpgrade then begin
+    ObservedPhase := 'AWAITING_REGISTRATION';
+    PaintMaintenanceProgress;
+  end;
   DetachButton.Visible := GraphicalPipeActive and (MaintenanceOperation <> 'inspect-program') and (MaintenanceOperation <> 'inspect-entry') and not IsCacheOperation and not IsLifecycleOperation and not IsUpgradeOperation;
   try
     if not PipeExchange(PipeSuffix, Request, Response) then begin

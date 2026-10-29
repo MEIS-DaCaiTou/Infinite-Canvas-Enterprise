@@ -172,6 +172,10 @@ def test_setup_finishes_upgrade_before_success_page_and_suppresses_launch_on_fai
     assert "InstallProgress.Show" in finalizer and "UpgradeState = 'COMPLETE'" in finalizer
     assert "WizardForm.RunList.Checked[I] := False" in finalizer
     assert "maintenance_support_rebuild_required" in source and "无需单独修复" in source
+    observer = source[source.index("procedure ObserveMaintenancePhase("):source.index("function UTF8Bytes(")]
+    assert "\"phase\":\"UPGRADING\"" in observer and "ObservedPhase := 'UPGRADING'" in observer
+    bridge = source[source.index("function RunBridge:"):source.index("function RegisterLifecycle:")]
+    assert "if FinalizingUpgrade then begin\n    ObservedPhase := 'AWAITING_REGISTRATION';\n    PaintMaintenanceProgress;" in bridge
 
 
 def test_result_is_bounded_stable_and_contains_no_credentials() -> None:
