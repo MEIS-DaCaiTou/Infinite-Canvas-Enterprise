@@ -4,6 +4,10 @@
 
 本文保留本轮变更、冻结和验证记录，顶部补充已核验的正式交付事实。负责人已完成人工验收并批准合并及发布；当前正式版为[v2026.10.10](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.10.10)，设备现场验收另列。下列较早候选和待批准文字按历史时点解释。
 
+## 2026-10-29 现场后续：维护缓存异常
+
+测试机10.9尝试10.10时报SUPPORT_UNPROVEN，收到的state副本中维护EXE与登记不符，不能确定差异发生环节。已公开10.10资产不可就地替换；新的自动准备/旧缓存重建属于独立本地10.11候选，不把下列已完成隔离演练当成现场通过。无需用户自行修改support.ini，具体实现、精确包/真实Setup的分层证据、现场待验收事项及维护责任只在[CURRENT](../CURRENT_PROJECT_STATUS.md)更新。本记录保留下方10.10发行时的准确事实。
+
 ## 正式交付（2026-10-29，10.10）
 
 负责人明确批准合并与正式发布。[PR #203](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/203)已合入main `60b6d687e20e6109dbda23007f8bc14251f7bba8`，产品源码`6688a749d4688be66738952a296bdcba04ce3080`，[v2026.10.10](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.10.10)为稳定Latest，Release ID `ice-2026.10.10-6688a749d468`；八项固定资产已完成上传及匿名公开下载大小/摘要校验，ZIP内Schema4一致。未变更原10.4/10.5/10.8/10.9资产或新增在线升级路线。

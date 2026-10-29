@@ -112,6 +112,8 @@ var
   HeadlessOperation, HeadlessRoot, LifecycleState, UpgradeState: String;
   FinalizingUpgrade: Boolean;
   InspectingEntry: Boolean;
+  MaintenanceSupportRebuildRequired: Boolean;
+  UpgradeCompletionCaption: String;
   EntryState: String;
   RecommendedOperation: Integer;
 
@@ -214,6 +216,8 @@ begin
   else if Phase = 'verifying' then Result := '正在复核完整程序与运行环境'
   else if Phase = 'committed' then Result := '程序修复已提交，正在确认收尾'
   else if Phase = 'recovering' then Result := '正在核验上次记录并恢复一致状态'
+  else if Phase = 'UPGRADING' then Result := '正在准备和切换完整新版本（原数据保留）'
+  else if Phase = 'AWAITING_REGISTRATION' then Result := '正在完成 Windows 登记与最终核验'
   else if Phase = 'rolled_back' then Result := '已回退到修复前状态，仍需重新修复';
 end;
 
@@ -234,7 +238,9 @@ begin
   else if Pos('"phase":"verifying"', Response) > 0 then ObservedPhase := 'verifying'
   else if Pos('"phase":"committed"', Response) > 0 then ObservedPhase := 'committed'
   else if Pos('"phase":"recovering"', Response) > 0 then ObservedPhase := 'recovering'
-  else if Pos('"phase":"rolled_back"', Response) > 0 then ObservedPhase := 'rolled_back';
+  else if Pos('"phase":"rolled_back"', Response) > 0 then ObservedPhase := 'rolled_back'
+  else if Pos('"phase":"UPGRADING"', Response) > 0 then ObservedPhase := 'UPGRADING'
+  else if Pos('"phase":"AWAITING_REGISTRATION"', Response) > 0 then ObservedPhase := 'AWAITING_REGISTRATION';
 end;
 function UTF8Bytes(const Value: String): AnsiString;
 begin
@@ -615,6 +621,7 @@ begin
   RepairState := '';
   LifecycleState := '';
   UpgradeState := '';
+  MaintenanceSupportRebuildRequired := False;
   EntryState := '';
   MatchingLifecycleRelease := False;
   InstallationId := '';
@@ -637,6 +644,10 @@ begin
   CredentialPage.Values[1] := '';
   CredentialPage.Values[2] := '';
   GraphicalPipeActive := not ShouldMaintainEntry or IsUpgradeOperation;
+  if FinalizingUpgrade then begin
+    ObservedPhase := 'AWAITING_REGISTRATION';
+    PaintMaintenanceProgress;
+  end;
   DetachButton.Visible := GraphicalPipeActive and (MaintenanceOperation <> 'inspect-program') and (MaintenanceOperation <> 'inspect-entry') and not IsCacheOperation and not IsLifecycleOperation and not IsUpgradeOperation;
   try
     if not PipeExchange(PipeSuffix, Request, Response) then begin
@@ -671,6 +682,7 @@ begin
       Result := False;
     end;
     if IsUpgradeOperation then begin
+      MaintenanceSupportRebuildRequired := Pos('"maintenance_support_rebuild_required":true', Response) > 0;
       if Pos('"upgrade_state":"ELIGIBLE"', Response) > 0 then UpgradeState := 'ELIGIBLE'
       else if Pos('"upgrade_state":"AWAITING_REGISTRATION"', Response) > 0 then UpgradeState := 'AWAITING_REGISTRATION'
       else if Pos('"upgrade_state":"COMPLETE"', Response) > 0 then UpgradeState := 'COMPLETE'
@@ -830,6 +842,12 @@ begin
     Result := '程序修复必须使用当前版本安装包。跨版本更新请选择“升级到本包版本／跨版本保留数据重装”。'
   else if LastStableCode = 'INSTALL_UPGRADE_TARGET_NOT_NEWER' then
     Result := '本包不是比当前版本更新的版本。同版本维护请使用对应的程序修复或保留数据重装选项。'
+  else if LastStableCode = 'INSTALL_UPGRADE_SUPPORT_IDENTITY_CONFLICT' then
+    Result := '原维护文件声明的安装归属与当前安装不一致。请确认选择的是原安装目录，并保留诊断记录；未采用其他安装的维护文件。'
+  else if LastStableCode = 'INSTALL_UPGRADE_SUPPORT_CHANGED' then
+    Result := '检查期间维护文件发生变化。请关闭其他安装器或维护操作后重试；未采用变化中的文件。'
+  else if LastStableCode = 'INSTALL_UPGRADE_SUPPORT_UNPROVEN' then
+    Result := '维护文件尚不能安全核验。请保留诊断记录；不要修改登记摘要或手工覆盖程序。'
   else if LastStableCode = 'INSTALL_LIFECYCLE_DATABASE_RECOVERY_REQUIRED' then
     Result := '数据库日志尚不能证明可安全处理，本次未执行升级。这不等于已确认数据库损坏。' + #13#10 +
       '请保留数据库、WAL、SHM、journal 和维护记录并导出诊断；不要手工删除这些文件。'
@@ -1066,6 +1084,10 @@ begin
     DesktopOption.Visible := ShouldMaintainEntry;
     LaunchOption.Visible := ShouldMaintainEntry;
   end;
+  { Inno initializes FinishedLabel after ssPostInstall; apply our verified
+    result on the actual page, including the paused/failed registration case. }
+  if (CurPageID = wpFinished) and (UpgradeCompletionCaption <> '') then
+    WizardForm.FinishedLabel.Caption := UpgradeCompletionCaption;
 end;
 
 function UpdateReadyMemo(Space, NewLine, MemoUserInfoInfo, MemoDirInfo,
@@ -1095,7 +1117,8 @@ begin
   else
     Result := '操作：首次安装' + NewLine + Space + '安装根目录：' + SelectedInstallRoot + NewLine +
       Space + '安装版本：{#AppVersion}' + NewLine + Space + 'Release：{#ReleaseId}';
-
+  if IsUpgradeOperation and MaintenanceSupportRebuildRequired then
+    Result := Result + NewLine + Space + '原维护缓存缺失或异常，将保留原文件并由本安装包自动重建，无需单独修复。';
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
@@ -1566,6 +1589,7 @@ end;
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   Key, Info, Uninstaller: String;
+  I: Integer;
 begin
   if (CurStep = ssInstall) and RegisterLifecycle then begin
     try PublishLifecycleSupport;
@@ -1580,7 +1604,9 @@ begin
        not RegWriteStringValue(HKCU, Key, 'Launcher', GetInstalledEntry('')) then
       MsgBox('固定入口已安装，但自动定位登记未完成。请从原安装根打开 InfiniteCanvas.exe；业务数据未重建。', mbInformation, MB_OK);
   end;
-  if (CurStep = ssDone) and RegisterLifecycle then begin
+  { Inno 7.1.0 creates its uninstaller/registry in PerformInstall before
+    ssPostInstall. Finalize while progress is visible, before wpFinished. }
+  if (CurStep = ssPostInstall) and RegisterLifecycle then begin
     Info := SupportInfo(SelectedInstallRoot);
     Uninstaller := ExpandConstant('{uninstallexe}');
     if not SetIniString('Lifecycle', 'Uninstaller', ExtractFileName(Uninstaller), Info) or
@@ -1588,14 +1614,22 @@ begin
       MsgBox('安装已完成，但卸载入口登记未完成；请保留同版本安装包进行检查。业务数据未重建。', mbInformation, MB_OK);
     if IsUpgradeOperation then begin
       FinalizingUpgrade := True;
+      InstallProgress.Show;
       try
         if RunBridge and (UpgradeState = 'COMPLETE') then
-          WizardForm.FinishedLabel.Caption := '离线升级／跨版本保留数据重装已完成。程序、固定入口、维护安装器及 Windows 登记已核验；原账号、数据库、素材、配置和安装身份保留。'
+          UpgradeCompletionCaption := '离线升级／跨版本保留数据重装已完成。程序、固定入口、维护安装器及 Windows 登记已核验；原账号、数据库、素材、配置和安装身份保留。'
         else begin
-          WizardForm.FinishedLabel.Caption := '目标版本运行检查已通过，但 Windows 登记尚未完成，业务访问仍暂停。请重开本安装包并选择显式恢复；不会自动回退已成功运行的新版本。';
-          MsgBox(WizardForm.FinishedLabel.Caption + #13#10 + LastStableCode, mbInformation, MB_OK);
+          LaunchOption.Checked := False;
+          WizardSelectTasks('!launchafter');
+          for I := 0 to WizardForm.RunList.Items.Count - 1 do
+            WizardForm.RunList.Checked[I] := False;
+          UpgradeCompletionCaption := '目标版本运行检查已通过，但 Windows 登记尚未完成，业务访问仍暂停。请重开本安装包并选择显式恢复；不会自动回退已成功运行的新版本。';
+          MsgBox(UpgradeCompletionCaption + #13#10 + LastStableCode, mbInformation, MB_OK);
         end;
-      finally FinalizingUpgrade := False; end;
+      finally
+        FinalizingUpgrade := False;
+        InstallProgress.Hide;
+      end;
     end;
   end;
 end;

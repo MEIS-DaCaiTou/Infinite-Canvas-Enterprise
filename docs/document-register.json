@@ -1,8 +1,8 @@
 {
   "schema_version": "enterprise-documents-v1",
   "reviewed_at": "2026-10-29",
-  "audit_base_commit": "60b6d687e20e6109dbda23007f8bc14251f7bba8",
-  "scope": "10.10 merged and stable Release; eight public assets and exact10.9/direct,10.4/original10.5/target Setup paths verified. Customer device validation pending. Asset-management implementation excluded; reference resources remain local.",
+  "audit_base_commit": "6423302ed6ab3d976a72d75fe4f28924005aafe8",
+  "scope": "10.10 public Release unchanged. Local10.11 cache rebuild: 111 targeted passes/1 conditional skip; actual10.9/damaged cache qualified at1368791, exact10.4/original10.5/final2319762 GUI path qualified. Only installer presentation changed after first candidate; original roots and fixture cleanup verified. No new PR/release or customer-device validation; asset-management excluded.",
   "documents": [
     {
       "path": ".github/PULL_REQUEST_TEMPLATE.md",
@@ -189,7 +189,7 @@
       "path": "docs/decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md",
       "kind": "authority",
       "authority": "delivery",
-      "reviewed_at": "2026-10-13"
+      "reviewed_at": "2026-10-29"
     },
     {
       "path": "docs/decisions/ADR-ENV-001-MODULAR-MONOLITH-MIDTERM-ARCHITECTURE-2026-07.md",

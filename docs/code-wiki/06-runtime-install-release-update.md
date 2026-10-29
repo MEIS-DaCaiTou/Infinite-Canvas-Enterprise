@@ -1,5 +1,9 @@
 # Runtime、安装、发布与在线更新
 
+2026-10-29本地候选契约：`install_upgrade_support.inspect_source_support()`只读返回观察到的setup/support原对象、`rebuild_required`和`reason`（`verified`/`missing`/`damaged`）；只在`install_lifecycle.current_source()`已证明完整安装/身份后使用。`inspect_upgrade`的ELIGIBLE响应新增`maintenance_support_rebuild_required: boolean`和`maintenance_support_reason: string`，只读检查不发布修复。旧缓存明确product/installationid冲突返回`INSTALL_UPGRADE_SUPPORT_IDENTITY_CONFLICT`，观察期间变化返回`INSTALL_UPGRADE_SUPPORT_CHANGED`，均不自动接管。
+
+`upgrade_retained`将同一观察到的原对象绑定到原四文件计划，保留旧文件后发布当前可信Setup及新support.ini；不执行坏缓存或只改摘要。`validate_published_support`及`finish_upgrade`继续严格校验目标缓存、原对象和Windows登记。`ssPostInstall`完成最终登记核验，`CurPageChanged(wpFinished)`再呈现保留的真实结果，避免被框架默认完成文字覆盖；登记失败取消自动启动并保留显式恢复。进度只显示允许列表中的后端阶段，最终核验阶段由安装器自身编排状态显示。原迁移/备份/Runtime/恢复服务不复制，成功激活后的登记恢复不回旧库。上述为10.11本地候选契约，不同源码的实际GUI证据、PR/发行及现场限制只见[CURRENT](../CURRENT_PROJECT_STATUS.md)，模块维护者负责同步此契约。
+
 2026-10-19 补记：#176 已合并 main e0dfa84，正式发行已为 v2026.10.3，准确构建身份见 [发行记录](../ops/RELEASE-2026.10.3-RECORD.md)。当前独立维护候选新增 Setup v2 的只读 inspect-entry；`install_entry_repair.inspect_fixed_entry` 复用当前完整 Release/入口归属证明，缺登记仅返回 REGISTRATION_REQUIRED，不生成 UUID。GUI 按所选操作刷新并提前检查离线升级，明确停机及关闭固定启动窗口；PermissionError 只在原事务成功回退后映射 WRITE_DENIED，回退不明仍阻断。实际补登记仍由显式 repair-entry 原事务完成，不改 Runtime/数据库/在线更新语义。此候选未发布，范围和验证见 [C6 增量](../ops/OFFLINE-RETAINED-UPGRADE-2026-10-12.md#2026-10-19-页面升级来源的登记预检与维护提示候选)。
 
 > 源码参考快照（2026-10-13）：main@e89a288（已合并 #154/#155/#156）；产品功能源码基点 #156@4bdd9a1 保留；C5/C6/C7 已合并，构建与验收范围仍引用其准确记录。本文是代码/运行参考，当前 PR/CI、Release 和验收只见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，实施顺序只认路线图。
