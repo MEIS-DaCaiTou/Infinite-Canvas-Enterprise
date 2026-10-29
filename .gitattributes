@@ -4,3 +4,12 @@ installer/windows/native-entry-build-policy.json text eol=lf
 
 # Release license inventory is byte-bound on all build hosts.
 static/vendor/MANIFEST.md text eol=lf
+static/vendor/css/fonts.css text eol=lf
+static/vendor/liblib-character-motion/*.glb binary
+static/vendor/liblib-character-motion/draco/*.wasm binary
+static/vendor/liblib-character-motion/*.js text eol=lf
+static/vendor/liblib-character-motion/*.json text eol=lf
+static/vendor/liblib-character-motion/NOTICE text eol=lf
+static/vendor/liblib-character-motion/draco/*.js text eol=lf
+static/vendor/liblib-character-motion/draco/LICENSE text eol=lf
+static/vendor/three-addons-r160/** text eol=lf

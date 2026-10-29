@@ -6,6 +6,10 @@
 
 2026-10-28 状态校准：本文件的2026-10-27候选授权及本地预览描述保留当时语境；相关10.9范围已合并并正式发布，负责人反馈测试机已升级且正在测试，具体问题待收集。生产设备及业务验收不由发行推断，见 [当前状态](docs/CURRENT_PROJECT_STATUS.md)。2026-10-24范围收缩替代本文件较早的4.3首版扩展授权；2026-10-27已确认恢复目标见[需求决定第13节](docs/decisions/REQUIREMENTS-DECISION-REGISTER.md#13-2026-10-27-环境容量与恢复目标)，不将目标写成已达成。
 
+## 2026-10-29 原人体交付修复仓库提交授权
+
+负责人明确要求先将原人体修复提交仓库。本轮允许在`codex/character-preview-parity-20261029`提交/推送原Liblib模型、渲染及完整本地依赖、必要接线/测试/文档；不包含用户配置/素材/业务数据。既有预览确认规则以本次明确提前提交授权为准，不重复申请。此授权不自动产生合并main、正式发行或客户设备操作许可；实际状态见[当前状态](docs/CURRENT_PROJECT_STATUS.md)。
+
 ## 2026-10-29 10.11交付授权已执行
 
 负责人批准核对后提交PR并发布；[PR #205](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/205)已合并，[v2026.10.11](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.10.11)及八项匿名公开资产核验完成。安装缓存自动重建和向导收尾按已批准范围交付；源码/两构建验证边界与现场待验收只见[当前状态](docs/CURRENT_PROJECT_STATUS.md)。不就地改写旧资产、不扩展资产管理或代操作客户设备。下文同轮候选/待确认说明保留历史时点。

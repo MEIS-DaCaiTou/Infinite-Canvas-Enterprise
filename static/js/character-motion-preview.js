@@ -1,8 +1,12 @@
-/* Bundled geometric placeholder with an optional local comparison renderer. */
+/* The originally previewed Liblib model and renderer are bundled together. */
 (function () {
   let rendererModule;
+  function loadRenderer() {
+    return rendererModule ||= import('../vendor/liblib-character-motion/renderer.js?v=20261029.1')
+      .catch(error => { rendererModule = undefined; throw error; });
+  }
   class CharacterMotionPreview {
-    constructor(host, phase = "library") {
+    constructor(host, phase = "library", rendererLoader = loadRenderer) {
       this.host = host;
       this.phase = phase;
       this.disposed = false;
@@ -10,13 +14,13 @@
       const figure = document.createElement("div");
       figure.className = "character-preview-figure";
       figure.setAttribute("aria-hidden", "true");
-      // Independently drawn geometric mannequin; no third-party model or image.
-      figure.innerHTML =
-        '<svg viewBox="0 0 180 460" fill="none" xmlns="http://www.w3.org/2000/svg"><ellipse cx="90" cy="39" rx="24" ry="31"/><path d="M78 68v15l-30 16-18 73-13 87 16 4 20-82 14-42-6 95 10 42-8 155 20 1 10-154 7 154 20-1-5-155 10-42-7-95 14 42 20 82 16-4-13-87-18-73-30-16V68M67 139l46 0M62 194h56M71 276l19-21 15 21M90 86v167M48 99l42 31 42-31M68 167h44M70 223h42M72 320h12M98 320h13M68 377h14M101 377h13M76 12v54M90 8v62M104 12v54M67 29h46M66 44h48M72 59h36"/><path d="M64 431l-5 17h28l-4-16M100 432l-3 16h28l-5-17"/></svg>';
+      const fallback = document.createElement('span');
+      fallback.textContent = '正在加载人体预览…';
+      figure.append(fallback);
       host.append(figure);
       host.classList.add("has-static-preview");
       this.figure = figure;
-      if (!CharacterMotionPreview.referenceAssets) return;
+      this.fallback = fallback;
       const canvas = document.createElement("canvas");
       canvas.className = "character-motion-canvas";
       canvas.setAttribute("aria-hidden", "true");
@@ -53,16 +57,18 @@
         () => this.renderer?.setPointer(0, 0, false),
         { signal: this.abort.signal },
       );
-      rendererModule ||= import(
-        "./character-generation-renderer.js?v=20261029.1"
-      );
-      rendererModule
+      rendererLoader()
         .then((module) => {
           if (this.disposed) return;
           return module.createCharacterGenerationRenderer(canvas, {
             theme: dark() ? "dark" : "light",
             reduceMotion: matchMedia("(prefers-reduced-motion: reduce)")
               .matches,
+            signal: this.abort.signal,
+            onUnavailable: () => {
+              host.classList.remove('has-motion-preview');
+              fallback.textContent = '人体预览暂不可用';
+            },
           });
         })
         .then((renderer) => {
@@ -79,6 +85,7 @@
         .catch((error) => {
           if (!this.disposed) {
             host.classList.add("motion-preview-unavailable");
+            fallback.textContent = '人体预览暂不可用';
             host.dataset.previewError = String(error.message || error);
             host.setAttribute("title", "动态预览暂不可用，仍可创建角色资料。");
             console.warn("Character motion preview unavailable:", error);
@@ -98,6 +105,7 @@
       this.renderer?.dispose();
       this.canvas?.remove();
       this.figure.remove();
+      this.host.classList.remove('has-static-preview', 'has-motion-preview', 'motion-preview-unavailable');
     }
   }
   window.CharacterMotionPreview = CharacterMotionPreview;

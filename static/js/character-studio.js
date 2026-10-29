@@ -213,8 +213,6 @@
           "/enterprise/api/me/characters/catalog",
         );
         this.catalog = catalog.characters;
-        CharacterMotionPreview.referenceAssets =
-          catalog.local_preview_available === true;
         if (this.draft?.id && !this.dirty)
           this.draft = structuredClone(
             [...this.rows, ...this.catalog].find(

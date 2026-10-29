@@ -1,8 +1,8 @@
 {
   "schema_version": "enterprise-documents-v1",
   "reviewed_at": "2026-10-29",
-  "audit_base_commit": "82f8bc3b6a61fe869b21722dfe6edf07213e7665",
-  "scope": "10.11 stable Release source2319762, PR205/main CI and eight anonymous public assets verified. Exact9/damaged first136 and exact4/original5/final231 GUI evidence kept distinct; installer-only follow-up reuses unchanged engine. Old releases unchanged; customer rollout pending; no asset-management expansion.",
+  "audit_base_commit": "7e0c8f5f48c825bf20afa5672b07153d5426085f",
+  "scope": "Owner explicitly authorizes commit and push of original Liblib human parity fix and complete packaged dependencies on standalone branch; exact Git export and remote commit to be verified. No main merge, new release or customer operation.",
   "documents": [
     {
       "path": ".github/PULL_REQUEST_TEMPLATE.md",
@@ -633,9 +633,9 @@
     {
       "path": "static/vendor/MANIFEST.md",
       "kind": "resource",
-      "frozen_sha256": "3dc05893d52a459252cb563d5c4385872bf0f88e334d877a17574aa2e10569d6",
+      "frozen_sha256": "60c3db11383aeb1358468639f80084e21c284425bfaa010b3449ac2549726430",
       "reviewed_at": "2026-10-29",
-      "change_reason": "2026-10-29 actual vendor scope: optional local comparison renderer/helpers and unlicensed reference assets remain outside public PR; bundled placeholder needs no new vendor dependency."
+      "change_reason": "Owner explicitly authorizes repository submission of original human parity fix; resource contents unchanged, candidate delivery status updated."
     },
     {
       "path": "tools/chrome-local-asset-importer/README.md",

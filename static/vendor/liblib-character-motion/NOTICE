@@ -1,0 +1,8 @@
+Liblib character motion preview source record
+
+Source renderer: public bundle 258ckt1vw9j5s.js, module 975790.
+Source model: https://libtv-res.liblib.art/character-studio/liblibtv-character-studio-cdn-2026-09-21/motion/midwam-human.glb
+The project owner explicitly requested direct reuse of this originally previewed model and renderer on 2026-10-29, replacing the rejected CC0 substitute.
+Changes: ES module imports and local packaged resource paths; original bundler runtime, business APIs and telemetry are excluded.
+No license declaration was supplied with the original renderer/model. This source record is not a third-party license grant; do not label these assets as MIT or CC0.
+Three loading helpers and the Draco decoder retain their separate MIT/Apache-2.0 notices.

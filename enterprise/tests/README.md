@@ -2,6 +2,8 @@
 
 Reviewed: 2026-10-29
 
+2026-10-29人体交付一致性续修：运行test_character_preview_assets.py、test_characters.py及test_character_motion_preview.js，验证原GLB及Draco/加载器完整、开发标记不分流、生命周期和失败不暗换模型；复用原vendor清单与逐组件SBOM门禁。准确结果见[CURRENT](../../docs/CURRENT_PROJECT_STATUS.md)。
+
 2026-10-29角色库定向验证：`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -B -m pytest -q enterprise/tests/test_characters.py enterprise/tests/test_local_json.py`，覆盖账号隔离、原媒体引用授权、版本并发、归档恢复、损坏/未知格式不覆盖、原子失败和HTTP边界，共28项通过。官方目录夹具验证只读公开引用、独立封面授权与缺省兼容；本地目录使用已记录来源的公开参考内容，正式分发另行处理；真实页面另验两类画布复用、草稿保留、筛选/视图及明暗主题，不调用付费模型。`node enterprise/tests/test_character_creation_task.js`验证受理单次提交、原编号续查、账号缓存隔离、网络/5xx/408不重发、拒绝/存储不可用和保存去重编号；Python新增创建回包重试、冲突不覆盖、跨账号与撤权重查。以上均为受控夹具，不声称真实供应商生成通过。`node enterprise/tests/test_character_carousel.js`另验实际拖动惯性方向、吸附边界、淡化和曲线；人体WebGL以完整项目真实渲染验证。不是完整造型算法、分布式写入、生命周期或发行验收。
 
 2026-10-29智能胶囊补齐：`node enterprise/tests/test_canvas_dock.js`验证两类画布保留原顶部控件、共用面板路由、事件/快捷键隔离及Escape放行、键盘/溢出/账号与地图避让；智能适配直接运行原函数片段，覆盖视口中心创建、重置旧分组、复用选中节点的composer及不提交生成。`node enterprise/tests/test_canvas_save_navigation.js`复用原返回保存检查；真实深色显示/12px/添加菜单/工作流展开已验证，浏览器设置阻断后的其余交互与主题复测另记CURRENT，不由模拟事件推断通过。

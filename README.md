@@ -19,7 +19,7 @@
 
 最新正式应用为 [v2026.10.11](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.10.11)，产品源码 `2319762`，[#205](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/205) 已合并；main CI及八项匿名公开资产核验通过。修复旧维护缓存阻断并在完成页前核验登记；准确来源与验证边界见[当前状态](docs/CURRENT_PROJECT_STATUS.md)。后续开发继续遵循[开发工作流](CODEX_WORKFLOW.md#31-开发机人工验收与反复修订负责人2026-10-24要求)。
 
-现场升级尚未代操作：先验收10.9测试机直接到11，再安排10.4生产经原10.5预置到11。已证明安装身份的维护缓存异常由安装器处理，不要求手改摘要或覆盖程序；首次文件副本差异发生环节仍未知。
+负责人确认测试机10.9已直接升级10.11；角色人体与开发预览不同的问题已定位，正按负责人要求将原Liblib模型、渲染器及依赖完整纳入独立分支交付候选，不采用替代模型。负责人已授权先提交/推送仓库；修复尚未合并main或发布，详见[当前状态](docs/CURRENT_PROJECT_STATUS.md)。
 
 当前企业部署仍采用单台 Windows 主机、SQLite 和本地文件。专业服务器/云部署、500+ 员工与 200+ 活跃创作保留为长期约束；Linux、容器和容量扩展待负责人实际需求再实施，业务核心保持可演进边界。方案 Accepted 不等于已经实现。
 
