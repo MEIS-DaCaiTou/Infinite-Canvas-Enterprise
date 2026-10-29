@@ -176,6 +176,9 @@ def test_setup_finishes_upgrade_before_success_page_and_suppresses_launch_on_fai
     assert "\"phase\":\"UPGRADING\"" in observer and "ObservedPhase := 'UPGRADING'" in observer
     bridge = source[source.index("function RunBridge:"):source.index("function RegisterLifecycle:")]
     assert "if FinalizingUpgrade then begin\n    ObservedPhase := 'AWAITING_REGISTRATION';\n    PaintMaintenanceProgress;" in bridge
+    pages = source[source.index("procedure CurPageChanged("):source.index("function UpdateReadyMemo(")]
+    assert "CurPageID = wpFinished" in pages and "FinishedLabel.Caption := UpgradeCompletionCaption" in pages
+    assert "UpgradeCompletionCaption := '目标版本运行检查已通过，但 Windows 登记尚未完成" in finalizer
 
 
 def test_result_is_bounded_stable_and_contains_no_credentials() -> None:

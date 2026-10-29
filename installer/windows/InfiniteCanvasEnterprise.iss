@@ -113,6 +113,7 @@ var
   FinalizingUpgrade: Boolean;
   InspectingEntry: Boolean;
   MaintenanceSupportRebuildRequired: Boolean;
+  UpgradeCompletionCaption: String;
   EntryState: String;
   RecommendedOperation: Integer;
 
@@ -1083,6 +1084,10 @@ begin
     DesktopOption.Visible := ShouldMaintainEntry;
     LaunchOption.Visible := ShouldMaintainEntry;
   end;
+  { Inno initializes FinishedLabel after ssPostInstall; apply our verified
+    result on the actual page, including the paused/failed registration case. }
+  if (CurPageID = wpFinished) and (UpgradeCompletionCaption <> '') then
+    WizardForm.FinishedLabel.Caption := UpgradeCompletionCaption;
 end;
 
 function UpdateReadyMemo(Space, NewLine, MemoUserInfoInfo, MemoDirInfo,
@@ -1612,14 +1617,14 @@ begin
       InstallProgress.Show;
       try
         if RunBridge and (UpgradeState = 'COMPLETE') then
-          WizardForm.FinishedLabel.Caption := '离线升级／跨版本保留数据重装已完成。程序、固定入口、维护安装器及 Windows 登记已核验；原账号、数据库、素材、配置和安装身份保留。'
+          UpgradeCompletionCaption := '离线升级／跨版本保留数据重装已完成。程序、固定入口、维护安装器及 Windows 登记已核验；原账号、数据库、素材、配置和安装身份保留。'
         else begin
           LaunchOption.Checked := False;
           WizardSelectTasks('!launchafter');
           for I := 0 to WizardForm.RunList.Items.Count - 1 do
             WizardForm.RunList.Checked[I] := False;
-          WizardForm.FinishedLabel.Caption := '目标版本运行检查已通过，但 Windows 登记尚未完成，业务访问仍暂停。请重开本安装包并选择显式恢复；不会自动回退已成功运行的新版本。';
-          MsgBox(WizardForm.FinishedLabel.Caption + #13#10 + LastStableCode, mbInformation, MB_OK);
+          UpgradeCompletionCaption := '目标版本运行检查已通过，但 Windows 登记尚未完成，业务访问仍暂停。请重开本安装包并选择显式恢复；不会自动回退已成功运行的新版本。';
+          MsgBox(UpgradeCompletionCaption + #13#10 + LastStableCode, mbInformation, MB_OK);
         end;
       finally
         FinalizingUpgrade := False;
