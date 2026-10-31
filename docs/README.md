@@ -1,6 +1,6 @@
 # Infinite Canvas Enterprise 文档索引
 
-更新时间：2026-10-28
+更新时间：2026-10-31
 
 本文是唯一导航入口。[文档登记表](./document-register.json) 列出受管理 Markdown／文本资料的角色；[审查记录](./ops/DOC-3-DOCUMENT-SYSTEM-AUDIT-2026-10.md) 记录历次整改范围及限制。main、开发候选、正式发行和现场反馈分别标注；文档数量不等于现行规则数量。
 
@@ -37,17 +37,11 @@
 
 本轮收口依据：[开发基线对齐记录](./ops/DEVELOPMENT-BASELINE-CLOSEOUT-2026-10-09.md)、[10.1 固定发行记录](./ops/MAINTENANCE-2026.10.1-RELEASE-RECORD.md)、[主线生命周期诊断实施](./ops/RUNTIME-UPDATE-LIFECYCLE-2026-10-09.md)。它们是有时点的证据/运维参考，不是第二份状态表，也不授权执行旧现场任务书。
 
-## 3. 当前关键决定
+## 3. 决定与历史的读法
 
-- [统一产品/安装/更新生命周期](./decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md)：长期保留 SQLite 单机；团队服务端目标 PostgreSQL；员工客户端本地缓存；共用更新引擎和稳定入口。
-- [模块化单体](./decisions/ADR-ENV-001-MODULAR-MONOLITH-MIDTERM-ARCHITECTURE-2026-07.md)、[不可变程序版本](./decisions/ADR-ENV-003-IMMUTABLE-RELEASE-STATIC-CACHE-2026-07.md)、[路径根](./decisions/ADR-ENV-004-PATH-ROOTS-AND-RELEASE-DIRECTORY-2026-07.md)、[Manifest/恢复](./decisions/ADR-OPS-006-RELEASE-MANIFEST-V2-DATABASE-ROLLBACK-2026-07.md)、[高风险权限治理](./decisions/ADR-SEC-1A-SUPER-ADMIN-CAPABILITY-GOVERNANCE-2026-07.md) 继续提供相应约束；文内实施状态是历史快照。
-- [旧 Greenfield-only 决策](./decisions/ADR-OPS-007-GREENFIELD-PRODUCTION-BASELINE-AND-LEGACY-NON-MIGRATION-2026-07.md) 的产品范围已被统一交付 ADR 替代，不再拒绝所有旧客户迁移。
-- [旧运维路线](./ops/OPS-ROADMAP-2026-07.md) 和 [旧企业蓝图](./architecture/ENTERPRISE-ARCHITECTURE-BLUEPRINT-2026-07.md) 仅作历史材料；当前顺序只认唯一路线图。
-- [2026-10-09 需求决策登记](./decisions/REQUIREMENTS-DECISION-REGISTER.md)：B01—B27 保留工程方向，N29/N34/N37 核心保留，N30/N31/N33 基础契约承接，其余独立产品范围按负责人决定移出。需求内容回到范围基线，不自行派工。
-- 范围基线下属 [追踪规则](./requirements/TRACEABILITY-CONTRACT.md) 登记 14 BR / 37 历史项 / 104 场景；[N37 草案](./requirements/N37-ASSET-INTEROP-CONTRACT-DRAFT.md) 只提出接口和无正式编号的专项验收方案。追踪完整不是测试通过或新增业务授权。
-
-- [2026-10-13 供应商适配/当前部署补充](./decisions/REQUIREMENTS-DECISION-REGISTER.md#7-2026-10-13-长期供应商适配与临时兼容边界)：长期平台适配由项目维护，模板仅临时兼容新模型；Linux/云/容量实施待实际需求。
-- 历史工程包记录：[C4](./ops/UPDATE-CATALOG-PAGINATION-2026-10-11.md)、[C5](./ops/VERIFIED-UPDATER-HANDOFF-2026-10-11.md)、[C6](./ops/OFFLINE-RETAINED-UPGRADE-2026-10-12.md)、[C7](./ops/ONLINE-UPGRADE-SEQUENCE-2026-10-12.md)、[产品集成修复](./ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md)。它们承载特定时点的实现/验证证据，不形成第二套动态状态或任务队列。
+- 现行范围、架构与顺序分别只看[范围](../PROJECT_SCOPE_LOCK.md)、[架构](../ARCHITECTURE.md)和[路线图](./roadmap/DEVELOPMENT-ROADMAP-2026-2027.md)；资产与客户端方向集中在[架构 7.7](../ARCHITECTURE.md#77-资产与跨客户端演进方向2026-10-31目标设计)，不等于已交付。
+- [需求决策登记](./decisions/REQUIREMENTS-DECISION-REGISTER.md)、[统一交付 ADR](./decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md)及其他 ADR 保留决定和适用边界；[追踪规则](./requirements/TRACEABILITY-CONTRACT.md)与[N37 草案](./requirements/N37-ASSET-INTEROP-CONTRACT-DRAFT.md)不是第二条路线。
+- 旧路线、蓝图、交接与发行记录保留为历史证据；当前状态以[状态入口](./CURRENT_PROJECT_STATUS.md)及实时仓库核验为准，不将旧时点待办直接派工。
 
 ## 4. 原有重复入口与分支差异
 

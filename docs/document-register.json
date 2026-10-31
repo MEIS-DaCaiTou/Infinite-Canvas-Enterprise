@@ -1,8 +1,8 @@
 {
   "schema_version": "enterprise-documents-v1",
-  "reviewed_at": "2026-10-29",
+  "reviewed_at": "2026-10-31",
   "audit_base_commit": "82f8bc3b6a61fe869b21722dfe6edf07213e7665",
-  "scope": "10.11 stable Release source2319762, PR205/main CI and eight anonymous public assets verified. Exact9/damaged first136 and exact4/original5/final231 GUI evidence kept distinct; installer-only follow-up reuses unchanged engine. Old releases unchanged; customer rollout pending; no asset-management expansion.",
+  "scope": "Docs-only evolution direction and decision granularity on main 7e0c8f5; PR207 draft. Business facts versus rebuildable indexes, data retention constraints, incremental packages and parallel server verification are explicit. No code, customer data, migration or new release.",
   "documents": [
     {
       "path": ".github/PULL_REQUEST_TEMPLATE.md",
@@ -82,7 +82,7 @@
       "path": "ARCHITECTURE.md",
       "kind": "authority",
       "authority": "architecture",
-      "reviewed_at": "2026-10-29"
+      "reviewed_at": "2026-10-31"
     },
     {
       "path": "CODE_BOUNDARIES.md",
@@ -477,13 +477,13 @@
       "path": "docs/README.md",
       "kind": "authority",
       "authority": "navigation",
-      "reviewed_at": "2026-10-28"
+      "reviewed_at": "2026-10-31"
     },
     {
       "path": "docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md",
       "kind": "authority",
       "authority": "roadmap",
-      "reviewed_at": "2026-10-29"
+      "reviewed_at": "2026-10-31"
     },
     {
       "path": "docs/runbooks/SEC-1B2-PRODUCTION-ACTIVATION-RUNBOOK-2026-07.md",
@@ -589,7 +589,7 @@
       "path": "PROJECT_SCOPE_LOCK.md",
       "kind": "authority",
       "authority": "scope",
-      "reviewed_at": "2026-10-29"
+      "reviewed_at": "2026-10-31"
     },
     {
       "path": "README.md",
