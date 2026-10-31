@@ -2,7 +2,7 @@
   "schema_version": "enterprise-documents-v1",
   "reviewed_at": "2026-10-31",
   "audit_base_commit": "82f8bc3b6a61fe869b21722dfe6edf07213e7665",
-  "scope": "10.11 stable Release source2319762, PR205/main CI and eight anonymous public assets verified. Exact9/damaged first136 and exact4/original5/final231 GUI evidence kept distinct; installer-only follow-up reuses unchanged engine. Old releases unchanged; customer rollout pending; no asset-management expansion.",
+  "scope": "Docs-only evolution direction and decision granularity on main 7e0c8f5; PR207 draft. Business facts versus rebuildable indexes, data retention constraints, incremental packages and parallel server verification are explicit. No code, customer data, migration or new release.",
   "documents": [
     {
       "path": ".github/PULL_REQUEST_TEMPLATE.md",
