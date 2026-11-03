@@ -1,6 +1,6 @@
 # Infinite Canvas Enterprise
 
-更新时间：2026-10-31。本页不复制整份状态和任务队列。
+更新时间：2026-11-03。本页不复制整份状态和任务队列。
 
 `Infinite-Canvas-Enterprise` 是独立维护的企业无限画布产品，仓库为 [MEIS-DaCaiTou/Infinite-Canvas-Enterprise](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise)。与 Aidan-OS、Aidan-Canvas、Aidan-App-SDK 不同，需求、分支和验收不能互相套用。
 
@@ -18,7 +18,7 @@
 | 完整文档导航与维护规则 | [文档索引](docs/README.md) / [登记表](docs/document-register.json) |
 | 开发、代码边界和安全 | [工作流](CODEX_WORKFLOW.md) / [代码边界](CODE_BOUNDARIES.md) / [安全基线](SECURITY_BASELINE.md) |
 
-当前源码、预览、main、正式Release及设备反馈分别见[当前状态](docs/CURRENT_PROJECT_STATUS.md#当前摘要与开发基线2026-10-31核验)，本页不维护另一份版本表。角色原人体提交已存在于远端；角色续修、数据/资源收敛及拖拽资产整理仍有本地未提交内容，不能从某个HEAD或旧安装包推定包含全部功能。
+当前源码、预览、main、正式Release及设备反馈分别见[当前状态](docs/CURRENT_PROJECT_STATUS.md#当前摘要与开发基线2026-10-31核验)，本页不维护另一份版本表。2026.11.1已通过#208合并并正式发行，包含本轮角色、资产整理、资源/保存、查询优化和Comfy任务修复；精确源码、安装验证及设备范围见当前状态，后续文档提交不替换发行包。
 
 当前正式形态为Windows单机/LAN；服务器适配、单企业试部署与桌面小样已获准按[唯一路线图](docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md)推进，尚未成为现成Linux/容器/多实例产品。开放PR建议见[文档/PR盘点](docs/ops/DOC-3-DOCUMENT-SYSTEM-AUDIT-2026-10.md#2026-10-31-开发前状态清理与pr盘点)。
 
