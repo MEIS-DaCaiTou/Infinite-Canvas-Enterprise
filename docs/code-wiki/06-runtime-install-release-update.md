@@ -1,8 +1,8 @@
 # Runtime、安装、发布与在线更新
 
-更新时间：2026-10-13。主线、维护线和固定入口边界见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，生命周期设计见 [统一交付 ADR](../decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md)。
+更新时间：2026-11-03。下方旧日期段落保留原时点，当前交付以CURRENT为准。主线、维护线和固定入口边界见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，生命周期设计见 [统一交付 ADR](../decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md)。
 
-2026-10-31现行发行/代码边界：正式10.11及已知设备反馈只见CURRENT；本轮没有重打包或重跑安装演练。原人体a2a6831提交可读，当前角色续修、资源/保存及资产侧栏含未提交修改，正式包不自动携带它们。服务器SIGTERM/服务管理/容器和密钥恢复尚待适配；旧Windows维护工具不作为员工桌面客户端。
+2026-11-03交付收口：2026.11.1已正式发布（[发行入口](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.11.1)），[PR #208](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/208)已合并。产品冻结`fe004d840cbbfb1218da45a0281c0168f226c3cd`，发行主线基点`c53f9674c89d0b01e45578f9f6d82e7fe2890a4f`；后续仅文档登记不改变这批安装包。PR及合并主线的企业套件、Runtime、固定EXE、文档检查均通过；PR企业套件2381通过、51条件跳过、12子用例通过。准确10.11→本版的真实固定入口/捆绑Python演练覆盖正常切换、中断恢复、启动失败回滚，业务文件与安装身份保留，原开发环境已恢复。演练停在Windows登记等待态，本轮未重复最终图形登记；沿用未修改的10.11安装向导和既有验证。8项公开资产匿名下载及原清单校验通过，历史发行资产未变；现场设备仍需升级验收。 复用原升级/登记/恢复引擎和schema4，无新增中间版本或在线路线；服务器和员工桌面仍未正式交付。
 
 2026-10-29维护缓存契约（10.11已发行）：`install_upgrade_support.inspect_source_support()`只读返回观察到的setup/support原对象、`rebuild_required`和`reason`（`verified`/`missing`/`damaged`）；只在`install_lifecycle.current_source()`已证明完整安装/身份后使用。`inspect_upgrade`的ELIGIBLE响应新增`maintenance_support_rebuild_required: boolean`和`maintenance_support_reason: string`，只读检查不发布修复。旧缓存明确product/installationid冲突返回`INSTALL_UPGRADE_SUPPORT_IDENTITY_CONFLICT`，观察期间变化返回`INSTALL_UPGRADE_SUPPORT_CHANGED`，均不自动接管。
 

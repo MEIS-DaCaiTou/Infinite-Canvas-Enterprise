@@ -1,8 +1,8 @@
 {
   "schema_version": "enterprise-documents-v1",
   "reviewed_at": "2026-11-03",
-  "audit_base_commit": "a2a6831c090106d8de80463175531ba646213dca",
-  "scope": "2026-11-03 R111 release qualification authorized for PR, merge and v2026.11.1. Preserve all prior CHAR1011/a2a6831 work; current branch codex/release-2026-11-1. Add system-admin stale Comfy slot release in original Journal/Queue/API/audit, retain acceptance facts and real backend capacity, no extra backup/approval chain. 45 relevant tests and full Edge admin light/dark controlled release checks passed. Broader existing character/assets/data/query changes are being closed out; full Enterprise regression and exact 10.11 to target package/runtime/retention/recovery evidence pending. Preview compares all 339 runtime files, 46 synced; no customer data operation. Future release/main/device states stay distinct.",
+  "audit_base_commit": "fe004d840cbbfb1218da45a0281c0168f226c3cd",
+  "scope": "2026-11-03 R111 shipped v2026.11.1 from fe004d840cbbfb1218da45a0281c0168f226c3cd through merged PR208 at c53f9674c89d0b01e45578f9f6d82e7fe2890a4f. 2381 PR enterprise tests passed, 51 conditional skips and 12 subtests. Required PR and merge CI passed. Exact 10.11 installed-runtime upgrade, interrupted recovery and health-failure rollback retained business files and installation identity; registration GUI not rerun. 8 public assets anonymously verified; old releases unchanged. Original preview restored and clean main fast-forwarded. Device acceptance remains separate. This closeout changes documents only; no artifact rebuild or customer operation.",
   "documents": [
     {
       "path": ".github/PULL_REQUEST_TEMPLATE.md",
