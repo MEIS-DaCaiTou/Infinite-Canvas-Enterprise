@@ -747,38 +747,48 @@ async def assign_canvas_owner(canvas_id: str, request: Request):
     target = edb.get_user_by_id(user_id)
     if not target:
         raise HTTPException(status_code=404, detail="用户不存在")
-    old_owner = edb.get_canvas_owner(canvas_id)
-    old_project = edb.get_canvas_project(canvas_id)
-    new_project = old_project
-    project_changed = False
-    if target_project_id:
-        if target_project_id != edb.DEFAULT_PROJECT_ID:
-            if not edb.project_exists(target_project_id):
-                raise HTTPException(status_code=404, detail="目标项目不存在")
-            if edb.get_project_owner(target_project_id) != user_id:
-                raise HTTPException(status_code=400, detail="目标项目不属于目标用户")
-        project_changed, _ = edb.set_canvas_project(canvas_id, target_project_id)
-        new_project = target_project_id
-    elif old_project and old_project != edb.DEFAULT_PROJECT_ID:
-        project_owner = edb.get_project_owner(old_project)
-        if project_owner != user_id:
-            project_changed, _ = edb.set_canvas_project(canvas_id, edb.DEFAULT_PROJECT_ID)
-            new_project = edb.DEFAULT_PROJECT_ID
-    edb.assign_canvas_owner(canvas_id, user_id)
-    edb.log_action(
-        current["user_id"],
-        "canvas_assigned",
-        json.dumps({
-            "canvas_id": canvas_id,
-            "old_owner": old_owner,
-            "target_user_id": user_id,
-            "target_username": target.get("username"),
-            "old_project": old_project,
-            "new_project": new_project,
-            "project_normalized": bool(project_changed),
-        }, ensure_ascii=False),
-    )
-    return {"success": True, "canvas_id": canvas_id, "user_id": user_id, "project": new_project}
+    from enterprise.local_json import document_lock
+    path = edb._canvas_json_path(canvas_id)
+    if not path:
+        raise HTTPException(404, '画布不存在')
+    with document_lock(path):
+        old_owner = edb.get_canvas_owner(canvas_id)
+        old_project = edb.get_canvas_project(canvas_id)
+        new_project = old_project
+        project_changed = False
+        if target_project_id:
+            if target_project_id != edb.DEFAULT_PROJECT_ID:
+                if not edb.project_exists(target_project_id):
+                    raise HTTPException(status_code=404, detail="目标项目不存在")
+                if edb.get_project_owner(target_project_id) != user_id:
+                    raise HTTPException(status_code=400, detail="目标项目不属于目标用户")
+            project_changed, _ = edb.set_canvas_project(canvas_id, target_project_id)
+            new_project = target_project_id
+        elif old_project and old_project != edb.DEFAULT_PROJECT_ID:
+            project_owner = edb.get_project_owner(old_project)
+            if project_owner != user_id:
+                project_changed, _ = edb.set_canvas_project(canvas_id, edb.DEFAULT_PROJECT_ID)
+                new_project = edb.DEFAULT_PROJECT_ID
+        try:
+            edb.assign_canvas_owner(canvas_id, user_id)
+        except Exception:
+            if project_changed and edb.get_canvas_owner(canvas_id) != user_id:
+                edb.set_canvas_project(canvas_id, old_project or edb.DEFAULT_PROJECT_ID)
+            raise
+        edb.log_action(
+            current["user_id"],
+            "canvas_assigned",
+            json.dumps({
+                "canvas_id": canvas_id,
+                "old_owner": old_owner,
+                "target_user_id": user_id,
+                "target_username": target.get("username"),
+                "old_project": old_project,
+                "new_project": new_project,
+                "project_normalized": bool(project_changed),
+            }, ensure_ascii=False),
+        )
+        return {"success": True, "canvas_id": canvas_id, "user_id": user_id, "project": new_project}
 
 
 # ── 项目归属查询（管理员专用）────────────────────────────

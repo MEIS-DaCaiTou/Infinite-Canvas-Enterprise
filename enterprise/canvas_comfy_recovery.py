@@ -12,7 +12,8 @@ from enterprise.canvas_task_journal import pending_dispatch
 
 def public_comfy_task(record, *, resuming=False):
     """Expose accepted work still being queried as nonterminal to canvas pollers."""
-    public = {key: value for key, value in record.items() if key not in {"comfy_receipt", "comfy_queue"}}
+    public = {key: value for key, value in record.items() if key not in {"comfy_receipt", "comfy_queue", "queue_release"}}
+    public['queue_released'] = bool(record.get('queue_release'))
     receipt = record.get("comfy_receipt") or {}
     automatic = (record.get("auto_recovery") or {}).get("status")
     tracking = (record.get("reconciliation") or {}).get("status")

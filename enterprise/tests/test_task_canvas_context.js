@@ -73,32 +73,18 @@ async function run(){
         assert.equal(media.url,'/output/v.mp4');assert.equal(media.mediaKind || media.kind,'video');
         assert.equal(savedCount,2);
 
-        // Execute actual save branches: conflict merge must be written before source resolves.
+        // Conflict storage itself is covered by test_canvas_conflict.js. A
+        // task must refuse a failed/conflicting save, never lift the version
+        // and replay old canvas contents just to acquire source provenance.
         context.canvas={id:'original',updated_at:1};context.nodes=[node];
         let writes=0;
-        Object.assign(context,{
-            canvasId:'original',applyingRemoteCanvas:false,saveCanvasAgain:false,localCanvasDirty:true,
-            lastCanvasUpdatedAt:1,CLIENT_ID:'fixture',smartClientId:'fixture',viewport:{},
-            connections:[],canvasDefaultSmartSettings:{},initialSmartSettings:{},saveTimer:null,currentCanvasTime:null,
-            tr:x=>x,setStatus:()=>{},gateCanvasList:null,loadCanvasList:()=>{},sanitizeConnections:()=>{},serializableCanvasNodes:()=>context.nodes,
-            savePromptDraftForCurrent:()=>{},settingsForStorage:x=>x,canvasForStorage:()=>({...context.canvas,nodes:context.nodes}),
-            mediaItemForStorage:x=>x,stripImageGenerationMeta:x=>x,normalizeSmartGenerationLogs:x=>x || [],
-            setTimeout:()=>0,clearTimeout:()=>{},mergeSmartImageLists:()=>[],
-            smartNodeHasCompletedResult:()=>false,smartNodeInFlight:()=>false,smartNodeHasDisplayResult:()=>false,
-            fetch:async()=>{
-                writes++;
-                if(writes===1)return {ok:false,status:409,json:async()=>({detail:{updated_at:2,canvas:{id:'original',nodes:[node],updated_at:2}}})};
-                return {ok:true,status:200,json:async()=>({canvas:{...context.canvas,updated_at:3}})};
-            },
-        });
-        if(kind==='smart'){
-            load(context,file,'mergeSmartNode');load(context,file,'mergeSmartNodeLists');
-            context.applyMergedServerCanvas=remote=>{context.nodes=context.mergeSmartNodeLists(context.nodes,remote.nodes);context.canvas.updated_at=remote.updated_at;};
-        }
-        load(context,file,'saveCanvas');
-        await context.taskCanvasSource(node);
-        assert.equal(writes,2,'conflicting save followed by persisted merged state');
-        assert.equal(context.canvas.updated_at,3);
+        context.saveCanvas=async()=>{writes++;return false;};
+        await assert.rejects(()=>context.taskCanvasSource(node),/本次未提交生成任务/);
+        assert.equal(writes,1,'a rejected save cannot be retried by task acceptance');
+        context.saveCanvas=async()=>{writes++;return true;};
+        assert.deepEqual(plain(await context.taskCanvasSource(node)),{canvas_id:'original',node_id:'generator'});
+        assert.equal(writes,2);
+
     }
     console.log('task canvas source, navigation guard and typed reuse: PASS (classic + smart)');
 }

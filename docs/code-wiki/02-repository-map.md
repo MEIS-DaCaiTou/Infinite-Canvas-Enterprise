@@ -1,5 +1,7 @@
 # 仓库结构与模块职责
 
+2026-10-31本地新增职责定位：`enterprise/media_download.py`校验并绑定远程媒体连接；`media_response.py`隔离可变主动媒体；`workflow_archive.py`只管ZIP限额/有界复制。`static/js/canvas-conflict-draft.js`管经典冲突草稿；`canvas-asset-shelf.js/css`管两类画布共用的个人整理交互，薄适配仍调用原素材API与画布插入/保存。`local_json`新增跨进程文档锁，均不等于多存储事务或新资源系统。
+
 > 源码参考快照（2026-10-13）：main@e89a288（已合并 #154/#155/#156）；产品功能源码基点 #156@4bdd9a1 保留；C5/C6/C7 已合并，构建与验收范围仍引用其准确记录。本文是代码/运行参考，当前 PR/CI、Release 和验收只见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，实施顺序只认路线图。
 
 [返回索引](./README.md)

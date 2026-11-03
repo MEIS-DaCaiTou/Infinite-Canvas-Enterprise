@@ -69,7 +69,7 @@ class CanvasTaskJournal:
     def _queue_projection(record):
         return deepcopy({key: record[key] for key in ('id', 'type', 'status', 'created_at', 'enterprise_user_id',
             'workflow_json', 'comfy_queue', 'comfy_receipt', 'recovery_required', 'dispatch_version',
-            'dispatch_started_at', 'provider_receipts') if key in record})
+            'dispatch_started_at', 'provider_receipts', 'queue_release') if key in record})
 
     def comfy_queue_records(self):
         """Rebuild once; normal queue ticks do not scan history or copy result bodies."""
@@ -118,6 +118,20 @@ class CanvasTaskJournal:
                 claimed["dispatch_started_at"] = now
             self._write(claimed)
             return True
+
+    def release_comfy_slot(self, task_id: str, actor: str) -> dict:
+        """Administrative quota decision; preserve the original failure/receipt."""
+        with self._lock:
+            record = self.get(task_id)
+            if not record or record.get('type') != 'comfy':
+                raise LookupError('任务不存在')
+            if record.get('queue_release'):
+                return record
+            if record.get('status') != 'failed' or not record.get('recovery_required'):
+                raise ValueError('只能释放已失败且仍待核对的旧任务；运行或排队任务请使用取消')
+            record = {**record, 'queue_release': {'released_by': actor, 'released_at': time.time()}}
+            self._write(record)
+            return record
 
     def enable_dispatch(self, task_id: str) -> None:
         """Publish readiness only after private input and ownership are durable."""
@@ -368,7 +382,7 @@ No provider work may start if either the receipt or owner commit fails.
         journal.create({**record, "enterprise_user_id": user_id})
         db.record_canvas_image_task_owner(user_id, record["id"])
         db.record_task_owner(
-            user_id, {"online-image": "canvas_image", "comfy": "canvas_comfy", "video": "canvas_video", "llm": "canvas_llm"}[record["type"]],
+            user_id, {"online-image": "canvas_image", "comfy": "canvas_comfy", "video": "canvas_video", "llm": "canvas_llm", "audio": "canvas_audio"}[record["type"]],
             record["id"], source="durable_canvas_task_receipt", status="queued",
         )
         if db.get_canvas_image_task_owner(record["id"]) != user_id:

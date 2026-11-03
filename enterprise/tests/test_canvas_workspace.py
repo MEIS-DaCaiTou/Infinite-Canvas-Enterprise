@@ -199,7 +199,7 @@ def test_original_owner_routes_ignore_retired_business_project_restrictions(busi
 
 
 def test_metadata_move_reads_latest_canvas_inside_existing_lock(tmp_path):
-    from enterprise.local_json import atomic_write_json
+    from enterprise.local_json import atomic_write_json, document_lock
     import ast
     import asyncio
     import threading
@@ -220,7 +220,7 @@ def test_metadata_move_reads_latest_canvas_inside_existing_lock(tmp_path):
     namespace={'CanvasMetaUpdate':object,'CANVAS_LOCK':ExistingLock(),
         'load_canvas':lambda _:json.loads(path.read_text()),'canvas_path':lambda _:path,
         'json':json,'canvas_record':lambda value:value,
-        'atomic_write_json':atomic_write_json}
+        'atomic_write_json':atomic_write_json,'document_lock':document_lock}
     exec(compile(module,str(source),'exec'),namespace)
     payload=SimpleNamespace(title=None,icon=None,owner=None,color=None,pinned=None,project='new',board_x=None,board_y=None)
     with ThreadPoolExecutor(max_workers=1) as pool:

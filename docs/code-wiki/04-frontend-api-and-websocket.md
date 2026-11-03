@@ -1,5 +1,65 @@
 # 前端、API 与 WebSocket
 
+2026.11.1算力与队列对失败待核对任务增加“释放名额”，点击即提交管理员释放API，无额外确认向导；返回最新状态、移除占位行并提示结果。发送中防重复，失败可重试，刷新不丢设置草稿。原任务中心显示“管理员已释放名额”，回执事实仍可读；新增can_release/queue_released均由服务端投影，客户端不能代替权限检查。
+
+COMFY1103：原/enterprise/api/me/generation-tasks目录/详情增加Comfy专用can_cancel/cancellation_pending能力，TaskCenter共用原POST /enterprise/api/me/comfy-tasks/{id}/cancel；两类画布即使无输出DOM仍可从日志→生成任务→详情取消。经典节点“管理任务”用GenerationTaskCenter.openTasks({kind:canvas_comfy})打开同一中心，JS/CSS缓存版本20261103.1。失败保持按钮可重试，受理取消不当作已取消，确认前禁重复；不调用全局interrupt，不因删卡片自动发取消/生成。
+
+2026-11-03 AUTH1103没有变更HTTP/WS参数、返回形状、选择器/侧栏布局或画布保存；只缩小Gateway普通用户资产分页/轻目录的授权读取候选。授权仍先于计数/分页，源变化409、坏源503、旧GET兼容。完整项目三账号与两类实际角色导入入口复测通过，上传16张、确认页未保存/生成；普通用户实际库为空，双用户非空隔离由独立SQLite/JWT夹具与原策略对照覆盖。
+
+2026-11-02 WINDOW1102：经典/智能HTML先加载共享`media-grid-window.js`再加载角色选择器/侧栏，缓存版本20261102.6；没有新HTTP/WS接口。页面仍每次请求24项、手动“加载更多”，滚动和resize只更新本地可见卡片；离屏媒体撤掉src，回到已加载范围时重新挂载缩略图。选择保留原URL，确认才读原图；方向键/Home/End跨窗口按元数据索引定位。来源/目录/搜索重置滚动，503重试保留原页、409刷新沿原协议。窗口仅限制DOM，元数据、浏览器媒体缓存和服务端授权全量过滤仍需单独评估。
+
+2026-11-02 UPLOAD1102：公开上传分页参数/返回形状不变，内部来源提示仅供Gateway与上游协作，浏览器无需发送；Gateway不能信任浏览器传入该提示。新上游不再把上传目录元数据全量传回Gateway，历史画布输入参考仍保留；Gateway按当前授权直接补上传元数据，再计数和分页。无标记旧上游继续兼容，上传根不可读仍503。共享侧栏加载后续页复用既有卡片/媒体，插入、双击和拖动委托给原适配器；切换/搜索和关闭释放不再需要的媒体。不是虚拟列表，已加载项仍累积。
+
+## 2026-11-02 上传、关联与精确整理查询（本地候选）
+
+GET `/api/local-assets?page_size=24&kind=image&sort=newest|oldest&cursor=...`返回原分页形状；Gateway先按当前资源/画布归属过滤上传目录和画布输入参考，再排序计数。无需整批图片尺寸/旁车；不带分页仍返回原完整树。cursor为实时keyset，同时间依原稳定ID排列；刷新可见插到游标前的新项，不因其他文件变化自动409。total是元数据行数，同图多画布引用可能多行，前端按URL合并；不是资产上限。
+
+POST `/api/canvas-assets/context`接受`{urls:[本批原图URL],canvas_id}`，单次最多100 URL，选择器必要时分批；返回`{canvases:[{id,project}],items:[{url,canvas_id,created_at}]}`，仅本批匹配关系和当前画布摘要。原提取规则、当前画布授权及同源/远程URL区分保留；不进行下载、写入或归属登记。关联读取失败不推进来源cursor，保留旧卡片/选择；仅旧服务器404/405回原完整索引。
+
+素材分页增加`item_id`和`match_url`精确匹配（url或collected_from），可与library_id/category_id组合；先授权后匹配，隐藏结果计0，不采用名称子串做去重。整理和撤销仍走原写入接口/CAS。
+
+11-02 COLD1102：原`/api/asset-library/`非GET写入可选`?catalog=1|true`（保留已有query）；非法值在原feature检查后返回400。成功结果保留原操作item，library及asset_library/category别名投影为授权后的轻目录，并标记`projection: catalog`；不返回完整items数组。先完成原归属登记/权限过滤/事件处理，再投影。共享整理侧栏统一请求此参数；无参数调用仍得原完整结果，上游至Gateway内部写入响应仍完整，不宣称全链有界。
+
+2026-11-02历史分页保持同一HTTP契约：大历史可命中有效SQLite查询投影，索引缺失/过期/异常回原JSON并合并后台重建；旧完整GET、小历史内存缓存及asset-library接口保留。当前权限先于计数/分页，源变化旧cursor409、参数400、原源不可读503不变。新增配置`ENTERPRISE_HISTORY_QUERY_INDEX_ENABLED=false`在Gateway重启后退回原JSON；不需前端改参数，也不重提生成。两类画布/角色/侧栏没有新读取或保存API，尚未接分页的消费者仍需后续接入。实际小历史页面回归与合成大历史HTTP测量分列，不把测量数字写成现场整页速度。
+
+2026-10-31保存/接口核对：两类画布409均停止覆盖，复用canvas-conflict-draft保留会话草稿、下载/另存副本/重读；智能画布干净页直接采用远端节点，脏页不提高基线自动合并重存；同一页面保存串行，期间继续编辑会在后续保存，不新增第二个保存API。Node与完整项目Edge双页验证已通过，当前仍是本地候选。WS每次敏感发送已有会话复核，recent_event_ids仅连接内短期去重；任务目录cursor为分页，不是持久事件恢复游标。Web已用HttpOnly会话Cookie；桌面登录/令牌存储、API兼容窗口仍是待实施契约。旧项目工作台/共享/费用路由记录属于退出的历史范围。
+
+## 2026-11-01 在线图片预览适配（本地候选）
+
+在线页`#lightbox`以原生dialog/showModal进入当前iframe顶层，避免body UI transform使普通fixed相对滚动内容定位；图片框和提示词区按可见视口的网格布局收敛，保持`lightboxFrame/Img/Card/Prompt`及下载、复用入口。原`StudioImagePreview`处理滚轮/拖动，关闭或重开复位。关闭、原生Esc和预览背景使用同一close清理，恢复原html overflow与滚动位置；复用则回原表单顶部。
+
+预览只锁html滚动根，不把body overflow设hidden：后者是theme.js判断studio-scale-viewport的信号，可能在自动缩放刷新时锁住原页面高度。此处没有改全局主题/缩放算法、媒体权限或生成接口。维护者更新真实滚动/视口/关闭/下载/复用复测；当前仅验证开发机Edge，两类画布自身图片预览不属于此修复。
+
+## 2026-11-01 历史/素材可选分页（本地候选）
+
+GET `/api/history`、`/api/asset-library`带`page_size`（1–100，默认24）进入原Gateway权限后的分页读；不带page_size/cursor仍为原数组/目录格式。公共查询参数`q`（名称/提示词/标签，最长200字符）、`sort=newest|oldest`、`cursor`；历史保留原`type`过滤，素材可按`kind=image|video|audio|workflow`、`library_id`、`category_id`筛选。响应`{items,next_cursor,total,page_size}`；total只计本次仍有权且满足筛选的记录，不透露隐藏目录/其他账号数量。
+
+游标是导航位置而非授权，绑定账号、查询参数和源修订；参数/游标无效400，源文件变化409（提示刷新），源不可读503且不覆盖原件。每页重查当前归属；失效授权不因命中解析缓存继续生效。素材items为原条目补library_id/category_id，历史条目保持原企业归属注解和结果字段；内部位置不返回。
+
+在线历史、角色三来源及整理侧栏文件夹按批读取；网络失败保留卡片/选择并重试原cursor，历史/素材修订409提示刷新，晚响应不覆盖新页。项目匹配在后续页未读完时显示“已加载范围暂无匹配”，不能报告真实空库；关联和上传续批见上节，手动连续翻页仍累计DOM，不是全面虚拟化。
+
+GET `/api/asset-library?catalog=1`（或true）在原权限过滤后返回`{library,projection:'catalog'}`，保留目录元数据，各分类以`item_count`和最多两项`preview_items`替代items。旧完整GET和写入/去重/撤销协议保留；可见封面与计数不得从未授权原目录计算。两类消费者复用原画布媒体帮助函数：封面96px、侧栏240px、角色选择器320px，原URL/尺寸不被缩略图替换；确认导入/复用继续原入口。
+
+## 2026-10-31 列表加载契约（本地候选）
+
+GET `/api/projects`保持默认返回`canvas_count`，新增可选`include_counts=false`及响应`counts_included:false`；此时不扫描画布计数，各项目不含`canvas_count`。Gateway仍过滤普通用户的项目归属和虚拟默认项目，不因省计数而放宽授权；旧计数不含回收站画布。目录以同批已授权`/api/canvases`结果计算数量，包括真实0。未返回成功有效数组时，不替换已有项目/卡片，不显示“暂无画布”；最新一轮响应才可更新列表。
+
+画布/项目/回收站及历史读取复用原函数，通过`asyncio.to_thread`移出ASGI事件循环；不是新增任务Worker或多实例支持。正常列表单遍读画布，过期项在原文档锁内重读后才清理。历史GET保持原数组/类型过滤/排序；文件不存在仍为`[]`，损坏/不可读改为503并保留原文件。在线页可在模型配置仍等待时读取/重试历史。仍未做历史服务端分页，不能先分页再按用户过滤导致漏项或计数偏差。
+
+### 历史写入与不可读画布续批（2026-10-31，本地候选）
+
+GET `/api/canvases`和回收站在Gateway响应中增加`unreadable_canvas_count`，只统计本人归属不可读文件，管理员可见全数；内部`unreadable_canvas_ids`被移除。正常数组保留，数量非0时显示“部分画布暂不可读”及重试，不以空列表冒充全部没有画布；失败源文件不更改。
+
+POST `/api/history/delete`继续接受原timestamp身份，普通用户仍核对本人且唯一匹配，管理员兼容原范围；跨用户或歧义匹配仍404；未匹配保持原success:false响应，历史不可读/写失败503。只删记录不删素材；JSON提交后归属/审计同步失败明确500，保留素材供核对，未实现跨SQLite事务。生成归档失败时原成功响应保留图片/任务身份并补`history_warning`，没有自动重新提交或补档保证。历史GET、类型过滤和旧媒体链接兼容，仍全量返回。
+
+## 2026-10-30 本地收敛契约（未发布）
+
+完整画布PUT沿用原路由；`base_updated_at`须等于GET完整画布的`updated_at`，缺省0或旧/未来版本均409并返回远端记录，不能提升基线后重提旧节点。经典画布保留草稿并暂停覆盖；标题/图标走原POST `/api/canvases/{id}/meta`，不提交节点全集。
+
+POST `/api/canvases/{id}/touch`只更新可选`last_opened_at`，不改变内容版本，避免第二页仅浏览就制造保存冲突。列表投影`updated_at`保留最近打开/修改排序，补充真实`content_updated_at`；内容保存以GET完整画布或touch顶层的内容版本为准，不把列表活动时间当保存基线。旧JSON缺省访问时间为0，无数据库迁移。
+
+下载保留自身绝对URL完整规范路径的授权，移除跨目录basename回退。Gateway隔离可变媒体主动内容，Comfy专用客户端不套公共下载策略。WebSocket每次取发送锁后重验原会话，撤权/过期不继续发送敏感载荷。维护责任、限额、验证与暂缓项见[收敛记录](../ops/DEVELOPMENT-CONVERGENCE-2026-10-30.md)。
+
 2026-10-28 接口核对基线：10.9 产品源码 `0dce14f`。本章下方日期段是历史采集记录，其中“候选/未发布”只代表当时；现行状态见 [CURRENT](../CURRENT_PROJECT_STATUS.md)。10-24退出的项目工作台、共享、费用和预算路由不能按历史段落作为10.9接口调用。
 
 2026-10-26队列增量已随10.9发布：管理员 GET/PUT `/enterprise/api/admin/comfy-queue` 配置算力分组/并发、个人额度和逐工作流等待；GET `/enterprise/api/me/comfy-queue` 返回本人用量，内部调度由原 Upstream 执行。经典画布区分 `platform_queued` 与后端排队；其他供应商保持原调度。
@@ -7,6 +67,9 @@
 <a id="本地角色库接口未发布"></a>
 
 ### 角色库接口（10.10/10.11；人体交付续修另列）
+
+2026-10-29本地编辑/资产增量（未发布）：POST/PUT另接受可选`design:{version:1,values,notes}`及`assets:{full_body?,portrait?,expression?,turnaround?}`。造型数值为白名单键的-100至100整数，文本选项≤200字符，notes≤1000；未知键/版本400。资产逐个重查原图片权限，读取隐藏已失权引用；官方目录只允许内置公开路径。旧客户端遗漏新字段时保留，PUT仍按expected_revision比较。图片任务沿用原受理/本人查询，每次1张，网络未知不重提；缓存按账号/角色/类别隔离并记录原参考图/版本/参数。原有资料字段、schema1和端点不变。详细维护契约及未完成的实时预览/音色见[本轮记录](../ops/CHARACTER-EDITOR-ASSETS-2026-10-29.md)。
+
 
 资料接口已随10.10交付，10.11沿用，不属于正式10.9。本地人体交付修复不修改接口；新前端不再用local_preview_available选择渲染器，统一加载随包原Liblib人体及其依赖。此修复尚未发布。`character-studio.js`共用以下同源会话接口，角色接口只管理创作角色资料及已有图片引用；独立创建页使用原API图片任务生成参考图；“角色”不指系统权限角色。开发者维护HTTP/服务契约，前端维护者同步资料表单与两类画布适配器。
 
@@ -252,3 +315,12 @@ static/js/comfy-workflow-session.js 提供共享输入、上传互斥、运行�
 ### 本地预览补充：ComfyUI逐笔取消（2026-10-25）
 
 `enterprise/canvas_comfy_control.py`提供本人画布任务列表与取消编排，Gateway仅转发可信登录身份；原后端和prompt_id由既有journal读取。`providers/comfyui.py`负责单job取消协议及execution_interrupted解释，不使用全局中断回退。`static/js/canvas-comfy-tasks.js`只负责OUTPUT卡片状态、悬停详情与右键逐笔操作，复用StudioDropdowns定位；画布主脚本连接已有占位卡和结果呈现，原任务ID与运行快照随结果保留；完成/取消继续走原journal、CanvasComfyRecovery与AcceptedTaskRecovery，无另建任务系统或Schema变更。此增量现已随10.9合并和发布；真实GPU验证与GUI覆盖范围见 CURRENT。
+
+
+2026-10-30续修：两类画布共用角色编辑、分类资产、即时预览、兼容语音及串行套系模块。即时预览输出经原上传保存，参数归零恢复`preview_source`，异步返回时复核当前草稿；HTTP500无上游编号时保留原受理记录，另建付费任务须明确接受可能重复计费并授权。图片JSON/multipart共用`image_reference_file`，内置公开角色图片由`character_media.py`转换成实际图片数据，缺失或越界在外发前拒绝。语音POST `/api/character-voice-tasks`共用journal/dispatcher及本人查询；界面分别标注预计来源与原任务实际来源，不暴露密钥。开发机已验证实际像素、保存重开、深浅色/920px窗口及真实MP3，当前资产套系、检查和未实现边界见[本轮记录](../ops/CHARACTER-EDITOR-ASSETS-2026-10-29.md)。本轮尚未提交PR或发行。
+
+2026-10-30工作台续修：原预览引擎输出已检测人脸框只读信息，`character-retouch-preview.js`按公开模块802379计算显示取景，`character-editor-view.js`仅消费变换并呈现渐隐/模糊。显示变换不进入导出像素或业务数据，无额外推理、任务接口或凭据依赖；原接口与回执语义保持原边界。
+
+角色库完整入口修复：`CharacterLibraryView.resetHome/clearFilters`仅管理展示与筛选，普通工具栏打开恢复完整轮播；Studio保留脏草稿和创建/任务恢复上下文。相邻选中变化不销毁人体，轮播重建及关闭统一释放。角色资料、媒体权限和原任务账本不因展示重置改写。
+
+角色导入资产选择页共用于两类画布和生成参考图：`character-asset-picker.js`只读取原GET `/api/canvas-assets`、`/api/history`、`/api/asset-library`、`/api/local-assets`，分别组装生成/保存/上传图片。项目由索引画布的`project`及资源URL关联派生，未知归属在全部项目展示；不增接口/数据库/授权。`CharacterCreationView.assetReturn`区分从库进入与从生成/导入表单进入，取消返回原调用页；直接库入口取消不再进入本地上传表单。选择与显式确认分开，只有后续用户提交导入表单才调用原角色POST；具体字段、限制及维护责任见[本轮记录](../ops/CHARACTER-EDITOR-ASSETS-2026-10-29.md)。

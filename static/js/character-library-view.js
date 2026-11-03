@@ -54,6 +54,7 @@
       ]) {
         const details = el("details", "character-filter");
         details.dataset.filter = key;
+        details.dataset.filterLabel = label;
         const summary = el("summary");
         summary.setAttribute("aria-label", label);
         summary.append(el("span", "", label), icon("chevron-down"));
@@ -136,6 +137,16 @@
       searchLabel.hidden = true;
       filters.append(searchButton, searchLabel);
       this.search = search;
+      this.searchButton = searchButton;
+      this.searchLabel = searchLabel;
+      this.clearFiltersButton = button("清空筛选", "filter-x", "character-clear-filters");
+      this.clearFiltersButton.hidden = true;
+      this.clearFiltersButton.addEventListener("click", () => {
+        this.clearFilters();
+        this.selectedId = createId;
+        this.renderCards();
+      });
+      filters.append(this.clearFiltersButton);
       searchButton.addEventListener("click", () => {
         searchButton.hidden = true;
         searchLabel.hidden = false;
@@ -294,6 +305,33 @@
         }
       });
     }
+    clearFilters() {
+      this.filters = {};
+      this.search.value = "";
+      this.searchButton.hidden = false;
+      this.searchLabel.hidden = true;
+      this.clearFiltersButton.hidden = true;
+      for (const details of this.root.querySelectorAll(".character-filter")) {
+        details.open = false;
+        details.classList.remove("has-selection");
+        details.querySelectorAll("input").forEach(input => { input.checked = false; });
+        details.querySelector("summary").replaceChildren(
+          el("span", "", details.dataset.filterLabel), icon("chevron-down"),
+        );
+      }
+    }
+    resetHome() {
+      this.closeAssets();
+      this.clearFilters();
+      this.source = "personal";
+      this.mode = "carousel";
+      this.archived = this.multiple = false;
+      this.picked.clear();
+      this.selectedId = createId;
+      this.lastExternalSelection = null;
+      for (const menu of this.root.querySelectorAll(".character-create-menu,.character-import-menu")) menu.hidden = true;
+      for (const trigger of this.root.querySelectorAll("[data-new],[data-import-profile]")) trigger.setAttribute("aria-expanded", "false");
+    }
     render(rows, catalog, selectedId) {
       this.items = [
         ...rows.map((row) => ({ ...row, source: "personal" })),
@@ -348,12 +386,10 @@
           String(this.multiple ? this.picked.has(id) : id === row.id),
         );
       });
-      if (row.id === createId && !this.motion) {
+      // Keep the mannequin in the neighboring slot while another role is selected.
+      if (!this.motion) {
         const host = this.grid.querySelector(".character-create-slot");
         if (host) this.motion = new CharacterMotionPreview(host);
-      } else if (row.id !== createId) {
-        this.motion?.destroy();
-        this.motion = null;
       }
       this.callbacks.onSelect(row.id === createId ? null : row, row.source);
       this.syncFooter();
@@ -457,6 +493,8 @@
       this.carousel = null;
       this.grid.replaceChildren();
       const search = this.search.value.trim().toLowerCase();
+      this.clearFiltersButton.hidden = !search &&
+        !Object.values(this.filters).some(values => values.length);
       this.filtered = this.items.filter(
         (row) =>
           Boolean(row.archived) === Boolean(this.archived) &&
@@ -616,48 +654,16 @@
       this.syncFooter();
     }
     showAssets(row) {
-      this.closeAssets();
-      this.detail = el("section", "character-assets-detail");
-      this.detail.setAttribute("aria-label", row.name + " · 角色资产详情");
-      this.detail.setAttribute("role", "region");
-      this.root.classList.add("has-asset-detail");
-      const dismiss = button("关闭角色资产", null, "character-assets-dismiss");
-      dismiss.addEventListener("click", () => this.closeAssets());
-      const cards = el("div", "character-assets-cards");
-      row.images.forEach((url, index) => {
-        const card = button(
-          "预览参考图 " + (index + 1),
-          null,
-          "character-asset-image",
-        );
-        card.append(
-          picture(url, row.asset_labels?.[index] || "参考图 " + (index + 1)),
-        );
-        card.addEventListener("click", () => {
-          const preview = el("div", "character-asset-preview");
-          const close = button("关闭图片预览", "x");
-          preview.append(
-            close,
-            picture(url, row.asset_labels?.[index] || row.name),
-          );
-          close.addEventListener("click", () => preview.remove());
-          this.detail.append(preview);
-        });
-        cards.append(card);
-      });
-      this.detail.append(
-        dismiss,
-        cards,
-        el("div", "character-assets-name", row.name),
-      );
-      this.body.append(this.detail);
-      this.choose(row);
-      window.lucide?.createIcons();
+      CharacterAssetsView.open(this, row);
     }
     closeAssets() {
       this.detail?.remove();
       this.detail = null;
       this.root.classList.remove("has-asset-detail");
+      for (const node of this.root.querySelectorAll(
+        ".character-header,.character-toolbar,.character-grid",
+      ))
+        node.inert = false;
     }
     pause() {
       this.carousel?.cancelMotion();

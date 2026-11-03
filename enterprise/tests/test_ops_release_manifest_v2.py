@@ -583,7 +583,11 @@ def test_config_contract_does_not_drift_from_config_getenv_calls() -> None:
         and isinstance(node.args[0].value, str)
     }
     contract = json.loads(_config_contract())
-    assert {item["key"] for item in contract["keys"]} == actual
+    # Keep v1 deployment keys readable by the already shipped 10.11 installer.
+    # The optional read-index rollback switch does not change installation roots,
+    # required credentials, or the database schema; it is runtime tuning only.
+    runtime_tuning = {"ENTERPRISE_HISTORY_QUERY_INDEX_ENABLED"}
+    assert {item["key"] for item in contract["keys"]} | runtime_tuning == actual
 
 
 def test_release_manifest_reader_rejects_symlink(tmp_path: Path) -> None:

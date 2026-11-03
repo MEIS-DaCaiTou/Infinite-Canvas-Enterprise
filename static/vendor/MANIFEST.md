@@ -12,6 +12,8 @@ This folder contains third-party assets mirrored locally so the app can load wit
 - The parity candidate always loads this packaged renderer in both canvases. It does not switch by the presence of developer-only reference files, and does not use the rejected CC0 replacement. Liblib business APIs, analytics, account data and reference character photos are not included.
 - Current published10.11 remains unchanged; this delivery-parity fix is carried by the owner-authorized standalone repository branch, not yet merged or released.
 
+- `liblib-character-retouch/`: recovered original face/body preview and parameter specification, with local vision/face-parsing models and WASM dependencies. Both canvases load the same packaged resources. SOURCE.json and NOTICE record exact provenance and adaptations; MediaPipe/ONNX Runtime notices are retained separately. Visual effect acceptance remains pending and is not implied by resource inclusion.
+
 ## CSS
 
 - `css/fonts.css`: local `@font-face` declarations used by all pages.

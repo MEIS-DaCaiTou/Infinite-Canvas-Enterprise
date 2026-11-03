@@ -105,6 +105,54 @@ def test_no_retry_on_lost_submit_response(monkeypatch):
         with pytest.raises(ValueError): base_url(value)
 
 
+@pytest.mark.parametrize('failure', ['refused', 'connect_timeout', 'read_timeout', 'reset', 'unknown_connection'])
+def test_only_preconnection_failure_releases_queue_slot(tmp_path, monkeypatch, failure):
+    import asyncio
+    from urllib3.exceptions import MaxRetryError, NewConnectionError, ProtocolError
+    from enterprise.providers.comfyui import ComfyNotSubmittedError, ComfyCancelledError
+    from enterprise.comfy_queue import ComfyQueue
+
+    errors = {
+        'refused': requests.ConnectionError(MaxRetryError(None, '/prompt', NewConnectionError(None, 'connection refused'))),
+        'connect_timeout': requests.ConnectTimeout('connection not established'),
+        'read_timeout': requests.ReadTimeout('response lost after acceptance'),
+        'reset': requests.ConnectionError(MaxRetryError(None, '/prompt', ProtocolError('connection reset after write'))),
+        'unknown_connection': requests.ConnectionError('unclassified connection failure'),
+    }
+    posts = []
+    def submit(*args, **kwargs):
+        posts.append(args[0]);raise errors[failure]
+    monkeypatch.setattr(requests, 'post', submit)
+    journal = CanvasTaskJournal(tmp_path / 'tasks')
+    journal.create({'id':'failed-submit','type':'comfy','status':'queued','enterprise_user_id':'alice'})
+    queue = ComfyQueue(journal, tmp_path, lambda:['localhost:8188'], lambda:[])
+    def execute(_payload, task_id):
+        journal.record_comfy(task_id, {'backend':'localhost:8188','phase':'submitting'})
+        return ComfyClient('localhost:8188').submit({},task_id)
+    # Exercise the actual receipt runner, not a copy of its failure handling.
+    source = Path(__file__).resolve().parents[2] / 'main.py'
+    node = next(n for n in ast.parse(source.read_text(encoding='utf-8')).body
+                if isinstance(n, ast.AsyncFunctionDef) and n.name=='run_canvas_comfy_task')
+    scope = {'asyncio':asyncio,'CANVAS_TASK_JOURNAL':journal,'execute_comfy_generation':execute,
+             'ComfyExecutionError':ComfyExecutionError,'ComfyNotSubmittedError':ComfyNotSubmittedError,
+             'ComfyCancelledError':ComfyCancelledError,'CANVAS_ACCEPTED_RECOVERY':SimpleNamespace(notify=lambda *_:None)}
+    exec(compile(ast.Module(body=[node],type_ignores=[]),str(source),'exec'),scope)
+    asyncio.run(scope['run_canvas_comfy_task']('failed-submit',None))
+    record = journal.get('failed-submit')
+    assert record['status']=='failed' and len(posts)==1
+    safe = failure in {'refused','connect_timeout'}
+    assert record['recovery_required'] is not safe
+    assert queue.status('alice')['running']==(0 if safe else 1)
+    assert record['comfy_receipt']['phase']==('not_submitted' if safe else 'submitting')
+    if safe:
+        assert record['error_code']=='COMFY_NOT_SUBMITTED' and record['status_code']==503
+        assert '未提交' in record['error']
+    else:
+        assert not record.get('comfy_receipt',{}).get('prompt_id')
+    journal.recover()
+    assert queue.status('alice')['running']==(0 if safe else 1)
+
+
 def test_accepted_task_survives_restart_without_replay_or_identity_change(tmp_path):
     journal = CanvasTaskJournal(tmp_path)
     journal.create({"id": "accepted", "type": "comfy", "status": "queued"})

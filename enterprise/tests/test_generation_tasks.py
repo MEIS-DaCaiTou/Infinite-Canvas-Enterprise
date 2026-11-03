@@ -216,3 +216,30 @@ def test_video_filter_pagination_and_disconnected_result_projection(catalog):
     detail=repository.detail('alice','video-new')
     assert detail['items']==[{'url':'/output/video.mp4','kind':'video'}]
     assert repository.detail('bob','video-new') is None
+
+
+def test_comfy_cancel_capability_survives_missing_canvas_output(catalog):
+    repository, add, _ = catalog
+    add('waiting-no-output',type='comfy',status='queued',dispatch_version=1,
+        comfy_queue={'backend':'fixture:8188'})
+    detail=repository.detail('alice','waiting-no-output')
+    assert detail['can_cancel'] and not detail['cancellation_pending'] and not detail['items']
+    assert repository.detail('bob','waiting-no-output') is None
+    record={'id':'accepted','type':'comfy','status':'running','comfy_receipt':{'phase':'running','prompt_id':'original'}}
+    assert describe_task(record)['can_cancel']
+    record['cancellation']={'acknowledged':True}
+    assert not describe_task(record)['can_cancel'] and describe_task(record)['cancellation_pending']
+    record['comfy_receipt']['phase']='retrieving';record.pop('cancellation')
+    assert not describe_task(record)['can_cancel']
+    record.update(status='failed',recovery_required=True,comfy_receipt={'phase':'submitting'})
+    assert not describe_task(record)['can_cancel'], 'unknown acceptance cannot be declared cancelled'
+    record.update(status='cancelled',recovery_required=False)
+    assert not describe_task(record)['can_cancel']
+    assert 'can_cancel' not in describe_task({'id':'image','type':'online-image','status':'queued'})
+
+
+def test_generation_task_center_controls():
+    from pathlib import Path
+    import subprocess
+    root=Path(__file__).resolve().parents[2]
+    subprocess.run(['node',str(Path(__file__).with_name('test_generation_task_center.js'))],cwd=root,check=True,timeout=30)

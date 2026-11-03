@@ -9,6 +9,7 @@ import time
 from urllib.parse import quote, urlencode, urlsplit, urlunsplit
 
 import requests
+from urllib3.exceptions import NewConnectionError
 
 
 def base_url(value: str) -> str:
@@ -43,6 +44,11 @@ def view_path(reference: str, file_type="input") -> str:
 
 class ComfyExecutionError(RuntimeError):
     pass
+
+
+class ComfyNotSubmittedError(ComfyExecutionError):
+    """The transport positively failed before establishing a connection."""
+    status_code = 503
 
 
 class ComfyCancelledError(ComfyExecutionError):
@@ -87,8 +93,18 @@ class ComfyClient:
 
     def submit(self, workflow: dict, client_id: str):
         # No retry, including when the response is lost after acceptance.
-        response = requests.post(endpoint(self.backend, "/prompt"),
-                                 json={"prompt": workflow, "client_id": client_id}, timeout=(10, 30), allow_redirects=False)
+        try:
+            response = requests.post(endpoint(self.backend, "/prompt"),
+                                     json={"prompt": workflow, "client_id": client_id}, timeout=(10, 30), allow_redirects=False)
+        except requests.ConnectTimeout as exc:
+            raise ComfyNotSubmittedError("ComfyUI 连接未建立，任务未提交；请检查后端地址及服务状态后再生成") from exc
+        except requests.ConnectionError as exc:
+            # A reset/read failure after connecting is still ambiguous. Only
+            # urllib3's failed _new_conn (including DNS/refusal) proves no POST.
+            reason = getattr(exc.args[0], 'reason', None) if exc.args else None
+            if not isinstance(reason, NewConnectionError):
+                raise
+            raise ComfyNotSubmittedError("ComfyUI 连接未建立，任务未提交；请检查后端地址及服务状态后再生成") from exc
         if response.is_redirect:
             raise RuntimeError("ComfyUI 提交返回重定向；请核对完整后端地址及队列，不自动再次提交")
         if not response.ok:

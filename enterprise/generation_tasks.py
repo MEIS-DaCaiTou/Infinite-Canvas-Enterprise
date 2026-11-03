@@ -11,7 +11,7 @@ from enterprise.canvas_task_journal import CanvasTaskJournal
 from enterprise.accepted_task_recovery import recovery_candidate
 from enterprise.runtime.logging import redact_text
 
-TYPES = {"canvas_image": "online-image", "canvas_comfy": "comfy", "canvas_video": "video", "canvas_llm": "llm"}
+TYPES = {"canvas_image": "online-image", "canvas_comfy": "comfy", "canvas_video": "video", "canvas_llm": "llm", "canvas_audio": "audio"}
 STATES = {"queued", "running", "succeeded", "failed", "cancelled", "unknown", "partial", "unavailable"}
 
 
@@ -83,6 +83,12 @@ def describe_task(record, *, detail=False):
             "model": record.get("model") or first.get("model") or "", "workflow": record.get("workflow_json") or "",
             "output_count": len(items), "can_query": can_query,
             "error": redact_text(record.get("error") or "")[:1200]}
+    if record.get('type') == 'comfy':
+        from enterprise.canvas_comfy_recovery import public_comfy_task
+        control = public_comfy_task(record)
+        cancelling = bool((record.get('cancellation') or {}).get('acknowledged') and control['can_cancel'])
+        data.update(can_cancel=bool(control['can_cancel'] and control['phase'] != 'retrieving' and not cancelling),
+                    cancellation_pending=cancelling, queue_released=control['queue_released'])
     automatic = record.get("auto_recovery") or {}
     if automatic:
         data["auto_recovery"] = {key: automatic[key] for key in (
@@ -137,7 +143,7 @@ class GenerationTaskRepository:
     def page(self, user_id, *, cursor="", status="", kind="", limit=30):
         before = None
         if cursor:
-            match = re.fullmatch(r"(\d{1,16})\|(canvas_image|canvas_comfy|canvas_video|canvas_llm)\|([A-Za-z0-9_-]{1,160})", cursor)
+            match = re.fullmatch(r"(\d{1,16})\|(canvas_image|canvas_comfy|canvas_video|canvas_llm|canvas_audio)\|([A-Za-z0-9_-]{1,160})", cursor)
             if not match:
                 raise ValueError("任务分页位置无效")
             before = (int(match[1]), match[2], match[3])

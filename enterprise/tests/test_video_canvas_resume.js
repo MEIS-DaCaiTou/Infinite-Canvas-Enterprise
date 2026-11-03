@@ -71,6 +71,9 @@ async function submitAfterSourceSave(kind, conflictAt) {
     Object.assign(ctx,{
         crypto:require('node:crypto').webcrypto,URLSearchParams,
         savingCanvasNow:false,canvasSyncInFlight:false,canvasId:'original-canvas',
+        canvasSaveConflict:false,smartSaveConflict:false,smartSavePromise:null,smartSaveAgain:false,smartSavedContent:'',
+        showCanvasConflict:()=>{ctx.conflictShown=true;},
+        pauseSmartCanvasConflict:()=>{ctx.smartSaveConflict=true;ctx.conflictShown=true;},
         applyingRemoteCanvas:false,saveCanvasAgain:false,localCanvasDirty:true,
         lastCanvasUpdatedAt:1,CLIENT_ID:'fixture',smartClientId:'fixture',viewport:{},
         connections:[],canvasDefaultSmartSettings:{},initialSmartSettings:{},saveTimer:null,currentCanvasTime:null,
@@ -91,7 +94,7 @@ async function submitAfterSourceSave(kind, conflictAt) {
         outputForNode:()=>ctx.nodes.find(n=>n.id==='output'),uid:()=> 'new-pending',
         runSnapshot:()=>({node:{id:'generator'}}),
         makePendingForRun:(id,run,_n,_refs,extra)=>({id,run,...extra}),
-        isCascadeAbortError:error=>error.name==='AbortError',alert:error=>{throw new Error(error);},
+        isCascadeAbortError:error=>error.name==='AbortError',alert:error=>{ctx.lastAlert=String(error);},
         smartRunSnapshot:()=>({node:{id:'output'}}),
         startSmartPendingGenerationLog:(node,run)=>{node.pendingGenerationLog={run};},
     });
@@ -118,32 +121,43 @@ async function submitAfterSourceSave(kind, conflictAt) {
         return {ok:true,json:async()=>({status:'succeeded',result:{videos:['/output/new.mp4']}})};
     };
     vm.runInContext(read('task-canvas-context.js'),ctx);
-    functions(ctx,file,['saveCanvas','taskCanvasSource']);
+    functions(ctx,file,kind==='smart'
+        ? ['smartCanvasSaveContent','saveSmartCanvasOnce','saveCanvas','taskCanvasSource']
+        : ['saveCanvas','taskCanvasSource']);
     if(kind==='classic'){
         functions(ctx,file,['runVideoNode']);
         await ctx.runVideoNode('generator');
+        if(conflictAt){
+            assert.equal(posts,0,'a rejected source save must not submit paid work');
+            assert.match(ctx.lastAlert,/画布保存失败/);
+            assert(ctx.conflictShown,'local draft conflict remains actionable');
+            return;
+        }
         assert.equal(ctx.nodes[1].images.at(-1)?.url,'/output/new.mp4');
         assert.equal(ctx.nodes[1]._pending.length,0);
     } else {
         functions(ctx,file,['mergeSmartNode','mergeSmartNodeLists','applyMergedServerCanvas',
             'runApiVideoGeneration','completeSmartVideoTracking']);
         const original=ctx.nodes[0];
+        if(conflictAt){
+            await assert.rejects(ctx.runApiVideoGeneration('Synthetic geometry',[],{videoModel:'fixture'},{node:original}),/画布保存失败/);
+            assert.equal(posts,0,'a rejected source save must not submit paid work');
+            assert(ctx.conflictShown,'local draft conflict remains actionable');
+            return;
+        }
         const result=await ctx.runApiVideoGeneration('Synthetic geometry',[],{videoModel:'fixture'}, {node:original});
         assert.equal(result[0],'/output/new.mp4');
         assert(ctx.nodes[0].pendingTasks.some(t=>t.taskId==='video-new'),'accepted ID belongs to the live node');
         ctx.completeSmartVideoTracking(original,'video-new');
         assert.equal((ctx.nodes[0].pendingTasks||[]).length,0);
     }
-    assert.equal(posts,1,'source save and conflict retry never create twice');
+    assert.equal(posts,1,'source save and original receipt query never create twice');
     assert.equal(conflicted,Boolean(conflictAt));
 }
 (async()=>{
     for(const kind of ['classic','smart']){
         await submitAfterSourceSave(kind,0);
-        if(kind==='smart'){
-            await submitAfterSourceSave(kind,1);
-            await submitAfterSourceSave(kind,2);
-        }
+        await submitAfterSourceSave(kind,1);
     }
     for(const kind of ['classic','smart']){
         let ctx=setup(kind,fixture(kind));

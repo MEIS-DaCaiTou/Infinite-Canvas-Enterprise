@@ -8,8 +8,62 @@ import time
 from pathlib import Path
 from threading import RLock
 from uuid import uuid4
+from contextlib import contextmanager
+from threading import local
 
 _IO_LOCK = RLock()
+_DOCUMENT_LOCKS = {}
+_DOCUMENT_STATE = local()
+
+
+@contextmanager
+def document_lock(path, *, timeout=10):
+    """Serialize a document's read/modify/write across Gateway and upstream.
+
+    Keep the sidecar inode stable. Nested operations in the same thread reuse
+    the lease; callers still use atomic_write_json to publish complete bytes.
+    """
+    key = os.path.normcase(os.path.abspath(os.fspath(path)))
+    with _IO_LOCK:
+        guard = _DOCUMENT_LOCKS.setdefault(key, RLock())
+    with guard:
+        held = getattr(_DOCUMENT_STATE, 'held', None)
+        if held is None:
+            held = _DOCUMENT_STATE.held = set()
+        if key in held:
+            yield
+            return
+        lock_path = Path(key + '.lock')
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with lock_path.open('a+b') as stream:
+            if not stream.seek(0, os.SEEK_END):
+                stream.write(b'\0')
+                stream.flush()
+            deadline = time.monotonic() + timeout
+            while True:
+                try:
+                    stream.seek(0)
+                    if os.name == 'nt':
+                        import msvcrt
+                        msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+                    else:
+                        import fcntl
+                        fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except OSError as exc:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError('Document is busy; retry without discarding local changes') from exc
+                    time.sleep(.02)
+            held.add(key)
+            try:
+                yield
+            finally:
+                held.remove(key)
+                stream.seek(0)
+                if os.name == 'nt':
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
 
 
 def _sharing_retry(operation):

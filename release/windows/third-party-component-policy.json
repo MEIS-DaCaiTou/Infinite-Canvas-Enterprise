@@ -102,13 +102,37 @@
         "static/vendor/liblib-character-motion/draco/draco_decoder.wasm": "a680d927bed9cb864ddbd63521868891af2bfbe755092761b4837487618df8ac",
         "static/vendor/liblib-character-motion/draco/LICENSE": "d3709b0fb4b8a94bbb1d02b8a2e484f258b0d9c5c5a01f940391f3fe662cd1a4"
       }
+    },
+    {
+      "bom_ref": "pkg:generic/liblib-character-retouch@cdn-2026-09-21",
+      "name": "Liblib character retouch engine and inference dependencies",
+      "version": "cdn-2026-09-21-module-587056",
+      "source": "https://liblibai-web-static.liblib.cloud/liblibtv_online/static/_next/static/chunks/2cxx_anwecawu.js",
+      "license_expression": "LicenseRef-Liblib-Source-License-Not-Declared AND Apache-2.0 AND MIT",
+      "license_source_path": "static/vendor/liblib-character-retouch/NOTICE",
+      "payload_files": {
+        "static/vendor/liblib-character-retouch/MediaPipe-LICENSE": "8707eef0533987efc5b155d64761eeb6e20793f50b9bd1a68dad1cf4719d0ed8",
+        "static/vendor/liblib-character-retouch/models/face_landmarker.task": "64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff",
+        "static/vendor/liblib-character-retouch/models/face_parsing.onnx": "0d9bd318e46987c3bdbfacae9e2c0f461cae1c6ac6ea6d43bbe541a91727e33f",
+        "static/vendor/liblib-character-retouch/models/pose_landmarker.task": "59929e1d1ee95287735ddd833b19cf4ac46d29bc7afddbbf6753c459690d574a",
+        "static/vendor/liblib-character-retouch/NOTICE": "f99766031474c850e93d6888178c43e7c0608ff1c6c81d2c66909655a1660db9",
+        "static/vendor/liblib-character-retouch/ONNXRuntime-LICENSE": "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c",
+        "static/vendor/liblib-character-retouch/ort/ort-wasm-simd-threaded.wasm": "207d02be4591c156b0a98f024f3d58005b5b04c92274d759fb390338c63559ea",
+        "static/vendor/liblib-character-retouch/preview.js": "2953ba903926278bfc6cd5a956dcb337c0d7045cc85f5c1374c8d716c40add04",
+        "static/vendor/liblib-character-retouch/spec.js": "2c6fd3e17000634e8c25f58d7447313b8f25211a52ebd70fa5540d00a2838be9",
+        "static/vendor/liblib-character-retouch/wasm/vision_wasm_internal.js": "6f6b86509cf9e163ea1cfec7edc8cf53732699c04781e4c21c557c1ba402310e",
+        "static/vendor/liblib-character-retouch/wasm/vision_wasm_internal.wasm": "cb3ec20026a9aecc2a81a93c25630ceb5389297ddb7a5f0bd61dd09cde606b9b",
+        "static/vendor/liblib-character-retouch/wasm/vision_wasm_nosimd_internal.js": "9f8fc960e363f0fb2f42f7937b97ae9cf9a5630490f71031fa90caa9bb121938",
+        "static/vendor/liblib-character-retouch/wasm/vision_wasm_nosimd_internal.wasm": "924274fcd5ac8985f6570a8573e7971b7bd2d580ba1b8f3beb0ba8f95db6347c"
+      }
     }
   ],
   "project_owned_payload_files": {
-    "static/vendor/MANIFEST.md": "60c3db11383aeb1358468639f80084e21c284425bfaa010b3449ac2549726430",
+    "static/vendor/MANIFEST.md": "e1369ff885c969e8c4f4bbefaefb8121f13c85402af51c65d340e588ca05d2b9",
     "static/vendor/css/fonts.css": "52110263cc24b0fdbb88c4a75b397fdaa708f7bd2b7201a8f43d90b8995251b9",
     "static/vendor/three-addons-r160/SOURCE.json": "0167ba95a16762cfd1e3c4760b1f30a07d4f46ce77dd87638ca5e91296430710",
-    "static/vendor/liblib-character-motion/SOURCE.json": "d63d07cc3019a6622b692fd788a47a65a7870debb71ebab448c80959d298d99d"
+    "static/vendor/liblib-character-motion/SOURCE.json": "d63d07cc3019a6622b692fd788a47a65a7870debb71ebab448c80959d298d99d",
+    "static/vendor/liblib-character-retouch/SOURCE.json": "7d25a0251d23c62dba1e5ec98730f22b5162534ab34b525ff55add16df36b45a"
   },
   "schema_version": "ops-third-party-component-policy-v1"
 }

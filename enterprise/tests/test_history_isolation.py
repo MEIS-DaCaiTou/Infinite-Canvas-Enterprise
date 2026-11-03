@@ -302,6 +302,18 @@ async def _run_checks() -> None:
         logs, _total = edb.get_logs(limit=50)
         actions = [row["action"] for row in logs]
         assert "history_deleted" in actions
+        prior_history = history_path.read_bytes()
+        try:
+            history_path.write_bytes(b'{controlled broken history')
+            failed_delete = await interceptors.pre_process(
+                'api/history/delete', 'POST', actor_a,
+                body=json.dumps({'timestamp': 100.0}).encode('utf-8'),
+            )
+            assert failed_delete.status_code == 503
+            assert history_path.read_bytes() == b'{controlled broken history'
+            assert (output_dir / 'history-a.png').exists()
+        finally:
+            history_path.write_bytes(prior_history)
         assert "history_assigned" in actions
 
     print("history isolation checks passed")

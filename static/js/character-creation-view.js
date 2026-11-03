@@ -25,7 +25,10 @@
         sessionStorage,
       );
       this.abort = new AbortController();
-      studio.dialog.addEventListener("close", () => this.pause());
+      studio.dialog.addEventListener("close", () => {
+        this.pause();
+        this.stopAssetPicker();
+      });
       studio.dialog.addEventListener("keydown", (event) => {
         if (!this.root.hidden && event.key === "Escape") {
           event.preventDefault();
@@ -66,6 +69,7 @@
     setOwner(owner) {
       if (owner !== this.task.owner) {
         this.pause();
+        this.stopAssetPicker();
         this.reference = "";
         this.imported = null;
         this.prompt = "";
@@ -101,12 +105,18 @@
     back(force = false) {
       if (this.working && !force) return;
       if (!force && this.mode === "assets") {
-        this.mode = this.assetTarget === "reference" ? "generate" : "import";
-        this.studio.message();
-        this.render();
-        return;
+        const destination = this.assetReturn || "library";
+        this.stopAssetPicker();
+        if (destination !== "library") {
+          this.mode = destination;
+          this.studio.message();
+          this.render();
+          return;
+        }
       }
+      this.stopAssetPicker();
       this.pause();
+      this.imported = null;
       this.root.hidden = true;
       this.studio.dialog.classList.remove("is-creating");
       this.studio.message();
@@ -136,12 +146,9 @@
           this.selectProvider();
         });
       } else if (mode === "assets") {
-        this.assetTarget = "import";
-        this.assetSource = "canvas";
-        this.assets = [];
-        this.render();
-        await this.loadAssets();
+        this.openAssets("import", "library");
       } else {
+        this.importOrigin = "local";
         this.imported = null;
         this.render();
         this.fileInput.click();
@@ -171,6 +178,11 @@
       else this.pause();
       this.root.replaceChildren();
       if (this.root.hidden) return;
+      this.root.classList.toggle("is-asset-picker", this.mode === "assets");
+      if (this.mode === "assets") {
+        this.renderAssets();
+        return;
+      }
       const header = el("header", "character-generator-header");
       const back = el("button", "", "‹");
       back.type = "button";
@@ -389,12 +401,7 @@
         file.click();
       };
       assets.onclick = () => {
-        this.assetTarget = "reference";
-        this.mode = "assets";
-        this.assetSource = "canvas";
-        this.assets = [];
-        this.render();
-        this.loadAssets();
+        this.openAssets("reference", "generate");
       };
       menu.append(upload, assets);
       refButton.onclick = () => {
@@ -527,8 +534,9 @@
     }
     renderImport() {
       const form = el("form", "character-import-card");
-      form.setAttribute("aria-label", "导入已有角色");
-      form.append(el("h2", "", "导入已有角色"));
+      const fromAssets = this.importOrigin === "assets";
+      form.setAttribute("aria-label", fromAssets ? "确认资产角色导入" : "导入已有角色");
+      form.append(el("h2", "", fromAssets ? "确认导入角色" : "导入已有角色"));
       const upload = el(
         "button",
         "character-import-image",
@@ -544,17 +552,12 @@
           createId: CanvasTaskQuery.requestId(),
         };
       });
-      upload.onclick = () => this.fileInput.click();
+      upload.onclick = () => fromAssets ? this.openAssets("import", "import") : this.fileInput.click();
       form.append(upload);
-      const assets = el("button", "", "从我的资产选择");
+      const assets = el("button", "", fromAssets ? "重新选择资产" : "从我的资产选择");
       assets.type = "button";
       assets.onclick = () => {
-        this.mode = "assets";
-        this.assetTarget = "import";
-        this.assetSource = "canvas";
-        this.assets = [];
-        this.render();
-        this.loadAssets();
+        this.openAssets("import", "import");
       };
       form.append(assets);
       const name = el("input");
@@ -600,89 +603,47 @@
         });
       };
     }
-    async loadAssets() {
-      this.assets = [];
-      await this.run(async () => {
-        const values = [];
-        if (this.assetSource === "canvas") {
-          for (const url of this.studio.adapter.selection().filter(Boolean))
-            values.push({ url, name: "画布选中图片" });
-          const data = await this.studio.request("/api/canvas-assets");
-          for (const row of data.items || [])
-            if (
-              row.kind === "image" ||
-              /\.(png|jpe?g|webp|gif)$/i.test(row.url || "")
-            )
-              values.push({
-                url: row.url,
-                name: row.name || row.canvas_name || "画布图片",
-              });
-        } else {
-          const data = await this.studio.request("/api/history");
-          for (const row of data)
-            for (const image of row.images || []) {
-              const url = typeof image === "string" ? image : image.url;
-              if (url)
-                values.push({
-                  url,
-                  name: row.prompt?.slice(0, 40) || "生成图片",
-                });
-            }
-        }
-        this.assets = [
-          ...new Map(values.map((item) => [item.url, item])).values(),
-        ];
-      });
+    stopAssetPicker() {
+      this.assetPicker?.destroy();
+      this.assetPicker = null;
+      this.root.classList.remove("is-asset-picker");
+      this.studio.dialog.querySelector("[data-close]").setAttribute("aria-label", "关闭角色造型室");
+    }
+    openAssets(target, returnTo) {
+      this.stopAssetPicker();
+      this.assetTarget = target;
+      this.assetReturn = returnTo;
+      this.mode = "assets";
+      this.render();
+    }
+    acceptAsset(item) {
+      this.stopAssetPicker();
+      if (this.assetTarget === "reference") {
+        this.reference = item.url;
+        this.mode = "generate";
+      } else {
+        this.imported = {url: item.url, name: item.name.slice(0, 80),
+          description: "", createId: CanvasTaskQuery.requestId()};
+        this.importOrigin = "assets";
+        this.mode = "import";
+      }
+      this.render();
     }
     renderAssets() {
-      const title = el(
-        "h2",
-        "character-assets-title",
-        this.assetTarget === "reference"
-          ? "选择角色参考图"
-          : "从我的资产导入角色",
-      );
-      this.root.append(title);
-      const tabs = el("div", "character-assets-tabs");
-      for (const [value, label] of [
-        ["canvas", "画布素材"],
-        ["history", "生成历史"],
-      ]) {
-        const button = el("button", "", label);
-        button.type = "button";
-        button.setAttribute("aria-pressed", String(this.assetSource === value));
-        button.onclick = () => {
-          this.assetSource = value;
-          this.loadAssets();
-        };
-        tabs.append(button);
+      if (!this.assetPicker) {
+        const params = new URLSearchParams(location.search);
+        this.assetPicker = new CharacterAssetPicker({
+          request: (...args) => this.studio.request(...args),
+          projectId: params.get("project") || "",
+          canvasId: params.get("id") || "",
+          cancelLabel: this.assetReturn === "library" ? "返回角色库" : "返回角色创建",
+          onCancel: () => this.back(),
+          onConfirm: item => this.acceptAsset(item),
+        });
+        this.assetPicker.load();
       }
-      this.root.append(tabs);
-      const grid = el("div", "character-pick-assets");
-      if (!this.assets?.length)
-        grid.append(el("p", "", "暂无可用图片，可切换来源或从本地上传。"));
-      for (const item of this.assets || []) {
-        const button = el("button");
-        button.type = "button";
-        button.append(picture(item.url), el("span", "", item.name));
-        button.onclick = () => {
-          if (this.assetTarget === "reference") {
-            this.reference = item.url;
-            this.mode = "generate";
-          } else {
-            this.imported = {
-              url: item.url,
-              name: item.name.slice(0, 80),
-              description: "",
-              createId: CanvasTaskQuery.requestId(),
-            };
-            this.mode = "import";
-          }
-          this.render();
-        };
-        grid.append(button);
-      }
-      this.root.append(grid);
+      this.studio.dialog.querySelector("[data-close]").setAttribute("aria-label", "关闭资产库");
+      this.root.append(this.assetPicker.root);
     }
   }
   window.CharacterCreationView = CharacterCreationView;

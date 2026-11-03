@@ -13,3 +13,9 @@ static/vendor/liblib-character-motion/NOTICE text eol=lf
 static/vendor/liblib-character-motion/draco/*.js text eol=lf
 static/vendor/liblib-character-motion/draco/LICENSE text eol=lf
 static/vendor/three-addons-r160/** text eol=lf
+
+# Packaged character retouch engine and local inference dependencies.
+static/vendor/liblib-character-retouch/** text eol=lf
+static/vendor/liblib-character-retouch/**/*.wasm binary
+static/vendor/liblib-character-retouch/**/*.onnx binary
+static/vendor/liblib-character-retouch/**/*.task binary

@@ -63,6 +63,9 @@ const boardResetViewBtn = document.getElementById('boardResetView');
 const pasteCanvasBtn = document.getElementById('pasteCanvasBtn');
 const emptyCreateCanvasBtn = document.getElementById('emptyCreateCanvasBtn');
 const statusEl = document.getElementById('boardStatus');
+const boardLoadState = document.getElementById('boardLoadState');
+const boardLoadMessage = document.getElementById('boardLoadMessage');
+const boardLoadRetry = document.getElementById('boardLoadRetry');
 
 /* ===== State ===== */
 let projects = [];
@@ -72,6 +75,10 @@ let currentProjectId = rememberedProjectId();
 let pendingDeleteProjectId = null;
 let statusTimer = null;
 let clipboardCanvasId = null;   // 剪切的画布（切到别的项目后粘贴）
+let listLoadState = 'loading';
+let listHasLoaded = false;
+let listLoadRevision = 0;
+let listUnreadableCount = 0;
 
 // board viewport (mirrors smart-canvas math)
 const viewport = { x: 0, y: 0, scale: 1 };
@@ -176,17 +183,45 @@ function onBoardWheel(e){
 function currentProject(){ return projects.find(p => p.id === currentProjectId) || projects[0] || null; }
 function canvasesInProject(pid){ return canvases.filter(c => (c.project || 'default') === pid); }
 
+function renderListLoadState(){
+    const loading = listLoadState === 'loading';
+    const failed = listLoadState === 'error';
+    const partial = listLoadState === 'partial';
+    boardLoadState.hidden = !loading && !failed && !partial;
+    boardLoadMessage.textContent = loading
+        ? L('正在加载项目与画布…','Loading projects and canvases…')
+        : partial ? L(`${listUnreadableCount} 个画布文件暂不可读，原文件已保留。请重试或联系管理员。`, `${listUnreadableCount} canvas file(s) could not be read. Files are preserved. Retry or contact an administrator.`)
+        : listHasLoaded ? L('刷新失败，仍显示上次内容','Refresh failed. Showing the previous list.') : L('加载失败，请重试','Unable to load. Please retry.');
+    boardLoadRetry.hidden = !failed && !partial;
+    boardLoadRetry.textContent = L('重试','Retry');
+    boardRefreshBtn.disabled = loading;
+    newCanvasBtn.disabled = newProjectBtn.disabled = !listHasLoaded;
+    boardEmptyHint.classList.toggle('hidden', !listHasLoaded || loading || failed || partial || canvasesInProject(currentProjectId).length > 0);
+    if(!listHasLoaded){
+        boardProjectName.textContent = loading ? L('加载中…','Loading…') : L('未加载','Not loaded');
+        boardCanvasCount.textContent = '—';
+    }
+}
+
 async function loadAll(){
+    const revision = ++listLoadRevision;
+    listLoadState = 'loading';
+    renderListLoadState();
     try {
         const [pRes, cRes] = await Promise.all([
-            fetch('/api/projects'),
+            fetch('/api/projects?include_counts=false'),
             fetch('/api/canvases')
         ]);
-        const pData = pRes.ok ? await pRes.json() : { projects: [] };
-        const cData = cRes.ok ? await cRes.json() : { canvases: [] };
+        if(!pRes.ok || !cRes.ok) throw new Error('Canvas directory request failed');
+        const [pData, cData] = await Promise.all([pRes.json(), cRes.json()]);
+        if(!Array.isArray(pData.projects) || !Array.isArray(cData.canvases)) throw new Error('Invalid canvas directory response');
+        if(revision !== listLoadRevision) return;
         projects = (pData.projects || []).slice().sort((a, b) => (a.order || 0) - (b.order || 0));
         if(!projects.length) projects = [{ id: 'default', name: L('默认项目','Default'), order: 0, canvas_count: 0 }];
         canvases = cData.canvases || [];
+        listHasLoaded = true;
+        listUnreadableCount = Math.max(0, Number(cData.unreadable_canvas_count) || 0);
+        listLoadState = listUnreadableCount ? 'partial' : 'ready';
         // pick first project (prefer default / order 0)
         if(!projects.find(p => p.id === currentProjectId)){
             const def = projects.find(p => p.id === 'default') || projects.slice().sort((a, b) => (a.order || 0) - (b.order || 0))[0];
@@ -198,16 +233,15 @@ async function loadAll(){
         resetView();
         refreshTrashCount();
     } catch(e){
-        console.error(e);
-        setStatus(L('加载失败','Load failed'));
+        if(revision !== listLoadRevision) return;
+        console.warn('Canvas directory could not be refreshed');
+        listLoadState = 'error';
+        renderListLoadState();
     }
 }
 
 function projectCanvasCount(pid){
-    const p = projects.find(x => x.id === pid);
-    // prefer live count from canvases array; fall back to server count
-    const live = canvasesInProject(pid).length;
-    return canvases.length ? live : (p?.canvas_count || 0);
+    return canvasesInProject(pid).length;
 }
 
 /* ===== Project sidebar rendering ===== */
@@ -292,6 +326,7 @@ function startProjectRename(pid, row){
 
 /* ===== Project CRUD ===== */
 function openNewProject(){
+    if(!listHasLoaded) return;
     newProjectRow.classList.add('active');
     newProjectInput.value = '';
     newProjectInput.focus();
@@ -353,6 +388,7 @@ async function deleteProject(pid){
 
 /* ===== Board rendering ===== */
 function updateBoardHeader(){
+    if(!listHasLoaded){ renderListLoadState(); return; }
     const p = currentProject();
     boardProjectName.textContent = p ? p.name : L('默认项目','Default');
     boardCanvasCount.textContent = String(canvasesInProject(currentProjectId).length);
@@ -380,7 +416,7 @@ function renderBoard(){
     autoLayoutNulls(items);
     boardWorld.innerHTML = '';
     items.forEach(c => boardWorld.appendChild(buildCard(c)));
-    boardEmptyHint.classList.toggle('hidden', items.length > 0);
+    renderListLoadState();
     updatePasteBtn();
     refreshIcons();
 }
@@ -467,8 +503,8 @@ function openCanvas(c){
     const project = encodeURIComponent(c.project || currentProjectId || 'default');
     rememberProjectId(c.project || currentProjectId || 'default');
     window.location.href = (c.kind === 'smart')
-        ? `/static/smart-canvas.html?id=${enc}&project=${project}&v=20261028.11`
-        : `/static/canvas.html?id=${enc}&project=${project}&v=20261028.11`;
+        ? `/static/smart-canvas.html?id=${enc}&project=${project}&v=20261102.6`
+        : `/static/canvas.html?id=${enc}&project=${project}&v=20261102.6`;
 }
 
 /* ===== Card create flow ===== */
@@ -476,6 +512,7 @@ let createCardEl = null;
 let createKind = 'classic';
 function closeCreateCard(){ createCardEl?.remove(); createCardEl = null; }
 function openCreateCard(worldPt){
+    if(!listHasLoaded) return;
     closeCreateCard();
     closeCardMenu();
     createKind = 'classic';
@@ -996,6 +1033,7 @@ emptyCreateCanvasBtn?.addEventListener('click', e => {
     openCreateCard(boardCenterWorld());
 });
 boardRefreshBtn.addEventListener('click', loadAll);
+boardLoadRetry.addEventListener('click', loadAll);
 boardResetViewBtn.addEventListener('click', resetView);
 pasteCanvasBtn?.addEventListener('click', pasteCanvas);
 

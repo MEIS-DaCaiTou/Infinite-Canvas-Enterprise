@@ -1,5 +1,6 @@
 """Queue settings and personal usage; the Gateway never owns dispatch state."""
 import asyncio
+from urllib.parse import quote
 
 import httpx
 from fastapi import APIRouter, Header, HTTPException, Request
@@ -26,24 +27,32 @@ def create_internal_router(queue):
             raise HTTPException(401, '请先登录')
         return await asyncio.to_thread(queue.status, x_enterprise_user_id)
 
+    @router.post('/{task_id}/release')
+    async def release(task_id: str, x_enterprise_user_id: str = Header(default='')):
+        if not x_enterprise_user_id:
+            raise HTTPException(401, '请先登录')
+        await queue.release_slot(task_id, x_enterprise_user_id)
+        return {'message': '已释放该任务占用的名额；未重提或终止后端任务',
+                'status': await asyncio.to_thread(queue.status)}
+
     return router
 
 
 router = APIRouter()
 
 
-async def forward(request, suffix='', *, body=None):
+async def forward(request, suffix='', *, body=None, release=False):
     user_id = current_user_id(request)
     client = getattr(request.app.state, 'upstream_client', None)
     if client is None:
         raise HTTPException(503, '队列服务暂不可用')
     try:
-        response = await client.request('PUT' if body is not None else 'GET', '/_enterprise_internal/comfy-queue' + suffix,
+        response = await client.request('POST' if release else 'PUT' if body is not None else 'GET', '/_enterprise_internal/comfy-queue' + suffix,
             json=body, headers={'X-Enterprise-User-ID': user_id}, timeout=15)
-        if response.status_code not in {200, 400, 401, 403, 409, 422, 503}:
+        if response.status_code not in {200, 400, 401, 403, 404, 409, 422, 503}:
             raise ValueError('Unexpected queue response')
         data = response.json()
-        if response.status_code == 200 and not suffix:
+        if response.status_code == 200 and (not suffix or release):
             from enterprise import db
             for row in data['status']['items']:
                 user = await asyncio.to_thread(db.get_user_by_id, row.get('enterprise_user_id', ''))
@@ -73,3 +82,13 @@ async def save(request: Request):
 @router.get('/api/me/comfy-queue')
 async def usage(request: Request):
     return await forward(request, '/me')
+
+
+@router.post('/api/admin/comfy-queue/{task_id}/release')
+async def release(request: Request, task_id: str):
+    user = _require_admin(request)
+    result = await forward(request, '/' + quote(task_id, safe='') + '/release', release=True)
+    if result.status_code == 200:
+        from enterprise import db
+        await asyncio.to_thread(db.log_action, user['user_id'], 'comfy_queue_release', '释放旧任务名额：' + task_id)
+    return result

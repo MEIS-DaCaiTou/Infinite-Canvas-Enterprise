@@ -162,6 +162,16 @@ async def _run_checks() -> None:
         assert [item["id"] for item in project_payload["projects"]] == ["default", "project_a"]
         assert project_payload["projects"][1]["canvas_count"] == 1
 
+        for actor, project_id in [(actor_a, 'project_a'), (actor_b, 'project_b')]:
+            light_payload = {'counts_included': False, 'projects': [
+                {'id': 'default', 'canvas_count': 99},
+                {'id': 'project_a', 'canvas_count': 99},
+                {'id': 'project_b', 'canvas_count': 99},
+            ]}
+            interceptors.filter_project_list(actor, light_payload)
+            assert [p['id'] for p in light_payload['projects']] == ['default', project_id]
+            assert all('canvas_count' not in p for p in light_payload['projects'])
+
         err = await interceptors.pre_process("api/projects/project_b", "POST", actor_a)
         assert err is not None and err.status_code == 404
         err = await interceptors.pre_process("api/projects/project_a", "POST", actor_a)

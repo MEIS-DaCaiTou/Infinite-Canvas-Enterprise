@@ -1,6 +1,56 @@
 # Infinite Canvas Enterprise 代码与数据边界
 
-更新时间：2026-10-29
+更新时间：2026-11-03
+
+2026.11.1管理员释放：CanvasTaskJournal.release_comfy_slot在原记录锁/原子JSON写入中记录queue_release，仅接受failed且recovery_required的Comfy旧任务，幂等且保留错误、prompt_id和结果。ComfyQueue用该标记从个人/本地名额统计排除并立即唤醒派发；真实远端队列仍计入算力容量，原任务续查保留。原管理员API验证系统角色，可信Gateway身份写处理人，复用现有审计；普通回执只暴露queue_released布尔，不暴露管理员ID。运行/平台排队仍使用原取消API，不另建任务账本或备份流程。
+
+COMFY1103：ComfyClient只分类明确连接未建立（Requests ConnectTimeout/urllib3 NewConnectionError），原runner写failed/not_submitted并释放原Queue名额；回包丢失/重置等未知受理保持核对，绝不重发。GenerationTaskRepository复用public_comfy_task投影本人取消能力，TaskCenter经原owner-scoped取消API操作；经典节点只打开同一任务中心，两类画布不新增任务/保存器。输出DOM移除不改变服务器任务。历史未知回执不按宽泛错误字符串自动清理，生产定点处置与本地代码验证分开。
+
+
+## 2026-11-02 只读集合查询与缓存维护
+
+`history_query_index`是可删除重建的历史查询投影，不是新的业务数据库。Gateway启动/关闭`HistoryQueryCache`；原history分页在feature/resource门禁后尝试有效索引，源超过原解析缓存预算8MiB才启用；小历史继续原内存缓存。缺失/陈旧/不可读索引退回当前JSON，仅成功的JSON页触发后台维护。复用本次已解析的原始快照，最多一个构建且不排队，完成修订不重复构建；失败退避30秒，关闭等待当前构建。不定时扫描、不新增生成任务或业务写入器。
+
+源修订变化即拒绝旧索引，旧cursor仍返回409；真正不可读的源仍503，不以缓存掩盖。索引发布复用document_lock和原子替换，所有读取关闭SQLite句柄后再释放同一锁；失败保留原件，未知目标文件不覆盖。索引不存归属授权，当前可见ID只在连接内存临时表参与计数和分页；原Gateway身份标注/权限过滤及collection_query契约共用。缓存位于CACHE_ROOT/queries/history-v1.sqlite3，含历史内容，按业务数据保护；`ENTERPRISE_HISTORY_QUERY_INDEX_ENABLED=false`重启Gateway可回退。增量维护和全量JSON写入优化尚未完成，校对工具继续可用。
+
+`collection_query`只读取原history.json/asset_library.json并保存可丢弃的解析树/历史身份及条目位置查询，负责分页参数、排序和源修订游标；不写业务文件、缓存授权、调用生成或清理媒体。AUTH1103的LibraryLookup归原文件快照维护，沿用8MiB源缓存预算，超预算临时构建；保留重复/缺失ID、旧categories、显式空libraries与容器顺序。`db.asset_library_query_snapshot`在一个只读事务按用户授权找到保守候选，只补候选及目录容器归属，SQL按400项分批；不改变原ID→资源归属→最新旧item资源关联的优先级。`interceptors`继续原门禁，再将候选交给原filter_asset_library，授权后才计数/分页。旧完整GET、管理员、写入继续原asset_library_ownership_snapshot。当前本人授权很多、冷/超预算JSON、管理员及写入的规模成本仍存在；不新增表、事实源或授权缓存。
+
+在线页、角色选择器三来源及两类画布整理侧栏共用原分页能力；失败保留卡片、选择与原cursor，409后刷新，不自动收费重提。`catalog=1`投影授权后的目录计数/封面；整理去重/撤销通过`item_id`或`match_url`精确查询定位。11-02 COLD1102将可选catalog扩展到原资产写入：归属登记、权限过滤及事件处理完成后才精简公开library及别名，保留操作结果item；旧调用和上游内部响应仍完整，不新建保存器。
+
+`local_uploads`集中原命名/类型判断与轻量文件元数据读取；UPLOAD1102普通用户只探测当前授权的上传路径（限定原上传根，排除隐藏/越界路径），管理员用DirEntry扫描；原完整上传管理仍读尺寸/旁车。Gateway覆盖内部来源提示，上游仅提供画布输入参考，Gateway合并授权上传元数据后再次过滤/分页；旧上游完整包继续兼容，根不可读报503，不误显空库。不导入main到Gateway、不缓存授权或新建索引，读工作继续在原线程池。上传cursor仍为实时keyset，新增到游标前的项刷新可见，不是冻结快照。
+
+WINDOW1102的`media-grid-window`只维护视口卡片、少量预留行、精确行占位和滚动/resize监听；不发送API、授予权限或保存数据。侧栏和角色选择器通过key/create/update/release回调复用它，各自保留分页、筛选、选择、键盘和原画布适配器。离屏/移除/关闭暂停媒体并撤掉src，不缓存离屏DOM；容器销毁断开Observer/监听。侧栏图像/视频/音频在同一响应式断点使用相同媒体高度，防止混合行定位漂移；选择器Home/End/方向键按已加载元数据索引定位再挂载。分页仍手动，不因滚动自动请求；元数据和浏览器缓存仍可增长。
+
+企业规模验证区分三项：单页/视口资源体量，多账号当前权限，服务器并发处理成本。只读投影不得缓存授权或绕过原门禁；局部闭环ASGI测量不等于TCP/TLS、真实媒体、写入和50账号容量。已测一万资产时归属全读/过滤仍存在并发成本，后续按同一授权契约推进查询边界；不靠新增全局锁、通用插件或直接增加Worker掩盖该成本。
+
+POST `/api/canvas-assets/context`只读本批图片的项目关系，复用`ResourceReferenceIndex`与原提取函数；Gateway每次重查画布归属，跳过通用POST任务/资源登记。关联失败不推进来源cursor；旧服务器404/405才回原索引，网络或权限错误不回退。COLD1102把同一遍历/去重/类型规则集中到`iter_canvas_media_entries`，图片URL轻读不构造完整资产记录、名称或ID，完整管理响应兼容。缓存有界、可重建；首次仍扫描画布。维护者同时验证当前授权、旧输入图保留及两类画布，不新增资产事实源。
+
+运行维护者负责`runtime/child.py`的HTTP排空参数：明确停机后最多等待8秒仍未结束的HTTP请求，随后取消请求并进入原lifespan清理；现有监督器仍等待10秒并保留强停后备。正常请求超时、任务Journal和供应商受理恢复未改；不得把这项上限写成所有生命周期故障已解决，未知收费请求仍不得自动重提。
+
+侧栏/选择器只通过既有画布缩略图帮助函数读取240/320px预览，目录封面96px；原URL与原始尺寸保留，明确复用/确认时才加载原图。侧栏重绘/关闭释放媒体源和本轮DOM监听；不新建缩略图、资源或保存服务。当前维护者维护查询/授权、原图尺寸和两类消费者契约，证据集中在[原收敛记录](docs/ops/DEVELOPMENT-CONVERGENCE-2026-10-30.md)。
+
+## 2026-10-31 历史元数据与列表失败边界
+
+`enterprise/history_records.py`只负责现有history.json的读取、追加和元数据删除，复用`local_json`跨进程document_lock/原子替换。Gateway在同一删除锁内校验原历史归属；模块不认识账号、不授予资源权限、不清理媒体，也不执行供应商。上游生成已成功但历史不可写时保留结果/原任务身份并返回warning，不以报错触发重复付费；未建立自动补档系统。原企业删除入口已保留字节，本批统一其读改写协调及原始兼容入口，不能将后者旧行为写成企业现网已复现。
+
+画布列表上游只在内部返回不可读ID，Gateway按原归属转换成数量并移除ID，前端复用原加载/失败/重试状态；两类编辑器的节点和保存协议不变。索引/摘要仅是后续可重建查询投影，不取代授权或直接触发回收。维护者与定向证据见[收敛记录](docs/ops/DEVELOPMENT-CONVERGENCE-2026-10-30.md)。主目录已快进GitHub main，当前候选与预览仍独立。
+
+## 2026-10-31 收口与服务器化的直接边界
+
+当前文档只在CHAR1011开发候选维护；默认聊天旧检出、manual-acceptance运行副本、main和发行包分别记录。本轮已修智能画布冲突与资产批量删除的直接失败路径：两类画布复用同一canvas-conflict-draft会话草稿/UI与原版本API；素材删除先经原local_json/CAS提交目录，再清理库内副本，失败保留可恢复字节。未新建保存器或资源账本，跨介质中断恢复仍另列。团队服务器/桌面共享业务服务，操作系统凭据、启停、文件桥接留在适配层。模块提取只覆盖本次相关业务，不建立第二套资源/任务/保存事实源。角色/资产部门共享和PS回写仍按真实接口与生命周期推进，不因新侧栏存在宣称已完成。
+
+
+## 2026-10-31 拖拽整理预览
+
+`canvas-asset-shelf.js/css`集中维护库选择、目录请求、拖动来源与落点、取消和撤销。两类编辑器提供媒体列表、原插入能力及原节点拖动的预览/落下钩子；命中侧栏由编辑器恢复节点位置，未命中继续原移动，侧栏不改画布JSON。智能多图拆出收藏只恢复本次源项/临时节点，不用旧整页快照覆盖新任务结果。画布来源不新增副本，库内来源明确拖回才插入。
+
+读写继续走原asset-library和Owner/资源授权；库选择仅展示Gateway已允许的目录，`reference_shelf_owner`不能替代授权。同账号不同库名支持多产品库，同账号同名复用；取消表单不写请求。图片/视频/音频共用原媒体分类和副本，整理显式`classify=false`。移动只改元数据，撤销收藏使用`keep_file=true`保留可能被画布引用的字节。没有新资源、任务、保存系统或共享策略；准确边界、责任和回退见[预览记录](docs/ops/ASSET-SHELF-PREVIEW-2026-10-31.md)。
+
+## 2026-10-30 资源与本机保存收敛
+
+`media_download`只处理不可信媒体GET的地址和连接，授权仍由interceptors维护；不改变已配置Comfy/供应商客户端。`media_response`只隔离可变媒体响应，不作用于应用HTML。`workflow_archive`只有用户工作流展开限额，不接管素材存储或发行包校验。
+
+`local_json.document_lock`为原JSON读改写增加跨进程协调，继续使用原子替换；不是数据库/文件的通用事务。画布meta/touch/删除/恢复与管理员项目调整复用它。`canvas-conflict-draft`只提供冲突会话草稿及恢复UI，服务端仍走原画布API，两类画布没有第二个保存系统。适用版本和余项见[收敛记录](docs/ops/DEVELOPMENT-CONVERGENCE-2026-10-30.md)。
 
 ## 2026-10-27 本地保存与传输模块
 
@@ -104,3 +154,16 @@ C7 `ops/update/sequence.py` 只协调已声明路径，逐跳消费共享 MVP �
 2026-10-15 前端增量约束：沿用当前页面的主题变量、字体、圆角、面板、按钮和交互层级。新的文本结果视图与已有日志/错误详情保持一致，设置页和两类画布共用 static/css/comfy-outputs.css；不得以临时原生控件、散落硬编码样式另立视觉体系。页面/交互变更先告知负责人方案，再按实际页面路径验收。
 
 2026-10-20 已批准候选的限定增量：`install_database_preparation` 只为 C6 离线升级处理 WAL=0、SHM=32768 的既有成对残留。只读资格与写连接分开，实际 SQLite 处理由原 `install_upgrade` 计划、kernel lease 和启动 fence 保护，并在 SQLite 互斥内重新核验；默认生命周期检查仍拒绝旁路文件。非空 WAL、journal、未知对象/锁与不能证明一致性的状态继续阻断，不手工删除日志、不恢复旧数据库、不替代版本化迁移。新能力以候选 PR 为准，不视为正式 v2026.10.3 已具备。
+
+## 2026-10-29 角色编辑与分类资产
+
+`character-editor-view`维护三栏界面、编辑历史与当前图片；`character-assets-view`维护类别和预览，`character-design`维护纯词汇/构图规则；`character-image-action`只适配原图片任务与显式采用，创建/编辑/类别回执按账号分离。Studio仍为资料保存/上传/画布适配的唯一编排入口。服务端`character_design`只验证参数结构，`characters`重查媒体和版本，Repository原子保存；不复制权限、素材存储或任务事实源。前端维护者同步两类画布接线、主题与任务边界，领域维护者维护兼容/授权/冲突测试；实时预览和音色未接入时必须明确说明，不能仅提供控件即宣称实现。详见[实施记录](docs/ops/CHARACTER-EDITOR-ASSETS-2026-10-29.md)。
+
+
+2026-10-30续修边界：`character-retouch-preview.js`负责本地预览生命周期和参数，编辑器负责原图/像素保存及异步草稿一致性；`character-asset-batch.js`只串行编排原图片回执，未知中断不自动重提；`character-voice-view.js`管理试听与采用。服务端`character_voice_tasks.py`复用共享journal/dispatcher、凭据绑定及原媒体授权；`character_media.py`仅解析规范、真实存在的公开内置角色图片，供main的JSON/multipart参考图转换共用，通用资源删除逻辑不接入此解析器。schema1可选`design.preview_source`及`voice.url`独立授权，无SQLite迁移。原预览资源完整随包，开发机已验证像素保存、主题/窄窗口及真实兼容语音；资产流程与剩余效果边界见[本轮记录](docs/ops/CHARACTER-EDITOR-ASSETS-2026-10-29.md)，不将本地检查写成正式发行或参考站私有算法一致。
+
+2026-10-30工作台续修：原预览引擎输出已检测人脸框只读信息，`character-retouch-preview.js`按公开模块802379计算显示取景，`character-editor-view.js`仅消费变换并呈现渐隐/模糊。显示变换不进入导出像素或业务数据，无额外推理、任务接口或凭据依赖；原接口与回执语义保持原边界。
+
+角色库完整入口修复：`CharacterLibraryView.resetHome/clearFilters`仅管理展示与筛选，普通工具栏打开恢复完整轮播；Studio保留脏草稿和创建/任务恢复上下文。相邻选中变化不销毁人体，轮播重建及关闭统一释放。角色资料、媒体权限和原任务账本不因展示重置改写。
+
+角色导入资产选择由`character-asset-picker.js/css`独立负责：只读取现有已授权的画布索引、生成历史、保存素材和登记上传，管理当前选择/项目过滤/排序并向宿主返回确认图片。`character-creation-view`负责入口返回目的地及后续导入确认，Studio仍负责原会话；选择器不保存角色、不调用供应商、不复制素材/权限服务。未知项目关联不猜测为当前项目，取消后迟到读取不能复活页面；完整资产管理写入另属独立增量。

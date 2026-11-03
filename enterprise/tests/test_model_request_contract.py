@@ -113,7 +113,7 @@ def test_edit_uses_multipart_contract_and_never_resubmits_on_failure(builders, t
     env, calls, status = builders
     image = tmp_path / 'fixture.png'
     image.write_bytes(b'fixture-image-bytes')
-    env.update({'output_file_from_url':lambda url:str(image), 'content_type_for_path':lambda path:'image/png', '__builtins__':__builtins__})
+    env.update({'image_reference_file':lambda url:str(image), 'content_type_for_path':lambda path:'image/png', '__builtins__':__builtins__})
     import os
     env['os'] = os
     status[0] = 400
