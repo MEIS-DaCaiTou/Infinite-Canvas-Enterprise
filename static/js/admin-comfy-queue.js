@@ -4,6 +4,7 @@
     const en=()=>document.documentElement.lang.startsWith('en');
     const t=(zh,english)=>en()?english:zh;
     let policy=null,dirty=false,timer;
+    const releasing=new Set();
     const element=(tag,content,className)=>{const node=document.createElement(tag);if(content!==undefined)node.textContent=content;if(className)node.className=className;return node;};
     async function request(options){
         const response=await fetch('/enterprise/api/admin/comfy-queue',{cache:'no-store',...options});
@@ -51,10 +52,28 @@
         const host=document.getElementById('comfyQueueActivity');host.replaceChildren();
         host.append(element('p',t(`${status.running} 个执行或核对中 · ${status.waiting} 个平台等待 · ${status.outstanding} 个未结束`,`${status.running} running/checking · ${status.waiting} waiting · ${status.outstanding} unfinished`),'queue-note'));
         const states={platform_queued:t('平台等待','Platform queue'),preparing:t('准备中','Preparing'),running:t('运行中','Running'),queued:t('后端排队','Backend queue'),reconnecting:t('重新连接','Reconnecting'),retrieving:t('保存结果','Saving result'),unknown:t('待核对','Needs checking')};
-        const jobs=table([t('成员','Member'),t('工作流','Workflow'),t('状态','Status'),t('提交时间','Submitted')]);
-        status.items.forEach(row=>{const tr=element('tr');[row.user_name,row.workflow_json,states[row.phase] || row.phase,new Date(row.created_at*1000).toLocaleString()].forEach(text=>tr.append(element('td',text || '—')));jobs.body.append(tr);});
-        if(!status.items.length){const row=element('tr'),cell=element('td',t('当前没有未结束任务','No unfinished tasks'));cell.colSpan=4;cell.className='queue-empty';row.append(cell);jobs.body.append(row);}
+        const jobs=table([t('成员','Member'),t('工作流','Workflow'),t('状态','Status'),t('提交时间','Submitted'),t('操作','Action')]);
+        status.items.forEach(row=>{
+            const tr=element('tr');[row.user_name,row.workflow_json,states[row.phase] || row.phase,new Date(row.created_at*1000).toLocaleString()].forEach(text=>tr.append(element('td',text || '—')));
+            const action=element('td');
+            if(row.can_release){
+                const button=element('button',t('释放名额','Release slot'),'action-btn');button.type='button';button.disabled=releasing.has(row.id);
+                button.onclick=async()=>{
+                    if(releasing.has(row.id))return;
+                    releasing.add(row.id);button.disabled=true;
+                    try{
+                        const response=await fetch('/enterprise/api/admin/comfy-queue/'+encodeURIComponent(row.id)+'/release',{method:'POST',cache:'no-store'});
+                        const data=await response.json();if(!response.ok)throw new Error(data.detail || t('释放失败，请重试','Release failed; retry'));
+                        renderStatus(data.status);message(data.message);
+                    }catch(error){message(error.message,true);button.disabled=false;}
+                    finally{releasing.delete(row.id);}
+                };action.append(button);
+            }
+            tr.append(action);jobs.body.append(tr);
+        });
+        if(!status.items.length){const row=element('tr'),cell=element('td',t('当前没有未结束任务','No unfinished tasks'));cell.colSpan=5;cell.className='queue-empty';row.append(cell);jobs.body.append(row);}
         host.append(jobs.wrap);
+        if(status.items.some(row=>row.can_release))host.append(element('p',t('旧任务待核对且错误占用名额时，可释放名额。不会重提或终止后端任务，原任务记录保留。','Release a stale task slot without resubmitting or stopping backend work. The original receipt remains.'),'queue-note'));
         for(const [group,health] of Object.entries(status.resources || {}))if(status.waiting&&!health.available)host.append(element('p',t(`${group}：后端连接暂不可用，任务保留在平台等待。`,`${group}: backend unavailable; tasks remain in the platform queue.`),'queue-note'));
     }
     function message(content,error=false){const node=document.getElementById('comfyQueueMessage');node.textContent=content;node.dataset.error=String(error);}

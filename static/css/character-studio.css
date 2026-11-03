@@ -252,6 +252,19 @@
   place-items: center;
   background: var(--character-overlay) !important;
 }
+.character-clear-filters {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  padding: 0 10px !important;
+  border-radius: 999px !important;
+  background: var(--character-overlay) !important;
+  color: var(--character-text);
+  font-size: 12px !important;
+  white-space: nowrap;
+}
+.character-clear-filters svg { width: 14px; height: 14px; }
 .character-search {
   display: flex;
   height: 32px;
@@ -628,6 +641,7 @@ html body .character-studio input.character-range::-moz-range-thumb {
   color: var(--character-inverse);
 }
 .character-studio .character-primary:hover {
+  background: var(--character-text);
   opacity: 0.9;
 }
 .character-create-wrapper {
@@ -1025,12 +1039,22 @@ html body .character-studio .character-generator-prompt textarea {
 .character-pick-assets {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
+  /* Keep each thumbnail row at its content height; scroll surplus rows
+   * instead of shrinking every card into the available dialog height. */
+  grid-auto-rows: max-content;
+  align-content: start;
+  flex: 1;
   gap: 12px;
   padding: 0 24px 24px;
   overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   min-height: 0;
 }
 .character-pick-assets button {
+  display: flex;
+  flex-direction: column;
+  height: auto;
   min-width: 0;
   overflow: hidden;
   text-align: left;
@@ -1038,6 +1062,8 @@ html body .character-studio .character-generator-prompt textarea {
   padding: 8px;
 }
 .character-pick-assets img {
+  display: block;
+  flex: none;
   width: 100%;
   height: 150px;
   object-fit: contain;
@@ -1045,11 +1071,14 @@ html body .character-studio .character-generator-prompt textarea {
 }
 .character-pick-assets span {
   display: block;
+  flex: none;
+  width: 100%;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
   margin-top: 6px;
   font-size: 12px;
+  line-height: 18px;
 }
 .character-pick-assets > p {
   grid-column: 1/-1;
@@ -1174,7 +1203,8 @@ html body .character-studio .character-generator-prompt textarea {
 .character-assets-detail {
   position: absolute;
   inset: 0;
-  z-index: 20;
+  /* Preview must sit above the studio's outer close button (60). */
+  z-index: 65;
 }
 .character-assets-dismiss {
   position: absolute;

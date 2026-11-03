@@ -1,3 +1,4 @@
+let canvasAssetShelf = null;
 const params = new URLSearchParams(location.search);
 const canvasId = params.get('id') || '';
 const sourceProjectId = params.get('project') || '';
@@ -93,6 +94,10 @@ let didPan = false;
 let portDragState = null;
 let saveTimer = null;
 let smartSaveRevision = 0;
+let smartSavedContent = "";
+let smartSaveConflict = false;
+let smartSavePromise = null;
+let smartSaveAgain = false;
 let apiProviders = [];
 let comfyWorkflows = [];
 let comfyInstanceCount = 1;
@@ -5270,28 +5275,28 @@ function mergeSmartConnections(localConns, remoteConns, nodeIds){
     return out;
 }
 function applyMergedServerCanvas(serverCanvas){
-    if(!serverCanvas || !canvas) return false;
-    const remoteNodes = (Array.isArray(serverCanvas.nodes) ? serverCanvas.nodes : []).map(normalizeLegacySmartNode).filter(Boolean);
-    const mergedNodes = mergeSmartNodeLists(nodes, remoteNodes);
-    const nodeIds = new Set(mergedNodes.map(n => n.id));
-    nodes = mergedNodes;
-    canvas.connections = mergeSmartConnections(canvas.connections, serverCanvas.connections, nodeIds);
-    canvas.logs = mergeSmartGenerationLogs(canvas.logs, serverCanvas.logs);
+    if(!serverCanvas || !canvas || canvasSyncInFlight || smartSaveConflict) return false;
+    if(Number(serverCanvas.updated_at || 0) <= Number(canvas.updated_at || 0)) return false;
+    if(hasSmartCanvasChanges()){ pauseSmartCanvasConflict(); return false; }
+    // A clean page follows the actual remote state. Do not union deleted nodes,
+    // promote a dirty page's save base, or silently resolve same-field edits.
+    canvas = {...serverCanvas};
+    nodes = (Array.isArray(serverCanvas.nodes) ? serverCanvas.nodes : []).map(normalizeLegacySmartNode).filter(Boolean);
+    canvas.connections = Array.isArray(serverCanvas.connections) ? serverCanvas.connections : [];
+    canvas.logs = normalizeSmartGenerationLogs(serverCanvas.logs);
+    canvasDefaultSmartSettings = cloneSmartSettings(serverCanvas.settings || initialSmartSettings);
+    smartSavedContent = JSON.stringify(smartCanvasSaveContent());
     const cleanedState = clearCompletedNodeBusyStates();
     const recoveredLoopOutputs = recoverStuckLoopOutputsFromLogs();
-    canvas.updated_at = Number(serverCanvas.updated_at || canvas.updated_at || 0);
-    if(canvas.title !== serverCanvas.title && serverCanvas.title){
-        canvas.title = serverCanvas.title;
-        const titleEl = document.getElementById('smartTitle');
-        if(titleEl) titleEl.textContent = canvas.title;
-    }
+    const titleEl = document.getElementById('smartTitle');
+    if(titleEl) titleEl.textContent = canvas.title;
     render();
     if(typeof scheduleConnectionLayerRefresh === 'function') scheduleConnectionLayerRefresh();
     if(cleanedState || recoveredLoopOutputs) scheduleSave();
-    resumeSmartPendingTasks();
-    resumeJimengPendingNodes();
+    resumeSmartPendingTasks(); resumeJimengPendingNodes();
     return true;
 }
+
 async function mergeReloadCanvasNow(){
     if(!canvasId) return;
     if(dragState || selectionState){
@@ -5324,7 +5329,7 @@ function startCanvasMetaPoll(){
     if(canvasMetaPollTimer) return;
     canvasMetaPollTimer = setInterval(async () => {
         if(!canvasId || !canvas) return;
-        if(canvasSyncInFlight || dragState || selectionState) return;
+        if(canvasSyncInFlight || smartSaveConflict || dragState || selectionState) return;
         try {
             const res = await fetch(`/api/canvases/${encodeURIComponent(canvasId)}/meta`);
             if(!res.ok) return;
@@ -5846,13 +5851,74 @@ function migrateSmartGroupImageMembers(){
     });
     return changed;
 }
-async function loadCanvas(){
+function smartCanvasSaveContent(){
+    canvas.nodes = nodes;
+    canvas.viewport = {...viewport};
+    const stored = canvasForStorage();
+    (stored.nodes || []).forEach(node => {
+        node.images = (node.images || []).map(img => mediaItemForStorage(stripImageGenerationMeta(img)));
+    });
+    return {title:stored.title || tr('smart.title'), icon:stored.icon || 'sparkles',
+        nodes:stored.nodes || [], connections:stored.connections || [],
+        viewport:stored.viewport || {x:0,y:0,scale:1},
+        logs:normalizeSmartGenerationLogs(stored.logs), settings:stored.settings};
+}
+function hasSmartCanvasChanges(){
+    return !!smartSavedContent && JSON.stringify(smartCanvasSaveContent()) !== smartSavedContent;
+}
+function smartConflictDraft(){
+    return {...canvas, ...smartCanvasSaveContent(), id:canvasId, kind:'smart', updated_at:canvas.updated_at};
+}
+function retainSmartCanvasConflict(){
+    return CanvasConflictDraft.retain(canvasId, smartConflictDraft());
+}
+function pauseSmartCanvasConflict(){
+    smartSaveConflict = true;
+    smartSaveAgain = false;
+    clearTimeout(saveTimer); saveTimer = null;
+    showSmartCanvasConflict();
+}
+function showSmartCanvasConflict(savedDraft=null){
+    const current = () => savedDraft && !smartSaveConflict ? savedDraft : smartConflictDraft();
+    const retained = savedDraft ? true : retainSmartCanvasConflict();
+    CanvasConflictDraft.show({draft:current,retained,
+        onRestore:savedDraft ? () => {
+            canvas = {...canvas,...savedDraft};
+            nodes = (savedDraft.nodes || []).map(normalizeLegacySmartNode).filter(Boolean);
+            viewport = {...viewport,...savedDraft.viewport};
+            canvasDefaultSmartSettings = cloneSmartSettings(savedDraft.settings || initialSmartSettings);
+            smartSaveConflict = true; smartSaveRevision++;
+            applyViewport(); render(); toast('已恢复本页草稿，请另存副本以保留远端修改');
+        } : null,
+        onCopy:async() => {
+            const draft = current();
+            const created = await fetch('/api/canvases',{method:'POST',headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({title:(draft.title || '画布')+' · 本页副本',kind:'smart',project:draft.project})});
+            if(!created.ok) throw new Error('创建副本失败，草稿仍保留');
+            const data = await created.json();
+            const saved = await fetch('/api/canvases/'+encodeURIComponent(data.canvas.id),{method:'PUT',
+                headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({...draft,title:data.canvas.title,base_updated_at:data.canvas.updated_at})});
+            if(!saved.ok) throw new Error('副本内容未保存，草稿仍保留，请重试');
+            CanvasConflictDraft.clear(canvasId);
+            const url = new URL(window.location.href); url.searchParams.set('id',data.canvas.id);
+            window.location.replace(url);
+        },
+        onReload:async(downloaded=false) => {
+            if(!retained && !downloaded) throw new Error('请先下载本页草稿，再读取远端版本');
+            if(!await loadCanvas(true)) throw new Error('远端读取失败，本页草稿仍保留');
+        }
+    });
+}
+
+async function loadCanvas(skipRetainedDraft=false){
     if(!canvasId) return;
     try {
         const res = await fetch(`/api/canvases/${canvasId}`);
-        if(!res.ok) return;
+        if(!res.ok) throw new Error('画布读取失败，本页草稿仍保留');
         const data = await res.json();
         canvas = data.canvas;
+        smartSaveConflict = false;
         canvas.logs = normalizeSmartGenerationLogs(canvas.logs);
         rememberCanvasListProject(canvas.project || 'default');
         canvasUsesConnections = Object.prototype.hasOwnProperty.call(canvas || {}, 'connections');
@@ -5891,74 +5957,57 @@ async function loadCanvas(){
         applyViewport();
         render();
         focusTaskSource();
+        smartSavedContent = JSON.stringify(smartCanvasSaveContent());
         resumeSmartLLMTasks();
         if(cleanedDetachedInputs || cleanedCompletedState || recoveredLoopOutputs || hiddenCompletedTimers) scheduleSave();
         resumeSmartPendingTasks();
         resumeJimengPendingNodes();
         startCanvasMetaPoll();
-    } catch(e) { toast(tr('smart.toastCanvasFail')); }
+        const retained = skipRetainedDraft ? null : CanvasConflictDraft.read(canvasId);
+        if(retained) showSmartCanvasConflict(retained);
+        return true;
+    } catch(e) { toast(e.message || tr('smart.toastCanvasFail')); return false; }
 }
 function scheduleSave(){
     smartSaveRevision++;
     clearTimeout(saveTimer);
+    if(smartSaveConflict){ retainSmartCanvasConflict(); return; }
     saveTimer = setTimeout(saveCanvas, 450);
 }
+
 async function saveCanvas(){
-    if(!canvasId || !canvas) return;
-    savePromptDraftForCurrent();
-    nodes.forEach(node => {
-        node.images = (node.images || []).map(img => mediaItemForStorage(stripImageGenerationMeta(img)));
-        if(node.runSettings) node.runSettings = settingsForStorage(node.runSettings);
-    });
-    canvas.nodes = nodes;
-    canvas.settings = settingsForStorage(canvasDefaultSmartSettings || initialSmartSettings);
-    canvas.viewport = {...viewport};
-    const storageCanvas = canvasForStorage();
-    canvasSyncInFlight = true;
-    try {
-        const res = await fetch(`/api/canvases/${encodeURIComponent(canvasId)}`, {
-            method:'PUT',
-            headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({
-                title:storageCanvas.title || tr('smart.title'),
-                icon:storageCanvas.icon || 'sparkles',
-                nodes:storageCanvas.nodes || [],
-                connections:storageCanvas.connections || [],
-                viewport:storageCanvas.viewport || {x:0,y:0,scale:1},
-                logs:normalizeSmartGenerationLogs(storageCanvas.logs),
-                settings:storageCanvas.settings,
-                base_updated_at:storageCanvas.updated_at || canvas.updated_at || 0,
-                client_id:smartClientId
-            })
-        });
-        if(res.ok){
-            const data = await res.json();
-            if(data.canvas && data.canvas.updated_at) canvas.updated_at = data.canvas.updated_at;
-            return true;
-        } else if(res.status === 409) {
-            // 冲突：别人先保存了。合并对方的状态（节点 id 合并、图片取并集，谁都不丢），
-            // 然后用对方最新的 updated_at 作为基底重存，把合并结果落盘——而不是直接覆盖对方。
-            const data = await res.json().catch(() => ({}));
-            const serverCanvas = data.detail?.canvas;
-            if(serverCanvas){
-                applyMergedServerCanvas(serverCanvas);
-                nodes.forEach(node => {
-                    node.images = (node.images || []).map(img => mediaItemForStorage(stripImageGenerationMeta(img)));
-                    if(node.runSettings) node.runSettings = settingsForStorage(node.runSettings);
-                });
-                canvas.nodes = nodes;
-            } else if(data.detail?.updated_at) {
-                canvas.updated_at = data.detail.updated_at;
-            }
-            clearTimeout(saveTimer);
-            saveTimer = setTimeout(saveCanvas, 300);
-            return 'retry';
-        }
-        return false;
-    } catch(e) {return false;} finally {
-        canvasSyncInFlight = false;
+    if(!canvasId || !canvas) return false;
+    if(smartSaveConflict){ retainSmartCanvasConflict(); showSmartCanvasConflict(); return false; }
+    if(smartSavePromise){ smartSaveAgain = true; return smartSavePromise; }
+    smartSavePromise = saveSmartCanvasOnce();
+    try { return await smartSavePromise; }
+    finally {
+        smartSavePromise = null;
+        if(smartSaveAgain && !smartSaveConflict){ smartSaveAgain=false; scheduleSave(); }
     }
 }
+async function saveSmartCanvasOnce(){
+    savePromptDraftForCurrent();
+    const content = smartCanvasSaveContent();
+    const signature = JSON.stringify(content);
+    if(signature === smartSavedContent) return true;
+    canvasSyncInFlight = true;
+    try {
+        const res = await fetch(`/api/canvases/${encodeURIComponent(canvasId)}`,{
+            method:'PUT',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({...content,base_updated_at:canvas.updated_at || 0,client_id:smartClientId})
+        });
+        if(res.status === 409){ pauseSmartCanvasConflict(); return false; }
+        if(!res.ok) return false;
+        const data = await res.json();
+        if(data.canvas?.updated_at) canvas.updated_at=data.canvas.updated_at;
+        smartSavedContent = signature;
+        if(JSON.stringify(smartCanvasSaveContent()) !== signature) smartSaveAgain = true;
+        return true;
+    } catch(e){ return false; }
+    finally { canvasSyncInFlight=false; }
+}
+
 function imageMetaFromNode(node){
     return {};
 }
@@ -16028,6 +16077,8 @@ window.onmousemove = e => {
             if(canDetachThumb){
                 const img = source.images[thumbDragState.imgIndex];
                 if(img){
+                    const shelfOrigin={nodeId:source.id,index:thumbDragState.imgIndex,image:{...img},title:source.title,w:source.w,h:source.h};
+                    const shelfUndoEntry=pendingUndoSnapshot;
                     commitPendingUndo();
                     undoSuppressed = true;
                     applyNodeMetaToImage(img, source);
@@ -16044,7 +16095,7 @@ window.onmousemove = e => {
                     selectedImage = {nodeId:'', index:-1};
                     const newNode = createImageNodeAt(point, [img], {select:false, skipUndo:true});
                     undoSuppressed = false;
-                    dragState = {id:newNode.id, startX:e.clientX, startY:e.clientY, ox:newNode.x, oy:newNode.y, thumbDetached:true};
+                    dragState = {id:newNode.id, startX:e.clientX, startY:e.clientY, ox:newNode.x, oy:newNode.y, thumbDetached:true,shelfOrigin,shelfUndoEntry};
                     thumbDragState.detached = true;
                     render();
                 }
@@ -16073,6 +16124,9 @@ window.onmousemove = e => {
         n.x = item.ox + moveDx;
         n.y = item.oy + moveDy;
     });
+    if(canvasAssetShelf?.previewNodeDrag(e, window.CanvasAssetShelf.mediaFromNodes((dragState.group || [{id:dragState.id}]).map(row=>nodes.find(n=>n.id===row.id)).filter(Boolean)))){
+        clearDropHighlight();moveNodeElementsDuringDrag();return;
+    }
     if(assetLibraryOpen){
         const hit = document.elementFromPoint(e.clientX, e.clientY);
         if(hit && assetPanel?.contains(hit)){
@@ -16166,6 +16220,23 @@ window.onmouseup = e => {
     }
     if(dragState){
         const draggedNode = nodes.find(n => n.id === dragState.id);
+        const shelfMedia=window.CanvasAssetShelf?.mediaFromNodes((dragState.group || [{id:dragState.id}]).map(row=>nodes.find(n=>n.id===row.id)).filter(Boolean)) || [];
+        if(canvasAssetShelf?.dropNodeDrag(e,shelfMedia)){
+            restoreDraggedNodePosition();
+            if(dragState.thumbDetached && dragState.shelfOrigin){
+                const origin=dragState.shelfOrigin,source=nodes.find(n=>n.id===origin.nodeId);
+                if(source){
+                    source.images ||= [];source.images.splice(Math.min(origin.index,source.images.length),0,origin.image);
+                    source.title=origin.title;
+                    for(const key of ['w','h']){if(origin[key]===undefined)delete source[key];else source[key]=origin[key];}
+                    nodes=nodes.filter(n=>n.id!==dragState.id);
+                    if(isSmartGroupNode(source))arrangeSmartGroupMembers(source,{skipUndo:true,syncDom:true});
+                    if(undoStack.at(-1)===dragState.shelfUndoEntry)undoStack.pop();
+                }
+            }
+            discardPendingUndo();clearDropHighlight();dragState=null;suppressNodeClickUntil=Date.now()+250;
+            render();scheduleSave();return;
+        }
         let stateChanged = false;
         const hit = document.elementFromPoint(e.clientX, e.clientY);
         const droppedOnAssetPanel = assetLibraryOpen && hit && assetPanel?.contains(hit);
@@ -17238,4 +17309,11 @@ CharacterStudio.mount({
         node.title=profile.name; node.characterRef={id:profile.id,revision:profile.revision};
         render(); scheduleSave(); return true;
     }
+});
+
+// Shared collection UI; preserve existing typed media insertion and saves.
+canvasAssetShelf=window.CanvasAssetShelf?.install({
+    items:()=>window.CanvasAssetShelf.mediaFromNodes(nodes),
+    insert:(item,screenPoint)=>createImageNodeAt(screenPoint?screenToWorld({clientX:screenPoint.x,clientY:screenPoint.y}):viewportCenter(),
+        [{url:item.url,name:item.name || '参考素材',kind:item.kind || window.CanvasAssetShelf.mediaKind(item),width:item.width,height:item.height}])
 });

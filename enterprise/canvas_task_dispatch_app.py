@@ -12,8 +12,8 @@ from enterprise.task_canvas_context import accepted_source
 from enterprise.runtime.install_maintenance import maintenance_active
 
 ROUTES = {"online-image": "api/canvas-image-tasks", "comfy": "api/canvas-comfy-tasks",
-          "video": "api/canvas-video-tasks", "llm": "api/canvas-llm-tasks"}
-OWNER_TYPES = {"online-image": "canvas_image", "comfy": "canvas_comfy", "video": "canvas_video", "llm": "canvas_llm"}
+          "video": "api/canvas-video-tasks", "llm": "api/canvas-llm-tasks", "audio": "api/character-voice-tasks"}
+OWNER_TYPES = {"online-image": "canvas_image", "comfy": "canvas_comfy", "video": "canvas_video", "llm": "canvas_llm", "audio": "canvas_audio"}
 
 
 def dispatch_paused(state_root):

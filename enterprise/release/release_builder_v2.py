@@ -414,6 +414,8 @@ def _license_documents(sbom_bytes: bytes, payload: Path, runtime_root: Path, ver
 
 
 def _config_contract() -> bytes:
+    # v1 is also consumed by installed 10.11 upgraders. Keep its core deployment
+    # key set stable; optional runtime-only tuning remains in enterprise.env.example.
     records = [
         ("GATEWAY_PORT", "integer", True, "non-secret-default", False, "runtime", "1..65535"),
         ("UPSTREAM_PORT", "integer", True, "non-secret-default", False, "runtime", "1..65535"),

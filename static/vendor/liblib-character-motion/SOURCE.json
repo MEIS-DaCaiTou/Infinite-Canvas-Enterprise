@@ -1,0 +1,44 @@
+{
+  "assets": [
+    {
+      "file": "midwam-human.glb",
+      "url": "https://libtv-res.liblib.art/character-studio/liblibtv-character-studio-cdn-2026-09-21/motion/midwam-human.glb",
+      "bytes": 179412
+    },
+    {
+      "file": "draco/draco_wasm_wrapper.js",
+      "url": "https://libtv-res.liblib.art/character-studio/liblibtv-character-studio-cdn-2026-09-21/motion/draco/draco_wasm_wrapper.js",
+      "bytes": 80740
+    },
+    {
+      "file": "draco/draco_decoder.wasm",
+      "url": "https://libtv-res.liblib.art/character-studio/liblibtv-character-studio-cdn-2026-09-21/motion/draco/draco_decoder.wasm",
+      "bytes": 192420
+    }
+  ],
+  "gltf_asset": {
+    "generator": "Khronos glTF Blender I/O v1.2.75",
+    "version": "2.0"
+  },
+  "extensions": [
+    "KHR_draco_mesh_compression"
+  ],
+  "external_buffers": [],
+  "purpose": "Owner explicitly requested direct use of the originally previewed Liblib human model and renderer in both canvases and delivery dependencies on 2026-10-29; no replacement model.",
+  "renderer": {
+    "bundle": "https://liblibai-web-static.liblib.cloud/liblibtv_online/static/_next/static/chunks/258ckt1vw9j5s.js",
+    "module": 975790,
+    "adaptation": "ES module imports, local asset paths, local disposal helper; original bundle bootstrap and RUM excluded."
+  },
+  "decoder_license_source": "https://raw.githubusercontent.com/google/draco/main/LICENSE",
+  "creation_ui": {
+    "bundle": "https://liblibai-web-static.liblib.cloud/liblibtv_online/static/_next/static/chunks/209jfngjispvf.js",
+    "inspected_functions": [
+      "sh",
+      "s9"
+    ],
+    "stylesheet": "https://liblibai-web-static.liblib.cloud/liblibtv_online/static/_next/static/chunks/11a35r_bmgq85.css",
+    "adaptation": "Generator/menu presentation inspected and adapted in character-creation-view/library-view; uploads, tasks, ownership and pricing use Enterprise APIs. No original business API or credit system is executed."
+  },
+  "license_status": "No license declaration supplied for original model/renderer; source recorded, not relabeled MIT or CC0."
+}

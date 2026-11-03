@@ -45,6 +45,47 @@ def test_persistence_isolation_and_reference_reuse(domain, tmp_path):
     assert error.value.status == 403
 
 
+def test_design_and_typed_assets_roundtrip_and_revoked_access(domain):
+    service, allowed = domain
+    allowed.add('/assets/output/portrait.png')
+    design = {'version': 1, 'values': {'smooth': 20, 'hair': '长直发'}, 'notes': '保留衣服'}
+    row = service.save(ALICE, payload(design=design, assets={'portrait': '/assets/output/portrait.png'}))
+    assert row['design'] == design
+    assert service.list(ALICE)[0]['assets'] == {'portrait': '/assets/output/portrait.png'}
+    allowed.remove('/assets/output/portrait.png')
+    assert service.list(ALICE)[0]['assets'] == {}
+    with pytest.raises(CharacterError) as error:
+        service.save(ALICE, payload(expected_revision=1, design=design, assets=row['assets']), row['id'])
+    assert error.value.status == 403
+    assert service.repository.list('alice')[0]['revision'] == 1
+
+
+@pytest.mark.parametrize('extra', [
+    {'design': {'version': 2}}, {'design': {'version': True}}, {'design': {'version': 1, 'values': {'smooth': True}}},
+    {'design': {'version': 1, 'values': {'smooth': 101}}},
+    {'design': {'version': 1, 'values': {'unknown': 0}}},
+    {'design': {'version': 1, 'notes': 'x'*1001}},
+    {'assets': {'audio': '/assets/input/alice.png'}},
+    {'assets': {'portrait': 'https://external.invalid/photo.png'}},
+])
+def test_invalid_design_or_asset_contract_never_writes(domain, extra):
+    service, _ = domain
+    with pytest.raises(CharacterError) as error:
+        service.save(ALICE, payload(**extra))
+    assert error.value.status == 400
+    assert not service.repository.list('alice')
+
+
+def test_old_client_save_preserves_new_metadata_and_conflict_rules(domain):
+    service, _ = domain
+    row = service.save(ALICE, payload(design={'version':1,'values':{'height':25}}, assets={'full_body':'/assets/input/alice.png'}))
+    updated = service.save(ALICE, payload(name='old client', expected_revision=1), row['id'])
+    assert updated['assets'] == row['assets'] and updated['design'] == row['design']
+    with pytest.raises(CharacterError) as error:
+        service.save(ALICE, payload(expected_revision=1, assets={}), row['id'])
+    assert error.value.status == 409
+
+
 @pytest.mark.parametrize('body', [payload(name=''), payload(name='x'*81), payload(images=[]),
     payload(images=['/assets/input/alice.png']*13), payload(images=['https://external.invalid/x.png']),
     payload(images=['/assets/input/code.svg']), payload(gender='unknown'), payload(user_id='bob')])
@@ -189,6 +230,17 @@ def test_catalog_never_publishes_private_references(tmp_path):
     assert error.value.status == 503
 
 
+def test_catalog_typed_asset_cannot_smuggle_private_media(tmp_path):
+    path = tmp_path / 'catalog.json'
+    path.write_text(json.dumps({'schema_version':1,'characters':[
+        {'id':'bad','name':'Bad','images':['/static/characters/example.png'],
+         'assets':{'portrait':'/assets/input/private.png'}}]}),encoding='utf8')
+    service = Characters(CharacterRepository(tmp_path,path),lambda value:value,lambda *_:True)
+    with pytest.raises(CharacterError) as error:
+        service.catalog(ALICE)
+    assert error.value.status == 503
+
+
 def test_bundled_catalog_uses_real_media_normalizer(tmp_path):
     from enterprise.interceptors import normalize_resource_url, can_access_resource
     path = tmp_path / 'catalog.json'
@@ -222,3 +274,25 @@ def test_old_profiles_without_cover_remain_readable(domain):
     with pytest.raises(CharacterError) as error:
         service.save(ALICE,payload(cover_url=False))
     assert error.value.status==400
+
+
+def test_preview_original_and_voice_have_independent_authorization(domain):
+    service,allowed=domain
+    allowed.update({'/assets/input/original.png','/assets/output/voice.mp3'})
+    data=payload(design={'version':1,'values':{'smooth':20},'preview_source':'/assets/input/original.png'},
+                 voice={'provider_id':'fixture','model':'tts-1','voice':'alloy','speed':1,'url':'/assets/output/voice.mp3'})
+    row=service.save(ALICE,data)
+    assert row['design']['preview_source']=='/assets/input/original.png'
+    assert row['voice']['url']=='/assets/output/voice.mp3'
+    allowed.remove('/assets/input/original.png');allowed.remove('/assets/output/voice.mp3')
+    current=service.list(ALICE)[0]
+    assert 'preview_source' not in current['design'] and 'url' not in current['voice']
+    assert service.repository.list('alice')[0]['voice']['url']=='/assets/output/voice.mp3'
+    with pytest.raises(CharacterError) as denied:service.save(ALICE,{**data,'expected_revision':1},row['id'])
+    assert denied.value.status==403
+
+
+@pytest.mark.parametrize('voice', [{'speed':True},{'speed':float('nan')},{'speed':5},{'url':'https://foreign.invalid/voice.mp3'},{'api_key':'not-allowed'}])
+def test_invalid_voice_metadata_rejected(domain,voice):
+    service,_=domain
+    with pytest.raises(CharacterError):service.save(ALICE,payload(voice=voice))

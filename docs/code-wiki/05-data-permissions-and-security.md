@@ -1,5 +1,7 @@
 # 数据、权限与安全
 
+2026-10-31本地边界：资源所有权继续由interceptors核验；下载media_download逐跳解析并绑定已检查IP，Comfy专用私网客户端仍保留。media_response在Gateway可变媒体边界隔离主动内容；裸main独立暴露不在该保证内。local_json的文档锁/CAS与原子替换分别保护单文件读改写/发布，不能代替跨SQLite、目录和媒体的恢复。WindowsCredentialVault绑定Windows当前用户DPAPI，Linux/异机须受控重配与新适配；不能把密文随DB复制当完成迁移。
+
 > 源码参考快照（2026-10-13）：main@e89a288（已合并 #154/#155/#156）；产品功能源码基点 #156@4bdd9a1 保留；C5/C6/C7 已合并，构建与验收范围仍引用其准确记录。本文是代码/运行参考，当前 PR/CI、Release 和验收只见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，实施顺序只认路线图。
 
 [返回索引](./README.md)

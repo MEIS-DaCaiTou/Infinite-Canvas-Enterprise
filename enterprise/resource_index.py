@@ -32,8 +32,7 @@ class ResourceReferenceIndex:
             self._references -= len(old[2])
             self._reference_chars -= old[3]
 
-    def matching_ids(self, paths, resource_url, load_json, extract_urls):
-        result = set()
+    def _snapshots(self, paths, load_json, extract_urls):
         with self._lock:
             for path in paths:
                 path = Path(path)
@@ -43,7 +42,7 @@ class ResourceReferenceIndex:
                     cached = self._entries.get(key)
                     if cached is not None and cached[0] == fingerprint:
                         self._entries.move_to_end(key)
-                        _, identifier, urls, _weight = cached
+                        _, identifier, urls, _weight, metadata = cached
                     else:
                         self._discard(key)
                         data = load_json(path)
@@ -54,17 +53,35 @@ class ResourceReferenceIndex:
                         # A concurrent save must not create a reusable stale entry.
                         if self._fingerprint(path) != fingerprint:
                             continue
-                        weight = sum(len(url) for url in urls)
+                        metadata = {'id': identifier, 'project': str(data.get('project') or '').strip() or 'default',
+                                    'deleted_at': data.get('deleted_at') or 0,
+                                    'created_at': data.get('updated_at') or data.get('created_at') or 0}
+                        weight = sum(len(url) for url in urls) + len(metadata['project'])
                         if (fingerprint[2] <= self.max_file_bytes and len(urls) <= self.max_references
                                 and weight <= self.max_reference_chars):
-                            self._entries[key] = (fingerprint, identifier, urls, weight)
+                            self._entries[key] = (fingerprint, identifier, urls, weight, metadata)
                             self._references += len(urls)
                             self._reference_chars += weight
                             while (len(self._entries) > self.max_files or self._references > self.max_references
                                    or self._reference_chars > self.max_reference_chars):
                                 self._discard(next(iter(self._entries)))
-                    if identifier and resource_url in urls:
-                        result.add(identifier)
+                    yield identifier, urls, metadata
                 except (OSError, ValueError, TypeError):
                     self._discard(key)
-        return result
+    def matching_ids(self, paths, resource_url, load_json, extract_urls):
+        return {identifier for identifier, urls, _ in self._snapshots(paths, load_json, extract_urls)
+                if identifier and resource_url in urls}
+
+    def canvas_context(self, paths, requested_urls, canvas_id, load_json, extract_urls, url_key):
+        """One bounded-cache pass, only requested page URLs; caller still filters ownership."""
+        wanted = None if requested_urls is None else {url_key(url) for url in requested_urls}
+        canvases, items = [], []
+        for identifier, urls, metadata in self._snapshots(paths, load_json, extract_urls):
+            if metadata['deleted_at']:
+                continue
+            available = {url_key(url) for url in urls}
+            matches = available if wanted is None else available & wanted
+            if matches or identifier == canvas_id:
+                canvases.append({'id': identifier, 'project': metadata['project']})
+                items.extend({'url': url, 'canvas_id': identifier, 'created_at': metadata['created_at']} for url in sorted(matches))
+        return {'canvases': canvases, 'items': items}

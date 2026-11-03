@@ -1,0 +1,111 @@
+/* The role picker is a shared read-only client of existing asset APIs. */
+.character-creation-screen.is-asset-picker {
+  background: #fff;
+  border-radius: inherit;
+  overflow: hidden;
+}
+:root:is(.theme-dark, .studio-theme-dark) .character-creation-screen.is-asset-picker {
+  background: #16191d;
+}
+.character-asset-picker {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  font-size: 14px;
+}
+.character-asset-sidebar {
+  min-width: 0;
+  padding: 12px 10px;
+  border-right: 1px solid var(--character-border);
+}
+.character-asset-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  margin-bottom: 10px;
+}
+.character-asset-heading h2 { font-size: 14px; margin: 0; font-weight: 600; }
+.character-studio .character-asset-back { width: 24px; height: 28px; font-size: 24px; }
+.character-asset-sources { display: flex; flex-direction: column; gap: 6px; }
+.character-asset-sources button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  text-align: left;
+  color: var(--character-muted);
+  border-radius: 12px;
+}
+.character-asset-sources button[aria-pressed="true"] {
+  background: var(--character-active);
+  color: var(--character-text);
+  font-weight: 600;
+}
+.character-asset-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.character-asset-scopes { display: flex; gap: 18px; height: 56px; padding: 0 56px 0 22px; flex: none; }
+.character-asset-scopes button { color: var(--character-muted); font-weight: 600; }
+.character-asset-scopes button[aria-pressed="true"] { color: var(--character-text); }
+.character-asset-tools { display: flex; align-items: center; justify-content: space-between; height: 46px; padding: 0 22px 12px; flex: none; }
+.character-asset-kind { border-radius: 20px; padding: 4px 12px; background: var(--character-active); font-size: 12px; }
+.character-asset-tools button { display: grid; place-items: center; width: 30px; height: 30px; color: var(--character-muted); }
+.character-asset-tools svg { width: 16px; height: 16px; }
+.character-asset-picker .character-pick-assets { grid-template-columns: repeat(5, minmax(0, 1fr)); padding: 0 22px 20px; }
+.character-asset-picker .character-pick-assets > button {
+  position: relative;
+  border: 2px solid transparent;
+  border-radius: 12px;
+}
+.character-asset-picker .character-pick-assets > button:hover { background: var(--character-active); }
+.character-asset-picker .character-pick-assets > button[aria-checked="true"] { border-color: var(--character-text); }
+.character-asset-picker .character-pick-assets > button[aria-checked="true"]::after {
+  content: "✓";
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--character-inverse);
+  background: var(--character-text);
+  font-size: 12px;
+}
+.character-asset-empty {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  min-height: 0;
+  gap: 10px;
+  padding: 24px;
+  text-align: center;
+}
+.character-asset-picker .character-pick-assets.is-empty { display: flex; }
+.character-asset-empty > svg { width: 30px; height: 30px; }
+.character-asset-empty p { margin: 0; font-weight: 600; }
+.character-asset-empty small { color: var(--character-muted); }
+.character-asset-empty button { padding: 7px 14px; background: var(--character-active); }
+.character-asset-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 68px;
+  flex: none;
+  padding: 0 16px 0 22px;
+  border-top: 1px solid var(--character-border);
+}
+.character-asset-selection { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--character-muted); font-size: 12px; }
+.character-asset-footer button { height: 36px; min-width: 80px; padding: 0 14px; background: var(--character-active); }
+.character-asset-footer .character-primary { color: var(--character-inverse); background: var(--character-text); }
+.character-asset-footer .character-primary:hover { opacity: .85; background: var(--character-text); }
+.character-asset-picker .character-asset-more { grid-column:1/-1; width:100%; min-height:38px; padding:9px 14px; color:var(--character-text); background:var(--character-active); border-radius:10px; font-size:13px; }
+.character-asset-picker .character-asset-more:disabled { opacity:.65; cursor:wait; }

@@ -1472,3 +1472,6 @@ html .comfy-output-popover[data-kind="tooltip"]:popover-open{pointer-events:none
 .comfy-output-cancel:hover:not(:disabled){background:var(--soft-2)}
 .comfy-output-cancel:disabled{color:var(--muted);opacity:.7;cursor:default}
 .comfy-queue-usage{font-size:10px;color:var(--muted,#64748b);line-height:1.5;margin:5px 0;}
+.comfy-queue-usage{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.comfy-task-list{border:1px solid var(--line);border-radius:7px;padding:4px 8px;background:var(--soft);color:var(--text);font:inherit;cursor:pointer}
+.comfy-task-list:hover{background:var(--soft-2)}

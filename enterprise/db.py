@@ -850,19 +850,20 @@ def get_canvas_project(canvas_id: str) -> Optional[str]:
 
 def set_canvas_project(canvas_id: str, project_id: str) -> tuple[bool, Optional[str]]:
     """更新画布 JSON 的 project 字段，返回 (是否写入, 旧 project)。"""
-    data = read_canvas_json(canvas_id)
-    if not data:
-        return False, None
-    old_project = str(data.get("project") or DEFAULT_PROJECT_ID).strip() or DEFAULT_PROJECT_ID
-    new_project = str(project_id or DEFAULT_PROJECT_ID).strip() or DEFAULT_PROJECT_ID
-    if old_project == new_project:
-        return False, old_project
-    data["project"] = new_project
+    from enterprise.local_json import read_json, atomic_write_json, document_lock
     path = _canvas_json_path(canvas_id)
     if not path:
-        return False, old_project
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+        return False, None
+    with document_lock(path):
+        # A damaged file is an error, never an empty canvas to be reconstructed.
+        data = read_json(path)
+        old_project = str(data.get("project") or DEFAULT_PROJECT_ID).strip() or DEFAULT_PROJECT_ID
+        new_project = str(project_id or DEFAULT_PROJECT_ID).strip() or DEFAULT_PROJECT_ID
+        if old_project == new_project:
+            return False, old_project
+        data["project"] = new_project
+        data["updated_at"] = max(int(time.time() * 1000), int(data.get("updated_at") or 0) + 1)
+        atomic_write_json(path, data)
     return True, old_project
 
 
@@ -1294,6 +1295,84 @@ def get_asset_object(object_type: str, object_id: str) -> Optional[dict]:
         conn.close()
 
 
+def asset_library_ownership_snapshot() -> dict:
+    """Current-request batch of the same ownership facts used by legacy reads."""
+    conn = get_db()
+    try:
+        conn.execute('BEGIN')
+        objects = conn.execute('SELECT object_type, object_id, user_id, resource_url FROM user_asset_object_map ORDER BY updated_at DESC').fetchall()
+        resources = conn.execute('SELECT resource_url, user_id FROM user_resource_map').fetchall()
+        by_resource = {}
+        for row in objects:
+            if row['object_type'] == 'item' and row['resource_url']:
+                by_resource.setdefault(row['resource_url'], row['user_id'])
+        return {'objects': {(r['object_type'], r['object_id']): r['user_id'] for r in objects},
+                'resources': {r['resource_url']: r['user_id'] for r in resources}, 'item_resources': by_resource}
+    finally:
+        conn.close()
+
+
+def asset_library_query_snapshot(user_id, lookup):
+    """Current read transaction, scoped by possible grants and document positions.
+
+    The lookup contains only file-derived IDs/URLs. It cannot grant access:
+    original item/resource/latest-legacy precedence is applied by the caller.
+    """
+    conn = get_db()
+    try:
+        conn.execute('BEGIN')
+        granted_items = conn.execute(
+            "SELECT object_id, resource_url FROM user_asset_object_map WHERE user_id=? AND object_type='item'",
+            (user_id,),
+        ).fetchall()
+        granted_urls = conn.execute('SELECT resource_url FROM user_resource_map WHERE user_id=?', (user_id,)).fetchall()
+        positions = set()
+        for row in granted_items:
+            positions.update(lookup.by_id.get(row['object_id'], ()))
+            positions.update(lookup.by_resource.get(row['resource_url'], ()))
+        for row in granted_urls:
+            positions.update(lookup.by_resource.get(row['resource_url'], ()))
+        identifiers, urls = set(), set()
+        for position in positions:
+            _li, _ci, identifier, url, _item = lookup.entries[position]
+            if identifier:
+                identifiers.add(identifier)
+            if url:
+                urls.add(url)
+
+        # SQLite's parameter budget is finite. Chunk values, not authorization:
+        # all chunks remain within this same current read transaction.
+        def chunks(values):
+            values = sorted(values)
+            for start in range(0, len(values), 400):
+                selected = values[start:start + 400]
+                yield selected, ','.join('?' for _ in selected)
+
+        objects = {}
+        container_ids = {identifier for _kind, identifier in lookup.containers}
+        for values, marks in chunks(container_ids):
+            for row in conn.execute(
+                f"SELECT object_type, object_id, user_id FROM user_asset_object_map WHERE object_type IN ('library','category') AND object_id IN ({marks})", values
+            ):
+                objects[(row['object_type'], row['object_id'])] = row['user_id']
+        for values, marks in chunks(identifiers):
+            for row in conn.execute(
+                f"SELECT object_id, user_id FROM user_asset_object_map WHERE object_type='item' AND object_id IN ({marks})", values
+            ):
+                objects[('item', row['object_id'])] = row['user_id']
+        resources, legacy = {}, {}
+        for values, marks in chunks(urls):
+            for row in conn.execute(f'SELECT resource_url,user_id FROM user_resource_map WHERE resource_url IN ({marks})', values):
+                resources[row['resource_url']] = row['user_id']
+            for row in conn.execute(
+                f"SELECT resource_url,user_id FROM user_asset_object_map WHERE object_type='item' AND resource_url IN ({marks}) ORDER BY updated_at DESC", values
+            ):
+                legacy.setdefault(row['resource_url'], row['user_id'])
+        return {'objects': objects, 'resources': resources, 'item_resources': legacy}, positions
+    finally:
+        conn.close()
+
+
 def get_asset_item_owner_by_resource(resource_url: str) -> Optional[str]:
     resource_url = (resource_url or "").strip()
     if not resource_url:
@@ -1569,7 +1648,7 @@ def get_task(task_type: str, task_id: str) -> Optional[dict]:
 
 def list_owned_canvas_tasks(user_id: str, *, before=None, limit=100, task_type="") -> list[dict]:
     """Owner-first keyset lookup; journal records remain the task state source."""
-    clauses = ["user_id = ?", "task_type IN ('canvas_image', 'canvas_comfy', 'canvas_video', 'canvas_llm')"]
+    clauses = ["user_id = ?", "task_type IN ('canvas_image', 'canvas_comfy', 'canvas_video', 'canvas_llm', 'canvas_audio')"]
     values = [user_id]
     if task_type:
         clauses.append("task_type = ?")

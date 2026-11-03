@@ -1,5 +1,5 @@
 from enterprise.providers.comfyui import (
-    ComfyClient, ComfyExecutionError, ComfyCancelledError, base_url as comfy_base_url,
+    ComfyClient, ComfyExecutionError, ComfyNotSubmittedError, ComfyCancelledError, base_url as comfy_base_url,
     endpoint as comfy_endpoint, view_path as comfy_view_path,
 )
 import json
@@ -29,10 +29,11 @@ import tempfile
 import math
 import shlex
 import functools
+from pathlib import Path
 import html
 import xml.etree.ElementTree as ET
 from typing import List, Dict, Any, Optional, Tuple
-from threading import Lock, Thread
+from threading import Lock, RLock, Thread
 import httpx
 from PIL import Image, ImageOps
 from io import BytesIO
@@ -54,7 +55,14 @@ from enterprise.config import PATH_ROOTS as _CONFIG_PATH_ROOTS
 from enterprise.paths import get_path_roots, prepare_application_directories
 from enterprise.app_paths import AppPathLayout
 from enterprise.canvas_task_journal import CanvasTaskJournal, create_task_receipt
-from enterprise.local_json import atomic_write_json, read_json
+from enterprise.local_json import atomic_write_json, read_json, document_lock
+from enterprise.local_uploads import kind_ext as _local_upload_kind_ext, display_name as _local_upload_display_name
+from enterprise.local_uploads import metadata_items as local_upload_metadata_items
+from enterprise.resource_index import ResourceReferenceIndex
+from enterprise import history_records
+from enterprise.media_download import open_media
+from enterprise.workflow_archive import MAX_UPLOAD, MAX_WORKFLOW, inspect_archive, copy_resource
+from enterprise.path_safety import assert_path_within_root, assert_no_reparse_ancestors, PathSafetyError
 from enterprise.task_credentials import CallSourceSelection, credential_bound, scoped_api_key, prepare_task_binding, require_bound_generation, task_error
 from enterprise.department_governance import DepartmentGovernance
 from enterprise.task_canvas_context import TaskCanvasSource
@@ -339,7 +347,7 @@ QUEUE_LOCK = Lock()
 HISTORY_LOCK = Lock()
 GLOBAL_CONFIG_LOCK = Lock()
 CONVERSATION_LOCK = Lock()
-CANVAS_LOCK = Lock()
+CANVAS_LOCK = RLock()
 LOAD_LOCK = Lock()
 RUNNINGHUB_WORKFLOW_LOCK = Lock()
 NEXT_TASK_ID = 1
@@ -2750,6 +2758,10 @@ class CanvasSaveRequest(BaseModel):
 class CanvasAssetCheckRequest(BaseModel):
     urls: List[str] = []
 
+class CanvasAssetContextRequest(BaseModel):
+    urls: List[str] = Field(default_factory=list, max_length=100)
+    canvas_id: str = Field(default='', max_length=100)
+
 class CanvasAssetDownloadRequest(BaseModel):
     urls: List[str] = []
     items: List[Dict[str, Any]] = []
@@ -2828,12 +2840,15 @@ class AssetLibraryCategoryRequest(BaseModel):
 
 class AssetLibraryRequest(BaseModel):
     name: str = "资产库"
+    reference_shelf: bool = False
 
 class AssetLibraryAddRequest(BaseModel):
     category_id: str = ""
     url: str = ""
     name: str = ""
     library_id: str = ""
+    classify: bool = True
+    collect_request_id: str = Field(default="", max_length=64, pattern=r"^[A-Za-z0-9_-]*$")
 
 class AssetLibraryBatchAddRequest(BaseModel):
     category_id: str = ""
@@ -3149,15 +3164,15 @@ def comfy_class_is_debug_text(class_type):
 
 def save_to_history(record):
     with HISTORY_LOCK:
-        history = []
-        if os.path.exists(HISTORY_FILE):
-            try:
-                history = read_json(HISTORY_FILE)
-            except: pass
-        if "timestamp" not in record:
-            record["timestamp"] = time.time()
-        history.insert(0, record)
-        atomic_write_json(HISTORY_FILE, history[:5000], indent=4)
+        try:
+            history_records.append_record(HISTORY_FILE, record)
+            return True
+        except history_records.HistoryUnavailable as exc:
+            # Generation is already complete. Preserve its result/receipt rather
+            # than converting a metadata failure into another paid submission.
+            record['history_warning'] = str(exc)
+            logging.warning('history_append_failed: result retained; history file not replaced')
+            return False
 
 def get_comfy_history(comfy_address, prompt_id):
     try:
@@ -3240,8 +3255,8 @@ def canvas_path(canvas_id):
     return os.path.join(CANVAS_DIR, f"{cleaned}.json")
 
 def save_canvas(canvas):
-    canvas["updated_at"] = now_ms()
-    with CANVAS_LOCK:
+    with CANVAS_LOCK, document_lock(canvas_path(canvas['id'])):
+        canvas["updated_at"] = max(now_ms(), int(canvas.get('updated_at') or 0) + 1)
         atomic_write_json(canvas_path(canvas["id"]), canvas)
 
 def normalize_canvas_kind(kind="classic"):
@@ -3257,9 +3272,11 @@ def load_projects():
         projects = data.get("projects") if isinstance(data, dict) else data
         if isinstance(projects, list):
             return [p for p in projects if isinstance(p, dict) and p.get("id")]
-    except Exception:
-        pass
-    return []
+        raise ValueError('invalid projects document')
+    except FileNotFoundError:
+        return []
+    except (OSError, ValueError, TypeError) as exc:
+        raise HTTPException(503, '项目目录暂不可读，原文件已保留；请恢复有效备份或检查权限。') from exc
 
 def save_projects(projects):
     with CANVAS_LOCK:
@@ -3296,16 +3313,18 @@ def new_project(name="新项目"):
     save_projects(projects)
     return proj
 
-def list_projects():
+def list_projects(include_counts=True):
     projects = ensure_default_project()
     counts = {}
-    for rec in iter_canvas_records(include_deleted=False):
-        pid = rec.get("project") or DEFAULT_PROJECT_ID
-        counts[pid] = counts.get(pid, 0) + 1
+    if include_counts:
+        for rec in iter_canvas_records(include_deleted=False):
+            pid = rec.get("project") or DEFAULT_PROJECT_ID
+            counts[pid] = counts.get(pid, 0) + 1
     out = []
     for p in sorted(projects, key=lambda x: (int(x.get("order") or 0), x.get("created_at") or 0)):
         rec = project_record(p)
-        rec["canvas_count"] = counts.get(rec["id"], 0)
+        if include_counts:
+            rec["canvas_count"] = counts.get(rec["id"], 0)
         out.append(rec)
     return out
 
@@ -3368,10 +3387,23 @@ def canvas_record(data):
         "board_x": data.get("board_x"),
         "board_y": data.get("board_y"),
         "created_at": data.get("created_at", 0),
-        "updated_at": data.get("updated_at", 0),
+        "updated_at": max(data.get("updated_at", 0), data.get("last_opened_at", 0)),
+        "content_updated_at": data.get("updated_at", 0),
         "deleted_at": data.get("deleted_at", 0),
         "node_count": len(data.get("nodes", [])),
     }
+
+def _read_canvas_for_listing(path, cutoff):
+    data = read_json(path)
+    if data.get("deleted_at") and int(data["deleted_at"]) < cutoff:
+        # Recheck under the existing save/restore lock before removing expired trash.
+        with CANVAS_LOCK, document_lock(path):
+            data = read_json(path)
+            if data.get("deleted_at") and int(data["deleted_at"]) < cutoff:
+                os.remove(path)
+                return None
+    return data
+
 
 def cleanup_expired_canvas_trash():
     cutoff = now_ms() - CANVAS_TRASH_RETENTION_MS
@@ -3381,31 +3413,33 @@ def cleanup_expired_canvas_trash():
                 continue
             path = os.path.join(CANVAS_DIR, filename)
             try:
-                data = read_json(path)
-                deleted_at = int(data.get("deleted_at") or 0)
-                if deleted_at and deleted_at < cutoff:
-                    os.remove(path)
+                _read_canvas_for_listing(path, cutoff)
             except Exception:
                 continue
 
-def iter_canvas_records(include_deleted=False):
-    cleanup_expired_canvas_trash()
+def iter_canvas_records(include_deleted=False, unreadable_ids=None):
+    cutoff = now_ms() - CANVAS_TRASH_RETENTION_MS
     records = []
     for filename in os.listdir(CANVAS_DIR):
         if not filename.endswith(".json"):
             continue
         try:
-            data = read_json(os.path.join(CANVAS_DIR, filename))
+            data = _read_canvas_for_listing(os.path.join(CANVAS_DIR, filename), cutoff)
+            if data is None:
+                continue
+            record = canvas_record(data)
         except Exception:
+            if unreadable_ids is not None:
+                unreadable_ids.append(filename[:-5])
             continue
         is_deleted = bool(data.get("deleted_at"))
         if include_deleted != is_deleted:
             continue
-        records.append(canvas_record(data))
+        records.append(record)
     return records
 
-def list_canvases():
-    records = iter_canvas_records(include_deleted=False)
+def list_canvases(unreadable_ids=None):
+    records = iter_canvas_records(include_deleted=False, unreadable_ids=unreadable_ids)
     return sorted(
         records,
         key=lambda item: (
@@ -3414,8 +3448,8 @@ def list_canvases():
         ),
     )
 
-def list_deleted_canvases():
-    records = iter_canvas_records(include_deleted=True)
+def list_deleted_canvases(unreadable_ids=None):
+    records = iter_canvas_records(include_deleted=True, unreadable_ids=unreadable_ids)
     return sorted(records, key=lambda item: item["deleted_at"], reverse=True)
 
 def canvas_asset_url_value(value):
@@ -3476,6 +3510,16 @@ def canvas_node_title(node):
         return ""
     return str(node.get("title") or node.get("name") or node.get("label") or node.get("type") or "节点")[:120]
 
+def iter_canvas_media_entries(node, seen):
+    """One extraction/deduplication rule for full assets and URL-only queries."""
+    for field_path, raw, url in iter_canvas_asset_values(node):
+        if url in seen:
+            continue
+        seen.add(url)
+        kind = canvas_asset_kind(raw, url)
+        if kind in {"image", "video", "audio", "text"}:
+            yield field_path, raw, url, kind
+
 def extract_canvas_assets(canvas):
     record = canvas_record(canvas)
     canvas_id = str(record.get("id") or "")
@@ -3487,14 +3531,7 @@ def extract_canvas_assets(canvas):
             continue
         node_id = str(node.get("id") or f"node_{node_index}")
         node_title = canvas_node_title(node)
-        for field_path, raw, url in iter_canvas_asset_values(node):
-            dedupe_key = url
-            if dedupe_key in seen:
-                continue
-            seen.add(dedupe_key)
-            kind = canvas_asset_kind(raw, url)
-            if kind not in {"image", "video", "audio", "text"}:
-                continue
+        for field_path, raw, url, kind in iter_canvas_media_entries(node, seen):
             fallback = f"{record.get('title') or 'canvas'}-{len(items) + 1}"
             item = {
                 "id": hashlib.sha1(f"{canvas_id}:{url}".encode("utf-8")).hexdigest()[:24],
@@ -4363,6 +4400,7 @@ async def run_codex_cli(prompt, model="", image_paths=None, timeout=None, output
         args.extend(["--output-last-message", last_path])
     args.append("-")
     prompt_bytes = str(prompt or "").encode("utf-8")
+    proc = None
     try:
         proc = await asyncio.create_subprocess_exec(
             *args,
@@ -4372,7 +4410,21 @@ async def run_codex_cli(prompt, model="", image_paths=None, timeout=None, output
             stderr=asyncio.subprocess.PIPE,
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(input=prompt_bytes), timeout=timeout or codex_timeout())
-    except asyncio.TimeoutError as exc:
+    except (asyncio.TimeoutError, asyncio.CancelledError) as exc:
+        if proc and proc.returncode is None:
+            if os.name == 'nt':
+                killer = await asyncio.create_subprocess_exec('taskkill', '/PID', str(proc.pid), '/T', '/F',
+                    stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+                await killer.wait()
+            if proc.returncode is None:
+                try: proc.kill()
+                except ProcessLookupError: pass
+            await proc.wait()
+        if last_path:
+            try: os.remove(last_path)
+            except OSError: pass
+        if isinstance(exc, asyncio.CancelledError):
+            raise
         raise HTTPException(status_code=504, detail="OpenAI Codex CLI 执行超时。可设置 CODEX_CLI_TIMEOUT 增大等待时间。") from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=400, detail=f"未找到 OpenAI Codex CLI：{exe}") from exc
@@ -6040,6 +6092,11 @@ def output_path_for(filename, category="output"):
 def output_file_from_url(url):
     if isinstance(url, dict):
         url = url.get("url", "")
+    if isinstance(url, str) and (url.startswith(('http://','https://','//'))):
+        # Resolve the complete local identity used by Gateway authorization,
+        # never a remote URL's basename. Relative references keep their contract.
+        from enterprise.interceptors import normalize_resource_url
+        url = normalize_resource_url(url)
     if not url or not (url.startswith("/output/") or url.startswith("/assets/")):
         return None
     clean = urllib.parse.unquote(url.split("?", 1)[0]).replace("\\", "/")
@@ -6050,6 +6107,8 @@ def output_file_from_url(url):
         root = OUTPUT_DIR
         rel = clean[len("/output/"):]
     rel = rel.lstrip("/")
+    if any(part in {".", ".."} for part in rel.split("/")):
+        return None
     if not rel:
         return None
     path = os.path.abspath(os.path.join(root, rel))
@@ -6207,7 +6266,7 @@ def fetch_remote_media_bytes(url: str, timeout: float = 30.0, max_bytes: int = 2
     parsed = urllib.parse.urlparse(text)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         return None
-    with requests.get(text, stream=True, timeout=timeout, headers={"User-Agent": "ComfyUI-API-Modelscope/1.0"}) as response:
+    with open_media(text, timeout=timeout) as response:
         response.raise_for_status()
         content_type = response.headers.get("content-type") or "application/octet-stream"
         chunks = []
@@ -6230,6 +6289,8 @@ def origin_from_url(value):
 def ensure_same_origin_request(request: Request):
     host = str(request.headers.get("host") or "").lower()
     expected = f"{request.url.scheme}://{host}".lower() if host else ""
+    if request.headers.get('x-enterprise-user-id'):
+        expected = request.headers.get('x-enterprise-origin') or expected
     origin = origin_from_url(request.headers.get("origin", ""))
     referer = origin_from_url(request.headers.get("referer", ""))
     actual = origin or referer
@@ -6330,7 +6391,8 @@ def normalize_asset_library(lib):
     lib["libraries"] = libraries
     lib["active_library_id"] = active
     lib["categories"] = active_library.get("categories") or []
-    lib["updated_at"] = int(lib.get("updated_at") or now_ms())
+    # Missing legacy revision stays zero until its first successful write.
+    lib["updated_at"] = int(lib.get("updated_at") or 0)
     sort_asset_library_items(lib)
     return lib
 
@@ -6361,15 +6423,16 @@ def migrate_asset_item_registrations(item):
         item.pop(key, None)
 
 def load_asset_library():
-    if not os.path.exists(ASSET_LIBRARY_PATH):
-        lib = default_asset_library()
-        save_asset_library(lib)
-        return lib
-    try:
-        with open(ASSET_LIBRARY_PATH, "r", encoding="utf-8") as f:
-            lib = json.load(f)
-    except Exception:
-        lib = default_asset_library()
+    with document_lock(ASSET_LIBRARY_PATH):
+        try:
+            lib = read_json(ASSET_LIBRARY_PATH)
+            if not isinstance(lib, dict):
+                raise ValueError('asset directory must be an object')
+        except FileNotFoundError:
+            lib = default_asset_library()
+            save_asset_library(lib)
+        except (OSError, ValueError, TypeError) as exc:
+            raise HTTPException(status_code=503, detail='资产目录暂时无法读取，原文件已保留；请检查权限或恢复有效备份后重试。') from exc
     return normalize_asset_library(lib)
 
 def sort_asset_library_items(lib):
@@ -6434,7 +6497,7 @@ def remove_asset_library_file(item) -> None:
     try:
         url = item.get("url") if isinstance(item, dict) else ""
         path = output_file_from_url(url)
-        if path and os.path.isfile(path):
+        if path and Path(path).resolve().is_relative_to(Path(ASSET_LIBRARY_DIR).resolve()) and os.path.isfile(path):
             os.remove(path)
     except Exception as exc:
         print(f"删除资产文件失败: {exc}")
@@ -6720,12 +6783,20 @@ def make_workflow_library_item_from_bytes(raw: bytes, filename: str, name: str =
     }
 
 def save_asset_library(lib):
-    lib = normalize_asset_library(lib)
-    sort_asset_library_items(lib)
-    lib["updated_at"] = now_ms()
-    os.makedirs(DATA_DIR, exist_ok=True)
-    with open(ASSET_LIBRARY_PATH, "w", encoding="utf-8") as f:
-        json.dump(lib, f, ensure_ascii=False, indent=2)
+    with document_lock(ASSET_LIBRARY_PATH):
+        if os.path.exists(ASSET_LIBRARY_PATH):
+            try:
+                current = read_json(ASSET_LIBRARY_PATH)
+                if not isinstance(current, dict):
+                    raise ValueError('invalid directory')
+            except (OSError, ValueError, TypeError) as exc:
+                raise HTTPException(status_code=503, detail='资产目录损坏或不可读，已停止保存并保留原文件。') from exc
+            if int(current.get('updated_at') or 0) != int(lib.get('updated_at') or 0):
+                raise HTTPException(status_code=409, detail='资产目录已更新，请刷新后重试；未覆盖其他修改。')
+        lib = normalize_asset_library(lib)
+        sort_asset_library_items(lib)
+        lib["updated_at"] = max(now_ms(), int(lib.get('updated_at') or 0) + 1)
+        atomic_write_json(ASSET_LIBRARY_PATH, lib, create_parent=True)
     if GLOBAL_LOOP:
         asyncio.run_coroutine_threadsafe(manager.broadcast_asset_library_updated(int(lib["updated_at"])), GLOBAL_LOOP)
 
@@ -7182,9 +7253,20 @@ def convert_output_to_jpg(url, quality=88):
         print(f"转换 JPG 失败: {e}")
         return url
 
+def image_reference_file(ref):
+    url = ref.get("url", "")
+    if url.startswith('/static/characters/'):
+        from enterprise.character_media import public_character_image_path
+        path = public_character_image_path(url, STATIC_DIR)
+        if not path:
+            raise HTTPException(400, '内置角色参考图不可用，请重新选择图片，未提交生成')
+        return path
+    return output_file_from_url(url)
+
+
 def reference_to_data_url(ref, max_size=None):
     """把本地输出文件转为 data URL（base64）。max_size 限制最长边像素，避免 payload 过大。"""
-    path = output_file_from_url(ref.get("url", ""))
+    path = image_reference_file(ref)
     if not path:
         return ref.get("url", "")
     if max_size:
@@ -10234,7 +10316,7 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
             edit_failed_text = ""
             try:
                 for ref in image_refs[:ONLINE_IMAGE_REFERENCE_MAX]:
-                    path = output_file_from_url(ref.get("url", ""))
+                    path = image_reference_file(ref)
                     if not path:
                         continue
                     fh = open(path, "rb")
@@ -10628,8 +10710,6 @@ def view_image(filename: str, type: str = "input", subfolder: str = ""):
 def download_output(request: Request, url: str, name: str = "", inline: bool = False):
     url = rewrite_runninghub_file_url(url)
     path = output_file_from_url(url)
-    if not path:
-        path = local_media_file_by_basename(filename_from_media_url(url, ""))
     if path:
         filename = sanitize_export_filename(os.path.basename(name) if name else os.path.basename(path), os.path.basename(path))
         return FileResponse(path, media_type=content_type_for_path(path), filename=None if inline else filename)
@@ -10642,10 +10722,7 @@ def download_output(request: Request, url: str, name: str = "", inline: bool = F
         range_header = request.headers.get("range")
         if range_header:
             upstream_headers["Range"] = range_header
-        upstream = requests.get(
-            url, stream=True, timeout=(10, 60),
-            headers=upstream_headers,
-        )
+        upstream = open_media(url, timeout=(10, 60), headers=upstream_headers)
         upstream.raise_for_status()
     except requests.RequestException as exc:
         raise HTTPException(status_code=502, detail=f"远程文件下载失败：{exc}")
@@ -10789,32 +10866,6 @@ async def upload_comfyui_base64(payload: Base64UploadRequest):
         raise HTTPException(status_code=502, detail="上传到指定 ComfyUI 失败") from exc
     return {"name": name}
 
-
-def _local_upload_kind_ext(filename, content_type):
-    image_exts = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
-    video_exts = {".mp4", ".webm", ".mov", ".m4v", ".flv"}
-    audio_exts = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}
-    ext = os.path.splitext(filename or "")[1].lower()
-    ct = (content_type or "").lower()
-    if ext in video_exts or ct.startswith("video/"):
-        if ext not in video_exts:
-            ext = ".webm" if "webm" in ct else ".mov" if "quicktime" in ct else ".mp4"
-        return "video", ext
-    if ext in audio_exts or ct.startswith("audio/"):
-        if ext not in audio_exts:
-            ext = ".wav" if "wav" in ct else ".ogg" if "ogg" in ct else ".m4a" if "mp4" in ct else ".mp3"
-        return "audio", ext
-    if ext in image_exts or ct.startswith("image/"):
-        if ext not in image_exts:
-            ext = ".jpg" if "jpeg" in ct else ".webp" if "webp" in ct else ".gif" if "gif" in ct else ".png"
-        return "image", ext
-    return None, ext
-
-def _local_upload_display_name(filename):
-    # 文件名形如 up_<hex>_<原始名>；去掉前缀还原展示名
-    base = os.path.basename(str(filename or ""))
-    m = re.match(r"^up_[0-9a-f]{12}_(.+)$", base)
-    return m.group(1) if m else base
 
 def _local_upload_rel_path(value):
     text = str(value or "").replace("\\", "/").strip().lstrip("/")
@@ -11167,7 +11218,14 @@ async def import_local_assets_from_urls(payload: LocalAssetUrlImportRequest):
     return {"ok": True, "count": len(uploaded), "files": uploaded, "items": results}
 
 @app.get("/api/local-assets")
-async def list_local_assets():
+async def list_local_assets(request: Request):
+    if 'page_size' in request.query_params or 'cursor' in request.query_params:
+        try:
+            if request.headers.get('x-enterprise-upload-source') == 'canvas-inputs-v1':
+                return await asyncio.to_thread(upload_picker_index, include_uploads=False)
+            return await asyncio.to_thread(upload_picker_index)
+        except OSError:
+            raise HTTPException(503, '上传列表暂不可读，请重试；原文件保留。')
     tree, items = _local_upload_tree_and_items()
     return {"items": items, "tree": tree}
 
@@ -11407,6 +11465,8 @@ async def cloud_video_upload(payload: CloudVideoUploadRequest, request: Request)
 
 @app.post("/api/ai/import-local-image")
 async def import_local_ai_reference(payload: LocalImageImportRequest, request: Request):
+    if request.headers.get("x-enterprise-user-id") and request.headers.get("x-enterprise-is-admin") != "true":
+        raise HTTPException(403, "企业用户请从本地选择并上传图片；服务器路径导入仅供授权管理员。")
     ensure_same_origin_request(request)
     requested = [payload.path] if payload.path else []
     requested.extend(payload.paths or [])
@@ -13136,6 +13196,10 @@ async def run_canvas_comfy_task(task_id: str, payload: GenerateRequest):
     except ComfyCancelledError:
         await asyncio.to_thread(CANVAS_TASK_JOURNAL.record_comfy, task_id, {"phase": "cancelled"})
         changes = {"status": "cancelled", "error": "", "error_code": "COMFY_CANCELLED", "recovery_required": False}
+    except ComfyNotSubmittedError as exc:
+        await asyncio.to_thread(CANVAS_TASK_JOURNAL.record_comfy, task_id, {"phase": "not_submitted"})
+        changes = {"status": "failed", "error": str(exc), "error_code": "COMFY_NOT_SUBMITTED",
+                   "status_code": 503, "recovery_required": False}
     except Exception as exc:
         detail = getattr(exc, "detail", None) or str(exc)
         status_code = getattr(exc, "status_code", 500)
@@ -14239,17 +14303,42 @@ from enterprise.canvas_task_dispatch_app import create_dispatch as _create_task_
 from enterprise.config import JWT_SECRET as _task_dispatch_secret
 from enterprise.comfy_queue import ComfyQueue
 from enterprise.comfy_queue_api import create_internal_router as comfy_queue_internal_router
+from enterprise.character_voice_tasks import CharacterVoiceTasks, CharacterVoiceRequest
+
+def _save_character_voice(data):
+    name = 'character_voice_' + uuid.uuid4().hex + '.mp3'
+    target = output_path_for(name)
+    temporary = target + '.tmp'
+    try:
+        with open(temporary, 'xb') as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, target)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+    return output_url_for(name)
+
+CHARACTER_VOICE_TASKS = CharacterVoiceTasks(CANVAS_TASK_JOURNAL, get_api_provider_exact,
+    api_headers, prepare_canvas_call_binding, _save_character_voice,
+    lambda owner, urls: _publish_llm_resources(owner, 'character_voice_task', urls),
+    lambda task_id, payload: CANVAS_TASK_DISPATCH.enqueue(task_id, payload))
 COMFY_QUEUE = ComfyQueue(CANVAS_TASK_JOURNAL, PATH_ROOTS.STATE_ROOT, lambda: COMFYUI_INSTANCES,
     lambda: [row['name'] for row in list_workflows(include_disabled=True)['workflows']])
 app.include_router(comfy_queue_internal_router(COMFY_QUEUE))
 CANVAS_TASK_DISPATCH = _create_task_dispatch(CANVAS_TASK_JOURNAL,
-    {"online-image": OnlineImageRequest, "comfy": GenerateRequest, "video": CanvasVideoRequest, "llm": CanvasLLMTaskRequest},
+    {"online-image": OnlineImageRequest, "comfy": GenerateRequest, "video": CanvasVideoRequest, "llm": CanvasLLMTaskRequest, "audio": CharacterVoiceRequest},
     {"online-image": run_canvas_image_task, "comfy": run_canvas_comfy_task,
-     "video": CANVAS_VIDEO_TASKS.run, "llm": CANVAS_LLM_TASKS.run},
+     "video": CANVAS_VIDEO_TASKS.run, "llm": CANVAS_LLM_TASKS.run, "audio": CHARACTER_VOICE_TASKS.run},
     schedule_canvas_task, lambda: _task_dispatch_paused(PATH_ROOTS.STATE_ROOT),
     secret=_task_dispatch_secret, provider=get_api_provider_exact, headers=api_headers, comfy_queue=COMFY_QUEUE,
     workflow=lambda name: get_workflow(name), backend=lambda name, override: workflow_backend(name, override),
     default_model=lambda kind, provider: preferred_chat_model(provider) if kind == "llm" else (provider.get("image_models") or [IMAGE_MODEL])[0])
+
+@app.post('/api/character-voice-tasks')
+async def create_character_voice_task(payload: CharacterVoiceRequest, x_enterprise_user_id: Optional[str] = Header(default=None)):
+    return await CHARACTER_VOICE_TASKS.create(payload, x_enterprise_user_id)
 
 @app.post("/api/canvas-llm-tasks")
 async def create_canvas_llm_task(payload: CanvasLLMTaskRequest, x_enterprise_user_id: Optional[str] = Header(default=None)):
@@ -14292,11 +14381,13 @@ async def delete_conversation(conversation_id: str, request: Request, x_user_id:
 
 @app.get("/api/canvases")
 async def canvases():
-    return {"canvases": list_canvases()}
+    unreadable = []
+    records = await asyncio.to_thread(list_canvases, unreadable)
+    return {"canvases": records, "unreadable_canvas_ids": unreadable}
 
 @app.get("/api/projects")
-async def get_projects():
-    return {"projects": list_projects()}
+async def get_projects(include_counts: bool = True):
+    return {"projects": await asyncio.to_thread(list_projects, include_counts), "counts_included": include_counts}
 
 @app.post("/api/projects")
 async def create_project(payload: ProjectCreateRequest):
@@ -14333,19 +14424,22 @@ async def delete_project(project_id: str):
             if not filename.endswith(".json"):
                 continue
             path = os.path.join(CANVAS_DIR, filename)
-            try:
-                data = read_json(path)
-            except Exception:
-                continue
-            if str(data.get("project") or "") == project_id:
-                data["project"] = DEFAULT_PROJECT_ID
-                atomic_write_json(path, data)
-                moved += 1
+            with document_lock(path):
+                try:
+                    data = read_json(path)
+                except Exception:
+                    continue
+                if str(data.get("project") or "") == project_id:
+                    data["project"] = DEFAULT_PROJECT_ID
+                    atomic_write_json(path, data)
+                    moved += 1
     return {"ok": True, "moved": moved}
 
 @app.get("/api/canvases/trash")
 async def trashed_canvases():
-    return {"canvases": list_deleted_canvases(), "retention_days": 30}
+    unreadable = []
+    records = await asyncio.to_thread(list_deleted_canvases, unreadable)
+    return {"canvases": records, "retention_days": 30, "unreadable_canvas_ids": unreadable}
 
 @app.post("/api/canvases")
 async def create_canvas(payload: CanvasCreateRequest):
@@ -14366,7 +14460,7 @@ async def get_canvas_meta(canvas_id: str):
 async def update_canvas_meta(canvas_id: str, payload: CanvasMetaUpdate):
     """更新画布的轻量元数据（标题/图标/负责人/颜色/置顶）。
     刻意不走 save_canvas（它会刷新 updated_at），以免打标签/置顶把画布顶到列表最前。"""
-    with CANVAS_LOCK:
+    with CANVAS_LOCK, document_lock(canvas_path(canvas_id)):
         canvas = load_canvas(canvas_id)
         if payload.title is not None:
             canvas["title"] = (payload.title or canvas.get("title") or "未命名画布")[:80]
@@ -14393,15 +14487,68 @@ async def get_canvas(canvas_id: str):
 
 @app.post("/api/canvases/{canvas_id}/touch")
 async def touch_canvas(canvas_id: str):
-    canvas = load_canvas(canvas_id)
-    save_canvas(canvas)
-    return {"canvas": canvas_record(canvas), "updated_at": canvas.get("updated_at", 0)}
+    with CANVAS_LOCK, document_lock(canvas_path(canvas_id)):
+        canvas = load_canvas(canvas_id)
+        # Opening is activity, not a content edit. Keep list recency without
+        # making another page's unchanged content base conflict on mere viewing.
+        canvas['last_opened_at'] = now_ms()
+        atomic_write_json(canvas_path(canvas_id), canvas)
+        return {"canvas": canvas_record(canvas), "updated_at": canvas.get("updated_at", 0)}
 
 @app.get("/api/canvas-assets")
 async def list_canvas_assets():
     # canvas_assets_index 会同步遍历并解析所有画布 JSON，放进线程池避免阻塞事件循环
     # （否则画布多时一次请求就会卡住整个 asyncio loop，连 WebSocket 一起掉线）。
     return await asyncio.to_thread(canvas_assets_index)
+
+_CANVAS_ASSET_CONTEXT = ResourceReferenceIndex()
+
+def character_asset_urls(canvas):
+    seen = set()
+    for node in canvas.get('nodes') if isinstance(canvas.get('nodes'), list) else []:
+        if isinstance(node, dict):
+            for _path, _raw, url, kind in iter_canvas_media_entries(node, seen):
+                if kind == 'image':
+                    yield url
+
+def upload_picker_index(include_uploads=True):
+    items = local_upload_metadata_items(LOCAL_UPLOAD_DIR) if include_uploads else []
+    context = _CANVAS_ASSET_CONTEXT.canvas_context(
+        Path(CANVAS_DIR).glob('*.json'), None, '', read_json,
+        character_asset_urls, lambda url: url,
+    )
+    for row in context['items']:
+        if str(row['url']).startswith(('/assets/input/', '/assets/uploads/')):
+            items.append({**row, 'id': row['canvas_id'] + ':' + row['url'],
+                          'name': filename_from_media_url(row['url'], '图片'),
+                          'kind': 'image', '_query_position': 0})
+    # The enterprise gateway filters current ownership before sorting/counting/pages.
+    result = {'projection': 'upload-picker', 'items': items}
+    if not include_uploads:
+        result['source'] = 'canvas-inputs-v1'
+    return result
+
+def canvas_asset_context(payload, origin):
+    def url_key(value):
+        value = str(value)
+        if (value.startswith(('/assets/', '/output/')) and value.isascii()
+                and not any(token in value for token in ('?', '#', '%', ' ', '\\', '/./', '/../'))):
+            return value
+        parsed = urllib.parse.urlparse(urllib.parse.urljoin(origin + '/', value))
+        path = urllib.parse.quote(parsed.path, safe="/%:@!$&'()*+,;=-._~")
+        return path if parsed.scheme + '://' + parsed.netloc == origin else parsed._replace(path=path).geturl()
+    paths = Path(CANVAS_DIR).glob('*.json')
+    if not payload.urls:
+        paths = (path for path in paths if path.stem == payload.canvas_id)
+    return _CANVAS_ASSET_CONTEXT.canvas_context(
+        paths, payload.urls, payload.canvas_id, read_json,
+        character_asset_urls, url_key,
+    )
+
+@app.post('/api/canvas-assets/context')
+async def list_canvas_asset_context(payload: CanvasAssetContextRequest, request: Request):
+    origin = (request.headers.get('x-enterprise-origin') or request.headers.get('origin') or str(request.base_url)).rstrip('/')
+    return await asyncio.to_thread(canvas_asset_context, payload, origin)
 
 @app.get("/api/smart-canvas/prompt-templates")
 async def smart_canvas_prompt_templates():
@@ -14448,19 +14595,14 @@ async def download_canvas_assets(payload: CanvasAssetDownloadRequest):
             if path and os.path.isfile(path):
                 base = sanitize_export_filename(requested_name or os.path.basename(path), os.path.basename(path) or f"image-{count + 1}.png")
             else:
-                local_by_name = local_media_file_by_basename(filename_from_media_url(text, ""))
-                if local_by_name and os.path.isfile(local_by_name):
-                    path = local_by_name
-                    base = sanitize_export_filename(requested_name or os.path.basename(path), os.path.basename(path) or f"image-{count + 1}.png")
-                else:
-                    try:
-                        remote = fetch_remote_media_bytes(text)
-                    except Exception:
-                        remote = None
-                    if not remote:
-                        continue
-                    content, content_type = remote
-                    base = sanitize_export_filename(requested_name or filename_from_media_url(text, f"image-{count + 1}.bin"), f"image-{count + 1}.bin")
+                try:
+                    remote = fetch_remote_media_bytes(text)
+                except Exception:
+                    remote = None
+                if not remote:
+                    continue
+                content, content_type = remote
+                base = sanitize_export_filename(requested_name or filename_from_media_url(text, f"image-{count + 1}.bin"), f"image-{count + 1}.bin")
             name, ext = os.path.splitext(base)
             archive_name = base
             suffix = 2
@@ -14485,7 +14627,9 @@ async def download_canvas_assets(payload: CanvasAssetDownloadRequest):
 
 def sanitize_export_filename(name: str, fallback: str) -> str:
     base = os.path.basename(str(name or "").strip()) or fallback
-    base = re.sub(r'[\\/:*?"<>|]+', "_", base)
+    base = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', "_", base).rstrip(". ")
+    if base.split(".")[0].upper() in {"CON", "PRN", "AUX", "NUL", *[f"COM{i}" for i in range(1,10)], *[f"LPT{i}" for i in range(1,10)]}:
+        base = "_" + base
     return base or fallback
 
 def canvas_workflow_collect_resource_refs(value, found=None):
@@ -14614,128 +14758,172 @@ async def upload_asset_library_workflows(
 
 @app.post("/api/canvas-workflows/import")
 async def import_canvas_workflow(file: UploadFile = File(...)):
-    raw = await file.read()
-    if not raw:
-        raise HTTPException(status_code=400, detail="文件为空")
-    name = str(file.filename or "").lower()
-    resource_mapping = {}
-    workflow = None
+    import_dir = None
     try:
-        if name.endswith(".zip") or raw[:2] == b"PK":
-            with zipfile.ZipFile(BytesIO(raw), "r") as zf:
-                candidates = [n for n in zf.namelist() if n.lower().endswith("workflow.json")]
-                workflow_name = "workflow.json" if "workflow.json" in zf.namelist() else (candidates[0] if candidates else "")
-                if not workflow_name:
-                    raise HTTPException(status_code=400, detail="压缩包中没有 workflow.json")
-                workflow = json.loads(zf.read(workflow_name).decode("utf-8-sig"))
-                stamp = time.strftime("%Y%m%d-%H%M%S")
-                import_dir = os.path.join(OUTPUT_INPUT_DIR, f"workflow_import_{stamp}_{uuid.uuid4().hex[:6]}")
-                os.makedirs(import_dir, exist_ok=True)
-                for res in workflow.get("resources") or []:
-                    archive = str(res.get("archive") or "").replace("\\", "/").lstrip("/")
-                    if not archive or archive not in zf.namelist():
-                        continue
-                    base = sanitize_export_filename(res.get("name") or os.path.basename(archive), os.path.basename(archive) or "resource.bin")
-                    target = os.path.join(import_dir, f"{uuid.uuid4().hex[:8]}_{base}")
-                    with zf.open(archive) as src, open(target, "wb") as dst:
-                        shutil.copyfileobj(src, dst)
-                    rel = os.path.relpath(target, ASSETS_DIR).replace("\\", "/")
-                    new_url = f"/assets/{rel}"
-                    old_url = str(res.get("url") or "").strip()
-                    if old_url:
-                        resource_mapping[old_url] = new_url
-                    resource_mapping[archive] = new_url
-                    resource_mapping[f"./{archive}"] = new_url
-                    resource_mapping[os.path.basename(archive)] = new_url
-        else:
-            workflow = json.loads(raw.decode("utf-8-sig"))
-    except HTTPException:
+        raw = await file.read(MAX_UPLOAD + 1)
+        if len(raw) > MAX_UPLOAD:
+            raise HTTPException(413, "工作流文件超过256MB，请拆分后导入")
+        if not raw:
+            raise HTTPException(status_code=400, detail="文件为空")
+        name = str(file.filename or "").lower()
+        resource_mapping = {}
+        workflow = None
+        try:
+            if name.endswith(".zip") or raw[:2] == b"PK":
+                with zipfile.ZipFile(BytesIO(raw), "r") as zf:
+                    inspect_archive(zf)
+                    candidates = [n for n in zf.namelist() if n.lower().endswith("workflow.json")]
+                    workflow_name = "workflow.json" if "workflow.json" in zf.namelist() else (candidates[0] if candidates else "")
+                    if not workflow_name:
+                        raise HTTPException(status_code=400, detail="压缩包中没有 workflow.json")
+                    if zf.getinfo(workflow_name).file_size > MAX_WORKFLOW:
+                        raise HTTPException(413, "工作流JSON超过8MB")
+                    workflow = json.loads(zf.read(workflow_name).decode("utf-8-sig"))
+                    if not isinstance(workflow, dict):
+                        raise HTTPException(400, "压缩包工作流必须为JSON对象")
+                    stamp = time.strftime("%Y%m%d-%H%M%S")
+                    import_dir = os.path.join(OUTPUT_INPUT_DIR, f"workflow_import_{stamp}_{uuid.uuid4().hex[:6]}")
+                    os.makedirs(import_dir, exist_ok=True)
+                    extracted = {}
+                    expanded = 0
+                    resources = workflow.get("resources") or []
+                    if not isinstance(resources, list) or len(resources) > 2048:
+                        raise HTTPException(413, "工作流素材列表超限")
+                    for res in resources:
+                        if not isinstance(res, dict):
+                            raise HTTPException(400, "工作流素材格式不正确")
+                        archive = str(res.get("archive") or "").replace("\\", "/").lstrip("/")
+                        if not archive or archive not in zf.namelist():
+                            continue
+                        base = sanitize_export_filename(res.get("name") or os.path.basename(archive), os.path.basename(archive) or "resource.bin")
+                        if archive not in extracted:
+                            target = os.path.join(import_dir, f"{uuid.uuid4().hex[:8]}_{base}")
+                            with zf.open(archive) as src, open(target, "xb") as dst:
+                                expanded = copy_resource(src, dst, expanded)
+                            rel = os.path.relpath(target, ASSETS_DIR).replace("\\", "/")
+                            extracted[archive] = f"/assets/{rel}"
+                        new_url = extracted[archive]
+                        old_url = str(res.get("url") or "").strip()
+                        if old_url:
+                            resource_mapping[old_url] = new_url
+                        resource_mapping[archive] = new_url
+                        resource_mapping[f"./{archive}"] = new_url
+                        resource_mapping[os.path.basename(archive)] = new_url
+            else:
+                if len(raw) > MAX_WORKFLOW:
+                    raise HTTPException(413, "工作流JSON超过8MB")
+                workflow = json.loads(raw.decode("utf-8-sig"))
+        except HTTPException:
+            raise
+        except zipfile.BadZipFile as exc:
+            raise HTTPException(status_code=400, detail="无法读取压缩包") from exc
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"无法解析工作流文件：{exc}") from exc
+        if isinstance(workflow, list):
+            workflow = {"nodes": workflow, "connections": []}
+        if not isinstance(workflow, dict):
+            raise HTTPException(status_code=400, detail="工作流格式不正确")
+        nodes_payload = workflow.get("nodes")
+        connections_payload = workflow.get("connections")
+        if nodes_payload is None and isinstance(workflow.get("workflow"), dict):
+            nodes_payload = workflow["workflow"].get("nodes")
+            connections_payload = workflow["workflow"].get("connections")
+        if not isinstance(nodes_payload, list):
+            raise HTTPException(status_code=400, detail="工作流 JSON 缺少 nodes")
+        if not isinstance(connections_payload, list):
+            connections_payload = []
+        if resource_mapping:
+            nodes_payload = canvas_workflow_replace_strings(nodes_payload, resource_mapping)
+            connections_payload = canvas_workflow_replace_strings(connections_payload, resource_mapping)
+        return {
+            "workflow": canvas_workflow_payload(nodes_payload, connections_payload, workflow.get("resources") or []),
+            "nodes": nodes_payload,
+            "connections": connections_payload,
+            "resource_map": resource_mapping,
+        }
+    except BaseException:
+        if import_dir and os.path.isdir(import_dir):
+            assert_path_within_root(Path(import_dir), Path(OUTPUT_INPUT_DIR))
+            assert_no_reparse_ancestors(Path(import_dir))
+            shutil.rmtree(import_dir)
         raise
-    except zipfile.BadZipFile as exc:
-        raise HTTPException(status_code=400, detail="无法读取压缩包") from exc
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"无法解析工作流文件：{exc}") from exc
-    if isinstance(workflow, list):
-        workflow = {"nodes": workflow, "connections": []}
-    if not isinstance(workflow, dict):
-        raise HTTPException(status_code=400, detail="工作流格式不正确")
-    nodes_payload = workflow.get("nodes")
-    connections_payload = workflow.get("connections")
-    if nodes_payload is None and isinstance(workflow.get("workflow"), dict):
-        nodes_payload = workflow["workflow"].get("nodes")
-        connections_payload = workflow["workflow"].get("connections")
-    if not isinstance(nodes_payload, list):
-        raise HTTPException(status_code=400, detail="工作流 JSON 缺少 nodes")
-    if not isinstance(connections_payload, list):
-        connections_payload = []
-    if resource_mapping:
-        nodes_payload = canvas_workflow_replace_strings(nodes_payload, resource_mapping)
-        connections_payload = canvas_workflow_replace_strings(connections_payload, resource_mapping)
-    return {
-        "workflow": canvas_workflow_payload(nodes_payload, connections_payload, workflow.get("resources") or []),
-        "nodes": nodes_payload,
-        "connections": connections_payload,
-        "resource_map": resource_mapping,
-    }
 
-def smart_group_export_folder(folder: str, group_name: str) -> str:
-    text = str(folder or "").strip()
-    if text:
-        path = os.path.abspath(os.path.expanduser(text))
-    else:
-        stamp = time.strftime("%Y%m%d-%H%M%S")
-        safe_group = sanitize_export_filename(group_name or "group", "group")
-        path = os.path.abspath(os.path.join(OUTPUT_DIR, "smart-groups", f"{safe_group}-{stamp}"))
-    os.makedirs(path, exist_ok=True)
-    return path
+
+def smart_group_export_folder(folder: str, group_name: str, owner="local") -> str:
+    root = os.path.abspath(os.environ.get('CANVAS_EXPORT_ROOT') or os.path.join(OUTPUT_DIR, 'smart-groups'))
+    owner = re.sub(r'[^A-Za-z0-9_-]', '_', owner)[:80] or 'local'
+    root = os.path.join(root, owner)
+    requested = os.path.abspath(os.path.expanduser(folder)) if str(folder or '').strip() else root
+    try:
+        assert_path_within_root(Path(requested), Path(root))
+        assert_no_reparse_ancestors(Path(requested), allow_missing=True)
+        os.makedirs(requested, exist_ok=True)
+        assert_no_reparse_ancestors(Path(requested))
+        safe_group = sanitize_export_filename(group_name or 'group', 'group').rstrip('. ')[:80]
+        batch = os.path.join(requested, f"{safe_group}-{uuid.uuid4().hex}")
+        os.mkdir(batch)
+        assert_no_reparse_ancestors(Path(batch))
+        return batch
+    except (PathSafetyError, ValueError, OSError) as exc:
+        raise HTTPException(403, '导出目录须位于当前账号的受管导出目录内；可使用画布原有 ZIP 下载。') from exc
 
 @app.post("/api/smart-canvas/group-export")
-async def export_smart_canvas_group(payload: SmartCanvasGroupExportRequest):
-    target_dir = smart_group_export_folder(payload.folder, payload.group_name)
-    used_names = set()
-    count = 0
-    text_index = 1
-    for item in payload.items[:2000]:
-        kind = str(item.kind or "").lower()
-        if kind == "text":
-            text = str(item.text or "")
-            if not text.strip():
+async def export_smart_canvas_group(payload: SmartCanvasGroupExportRequest, request: Request):
+    owner = request.headers.get("x-enterprise-user-id") or "local"
+    target_dir = smart_group_export_folder(payload.folder, payload.group_name, owner)
+    try:
+        used_names = set()
+        count = 0
+        text_index = 1
+        for item in payload.items[:2000]:
+            kind = str(item.kind or "").lower()
+            if kind == "text":
+                text = str(item.text or "")
+                if not text.strip():
+                    continue
+                base = sanitize_export_filename(item.name or f"{text_index}.txt", f"{text_index}.txt")
+                if not base.lower().endswith(".txt"):
+                    base += ".txt"
+                text_index += 1
+                name, ext = os.path.splitext(base)
+                out_name = base
+                suffix = 2
+                while out_name in used_names:
+                    out_name = f"{name}-{suffix}{ext}"
+                    suffix += 1
+                used_names.add(out_name)
+                with open(os.path.join(target_dir, out_name), "x", encoding="utf-8") as f:
+                    f.write(text)
+                count += 1
                 continue
-            base = sanitize_export_filename(item.name or f"{text_index}.txt", f"{text_index}.txt")
-            if not base.lower().endswith(".txt"):
-                base += ".txt"
-            text_index += 1
+            src = output_file_from_url(item.url)
+            if not src or not os.path.isfile(src):
+                continue
+            base = sanitize_export_filename(item.name or os.path.basename(src), os.path.basename(src) or f"asset-{count + 1}")
             name, ext = os.path.splitext(base)
+            if not ext:
+                _, src_ext = os.path.splitext(src)
+                ext = src_ext or ".bin"
+                base = name + ext
             out_name = base
             suffix = 2
             while out_name in used_names:
                 out_name = f"{name}-{suffix}{ext}"
                 suffix += 1
             used_names.add(out_name)
-            with open(os.path.join(target_dir, out_name), "w", encoding="utf-8") as f:
-                f.write(text)
+            with open(src, "rb") as source, open(os.path.join(target_dir, out_name), "xb") as dest:
+                shutil.copyfileobj(source, dest)
             count += 1
-            continue
-        src = output_file_from_url(item.url)
-        if not src or not os.path.isfile(src):
-            continue
-        base = sanitize_export_filename(item.name or os.path.basename(src), os.path.basename(src) or f"asset-{count + 1}")
-        name, ext = os.path.splitext(base)
-        if not ext:
-            _, src_ext = os.path.splitext(src)
-            ext = src_ext or ".bin"
-            base = name + ext
-        out_name = base
-        suffix = 2
-        while out_name in used_names:
-            out_name = f"{name}-{suffix}{ext}"
-            suffix += 1
-        used_names.add(out_name)
-        shutil.copy2(src, os.path.join(target_dir, out_name))
-        count += 1
-    if count <= 0:
-        raise HTTPException(status_code=404, detail="没有可导出的内容")
-    return {"ok": True, "folder": target_dir, "count": count}
+        if count <= 0:
+            raise HTTPException(status_code=404, detail="没有可导出的内容")
+        return {"ok": True, "folder": target_dir, "count": count}
+    except BaseException:
+        root = os.path.abspath(os.environ.get('CANVAS_EXPORT_ROOT') or os.path.join(OUTPUT_DIR, 'smart-groups'))
+        assert_path_within_root(Path(target_dir), Path(root))
+        assert_no_reparse_ancestors(Path(target_dir))
+        shutil.rmtree(target_dir)
+        raise
+
 
 @app.get("/api/asset-library")
 async def get_asset_library():
@@ -14925,10 +15113,20 @@ async def delete_prompt_library_category(category_id: str):
     return {"library": public_prompt_libraries(data)}
 
 @app.post("/api/asset-library/libraries")
-async def create_asset_library(payload: AssetLibraryRequest):
+async def create_asset_library(payload: AssetLibraryRequest, request: Request):
     lib = load_asset_library()
+    actor = request.headers.get("x-enterprise-user-id") or ""
+    if payload.reference_shelf:
+        if not actor:
+            raise HTTPException(403, "请从企业入口登录后整理个人参考")
+        requested_name = sanitize_asset_name(payload.name, "我的参考库")
+        existing = next((row for row in lib.get("libraries", []) if row.get("reference_shelf_owner") == actor and row.get("name") == requested_name), None)
+        if existing:
+            return {"library": lib, "asset_library": existing}
     library = {"id": f"lib_{uuid.uuid4().hex[:12]}", "name": sanitize_asset_name(payload.name, "资产库"), "type": "asset", "categories": []}
-    library["categories"].append({"id": f"cat_{uuid.uuid4().hex[:12]}", "name": "默认分组", "type": "image", "items": []})
+    if payload.reference_shelf:
+        library["reference_shelf_owner"] = actor
+    library["categories"].append({"id": f"cat_{uuid.uuid4().hex[:12]}", "name": "待整理" if payload.reference_shelf else "默认分组", "type": "image", "items": []})
     library["categories"].append({"id": f"wf_{uuid.uuid4().hex[:12]}", "name": "工作流", "type": "workflow", "items": []})
     lib.setdefault("libraries", []).append(library)
     lib["active_library_id"] = library["id"]
@@ -14997,19 +15195,21 @@ async def delete_asset_library_category(category_id: str, library_id: str = ""):
         raise HTTPException(status_code=404, detail="分类不存在")
     if cat.get("type") == "workflow" and category_id == "workflows" and (library.get("id") or "") == "default":
         raise HTTPException(status_code=400, detail="默认工作流分类不能删除")
-    # 删除分组时一并清理该分组下的本地文件 + 分组文件夹，避免磁盘残留。
-    for item in (cat.get("items") or []):
-        remove_asset_library_file(item)
+    removed_items = list(cat.get("items") or [])
     cat_dir = str(cat.get("dir") or "").strip("/").strip()
+    library["categories"] = [c for c in library.get("categories", []) if c.get("id") != category_id]
+    save_asset_library(lib)
+    # A failed or conflicting directory commit must leave every original file.
+    for item in removed_items:
+        remove_asset_library_file(item)
     if cat_dir:
         try:
             target = os.path.join(ASSET_LIBRARY_DIR, cat_dir)
             if os.path.isdir(target) and os.path.abspath(target).startswith(os.path.abspath(ASSET_LIBRARY_DIR) + os.sep):
-                shutil.rmtree(target, ignore_errors=True)
-        except Exception as exc:
-            print(f"删除分组文件夹失败: {exc}")
-    library["categories"] = [c for c in library.get("categories", []) if c.get("id") != category_id]
-    save_asset_library(lib)
+                # Only remove an empty directory: never sweep concurrent/new files.
+                os.rmdir(target)
+        except OSError:
+            pass
     return {"library": lib}
 
 @app.post("/api/asset-library/items")
@@ -15020,16 +15220,28 @@ async def add_asset_library_item(payload: AssetLibraryAddRequest):
         raise HTTPException(status_code=404, detail="分类不存在")
     if cat.get("type") != "image":
         raise HTTPException(status_code=400, detail="该分类暂不支持添加媒体")
+    if payload.collect_request_id:
+        existing = next((row for row in cat.get("items", []) if row.get("collect_request_id") == payload.collect_request_id), None)
+        if existing:
+            if existing.get("collected_from") != payload.url:
+                raise HTTPException(409, "整理请求内容已变化，请重新拖入")
+            return {"library": lib, "item": existing, "already_saved": True}
     src = output_file_from_url(payload.url)
     if not src:
         raise HTTPException(status_code=400, detail="只支持保存本地 /assets 或 /output 媒体")
     _, item = make_asset_library_item(src, payload.name or os.path.basename(src), subdir=cat.get("dir") or "")
-    if item.get("kind") == "image":
+    if payload.collect_request_id:
+        item.update(collect_request_id=payload.collect_request_id, collected_from=payload.url)
+    if payload.classify and item.get("kind") == "image":
         classification = await classify_asset_image_best_effort(output_file_from_url(item.get("url") or "") or src)
         if classification:
             item["classification"] = classification
     cat.setdefault("items", []).append(item)
-    save_asset_library(lib)
+    try:
+        save_asset_library(lib)
+    except Exception:
+        remove_asset_library_file(item)
+        raise
     return {"library": lib, "item": item}
 
 @app.post("/api/asset-library/items/batch")
@@ -15363,7 +15575,7 @@ async def check_asset_library_avatar(item_id: str, payload: AssetAvatarRegisterR
     return {"library": lib, "item": target_item}
 
 @app.delete("/api/asset-library/items/{item_id}")
-async def delete_asset_library_item(item_id: str):
+async def delete_asset_library_item(item_id: str, keep_file: bool = False):
     lib = load_asset_library()
     removed = None
     for library in lib.get("libraries", []):
@@ -15377,8 +15589,11 @@ async def delete_asset_library_item(item_id: str):
             cat["items"] = keep
     if not removed:
         raise HTTPException(status_code=404, detail="资产不存在")
-    remove_asset_library_file(removed)  # 同时删除本地文件，避免磁盘上堆积
     save_asset_library(lib)
+    # Shelf undo removes the collection entry only: a newly inserted canvas
+    # may already reference these bytes. Never break it by undoing collection.
+    if not keep_file:
+        remove_asset_library_file(removed)
     return {"library": lib}
 
 @app.post("/api/asset-library/items/delete")
@@ -15401,9 +15616,10 @@ async def batch_delete_asset_library_items(payload: AssetLibraryBatchDeleteReque
                 else:
                     keep.append(item)
             cat["items"] = keep
-    for item in removed_items:  # 批量删除同时清理本地文件
-        remove_asset_library_file(item)
     save_asset_library(lib)
+    # Commit the directory revision before any irreversible cleanup.
+    for item in removed_items:
+        remove_asset_library_file(item)
     return {"library": lib, "removed": removed}
 
 @app.post("/api/asset-library/items/move")
@@ -15495,53 +15711,57 @@ async def batch_crop_asset_library_items(payload: AssetLibraryBatchCropRequest):
 
 @app.put("/api/canvases/{canvas_id}")
 async def update_canvas(canvas_id: str, payload: CanvasSaveRequest):
-    canvas = load_canvas(canvas_id)
-    current_updated_at = int(canvas.get("updated_at") or 0)
-    if payload.base_updated_at and current_updated_at and int(payload.base_updated_at) < current_updated_at:
-        raise HTTPException(status_code=409, detail={
-            "message": "画布已被其他页面更新，已拒绝旧版本覆盖。",
-            "canvas": canvas,
-            "updated_at": current_updated_at,
-        })
-    canvas["title"] = (payload.title or canvas.get("title") or "未命名画布")[:80]
-    canvas["icon"] = (payload.icon or canvas.get("icon") or "layers")[:32]
-    canvas["kind"] = normalize_canvas_kind(canvas.get("kind"))
-    canvas["nodes"] = payload.nodes
-    canvas["connections"] = payload.connections
-    if canvas["kind"] == "smart":
-        canvas["viewport"] = payload.viewport
-    else:
-        canvas["viewport"] = canvas.get("viewport") or {"x": 0, "y": 0, "scale": 1}
-    canvas["logs"] = payload.logs[-500:]
-    canvas["settings"] = payload.settings or {}
-    save_canvas(canvas)
+    with CANVAS_LOCK, document_lock(canvas_path(canvas_id)):
+        canvas = load_canvas(canvas_id)
+        current_updated_at = int(canvas.get("updated_at") or 0)
+        if current_updated_at and int(payload.base_updated_at or 0) != current_updated_at:
+            raise HTTPException(status_code=409, detail={
+                "message": "画布已被其他页面更新，已拒绝旧版本覆盖。",
+                "canvas": canvas,
+                "updated_at": current_updated_at,
+            })
+        canvas["title"] = (payload.title or canvas.get("title") or "未命名画布")[:80]
+        canvas["icon"] = (payload.icon or canvas.get("icon") or "layers")[:32]
+        canvas["kind"] = normalize_canvas_kind(canvas.get("kind"))
+        canvas["nodes"] = payload.nodes
+        canvas["connections"] = payload.connections
+        if canvas["kind"] == "smart":
+            canvas["viewport"] = payload.viewport
+        else:
+            canvas["viewport"] = canvas.get("viewport") or {"x": 0, "y": 0, "scale": 1}
+        canvas["logs"] = payload.logs[-500:]
+        canvas["settings"] = payload.settings or {}
+        save_canvas(canvas)
     await manager.broadcast_canvas_updated(canvas_id, int(canvas.get("updated_at") or now_ms()), payload.client_id)
     return {"canvas": canvas}
 
 @app.delete("/api/canvases/{canvas_id}")
 async def delete_canvas(canvas_id: str):
-    canvas = load_canvas_any(canvas_id)
-    if not canvas.get("deleted_at"):
-        canvas["deleted_at"] = now_ms()
-        save_canvas(canvas)
-    return {"ok": True}
+    with CANVAS_LOCK, document_lock(canvas_path(canvas_id)):
+        canvas = load_canvas_any(canvas_id)
+        if not canvas.get("deleted_at"):
+            canvas["deleted_at"] = now_ms()
+            save_canvas(canvas)
+        return {"ok": True}
 
 @app.post("/api/canvases/{canvas_id}/restore")
 async def restore_canvas(canvas_id: str):
-    canvas = load_canvas_any(canvas_id)
-    if canvas.get("deleted_at"):
-        canvas.pop("deleted_at", None)
-        save_canvas(canvas)
-    return {"canvas": canvas}
+    with CANVAS_LOCK, document_lock(canvas_path(canvas_id)):
+        canvas = load_canvas_any(canvas_id)
+        if canvas.get("deleted_at"):
+            canvas.pop("deleted_at", None)
+            save_canvas(canvas)
+        return {"canvas": canvas}
 
 @app.delete("/api/canvases/{canvas_id}/purge")
 async def purge_canvas(canvas_id: str):
-    path = canvas_path(canvas_id)
-    if os.path.exists(path):
-        os.remove(path)
-    return {"ok": True}
+    with CANVAS_LOCK, document_lock(canvas_path(canvas_id)):
+        path = canvas_path(canvas_id)
+        if os.path.exists(path):
+            os.remove(path)
+        return {"ok": True}
 
-# --- GPT 对话 ---
+    # --- GPT 对话 ---
 
 @app.post("/api/chat")
 async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(default=""), x_enterprise_user_id: Optional[str] = Header(default=None)):
@@ -15857,28 +16077,21 @@ async def build_chat_stream(payload, request, x_user_id, tracking=None):
 
 # --- 历史记录 ---
 
+def load_history_records(type=None):
+    try:
+        data = history_records.read_records(HISTORY_FILE)
+        if type:
+            data = [item for item in data if item.get("type", "zimage") == type]
+        data = [item for item in data if item.get("images") and len(item["images"]) > 0]
+        data.sort(key=lambda item: float(item["timestamp"]) if isinstance(item.get("timestamp"), (int, float)) else 0, reverse=True)
+        return data
+    except history_records.HistoryUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+
 @app.get("/api/history")
 async def get_history_api(type: str = None):
-    if os.path.exists(HISTORY_FILE):
-        try:
-            with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                if type:
-                    data = [item for item in data if item.get("type", "zimage") == type]
-                data = [item for item in data if item.get("images") and len(item["images"]) > 0]
-
-                def sort_key(item):
-                    ts = item.get("timestamp", 0)
-                    if isinstance(ts, (int, float)):
-                        return float(ts)
-                    return 0
-
-                data.sort(key=sort_key, reverse=True)
-                return data
-        except Exception as e:
-            print(f"读取历史文件失败: {e}")
-            return []
-    return []
+    return await asyncio.to_thread(load_history_records, type)
 
 @app.get("/api/queue_status")
 async def get_queue_status(client_id: str):
@@ -15890,42 +16103,11 @@ async def get_queue_status(client_id: str):
 
 @app.post("/api/history/delete")
 async def delete_history(req: DeleteHistoryRequest):
-    if not os.path.exists(HISTORY_FILE):
-        return {"success": False, "message": "History file not found"}
     try:
-        with HISTORY_LOCK:
-            history = read_json(HISTORY_FILE)
-            target_record = None
-            new_history = []
-            for item in history:
-                is_match = False
-                item_ts = item.get("timestamp", 0)
-                if isinstance(req.timestamp, (int, float)) and isinstance(item_ts, (int, float)):
-                    if abs(float(item_ts) - float(req.timestamp)) < 0.001:
-                        is_match = True
-                elif str(item_ts) == str(req.timestamp):
-                    is_match = True
-                if is_match:
-                    target_record = item
-                else:
-                    new_history.append(item)
-            if target_record:
-                atomic_write_json(HISTORY_FILE, new_history, indent=4)
-
-        if target_record:
-            for img_url in target_record.get("images", []):
-                file_path = output_file_from_url(img_url)
-                if file_path and os.path.exists(file_path):
-                    try:
-                        os.remove(file_path)
-                    except Exception as e:
-                        print(f"Failed to delete file {file_path}: {e}")
-            return {"success": True}
-        else:
-            return {"success": False, "message": "Record not found"}
-    except Exception as e:
-        print(f"Delete history error: {e}")
-        return {"success": False, "message": str(e)}
+        removed = await asyncio.to_thread(history_records.delete_matching, HISTORY_FILE, req.timestamp)
+        return {"success": bool(removed), **({} if removed else {"message": "Record not found"})}
+    except history_records.HistoryUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc
 
 # --- ModelScope 角度控制 ---
 

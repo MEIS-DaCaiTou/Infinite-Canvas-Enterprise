@@ -5,11 +5,12 @@ import uuid
 import re
 
 from enterprise.character_repository import CharacterError
+from enterprise.character_design import ASSET_KINDS, design_profile, voice_profile
 
 GENDERS = ('unspecified', 'female', 'male', 'neutral', 'other')
 AGES = ('unspecified', 'child', 'teen', 'young', 'adult', 'middle', 'senior')
 REGIONS = ('unspecified', 'east_asia', 'south_asia', 'europe', 'africa', 'americas', 'middle_east', 'other')
-FIELDS = {'name', 'description', 'gender', 'age_group', 'region', 'images', 'cover_url', 'expected_revision', 'archived', 'create_request_id'}
+FIELDS = {'name', 'description', 'gender', 'age_group', 'region', 'images', 'cover_url', 'expected_revision', 'archived', 'create_request_id', 'design', 'assets', 'voice'}
 PREFIXES = ('/assets/input/', '/assets/output/', '/assets/library/', '/assets/uploads/', '/output/', '/static/characters/')
 
 
@@ -23,7 +24,7 @@ class Characters:
             if not isinstance(entry, dict) or not isinstance(entry.get('id'), str):
                 raise CharacterError(503, '官方角色库记录无效')
             profile = self._profile(principal, {key:entry[key] for key in FIELDS if key in entry})
-            if any(not ref.startswith('/static/characters/') for ref in [*profile['images'],profile['cover_url']]):
+            if any(not ref.startswith('/static/characters/') for ref in [*profile['images'],profile['cover_url'],*profile.get('assets',{}).values(),*(filter(None,[(profile.get('design') or {}).get('preview_source'),(profile.get('voice') or {}).get('url')]))]):
                 raise CharacterError(503, '官方角色库只能引用内置公开素材')
             asset_labels = entry.get('asset_labels', [])
             if not isinstance(asset_labels,list) or len(asset_labels)>12 or any(not isinstance(label,str) or len(label)>40 for label in asset_labels):
@@ -74,6 +75,25 @@ class Characters:
             raise CharacterError(400, '角色封面格式无效')
         cover = body.get('cover_url') or profile['images'][0]
         profile['cover_url'] = self._images(principal,[cover])[0]
+        if 'design' in body:
+            profile['design'] = design_profile(body['design'])
+            if profile['design'].get('preview_source'):
+                profile['design']['preview_source'] = self._images(principal, [profile['design']['preview_source']])[0]
+        if 'assets' in body:
+            assets = body['assets']
+            if not isinstance(assets, dict) or set(assets) - ASSET_KINDS:
+                raise CharacterError(400, '角色资产类型无效')
+            profile['assets'] = {key: self._images(principal, [value])[0] for key, value in assets.items()}
+        if 'voice' in body:
+            profile['voice']=voice_profile(body['voice'])
+            audio=profile['voice'].get('url')
+            if audio:
+                normalized=self.normalize(audio)
+                if not normalized or not normalized.startswith(PREFIXES) or PurePosixPath(normalized).suffix.lower() not in {'.mp3','.wav','.ogg','.m4a','.flac'}:
+                    raise CharacterError(400,'仅支持项目内的语音素材')
+                if not self.can_access(principal,normalized):
+                    raise CharacterError(403,'角色语音不可访问')
+                profile['voice']['url']=normalized
         if type(body.get('archived', False)) is not bool:
             raise CharacterError(400, '归档状态无效')
         profile['archived'] = body.get('archived', False)
@@ -88,6 +108,14 @@ class Characters:
             row['unavailable_images'] = len(original) - len(row['images'])
             cover = row.get('cover_url') or (original[0] if original else '')
             row['cover_url'] = cover if isinstance(cover,str) and cover.startswith(PREFIXES) and self.can_access(principal,cover) else ''
+            if 'assets' in row:
+                assets = row['assets']
+                row['assets'] = {key: ref for key, ref in assets.items() if key in ASSET_KINDS
+                    and isinstance(ref, str) and ref.startswith(PREFIXES) and self.can_access(principal, ref)}
+            if (row.get('design') or {}).get('preview_source') and not self.can_access(principal,row['design']['preview_source']):
+                row['design'].pop('preview_source',None)
+            if (row.get('voice') or {}).get('url') and not self.can_access(principal,row['voice']['url']):
+                row['voice'].pop('url',None)
         return sorted(rows, key=lambda row: row['updated_at'], reverse=True)
 
     def save(self, principal, body, character_id=None):

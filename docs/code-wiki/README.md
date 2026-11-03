@@ -1,14 +1,14 @@
 # Infinite Canvas Enterprise Code Wiki
 
-更新时间：2026-10-28
+更新时间：2026-10-31
 项目：`MEIS-DaCaiTou/Infinite-Canvas-Enterprise`
 
-Wiki 是源码/运行参考，不是第二份状态表、路线图或生产批准。2026-10-28 对照产品源码 `0dce14f`、main `1c22861` 核查现行入口、近期模块及关键接口/配置；各章较早标注的候选、测试和发布状态仅代表其日期，未经重新核验的旧细节仍以代码为准。历史测试结果不改成新跑分。
+Wiki是源码/运行参考，不是第二份状态、路线图或发布批准。2026-10-31复核当前a2a6831加本地候选的直接模块、资源/保存边界、GitHub状态和服务器阻碍；下方带2026-10-13至29日期的源码/测试段落是历史快照，不宣称已逐个重跑或全部接口重新验收。涉及当前实现先读各章本轮补记；当前基线与交付只见CURRENT。
 
 ## 1. 阅读范围
 
 - 数据迁移/恢复、一次确认与路由检查已接入 main，不能再笼统写“只支持同 Schema 更新”。
-- 正式应用最新为 v2026.10.9，产品源码 `0dce14f`；10.4经原10.5预置、10.8直接至10.9的离线原位路径已在开发机隔离副本验证。BAT 仍是源码/旧安装兼容路径，现场与恢复范围见 CURRENT。
+- 正式发行和设备状态只见[CURRENT](../CURRENT_PROJECT_STATUS.md)，本索引不复制另一份“最新版本”。BAT为源码/旧安装兼容路径，不能代替正式安装器的准确升级与恢复范围。
 - [已合并产品修复](../ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md) 索引图像能力/请求模块、个人模型及扩展；[C5](../ops/VERIFIED-UPDATER-HANDOFF-2026-10-11.md)/[C6](../ops/OFFLINE-RETAINED-UPGRADE-2026-10-12.md)/[C7](../ops/ONLINE-UPGRADE-SEQUENCE-2026-10-12.md) 索引已合并生命周期及其准确验收边界。文档存在不表示运行代码合并。
 - 最新主线、PR/CI、Release 和现场结果只见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，每轮重新核验。
 - 安装更新设计见 [统一交付 ADR](../decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md)，任务只按 [路线图](../roadmap/DEVELOPMENT-ROADMAP-2026-2027.md)。

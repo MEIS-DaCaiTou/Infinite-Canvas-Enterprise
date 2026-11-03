@@ -1,6 +1,9 @@
 # Infinite Canvas Enterprise 企业层开发指南
 
-更新时间：2026-10-28
+更新时间：2026-10-31
+
+2026-10-31源码导航补充：`local_json.document_lock/atomic_write_json`处理单文件协调；`media_download`处理不可信远程媒体连接，`media_response`处理可变媒体响应，`workflow_archive`处理导入展开限制；权限仍复用interceptors。`canvas-conflict-draft`、角色模块与`canvas-asset-shelf`两画布共用，分别只管冲突恢复、角色会话和整理交互；主编排/保存/资源/任务继续复用。服务器/桌面推进已授权但未交付，准确基线见CURRENT。默认8000/3001是产品端口；当前隔离完整预览使用18000/18001，不由端口相同推定源码相同。
+
 
 本文是快速开发指南，不是当前状态或路线图。完整导航见 [docs/README.md](docs/README.md)，模块细节见 [Code Wiki](docs/code-wiki/README.md)。
 

@@ -16,7 +16,7 @@ from enterprise.providers.comfyui import base_url, endpoint
 
 
 def unfinished(record):
-    return record.get('status') in {'queued', 'running'} or bool(record.get('recovery_required'))
+    return not record.get('queue_release') and (record.get('status') in {'queued', 'running'} or bool(record.get('recovery_required')))
 
 
 def executing(record):
@@ -167,6 +167,16 @@ class ComfyQueue:
             self.wake.set()
             return True
 
+    async def release_slot(self, task_id, actor):
+        async with self.lock:
+            try:
+                await asyncio.to_thread(self.journal.release_comfy_slot, task_id, actor)
+            except LookupError as exc:
+                raise HTTPException(404, str(exc)) from exc
+            except ValueError as exc:
+                raise HTTPException(409, str(exc)) from exc
+            self.wake.set()
+
     async def _run(self):
         while True:
             self.wake.clear()
@@ -273,7 +283,8 @@ class ComfyQueue:
 
     def public(self, row):
         return {key: row.get(key) for key in ('id', 'enterprise_user_id', 'workflow_json', 'created_at', 'status')} | {
-            'phase': 'platform_queued' if pending_dispatch(row) and row['id'] not in self.reserved else (row.get('comfy_receipt') or {}).get('phase', 'preparing')}
+            'phase': 'unknown' if row.get('status') == 'failed' and row.get('recovery_required') else 'platform_queued' if pending_dispatch(row) and row['id'] not in self.reserved else (row.get('comfy_receipt') or {}).get('phase', 'preparing'),
+            'can_release': row.get('status') == 'failed' and bool(row.get('recovery_required')) and not row.get('queue_release')}
 
     def task_queue(self, row):
         if not row.get('comfy_queue'):

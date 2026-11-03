@@ -67,6 +67,11 @@ def _truthy(value: str | None) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+ENTERPRISE_HISTORY_QUERY_INDEX_ENABLED: bool = _truthy(
+    os.getenv("ENTERPRISE_HISTORY_QUERY_INDEX_ENABLED", "true")
+)
+
+
 # ── 企业项目信息与更新治理 ───────────────────────────────
 ENTERPRISE_REPO_URL: str = os.getenv(
     "ENTERPRISE_REPO_URL",

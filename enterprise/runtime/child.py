@@ -29,6 +29,9 @@ import argparse
 import asyncio
 import importlib
 
+# The existing supervisor waits 10s before its forced-stop fallback. Leave
+# time for application cleanup after cancelling requests that cannot drain.
+HTTP_DRAIN_TIMEOUT_SECONDS = 8.0
 
 def _load_application(role: str, app_root: Path):
     root = str(app_root.resolve())
@@ -64,7 +67,8 @@ async def _serve(args: argparse.Namespace) -> int:
     import uvicorn
 
     application = _load_application(args.role, Path(args.app_root))
-    config = uvicorn.Config(application, host=args.host, port=args.port, log_level="warning", access_log=False)
+    config = uvicorn.Config(application, host=args.host, port=args.port, log_level="warning", access_log=False,
+                            timeout_graceful_shutdown=HTTP_DRAIN_TIMEOUT_SECONDS)
     server = uvicorn.Server(config)
     stop_file = Path(args.runtime_stop_file)
     marker = Path(args.shutdown_marker)

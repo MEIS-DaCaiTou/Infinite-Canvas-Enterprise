@@ -1,12 +1,13 @@
 # Infinite Canvas Enterprise
 
+更新时间：2026-10-31。本页不复制整份状态和任务队列。
+
 `Infinite-Canvas-Enterprise` 是独立维护的企业无限画布产品，仓库为 [MEIS-DaCaiTou/Infinite-Canvas-Enterprise](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise)。与 Aidan-OS、Aidan-Canvas、Aidan-App-SDK 不同，需求、分支和验收不能互相套用。
 
 项目基于 `hero8152/Infinite-Canvas@2026.07.6` 的冻结历史来源独立演进；保留归属/许可证，不再要求持续同步。
 
 ## 文档入口
 
-更新时间：2026-10-28。本页不复制整份状态和任务队列。
 
 | 需要了解 | 入口 |
 | --- | --- |
@@ -17,11 +18,9 @@
 | 完整文档导航与维护规则 | [文档索引](docs/README.md) / [登记表](docs/document-register.json) |
 | 开发、代码边界和安全 | [工作流](CODEX_WORKFLOW.md) / [代码边界](CODE_BOUNDARIES.md) / [安全基线](SECURITY_BASELINE.md) |
 
-最新正式应用为 [v2026.10.11](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.10.11)，产品源码 `2319762`，[#205](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/205) 已合并；main CI及八项匿名公开资产核验通过。修复旧维护缓存阻断并在完成页前核验登记；准确来源与验证边界见[当前状态](docs/CURRENT_PROJECT_STATUS.md)。后续开发继续遵循[开发工作流](CODEX_WORKFLOW.md#31-开发机人工验收与反复修订负责人2026-10-24要求)。
+当前源码、预览、main、正式Release及设备反馈分别见[当前状态](docs/CURRENT_PROJECT_STATUS.md#当前摘要与开发基线2026-10-31核验)，本页不维护另一份版本表。角色原人体提交已存在于远端；角色续修、数据/资源收敛及拖拽资产整理仍有本地未提交内容，不能从某个HEAD或旧安装包推定包含全部功能。
 
-现场升级尚未代操作：先验收10.9测试机直接到11，再安排10.4生产经原10.5预置到11。已证明安装身份的维护缓存异常由安装器处理，不要求手改摘要或覆盖程序；首次文件副本差异发生环节仍未知。
-
-当前企业部署仍采用单台 Windows 主机、SQLite 和本地文件。专业服务器/云部署、500+ 员工与 200+ 活跃创作保留为长期约束；Linux、容器和容量扩展待负责人实际需求再实施，业务核心保持可演进边界。方案 Accepted 不等于已经实现。
+当前正式形态为Windows单机/LAN；服务器适配、单企业试部署与桌面小样已获准按[唯一路线图](docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md)推进，尚未成为现成Linux/容器/多实例产品。开放PR建议见[文档/PR盘点](docs/ops/DOC-3-DOCUMENT-SYSTEM-AUDIT-2026-10.md#2026-10-31-开发前状态清理与pr盘点)。
 
 ## 运行入口：先区分源码与安装产品
 

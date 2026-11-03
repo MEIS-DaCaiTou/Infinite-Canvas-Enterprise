@@ -55,6 +55,8 @@ from enterprise.interceptors import (
     is_stream_path,
     post_process,
     pre_process,
+    start_collection_queries,
+    stop_collection_queries,
     rewrite_managed_modelscope_token_body,
     upstream_conversation_user_id,
 )
@@ -313,6 +315,7 @@ async def startup() -> None:
     _health_probe_lock = asyncio.Lock()
     app.state.upstream_client = _http_client
     _health_probe_task = None
+    start_collection_queries()
     print(f"[企业版] 网关启动，监听 0.0.0.0:{GATEWAY_PORT}")
     print(f"[企业版] 上游服务地址: {UPSTREAM_URL}")
 
@@ -320,6 +323,7 @@ async def startup() -> None:
 @app.on_event("shutdown")
 async def shutdown() -> None:
     global _health_probe_task
+    await run_in_threadpool(stop_collection_queries)
     if _http_client:
         await _http_client.aclose()
     app.state.upstream_client = None
@@ -1236,7 +1240,8 @@ async def ws_proxy(websocket: WebSocket, path: str):
     await websocket.accept()
     query_string = websocket.scope.get("query_string", b"").decode("utf-8", errors="ignore")
     client_id = str(websocket.query_params.get("client_id") or "").strip()
-    connection = enterprise_ws.register_connection(websocket, user, path, client_id)
+    connection = enterprise_ws.register_connection(websocket, user, path, client_id,
+        validate_session=lambda: verify_token(token))
     await enterprise_ws.broadcast_stats()
     upstream_ws_url = enterprise_ws.build_upstream_ws_url(UPSTREAM_URL, path, query_string)
 
@@ -1433,11 +1438,18 @@ async def _forward(
         k: v for k, v in request.headers.items()
         if k.lower() not in exclude_headers
     }
+    # Only the authenticated paged picker omits upload enumeration upstream.
+    # Strip a caller-supplied hint on every other route/legacy request.
+    from enterprise.local_uploads import is_picker_query
+    headers.pop('x-enterprise-upload-source', None)
+    if user and is_picker_query(path, request.method, request.query_params):
+        headers['x-enterprise-upload-source'] = 'canvas-inputs-v1'
     # 企业用户信息注入（上游可选使用，不影响上游逻辑）
     if user:
         from urllib.parse import quote
         upstream_user_id = await run_in_threadpool(upstream_conversation_user_id, path, body, user) or user["user_id"]
         headers["x-enterprise-user-id"] = user["user_id"]
+        headers['x-enterprise-origin'] = _canonical_origin(str(request.url.scheme), request.headers.get('host') or '')
         # URL 编码用户名，防止中文等非 ASCII 字符导致 HTTP 头编码失败
         headers["x-enterprise-username"] = quote(user["username"], safe="")
         headers["x-enterprise-is-admin"] = "true" if user.get("is_admin") else "false"
@@ -1478,6 +1490,14 @@ async def _forward(
         return JSONResponse({"error": str(e), "code": 502}, status_code=502)
 
     content_type = upstream_resp.headers.get("content-type", "")
+    if path.startswith(('assets/', 'output/')) or path in {'api/download-output','api/media-preview','api/image-jpeg','api/view'}:
+        from enterprise.media_response import media_response_headers
+        from urllib.parse import unquote
+        policy = media_response_headers(content_type, unquote(path.rsplit('/',1)[-1]) or 'download')
+        for key, value in policy.items():
+            upstream_resp.headers[key] = value
+        # Mutable HTML must never enter the application's shell-injection path.
+        return streaming_response(upstream_resp, head=request.method == 'HEAD')
     if "text/event-stream" in content_type:
         async def observe_sse(line):
             if not skip_intercept and user:

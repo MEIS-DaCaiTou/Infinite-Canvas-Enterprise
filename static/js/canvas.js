@@ -1,3 +1,4 @@
+let canvasAssetShelf = null;
 function refreshIcons(){ if(window.lucide) lucide.createIcons(); }
 refreshIcons();
 function tr(key){ return window.StudioI18n ? StudioI18n.t(key) : key; }
@@ -372,13 +373,14 @@ backToManagerBtn?.addEventListener('click', async () => {
     await CanvasSaveNavigation.leave({
         cancelDebounce:()=>{ clearTimeout(saveTimer); saveTimer = null; },
         isSaving:()=>savingCanvasNow,
-        save:saveCanvas,
+        save:()=>localCanvasDirty ? saveCanvas() : Promise.resolve(true),
         hasPending:()=>localCanvasDirty || savingCanvasNow || saveCanvasAgain,
         failed:()=>setStatus(langIsEn() ? 'Save incomplete. Please try returning again.' : '保存尚未完成，请稍后再返回'),
         navigate:()=>{ window.location.href = canvasListUrlForProject(canvas.project); }
     });
 });
 let localCanvasDirty = false;
+let canvasSaveConflict = false;
 let savingCanvasNow = false;
 let saveCanvasAgain = false;
 let applyingRemoteCanvas = false;
@@ -1362,6 +1364,11 @@ function refreshGeometryAfterLayout(){
 function scheduleSave(){
     if(!canvas || applyingRemoteCanvas) return;
     localCanvasDirty = true;
+    if(canvasSaveConflict){
+        retainConflictedCanvas();
+        setStatus('保存冲突：草稿已保留，请另存副本或读取远端版本');
+        return;
+    }
     setStatus('Saving...');
     clearTimeout(saveTimer);
     if(savingCanvasNow){
@@ -1412,8 +1419,50 @@ function serializableCanvasNode(node){
 function serializableCanvasNodes(list=nodes){
     return (list || []).map(serializableCanvasNode);
 }
+function conflictedCanvasDraft(){
+    return {...canvas, nodes:serializableCanvasNodes(), connections, viewport,
+        updated_at:lastCanvasUpdatedAt, logs:canvas.logs || []};
+}
+function retainConflictedCanvas(){
+    return CanvasConflictDraft.retain(canvas.id, conflictedCanvasDraft());
+}
+function showCanvasConflict(savedDraft=null){
+    const id=canvas.id;
+    const currentDraft=()=>canvas?.id===id && canvasSaveConflict ? conflictedCanvasDraft() : savedDraft;
+    const retained=savedDraft ? true : retainConflictedCanvas();
+    CanvasConflictDraft.show({draft:currentDraft,retained,
+        onRestore:savedDraft ? ()=>{
+            nodes=savedDraft.nodes || [];connections=savedDraft.connections || [];
+            canvas={...canvas,...savedDraft};lastCanvasUpdatedAt=Number(savedDraft.updated_at || 0);
+            localCanvasDirty=true;canvasSaveConflict=true;render();
+            setStatus('已恢复本页草稿；请另存副本以保留远端修改');
+        } : null,
+        onCopy:async()=>{
+            const draft=currentDraft();
+            const created=await fetch('/api/canvases',{method:'POST',headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({title:(draft.title || '画布')+' · 本页副本',kind:draft.kind || 'classic',project:draft.project,
+                    board_x:Number(draft.board_x || 0)+280,board_y:Number(draft.board_y || 0)})});
+            if(!created.ok) throw new Error('创建副本失败，草稿仍保留');
+            const data=await created.json();
+            const saved=await fetch('/api/canvases/'+data.canvas.id,{method:'PUT',headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({...draft,title:data.canvas.title,base_updated_at:data.canvas.updated_at})});
+            if(!saved.ok) throw new Error('副本内容尚未保存，草稿仍保留，请重试');
+            CanvasConflictDraft.clear(id);canvasSaveConflict=false;
+            const copyUrl=new URL(window.location.href);
+            copyUrl.searchParams.set("id",data.canvas.id);
+            window.history.replaceState(null,"",copyUrl);
+            await openCanvas(data.canvas.id);
+        },
+        onReload:async(confirmedDownload=false)=>{
+            if(!retained && !confirmedDownload) throw new Error('请先下载草稿，再选择“已下载草稿，读取远端版本”；本次浏览器未能保留草稿');
+            canvasSaveConflict=false;localCanvasDirty=false;saveCanvasAgain=false;
+            clearTimeout(saveTimer);saveTimer=null;
+            await openCanvas(id,true);
+        }});
+}
 async function saveCanvas(){
     if(!canvas || applyingRemoteCanvas) return;
+    if(canvasSaveConflict){ retainConflictedCanvas(); showCanvasConflict(); return false; }
     if(savingCanvasNow){
         saveCanvasAgain = true;
         return;
@@ -1440,12 +1489,16 @@ async function saveCanvas(){
             const data = await res.json().catch(() => ({}));
             const remote = data.detail?.canvas || data.canvas;
             if(localCanvasDirty || saveCanvasAgain){
-                lastCanvasUpdatedAt = Number(data.detail?.updated_at || data.updated_at || remote?.updated_at || lastCanvasUpdatedAt || 0);
-                saveCanvasAgain = true;
-                setStatus('Saving...');
-                return 'retry';
+                canvasSaveConflict=true;
+                saveCanvasAgain=false;
+                clearTimeout(saveTimer);saveTimer=null;
+                showCanvasConflict();
+                setStatus('保存冲突：已停止覆盖，本页草稿可恢复');
+                return false;
             }
-            if(remote) applyRemoteCanvasData(remote);
+            // Apply after finally releases savingCanvasNow. Applying inside
+            // the save would defer itself forever on an otherwise clean page.
+            if(remote) Promise.resolve().then(()=>applyRemoteCanvasData(remote));
             setStatus('Synced');
             return 'retry';
         }
@@ -1469,7 +1522,7 @@ async function saveCanvas(){
         return false;
     } finally {
         savingCanvasNow = false;
-        if(saveCanvasAgain && canvas && !applyingRemoteCanvas){
+        if(saveCanvasAgain && canvas && !applyingRemoteCanvas && !canvasSaveConflict){
             saveCanvasAgain = false;
             localCanvasDirty = true;
             setTimeout(saveCanvas, 0);
@@ -1662,7 +1715,8 @@ async function touchCanvasOpened(id){
         if(!res.ok) return null;
         const data = await res.json();
         if(data.canvas) updateCanvasListRecord(data.canvas);
-        return data.canvas || data;
+        return data.canvas ? {...data.canvas,
+            updated_at:data.updated_at ?? data.canvas.content_updated_at ?? data.canvas.updated_at} : data;
     } catch(e) {
         console.warn('touch canvas failed', e);
         return null;
@@ -1929,25 +1983,12 @@ async function setCanvasIcon(id, icon, event){
     closeCanvasMetaPopover();
     renderCanvasList();
     try {
-        let target = canvas?.id === id ? canvas : null;
-        if(!target) {
-            const data = await fetch(`/api/canvases/${id}`).then(r => r.json());
-            target = data.canvas;
-        }
-        target.icon = icon || 'layers';
-        const res = await fetch(`/api/canvases/${id}`, {
-            method:'PUT',
-            headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({
-                title:target.title,
-                icon:target.icon,
-                nodes:target.nodes || [],
-                connections:target.connections || [],
-                viewport:target.viewport || {x:0, y:0, scale:1}
-            })
+        const res = await fetch(`/api/canvases/${id}/meta`, {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({icon:icon || 'layers'})
         });
         if(!res.ok) throw new Error('图标保存失败');
-        if(canvas?.id === id) canvas.icon = target.icon;
+        if(canvas?.id === id) canvas.icon = icon || 'layers';
         await loadCanvasList(false);
     } catch(e) {
         setStatus('图标保存失败');
@@ -1993,22 +2034,9 @@ async function setCanvasTitle(id, title){
     if(canvas?.id === id) canvas.title = title;
     renderCanvasList();
     try {
-        let target = canvas?.id === id ? canvas : null;
-        if(!target){
-            const data = await fetch(`/api/canvases/${id}`).then(r => r.json());
-            target = data.canvas;
-        }
-        target.title = title;
-        const res = await fetch(`/api/canvases/${id}`, {
-            method:'PUT',
-            headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({
-                title:target.title,
-                icon:target.icon,
-                nodes:target.nodes || [],
-                connections:target.connections || [],
-                viewport:target.viewport || {x:0, y:0, scale:1}
-            })
+        const res = await fetch(`/api/canvases/${id}/meta`, {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({title:title})
         });
         if(!res.ok) throw new Error('重命名失败');
         if(currentCanvasTitle && canvas?.id === id) currentCanvasTitle.textContent = title;
@@ -2018,7 +2046,7 @@ async function setCanvasTitle(id, title){
         console.error(e);
     }
 }
-async function openCanvas(id){
+async function openCanvas(id, skipConflictDraft=false){
     setStatus('Opening...');
     try {
         const res = await fetch(`/api/canvases/${id}`);
@@ -2027,8 +2055,10 @@ async function openCanvas(id){
         resetCascadeRuntimeState();
         canvas = data.canvas;
         rememberCanvasListProject(canvas.project || 'default');
-        const touched = await touchCanvasOpened(canvas.id);
-        if(touched?.updated_at) canvas.updated_at = Number(touched.updated_at);
+        // Keep the revision paired with the content returned by GET. Another
+        // page may save between GET and touch; activity must not promote our
+        // older content to that newer revision.
+        await touchCanvasOpened(canvas.id);
         if((canvas.kind || 'classic') === 'smart'){
             openSmartCanvasPage(canvas.id);
             return;
@@ -2040,6 +2070,7 @@ async function openCanvas(id){
         canvas.viewport = {...viewport};
         lastCanvasUpdatedAt = Number(canvas.updated_at || 0);
         localCanvasDirty = false;
+        canvasSaveConflict = false;
         resetTransientRunState(nodes);
         sanitizeConnections();
         pruneMissingComfyWorkflows();
@@ -2054,6 +2085,8 @@ async function openCanvas(id){
         comfyTaskControls.load(canvas.id);
         startCanvasRemotePolling();
         setStatus('Ready');
+        const retainedDraft=CanvasConflictDraft.read(canvas.id);
+        if(retainedDraft && !skipConflictDraft) showCanvasConflict(retainedDraft);
     } catch(e) {
         setStatus(tr('canvas.openFailed'));
         console.error(e);
@@ -2201,7 +2234,10 @@ function handleCanvasUpdatedMessage(data){
     if(remoteUpdatedAt && remoteUpdatedAt <= Number(lastCanvasUpdatedAt || 0)) return;
     clearTimeout(saveTimer);
     saveTimer = null;
-    localCanvasDirty = false;
+    if(localCanvasDirty || savingCanvasNow || saveCanvasAgain || canvasSaveConflict){
+        setStatus('远端已更新；保留本页未保存内容');
+        return;
+    }
     clearTimeout(remoteSyncTimer);
     remoteSyncTimer = setTimeout(syncRemoteCanvasNow, savingCanvasNow ? 700 : 120);
     setStatus('Syncing...');
@@ -6057,9 +6093,10 @@ function renderNode(node){
         && (node.runStatus !== 'failed' || node._cascadeFailed);
     const statusHtml = showStatus ? (() => {
         const label = { queued:'排队中', running:'运行中', done:'完成', failed:'失败' }[node.runStatus] || '';
-        return `<span class="node-run-status ${node.runStatus}"><span class="dot"></span>${escapeHtml(label)}${node._cascadeIdx?' '+node._cascadeIdx:''}</span>`;
+        return `<span class="node-run-status ${escapeAttr(node.runStatus)}"><span class="dot"></span>${escapeHtml(label)}${node._cascadeIdx?' '+escapeHtml(String(node._cascadeIdx)):''}</span>`;
     })() : '';
-    el.innerHTML = `<div class="node-head"><span class="node-title">${displayTitle}</span><div style="display:flex;align-items:center;gap:8px">${statusHtml}<button onclick="deleteNodeFromButton('${node.id}', event)" class="text-gray-300 hover:text-red-500"><i data-lucide="x" class="w-4 h-4"></i></button></div></div>`;
+    el.innerHTML = `<div class="node-head"><span class="node-title">${displayTitle}</span><div style="display:flex;align-items:center;gap:8px">${statusHtml}<button data-node-delete class="text-gray-300 hover:text-red-500"><i data-lucide="x" class="w-4 h-4"></i></button></div></div>`;
+    el.querySelector('[data-node-delete]').addEventListener('click', event=>deleteNodeFromButton(node.id,event));
     const body = document.createElement('div');
     body.className = 'node-body';
     if(node.type === 'image') {
@@ -8918,7 +8955,7 @@ function renderComfyBody(node){
         </div>
         <div class="comfy-controls">
             <div class="gen-settings comfy-settings"></div>
-            <div class="comfy-queue-usage" data-comfy-queue-usage></div>
+            <div class="comfy-queue-usage"><span data-comfy-queue-usage></span><button type="button" class="comfy-task-list" data-comfy-task-list>${langIsEn()?'Manage tasks':'管理任务'}</button></div>
             <div class="gen-run-row">
                 <button class="comfy-run ${node.running ? 'running' : ''}" ${node.running ? 'disabled' : ''}><i data-lucide="zap" class="w-4 h-4"></i>${node.running ? tr('canvas.comfyRunning') : tr('canvas.comfyRun')}</button>
                 ${cascadeBtnHtml(node)}
@@ -8942,6 +8979,7 @@ function renderComfyBody(node){
     refreshComfyInputViews(wrap, node, ordered);
     renderComfySettings(wrap.querySelector('.comfy-settings'), node);
     queueMicrotask(()=>comfyTaskControls.paintUsage());
+    wrap.querySelector('[data-comfy-task-list]').onclick = e => { e.stopPropagation(); GenerationTaskCenter.openTasks({kind:'canvas_comfy'}); };
     wrap.querySelector('.comfy-run').onclick = e => { e.stopPropagation(); runCanvasGenerate(node.id); };
     bindCascadeButtons(wrap, node.id);
     return wrap;
@@ -14100,6 +14138,7 @@ function startNodeDrag(e, node){
 }
 function onNodeDrag(e){
     if(!dragNode) return;
+    canvasAssetShelf?.previewNodeDrag(e, window.CanvasAssetShelf.mediaFromNodes([dragNode.node, ...(dragNode.children || []).map(row=>row.node)]));
     const dx = (e.clientX - dragNode.sx) / viewport.scale;
     const dy = (e.clientY - dragNode.sy) / viewport.scale;
     dragNode.node.x = dragNode.ox + dx;
@@ -14275,9 +14314,15 @@ function endDrag(event=null){
     const hadViewportDrag = Boolean(dragBoard || minimapDrag);
     if(dragNode){
         const moved = [dragNode.node, ...(dragNode.children || []).map(c => c.node)].filter(Boolean);
+        const shelved = event && canvasAssetShelf?.dropNodeDrag(event, window.CanvasAssetShelf.mediaFromNodes(moved));
+        if(shelved){
+            dragNode.node.x=dragNode.ox;dragNode.node.y=dragNode.oy;
+            for(const row of dragNode.children || []){row.node.x=row.ox;row.node.y=row.oy;}
+            render();
+        }
         // 拖动 group/promptGroup 自身时不重新评估（成员跟着一起走，包含关系不变）
         const draggedGroup = moved.some(n => n.type === 'group' || n.type === 'promptGroup');
-        if(!draggedGroup) updateGroupMembership(moved);
+        if(!shelved && !draggedGroup) updateGroupMembership(moved);
     }
     dragNode = null;
     dragBoard = null;
@@ -15122,5 +15167,16 @@ CharacterStudio.mount({
             nodes.push(node); ids.push(node.id);
         });
         selected=new Set(ids); render(); scheduleSave(); return true;
+    }
+});
+
+// Narrow adapter: collection UI never reads or rewrites the canvas JSON.
+canvasAssetShelf=window.CanvasAssetShelf?.install({
+    items:()=>window.CanvasAssetShelf.mediaFromNodes(nodes),
+    insert:(item,screenPoint)=>{
+        if(!ensureCanvas())return;
+        pushUndo();
+        const point=screenPoint?screenToWorld(screenPoint.x,screenPoint.y):defaultPoint(120,0);
+        addNode({id:uid('img'),type:'image',x:point.x-130,y:point.y-150,url:item.url,name:item.name || '参考素材',mediaKind:item.kind || window.CanvasAssetShelf.mediaKind(item)});
     }
 });

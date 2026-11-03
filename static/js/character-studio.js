@@ -59,6 +59,8 @@
       this.dialog.setAttribute("aria-label", "角色造型室");
       this.dialog.innerHTML = `<button type="button" data-close aria-label="关闭角色造型室">×</button><div class="character-library-screen"></div><header class="character-editor-header" hidden><button type="button" data-back>‹ 返回角色库</button></header><p class="character-status" role="status" aria-live="polite" hidden></p><aside class="character-editor" aria-label="角色资料"></aside>`;
       document.body.append(this.dialog);
+      this.dialog.querySelector("[data-back]").setAttribute("aria-label", "返回角色库");
+      this.dialog.querySelector("[data-back]").title = "返回角色库";
       this.editor = this.dialog.querySelector(".character-editor");
       this.status = this.dialog.querySelector(".character-status");
       this.gallery = new CharacterLibraryView(
@@ -74,17 +76,19 @@
             if (!this.canSwitch()) return;
             this.creation.open(mode || "generate");
           },
-          onEdit: () => {
-            if (!this.draft || !this.canSwitch()) return;
-            if (this.library === "official")
-              this.draft = {
-                ...structuredClone(this.draft),
-                id: undefined,
-                revision: undefined,
-                name: this.draft.name + " · 副本",
-              };
-            this.setEditing(true);
-            this.renderEditor();
+          onEdit: () => this.beginEdit(),
+          onVoice: row => {this.focusRow(row);if(this.beginEdit()){this.editView.tab='voice';this.renderEditor();}},
+          onGenerateAsset: (row, kind) => {
+            this.focusRow(row);
+            if (this.beginEdit()) this.editView.generate(kind);
+          },
+          onAssignAsset: (row, kind, url) => {
+            this.focusRow(row);
+            if (this.beginEdit())
+              this.editView.change(() => {
+                this.draft.assets = { ...this.draft.assets, [kind]: url };
+                if (kind === "full_body") this.draft.cover_url = url;
+              });
           },
           onInsert: () => this.insert(),
           onArchive: (ids) => this.archiveSelected(ids),
@@ -93,12 +97,22 @@
       );
       this.grid = this.gallery.grid;
       this.creation = new CharacterCreationView(this);
+      this.editView = new CharacterEditorView(this, labels);
+      this.imageAction = new CharacterImageAction(this);
       this.dialog
         .querySelector("[data-close]")
         .addEventListener("click", () => {
-          if (!this.busy && !this.creation.working) this.dialog.close();
+          if (!this.busy && !this.creation.working && !this.imageAction.working) {
+            if (!this.creation.root.hidden && this.creation.mode === "assets") this.creation.back();
+            else this.dialog.close();
+          }
         });
-      this.dialog.addEventListener("close", () => this.gallery.pause());
+      this.dialog.addEventListener("close", () => {
+        this.gallery.pause();
+        this.editView.preview?.destroy();
+        this.editView.preview = null;
+        this.editView.voiceView.stop();
+      });
       this.dialog.addEventListener("keydown", (event) => {
         event.stopPropagation();
         if (
@@ -117,7 +131,8 @@
         }
       });
       this.dialog.addEventListener("cancel", (event) => {
-        if (this.busy || this.creation.working) event.preventDefault();
+        if (this.busy || this.creation.working || this.imageAction.working)
+          event.preventDefault();
       });
       this.dialog.querySelector("[data-back]").addEventListener("click", () => {
         if (this.canSwitch()) {
@@ -161,6 +176,11 @@
       this.dialog.classList.toggle("is-editing", value);
       this.dialog.querySelector(".character-editor-header").hidden = !value;
       if (value) this.gallery.pause();
+      else {
+        this.editView.preview?.destroy();
+        this.editView.preview = null;
+        this.editView.voiceView.stop();
+      }
     }
     async request(url, options = {}) {
       const response = await fetch(url, {
@@ -201,7 +221,17 @@
       }
     }
     async open() {
-      if (!this.dialog.open) this.dialog.showModal();
+      if (!this.dialog.open) {
+        // A normal toolbar entry opens the complete library, not a QA search or editor.
+        // An unsaved edit or an unfinished creation screen keeps its existing context.
+        if (!this.dirty && this.creation.root.hidden && this.imageAction.root.hidden) {
+          this.setEditing(false);
+          this.draft = null;
+          this.library = "personal";
+          this.gallery.resetHome();
+        }
+        this.dialog.showModal();
+      }
       await this.load();
     }
     async load() {
@@ -213,8 +243,6 @@
           "/enterprise/api/me/characters/catalog",
         );
         this.catalog = catalog.characters;
-        CharacterMotionPreview.referenceAssets =
-          catalog.local_preview_available === true;
         if (this.draft?.id && !this.dirty)
           this.draft = structuredClone(
             [...this.rows, ...this.catalog].find(
@@ -238,6 +266,7 @@
     newProfile() {
       if (!this.canSwitch()) return;
       this.draft = {
+        _edit_nonce: crypto.randomUUID().replaceAll("-", ""),
         name: "",
         description: "",
         gender: "unspecified",
@@ -262,11 +291,29 @@
         this.editing ? undefined : this.draft?.id,
       );
     }
+    beginEdit() {
+      if (!this.draft || !this.canSwitch()) return false;
+      if (this.library === "official")
+        this.draft = {
+          ...structuredClone(this.draft),
+          id: undefined,
+          revision: undefined,
+          _edit_nonce: crypto.randomUUID().replaceAll("-", ""),
+          assets: CharacterDesign.slots(this.draft),
+          name: this.draft.name + " · 副本",
+        };
+      this.library = "personal";
+      this.setEditing(true);
+      this.renderEditor();
+      return true;
+    }
     renderEditor() {
-      this.editor.replaceChildren();
+      this.editView.render();
+    }
+    renderProfileForm(target) {
       const row = this.draft;
       if (!row) {
-        this.editor.append(
+        target.append(
           element("p", "character-empty", "选择角色查看资料，或新建一个角色。"),
         );
         return;
@@ -280,10 +327,7 @@
           row.id ? (row.archived ? "已归档角色" : "角色资料") : "新建角色",
         ),
       );
-      for (const [name, title, max] of [
-        ["name", "角色名称", 80],
-        ["description", "角色描述", 2000],
-      ]) {
+      for (const [name, title, max] of [["description", "角色描述", 2000]]) {
         const label = element("label", "", title),
           input = element(name === "description" ? "textarea" : "input");
         input.name = name;
@@ -417,7 +461,7 @@
         e.preventDefault();
         this.save();
       });
-      this.editor.append(form);
+      target.append(form);
     }
     appendImages(refs) {
       const images = [...new Set([...this.draft.images, ...refs])];
@@ -471,11 +515,19 @@
         ),
       );
       if (row.cover_url) data.cover_url = row.cover_url;
+      if (row.design) data.design = row.design;
+      if (row.voice) data.voice = row.voice;
+      if (row.assets) data.assets = row.assets;
       if (row.id) data.expected_revision = row.revision;
+      else
+        data.create_request_id = row._edit_nonce ||= crypto
+          .randomUUID()
+          .replaceAll("-", "");
       data.archived = false;
       return data;
     }
     async save() {
+      let success = false;
       await this.perform(async () => {
         const row = this.draft,
           data = this.payload(row);
@@ -501,7 +553,9 @@
         this.renderCards();
         this.renderEditor();
         this.message();
+        success = true;
       });
+      return success;
     }
     async archive() {
       if (this.draft?.id) await this.archiveSelected([this.draft.id]);
@@ -561,7 +615,16 @@
           throw new Error("角色或参考图不可用，请刷新后核对。");
         if (chosen.length === 1 && chosen[0].revision !== this.draft.revision)
           throw new Error("角色已在其他页面修改，请重新打开后核对。");
-        for (const row of chosen) if (!(await this.adapter.insert(row))) return;
+        for (const row of chosen)
+          if (
+            !(await this.adapter.insert({
+              ...row,
+              images: [
+                ...new Set([...row.images, ...Object.values(row.assets || {})]),
+              ],
+            }))
+          )
+            return;
         this.dialog.close();
       });
     }

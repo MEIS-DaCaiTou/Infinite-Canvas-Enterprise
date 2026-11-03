@@ -460,6 +460,8 @@ _MAIN_FLOW_BY_SYMBOL.update(
         "save_conversation": "W08", "delete_conversation": "W08",
         "save_canvas": "W09", "save_projects": "W09", "update_canvas_meta": "W09",
         "delete_project": "W09", "purge_canvas": "W09",
+        "_read_canvas_for_listing": "W09",
+        "_save_character_voice": "W15",
         "save_asset_library": "W10", "save_prompt_libraries": "W10",
         "shared_folders_save": "W10", "save_runninghub_workflow_store": "W10",
         "save_api_providers": "W11",
@@ -495,6 +497,12 @@ _MAIN_FLOW_BY_SYMBOL.update(
 _OTHER_FLOW_BY_SYMBOL: dict[tuple[str, str], str] = {
     # Shared atomic primitive; W07/W08/W09 callers retain their own locks/roots.
     ("enterprise/local_json.py", "atomic_write_json"): "W09",
+    ("enterprise/local_json.py", "document_lock"): "W09",
+    # Disposable history read projection beside the original DATA_ROOT JSON.
+    # Rebuild publishes a complete temporary SQLite file; JSON stays authoritative.
+    ("enterprise/history_query_index.py", "HistoryQueryIndex.rebuild"): "W07",
+    ("enterprise/history_query_index.py", "_open_readonly"): "W07",
+    ("tools/check_history_query_index.py", "ownership_snapshot"): "W31",
     # Explicit private media copies use the existing W15 output storage flow.
     # Only this invocation's newly created files are removed after failure.
     ("enterprise/project_results.py", "ProjectResults.reuse"): "W15",
@@ -699,7 +707,7 @@ def _flow_for_operation(file: str, symbol: str) -> str:
 # Wxx flow). Line numbers are deliberately excluded, while duplicate identical
 # calls remain duplicate records. Any added/removed/changed call drifts it.
 # W15 replaces the generic URL fallback with removal of this invocation's generated partial output.
-EXPECTED_SITE_MANIFEST_DIGEST = "f519577a2551768267157632889675ad0ee62b6892cb9cafd300ee3930737af2"
+EXPECTED_SITE_MANIFEST_DIGEST = "c65afe7d033f673f93158d594b1303160bb22315d2fcc00318452f9e425d91ba"
 
 FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W01", "main.py", "startup_event"),

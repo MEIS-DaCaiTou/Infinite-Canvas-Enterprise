@@ -55,8 +55,11 @@ function contextFor(data) {
         initialSmartSettings:data.settings || {}, canvasDefaultSmartSettings:data.settings || {},
         CLIENT_ID:'persistence-fixture', smartClientId:'persistence-fixture',
         applyingRemoteCanvas:false, savingCanvasNow:false, saveCanvasAgain:false,
-        localCanvasDirty:true, lastCanvasUpdatedAt:data.updated_at, currentCanvasTime:null,
-        selected:new Set(), saveTimer:null, canvasSyncInFlight:false, smartLoopContext:null,
+        localCanvasDirty:true, canvasSaveConflict:false, lastCanvasUpdatedAt:data.updated_at, currentCanvasTime:null,
+        CanvasConflictDraft:{read:()=>null},
+        gateCanvasList:null,
+        selected:new Set(), saveTimer:null, canvasSyncInFlight:false, smartLoopContext:null, smartSavedContent:"", smartSaveConflict:false,
+        smartSavePromise:null,smartSaveAgain:false,smartSaveRevision:0,CanvasConflictDraft:{read:()=>null},
         comfyWorkflows:[{name:workflow}], comfyWorkflowCache:{},
         comfyTaskControls:{load:()=>{}},
         canvasListUrlForProject:()=>'/static/canvas-list.html',
@@ -98,7 +101,7 @@ function contextFor(data) {
             'stripImageGenerationMeta', 'smartGenerationLogKey', 'normalizeSmartGenerationLogs', 'canvasForStorage',
             'normalizeLegacySmartNode', 'normalizeSmartVideoModeSettings', 'smartPendingTasks',
             'smartNodeHasDisplayResult', 'clearSmartNodeBusyState', 'markSmartNodeComplete',
-            'saveCanvas', 'loadCanvas', 'inputPromptTextFor']);
+            'smartCanvasSaveContent','saveSmartCanvasOnce','saveCanvas', 'loadCanvas', 'inputPromptTextFor']);
         context.promptInputNodesFor=()=>[];
     }
     return context;
@@ -117,7 +120,7 @@ async function main() {
             request=JSON.parse(options.body);
             return {ok:true, status:200, json:async()=>({canvas:{...data, updated_at:data.updated_at+1}})};
         };
-        await context.saveCanvas();
+        assert.equal(await context.saveCanvas(),true);
         assert.equal(calls,1);
         assert.equal(request.title,data.title);
         assert.equal(request.icon,data.icon);

@@ -1,0 +1,13 @@
+{
+  "package": "three",
+  "version": "0.160.0",
+  "license": "MIT",
+  "source": "https://github.com/mrdoob/three.js/tree/r160/examples/jsm",
+  "files": [
+    "loaders/GLTFLoader.js",
+    "loaders/DRACOLoader.js",
+    "utils/BufferGeometryUtils.js"
+  ],
+  "adaptation": "Only bare three imports mapped to existing local r160 core",
+  "draco_required": true
+}

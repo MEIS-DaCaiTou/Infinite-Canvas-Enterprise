@@ -1,0 +1,60 @@
+{
+  "source": "https://liblibai-web-static.liblib.cloud/liblibtv_online/static/_next/static/chunks/2cxx_anwecawu.js",
+  "module": 587056,
+  "parameters_module": 725942,
+  "assets_source": "https://libtv-res.liblib.art/character-studio/liblibtv-character-studio-cdn-2026-09-21/face-preview/",
+  "files": [
+    {
+      "path": "models/face_landmarker.task",
+      "bytes": 3758596
+    },
+    {
+      "path": "models/pose_landmarker.task",
+      "bytes": 5777746
+    },
+    {
+      "path": "models/face_parsing.onnx",
+      "bytes": 53205364
+    },
+    {
+      "path": "wasm/vision_wasm_internal.js",
+      "bytes": 204816
+    },
+    {
+      "path": "wasm/vision_wasm_internal.wasm",
+      "bytes": 11453626
+    },
+    {
+      "path": "wasm/vision_wasm_nosimd_internal.js",
+      "bytes": 204669
+    },
+    {
+      "path": "wasm/vision_wasm_nosimd_internal.wasm",
+      "bytes": 10647962
+    },
+    {
+      "path": "ort/ort-wasm-simd-threaded.wasm",
+      "bytes": 11246032
+    }
+  ],
+  "changes": [
+    "Local ESM imports and same-origin image/asset paths",
+    "Remove bundler bootstrap and RUM",
+    "No Liblib business API or account integration",
+    "Expose the already detected face box to local framing; no second inference or provider call"
+  ],
+  "upstream_notices": {
+    "MediaPipe-LICENSE": "https://raw.githubusercontent.com/google-ai-edge/mediapipe/master/LICENSE",
+    "ONNXRuntime-LICENSE": "https://raw.githubusercontent.com/microsoft/onnxruntime/v1.20.1/LICENSE"
+  },
+  "workbench_reference": {
+    "source": "https://liblibai-web-static.liblib.cloud/liblibtv_online/static/_next/static/chunks/209jfngjispvf.js",
+    "framing_module": 802379,
+    "retrieved_on": "2026-10-30",
+    "uses": [
+      "425x542 portrait in 467x550 crop, face-fit matrix and fallback framing",
+      "602px workbench, 70px header, 88px footer",
+      "196px eased surface fade and 16px backdrop blur"
+    ]
+  }
+}

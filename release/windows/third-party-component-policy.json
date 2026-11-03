@@ -28,7 +28,11 @@
       "license_source_path": "release/windows/license-evidence/tailwindcss-and-three-MIT.txt",
       "name": "three",
       "payload_files": {
-        "static/vendor/js/three-0.160.0.module.js": "c6eacae1ec5fd832160227ca7441311c8b30dee0419af87954fb9df6d105bf1f"
+        "static/vendor/js/three-0.160.0.module.js": "c6eacae1ec5fd832160227ca7441311c8b30dee0419af87954fb9df6d105bf1f",
+        "static/vendor/three-addons-r160/loaders/GLTFLoader.js": "81474080932ecdd7ab610765986e82c60a56b8712295fdee106c2dc8205816bc",
+        "static/vendor/three-addons-r160/loaders/DRACOLoader.js": "72242629646b1d8a02877d9228cc19b89a893bed5a4d136cc785f2d2d7ac4216",
+        "static/vendor/three-addons-r160/utils/BufferGeometryUtils.js": "1a62da5121d8f51827c47b3e3e34bc50a03126bdca6bbd2b54f1024c6d918e3e",
+        "static/vendor/three-addons-r160/LICENSE": "852e0e8699169bf9f6fdc6bda3e682d078dcbc738b5d33e74df594721bff271d"
       },
       "source": "https://github.com/mrdoob/three.js/tree/r160",
       "version": "0.160.0"
@@ -72,11 +76,63 @@
       },
       "source": "https://github.com/floriankarsten/space-grotesk",
       "version": "payload-revision-3e699ead1876"
+    },
+    {
+      "bom_ref": "pkg:generic/liblib-character-motion@cdn-2026-09-21",
+      "name": "Liblib character motion model and renderer",
+      "version": "cdn-2026-09-21-module-975790",
+      "source": "https://liblibai-web-static.liblib.cloud/liblibtv_online/static/_next/static/chunks/258ckt1vw9j5s.js",
+      "license_expression": "LicenseRef-Liblib-Source-License-Not-Declared",
+      "license_source_path": "static/vendor/liblib-character-motion/NOTICE",
+      "payload_files": {
+        "static/vendor/liblib-character-motion/renderer.js": "12b98d603206cce10a6e627023ef213447edbb5be6b3b6e15d7458be5f90fd77",
+        "static/vendor/liblib-character-motion/midwam-human.glb": "068228984f719a4c4001183aef6112ffd2566c82b716e3d08584e5883752691d",
+        "static/vendor/liblib-character-motion/NOTICE": "367aa0c5b0a6acfb66e80aa056c09165ac53845bab3e5f142a3cabe9525f59a1"
+      }
+    },
+    {
+      "bom_ref": "pkg:generic/draco-character-decoder@cdn-2026-09-21",
+      "name": "Draco WASM decoder",
+      "version": "cdn-2026-09-21",
+      "source": "https://libtv-res.liblib.art/character-studio/liblibtv-character-studio-cdn-2026-09-21/motion/draco/",
+      "license_expression": "Apache-2.0",
+      "license_source_path": "static/vendor/liblib-character-motion/draco/LICENSE",
+      "payload_files": {
+        "static/vendor/liblib-character-motion/draco/draco_wasm_wrapper.js": "28ba4c31ccbd29c891caf91b06874fffdfa54aeb50ff0e58835b0d55bf32f5ba",
+        "static/vendor/liblib-character-motion/draco/draco_decoder.wasm": "a680d927bed9cb864ddbd63521868891af2bfbe755092761b4837487618df8ac",
+        "static/vendor/liblib-character-motion/draco/LICENSE": "d3709b0fb4b8a94bbb1d02b8a2e484f258b0d9c5c5a01f940391f3fe662cd1a4"
+      }
+    },
+    {
+      "bom_ref": "pkg:generic/liblib-character-retouch@cdn-2026-09-21",
+      "name": "Liblib character retouch engine and inference dependencies",
+      "version": "cdn-2026-09-21-module-587056",
+      "source": "https://liblibai-web-static.liblib.cloud/liblibtv_online/static/_next/static/chunks/2cxx_anwecawu.js",
+      "license_expression": "LicenseRef-Liblib-Source-License-Not-Declared AND Apache-2.0 AND MIT",
+      "license_source_path": "static/vendor/liblib-character-retouch/NOTICE",
+      "payload_files": {
+        "static/vendor/liblib-character-retouch/MediaPipe-LICENSE": "8707eef0533987efc5b155d64761eeb6e20793f50b9bd1a68dad1cf4719d0ed8",
+        "static/vendor/liblib-character-retouch/models/face_landmarker.task": "64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff",
+        "static/vendor/liblib-character-retouch/models/face_parsing.onnx": "0d9bd318e46987c3bdbfacae9e2c0f461cae1c6ac6ea6d43bbe541a91727e33f",
+        "static/vendor/liblib-character-retouch/models/pose_landmarker.task": "59929e1d1ee95287735ddd833b19cf4ac46d29bc7afddbbf6753c459690d574a",
+        "static/vendor/liblib-character-retouch/NOTICE": "f99766031474c850e93d6888178c43e7c0608ff1c6c81d2c66909655a1660db9",
+        "static/vendor/liblib-character-retouch/ONNXRuntime-LICENSE": "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c",
+        "static/vendor/liblib-character-retouch/ort/ort-wasm-simd-threaded.wasm": "207d02be4591c156b0a98f024f3d58005b5b04c92274d759fb390338c63559ea",
+        "static/vendor/liblib-character-retouch/preview.js": "2953ba903926278bfc6cd5a956dcb337c0d7045cc85f5c1374c8d716c40add04",
+        "static/vendor/liblib-character-retouch/spec.js": "2c6fd3e17000634e8c25f58d7447313b8f25211a52ebd70fa5540d00a2838be9",
+        "static/vendor/liblib-character-retouch/wasm/vision_wasm_internal.js": "6f6b86509cf9e163ea1cfec7edc8cf53732699c04781e4c21c557c1ba402310e",
+        "static/vendor/liblib-character-retouch/wasm/vision_wasm_internal.wasm": "cb3ec20026a9aecc2a81a93c25630ceb5389297ddb7a5f0bd61dd09cde606b9b",
+        "static/vendor/liblib-character-retouch/wasm/vision_wasm_nosimd_internal.js": "9f8fc960e363f0fb2f42f7937b97ae9cf9a5630490f71031fa90caa9bb121938",
+        "static/vendor/liblib-character-retouch/wasm/vision_wasm_nosimd_internal.wasm": "924274fcd5ac8985f6570a8573e7971b7bd2d580ba1b8f3beb0ba8f95db6347c"
+      }
     }
   ],
   "project_owned_payload_files": {
-    "static/vendor/MANIFEST.md": "3dc05893d52a459252cb563d5c4385872bf0f88e334d877a17574aa2e10569d6",
-    "static/vendor/css/fonts.css": "fa703880bd6937f99c03937b661b34531e2fd8d698ced6257524156dcb28866a"
+    "static/vendor/MANIFEST.md": "e1369ff885c969e8c4f4bbefaefb8121f13c85402af51c65d340e588ca05d2b9",
+    "static/vendor/css/fonts.css": "52110263cc24b0fdbb88c4a75b397fdaa708f7bd2b7201a8f43d90b8995251b9",
+    "static/vendor/three-addons-r160/SOURCE.json": "0167ba95a16762cfd1e3c4760b1f30a07d4f46ce77dd87638ca5e91296430710",
+    "static/vendor/liblib-character-motion/SOURCE.json": "d63d07cc3019a6622b692fd788a47a65a7870debb71ebab448c80959d298d99d",
+    "static/vendor/liblib-character-retouch/SOURCE.json": "7d25a0251d23c62dba1e5ec98730f22b5162534ab34b525ff55add16df36b45a"
   },
   "schema_version": "ops-third-party-component-policy-v1"
 }

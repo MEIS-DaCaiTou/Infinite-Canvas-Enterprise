@@ -12,12 +12,19 @@
   const pending = (state) =>
     state && !["saved", "failed", "cancelled"].includes(state.stage);
   class CharacterCreationTask {
-    constructor(request, storage) {
+    constructor(
+      request,
+      storage,
+      scope = "character-creation-v1",
+      kind = "image",
+    ) {
       this.request = request;
       this.storage = storage;
       this.state = null;
       this.owner = "";
       this.busy = false;
+      this.scope = scope;
+      this.kind = kind;
     }
     setOwner(owner) {
       if (owner === this.owner) return;
@@ -38,14 +45,14 @@
       }
     }
     key() {
-      return "character-creation-v1:" + this.owner;
+      return this.scope + ":" + this.owner;
     }
     store() {
       // Before paid submission this must succeed, so its uncertain receipt can
       // survive navigation. After acceptance the server journal remains truth.
       this.storage.setItem(this.key(), JSON.stringify(this.state));
     }
-    async submit(payload, description = payload.prompt) {
+    async submit(payload, description = payload.prompt, context = null) {
       if (this.busy || pending(this.state))
         throw new Error("请先核对原角色任务，不能重复提交。");
       if (!this.owner) throw new Error("请先登录后创建角色");
@@ -58,6 +65,7 @@
           prompt: description,
           stage: "submitting",
           taskId: "",
+          context,
         };
         try {
           this.store();
@@ -69,11 +77,20 @@
         }
         let accepted;
         try {
-          accepted = await this.request("/api/canvas-image-tasks", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ ...payload, n: 1 }),
-          });
+          accepted = await this.request(
+            this.kind === "audio"
+              ? "/api/character-voice-tasks"
+              : "/api/canvas-image-tasks",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(
+                this.kind === "audio"
+                  ? { ...payload, request_id: this.state.createId }
+                  : { ...payload, n: 1 },
+              ),
+            },
+          );
         } catch (error) {
           if (owner !== this.owner) throw error;
           this.state.stage = [400, 401, 403, 404, 413, 422, 429].includes(
@@ -118,10 +135,11 @@
       state.stage = task.status;
       state.error = task.error || "";
       state.source = task.call_source;
+      state.canQuery = Boolean(task.can_query);
       state.images = [
         ...new Set(
           (task.items || [])
-            .filter((item) => item.kind === "image")
+            .filter((item) => item.kind === this.kind)
             .map((item) => item.url),
         ),
       ].slice(0, 12);
@@ -129,7 +147,9 @@
       else if (state.stage === "succeeded") {
         state.stage = "unknown";
         state.error =
-          "原任务已结束，但没有可保存的图片，请在生成任务详情中核对。";
+          "原任务已结束，但没有可保存的" +
+          (this.kind === "audio" ? "语音" : "图片") +
+          "，请在生成任务详情中核对。";
       }
       this.store();
       return task;
@@ -181,6 +201,18 @@
     }
     canGenerate() {
       return !this.busy && !pending(this.state);
+    }
+    archiveUnknown(acknowledged) {
+      if (this.busy || this.state?.stage !== "unknown" || !acknowledged)
+        throw new Error(
+          "请先核对原任务；仍无法确认时，须明确接受可能再次计费并同意另建任务。",
+        );
+      const key = this.key() + ":retained";
+      const records = JSON.parse(this.storage.getItem(key) || "[]");
+      records.push({ ...this.state, retainedAt: Date.now() });
+      this.storage.setItem(key, JSON.stringify(records));
+      this.storage.removeItem(this.key());
+      this.state = null;
     }
   }
   root.CharacterCreationTask = CharacterCreationTask;

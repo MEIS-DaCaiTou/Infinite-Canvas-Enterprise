@@ -1,5 +1,9 @@
 # Runtime、安装、发布与在线更新
 
+更新时间：2026-10-13。主线、维护线和固定入口边界见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，生命周期设计见 [统一交付 ADR](../decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md)。
+
+2026-10-31现行发行/代码边界：正式10.11及已知设备反馈只见CURRENT；本轮没有重打包或重跑安装演练。原人体a2a6831提交可读，当前角色续修、资源/保存及资产侧栏含未提交修改，正式包不自动携带它们。服务器SIGTERM/服务管理/容器和密钥恢复尚待适配；旧Windows维护工具不作为员工桌面客户端。
+
 2026-10-29维护缓存契约（10.11已发行）：`install_upgrade_support.inspect_source_support()`只读返回观察到的setup/support原对象、`rebuild_required`和`reason`（`verified`/`missing`/`damaged`）；只在`install_lifecycle.current_source()`已证明完整安装/身份后使用。`inspect_upgrade`的ELIGIBLE响应新增`maintenance_support_rebuild_required: boolean`和`maintenance_support_reason: string`，只读检查不发布修复。旧缓存明确product/installationid冲突返回`INSTALL_UPGRADE_SUPPORT_IDENTITY_CONFLICT`，观察期间变化返回`INSTALL_UPGRADE_SUPPORT_CHANGED`，均不自动接管。
 
 `upgrade_retained`将同一观察到的原对象绑定到原四文件计划，保留旧文件后发布当前可信Setup及新support.ini；不执行坏缓存或只改摘要。`validate_published_support`及`finish_upgrade`继续严格校验目标缓存、原对象和Windows登记。`ssPostInstall`完成最终登记核验，`CurPageChanged(wpFinished)`再呈现保留的真实结果，避免被框架默认完成文字覆盖；登记失败取消自动启动并保留显式恢复。进度只显示允许列表中的后端阶段，最终核验阶段由安装器自身编排状态显示。原迁移/备份/Runtime/恢复服务不复制，成功激活后的登记恢复不回旧库。上述已随PR #205及10.11交付，不同源码的实际GUI证据、发行与现场限制只见[CURRENT](../CURRENT_PROJECT_STATUS.md)，模块维护者负责同步此契约。
@@ -20,7 +24,6 @@
 
 Windows 交接实现 [#157](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/157) 准确 551f433 四项常规 CI 成功、独立审查后已随 `519b1da0` 合并。正式入口“启动并打开”只用当前已安装版本；更新由管理员在更新中心单独确认，不要求每次启动更新。必要安装审查不扩成任意宿主/历史/GUI 工程，业务原任务恢复可并行推进；正式 10.1 资产未改变，新发行另行验证。
 
-更新时间：2026-10-13。主线、维护线和固定入口边界见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，生命周期设计见 [统一交付 ADR](../decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md)。
 
 ## 1. PathRoots
 

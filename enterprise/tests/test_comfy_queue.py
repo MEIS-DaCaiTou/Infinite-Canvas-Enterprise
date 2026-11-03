@@ -295,3 +295,86 @@ def test_gateway_queue_routes_require_admin_and_force_personal_owner(tmp_path):
                 result = await client.get('/api/me/comfy-queue?user_id=bob',headers={'x-fixture-role':'user'})
                 assert result.status_code == 200 and calls[-1].url.path.endswith('/me')
     asyncio.run(scenario())
+
+
+def test_admin_release_unblocks_owner_preserves_receipt_and_survives_restart(tmp_path):
+    async def scenario():
+        rig=Rig(tmp_path)
+        try:
+            await rig.admit('old')
+            rig.journal.mark_running('old')
+            rig.journal.record_comfy('old',{'backend':BACKEND,'phase':'submitting'})
+            rig.journal.finish('old',{'status':'failed','recovery_required':True,'error':'connection refused'})
+            original=rig.journal.get('old')
+            await rig.admit('new',run=True)
+            await rig.until(lambda:bool(rig.calls))
+            assert not rig.trace and rig.queue.status('alice')['running']==1
+            await rig.queue.release_slot('old','system-admin')
+            await rig.until(lambda:rig.trace==['new'])
+            released=rig.journal.get('old')
+            assert {k:v for k,v in released.items() if k!='queue_release'}==original
+            await rig.queue.release_slot('old','another-admin')
+            assert rig.journal.get('old')==released, 'duplicate click cannot overwrite the audit actor'
+            await rig.close()
+            restarted=Rig(tmp_path)
+            try:
+                assert not any(r['id']=='old' for r in restarted.queue.status()['items'])
+                assert restarted.journal.get('old')['comfy_receipt']==original['comfy_receipt']
+            finally:await restarted.close()
+        finally:await rig.close()
+    asyncio.run(scenario())
+
+
+def test_release_only_failed_review_records_and_does_not_free_remote_gpu(tmp_path):
+    async def scenario():
+        rig=Rig(tmp_path)
+        try:
+            await rig.admit('queued')
+            with pytest.raises(HTTPException) as denied:await rig.queue.release_slot('queued','admin')
+            assert denied.value.status_code==409
+            with pytest.raises(HTTPException) as absent:await rig.queue.release_slot('missing','admin')
+            assert absent.value.status_code==404
+            rig.journal.mark_running('queued')
+            rig.journal.record_comfy('queued',{'backend':BACKEND,'phase':'running','prompt_id':'accepted-original'})
+            with pytest.raises(HTTPException):await rig.queue.release_slot('queued','admin')
+            rig.journal.finish('queued',{'status':'failed','recovery_required':True})
+            rig.remote.add('accepted-original')
+            await rig.queue.release_slot('queued','admin')
+            from enterprise.accepted_task_recovery import recovery_candidate
+            assert recovery_candidate(rig.journal.get('queued')), 'original-ID read recovery remains available'
+            public=public_comfy_task(rig.journal.get('queued'))
+            assert public['queue_released'] and 'queue_release' not in public
+            await rig.admit('next',run=True)
+            await rig.until(lambda:rig.queue.health.get('comfy.invalid:8188',{}).get('backend_jobs')==1)
+            assert not rig.trace,'a released local slot does not bypass real remote jobs'
+            rig.remote.clear();rig.queue.wake.set()
+            await rig.until(lambda:rig.trace==['next'])
+            assert rig.journal.get('queued')['comfy_receipt']['prompt_id']=='accepted-original'
+        finally:await rig.close()
+    asyncio.run(scenario())
+
+
+def test_release_gateway_requires_system_admin_and_forwards_trusted_actor(monkeypatch):
+    from enterprise.comfy_queue_api import router
+    from enterprise import db
+    app=FastAPI();app.include_router(router);calls=[];audit=[]
+    monkeypatch.setattr(db,'log_action',lambda *args:audit.append(args))
+    @app.middleware('http')
+    async def principal(request,call_next):
+        role=request.headers.get('x-fixture-role');request.state.user={'user_id':'admin-id','role':role} if role else None
+        return await call_next(request)
+    def upstream(request):
+        calls.append((request.method,request.url.path,request.headers['X-Enterprise-User-ID']))
+        return httpx.Response(200,json={'message':'released','status':{'items':[]}})
+    async def scenario():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(upstream),base_url='http://upstream') as target:
+            app.state.upstream_client=target
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),base_url='http://fixture') as client:
+                path='/api/admin/comfy-queue/old/release'
+                assert (await client.post(path)).status_code==403
+                assert (await client.post(path,headers={'x-fixture-role':'user'})).status_code==403
+                assert calls==[]
+                assert (await client.post(path,headers={'x-fixture-role':'admin','X-Enterprise-User-ID':'foreign'})).status_code==200
+    asyncio.run(scenario())
+    assert calls==[('POST','/_enterprise_internal/comfy-queue/old/release','admin-id')]
+    assert audit[0][:2]==('admin-id','comfy_queue_release')

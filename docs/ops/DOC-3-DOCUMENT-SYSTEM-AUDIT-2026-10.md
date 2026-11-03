@@ -1,5 +1,89 @@
 # DOC-3：项目文档体系全量审查与整改
 
+## 2026-10-31 批准后的PR与Issue处置
+
+以下为后续已执行结果；下方“开发前盘点”保留当时只读阶段证据，不再代表当前开放数。负责人明确批准旧PR建议，另授权直接关闭已解决或无用Issue。
+
+- PR已关闭且未合并：[#180](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/180)、[#181](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/181)的Head已通过#182包含；[#143](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/143)、[#144](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/144)、[#145](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/145)按已批准的旧提案/历史维护归档。未删除分支、未强解旧冲突带回旧版本。现在2 open、162 merged、5 closed-unmerged；#170/#136保持Draft。
+- Issue [#188](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/188)按completed关闭：原经典画布五项机制已由后续修复交付，当前性能回归通过。不是认定所有客户卡顿已解决，新的页面加载/容量测量仍归#112。
+- Issue [#117](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/issues/117)按not_planned归档：旧签名Gate B和三资产计划已被现行交付决定替代；不表示已做正式签名，也不取消必要安装/数据恢复检查。
+- 保留5个有效Issue：#128首个Runtime OS异常与恢复证据不足；#116策略边界专项验收仍不完整；#113跨用户浏览器/真实供应商/费用组合未闭环；#112真实负载与尾延迟未测；#110未知受理、幂等和重启恢复需按供应商能力继续验收。原正文和历史证据保留，两个关闭项仅追加本次原因，不将本地未提交能力写成正式交付。
+- 远端回读确认5个开放Issue及2个Draft PR；本轮无新commit/PR、CI重跑、合并、Release或现场操作。当前代码收口和完整Edge证据见[收敛记录](DEVELOPMENT-CONVERGENCE-2026-10-30.md)。
+
+## 2026-10-31 开发前状态清理与PR盘点
+
+适用范围：当前CHAR1011/source候选`a2a6831`加原未提交修改、manual-acceptance完整预览及GitHub实际元数据。维护责任：本次开发者同步现行事实源/登记，发行负责人核对PR/CI/Release，负责人决定范围和PR处置。原始文档已在仓库外DOCS1031-114136逐文件保留，未删除文档、分支、工作树或业务数据。
+
+### 范围与方法
+
+152份受管Markdown/文本完成路径/角色盘点与全文规则扫描；现行权威入口、Wiki和直接相关接口/存储专项对照源码；21份冻结资料不改写。不是对152份历史记录逐个重跑功能或对162个历史PR重新做全量代码审计。GitHub连接器搜索用于定位；因搜索省略状态/时间，用CLI只读分页取得全部PR、7个开放PR的base/head/文件/检查/评论和当前main/Release，未执行任何远端写操作。一次main读取TLS握手超时，重试只读查询成功，未据超时推断仓库异常。
+
+远端main=`7e0c8f5f48c825bf20afa5672b07153d5426085f`；最新正式`v2026.10.11`，2026-10-29发布，8项资产元数据存在。main文档、Enterprise/Runtime及scope检查success，Fixed EXE real gates skipped；未重下包、安装或把历史公开核验当本次重复完成。a2a6831可从远端读取，尚未由此变成main/Release。
+
+### 全部开放PR的清理建议
+
+GitHub共169个PR：162已合并，7开放，0关闭未合并。下表状态均为本轮只读查询；CLEAN只针对所列旧base，不代表可安全合当前main。没有关闭、合并、评论、改标签、删分支或重跑CI。
+
+| PR | 当前状态/证据 | 建议处理与原因 |
+| --- | --- | --- |
+| [#180](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/180) 图片JSON编辑/透明图层 | OPEN/Draft，旧base #179，head0350053；常规CI成功，真实EXE跳过；head是main祖先，经[整合#182](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/182)已包含 | 建议确认后关闭为“已由#182整合”，保留分支/证据，不再合一次；原编辑500/未验收拆层仍不转成已完成 |
+| [#181](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/181) 空WAL/SHM受控准备 | OPEN/Draft，旧base #178，head4f100cc；常规及Native成功，真实EXE跳过；head同样经#182进入main | 建议确认后关闭重复开放项，回链#182及后续安装修复；不能因open再重复实现或合并 |
+| [#170](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/170) RunningHub视频原任务恢复 | OPEN/Draft，base旧#169，head847300f不在main；独有协议/测试文件未进现候选，旧head常规CI成功 | 保留Draft、按RunningHub实际需求暂缓；不是无用代码，也不是当前已交付恢复能力。启用时提取相关增量至当时基线并定向验收，不直接合旧状态/路线文件 |
+| [#143](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/143) 更新门禁说明 | OPEN非Draft，base main，head0f79ff2不在main，当前DIRTY；旧headCI成功 | 更新门禁字段及updateAccessExplanation已在现代码存在，[#146](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/146)等承接主线；建议确认后归档旧提案，不强解冲突搬回旧页面/状态。主题覆盖不等于两提交完全相同 |
+| [#144](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/144) 10.1后台与更新维护 | OPEN非Draft，base旧维护线，headbf1143a不在main；只有旧桥接检查成功 | 作为10.1已发布维护来源保留证据，建议确认后关闭旧维护PR；同versioned schema构建模式/门禁已可在现代码定位，不能合旧VERSION覆盖当前产品 |
+| [#145](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/145) 诊断与portable路径 | OPEN/Draft，叠加#144，head83e18c4不在main；仅旧桥接检查成功 | [#147](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/147)及后续主线已有脱敏生命周期阶段/errno/winerror；保留原历史路径证据。建议确认后归档旧候选，若仍需特定portable别名行为，按当前路径安全契约单独核对，不认定整包等价或直接合旧10.2版本 |
+| [#136](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/136) 历史升级工具 | OPEN/Draft，base旧稳定桥接线，head5c96c91不在main；当前head无检查汇总，2条旧现场修订评论 | 保留为独立历史兼容候选并核实是否仍需支持其来源；historical_install/recovery_control不在现主线，不能称完整吸收。固定入口/安装器已由#138/#139及后续取代相近主题；不要把“无检查”写成失败或整体合并。确认历史来源支持结束后再关闭 |
+
+### 已合并历史的校准
+
+- #177/#178/#179与#180/#181由#182整合；其中#177/#178/#179已merged，#180/#181仍open但Head已进入main，判断实现应同时看祖先/内容，不只看PR是否open。
+- #146/#147、#148—#155分别承接基线、诊断及固定入口/安装更新；旧PR中的“待合并/10.1最新”保留原时点，不用于当前派工。
+- #201/#203/#205为后续产品交付，#202/#204/#206为发行记录；记录PR不能替代产品源码，Formal Release不因文档变化重打包。历史162项保持GitHub原状态，无重复关闭动作。
+
+### 发现的路线偏差与收口
+
+1. Wiki仍写10.9最新、工作流仍先处理10.9反馈、架构表仍描述经典冲突旧重提；改为CURRENT唯一当前摘要并修正源码事实。
+2. 角色即时预览/兼容语音和个人拖拽整理已本地实现，不再笼统列为未开发；原站完整效果、组织共享/资源版本/PS回写仍明确未完成。
+3. 智能画布合并、批量删除提交窗口和加载假空态/重复扫描确认仍存在，先列收口任务，不把文档修订写成代码修复。
+4. 最新推进授权已落入范围/决策/唯一路线图；PG、Redis、容器不作为全部先决条件。DPAPI迁移、持久事件游标和成套恢复标记为未完成，不能把现有任务分页cursor当事件恢复。
+5. 多个工作目录/大量未提交修改增加交付漂移风险；明确开发源、预览副本、main、正式包和设备状态，保留前后快照。未执行任何reset或源码覆盖。
+
+### 文档修改清单与原因
+
+| 文档 | 关键修正原因 |
+| --- | --- |
+| `ARCHITECTURE.md` | 修正经典/智能保存现状、实际预览/语音、锁及服务器阻碍 |
+| `CODEX_WORKFLOW.md` | 先核实实际工作目录、交付映射与PR状态；纯文档不强制业务运行检查 |
+| `CODE_BOUNDARIES.md` | 明确两处直接收口、共享模块及平台适配职责 |
+| `ENTERPRISE_DOCS.md` | 补直接复用模块与产品/隔离端口区别 |
+| `PROJECT_CHARTER.md` | 把服务器/桌面等待语境改为已授权、未交付 |
+| `PROJECT_SCOPE_LOCK.md` | 登记本次推进与PR只读边界，保留退出范围 |
+| `README.md` | 移除重复且过期版本段，导航至唯一状态和新授权 |
+| `SECURITY_BASELINE.md` | 区分已授权适配和未验收部署，补DPAPI/恢复边界 |
+| `docs/CURRENT_PROJECT_STATUS.md` | 集中真实源码/预览/main/发行/设备/PR状态和完成程度 |
+| `docs/README.md` | 统一维护责任/范围，指明历史记录和现行事实入口 |
+| `docs/code-wiki/01-system-architecture.md` | 同步当前候选直接模块/接口/验证边界，保留日期历史 |
+| `docs/code-wiki/02-repository-map.md` | 同步当前候选直接模块/接口/验证边界，保留日期历史 |
+| `docs/code-wiki/03-backend-reference.md` | 同步当前候选直接模块/接口/验证边界，保留日期历史 |
+| `docs/code-wiki/04-frontend-api-and-websocket.md` | 同步当前候选直接模块/接口/验证边界，保留日期历史 |
+| `docs/code-wiki/05-data-permissions-and-security.md` | 同步当前候选直接模块/接口/验证边界，保留日期历史 |
+| `docs/code-wiki/06-runtime-install-release-update.md` | 同步当前候选直接模块/接口/验证边界，保留日期历史 |
+| `docs/code-wiki/07-dependencies-and-integrations.md` | 同步当前候选直接模块/接口/验证边界，保留日期历史 |
+| `docs/code-wiki/08-running-testing-and-development.md` | 同步当前候选直接模块/接口/验证边界，保留日期历史 |
+| `docs/code-wiki/09-known-limitations-and-maintenance.md` | 同步当前候选直接模块/接口/验证边界，保留日期历史 |
+| `docs/code-wiki/README.md` | 移除10.9最新误述并标注各章旧快照 |
+| `docs/document-register.json` | 同步审查范围、基线及已修改权威文件复核日期；不改冻结摘要 |
+| `docs/decisions/REQUIREMENTS-DECISION-REGISTER.md` | 新增第14项授权及待决条件，不另立路线图 |
+| `docs/ops/DOC-3-DOCUMENT-SYSTEM-AUDIT-2026-10.md` | 复用原审查记录，保存全部开放PR建议、理由及审查限制 |
+| `docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md` | 落实批准四阶段及先文档梳理，旧顺序明确为历史 |
+| `enterprise/tests/README.md` | 补现有Node/pytest入口与本轮未运行范围 |
+
+### 验证与后续需要确认的事项
+
+整改前文档检查152份/520链接/0错误，17项契约通过。首轮整改检查发现CURRENT复核日期被新增摘要推至检查范围外；已将复核日期归位，未放宽检查规则。整改后152份/527链接/11权威入口/21冻结资料，0错误；17项文档契约通过，受影响文件diff --check通过，21份冻结资料与整改前逐字节一致。共修订25文件（24份Markdown与1份登记JSON），未新增文档或第二路线图。本轮只运行文档相关检查，未跑业务全套、浏览器全流程、收费调用、安装或现场升级。
+
+PR关闭建议需负责人逐项或按明确名单确认，本次未操作。进入真实试部署前需明确：单企业部署目标/网络/操作系统、恢复目标与资源预算、现有密钥受控重配方案；进入桌面比较前明确目标操作系统与首个设计工具桥接场景。同一已批准的隔离适配无需再次申请，未知付费请求不重提。源码/预览/PR/CI/发行/设备验收按CURRENT分别记录。
+
 ## 2026-10-29 提交授权与公开PR边界
 
 负责人明确要求资产管理正式实施前先提交现有工作。CURRENT/ARCHITECTURE及API参考同步新的提交授权、local_preview_available与公开检出的几何占位/空目录；原站渲染代码、模型/图片和对照目录不进入公开PR，开发机原文件保留。vendor清单因此明确可选对照依赖排除，登记表按既有保护契约更新该资源摘要；不扩改冻结证据。先前“仅本地、未提交”段落保留日期语境。资产管理源码尚未开始，合并/发布另行授权。

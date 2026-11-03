@@ -24,13 +24,19 @@ from typing import Any, Mapping, Optional, Tuple
 from urllib.parse import parse_qs, unquote, urlparse
 
 from fastapi.responses import JSONResponse
+from fastapi import HTTPException
 from starlette.concurrency import run_in_threadpool
 
 from enterprise import db as edb
 from enterprise import ws as enterprise_ws
+from enterprise import history_records
+from enterprise import collection_query
+from enterprise import local_uploads
+from enterprise.history_query_index import HistoryQueryCache, HistoryQueryIndex
 from enterprise.resource_index import ResourceReferenceIndex
 from enterprise.config import (
     ENTERPRISE_HIDE_UPSTREAM_AUTHOR,
+    ENTERPRISE_HISTORY_QUERY_INDEX_ENABLED,
     ENTERPRISE_REPO_URL,
     ENTERPRISE_UPDATE_ENABLED,
     GATEWAY_PORT,
@@ -73,7 +79,25 @@ _CONVERSATION_DATA_DIR = PATH_ROOTS.DATA_ROOT / "conversations"
 _HISTORY_FILE = PATH_ROOTS.DATA_ROOT / "history.json"
 _ASSET_LIBRARY_FILE = PATH_ROOTS.DATA_ROOT / "asset_library.json"
 _RESOURCE_REFERENCES = ResourceReferenceIndex()
+_COLLECTION_QUERIES = collection_query.QuerySnapshots()
+_HISTORY_QUERIES = None
 DEFAULT_PROJECT_ID = "default"
+
+
+def start_collection_queries():
+    global _HISTORY_QUERIES
+    if ENTERPRISE_HISTORY_QUERY_INDEX_ENABLED and _HISTORY_QUERIES is None:
+        _HISTORY_QUERIES = HistoryQueryCache(
+            HistoryQueryIndex(_HISTORY_FILE, PATH_ROOTS.CACHE_ROOT / 'queries' / 'history-v1.sqlite3'),
+            history_id_for_record, min_source_bytes=_COLLECTION_QUERIES.max_cached_bytes,
+        )
+
+
+def stop_collection_queries():
+    global _HISTORY_QUERIES
+    cache, _HISTORY_QUERIES = _HISTORY_QUERIES, None
+    if cache is not None:
+        cache.close()
 
 _HISTORY_GENERATION_PATHS = {
     "api/online-image",
@@ -488,6 +512,7 @@ def _is_image_tools_submit(path: str, method: str) -> bool:
         "api/ms/generate",
         "api/generate",
         "generate",
+        "api/character-voice-tasks",
     }
 
 
@@ -844,20 +869,24 @@ def _find_asset_library_item(data: Any, item_id: str, library_id: str = "") -> t
     return "", "", None
 
 
-def _asset_library_item_owner(item: Any) -> Optional[str]:
+def _asset_object_owner(kind, identifier, ownership=None):
+    return ownership['objects'].get((kind, identifier)) if ownership is not None else edb.get_asset_object_owner(kind, identifier)
+
+
+def _asset_library_item_owner(item: Any, ownership=None) -> Optional[str]:
     if not isinstance(item, dict):
         return None
     item_id = str(item.get("id") or "").strip()
     if item_id:
-        owner = edb.get_asset_object_owner("item", item_id)
+        owner = _asset_object_owner("item", item_id, ownership)
         if owner:
             return owner
     resource_url = _asset_library_item_resource_url(item)
     if resource_url:
-        owner = edb.get_resource_owner(resource_url)
+        owner = ownership['resources'].get(resource_url) if ownership is not None else edb.get_resource_owner(resource_url)
         if owner:
             return owner
-        owner = edb.get_asset_item_owner_by_resource(resource_url)
+        owner = ownership['item_resources'].get(resource_url) if ownership is not None else edb.get_asset_item_owner_by_resource(resource_url)
         if owner:
             return owner
     return None
@@ -872,11 +901,11 @@ def _is_system_asset_library(library_id: str) -> bool:
     return str(library_id or "") in _ASSET_LIBRARY_SYSTEM_LIBRARY_IDS
 
 
-def _is_system_asset_category(library_id: str, category_id: str) -> bool:
+def _is_system_asset_category(library_id: str, category_id: str, ownership=None) -> bool:
     return (
         _is_system_asset_library(library_id)
         and str(category_id or "") in _ASSET_LIBRARY_SYSTEM_CATEGORY_IDS
-        and not edb.get_asset_object_owner("category", category_id)
+        and not _asset_object_owner("category", category_id, ownership)
     )
 
 
@@ -1360,16 +1389,12 @@ def _load_json_file(path: Path) -> Any:
 
 
 def _load_history_records() -> list[dict]:
-    data = _load_json_file(_HISTORY_FILE)
-    if not isinstance(data, list):
+    try:
+        return history_records.read_records(_HISTORY_FILE)
+    except history_records.HistoryUnavailable:
+        # A generation receipt/resource grant must survive an unavailable
+        # history file. Mutating paths use the strict reader directly.
         return []
-    return [item for item in data if isinstance(item, dict)]
-
-
-def _write_history_records(records: list[dict]) -> None:
-    _HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
-    from enterprise.local_json import atomic_write_json
-    atomic_write_json(_HISTORY_FILE, records[:5000], indent=4)
 
 
 def _history_timestamp_key(value: Any) -> str:
@@ -1427,23 +1452,6 @@ def _history_record_primary_resource(record: Mapping[str, Any]) -> str:
     return urls[0] if urls else ""
 
 
-def _timestamp_as_float(value: Any) -> Optional[float]:
-    if isinstance(value, (int, float)):
-        return float(value)
-    try:
-        return float(str(value).strip())
-    except Exception:
-        return None
-
-
-def _history_timestamp_matches(item_ts: Any, requested_ts: Any) -> bool:
-    item_float = _timestamp_as_float(item_ts)
-    requested_float = _timestamp_as_float(requested_ts)
-    if item_float is not None and requested_float is not None:
-        return abs(item_float - requested_float) < 0.001
-    return str(item_ts) == str(requested_ts)
-
-
 def _history_delete_timestamp_from_body(body: bytes | None) -> Any:
     data = _json_from_body(body)
     if not isinstance(data, dict):
@@ -1451,17 +1459,9 @@ def _history_delete_timestamp_from_body(body: bytes | None) -> Any:
     return data.get("timestamp")
 
 
-def _history_candidates_for_timestamp(records: list[dict], requested_ts: Any) -> list[tuple[int, dict]]:
-    return [
-        (idx, item)
-        for idx, item in enumerate(records)
-        if _history_timestamp_matches(item.get("timestamp", 0), requested_ts)
-    ]
-
-
-def _annotate_history_record(record: dict, owner_map: dict, users: dict) -> dict:
+def _annotate_history_record(record: dict, owner_map: dict, users: dict, history_id=None) -> dict:
     item = dict(record)
-    history_id = history_id_for_record(item)
+    history_id = history_id or history_id_for_record(item)
     owner_id = owner_map.get(history_id)
     owner = users.get(owner_id or "", {})
     item["enterprise_history_id"] = history_id
@@ -1472,22 +1472,61 @@ def _annotate_history_record(record: dict, owner_map: dict, users: dict) -> dict
     return item
 
 
-def filter_history_list(user: dict, data: Any) -> bool:
+def filter_history_list(user: dict, data: Any, history_ids=None, *, owners=None, users=None) -> bool:
     if not isinstance(data, list):
         return False
-    owner_map = edb.get_all_history_owner_map()
-    users = _user_lookup()
+    owner_map = edb.get_all_history_owner_map() if owners is None else owners
+    users = _user_lookup() if users is None else users
     user_id = _user_id(user)
     filtered = []
-    for record in data:
+    for position, record in enumerate(data):
         if not isinstance(record, dict):
             continue
-        history_id = history_id_for_record(record)
+        history_id = history_ids[position] if history_ids is not None else history_id_for_record(record)
         owner_id = owner_map.get(history_id)
         if _is_admin(user) or owner_id == user_id:
-            filtered.append(_annotate_history_record(record, owner_map, users))
+            filtered.append(_annotate_history_record(record, owner_map, users, history_id))
     data[:] = filtered
     return True
+
+
+def handle_collection_query(user, path, params):
+    source = 'history' if path == 'api/history' else 'library'
+    try:
+        if source == 'history':
+            owners, users = edb.get_all_history_owner_map(), _user_lookup()
+            if _HISTORY_QUERIES is not None:
+                indexed = _HISTORY_QUERIES.page(
+                    params, user_id=_user_id(user), owners=owners, admin=_is_admin(user),
+                    annotate=lambda row, identifier: _annotate_history_record(row, owners, users, identifier),
+                )
+                if indexed is not None:
+                    return JSONResponse(indexed)
+        document, revision = _COLLECTION_QUERIES.read(_HISTORY_FILE if source == 'history' else _ASSET_LIBRARY_FILE, source)
+        if source == 'history':
+            identities = _COLLECTION_QUERIES.history_ids(document, history_id_for_record)
+            rows = [dict(row, _query_position=i) for i, row in enumerate(document) if row.get('images')]
+            filter_history_list(user, rows, history_ids=[identities[row['_query_position']] for row in rows],
+                                owners=owners, users=users)
+        else:
+            if _is_admin(user):
+                data = {'library': dict(document)}
+            else:
+                lookup = _COLLECTION_QUERIES.library_lookup(document, _asset_library_item_resource_url)
+                ownership, positions = edb.asset_library_query_snapshot(_user_id(user), lookup)
+                data = {'library': lookup.subset(positions)}
+                filter_asset_library(user, data, ownership=ownership)
+            if 'catalog' in params:
+                if str(params['catalog']).lower() not in {'1', 'true'}:
+                    raise collection_query.QueryError(400, '目录投影参数无效。')
+                return JSONResponse({'library': collection_query.library_catalog(data['library']), 'projection': 'catalog'})
+            rows = list(collection_query.library_items(data['library']))
+        result = collection_query.page(rows, params, actor=_user_id(user), source=source, revision=revision)
+        if source == 'history' and _HISTORY_QUERIES is not None:
+            _HISTORY_QUERIES.consider(document, revision)
+        return JSONResponse(result)
+    except collection_query.QueryError as exc:
+        return JSONResponse({'message': str(exc)}, status_code=exc.status)
 
 
 def _history_records_from_generation_payload(data: Any) -> list[dict]:
@@ -1571,26 +1610,20 @@ def handle_history_delete(user: dict, body: bytes | None) -> JSONResponse:
     if not _HISTORY_FILE.exists():
         return JSONResponse({"success": False, "message": "History file not found"})
 
-    records = _load_history_records()
-    candidates = _history_candidates_for_timestamp(records, requested_ts)
-    if not candidates:
-        return JSONResponse({"success": False, "message": "Record not found"})
-
     is_admin = _is_admin(user)
     user_id = _user_id(user)
-    candidate_ids = [history_id_for_record(record) for _idx, record in candidates]
-
-    if not is_admin:
-        if len(candidates) != 1:
-            return _deny_not_found("历史记录不存在或无权限访问")
-        owner = edb.get_history_owner(candidate_ids[0])
-        if owner != user_id:
-            return _deny_not_found("历史记录不存在或无权限访问")
-
-    remove_indexes = {idx for idx, _record in candidates}
-    remaining = [record for idx, record in enumerate(records) if idx not in remove_indexes]
+    def can_delete(candidates):
+        return is_admin or (len(candidates) == 1 and edb.get_history_owner(history_id_for_record(candidates[0])) == user_id)
     try:
-        _write_history_records(remaining)
+        removed = history_records.delete_matching(_HISTORY_FILE, requested_ts, can_delete)
+    except history_records.HistoryDeleteDenied:
+        return _deny_not_found("历史记录不存在或无权限访问")
+    except history_records.HistoryUnavailable as exc:
+        return JSONResponse({"success": False, "message": str(exc)}, status_code=503)
+    if not removed:
+        return JSONResponse({"success": False, "message": "Record not found"})
+    candidate_ids = [history_id_for_record(record) for record in removed]
+    try:
         for history_id in candidate_ids:
             edb.remove_history_mapping(history_id)
         edb.log_action(
@@ -1604,8 +1637,8 @@ def handle_history_delete(user: dict, body: bytes | None) -> JSONResponse:
             }, ensure_ascii=False),
         )
     except Exception as exc:
-        print(f"[enterprise] delete history failed: timestamp={requested_ts} error={exc}")
-        return JSONResponse({"success": False, "message": str(exc)}, status_code=500)
+        print('[enterprise] history metadata removed; ownership/audit synchronization needs review')
+        return JSONResponse({"success": False, "message": "记录已移除，但归属或审计同步未完成；请刷新核对，原素材保留。"}, status_code=500)
 
     return JSONResponse({"success": True, "deleted_count": len(candidate_ids)})
 
@@ -1996,6 +2029,10 @@ def _pre_process_sync(
         if feature_denial is not None:
             return feature_denial
 
+    if enterprise_ws.is_asset_library_write(path, method) and query_params and 'catalog' in query_params:
+        if str(query_params['catalog']).lower() not in {'1', 'true'}:
+            return JSONResponse({'message': '目录投影参数无效。'}, status_code=400)
+
     project_id = _project_id_from_path(path)
     if project_id:
         if project_id == DEFAULT_PROJECT_ID and not is_admin:
@@ -2047,6 +2084,17 @@ def _pre_process_sync(
         if not can_access_resource(user, resource_url):
             return _deny_not_found("资源不存在或无权限访问")
 
+    if method.upper() == 'GET' and path == 'api/local-assets' and query_params and ('page_size' in query_params or 'cursor' in query_params):
+        try:
+            options = collection_query.query_options(query_params, actor=_user_id(user), source='uploads')
+            collection_query.cursor_position(query_params.get('cursor'), options, ['uploads-live-v1'])
+        except collection_query.QueryError as exc:
+            return JSONResponse({'message': str(exc)}, status_code=exc.status)
+
+    if method.upper() == 'GET' and path in {'api/history', 'api/asset-library'} and query_params and (
+            'page_size' in query_params or 'cursor' in query_params or path == 'api/asset-library' and 'catalog' in query_params):
+        return handle_collection_query(user, path, query_params)
+
     return None
 
 
@@ -2054,9 +2102,18 @@ def _pre_process_sync(
 
 def filter_canvas_list(user: dict, data: dict) -> bool:
     canvas_list = data.get("canvases") if isinstance(data, dict) else None
-    if not isinstance(canvas_list, list) or _is_admin(user):
+    if not isinstance(canvas_list, list):
         return False
-    owned = edb.get_user_canvas_ids(_user_id(user))
+    admin = _is_admin(user)
+    owned = set() if admin else edb.get_user_canvas_ids(_user_id(user))
+    modified = False
+
+    if 'unreadable_canvas_ids' in data:
+        unreadable = data.pop('unreadable_canvas_ids')
+        data['unreadable_canvas_count'] = sum(1 for cid in unreadable if admin or cid in owned)
+        modified = True
+    if admin:
+        return modified
     filtered = []
     for canvas in canvas_list:
         if not isinstance(canvas, dict) or canvas.get("id") not in owned:
@@ -2069,7 +2126,7 @@ def filter_canvas_list(user: dict, data: dict) -> bool:
             item["project"] = DEFAULT_PROJECT_ID
         filtered.append(item)
     data["canvases"] = filtered
-    return len(filtered) != len(canvas_list) or filtered != canvas_list
+    return modified or len(filtered) != len(canvas_list) or filtered != canvas_list
 
 
 def _owned_canvas_counts_by_project(user_id: str) -> dict[str, int]:
@@ -2081,6 +2138,8 @@ def _owned_canvas_counts_by_project(user_id: str) -> dict[str, int]:
         if not isinstance(data, dict):
             continue
         canvas_id = str(data.get("id") or path.stem)
+        if data.get("deleted_at"):
+            continue
         if edb.get_canvas_owner(canvas_id) != user_id:
             continue
         project_id = str(data.get("project") or DEFAULT_PROJECT_ID)
@@ -2097,7 +2156,8 @@ def filter_project_list(user: dict, data: dict) -> bool:
         return False
     user_id = _user_id(user)
     owned_projects = edb.get_user_project_ids(user_id)
-    counts = _owned_canvas_counts_by_project(user_id)
+    include_counts = data.get("counts_included", True) is not False
+    counts = _owned_canvas_counts_by_project(user_id) if include_counts else {}
     filtered: list[dict] = []
     has_default = False
     for project in projects:
@@ -2106,22 +2166,30 @@ def filter_project_list(user: dict, data: dict) -> bool:
         project_id = str(project.get("id") or "")
         if project_id == DEFAULT_PROJECT_ID:
             item = dict(project)
-            item["canvas_count"] = counts.get(DEFAULT_PROJECT_ID, 0)
+            if include_counts:
+                item["canvas_count"] = counts.get(DEFAULT_PROJECT_ID, 0)
+            else:
+                item.pop("canvas_count", None)
             filtered.append(item)
             has_default = True
         elif project_id in owned_projects:
             item = dict(project)
-            item["canvas_count"] = counts.get(project_id, 0)
+            if include_counts:
+                item["canvas_count"] = counts.get(project_id, 0)
+            else:
+                item.pop("canvas_count", None)
             filtered.append(item)
     if not has_default:
-        filtered.insert(0, {
+        default = {
             "id": DEFAULT_PROJECT_ID,
             "name": "默认项目",
             "order": 0,
             "created_at": 0,
             "updated_at": 0,
-            "canvas_count": counts.get(DEFAULT_PROJECT_ID, 0),
-        })
+        }
+        if include_counts:
+            default["canvas_count"] = counts.get(DEFAULT_PROJECT_ID, 0)
+        filtered.insert(0, default)
     data["projects"] = filtered
     return True
 
@@ -2357,23 +2425,23 @@ def filter_resource_collections(user: dict, data: Any) -> bool:
     return changed
 
 
-def _is_owned_asset_library_item(user: dict, item: Any) -> bool:
+def _is_owned_asset_library_item(user: dict, item: Any, ownership=None) -> bool:
     if _is_admin(user):
         return True
-    return _asset_library_item_owner(item) == _user_id(user)
+    return _asset_library_item_owner(item, ownership) == _user_id(user)
 
 
-def _asset_library_category_visible(user: dict, library_id: str, library_owner: Optional[str], category: dict) -> bool:
+def _asset_library_category_visible(user: dict, library_id: str, library_owner: Optional[str], category: dict, ownership=None) -> bool:
     if _is_admin(user):
         return True
     category_id = str(category.get("id") or "")
     user_id = _user_id(user)
-    category_owner = edb.get_asset_object_owner("category", category_id)
+    category_owner = _asset_object_owner("category", category_id, ownership)
     if category_owner == user_id:
         return True
     if library_owner == user_id and not category_owner:
         return True
-    return _is_system_asset_category(library_id, category_id)
+    return _is_system_asset_category(library_id, category_id, ownership)
 
 
 def _filter_asset_library_category_for_user(
@@ -2381,12 +2449,13 @@ def _filter_asset_library_category_for_user(
     library_id: str,
     library_owner: Optional[str],
     category: Any,
+    ownership=None,
 ) -> Optional[dict]:
     if not isinstance(category, dict):
         return None
-    visible = _asset_library_category_visible(user, library_id, library_owner, category)
+    visible = _asset_library_category_visible(user, library_id, library_owner, category, ownership)
     source_items = category.get("items") if isinstance(category.get("items"), list) else []
-    items = [item for item in source_items if _is_owned_asset_library_item(user, item)]
+    items = [item for item in source_items if _is_owned_asset_library_item(user, item, ownership)]
     if not visible and not items:
         return None
     if not visible:
@@ -2396,16 +2465,16 @@ def _filter_asset_library_category_for_user(
     return next_category
 
 
-def _default_asset_library_shell(root: dict, user: dict) -> dict:
+def _default_asset_library_shell(root: dict, user: dict, ownership=None) -> dict:
     default = _find_asset_library_library(root, "default")
     categories = []
     if isinstance(default, dict):
         for category in default.get("categories") or []:
             if not isinstance(category, dict):
                 continue
-            if not _is_system_asset_category("default", str(category.get("id") or "")):
+            if not _is_system_asset_category("default", str(category.get("id") or ""), ownership):
                 continue
-            filtered = _filter_asset_library_category_for_user(user, "default", None, category)
+            filtered = _filter_asset_library_category_for_user(user, "default", None, category, ownership)
             if filtered:
                 categories.append(filtered)
     if not categories:
@@ -2422,16 +2491,16 @@ def _default_asset_library_shell(root: dict, user: dict) -> dict:
     }
 
 
-def _filter_asset_library_library_for_user(user: dict, library: Any) -> Optional[dict]:
+def _filter_asset_library_library_for_user(user: dict, library: Any, ownership=None) -> Optional[dict]:
     if not isinstance(library, dict):
         return None
     library_id = str(library.get("id") or "")
     user_id = _user_id(user)
-    library_owner = edb.get_asset_object_owner("library", library_id)
+    library_owner = _asset_object_owner("library", library_id, ownership)
     library_visible = library_owner == user_id or _is_system_asset_library(library_id)
     categories = []
     for category in library.get("categories") or []:
-        filtered = _filter_asset_library_category_for_user(user, library_id, library_owner, category)
+        filtered = _filter_asset_library_category_for_user(user, library_id, library_owner, category, ownership)
         if filtered is not None:
             categories.append(filtered)
     if not library_visible and not categories:
@@ -2443,9 +2512,11 @@ def _filter_asset_library_library_for_user(user: dict, library: Any) -> Optional
     return next_library
 
 
-def filter_asset_library(user: dict, data: Any) -> bool:
+def filter_asset_library(user: dict, data: Any, ownership=None) -> bool:
     if _is_admin(user) or not isinstance(data, dict):
         return False
+    if ownership is None:
+        ownership = edb.asset_library_ownership_snapshot()
     root = data.get("library") if isinstance(data.get("library"), dict) else data
     if not isinstance(root, dict):
         return False
@@ -2453,11 +2524,11 @@ def filter_asset_library(user: dict, data: Any) -> bool:
     if isinstance(libraries, list):
         filtered_libraries = []
         for library in libraries:
-            filtered = _filter_asset_library_library_for_user(user, library)
+            filtered = _filter_asset_library_library_for_user(user, library, ownership)
             if filtered is not None:
                 filtered_libraries.append(filtered)
         if not filtered_libraries:
-            filtered_libraries.append(_default_asset_library_shell(root, user))
+            filtered_libraries.append(_default_asset_library_shell(root, user, ownership))
         active_library_id = str(root.get("active_library_id") or "")
         if not any(str(lib.get("id") or "") == active_library_id for lib in filtered_libraries):
             active_library_id = str(filtered_libraries[0].get("id") or "default")
@@ -2467,7 +2538,7 @@ def filter_asset_library(user: dict, data: Any) -> bool:
         root["categories"] = active.get("categories") if isinstance(active.get("categories"), list) else []
         return True
     if isinstance(root.get("categories"), list):
-        shell = _default_asset_library_shell({"libraries": [{"id": "default", "categories": root.get("categories")}]}, user)
+        shell = _default_asset_library_shell({"libraries": [{"id": "default", "categories": root.get("categories")}]}, user, ownership)
         root["categories"] = shell["categories"]
         return True
     return False
@@ -3007,6 +3078,12 @@ def _post_process_sync(
     if not is_success:
         return response_body, {}
 
+    if path == 'api/canvas-assets/context' and method == 'POST':
+        # Read-only association lookup: never register task/resource ownership.
+        filter_canvas_assets(user, data)
+        encoded = json.dumps(data, ensure_ascii=False).encode('utf-8')
+        return encoded, {'content-length': str(len(encoded))}
+
     modified = False
     data, sanitized_settings = sanitize_settings_response(user, path, method, data)
     modified = sanitized_settings or modified
@@ -3149,6 +3226,21 @@ def _post_process_sync(
         modified = filter_history_list(user, data) or modified
 
     # ── 过滤本地上传资源集合 ──────────────────────────────
+    elif path == 'api/local-assets' and method == 'GET' and data.get('projection') == 'upload-picker':
+        owned_urls = None if _is_admin(user) else edb.get_user_resource_urls(_user_id(user))
+        if data.get('source') == 'canvas-inputs-v1':
+            try:
+                uploads = local_uploads.metadata_items(PATH_ROOTS.UPLOAD_ROOT / 'assets' / 'uploads', owned_urls)
+            except OSError as exc:
+                raise HTTPException(503, '上传素材暂时无法读取，请重试；原文件保留。') from exc
+            data['items'] = uploads + data['items']
+        if not _is_admin(user):
+            owned_canvases = edb.get_user_canvas_ids(_user_id(user))
+            data['items'] = [row for row in data['items'] if
+                             (row.get('canvas_id') in owned_canvases if row.get('canvas_id') else
+                              normalize_resource_url(row.get('url', '')) in owned_urls)]
+        data = collection_query.page(data['items'], query_params or {}, actor=_user_id(user), source='uploads', revision=['uploads-live-v1'])
+        modified = True
     elif path == "api/local-assets" or path.startswith("api/local-assets/"):
         modified = filter_local_assets(user, data) or modified
 
@@ -3159,6 +3251,27 @@ def _post_process_sync(
         or path in {"api/shared-folders/import", "api/canvas-workflows/export-to-library"}
     ):
         modified = filter_asset_library(user, data) or modified
+
+    if enterprise_ws.is_asset_library_write(path, method) and query_params and str(query_params.get('catalog', '')).lower() in {'1', 'true'}:
+        if isinstance(data, dict) and isinstance(data.get('library'), dict):
+            # Ownership recording/filtering above must see the original full result.
+            data['library'] = collection_query.library_catalog(data['library'])
+            libraries = data['library']['libraries']
+            if isinstance(data.get('asset_library'), dict):
+                selected = next((row for row in libraries if row.get('id') == data['asset_library'].get('id')), None)
+                if selected is not None:
+                    data['asset_library'] = selected
+                else:
+                    data.pop('asset_library')
+            if isinstance(data.get('category'), dict):
+                selected = next((category for row in libraries for category in row.get('categories', [])
+                                 if category.get('id') == data['category'].get('id')), None)
+                if selected is not None:
+                    data['category'] = selected
+                else:
+                    data.pop('category')
+            data['projection'] = 'catalog'
+            modified = True
 
     if modified:
         new_body = json.dumps(data, ensure_ascii=False).encode("utf-8")

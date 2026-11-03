@@ -106,6 +106,49 @@ asyncio.run(restart())
     assert second.returncode==0,second.stdout+second.stderr
 
 
+def test_character_speech_recovers_queued_input_and_never_repeats_completed_submission(tmp_path):
+    first = invoke(tmp_path, r'''
+main.CANVAS_TASK_DISPATCH.paused=lambda:True
+async def write():
+    result=await main.create_character_voice_task(main.CharacterVoiceRequest(request_id='a'*32,provider_id='zhenzhen',input='voice-fixture'),'alice')
+    key=result['task_id']
+    record=main.CANVAS_TASK_JOURNAL.get(key)
+    assert record['status']=='queued' and record['type']=='audio' and record['dispatch_version']==1,record
+    assert 'fixture-key' not in main.CANVAS_TASK_DISPATCH.inputs._path(key).read_text()
+    (roots.DATA_ROOT/'voice-id').write_text(key)
+    os._exit(17)
+asyncio.run(write())
+''')
+    assert first.returncode == 17, first.stdout + first.stderr
+    second = invoke(tmp_path, r'''
+def speech_handler(request):
+    assert request.url.path=='/v1/audio/speech'
+    assert request.headers['Authorization']=='Bearer fixture-key-never-stored','fixture key binding was not restored'
+    assert json.loads(request.content)['input']=='voice-fixture'
+    generated('audio')
+    return httpx.Response(200,content=b'ID3controlled-audio',request=request)
+main.CHARACTER_VOICE_TASKS.client=lambda:original_client(transport=httpx.MockTransport(speech_handler))
+main.CHARACTER_VOICE_TASKS.save=lambda _: '/output/voice.mp3'
+main.CHARACTER_VOICE_TASKS.publish=lambda *a:None
+async def restart():
+    await main.startup_event()
+    try:
+        key=(roots.DATA_ROOT/'voice-id').read_text()
+        async with asyncio.timeout(10):
+            while main.CANVAS_TASK_JOURNAL.get(key)['status']=='queued' or main.CANVAS_TASK_DISPATCH.active:
+                await asyncio.sleep(.02)
+        record=main.CANVAS_TASK_JOURNAL.get(key)
+        assert record['status']=='succeeded',record
+        assert record['result']['audios']==['/output/voice.mp3']
+        await main.CANVAS_TASK_DISPATCH.start()
+        await asyncio.sleep(.05)
+        assert len(trace.read_text().splitlines())==1
+    finally:await main.shutdown_task_recovery()
+asyncio.run(restart())
+''')
+    assert second.returncode == 0, second.stdout + second.stderr
+
+
 @pytest.mark.parametrize('kind',['online-image','comfy','video','llm'])
 def test_hard_exit_after_claim_never_generates_again_on_startup(tmp_path,kind):
     writer=r'''

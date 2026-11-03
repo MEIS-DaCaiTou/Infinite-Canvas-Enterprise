@@ -1,13 +1,19 @@
 # Infinite Canvas Enterprise 开发工作流
 
-更新时间：2026-10-28
+更新时间：2026-11-03
+
+2026-11-03负责人已批准：收口现有开发功能与生产ComfyUI修复，提交PR、通过检查后合并并发行2026.11.1；无需再次等待预览确认。管理员在原算力与队列页面直接释放失败待核对旧任务的名额，不新增原始记录备份、独立维护链路或审批页面；保留原回执及既有审计。发布复用10.11安装/升级引擎，重点验证10.11直升、数据保留及失败恢复。授权不代替设备现场验收；本轮不操作客户设备。下方较早“等待负责人确认后PR”是历史约定，已由本轮授权替代。
+
+
+2026-10-31交付对应规则：文档维护以当前开发候选为准，运行目录只作明确记录的预览副本。未提交候选至少记录HEAD、差异文件清单、预览源码映射及外部前后快照；正式冻结时由原发行清单绑定提交/构建，不能把HEAD当作全部未提交实现。PR盘点使用当前state、mergedAt、base/head、检查及祖先/内容证据，搜索和旧正文只作线索；关闭、合并、删分支必须依据本轮明确授权，不因“CI绿”或“旧PR”自行执行。
+
 
 协作与反馈入口见 [贡献指南](CONTRIBUTING.md)；本文件继续管理开发流程。
 
 ## 1. 开始任务
 
 1. 确认项目名称、仓库和本地路径，不能与 Aidan 系列项目混用。
-2. `git fetch origin --prune`，记录 `origin/main`、当前分支、工作区状态和相关 PR。
+2. 先核验本聊天目录、实际开发候选和运行进程目录；记录分支、HEAD及未提交状态，再以只读GitHub API/必要fetch核对main和相关PR。本地remote引用可能过期；不得自动切分支、reset、覆盖或清理已有工作树。
 3. 依次阅读：
    - `docs/README.md`
    - `docs/CURRENT_PROJECT_STATUS.md`
@@ -20,7 +26,7 @@
 
 ## 2. 路线门禁
 
-任务顺序只认 [路线图](docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md)：先处理10.9测试机反馈，再按已确认顺序推进分类容量、NAS恢复和OSS；安装维护按实际阻断与准确来源处理。[统一交付 ADR](docs/decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md) 是认可的设计，不是实现完成。
+任务顺序只认[路线图](docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md)最新已批准章节。2026-10-31已获准按序收口候选、服务器适配验证、单企业试部署、桌面小样，先完成文档/PR梳理；旧10.9反馈和分类容量/NAS/OSS顺序不再作为当前独立队列。对应恢复目标仍保留。[统一交付ADR](docs/decisions/ADR-DELIVERY-001-UNIFIED-INSTALL-UPDATE-LIFECYCLE-2026-10.md)是设计，不能代替实现和验收。
 
 - 横向测试、日志、性能和模块化可以随当前阶段实施。
 - 后续阶段可做只读调研或小型 spike，但不得把未完成前置能力包装成可交付产品。
@@ -67,7 +73,6 @@
 默认运行受影响定向测试，复用已有 CI。跨模块风险、必要失败复核、合并要求或明确请求才重跑全套，并说明理由。纯文档变更运行：
 
 ```powershell
-python -B tools/check_development_runtime.py
 python -B tools/check_docs.py
 python -B -m unittest discover -s enterprise/tests -p test_documentation_contract.py
 ```

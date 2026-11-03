@@ -89,6 +89,8 @@ class EnterpriseWsConnection:
     closed_at: int = 0
     close_reason: str = ""
     send_failure_logged: bool = False
+    validate_session: Any = field(default=None, repr=False)
+    auth_version: int = 0
 
 
 _CONNECTIONS: dict[str, EnterpriseWsConnection] = {}
@@ -184,7 +186,7 @@ def build_upstream_ws_url(upstream_url: str, path: str, query_string: str = "") 
     return target
 
 
-def register_connection(websocket: Any, user: Mapping[str, Any], path: str, client_id: str = "") -> EnterpriseWsConnection:
+def register_connection(websocket: Any, user: Mapping[str, Any], path: str, client_id: str = "", *, validate_session=None) -> EnterpriseWsConnection:
     user_id = user_id_from_user(user)
     conn = EnterpriseWsConnection(
         websocket=websocket,
@@ -193,6 +195,8 @@ def register_connection(websocket: Any, user: Mapping[str, Any], path: str, clie
         is_admin=is_admin_user(user),
         path=str(path or ""),
         client_id=str(client_id or "").strip(),
+        validate_session=validate_session,
+        auth_version=int(user.get('auth_version') or 0),
     )
     _CONNECTIONS[conn.connection_id] = conn
     if conn.client_id and conn.user_id:
@@ -448,6 +452,22 @@ async def send_to_connection(connection: EnterpriseWsConnection, message: Mappin
         text = json.dumps(message, ensure_ascii=False)
     try:
         async with connection.lock:
+            if not is_connection_active(connection):
+                return False
+            if connection.validate_session:
+                try:
+                    current = await asyncio.to_thread(connection.validate_session)
+                except Exception:
+                    current = None
+                if (not current or user_id_from_user(current) != connection.user_id
+                        or is_admin_user(current) != connection.is_admin
+                        or int(current.get('auth_version') or 0) != connection.auth_version):
+                    mark_connection_dead(connection, 'session_revoked')
+                    try:
+                        await connection.websocket.close(code=1008)
+                    except Exception:
+                        pass
+                    return False
             await connection.websocket.send_text(text)
         connection.last_seen_at = int(time.time() * 1000)
         return True

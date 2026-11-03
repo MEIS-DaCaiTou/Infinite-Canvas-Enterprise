@@ -1,5 +1,9 @@
 # 运行、测试与开发方式
 
+更新时间：2026-10-13。命令为源码/旧安装参考；产品交付和现场状态回到 [CURRENT](../CURRENT_PROJECT_STATUS.md)。
+
+2026-10-31执行入口：实际开发候选为CHAR1011/source，manual-acceptance为18000/18001完整运行副本，聊天默认旧目录不是新候选。主业务和发行继续CPython3.14.6；纯文档检查仅需标准库，可用3.11，不为文档修改启动业务或重跑全套。pytest的test_character_frontend_suite显式包含角色/选择器/冲突/资产侧栏Node用例；入口存在不等于未提交候选已经通过远端CI。具体命令见企业测试README。
+
 2026-10-27现行开发基线：CPython **3.14.6**与`runtime/windows/requirements.lock`的30项发行依赖。下文较早的3.11命令仅是历史验证记录，不是当前强制兼容目标。应用依赖不再分别在根目录与enterprise维护；两个旧requirements入口均指向同一发行锁。
 
 新开发环境使用独立3.14.6解释器/虚拟环境，执行`python -m pip install --require-hashes -r requirements-dev.txt`，再运行`python -B tools/check_development_runtime.py`；测试前设置`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`。test-tools.lock只添加测试工具，不改变发行闭包。复制现有固定Runtime用于开发时，保留原发行依赖，将测试工具单独置于开发路径，不修改已安装的原Runtime或全局Python。
@@ -12,7 +16,6 @@
 
 [返回索引](./README.md)
 
-更新时间：2026-10-13。命令为源码/旧安装参考；产品交付和现场状态回到 [CURRENT](../CURRENT_PROJECT_STATUS.md)。
 
 2026-10-24本地流程调整：开发增量先启动原Gateway和业务服务，在固定内置浏览器入口交负责人手工测试；保留测试数据，反馈先在同一源码工作区修订。真实登录/角色实例与模拟身份的自动测试夹具分开；源码预览不要求每次打包或升级正式版本。人工确认后再提交PR，实际候选包与准确升级路径另验收。入口状态见[CURRENT](../CURRENT_PROJECT_STATUS.md)，具体规则见[开发工作流](../../CODEX_WORKFLOW.md#31-开发机人工验收与反复修订负责人2026-10-24要求)。
 

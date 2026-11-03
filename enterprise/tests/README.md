@@ -1,6 +1,46 @@
 # Enterprise Test Scripts
 
-Reviewed: 2026-10-29
+Reviewed: 2026-11-03
+
+2026.11.1发行收口：新管理员释放及现有队列/任务目录/恢复45项通过，覆盖同用户解阻、原回执不变、幂等、重启、角色限制/可信身份和远端真实占用不被跳过。完整后台浅/深色受控Edge验证一次点击/防重复/刷新，无额外GPU或生产写入；本轮完整企业回归与精确发行包升级验证的结果在当前状态/既有收敛记录持续更新，不重复创建测试或发行门禁。
+
+
+2026-11-03 COMFY1103：Comfy适配/队列27项和任务目录/取消/恢复33项共60项通过；5种网络分支执行实际main runner，只有明确连接未建立释放名额，响应丢失/重置/未知连接仍保留。无输出取消能力、重试/取消待确认由新test_generation_task_center.js经原test_generation_tasks.py收集。原控件Node、来源及双画布冲突/草稿脚本通过；来源脚本的过时自动覆盖断言已对齐现有保存拒绝契约。Edge完整经典浅色/智能深色通过原ID取消及刷新，经典实际删受控输出后仍可取消；受控回执、0GPU提交/业务写入。生产副本只读证据和未部署范围见原收敛记录。
+
+2026-11-03 AUTH1103：原集合查询/资产消费者35项与新test_asset_query_ownership.py的7项，共42项不同定向用例通过。按原全量策略逐页对照输出/游标，覆盖双用户非空资产/管理员、旧目录与显式空库、重复/缺失ID、归属优先级、当前撤权/转移、同时间旧关联、源失效/缓存预算和跨400参数分批。沿用原pytest目录收集，没有新CI作业。隔离8账号/一万资产两组顺序互换对照，16路闭环P95 3.62–3.87→1.45–1.96秒；本批不含媒体/写入或客户容量。完整预览三账号及两类实际角色导入入口只读通过，0生成/保存；原真实2K/4K、MP4证据不重复计数。
+
+2026-11-02 WINDOW1102：新`test_media_grid_window.js`覆盖2/5列、部分末行、精确占位、20k元数据窗口上限、保留/释放/定位/销毁的实际组件生命周期，接入原Node→pytest CI入口；共11个脚本，本批只选窗口/选择器/侧栏相关参数，与侧栏Python合计10项通过（8项未选）。选择器原分页/失败/选择/取消测试另补“完整服务器详情不被重复保留”，相关复跑不累加。完整Edge两类画布覆盖480项翻页、503/409恢复、搜索、拖拽撤销、键盘Home/End、resize、离屏MP4释放、原2K图确认及关闭；读取/写入夹具和未拦截实际入口分开，未跑全库或远端CI。
+
+企业读取测量另用隔离SQLite/JSON及真实Gateway/JWT/授权，以1k/10k合成元数据、8个账号、1/8/16路和每档3波闭环ASGI HTTP采样；验证24项分页隔离及同JWT撤权。不是现场吞吐或50员工验收，不含媒体/TCP/TLS/写入；一万项16路P95约5.7秒的限制必须保留，不能只汇报约5.2KB的分页收益。实际媒体沿真实2K/4K和MP4验证，不用小SVG证明容量。证据统一在原收敛记录。
+
+2026-11-02 UPLOAD1102：资产消费者15项与原代理传输7项共22项通过，覆盖普通用户不枚举全树、当前授权变化、管理员/旧上游兼容、画布输入保留、不可读503、Gateway覆盖/移除外部来源提示；没有新增CI作业，仍由原pytest目录收集。原侧栏Python/Node及角色选择器CI入口9项通过（8项未选），合计31项不同定向用例。完整项目Edge另验证两类画布2K/4K/MP4、失败重试、整理撤销，以及委托插入/双击各新增恰好一个临时节点；画布PUT拦截。持续480项同一脚本前后对照验证卡片/视频身份保留，GC仅为单列诊断；未把GC后内存当自然长期容量。准确结果见原收敛记录，远端CI未运行。
+
+2026-11-02 COLD1102定向验证：业务/共享前端19项（8项未选），新增`test_runtime_child_drain.py`真实Uvicorn停机2项，原监督器/进程边界3项（33项未选），原已受理任务恢复1项，共25项不同用例通过；末次别名精简的相关Node及写入用例复跑与上述重叠，不累加。新Python测试沿原Enterprise pytest目录自动收集，不新增CI作业，也不代表远端CI已跑。URL轻提取覆盖去重/类型和禁止完整记录加工；临时SQLite覆盖双用户权限、原登记及旧写入兼容。32MiB二进制仅为排空测试传输夹具，不是图片性能样本。
+
+完整Edge两类画布另用真实2048²、2880²、2926×4096图片及3.78/32.49MB MP4验证分页、失败恢复、搜索、整理撤销及原图确认；元数据/写入受控，非现场容量验收。恢复后的三账号真实Gateway和两类实际15图选择通过。完整预览未读完媒体时停机两进程各约8.4秒、无强停、清理标记新鲜；没有模型调用。历史异常PID的确切根因及活跃收费请求停机未验收。测量、清理和前后增量见[原收敛记录](../../docs/ops/DEVELOPMENT-CONVERGENCE-2026-10-30.md#2026-11-02-首次关联加工精简回包与停机排空cold1102)。
+
+2026-11-02 READ1102：新`test_asset_consumer_queries.py`6项与原查询/侧栏/前端入口共35 passed、8 deselected；另10项引用缓存/路由检查通过。URL快路径与中文/远程区分修改后，相关6项复测通过（不累加）。新文件由原Enterprise pytest目录收集，无新CI作业；尚未远端提交/运行。覆盖旧上传命名/文件类型、两种上传来源保留、当前归属先于分页、实时cursor、关联缓存失效/撤权、只读POST不登记资源、精确匹配隔离、关联失败不推进cursor及原撤销/失响应重试。
+
+完整Edge两类画布复用前批真实2K/4K、高字节PNG和32.5MB/94秒等MP4，补上传24→48、精确整理和本批关联查询；测试元数据/写入受控。最后不拦截读接口的实际项目15图→确认导入页面通过，0完整索引读取、0脚本错误、0收费调用，未保存角色。临时媒体链接已清理。冷首屏、持续写入、长期峰值/并发与退出异常限制集中在[原收敛记录](../../docs/ops/DEVELOPMENT-CONVERGENCE-2026-10-30.md#2026-11-02-上传关联和整理查询续批read1102)，不把受控页当现场验收。
+
+2026-11-02资产消费者续批：`test_collection_query.py`、`test_character_frontend_suite.py`选中的选择器/整理Node入口及`test_canvas_asset_shelf.py`共29 passed、8 deselected。目录投影先授权，覆盖双用户非空资产、旧目录/空库、原件不变；消费者覆盖24项分页、503原cursor重试/保留选择、409刷新、晚响应取消与原图URL不被预览替换。仍经原Enterprise pytest入口收集，无新CI作业，尚未提交远端。
+
+媒体验收标准：小SVG仅作交互夹具，不能支持真实媒体性能结论。性能/解码复测使用原始2K–4K图片，记录像素、字节及代表性高字节PNG；视频记录分辨率、时长、字节和实际播放，不能用几KB占位文件代替。本批使用2048²/2.59MB、2880²/11.69MB、2926×4096/6.06MB，及1918×978/94秒/32.49MB、1920×1012/14.47秒/3.78MB MP4；两类完整画布通过。元数据响应量、媒体网络观察、解码等待和整个浏览器进程树内存分别记录；未测4K视频、全部编码、长期峰值/并发容量或客户设备。临时链接和受控元数据不进入业务资产，验证与截图见[原收敛记录](../../docs/ops/DEVELOPMENT-CONVERGENCE-2026-10-30.md#2026-11-02-资产消费者与真实媒体consumer1102)。
+
+2026-11-02正式读接线：新`test_history_query_cache.py`11项与原索引/查询52项共63项通过，覆盖原接口先JSON后命中、原权限门禁/当前撤权、源追加/删除/坏文件、旧cursor409、单构建/不重复解析、失败退避、重开复用、停机及开关。仍由原Enterprise pytest目录收集，不新增CI作业。独立合成20k真实Gateway验证HTTP、四请求一致性、损坏索引回退、重启不重建及禁用回原JSON；完整项目Edge验证实际8条在线历史→预览→关闭，脚本/console错误和收费提交均0。具体测量、范围和未覆盖项见[原收敛记录](../../docs/ops/DEVELOPMENT-CONVERGENCE-2026-10-30.md#2026-11-02-历史索引接入与后台维护index1102)；未跑全库或现场设备。
+
+2026-11-01持久只读索引：`test_history_query_index.py`与原`test_collection_query.py`共52项通过，覆盖原policy/完整翻页对照、双用户/管理员/无归属、同时间/重复记录/缺失时间、Unicode搜索、当前撤权、cursor、重开无全量解析、源变化拒绝、构建失败/坏文件/外来数据库保留。新测试由原Enterprise pytest目录自动收集；未新增CI作业，未提交的本轮测试不能写成远端CI已通过。
+
+只读影子工具：`python -B tools/check_history_query_index.py --source <history.json> --index <私有目录/history-query.sqlite3> --database <enterprise.db> --username <启用账号> --build`。重复`--username`校对多账号，`--queries-file`可传查询字典数组；`--build`只重建投影。三账号实际历史40次分页比较通过；业务文件不变，不切换API。合成5000/20000条的构建、重开和搜索测量见[原收敛记录](../../docs/ops/DEVELOPMENT-CONVERGENCE-2026-10-30.md)。没有新UI改动，复用前批两类画布及图片预览视觉证据；本批只复测三账号真实Gateway兼容契约。
+
+2026-11-01查询定向：`test_collection_query.py`共15项覆盖两用户/管理员、先授权后分页、撤权/不同账号cursor、批读与旧归属优先级、坏文件/修订、缓存预算/原子替换及既有feature门禁。该文件自动由原Enterprise pytest目录收集；扩展原`test_canvas_list_loading.js`并通过原`test_character_frontend_suite.py`选中入口（合计16 passed，9 deselected，未声称全部前端脚本重跑）。原history/ownership/asset_library隔离脚本均通过。真实Gateway与Edge受控翻页失败/刷新及测量限制见[收敛记录](../../docs/ops/DEVELOPMENT-CONVERGENCE-2026-10-30.md)。
+
+2026-10-31历史/不可读画布续批：新增`test_history_records.py`覆盖损坏原件保留、超过5000条不裁剪、失败写入/元数据删除、生成结果warning及真实子进程追加/删除锁；扩展`test_page_loading.py`的坏画布与权限计数。两文件共24项通过，`test_canvas_list_loading.js`覆盖部分失败/重试。原`test_history_isolation.py`补损坏删除503及媒体保留；原history/type/task隔离脚本通过。Python测试自动由现有Enterprise pytest目录收集，前端沿用原Node→pytest CI入口；尚未提交业务代码，不能写成远端已通过这些新测试。完整Edge证据与限制见[收敛记录](../../docs/ops/DEVELOPMENT-CONVERGENCE-2026-10-30.md)。
+
+2026-10-31当前定向入口：`test_page_loading.py`覆盖单遍列表、过期/恢复竞争、轻项目权限/计数、历史失败及异步读线程；`test_canvas_list_loading.js`覆盖假空态/失败保留/重试/过期响应和在线并行。后者已加入`test_character_frontend_suite.py`的原pytest CI入口，现10项Node脚本；本次只选新增项验证，不写成10项重跑全过。原双用户`test_ownership_isolation.py`也补轻列表检查；真实Gateway三账号/Edge证据见CURRENT。经典/智能冲突与资产删除的前批证据按原记录复用，不无故重复全量测试。文档使用`tools/check_docs.py`及`test_documentation_contract.py`，可用标准库3.11，不替换业务3.14.6。
+
+
+2026-10-29人体交付一致性续修：运行test_character_preview_assets.py、test_characters.py及test_character_motion_preview.js，验证原GLB及Draco/加载器完整、开发标记不分流、生命周期和失败不暗换模型；复用原vendor清单与逐组件SBOM门禁。准确结果见[CURRENT](../../docs/CURRENT_PROJECT_STATUS.md)。
 
 2026-10-29角色库定向验证：`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -B -m pytest -q enterprise/tests/test_characters.py enterprise/tests/test_local_json.py`，覆盖账号隔离、原媒体引用授权、版本并发、归档恢复、损坏/未知格式不覆盖、原子失败和HTTP边界，共28项通过。官方目录夹具验证只读公开引用、独立封面授权与缺省兼容；本地目录使用已记录来源的公开参考内容，正式分发另行处理；真实页面另验两类画布复用、草稿保留、筛选/视图及明暗主题，不调用付费模型。`node enterprise/tests/test_character_creation_task.js`验证受理单次提交、原编号续查、账号缓存隔离、网络/5xx/408不重发、拒绝/存储不可用和保存去重编号；Python新增创建回包重试、冲突不覆盖、跨账号与撤权重查。以上均为受控夹具，不声称真实供应商生成通过。`node enterprise/tests/test_character_carousel.js`另验实际拖动惯性方向、吸附边界、淡化和曲线；人体WebGL以完整项目真实渲染验证。不是完整造型算法、分布式写入、生命周期或发行验收。
 

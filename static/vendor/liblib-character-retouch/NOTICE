@@ -1,0 +1,14 @@
+Liblib character face/body preview source record
+
+Recovered from public production module 587056 and parameter module 725942.
+Source URLs, module identifiers, asset paths and adaptations are recorded in SOURCE.json.
+The owner explicitly requested the original character preview effect and local dependencies.
+This directory contains only the preview engine, parameter specifications, vision/parsing
+models and local WASM runtimes. It contains no account data, provider credentials,
+reference character photos, analytics, or Liblib business API integration.
+
+No license declaration was supplied for Liblib-specific code or model assets. This
+source record is not a third-party license grant and does not label those assets MIT/CC0.
+Embedded MediaPipe and ONNX Runtime code retains its upstream Apache-2.0 and MIT
+notices respectively; their full license texts are included in this directory.
+This record describes provenance independently of functional or visual acceptance.
