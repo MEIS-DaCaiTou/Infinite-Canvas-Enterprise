@@ -187,3 +187,35 @@ def test_shared_frontend_typed_outputs_and_image_ranges():
     subprocess.run(["node", str(Path(__file__).with_suffix(".js"))], check=True)
     subprocess.run(["node", str(Path(__file__).with_name("test_comfy_input_order.js"))], check=True)
     subprocess.run(["node", str(Path(__file__).with_name("test_canvas_comfy_controls.js"))], check=True)
+
+
+@pytest.mark.parametrize("mode", ["first", "last", "both"])
+def test_minimax_keyframes_replace_template_and_disable_only_optional_port(mode):
+    from copy import deepcopy
+    from enterprise.providers.comfy_workflow import complete_minimax_fields, frame_execution_config
+    graph={"114":{"class_type":"LoadImage","inputs":{"image":"template-first.png"}},
+           "127":{"class_type":"LoadImage","inputs":{"image":"template-last.png"}},
+           "105:104":{"class_type":"MiniMaxH3ImageToVideo","inputs":{"prompt":"template prompt", "first_frame":["114",0],"last_frame":["127",0],"width":640,"height":640}},
+           "save":{"class_type":"SaveVideo","inputs":{"video":["105:104",0]}}}
+    original=deepcopy(graph)
+    config={"fields":[{"id":"prompt","node":"105:104","input":"prompt","type":"textarea","role":"prompt"},
+                      {"id":"old-first","node":"114","input":"image","type":"image","default":"template-first.png"}]}
+    repaired=complete_minimax_fields(graph,config)
+    assert len(repaired["fields"])==3 and repaired["fields"][-1]["id"]=="ice_frame:127"
+    values={"prompt":"new prompt","__ice_frame_mode":mode}
+    if mode!="last":values["old-first"]="own-first.png"
+    if mode!="first":values["ice_frame:127"]="own-last.png"
+    result=apply_workflow_values(graph,config,values)
+    target=result["105:104"]["inputs"]
+    for role,source,name in [("first","114","own-first.png"),("last","127","own-last.png")]:
+        if mode in (role,"both"):
+            assert target[role+"_frame"]==[source,0] and result[source]["inputs"]["image"]==name
+        else:assert role+"_frame" not in target
+    assert target["prompt"]=="new prompt" and target["width"]==640 and graph==original
+    assert len(frame_execution_config(graph,config,mode)["fields"])==(3 if mode=="both" else 2)
+    with pytest.raises(ValueError,match="不会使用"):
+        apply_workflow_values(graph,config,{"prompt":"new prompt","old-first":"own.png"})
+    with pytest.raises(ValueError,match="配置已变化"):
+        apply_workflow_values(graph,config,{**values,"stale-field":"lost.png"})
+    with pytest.raises(ValueError,match="模式"):
+        apply_workflow_values(graph,config,{**values,"__ice_frame_mode":"arbitrary"})

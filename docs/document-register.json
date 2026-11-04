@@ -1,8 +1,8 @@
 {
   "schema_version": "enterprise-documents-v1",
-  "reviewed_at": "2026-11-03",
-  "audit_base_commit": "fe004d840cbbfb1218da45a0281c0168f226c3cd",
-  "scope": "2026-11-03 R111 shipped v2026.11.1 from fe004d840cbbfb1218da45a0281c0168f226c3cd through merged PR208 at c53f9674c89d0b01e45578f9f6d82e7fe2890a4f. 2381 PR enterprise tests passed, 51 conditional skips and 12 subtests. Required PR and merge CI passed. Exact 10.11 installed-runtime upgrade, interrupted recovery and health-failure rollback retained business files and installation identity; registration GUI not rerun. 8 public assets anonymously verified; old releases unchanged. Original preview restored and clean main fast-forwarded. Device acceptance remains separate. This closeout changes documents only; no artifact rebuild or customer operation.",
+  "reviewed_at": "2026-11-04",
+  "audit_base_commit": "22c4a9300198a9e348a9d5b28766217696aecfe8",
+  "scope": "2026-11-04 approved PR convergence on 22c4a93, codex/fix-output-video-preview: local-first workflow loading, native H3 keyframe mapping/modes, optional upload-copy preparation, HTML revalidation, readable selects, image dimensions, stable crop presets, shared local brush preferences and classic output playback/drag reuse. Current verification is 94 scoped tests and nine existing Node scripts, plus prior full-project Edge evidence; remote CI is recorded separately on the PR. Existing v2026.11.1 release and device data unchanged; merge/release/device operations require their corresponding authorization. Earlier R111 release evidence remains historical.",
   "documents": [
     {
       "path": ".github/PULL_REQUEST_TEMPLATE.md",
@@ -88,13 +88,13 @@
       "path": "CODE_BOUNDARIES.md",
       "kind": "authority",
       "authority": "code-boundaries",
-      "reviewed_at": "2026-11-03"
+      "reviewed_at": "2026-11-04"
     },
     {
       "path": "CODEX_WORKFLOW.md",
       "kind": "authority",
       "authority": "workflow",
-      "reviewed_at": "2026-11-03"
+      "reviewed_at": "2026-11-04"
     },
     {
       "path": "docs/architecture/ARCH-2A-ARCHITECTURE-ASSESSMENT-AND-EVOLUTION-2026-07.md",
@@ -159,7 +159,7 @@
       "path": "docs/CURRENT_PROJECT_STATUS.md",
       "kind": "authority",
       "authority": "status",
-      "reviewed_at": "2026-11-03"
+      "reviewed_at": "2026-11-04"
     },
     {
       "path": "docs/data/DATA-MVP-1-INDEPENDENT-REVIEW-2026-09.md",
@@ -483,7 +483,7 @@
       "path": "docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md",
       "kind": "authority",
       "authority": "roadmap",
-      "reviewed_at": "2026-11-03"
+      "reviewed_at": "2026-11-04"
     },
     {
       "path": "docs/runbooks/SEC-1B2-PRODUCTION-ACTIVATION-RUNBOOK-2026-07.md",
@@ -562,7 +562,7 @@
       "path": "enterprise/tests/README.md",
       "kind": "authority",
       "authority": "testing",
-      "reviewed_at": "2026-11-03"
+      "reviewed_at": "2026-11-04"
     },
     {
       "path": "enterprise/tests/SMOKE_CHECKLIST.md",
@@ -589,7 +589,7 @@
       "path": "PROJECT_SCOPE_LOCK.md",
       "kind": "authority",
       "authority": "scope",
-      "reviewed_at": "2026-11-03"
+      "reviewed_at": "2026-11-04"
     },
     {
       "path": "README.md",

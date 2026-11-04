@@ -37,7 +37,7 @@ from threading import Lock, RLock, Thread
 import httpx
 from PIL import Image, ImageOps
 from io import BytesIO
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File, Form, Header, Request
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File, Form, Header, Request, Query
 from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response, StreamingResponse, JSONResponse
@@ -1504,7 +1504,16 @@ def update_env_values(updates):
 
 BACKEND_LOCAL_LOAD = {addr: 0 for addr in COMFYUI_INSTANCES}
 
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+class RevalidatedHtmlStaticFiles(StaticFiles):
+    """Revalidate entry documents so an outer reload also updates cached iframes."""
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        if path.lower().endswith(".html"):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
+app.mount("/static", RevalidatedHtmlStaticFiles(directory=STATIC_DIR), name="static")
 # External mutable roots are prepared by the explicit application capability
 # at startup.  Do not create them merely to satisfy an import-time mount.
 app.mount("/output", StaticFiles(directory=OUTPUT_DIR, check_dir=False), name="output")
@@ -10750,21 +10759,33 @@ def download_output(request: Request, url: str, name: str = "", inline: bool = F
     return StreamingResponse(stream_remote(), media_type=content_type, headers=headers, status_code=upstream.status_code)
 
 @app.post("/api/upload")
-async def upload_image(files: List[UploadFile] = File(...), workflow: str = "Z-Image.json", backend: str = ""):
+async def upload_image(files: List[UploadFile] = File(...), workflow: str = "Z-Image.json", backend: str = "",
+                       image_max_edge: int = Query(default=0, ge=0, le=16384), image_lossless: bool = False):
     target = workflow_backend(workflow, backend)
     client = ComfyClient(target)
     uploaded = []
+    if image_max_edge and image_max_edge < 64:
+        raise HTTPException(status_code=400, detail="图片长边上限需为 64–16384 像素")
     for file in files:
         content = await file.read(50 * 1024 * 1024 + 1)
         if len(content) > 50 * 1024 * 1024:
             raise HTTPException(status_code=413, detail="素材超过 50MB，无法上传")
-        # Unique input name, preserving extension; unrelated users' filenames cannot collide.
-        name = f"canvas_{uuid.uuid4().hex}{os.path.splitext(file.filename or '')[1]}"
+        from enterprise.comfy_input_images import prepare_upload
         try:
-            reference = await asyncio.to_thread(client.upload, name, content, file.content_type)
+            content, filename, content_type, image_info = await prepare_upload(
+                content, file.filename or '', file.content_type,
+                max_edge=image_max_edge, lossless=image_lossless)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if len(content) > 50 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="处理后的图片超过 50MB，请降低长边上限或关闭输入优化")
+        # Unique input name, preserving extension; unrelated users' filenames cannot collide.
+        name = f"canvas_{uuid.uuid4().hex}{os.path.splitext(filename)[1]}"
+        try:
+            reference = await asyncio.to_thread(client.upload, name, content, content_type)
         except Exception as exc:
             raise HTTPException(status_code=502, detail="上传到指定 ComfyUI 后端失败，请检查连接后重试") from exc
-        uploaded.append({"comfy_name": reference, "backend": target})
+        uploaded.append({"comfy_name": reference, "backend": target, "image_info": image_info})
     return {"files": uploaded}
 
 @app.post("/api/ai/upload")
@@ -16513,9 +16534,11 @@ def prepare_comfy_workflow(req):
     if getattr(req, "workflow_values", None) is not None:
         config = getattr(req, "_workflow_config", None) or get_workflow(req.workflow_json)["config"]
         try:
+            from enterprise.providers.comfy_workflow import frame_execution_config
+            effective_config = frame_execution_config(workflow, config, req.workflow_values.get('__ice_frame_mode'))
             workflow = apply_workflow_values(workflow, config, req.workflow_values, prompt=req.prompt)
             from enterprise.comfy_input_policy import authorize_workflow_media
-            authorize_workflow_media(getattr(req, "_enterprise_user_id", ""), workflow, config, req.workflow_values)
+            authorize_workflow_media(getattr(req, "_enterprise_user_id", ""), workflow, effective_config, req.workflow_values)
         except (ValueError, TypeError) as exc:
             raise ComfyExecutionError(str(exc)) from exc
         return workflow, workflow_seed(workflow, seed)
@@ -16719,6 +16742,7 @@ class WorkflowField(BaseModel):
     random_enabled: bool = False
     role: str = ""
     value_type: str = ""
+    media_index: Optional[int] = Field(default=None, ge=0)
 
 class WorkflowImageGroup(BaseModel):
     id: str
@@ -17267,6 +17291,8 @@ def get_workflow(name: str, include_definitions: bool = False, backend: str = ""
         except Exception:
             pass
     cfg = {**cfg, "backend": cfg.get("backend") or COMFYUI_INSTANCES[0], "enabled": workflow_enabled(name, cfg)}
+    from enterprise.providers.comfy_workflow import complete_minimax_fields
+    cfg = complete_minimax_fields(workflow, cfg)
     cfg["fields"] = [{**field, "role": field_role(workflow, field)} for field in cfg.get("fields", [])]
     result = {"name": name, "workflow": workflow, "config": cfg, "builtin": is_builtin_workflow(name)}
     result["image_group_candidates"] = image_group_candidates(workflow)

@@ -3022,6 +3022,10 @@ function renderComfyParams(){
         const wf = comfyWorkflowCache[settings.comfyWorkflow];
         const fields = (wf?.config?.fields || []).filter(f => comfyFieldKind(f) === 'setting');
         html += renderComfyWorkflowControl();
+        if(wf)html+=ComfyWorkflowFields.frameOptionsHtml(wf.workflow,settings,'data-param',window.StudioI18n?.lang?.()==='en');
+        if(wf)html+=`<div class="muted-note">${escapeHtml(ComfyWorkflowFields.imageMappingSummary(wf.workflow,wf.config,window.StudioI18n?.lang?.()==='en',settings.comfyFrameMode))}</div>`;
+        if(wf && ComfyWorkflowFields.runtimeFields(wf.config).some(f=>comfyFieldKind(f)==='image'))html+=ComfyWorkflowFields.imageOptionsHtml(settings,'data-param',window.StudioI18n?.lang?.()==='en');
+        if(settings._comfyImageInfo)html+=`<div class="muted-note">${escapeHtml(settings._comfyImageInfo)}</div>`;
         if(wf?.config?.image_groups?.length)html+=`<div class="muted-note">图片组 ${wf.config.image_groups.map(group=>`${group.min_images}–${group.max_images} 张`).join('、')} · 首张主体，其余参考</div>`;
         html += fields.length ? fields.map(renderComfySettingField).join('') : (settings.comfyWorkflow ? '' : `<div class="muted-note">${escapeHtml(tr('smart.noWorkflow'))}</div>`);
     }
@@ -3935,8 +3939,9 @@ function smartComfyRandomValue(field){
 }
 function setDynamicSetting(key, value){
     const numericKeys = new Set(['count','width','height','videoDuration','enhanceStrength','enhanceUpscaleRes','editUpscaleRes','customRatioWidth','customRatioHeight','customWidth','customHeight','msCustomRatioWidth','msCustomRatioHeight','msCustomWidth','msCustomHeight']);
-    const layoutKeys = new Set(['provider_id','model','resolution','ratio','msgenModel','msCustomModel','msResolution','msRatio','videoProvider','videoModel','videoAspect','videoResolution','comfyMode','comfyWorkflow','quality','count','enhanceUpscaleRes','editUpscaleRes','rhConfigKey','rhPayment','rhInstanceType']);
+    const layoutKeys = new Set(['provider_id','model','resolution','ratio','msgenModel','msCustomModel','msResolution','msRatio','videoProvider','videoModel','videoAspect','videoResolution','comfyMode','comfyWorkflow','quality','count','enhanceUpscaleRes','editUpscaleRes','rhConfigKey','rhPayment','rhInstanceType','comfyImageMode','comfyFrameMode']);
     settings[key] = numericKeys.has(key) && value !== '' ? Number(value) : value;
+    if(key==='comfyImageMode' || key==='comfyImageMaxEdge')delete settings._comfyImageInfo;
     if(key === 'provider_id') settings.model = '';
     if(key === 'videoProvider') settings.videoModel = '';
     if(key === 'videoMultimodal') settings._videoMultimodalUserSet = true;
@@ -3977,7 +3982,7 @@ function setDynamicSetting(key, value){
         if(subject) delete subject.outpaintSize;
     }
     if(key === 'comfyWorkflow') {
-        settings.comfyParams = {};
+        settings.comfyParams = {};delete settings.comfyFrameMode;
         ensureComfyWorkflow(settings.comfyWorkflow).then(renderDynamicParams);
     }
     if(key === 'rhConfigKey'){
@@ -10797,7 +10802,8 @@ function setCropAspectPreset(preset='free'){
     cropAspectRatio = cropRatioFromPreset(cropAspectPreset);
     syncCropRatioButtons();
     if(cropState && imageEditMode === 'crop' && cropAspectRatio){
-        fitCropRectToAspect(cropAspectRatio);
+        const {w,h}=cropBounds();
+        fitCropRectToAspect(cropAspectRatio,{x:0,y:0,w,h});
         renderCropBox();
     }
 }
@@ -14005,9 +14011,10 @@ async function generateComfyUrlsWithSettings(runSettings, prompt, refs,node){
         if(!r.ok) throw new Error(await r.text());
         return r.json().then(ComfyWorkflowFields.normalizeWorkflow);
     });
+    const inputOptions=smartComfyInputOptions(runSettings,node);
     const values = await ComfyWorkflowFields.canvasValues(wf.config, {
-        prompt, workflow:wf.workflow, media:{image:imageRefs, video:videoRefsOnly(allRefs), audio:audioRefsOnly(allRefs)},
-        parameters:runSettings.comfyParams || {}, mediaName:ref=>comfyNameForRef(ref,workflowName,wf.config.backend), english:window.StudioI18n?.lang?.() === 'en',
+        prompt, workflow:wf.workflow, frameMode:runSettings.comfyFrameMode, media:{image:imageRefs, video:videoRefsOnly(allRefs), audio:audioRefsOnly(allRefs)},
+        parameters:runSettings.comfyParams || {}, mediaName:ref=>comfyNameForRef(ref,workflowName,wf.config.backend,inputOptions), english:window.StudioI18n?.lang?.() === 'en',
         randomValue:field => comfyRandomEnabledField(field) && smartComfyRandomActiveFor(runSettings, field.id) ? smartComfyRandomValue(field) : undefined
     });
     const result = await runQueuedSmartComfyGenerate({prompt, workflow_json:workflowName, backend:wf.config.backend, params:comfyParamsFromWorkflowValues(wf.config || {fields:[]}, values), workflow_values:values, type:'workflow-custom', client_id:smartClientId},node);
@@ -14978,9 +14985,10 @@ async function runComfyGeneration(node, prompt, refs, pendingNode, meta){
         if(!r.ok) throw new Error(await r.text());
         return r.json().then(ComfyWorkflowFields.normalizeWorkflow);
     });
+    const inputOptions=smartComfyInputOptions(settings,node);
     const values = await ComfyWorkflowFields.canvasValues(wf.config, {
-        prompt, workflow:wf.workflow, media:{image:refs, video:videoRefsOnly(allRefs), audio:audioRefsOnly(allRefs)},
-        parameters:settings.comfyParams || {}, mediaName:ref=>comfyNameForRef(ref,workflowName,wf.config.backend), english:window.StudioI18n?.lang?.() === 'en',
+        prompt, workflow:wf.workflow, frameMode:settings.comfyFrameMode, media:{image:refs, video:videoRefsOnly(allRefs), audio:audioRefsOnly(allRefs)},
+        parameters:settings.comfyParams || {}, mediaName:ref=>comfyNameForRef(ref,workflowName,wf.config.backend,inputOptions), english:window.StudioI18n?.lang?.() === 'en',
         randomValue:field => comfyRandomEnabledField(field) && smartComfyRandomActive(field.id) ? smartComfyRandomValue(field) : undefined
     });
     const result = await runQueuedSmartComfyGenerate({prompt, workflow_json:workflowName, backend:wf.config.backend, params:comfyParamsFromWorkflowValues(wf.config || {fields:[]}, values), workflow_values:values, type:'workflow-custom', client_id:smartClientId},node);
@@ -15047,18 +15055,30 @@ async function runComfyEdit(node, prompt, refs, pendingNode, meta){
     clearPromptInput({preserveDraft:true});
     scheduleSave();
 }
-async function comfyNameForRef(ref, workflow="", backend=""){
+function smartComfyInputOptions(source,node){
+    // One submission keeps the selected preparation options even if the UI changes mid-upload.
+    return {comfyImageMode:source.comfyImageMode,comfyImageMaxEdge:source.comfyImageMaxEdge,onImageInfo:info=>{
+        const description=ComfyWorkflowFields.imageUploadDescription(info);
+        if(node?.runSettings)node.runSettings._comfyImageInfo=description;
+        if(activeSettingsSubject()?.id===node?.id){settings._comfyImageInfo=description;renderDynamicParams();}
+    }};
+}
+async function comfyNameForRef(ref, workflow="", backend="", imageOptions={}){
     if(!workflow && ref.comfy_name) return ref.comfy_name;
     const response = await fetch(ref.url);
     if(!response.ok) throw new Error('读取 ComfyUI 输入素材失败');
     const blob = await response.blob();
     const form = new FormData();
     form.append('files', blob, ref.name || 'smart-ref.png');
-    const data = await fetch('/api/upload?' + new URLSearchParams({workflow:workflow || 'Z-Image.json',backend}), {method:'POST', body:form}).then(async r => {
+    const data = await fetch('/api/upload?' + new URLSearchParams({workflow:workflow || 'Z-Image.json',backend,...ComfyWorkflowFields.imageUploadQuery(imageOptions)}), {method:'POST', body:form}).then(async r => {
         if(!r.ok) throw new Error(await r.text());
         return r.json();
     });
-    const name = data.files?.[0]?.comfy_name || ref.name || ref.url;
+    imageOptions._comfyImageInfo=ComfyWorkflowFields.imageUploadDescription(data.files?.[0]?.image_info);
+    imageOptions.onImageInfo?.(data.files?.[0]?.image_info);
+    if(imageOptions===settings)renderDynamicParams();
+    const name = data.files?.[0]?.comfy_name;
+    if(!name || typeof name!=='string')throw new Error('ComfyUI 未返回上传文件名，请重试上传；不会使用模板图片');
     const node = ref.nodeId ? nodes.find(n => n.id === ref.nodeId) : null;
     const image = node?.images?.find(img => img.url === ref.url) || (nodes || []).flatMap(n => n.images || []).find(img => img?.url === ref.url);
     if(image) image.comfy_name = name;
@@ -17123,6 +17143,7 @@ document.getElementById('editTextCanvas')?.addEventListener('dblclick', event =>
         beginEditTextInline(hit);
     }
 });
+ImageEditPreferences.bindBrushSizes();
 ['paintBrushSize','paintBrushColor'].forEach(id => {
     const control = document.getElementById(id);
     if(!control) return;
