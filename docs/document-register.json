@@ -2,7 +2,7 @@
   "schema_version": "enterprise-documents-v1",
   "reviewed_at": "2026-11-04",
   "audit_base_commit": "22c4a9300198a9e348a9d5b28766217696aecfe8",
-  "scope": "2026-11-04 approved PR convergence on 22c4a93, codex/fix-output-video-preview: local-first workflow loading, native H3 keyframe mapping/modes, optional upload-copy preparation, HTML revalidation, readable selects, image dimensions, stable crop presets, shared local brush preferences and classic output playback/drag reuse. Current verification is 94 scoped tests and nine existing Node scripts, plus prior full-project Edge evidence; remote CI is recorded separately on the PR. Existing v2026.11.1 release and device data unchanged; merge/release/device operations require their corresponding authorization. Earlier R111 release evidence remains historical.",
+  "scope": "2026-11-04 PR #210 convergence on 22c4a93, codex/fix-output-video-preview, product commit 8caa623600aea5553e8ee1b62595ac3bbfb3f3b9: local-first workflow loading, native H3 keyframe mapping/modes, optional upload-copy preparation, HTML revalidation, readable selects, image dimensions, stable crop presets, shared local brush preferences and classic output playback/drag reuse. Current verification is 94 scoped tests and nine existing Node scripts, plus prior full-project Edge evidence; exact Head and remote CI are recorded on the PR. Existing v2026.11.1 release and device data unchanged; merge/release/device operations require their corresponding authorization. Earlier R111 release evidence remains historical.",
   "documents": [
     {
       "path": ".github/PULL_REQUEST_TEMPLATE.md",
