@@ -1,6 +1,12 @@
 # Infinite Canvas Enterprise 代码与数据边界
 
-更新时间：2026-11-03
+更新时间：2026-11-04
+
+本地输入修复候选：`comfy-workflow-fields` 继续集中字段推断、输入来源映射、缺失/多余媒体校验和两类画布共享选项；`media_index` 仅选择连接来源，不重写图。`comfy_input_images` 只处理原上传接口收到的提交字节，不读取资产路径、不写原图、不管理权限或收费任务；线程内最多并行处理两张可选优化图，关闭时不解码。设置页只读加载与远端定义等待分离，超时不扩展到生成调用。经典视频输出单击内联播放，双击复用原大预览，普通图片预览行为保留。准确候选状态见[当前状态](docs/CURRENT_PROJECT_STATUS.md)。
+
+图片编辑偏好由 `image-edit-preferences` 维护两类编辑器共用的浏览器本地笔刷尺寸，不保存图片、权限或业务数据；裁剪约束继续归原编辑器，仅预设选择基于原图边界重新适配。经典输出拖放沿用现有素材引用载荷，视频/音频进入原媒体输入节点，文本经 ComfyOutputs.text 读取完整正文后进入原提示词节点。读取失败不创建空节点，切换画布不接收旧异步结果；原结果、任务、授权及保存服务不另复制。节点/结果身份仍由原媒体保留器维护，播放替换和重绘不依赖封面元素的旧事件绑定。
+
+首尾帧只在现有 comfy_workflow/ComfyWorkflowFields 内维护已核验的原生 MiniMaxH3ImageToVideo 契约：get_workflow 只读补全直接 LoadImage 的字段，服务端按配置/所选模式构图，授权继续检查实际启用的上传名；不猜测任意自定义图或改写模板。两类画布共用模式和来源绑定，只有提交快照中的可选端口被移除，仍经原任务链路。共享 studio-select 只改展示宽度，保留原 select 值/change 事件和画布移动收起行为。
 
 2026.11.1管理员释放：CanvasTaskJournal.release_comfy_slot在原记录锁/原子JSON写入中记录queue_release，仅接受failed且recovery_required的Comfy旧任务，幂等且保留错误、prompt_id和结果。ComfyQueue用该标记从个人/本地名额统计排除并立即唤醒派发；真实远端队列仍计入算力容量，原任务续查保留。原管理员API验证系统角色，可信Gateway身份写处理人，复用现有审计；普通回执只暴露queue_released布尔，不暴露管理员ID。运行/平台排队仍使用原取消API，不另建任务账本或备份流程。
 

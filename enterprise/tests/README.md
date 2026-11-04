@@ -1,6 +1,8 @@
 # Enterprise Test Scripts
 
-Reviewed: 2026-11-03
+Reviewed: 2026-11-04
+
+2026-11-04发行后修复收口：原 `test_character_frontend_suite.py` CI入口现收集16个脚本，新增工作流加载/图片映射、视频输出、原图尺寸及图片编辑回归；没有新CI作业。固定发行运行时两组不同定向用例94项通过（含全部16项前端入口），另9个原有Node脚本通过。新增 `test_comfy_input_images.py` 使用真实2K/4K及4500×6000像素，验证像素/透明度、等比缩放、原图不变、失败和并发上限；`test_static_html_cache.py` 验证HTML 200/304重新校验及脚本/媒体Range兼容。完整Edge证据和真实GPU/现场未测边界见[CURRENT](../../docs/CURRENT_PROJECT_STATUS.md)及[原收敛记录](../../docs/ops/DEVELOPMENT-CONVERGENCE-2026-10-30.md)。远端CI由本批PR单列，旧发行全量结果不冒充本批结果。
 
 2026.11.1发行验证：新管理员释放及队列/任务目录/恢复45项通过；完整后台浅深色受控Edge、同次防重复和刷新通过，原两类画布删除受控输出后取消证据保留。PR与合并主线Enterprise/Runtime/Fixed EXE/Documentation成功；PR企业2381通过、51条件跳过、12子用例。准确10.11→本版真实固定入口/Runtime正常切换、中断与启动失败回滚通过，文件/安装身份保留；本轮未重复最终图形登记，沿用未改10.11向导。8项公开资产匿名下载通过，0付费生成和生产操作。原首轮失败及定向修正记录保留，不将局部结果冒充完整首次全绿。
 

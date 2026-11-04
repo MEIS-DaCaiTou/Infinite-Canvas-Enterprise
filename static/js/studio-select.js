@@ -96,6 +96,7 @@
             button.dataset.optionIndex = String(index);
             button.disabled = option.disabled || Boolean(parent.disabled);
             const label = document.createElement('span'); label.textContent = option.textContent;
+            label.title = option.textContent;
             const mark = document.createElement('span'); mark.className = 'studio-select-check';
             mark.setAttribute('aria-hidden', 'true'); mark.textContent = option.selected ? '✓' : '';
             button.append(label, mark); list.append(button); count++;
@@ -132,9 +133,11 @@
         if (select.closest('#world')) {
             menu.style.setProperty('--studio-menu-scale', scale);
             menu.style.setProperty('--studio-menu-font', (parseFloat(getComputedStyle(select).fontSize) || 12) * scale + 'px');
-            menu.style.width = Math.min(rect.width, viewport.width - 16) + 'px';
         }
-        menu.style.minWidth = Math.min(rect.width, viewport.width - 16) + 'px';
+        // Compact triggers (aspect ratios in particular) are narrower than the
+        // option padding/checkmark. Size to readable content, bounded by the viewport.
+        menu.style.width = 'max-content';
+        menu.style.minWidth = Math.min(Math.max(rect.width, 140 * scale), viewport.width - 16) + 'px';
         menu.style.maxWidth = Math.min(420 * scale, viewport.width - 16) + 'px';
         menu.showPopover();
         const natural = menu.getBoundingClientRect();

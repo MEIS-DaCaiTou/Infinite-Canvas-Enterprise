@@ -233,9 +233,77 @@ def field_role(workflow, field):
     return "prompt" if key in {"prompt", "positive_prompt", "text"} else "parameter"
 
 
+FRAME_MODE_KEY = "__ice_frame_mode"
+
+
+def minimax_frame_slots(workflow):
+    """Only the verified native H3 optional ports with direct LoadImage sources."""
+    slots = []
+    for node_id, node in workflow.items():
+        if not isinstance(node, dict) or node.get("class_type") != "MiniMaxH3ImageToVideo":
+            continue
+        for port in ("first_frame", "last_frame"):
+            link = node.get("inputs", {}).get(port)
+            if (workflow_link(workflow, link) and link[1] == 0
+                    and workflow[str(link[0])].get("class_type") == "LoadImage"):
+                slots.append({"target": node_id, "port": port, "source": str(link[0])})
+    return slots
+
+
+def complete_minimax_fields(workflow, config):
+    """Expose every connected keyframe loader; never fall back to its template name."""
+    fields = [dict(field) for field in config.get("fields", [])]
+    for slot in minimax_frame_slots(workflow):
+        source = slot["source"]
+        if any(source in group["source_nodes"] for group in config.get("image_groups", [])):
+            continue
+        field = next((field for field in fields if str(field.get("node")) == source and field.get("input") == "image"), None)
+        label = "首帧图片" if slot["port"] == "first_frame" else "尾帧图片"
+        if field is None:
+            fields.append({"id": f"ice_frame:{source}", "node": source, "input": "image", "name": label,
+                           "type": "image", "role": "parameter", "default": ""})
+        else:
+            field.update(type="image", default="")
+            if field.get("name") in (None, "", "图片", "image"):
+                field["name"] = label
+    return {**config, "fields": fields}
+
+
+def frame_execution_config(workflow, config, mode=None):
+    config = complete_minimax_fields(workflow, config)
+    if mode is None:
+        return config
+    slots = minimax_frame_slots(workflow)
+    if mode not in ("first", "last", "both") or len({slot["target"] for slot in slots}) != 1 or len(slots) != 2:
+        raise ValueError("此工作流不支持所选首尾帧模式；请重新选择工作流")
+    disabled = {(slot["target"], slot["port"]) for slot in slots
+                if mode != "both" and slot["port"] != mode + "_frame"}
+    unused = set()
+    for source in {slot["source"] for slot in slots}:
+        targets = {(node_id, key) for node_id, node in workflow.items() for key, value in node.get("inputs", {}).items()
+                   if workflow_link(workflow, value) and str(value[0]) == source}
+        if targets and targets <= disabled:
+            unused.add(source)
+    return {**config, "fields": [field for field in config["fields"]
+                               if not (str(field.get("node")) in unused and field.get("input") == "image")]}
+
+
 def apply_workflow_values(workflow, config, values, *, prompt=""):
     """Construct one request graph, retaining the original loaders/ordering where possible."""
+    mode = values.get(FRAME_MODE_KEY)
+    config = frame_execution_config(workflow, config, mode)
+    known = {field["id"] for field in config.get("fields", [])} | {group["id"] for group in config.get("image_groups", [])} | {FRAME_MODE_KEY}
+    if set(values) - known:
+        raise ValueError("工作流输入配置已变化，请刷新工作流后重新选择输入")
+    frame_sources = {slot["source"] for slot in minimax_frame_slots(workflow)}
+    for field in config["fields"]:
+        if str(field.get("node")) in frame_sources and field.get("input") == "image" and not values.get(field["id"]):
+            raise ValueError(f"请提供{field.get('name') or '首尾帧图片'}；不会使用工作流模板图片")
     graph = deepcopy(workflow)
+    if mode and mode != "both":
+        for slot in minimax_frame_slots(workflow):
+            if slot["port"] != mode + "_frame":
+                del graph[slot["target"]]["inputs"][slot["port"]]
     if prompt:
         prompt_fields = [field for field in config.get("fields", []) if field_role(workflow, field) == "prompt"]
         if not prompt_fields:

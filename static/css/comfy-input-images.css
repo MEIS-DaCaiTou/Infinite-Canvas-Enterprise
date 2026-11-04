@@ -1,0 +1,9 @@
+.comfy-image-options{display:flex;align-items:center;flex-wrap:wrap;gap:8px;min-width:0;font-size:11px;line-height:1.5}
+.comfy-image-options-panel{min-width:0;font-size:11px;line-height:1.5;color:var(--text)}
+.comfy-image-options-panel summary{cursor:pointer;user-select:none}
+.comfy-image-options-panel[open] .comfy-image-options{margin-top:6px}
+.comfy-image-options select{min-width:128px;max-width:100%;padding:6px 10px;border:1px solid var(--line);border-radius:10px;background:var(--panel,var(--card-solid));color:var(--text);font:inherit}
+.comfy-image-help{font-size:10px;line-height:1.5;color:var(--muted);overflow-wrap:anywhere}
+.comfy-settings .muted-note{font-size:10px;line-height:1.5;color:var(--muted);overflow-wrap:anywhere}
+.comfy-frame-mode{display:flex;align-items:center;flex-wrap:wrap;gap:6px;min-width:0;font-size:11px;line-height:1.5}
+.comfy-frame-mode select{flex:1;min-width:155px;max-width:100%;font:inherit}
