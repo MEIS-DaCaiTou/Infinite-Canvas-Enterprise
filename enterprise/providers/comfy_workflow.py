@@ -240,7 +240,7 @@ def minimax_frame_slots(workflow):
     """Only the verified native H3 optional ports with direct LoadImage sources."""
     slots = []
     for node_id, node in workflow.items():
-        if node.get("class_type") != "MiniMaxH3ImageToVideo":
+        if not isinstance(node, dict) or node.get("class_type") != "MiniMaxH3ImageToVideo":
             continue
         for port in ("first_frame", "last_frame"):
             link = node.get("inputs", {}).get(port)

@@ -11,6 +11,14 @@ from enterprise.providers.comfy_workflow import (
 )
 
 
+def test_frame_inference_preserves_legacy_overlay_metadata():
+    from enterprise.providers.comfy_workflow import complete_minimax_fields, minimax_frame_slots
+    graph = {"source": "shipped"}
+    assert minimax_frame_slots(graph) == []
+    assert complete_minimax_fields(graph, {"fields": []}) == {"fields": []}
+    assert graph == {"source": "shipped"}
+
+
 @pytest.fixture
 def branched_prompt():
     graph = {
