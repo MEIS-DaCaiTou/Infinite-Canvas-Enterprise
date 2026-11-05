@@ -199,12 +199,14 @@ def query_options(params, *, actor, source):
     if selectors[1] not in {'', 'image', 'video', 'audio', 'workflow'}:
         raise QueryError(400, '媒体类型无效。')
     signature = [str(actor), source, size, query, sort, *selectors]
+    if source == 'history' and params.get('continuation') == 'live':
+        signature.append('live-history-v1')
     if source == 'library' and (params.get('item_id') or params.get('match_url')):
         signature.extend([str(params.get('item_id') or ''), str(params.get('match_url') or '')])
     return PageOptions(size, query, sort, tuple(selectors), signature)
 
 
-def cursor_position(cursor, options, revision):
+def cursor_position(cursor, options, revision, *, rebase=None):
     if not cursor:
         return None
     try:
@@ -213,12 +215,14 @@ def cursor_position(cursor, options, revision):
         token = json.loads(base64.urlsafe_b64decode(cursor + '=' * (-len(cursor) % 4)))
         if token['query'] != options.signature:
             raise ValueError('different query')
-        if token['revision'] != revision:
-            raise QueryError(409, '列表已更新，请刷新后继续。')
         last = token['after']
         if (not isinstance(last, list) or len(last) != 3 or not isinstance(last[0], (int, float))
                 or not math.isfinite(last[0]) or not isinstance(last[1], str) or not isinstance(last[2], int)):
             raise ValueError('bad position')
+        if token['revision'] != revision:
+            if rebase is None:
+                raise QueryError(409, '列表已更新，请刷新后继续。')
+            last = rebase(last)
         return last
     except (ValueError, TypeError, KeyError, UnicodeError) as exc:
         raise QueryError(400, '分页游标无效，请刷新列表。') from exc
@@ -259,7 +263,15 @@ def page(rows, params, *, actor, source, revision):
         matches.append((key, row))
     matches.sort(key=lambda pair: pair[0])
     cursor = str(params.get('cursor') or '')
-    last = cursor_position(cursor, options, revision)
+    def rebase(last):
+        anchors = [key for key, _ in matches if key[:2] == last[:2]]
+        if len(anchors) > 1:
+            raise QueryError(409, '历史定位项重复，请刷新后继续。')
+        # A deleted/revoked anchor grants nothing. Its ordering key still
+        # locates the next currently-authorized row without an offset shift.
+        return anchors[0] if anchors else last
+    live = source == 'history' and params.get('continuation') == 'live'
+    last = cursor_position(cursor, options, revision, rebase=rebase if live else None)
     if last is not None:
         remaining = [pair for pair in matches if pair[0] > last]
     else:

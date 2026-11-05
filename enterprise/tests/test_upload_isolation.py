@@ -13,6 +13,7 @@ import json
 import os
 import sys
 import tempfile
+from contextlib import closing
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -132,6 +133,18 @@ async def _run_checks() -> None:
             query_params={"url": "/assets/uploads/local-a.png"},
         )
         assert denied_preview is not None and denied_preview.status_code == 404
+        # Access must be checked again before a cached preview can be served.
+        # Revoke the isolated fixture's only grant and exercise the same URL.
+        with closing(edb.get_db()) as connection, connection:
+            connection.execute("DELETE FROM user_resource_map WHERE resource_url = ?", ("/assets/uploads/local-a.png",))
+        try:
+            assert not interceptors.can_access_resource(actor_a, "/assets/uploads/local-a.png")
+            revoked = await interceptors.pre_process(
+                "api/media-preview", "GET", actor_a, query_params={"url": "/assets/uploads/local-a.png"},
+            )
+            assert revoked is not None and revoked.status_code == 404
+        finally:
+            edb.record_resource_owner(user_a["id"], "/assets/uploads/local-a.png", "fixture-restored")
         denied_jpeg = await interceptors.pre_process(
             "api/image-jpeg",
             "GET",
