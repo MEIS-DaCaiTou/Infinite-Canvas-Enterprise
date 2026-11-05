@@ -567,8 +567,9 @@
             });
 
             setInterval(async () => {
+                if(document.hidden || window.frameElement?.matches('#frame-zimage:not(.active)')) return;
                 try {
-                    const res = await fetch("/api/queue_status?client_id=" + encodeURIComponent(CLIENT_ID));
+                    const res = await fetch("/api/queue_status?client_id=" + encodeURIComponent(CLIENT_ID), {cache:'no-store'});
                     const data = await res.json();
                     const statusText = document.getElementById("statusText");
                     const dotColor = document.getElementById("dotColor");

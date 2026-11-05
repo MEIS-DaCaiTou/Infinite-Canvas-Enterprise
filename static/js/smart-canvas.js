@@ -5070,6 +5070,8 @@ const smartClientId = `canvas_smart_${Math.random().toString(36).slice(2, 10)}${
 let canvasSyncInFlight = false;
 let canvasSyncTimer = null;
 let canvasMetaPollTimer = null;
+let canvasMetaPollBusy = false;
+let remoteCanvasReadBusy = false;
 let connectionLayerRaf = 0;
 function mergeSmartImageLists(localImgs, remoteImgs){
     const out = [];
@@ -5303,18 +5305,21 @@ function applyMergedServerCanvas(serverCanvas){
 }
 
 async function mergeReloadCanvasNow(){
-    if(!canvasId) return;
+    if(!canvasId || remoteCanvasReadBusy || !CanvasViewActivity.isVisible()) return;
     if(dragState || selectionState){
         // 用户正在拖拽/框选，稍后再合并，别打断操作
         scheduleCanvasMergeReload(600);
         return;
     }
+    remoteCanvasReadBusy = true;
     try {
-        const res = await fetch(`/api/canvases/${canvasId}`);
+        const res = await fetch(`/api/canvases/${encodeURIComponent(canvasId)}`, {cache:'no-store'});
         if(!res.ok) return;
         const data = await res.json();
-        if(data && data.canvas) applyMergedServerCanvas(data.canvas);
-    } catch(e) {}
+        if(data?.canvas && CanvasViewActivity.isVisible()) applyMergedServerCanvas(data.canvas);
+    } catch(e) {} finally {
+        remoteCanvasReadBusy = false;
+    }
 }
 function scheduleCanvasMergeReload(delay=200){
     clearTimeout(canvasSyncTimer);
@@ -5329,19 +5334,37 @@ function handleCanvasUpdatedMessage(data={}){
     if(remoteUpdatedAt && remoteUpdatedAt <= Number(canvas?.updated_at || 0)) return;
     scheduleCanvasMergeReload(200);
 }
+async function checkSmartCanvasVersion(){
+    if(!canvasId || !canvas || canvasMetaPollBusy || remoteCanvasReadBusy || !CanvasViewActivity.isVisible()) return;
+    if(canvasSyncInFlight || smartSaveConflict || dragState || selectionState) return;
+    canvasMetaPollBusy = true;
+    try {
+        const res = await fetch(`/api/canvases/${encodeURIComponent(canvasId)}/meta`, {cache:'no-store'});
+        if(!res.ok) return;
+        const meta = await res.json();
+        if(!CanvasViewActivity.isVisible()) return;
+        const remoteUpdatedAt = Number(meta.updated_at || 0);
+        const localUpdatedAt = Number(canvas.updated_at || 0);
+        const metadataChanged = (meta.title && meta.title !== canvas.title) || (meta.icon && meta.icon !== canvas.icon);
+        if(remoteUpdatedAt > localUpdatedAt){
+            await mergeReloadCanvasNow();
+        } else if(remoteUpdatedAt === localUpdatedAt && metadataChanged
+            && !canvasSyncInFlight && !smartSaveConflict && !hasSmartCanvasChanges()){
+            if(meta.title){
+                canvas.title = meta.title;
+                document.getElementById('smartTitle').textContent = meta.title;
+                document.title = meta.title;
+            }
+            if(meta.icon) canvas.icon = meta.icon;
+            smartSavedContent = JSON.stringify(smartCanvasSaveContent());
+        }
+    } catch(e) {} finally {
+        canvasMetaPollBusy = false;
+    }
+}
 function startCanvasMetaPoll(){
-    // WS / iframe 转发不可靠时的兜底：定期看服务器 updated_at 是否变新，变新就合并拉取
-    if(canvasMetaPollTimer) return;
-    canvasMetaPollTimer = setInterval(async () => {
-        if(!canvasId || !canvas) return;
-        if(canvasSyncInFlight || smartSaveConflict || dragState || selectionState) return;
-        try {
-            const res = await fetch(`/api/canvases/${encodeURIComponent(canvasId)}/meta`);
-            if(!res.ok) return;
-            const meta = await res.json();
-            if(Number(meta.updated_at || 0) > Number(canvas.updated_at || 0)) mergeReloadCanvasNow();
-        } catch(e) {}
-    }, 8000);
+    // Visible-page fallback if a WebSocket update is missed.
+    if(!canvasMetaPollTimer) canvasMetaPollTimer = setInterval(checkSmartCanvasVersion, 8000);
 }
 function connectAssetLibrarySyncSocket(){
     if(window.parent && window.parent !== window) return;
@@ -17252,12 +17275,15 @@ try {
 window.addEventListener('focus', () => {
     if(Date.now() - lastConfigRefreshAt > 1200) refreshSmartConfigFromSettings();
 });
+document.addEventListener('visibilitychange', checkSmartCanvasVersion);
+window.addEventListener('online', checkSmartCanvasVersion);
 window.addEventListener('message', event => {
     if(event.origin && event.origin !== location.origin) return;
     if(event.data?.type === 'studio-theme') applyTheme(event.data.theme || 'light');
     if(event.data?.type === 'providers-changed' || event.data?.type === 'workflows-changed' || event.data?.type === 'comfy-instances-changed') refreshSmartConfigFromSettings();
     if(event.data?.type === 'asset_library_updated') handleAssetLibraryUpdatedMessage(event.data);
     if(event.data?.type === 'canvas_updated') handleCanvasUpdatedMessage(event.data);
+    if(event.data?.type === 'canvas-focus') checkSmartCanvasVersion();
     if(event.data?.type === 'studio-lang' && window.StudioI18n) {
         window.StudioI18n.set(event.data.lang || 'zh');
     }
