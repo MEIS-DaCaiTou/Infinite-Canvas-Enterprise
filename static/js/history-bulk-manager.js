@@ -93,6 +93,10 @@
         injectStyles();
 
         let selecting = false;
+        let deleting = false;
+        // Selection belongs to loaded history records, including offscreen
+        // cards. Other generation pages retain their original DOM source.
+        const selected = new Set();
 
         /* -------- 工具条 -------- */
         const bar = document.createElement('div');
@@ -130,19 +134,24 @@
         function cards(){
             return Array.from(masonry.querySelectorAll('[data-history-ts]'));
         }
-        function selectedCards(){
-            return cards().filter(c => c.classList.contains('hbm-selected'));
+        function entries(){
+            return opts.entries ? opts.entries() : cards().map(card=>({timestamp:card.dataset.historyTs}));
+        }
+        function selectedEntries(){
+            return entries().filter(row=>selected.has(String(row.timestamp)));
         }
 
         function refreshLabels(){
             manageLabel.textContent = tr('bulk.manage');
-            const all = cards();
-            const sel = selectedCards();
+            const all = entries();
+            const sel = selectedEntries();
+            cards().forEach(card=>card.classList.toggle('hbm-selected',selected.has(card.dataset.historyTs)));
             countEl.textContent = fmt('bulk.selectedCount', { n: sel.length });
             const allSelected = all.length > 0 && sel.length === all.length;
             selectAllBtn.textContent = allSelected ? tr('bulk.deselectAll') : tr('bulk.selectAll');
-            deleteLabel.textContent = tr('bulk.deleteSelected');
-            deleteBtn.disabled = sel.length === 0;
+            deleteLabel.textContent = tr(deleting ? 'bulk.deleting' : 'bulk.deleteSelected');
+            deleteBtn.disabled = deleting || sel.length === 0;
+            selectAllBtn.disabled = exitBtn.disabled = deleting;
             exitBtn.textContent = tr('bulk.exit');
             if(window.lucide && lucide.createIcons) lucide.createIcons();
         }
@@ -156,6 +165,7 @@
         }
         function exit(){
             selecting = false;
+            selected.clear();
             document.body.classList.remove('history-bulk-selecting');
             cards().forEach(c => c.classList.remove('hbm-selected'));
             manageBtn.classList.remove('hbm-hide');
@@ -167,9 +177,10 @@
         exitBtn.addEventListener('click', exit);
 
         selectAllBtn.addEventListener('click', () => {
-            const all = cards();
-            const allSelected = all.length > 0 && selectedCards().length === all.length;
-            all.forEach(c => c.classList.toggle('hbm-selected', !allSelected));
+            const all = entries();
+            const allSelected = all.length > 0 && selectedEntries().length === all.length;
+            selected.clear();
+            if(!allSelected)all.forEach(row=>selected.add(String(row.timestamp)));
             refreshLabels();
         });
 
@@ -180,36 +191,48 @@
             if(!card || !masonry.contains(card)) return;
             e.preventDefault();
             e.stopPropagation();
-            card.classList.toggle('hbm-selected');
+            if(deleting) return;
+            const key=card.dataset.historyTs;
+            selected.has(key)?selected.delete(key):selected.add(key);
             refreshLabels();
         }, true);
 
         async function doDelete(){
-            const sel = selectedCards();
+            if(deleting) return;
+            const sel = selectedEntries();
             if(sel.length === 0) return;
             if(!confirm(fmt('bulk.deleteConfirm', { n: sel.length }))) return;
 
-            deleteBtn.disabled = true;
-            deleteLabel.textContent = tr('bulk.deleting');
+            deleting = true;
+            refreshLabels();
 
-            const results = await Promise.allSettled(sel.map(card => {
-                const ts = card.dataset.historyTs;
-                return fetch('/api/history/delete', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ timestamp: ts })
-                }).then(r => r.json()).then(res => {
-                    if(res && res.success){ card.remove(); return true; }
+            let failed = 0;
+            // These writes share one history document. Avoid one simultaneous
+            // full-file write per selected card; retry leaves failures selected.
+            for(const row of sel){
+                const ts = String(row.timestamp);
+                try {
+                    const response=await fetch('/api/history/delete', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ timestamp: ts })
+                    });
+                    const res=await response.json();
+                    if(response.ok && res && res.success){
+                        selected.delete(ts);
+                        if(opts.remove)opts.remove(ts);
+                        else cards().find(card=>card.dataset.historyTs===ts)?.remove();
+                        continue;
+                    }
                     throw new Error('delete failed');
-                });
-            }));
+                } catch(_){failed++;}
+            }
 
-            const failed = results.filter(r => r.status === 'rejected').length;
+            deleting = false;
             if(failed > 0) alert(failed + ' / ' + sel.length + ' ✗');
 
             refreshLabels();
-            if(selectedCards().length === 0 && cards().length === 0){ exit(); }
-            else { deleteBtn.disabled = selectedCards().length === 0; deleteLabel.textContent = tr('bulk.deleteSelected'); }
+            if(selectedEntries().length === 0 && entries().length === 0){ exit(); }
         }
         deleteBtn.addEventListener('click', doDelete);
 
@@ -218,7 +241,8 @@
 
         refreshLabels();
 
-        const api = { enter, exit, refresh: refreshLabels, isSelecting: () => selecting };
+        const api = { enter, exit, refresh: refreshLabels, isSelecting: () => selecting,
+            isSelected: ts=>selected.has(String(ts)) };
         masonry._hbm = api;
         return api;
     }

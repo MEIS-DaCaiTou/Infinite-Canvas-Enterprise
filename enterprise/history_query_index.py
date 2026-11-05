@@ -125,7 +125,7 @@ class HistoryQueryIndex:
                 revision = file_revision(self.source)
                 if meta.get('source') != str(self.source) or meta.get('revision') != revision:
                     raise IndexUnavailable(409, '查询索引已过期，请按当前历史重新构建。')
-                last = cursor_position(str(params.get('cursor') or ''), options, revision)
+                order = 'newest' if options.sort == 'newest' else 'created'
                 conn.execute('PRAGMA temp_store=MEMORY')
                 if not admin:
                     conn.execute('CREATE TEMP TABLE visible_history (history_id TEXT PRIMARY KEY) WITHOUT ROWID')
@@ -144,8 +144,17 @@ class HistoryQueryIndex:
                     conditions.append('instr(search_text,?)>0')
                     values.append(options.search)
                 where = ' AND '.join(conditions)
+                def rebase(last):
+                    anchors = conn.execute(
+                        f'SELECT position FROM history_rows WHERE {where} AND {order}=? AND history_id=? LIMIT 2',
+                        [*values, *last[:2]],
+                    ).fetchall()
+                    if len(anchors) > 1:
+                        raise QueryError(409, '历史定位项重复，请刷新后继续。')
+                    return [*last[:2], anchors[0]['position']] if anchors else last
+                last = cursor_position(str(params.get('cursor') or ''), options, revision,
+                                       rebase=rebase if params.get('continuation') == 'live' else None)
                 total = conn.execute('SELECT COUNT(*) FROM history_rows WHERE ' + where, values).fetchone()[0]
-                order = 'newest' if options.sort == 'newest' else 'created'
                 if last is not None:
                     where += f' AND ({order},history_id,position)>(?,?,?)'
                     values = [*values, *last]

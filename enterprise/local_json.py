@@ -10,6 +10,7 @@ from threading import RLock
 from uuid import uuid4
 from contextlib import contextmanager
 from threading import local
+from enterprise.runtime import performance
 
 _IO_LOCK = RLock()
 _DOCUMENT_LOCKS = {}
@@ -26,6 +27,7 @@ def document_lock(path, *, timeout=10):
     key = os.path.normcase(os.path.abspath(os.fspath(path)))
     with _IO_LOCK:
         guard = _DOCUMENT_LOCKS.setdefault(key, RLock())
+    waiting = time.perf_counter()
     with guard:
         held = getattr(_DOCUMENT_STATE, 'held', None)
         if held is None:
@@ -54,6 +56,7 @@ def document_lock(path, *, timeout=10):
                     if time.monotonic() >= deadline:
                         raise TimeoutError('Document is busy; retry without discarding local changes') from exc
                     time.sleep(.02)
+            performance.observe("json.lock_wait", (time.perf_counter()-waiting)*1000)
             held.add(key)
             try:
                 yield
@@ -82,6 +85,7 @@ def _sharing_retry(operation):
             time.sleep(delay)
 
 
+@performance.timed("json.read")
 def read_json(path):
     """Read a complete document, including during another thread's replacement."""
     def read():
@@ -91,6 +95,7 @@ def read_json(path):
         return _sharing_retry(read)
 
 
+@performance.timed("json.write")
 def atomic_write_json(path, payload, *, indent=2, create_parent=False):
     """Leave the previous file intact if serialization or replacement fails.
 

@@ -14,7 +14,7 @@ from enterprise.tests.test_convergence_resources import main_functions
 
 def data_scope(tmp_path):
     import threading
-    scope=main_functions({'load_asset_library','save_asset_library','save_canvas','load_canvas','update_canvas','touch_canvas'},
+    scope=main_functions({'load_asset_library','save_asset_library','save_canvas','load_canvas','update_canvas','update_canvas_document','touch_canvas','touch_canvas_document'},
         document_lock=local_json.document_lock,read_json=local_json.read_json,atomic_write_json=local_json.atomic_write_json,
         ASSET_LIBRARY_PATH=str(tmp_path/'library.json'),DATA_DIR=str(tmp_path),CANVAS_LOCK=threading.RLock(),
         now_ms=lambda:int(time.time()*1000),default_asset_library=lambda:{'libraries':[],'updated_at':0},

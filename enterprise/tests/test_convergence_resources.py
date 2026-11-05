@@ -180,6 +180,7 @@ def test_gateway_mutable_html_is_not_injected_or_executed(monkeypatch):
             response=await gateway._forward('assets/input/user.html',request,user=None,skip_intercept=True,body=b'')
             assert response.headers['content-disposition'].startswith('attachment')
             assert response.headers['x-content-type-options']=='nosniff'
+            assert response.headers['cache-control']=='private, no-cache'
             body=b''.join([chunk async for chunk in response.body_iterator])
             assert body==b'<html><body>untrusted</body></html>'
     asyncio.run(run())

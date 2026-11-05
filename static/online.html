@@ -21,7 +21,8 @@
     <script src="/static/js/theme.js?v=2026.07.5.1783117645"></script>
     <script src="/static/js/i18n.js?v=20261025.1"></script>
     <script src="/static/js/image-preview.js?v=2026.07.5.1782696713"></script>
-    <script src="/static/js/history-bulk-manager.js?v=2026.07.5.1782696703"></script>
+    <script src="/static/js/history-bulk-manager.js?v=20261105.2"></script>
+    <script src="/static/js/media-grid-window.js?v=20261105.2"></script>
     <style>
         @import url('/static/vendor/css/fonts.css?v=2026.07.5.1782696732');
         :root { --accent:#111827; --bg:#f9fafb; --card:#fff; --easing:cubic-bezier(0.4,0,0.2,1); }
@@ -670,7 +671,7 @@
                     method:'POST', headers:{'Content-Type':'application/json'},
                     body:JSON.stringify(reqBody)
                 }).then(async r => { if(!r.ok) {const error=(await r.json()).detail;throw new Error(error?.message || error || '生成失败');}; return r.json(); });
-                currentResult = result; out.src = result.images[0]; out.classList.remove('hidden'); dl.href = result.images[0]; dl.classList.remove('hidden'); renderImageCard(result, true);
+                currentResult = result; out.src = result.images[0]; out.classList.remove('hidden'); dl.href = result.images[0]; dl.classList.remove('hidden'); renderHistoryCards([result], {prepend:true});
             } catch(err) {
                 alert(err.message || 'Generation failed'); placeholder.classList.remove('hidden');
             } finally {
@@ -678,8 +679,15 @@
             }
         }
 
-        function renderImageCard(data, isNew=false){
-            if(!data.images?.[0] || document.getElementById(`history-${data.timestamp}`)) return;
+        function historyPreviewUrl(value){
+            try {
+                const url = new URL(value, location.href);
+                if(url.origin === location.origin && /^\/(assets|output)\//.test(url.pathname) && /\.(png|jpe?g|webp|gif|bmp|avif|tiff?)$/i.test(url.pathname))
+                    return '/api/media-preview?' + new URLSearchParams({w:'512',url:url.pathname+url.search});
+            } catch(_) {}
+            return value;
+        }
+        function createHistoryCard(data){
             const card = document.createElement('div');
             card.id = `history-${data.timestamp}`;
             card.dataset.historyTs = data.timestamp;
@@ -687,10 +695,58 @@
             card.onclick = () => { if(document.body.classList.contains('history-bulk-selecting')) return; openLightbox(data); };
             const multi = Array.isArray(data.images) && data.images.length > 1
                 ? `<div class="absolute top-3 right-3 bg-black/60 text-white text-[10px] font-black px-2 py-0.5 rounded-full pointer-events-none">×${data.images.length}</div>` : '';
-            card.innerHTML = `<img src="${data.images[0]}" class="w-full h-full object-cover block group-hover:scale-105 transition-transform duration-1000" loading="lazy">${multi}
-                <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 p-6 flex flex-col justify-end"><p class="text-white text-[10px] font-medium line-clamp-2 uppercase tracking-wider">${data.prompt || tr('online.onlineImageFallback')}</p></div>`;
-            isNew ? document.getElementById('masonry').prepend(card) : document.getElementById('masonry').appendChild(card);
-            lucide.createIcons();
+            card.innerHTML = `<img class="w-full h-full object-cover block group-hover:scale-105 transition-transform duration-1000" loading="lazy" decoding="async">${multi}
+                <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 p-6 flex flex-col justify-end"><p class="text-white text-[10px] font-medium line-clamp-2 uppercase tracking-wider"></p></div>`;
+            const image=card.querySelector('img');
+            image.src = historyPreviewUrl(data.images[0]);
+            image.onerror=()=>{
+                image.alt='预览加载失败';
+                if(card.querySelector('.history-preview-retry'))return;
+                const retry=document.createElement('button');retry.type='button';
+                retry.className='history-preview-retry';retry.textContent='重试预览';
+                retry.style.cssText='position:absolute;inset:35% 10%;z-index:2;background:var(--card,#fff);border:1px solid #94a3b8;border-radius:12px';
+                retry.onclick=event=>{event.stopPropagation();retry.remove();image.removeAttribute('src');image.src=historyPreviewUrl(data.images[0]);};
+                card.appendChild(retry);
+            };
+            card.querySelector('p').textContent = data.prompt || tr('online.onlineImageFallback');
+            return card;
+        }
+        const historyRows=[];
+        let historyWindow=null;
+        function paintHistory(){
+            if(!historyWindow){
+                historyWindow=new MediaGridWindow(document.getElementById('masonry'),{
+                    columns:4,height:240,scrollElement:window,key:row=>String(row.timestamp),
+                    create:createHistoryCard,
+                    update:(card,row)=>card.classList.toggle('hbm-selected',
+                        !!document.getElementById('masonry')._hbm?.isSelected(row.timestamp)),
+                    release:card=>{const img=card.querySelector('img');if(img){img.onload=img.onerror=null;img.removeAttribute('src');}}
+                });
+            }
+            historyWindow.setItems(historyRows);
+        }
+        function renderHistoryCards(items, {prepend=false}={}){
+            const known = new Set(historyRows.map(row => String(row.timestamp)));
+            const added = items.filter(row => {
+                const key = String(row.timestamp);
+                if(!row.images?.[0] || known.has(key)) return false;
+                known.add(key);
+                return true;
+            });
+            if(prepend) historyRows.unshift(...added);
+            else historyRows.push(...added);
+            paintHistory();
+        }
+        function removeHistoryCard(ts){
+            const index=historyRows.findIndex(row=>String(row.timestamp)===String(ts));
+            if(index>=0)historyRows.splice(index,1);
+            if(historyLegacy){
+                // The legacy endpoint pages by offset into its original array.
+                // Removing a loaded entry must also move the next offset back.
+                currentIndex -= allHistory.slice(0,currentIndex).filter(row=>String(row.timestamp)===String(ts)).length;
+            }
+            allHistory=allHistory.filter(row=>String(row.timestamp)!==String(ts));
+            paintHistory();
         }
         async function loadHistory(page=0){
             if(isLoading || (page && !historyHasMore)) return;
@@ -706,7 +762,7 @@
                     historyHasMore = currentIndex + next.length < allHistory.length;
                 } else {
                     loader.innerText = tr('online.loadingArchives');
-                    const url = '/api/history?type=online&page_size=' + PAGE_SIZE +
+                    const url = '/api/history?type=online&continuation=live&page_size=' + PAGE_SIZE +
                         (page && historyCursor ? '&cursor=' + encodeURIComponent(historyCursor) : '');
                     const response = await fetch(url);
                     failureStatus = response.status;
@@ -724,7 +780,7 @@
                         throw new Error('Invalid history response');
                     failureKind = 'render';
                     if(page === 0){
-                        document.getElementById('masonry').innerHTML=''; currentIndex=0;
+                        historyRows.length=0; currentIndex=0;
                         allHistory = legacy ? data : [];
                     }
                     historyLegacy = legacy;
@@ -742,7 +798,8 @@
                 failureKind = 'render';
                 historyLoadFailed = historyStale = false;
                 historyFailureKind = ''; historyFailureStatus = 0;
-                next.forEach(item => renderImageCard(item)); currentIndex += next.length;
+                renderHistoryCards(next); currentIndex += next.length;
+                document.getElementById('masonry')._hbm?.refresh();
                 loader.classList.toggle('hidden', !historyHasMore);
             } catch(e){
                 historyLoadFailed = true;
@@ -846,7 +903,7 @@
             ev.stopPropagation();
             if(!confirm(tr('online.deleteConfirm'))) return;
             const res = await fetch('/api/history/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({timestamp:ts})}).then(r=>r.json());
-            if(res.success) document.getElementById(`history-${ts}`)?.remove();
+            if(res.success) removeHistoryCard(ts);
         }
         const observer = new IntersectionObserver(entries => { if(entries[0].isIntersecting && !historyLoadFailed && historyHasMore) loadHistory(1); }, {threshold:.1});
         window.onload = async () => {
@@ -857,7 +914,7 @@
                 if(event.key === 'Enter' || event.key === ' '){ event.preventDefault(); loader.click(); }
             };
             const historyReady = loadHistory(0).then(() => {
-                window.HistoryBulkManager?.attach({masonry:'#masonry'});
+                window.HistoryBulkManager?.attach({masonry:'#masonry',entries:()=>historyRows,remove:removeHistoryCard});
                 observer.observe(loader);
             });
             await Promise.all([initModels(), historyReady]);

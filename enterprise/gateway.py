@@ -35,6 +35,7 @@ ROOT_DIR = Path(__file__).parent.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
+from enterprise.runtime import performance
 from enterprise.proxy_transport import read_request_body, response_headers, streaming_response, needs_body_filter
 
 from enterprise.config import (
@@ -293,6 +294,7 @@ app.include_router(update_router, prefix="/enterprise")
 
 # 共享业务代理客户端（保持连接池）。健康探测不复用该连接池，避免长请求或
 # 被取消的旧连接影响下一次探测。
+_performance_monitor = None
 _http_client: Optional[httpx.AsyncClient] = None
 _health_probe_lock: Optional[asyncio.Lock] = None
 _health_probe_task: Optional[asyncio.Task] = None
@@ -303,7 +305,7 @@ HEALTH_UPSTREAM_OUTER_DEADLINE_SECONDS = 2.5
 
 @app.on_event("startup")
 async def startup() -> None:
-    global _http_client, _health_probe_lock, _health_probe_task
+    global _http_client, _health_probe_lock, _health_probe_task, _performance_monitor
     require_gateway_database_ready(PATH_ROOTS, DB_PATH)
     ensure_db_schema()
     _http_client = httpx.AsyncClient(
@@ -312,6 +314,7 @@ async def startup() -> None:
         follow_redirects=True,
         limits=httpx.Limits(max_connections=200, max_keepalive_connections=50),
     )
+    _performance_monitor = asyncio.create_task(performance.monitor("gateway"))
     _health_probe_lock = asyncio.Lock()
     app.state.upstream_client = _http_client
     _health_probe_task = None
@@ -334,6 +337,9 @@ async def shutdown() -> None:
         except asyncio.CancelledError:
             pass
     _health_probe_task = None
+    if _performance_monitor:
+        _performance_monitor.cancel()
+        await asyncio.gather(_performance_monitor, return_exceptions=True)
 
 
 # ── 工具函数 ──────────────────────────────────────────────
@@ -1480,7 +1486,21 @@ async def _forward(
             headers=headers,
             content=body,
         )
+        dispatched = False
+        started = time.perf_counter()
+        family = 'media' if path.startswith(('assets/', 'output/')) or path in {'api/media-preview','api/image-jpeg','api/view','api/download-output'} else 'control'
+        async def trace(event, info):
+            nonlocal dispatched
+            if not dispatched and event.endswith('.started'):
+                dispatched = True
+                # Public httpcore trace has no pool-only event. This measures
+                # dispatch wait (pool + connection handoff), not TCP/read time.
+                performance.observe('gateway.dispatch_wait.'+family, (time.perf_counter()-started)*1000)
+        upstream_request.extensions['trace'] = trace
         upstream_resp = await _http_client.send(upstream_request, stream=True)
+    except httpx.PoolTimeout:
+        performance.observe('gateway.pool_timeout', (time.perf_counter()-started)*1000)
+        return JSONResponse({'error': '上游连接暂忙，请稍后重试；已受理任务请查询原任务', 'code': 502}, status_code=502)
     except httpx.ConnectError:
         return JSONResponse(
             {"error": "上游服务未启动，请先运行主程序", "code": 503},

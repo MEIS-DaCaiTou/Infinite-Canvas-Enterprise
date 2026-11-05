@@ -200,34 +200,27 @@ def test_original_owner_routes_ignore_retired_business_project_restrictions(busi
 
 def test_metadata_move_reads_latest_canvas_inside_existing_lock(tmp_path):
     from enterprise.local_json import atomic_write_json, document_lock
-    import ast
     import asyncio
     import threading
     from concurrent.futures import ThreadPoolExecutor
-    from pathlib import Path
     from types import SimpleNamespace
-    source=Path(__file__).resolve().parents[2]/'main.py'
-    function=next(n for n in ast.parse(source.read_text(encoding='utf8')).body
-                  if isinstance(n,ast.AsyncFunctionDef) and n.name=='update_canvas_meta')
-    function.decorator_list=[]
-    module=ast.Module(body=[function],type_ignores=[])
+    from enterprise.tests.test_convergence_resources import main_functions
     path=tmp_path/'canvas.json'
     path.write_text(json.dumps({'id':'canvas','project':'old','nodes':['initial'],'updated_at':1}))
     raw_lock=threading.Lock();entering=threading.Event()
     class ExistingLock:
         def __enter__(self):entering.set();raw_lock.acquire()
         def __exit__(self,*args):raw_lock.release()
-    namespace={'CanvasMetaUpdate':object,'CANVAS_LOCK':ExistingLock(),
-        'load_canvas':lambda _:json.loads(path.read_text()),'canvas_path':lambda _:path,
-        'json':json,'canvas_record':lambda value:value,
-        'atomic_write_json':atomic_write_json,'document_lock':document_lock}
-    exec(compile(module,str(source),'exec'),namespace)
+    namespace=main_functions({'update_canvas_meta','update_canvas_meta_document'},
+        asyncio=asyncio, CanvasMetaUpdate=object, CANVAS_LOCK=ExistingLock(),
+        load_canvas=lambda _:json.loads(path.read_text()),canvas_path=lambda _:path,
+        json=json,canvas_record=lambda value:value,
+        atomic_write_json=atomic_write_json,document_lock=document_lock)
     payload=SimpleNamespace(title=None,icon=None,owner=None,color=None,pinned=None,project='new',board_x=None,board_y=None)
     with ThreadPoolExecutor(max_workers=1) as pool:
-        raw_lock.acquire()
-        future=pool.submit(lambda:asyncio.run(namespace['update_canvas_meta']('canvas',payload)))
-        assert entering.wait(3)
-        path.write_text(json.dumps({'id':'canvas','project':'old','nodes':['latest saved work'],'updated_at':2}))
-        raw_lock.release()
+        with raw_lock:
+            future=pool.submit(lambda:asyncio.run(namespace['update_canvas_meta']('canvas',payload)))
+            assert entering.wait(3)
+            path.write_text(json.dumps({'id':'canvas','project':'old','nodes':['latest saved work'],'updated_at':2}))
         result=future.result(timeout=3)['canvas']
     assert result['project']=='new' and result['nodes']==['latest saved work'] and result['updated_at']==2
