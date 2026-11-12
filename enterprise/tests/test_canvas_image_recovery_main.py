@@ -166,6 +166,87 @@ print('archive retry keeps original task and downloads locally before caching su
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_async_edit_uploads_local_asset_upload_and_history_as_files(tmp_path):
+    install = tmp_path / "install"
+    app = install / "releases/fixture"
+    (app / "static").mkdir(parents=True)
+    (app / "main.py").write_text("# fixture", encoding="utf-8")
+    script = BOOTSTRAP + r'''
+from email import policy
+from email.parser import BytesParser
+from io import BytesIO
+from starlette.datastructures import Headers, UploadFile
+from PIL import Image
+
+colors = {'asset':(80,30,180), 'upload':(20,130,80), 'history':(190,40,35)}
+def image_bytes(label, size):
+    out = BytesIO()
+    Image.new('RGB', size, colors[label]).save(out, format='PNG')
+    return out.getvalue()
+
+posts = []
+def reply(request):
+    path = request.url.path
+    if request.method == 'POST':
+        assert path == '/v1/images/edits' and request.url.params['async'] == 'true'
+        header = ('Content-Type: ' + request.headers['content-type'] + '\r\n\r\n').encode()
+        parts = list(BytesParser(policy=policy.default).parsebytes(header + request.content).iter_parts())
+        fields = {part.get_param('name', header='content-disposition'):part.get_content()
+                  for part in parts if not part.get_filename()}
+        files = [part for part in parts if part.get_filename()]
+        label = fields['prompt']
+        assert fields['model'] == 'gpt-image-2-all' and len(files) == 1
+        assert files[0].get_param('name', header='content-disposition') == 'image'
+        with Image.open(BytesIO(files[0].get_payload(decode=True))) as image:
+            assert image.size == (1536, 1024) and image.format == 'JPEG'
+            assert all(abs(a-b) <= 3 for a,b in zip(image.getpixel((500,500)), colors[label]))
+        posts.append(label)
+        return httpx.Response(200, json={'task_id':label})
+    if path.startswith('/v1/images/tasks/'):
+        label = path.rsplit('/',1)[-1]
+        return httpx.Response(200,json={'data':{'task_id':label,'status':'SUCCESS','data':{
+            'data':[{'url':f'https://supplier.example/{label}.png'}]}}})
+    label = path.removeprefix('/').removesuffix('.png')
+    return httpx.Response(200,content=image_bytes(label,(32,32)),headers={'content-type':'image/png'})
+
+main.httpx.AsyncClient = lambda **kwargs: original_client(transport=httpx.MockTransport(reply), **kwargs)
+
+async def exercise():
+    asset_path = Path(main.ASSETS_DIR)/'library'/'reference.png'
+    asset_path.parent.mkdir(parents=True, exist_ok=True)
+    asset_path.write_bytes(image_bytes('asset',(3072,2048)))
+    uploaded = await main.upload_ai_reference([UploadFile(BytesIO(image_bytes('upload',(3072,2048))),
+        filename='portrait.png',headers=Headers({'content-type':'image/png'}))])
+    assert uploaded['files'][0]['url'].startswith('/assets/input/')
+    archived = await main.save_ai_image_to_output({'type':'url','value':'https://supplier.example/history.png'}, prefix='history_')
+    assert archived.startswith('/assets/')
+    Path(main.output_file_from_url(archived)).write_bytes(image_bytes('history',(3840,2560)))
+    refs = {'asset':'/assets/library/reference.png','upload':uploaded['files'][0]['url'],'history':archived}
+    for index,(label,url) in enumerate(refs.items()):
+        body = main.OnlineImageRequest(request_id=f'{index+1:032x}',provider_id='zhenzhen',
+            model='gpt-image-2-all', prompt=label,reference_images=[{'url':url,'kind':'image'}])
+        task = await main.create_canvas_image_task(body, None)
+        await asyncio.gather(*main.CANVAS_TASK_RUNNERS)
+        record = await main.get_canvas_image_task(task['task_id'])
+        assert record['status']=='succeeded' and record['upstream_task_id']==label,record
+        assert Path(main.output_file_from_url(record['result']['images'][0])).is_file()
+    for index,url in enumerate(['/assets/input/missing.png','https://unconfigured.example/missing.png'], start=4):
+        body = main.OnlineImageRequest(request_id=f'{index:032x}',provider_id='zhenzhen',
+            model='gpt-image-2-all', prompt='invalid',reference_images=[{'url':url,'kind':'image'}])
+        task = await main.create_canvas_image_task(body,None)
+        await asyncio.gather(*main.CANVAS_TASK_RUNNERS)
+        assert (await main.get_canvas_image_task(task['task_id']))['status']=='failed'
+    assert posts == ['asset','upload','history']
+asyncio.run(exercise())
+'''
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(ROOT), str(install), str(tmp_path / "local")],
+        cwd=ROOT, env=dict(os.environ, PYTHONUTF8="1", PYTHONDONTWRITEBYTECODE="1"),
+        capture_output=True, text=True, timeout=40,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 @pytest.mark.parametrize('legacy_partial', [False, True])
 def test_batch_archive_failure_and_legacy_partial_cache_query_original_id(tmp_path, legacy_partial):
     install = tmp_path / 'install'
@@ -392,6 +473,11 @@ async def exercise():
     assert len(unknown)==1 and unknown[0]['status']==('failed' if last_attempt=='rejected' else 'unknown')
     archived={item['url'] for item in detail['items']}
     assert {Path(main.output_file_from_url(url)).read_bytes() for url in archived}=={source_images[0],source_images[1]}
+    assert (await main.get_canvas_image_task(task_id))['status']=='running'
+    reopened.record_auto_recovery(task_id, {'status':'manual'})
+    projected=await main.get_canvas_image_task(task_id)
+    assert projected['status']=='partial' and set(projected['result']['images'])==archived
+    assert projected['result']['message'] and 'provider_receipts' not in projected
 
     recovering=True
     count=len(calls)
@@ -401,6 +487,8 @@ async def exercise():
     assert calls[count:]==[('GET','/v1/images/tasks/upstream-2'),('GET','/result-2.png')]
     detail=describe_task(reopened.get(task_id),detail=True)
     assert detail['status']=='partial' and detail['output_count']==3
+    projected=await main.get_canvas_image_task(task_id)
+    assert projected['status']=='partial' and projected['result']==result
     assert sorted(attempt['upstream_task_id'] for attempt in detail['attempts'])==['','upstream-0','upstream-1','upstream-2']
     duplicate=await main.create_canvas_image_task(request,None)
     assert duplicate['task_id']==task_id and post_count==4

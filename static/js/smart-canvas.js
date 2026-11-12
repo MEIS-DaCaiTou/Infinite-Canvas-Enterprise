@@ -15357,7 +15357,7 @@ async function pollSmartCanvasTask(taskId, onStatus=()=>{}){
             if(i) await new Promise(resolve => setTimeout(resolve, 1800));
             const task = await CanvasTaskQuery.readImage(taskId);
             onStatus(task);
-            if(task.status === 'succeeded') return task.result || {};
+            if(['succeeded','partial'].includes(task.status)) return task.result || {};
             if(task.status === 'jimeng_pending') throw new JimengPendingSignal({submitId:task.submit_id, kind:task.kind, queueInfo:task.queue_info, message:task.message});
             if(task.status === 'failed'){
                 const recoverTaskId = task.upstream_task_id || extractUpstreamTaskId(task.error || '') || (task.can_reconcile ? taskId : '');
@@ -15506,6 +15506,12 @@ async function resumeSmartPendingNode(node, logContext={}){
                 : await pollSmartCanvasTask(task.taskId, onStatus);
             if(!isActive()) return;
             if(task.taskType === 'video' && result?.jimeng_pending) throw new JimengPendingSignal({submitId:result.submit_id, kind:result.kind || 'video', queueInfo:result.queue_info, message:result.message});
+            const warning = result?.status === 'partial' ? result.message : '';
+            if(warning){
+                addSmartGenerationLog({run:{node:{id:node.id}, request:{task_id:task.taskId,
+                    provider_id:result.provider_id, model:result.model}}, outputs:result.images || [], error:warning});
+                toast(warning);
+            }
             finalizeSmartPendingTask(node, task.taskId, resultMediaUrls(result?.image_items?.length ? result.image_items : (result?.images?.length ? result.images : result)), task.kind || 'image', logContext);
             render();
             scheduleSave();

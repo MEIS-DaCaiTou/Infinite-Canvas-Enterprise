@@ -24,7 +24,7 @@
     <script src="/static/js/history-bulk-manager.js?v=20261105.2"></script>
     <script src="/static/js/media-grid-window.js?v=20261105.2"></script>
     <link rel="stylesheet" href="/static/css/generation-task-center.css?v=20261015.1">
-    <script src="/static/js/canvas-task-query.js?v=20261112.1"></script>
+    <script src="/static/js/canvas-task-query.js?v=20261113.1"></script>
     <script src="/static/js/generation-task-center.js?v=20261112.1"></script>
     <style>
         #onlineTaskModal { --text:var(--accent); --muted:#64748b; --line:#94a3b866; width:min(680px, calc(100% - 24px)); max-height:90vh; margin:auto; border:1px solid var(--line); border-radius:20px; background:var(--card); color:var(--text); }
@@ -708,10 +708,10 @@
                     try {
                         const receipt = await CanvasTaskQuery.submitImage(request);
                         accepted = true;
-                        const showTask = task => show([CanvasTaskQuery.imageStatus(task), task.error].filter(Boolean).join(' · '));
+                        const showTask = task => show([CanvasTaskQuery.imageStatus(task), task.message || task.error].filter(Boolean).join(' · '));
                         showTask(receipt);
                         const task = await CanvasTaskQuery.waitImage(request.taskId, {onStatus:showTask});
-                        if(task.status !== 'succeeded' || !task.result?.images?.length) return;
+                        if(!['succeeded','partial'].includes(task.status) || !task.result?.images?.length) return;
                         const result = task.result;
                         if(!hasResult){
                             hasResult = true;

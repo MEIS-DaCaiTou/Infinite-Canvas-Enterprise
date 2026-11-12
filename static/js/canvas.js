@@ -1968,7 +1968,7 @@ async function createSmartCanvas(){
 }
 function openSmartCanvasPage(id){
     if(!id) return;
-    window.location.href = `/static/smart-canvas.html?id=${encodeURIComponent(id)}&v=20261104.2`;
+    window.location.href = `/static/smart-canvas.html?id=${encodeURIComponent(id)}&v=20261113.1`;
 }
 function toggleEmojiPicker(id, event){
     event?.preventDefault();
@@ -10628,11 +10628,12 @@ async function runCanvasImageBatch(node, out, run, payload, refs, count, opts){
     if(!out){
         const outputs = results.flatMap(result => result.images || []);
         const failure = settled.find(item => item.status === 'rejected')?.reason;
-        const message = failure?.message || tr('canvas.generationFailed');
+        const warning = results.find(result => result.status === 'partial')?.message;
+        const message = failure?.message || warning || tr('canvas.generationFailed');
         if(outputs.length) mergeGeneratedOutputs(node, outputs, Boolean(opts.cascade));
         node.runStatus = outputs.length ? 'done' : 'failed';
-        node.runError = failure ? message : '';
-        addGenerationLog({run, outputs, runMs:nowMs() - startedAt, ...(failure ? {error:message} : {})});
+        node.runError = failure || warning ? message : '';
+        addGenerationLog({run, outputs, runMs:nowMs() - startedAt, ...(failure || warning ? {error:message} : {})});
         refreshRunNodes(node, out);
         scheduleSave();
         if(!opts.cascade && !outputs.length) showErrorModal(message, tr('canvas.apiFailed'));
@@ -12604,32 +12605,6 @@ function providerIdForPending(pending){
         || pending?.run?.node?.provider_id
         || 'comfly';
 }
-function completeRecoverPendingOutput(out, pending, result){
-    if(!out || !pending || !result) return;
-    const images = result.image_items?.length ? result.image_items : (result.images || []);
-    if(!images.length) return;
-    const meta = {
-        runMs: nowMs() - Number(pending.startedAt || nowMs()),
-        run: {...pending.run},
-    };
-    meta.run.request = requestMetaFromResult(result);
-    if(pending.canvasTaskType === 'online-image') Object.assign(meta.run, {canvasTaskId:taskId, imageBatchId:pending.imageBatchId});
-    out._pending = (out._pending || []).filter(p => p.id !== pending.id);
-    appendOutputImages(out, images, meta.run?.refs?.[0], [meta]);
-    const gen = nodes.find(n => n.id === meta.run?.node?.id);
-    if(gen){
-        if(!pending.imageBatchId || pending.appendGenerated || gen.activeImageBatchId === pending.imageBatchId){
-            mergeGeneratedOutputs(gen, images, Boolean(pending.appendGenerated || appendBatch));
-        }
-        gen.runStatus = 'done';
-        gen.runError = '';
-        gen.running = false;
-    }
-    addGenerationLog({run:meta.run, outputs:images, runMs:meta.runMs || 0,
-        error:result.status === 'partial' ? result.message : ''});
-    refreshRunNodes(gen, out);
-    scheduleSave();
-}
 async function queryRecoverPendingOutput(pendingId){
     let out = findOutputByPendingId(pendingId);
     let pending = pendingById(out, pendingId);
@@ -12640,7 +12615,7 @@ async function queryRecoverPendingOutput(pendingId){
         return;
     }
     const sourceCanvasId=canvas?.id, outputId=out.id;
-    const videoActive = () => {
+    const pendingActive = () => {
         if(canvas?.id !== sourceCanvasId) return false;
         const currentOut=nodes.find(n=>n.id===outputId), currentPending=pendingById(currentOut,pendingId);
         if(!currentOut || !currentPending) return false;
@@ -12652,7 +12627,7 @@ async function queryRecoverPendingOutput(pendingId){
     try {
         if(pending.canvasTaskType === 'video'){
             const data = await CanvasTaskQuery.queryVideo(pending.canvasTaskId);
-            if(!videoActive()) return;
+            if(!pendingActive()) return;
             if(data.status === 'succeeded') completeCanvasVideoTask(out, pending, data);
             else if(['queued','running','unknown'].includes(data.status)){
                 pending.failed=false;
@@ -12662,14 +12637,9 @@ async function queryRecoverPendingOutput(pendingId){
         }
         const data = await window.CanvasTaskQuery.query({canvasTaskId:pending.canvasTaskId,
             canReconcile:pending.canReconcile, providerId:providerIdForPending(pending), upstreamTaskId:taskId});
+        if(!pendingActive()) return;
         if(data.status === 'succeeded' || data.status === 'partial'){
-            completeRecoverPendingOutput(out, pending, data);
-            if(data.status === 'partial'){
-                const gen = nodes.find(n => n.id === pending.run?.node?.id);
-                if(gen){ gen.runStatus = 'failed'; gen.runError = data.message; refreshNodes([gen.id]); }
-                showErrorModal(data.message, tr('canvas.apiFailed'));
-                scheduleSave();
-            }
+            if(data.image_items?.length || data.images?.length) finishPendingImageOutput(out, pending, data);
             return;
         }
         if(data.status === 'failed'){
@@ -12680,18 +12650,12 @@ async function queryRecoverPendingOutput(pendingId){
             setStatus(pending.error);
         }
     } catch(err) {
-        if(pending.canvasTaskType === 'video' && !videoActive()) return;
+        if(!pendingActive()) return;
         pending.error = err.message || '查询失败';
         showErrorModal(pending.error, tr('canvas.apiFailed'));
     } finally {
-        if(pending.canvasTaskType === 'video'){
-            if(canvas?.id !== sourceCanvasId) return;
-            out=nodes.find(n=>n.id===outputId);
-            if(!out) return;
-        }
-        const latest = pendingById(out, pendingId);
-        if(latest){
-            latest.querying = false;
+        if(pendingActive()){
+            pending.querying = false;
             refreshNodes([out.id]);
             scheduleSave();
         }
@@ -12720,9 +12684,9 @@ async function pollCanvasImageTask(taskId, options={}){
                 latest.pending.retryReceipt = false;
                 updateCanvasImageStatus(taskId, CanvasTaskQuery.imageStatus(data));
             }
-            if(data.status === 'succeeded'){
+            if(['succeeded','partial'].includes(data.status)){
                 completeCanvasImageTask(taskId, data.result || {});
-                return 'succeeded';
+                return data.status;
             }
             if(data.status === 'jimeng_pending'){
                 failCanvasImageTask(taskId, data.message || '可在生成任务中核对原任务', {imageStatus:'供应商已受理'});
@@ -12754,7 +12718,7 @@ async function waitCanvasImageTaskResult(taskId, options={}){
             throw new Error(await responseErrorMessage(res, tr('canvas.generationFailed')));
         }
         const data = await res.json();
-        if(data.status === 'succeeded') return data.result || {};
+        if(['succeeded','partial'].includes(data.status)) return data.result || {};
         if(!['queued','running'].includes(data.status)) throw new Error(data.error || data.message || CanvasTaskQuery.imageStatus(data));
         await sleep(1800);
     }
@@ -12762,25 +12726,31 @@ async function waitCanvasImageTaskResult(taskId, options={}){
 function completeCanvasImageTask(taskId, result){
     const found = findPendingTask(taskId);
     if(!found) return;
-    const {out, pending} = found;
+    finishPendingImageOutput(found.out, found.pending, result);
+}
+function finishPendingImageOutput(out, pending, result){
+    const images = result.image_items?.length ? result.image_items : (result.images || []);
+    const taskId = pending.canvasTaskId;
     const meta = {
         runMs: nowMs() - Number(pending.startedAt || nowMs()),
-        run: pending.run || {},
+        run: {...pending.run},
     };
     meta.run.request = requestMetaFromResult(result);
     if(pending.canvasTaskType==='comfy')Object.assign(meta.run,{canvasTaskId:taskId,canvasTaskStatus:'succeeded',taskStartedAt:pending.startedAt,taskFinishedAt:nowMs()});
-    const images = result.image_items?.length ? result.image_items : (result.images || []);
+    if(pending.canvasTaskType === 'online-image') Object.assign(meta.run, {canvasTaskId:taskId, imageBatchId:pending.imageBatchId});
+    const warning = result.status === 'partial' ? result.message : '';
     const appendBatch = pending.imageBatchId && (out.images || []).some(item => item.run?.imageBatchId === pending.imageBatchId);
     out._pending = (out._pending || []).filter(p => p.id !== pending.id);
     appendOutputImages(out, images, meta.run?.refs?.[0], [meta]);
     const gen = nodes.find(n => n.id === meta.run?.node?.id);
-    if(gen){
-        mergeGeneratedOutputs(gen, images, Boolean(pending.appendGenerated));
+    if(gen && (!pending.imageBatchId || !gen.activeImageBatchId || pending.appendGenerated || gen.activeImageBatchId === pending.imageBatchId)){
+        mergeGeneratedOutputs(gen, images, Boolean(pending.appendGenerated || appendBatch));
         gen.runStatus = 'done';
-        gen.runError = '';
+        gen.runError = warning;
         gen.running = false;
     }
-    addGenerationLog({run:meta.run, outputs:images, runMs:meta.runMs || 0});
+    addGenerationLog({run:meta.run, outputs:images, runMs:meta.runMs || 0, ...(warning ? {error:warning} : {})});
+    if(warning) setStatus(warning);
     refreshRunNodes(gen, out);
     scheduleSave();
 }

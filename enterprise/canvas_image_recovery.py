@@ -38,6 +38,18 @@ def can_reconcile(record):
     )
 
 
+def image_receipt_result(record, timestamp):
+    receipts = record["provider_receipts"]
+    images = [url for item in receipts for url in (item.get("result") or {}).get("images", [])]
+    items = [meta for item in receipts for meta in (item.get("result") or {}).get("image_items", [])]
+    all_succeeded = all(item["state"] == "succeeded" for item in receipts)
+    return {"status": "succeeded" if all_succeeded else ("partial" if images else "failed"),
+            "task_id": record["id"], "images": images, "image_items": items,
+            "message": "" if all_succeeded else "已保留完成的图片；其余请在生成任务中核对原任务与账单，不会自动重新生成",
+            "provider_id": record.get("provider_id"), "model": record.get("model"), "type": "online",
+            "timestamp": timestamp}
+
+
 def public_receipt(record):
     # Internal query binding is not frontend configuration or a credential.
     public = {**{key: value for key, value in record.items() if key != "provider_receipts"},
@@ -48,10 +60,19 @@ def public_receipt(record):
                       provider_request_id=receipt.get("provider_request_id", ""),
                       provider_result_received=bool(receipt.get("generated_at")))
     from enterprise.accepted_task_recovery import recovery_candidate
-    if (recovery_candidate(record)
-            and (record.get("auto_recovery") or {}).get("status") in {"waiting", "querying"}):
+    auto_state = (record.get("auto_recovery") or {}).get("status")
+    partial = None
+    if record.get("type") == "online-image" and record.get("status") == "failed" and record.get("provider_receipts"):
+        previous = record.get("result") or {}
+        timestamp = previous.get("timestamp") or record.get("created_at") or record.get("updated_at", 0)
+        result = image_receipt_result(record, timestamp)
+        if result["status"] == "partial":
+            partial = result
+    if recovery_candidate(record) and (auto_state in {"waiting", "querying"} or (partial and not auto_state)):
         # A local tracking interruption is not a terminal supplier failure.
         public.update(status="running", error="", error_code="")
+    elif partial:
+        public.update(status="partial", result=partial, message=partial["message"])
     return public
 
 
@@ -217,16 +238,9 @@ class CanvasImageRecovery:
                     "message": f"原任务查询暂未确认{reason}，请稍后再查；没有重新生成" if query_unknown else "原任务仍在生成中，请稍后再查询"}
 
         record = await asyncio.to_thread(self.journal.get, task_id)
-        receipts = record["provider_receipts"]
-        images = [url for item in receipts for url in (item.get("result") or {}).get("images", [])]
-        items = [meta for item in receipts for meta in (item.get("result") or {}).get("image_items", [])]
-        all_succeeded = all(item["state"] == "succeeded" for item in receipts)
-        message = "" if all_succeeded else "部分请求未确认或已失败；已找回的结果已保留，其余请核对供应商任务与账单，不要自动重新生成"
-        result = {"status": "succeeded" if all_succeeded else ("partial" if images else "failed"),
-                  "task_id": task_id, "images": images, "image_items": items, "message": message,
-                  "provider_id": record.get("provider_id"), "model": record.get("model"), "type": "online", "timestamp": time.time()}
+        result = image_receipt_result(record, time.time())
         await asyncio.to_thread(self.journal.finish_image_recovery, task_id, result)
-        if images:
+        if result["images"]:
             try:
                 await asyncio.to_thread(self.publish, deepcopy(result))
             except OSError:

@@ -78,5 +78,14 @@ vm.runInNewContext(fs.readFileSync('static/js/canvas-task-query.js', 'utf8'), co
     assert(unknownCalls.slice(1).every(([url]) => url.endsWith(ids[1])));
     assert.equal(image.imageStatus({status:'failed', submission_status:'unknown'}), '供应商受理结果待核对');
     assert.equal(image.imageStatus({status:'failed', submission_status:'failed'}), '明确失败');
+    const partial = {status:'partial', submission_status:'unknown', result:{images:['/output/retained.png']}};
+    const states = [{status:'running'}, partial];
+    const final = await image.waitImage(ids[0], {wait:async()=>{}, fetcher:async (url, init={}) => {
+        assert.equal(url, '/api/canvas-image-tasks/' + ids[0]);
+        assert.notEqual(init.method, 'POST');
+        return {ok:true, json:async()=>states.shift()};
+    }});
+    assert.equal(image.imageStatus(final), '部分完成');
+    assert.deepEqual(final.result.images, ['/output/retained.png']);
     console.log('shared canvas original-task query passed');
 })();
