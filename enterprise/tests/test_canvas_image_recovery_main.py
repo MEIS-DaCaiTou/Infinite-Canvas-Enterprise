@@ -327,3 +327,90 @@ asyncio.run(exercise())
         capture_output=True, encoding="utf-8", timeout=40,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("last_attempt", ["rejected", "reply_lost"])
+def test_single_platform_task_keeps_partial_images_and_recovers_one_original_id(tmp_path, last_attempt):
+    app = tmp_path / "install/releases/fixture"
+    (app / "static").mkdir(parents=True)
+    (app / "main.py").write_text("# fixture", encoding="utf-8")
+    script = BOOTSTRAP + r'''
+from io import BytesIO
+from PIL import Image
+from enterprise.canvas_task_journal import CanvasTaskJournal
+from enterprise.generation_tasks import describe_task
+
+last_attempt=sys.argv[4]
+post_count=0
+recovering=False
+task_id='canvas_img_'+'a'*32
+source_images={}
+for index in range(3):
+    image=BytesIO()
+    Image.new('RGB',(32,32),(50*index,100,200)).save(image,format='PNG')
+    source_images[index]=image.getvalue()
+
+def reply(request):
+    global post_count
+    calls.append((request.method,request.url.path))
+    if request.method=='POST':
+        assert request.url.path=='/v1/images/generations' and request.url.params['async']=='true'
+        body=json.loads(request.content)
+        assert body.get('n',1)==1 and body['model']=='gpt-image-2-all'
+        post_count+=1
+        if post_count<=3:
+            return httpx.Response(200,json={'task_id':f'upstream-{post_count-1}'})
+        if last_attempt=='rejected':
+            return httpx.Response(429,json={'error':{'message':'fixture rate limit'}})
+        raise httpx.ReadTimeout('fixture missing fourth reply',request=request)
+    assert request.method=='GET'
+    if request.url.path.startswith('/v1/images/tasks/'):
+        upstream_id=request.url.path.rsplit('/',1)[-1]
+        index=int(upstream_id.removeprefix('upstream-'))
+        record=main.CANVAS_TASK_JOURNAL.get(task_id)
+        assert any(item.get('upstream_task_id')==upstream_id for item in record['provider_receipts'])
+        if index==2 and not recovering:
+            return httpx.Response(503,json={'message':'fixture temporary query failure'})
+        return httpx.Response(200,json={'data':{'task_id':upstream_id,'status':'SUCCESS',
+            'data':{'data':[{'url':f'https://supplier.example/result-{index}.png'}]}}})
+    index=int(request.url.path.removeprefix('/result-').removesuffix('.png'))
+    return httpx.Response(200,content=source_images[index],headers={'content-type':'image/png'})
+main.httpx.AsyncClient=lambda **kw:original_client(transport=httpx.MockTransport(reply),**kw)
+
+async def exercise():
+    global recovering
+    request=main.OnlineImageRequest(request_id='a'*32,provider_id='zhenzhen',model='gpt-image-2-all',
+        prompt='four outputs in one local task',n=4)
+    initial=await main.create_canvas_image_task(request,None)
+    assert initial['task_id']==task_id
+    await asyncio.gather(*main.CANVAS_TASK_RUNNERS)
+    reopened=CanvasTaskJournal(main.CANVAS_TASK_JOURNAL.root)
+    detail=describe_task(reopened.get(task_id),detail=True)
+    assert detail['status']=='partial' and detail['output_count']==2 and detail['can_query'],detail
+    assert len(detail['attempts'])==4
+    unknown=[item for item in detail['attempts'] if not item['upstream_task_id']]
+    assert len(unknown)==1 and unknown[0]['status']==('failed' if last_attempt=='rejected' else 'unknown')
+    archived={item['url'] for item in detail['items']}
+    assert {Path(main.output_file_from_url(url)).read_bytes() for url in archived}=={source_images[0],source_images[1]}
+
+    recovering=True
+    count=len(calls)
+    result=await main.reconcile_canvas_image_task(task_id)
+    assert result['status']=='partial' and len(result['images'])==3
+    assert archived.issubset(result['images'])
+    assert calls[count:]==[('GET','/v1/images/tasks/upstream-2'),('GET','/result-2.png')]
+    detail=describe_task(reopened.get(task_id),detail=True)
+    assert detail['status']=='partial' and detail['output_count']==3
+    assert sorted(attempt['upstream_task_id'] for attempt in detail['attempts'])==['','upstream-0','upstream-1','upstream-2']
+    duplicate=await main.create_canvas_image_task(request,None)
+    assert duplicate['task_id']==task_id and post_count==4
+    count=len(calls)
+    assert await main.reconcile_canvas_image_task(task_id)==result
+    assert len(calls)==count
+asyncio.run(exercise())
+'''
+    result = subprocess.run([sys.executable, "-c", script, str(ROOT), str(tmp_path / "install"),
+                             str(tmp_path / "local"), last_attempt], cwd=ROOT,
+                            env=dict(os.environ, PYTHONUTF8="1", PYTHONDONTWRITEBYTECODE="1"),
+                            capture_output=True, encoding="utf-8", timeout=40)
+    assert result.returncode == 0, result.stdout + result.stderr

@@ -10305,6 +10305,7 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
                 references=[reference_to_data_url(ref, max_size=1536) for ref in image_refs],
                 aspect_parameters=aspect_params,
                 edit_endpoint=edit_url,
+                multipart_edit=bool(async_edit_url),
             )
         elif is_aspect_image and not image_refs:
             body = {"model": model, "prompt": prompt, "response_format": "url", **aspect_params}
