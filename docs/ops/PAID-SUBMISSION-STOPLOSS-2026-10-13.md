@@ -219,3 +219,10 @@ Browser 使用本机58130隔离安装、私有SQLite、固定测试身份、实�
 
 
 本候选首次 CI Enterprise 为1 failed/1894 passed/50 skipped（9分钟内），失败是既有同进程重启测试的 Windows 文件替换竞争。定向当前21次复现1次、准确 main 旧 journal/恢复器/原测试5次复现1次；夹具第二次 worker 用新 journal，查询回调和观察却仍用旧实例，锁不共享。仅重绑测试 journal，使查询/观察/worker与真实单Upstream一样使用同一重建实例；未改产品恢复器或放宽断言。模块9 passed/4.69s及连续40次定向无失败，原两次原ID查询/重建断言保留。首次CI和定向证据留在原PR/artifact，最终Head及其CI另记。
+## 2026-11-13 贞贞图片异步接入
+
+供应商协议：[异步生成](https://gpt-best.apifox.cn/api-356258955)、[异步编辑](https://gpt-best.apifox.cn/api-339685644)、[原任务查询](https://gpt-best.apifox.cn/api-356258956)。标准 `/v1/images/generations`、`/v1/images/edits` 提交添加查询参数 `async=true`，保留原模型请求体和路由；从回包读取明确的 `task_id`，通过 `GET /v1/images/tasks/{task_id}` 续查。图片查询使用 Bearer，独立于平台目录的默认 Gemini 等协议。未经过持久任务入口的旧直调、非标准端点及其他供应商不改请求模式。
+
+已有图片回执按尝试保存平台 ID 对应的贞贞任务 ID、供应商绑定和可用的请求 ID，写入成功后才开始查询。若供应商仍直接返回图片且未提供任务 ID，照常归档；诊断请求 ID 不能替代供应商任务 ID。已受理但查询或归档失败时，保留原回执，续查只发读请求。供应商明确报告失败时按失败展示；提交结果不明且无可查 ID 时保留待核对。批量任务各自处理，单张回包丢失不影响其他已受理任务。无自动重提付费请求。
+
+本轮采用隔离数据和模拟 HTTP；此前真实样本是同步返回图片，不能当作 `gpt-image-2-all` 异步生成或编辑实测结果。

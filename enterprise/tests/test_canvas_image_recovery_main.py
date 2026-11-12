@@ -38,31 +38,41 @@ id_path = roots.DATA_ROOT / 'fixture-local-task-id'
 '''
 
 
-def test_hard_exit_preserves_accepted_id_and_recovery_only_issues_get(tmp_path):
+@pytest.mark.parametrize("crash_point", ["accepted", "before_reply"])
+def test_hard_exit_preserves_accepted_id_and_recovery_only_issues_get(tmp_path, crash_point):
     install = tmp_path / "install"
     app = install / "releases/fixture"
     (app / "static").mkdir(parents=True)
     (app / "main.py").write_text("# fixture", encoding="utf-8")
     writer = BOOTSTRAP + r'''
-async def exit_before_poll(client, upstream_id, provider):
+crash_point = sys.argv[4]
+def crash_handler(request):
+    if request.method == 'POST':
+        assert request.url.path == '/v1/images/generations' and request.url.params['async'] == 'true'
+        calls.append(('POST', request.url.path))
+        if crash_point == 'before_reply':
+            assert main.CANVAS_TASK_JOURNAL.get(id_path.read_text())['provider_receipts'][0]['state'] == 'submitting'
+            os._exit(18)
+        return httpx.Response(200, json={'task_id':'accepted-before-process-exit'})
     record = main.CANVAS_TASK_JOURNAL.get(id_path.read_text())
-    assert record['upstream_task_id'] == upstream_id == 'accepted-before-process-exit'
+    assert request.method == 'GET' and request.url.path == '/v1/images/tasks/accepted-before-process-exit'
+    assert record['upstream_task_id'] == 'accepted-before-process-exit'
     assert record['provider_receipts'][0]['provider_base_url'] == provider['base_url']
     assert calls == [('POST', '/v1/images/generations')]
     assert 'fixture-only-key' not in json.dumps(record)
     os._exit(17)
-main.wait_for_image_task = exit_before_poll
+main.httpx.AsyncClient = lambda **kwargs: original_client(transport=httpx.MockTransport(crash_handler), **kwargs)
 async def create():
     response = await main.create_canvas_image_task(main.OnlineImageRequest(prompt='private-fixture', provider_id='zhenzhen', model='nano-banana-2'))
     id_path.write_text(response['task_id'])
     await asyncio.gather(*main.CANVAS_TASK_RUNNERS)
 asyncio.run(create())
 '''
-    arguments = [str(ROOT), str(install), str(tmp_path / "local")]
+    arguments = [str(ROOT), str(install), str(tmp_path / "local"), crash_point]
     environment = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", PYTHONUTF8="1")
     first = subprocess.run([sys.executable, "-c", writer, *arguments], cwd=ROOT, env=environment,
                            capture_output=True, text=True, timeout=40)
-    assert first.returncode == 17, first.stdout + first.stderr
+    assert first.returncode == (17 if crash_point == "accepted" else 18), first.stdout + first.stderr
     reader = BOOTSTRAP + r'''
 async def save_image(image, prefix=''):
     assert image['value'] == 'https://supplier.example/result.png'
@@ -74,6 +84,20 @@ assert main.CANVAS_TASK_JOURNAL.recover()['interrupted'] == 1
 async def recover():
     task_id = id_path.read_text()
     record = await main.get_canvas_image_task(task_id)
+    if sys.argv[4] == 'before_reply':
+        from enterprise.generation_tasks import describe_task
+        from fastapi import HTTPException
+        assert describe_task(main.CANVAS_TASK_JOURNAL.get(task_id))['status'] == 'unknown'
+        assert not record.get('upstream_task_id') and not record['can_reconcile']
+        assert not main.CANVAS_TASK_JOURNAL.recovery_candidates()
+        try:
+            await main.reconcile_canvas_image_task(task_id)
+        except HTTPException as exc:
+            assert exc.status_code == 409
+        else:
+            raise AssertionError('No original supplier ID to query')
+        assert calls == []
+        return
     assert record['can_reconcile'] and record['upstream_task_id'] == 'accepted-before-process-exit'
     result = await main.reconcile_canvas_image_task(task_id)
     assert result['status'] == 'succeeded' and result['images'] == ['/output/recovered-original.png']
@@ -210,7 +234,7 @@ print('batch archive failure and legacy partial retain GET-only recovery')
                             capture_output=True, text=True, timeout=40)
     assert result.returncode == 0, result.stdout + result.stderr
 
-@pytest.mark.parametrize("failure", [None, 429, 502, "disconnect"])
+@pytest.mark.parametrize("failure", [None, 429, 502, "disconnect", "request-id-only"])
 def test_independent_batch_receipts_and_supplier_status(tmp_path, failure):
     install = tmp_path / "install"
     app = install / "releases/fixture"
@@ -222,24 +246,39 @@ from enterprise.generation_tasks import describe_task
 
 failure = json.loads(sys.argv[4])
 posts = []
+queries = {}
+main.IMAGE_POLL_INTERVAL = 0.001
 def handler(request):
+    if request.method == 'GET':
+        upstream_id = request.url.path.removeprefix('/v1/images/tasks/')
+        index = int(upstream_id.removeprefix('fixture-job-'))
+        record = main.CANVAS_TASK_JOURNAL.get(f'canvas_img_{index + 1:032x}')
+        assert record['provider_receipts'][0]['upstream_task_id'] == upstream_id
+        assert record['provider_receipts'][0]['state'] == 'accepted'
+        queries[index] = queries.get(index, 0) + 1
+        result = {'task_id':upstream_id, 'status':'IN_PROGRESS'}
+        if queries[index] > 1:
+            result.update(status='SUCCESS', data={'data':[{'url':f'https://supplier.example/{upstream_id}.png'}]})
+        return httpx.Response(200, json={'code':'success','data':result})
+    assert request.method == 'POST' and request.url.path == '/v1/images/generations'
+    assert request.url.params['async'] == 'true'
     payload = json.loads(request.content)
     index = int(payload['prompt'])
     posts.append(index)
     headers = {'x-request-id': f'fixture-request-{index}'}
     if index == 3 and failure == 'disconnect':
         raise httpx.ReadTimeout('fixture supplier reply interrupted', request=request)
+    if index == 3 and failure == 'request-id-only':
+        return httpx.Response(200, json={'request_id':'task-diagnostic-only'})
     if index == 3 and failure:
         return httpx.Response(failure, headers=headers, json={'error': {'message': 'fixture supplier rejected request', 'code': 'invalid_value'}})
     if index == 1:
         return httpx.Response(200, headers=headers, json={'data':[{'url':'https://supplier.example/sync.png'}]})
+    if index == 2:
+        return httpx.Response(200, headers=headers, json={'task_id':'fixture-job-2',
+            'data':[{'url':'https://supplier.example/preview.png'}]})
     return httpx.Response(200, headers=headers, json={'task_id':f'fixture-job-{index}'})
 main.httpx.AsyncClient = lambda **kwargs: original_client(transport=httpx.MockTransport(handler), **kwargs)
-
-async def wait(_, upstream_id, __):
-    assert upstream_id.startswith('fixture-job-')
-    return {'data':[{'url':f'https://supplier.example/{upstream_id}.png'}]}
-main.wait_for_image_task = wait
 
 async def save_image(image, prefix=''):
     name = image['value'].rsplit('/', 1)[1]
@@ -248,7 +287,7 @@ async def save_image(image, prefix=''):
 main.save_ai_image_to_output = save_image
 
 async def exercise():
-    requests = [main.OnlineImageRequest(prompt=str(index), provider_id='zhenzhen', model='gpt-image-2',
+    requests = [main.OnlineImageRequest(prompt=str(index), provider_id='zhenzhen', model='gpt-image-2-all',
         size='4096x4096', request_id=f'{index + 1:032x}') for index in range(4)]
     receipts = await asyncio.gather(*(main.create_canvas_image_task(body) for body in requests))
     duplicate = await main.create_canvas_image_task(requests[0])
@@ -256,9 +295,12 @@ async def exercise():
     await asyncio.gather(*main.CANVAS_TASK_RUNNERS)
     tasks = [await main.get_canvas_image_task(receipt['task_id']) for receipt in receipts]
     assert sorted(posts) == [0, 1, 2, 3]
+    assert queries == ({0:2, 2:2} if failure else {0:2, 2:2, 3:2})
     assert [task['status'] for task in tasks] == ['succeeded'] * 3 + (['failed'] if failure else ['succeeded'])
     assert tasks[0]['upstream_task_id'] == 'fixture-job-0'
     assert not tasks[1].get('upstream_task_id') and tasks[1]['provider_request_id'] == 'fixture-request-1'
+    assert tasks[2]['upstream_task_id'] == 'fixture-job-2'
+    assert tasks[2]['result']['images'] == ['/output/fixture-job-2.png']
     attempt = describe_task(main.CANVAS_TASK_JOURNAL.get(tasks[1]['id']), detail=True)['attempts'][0]
     assert not attempt['upstream_task_id'] and attempt['provider_request_id'] == 'fixture-request-1'
     if failure:
@@ -268,6 +310,11 @@ async def exercise():
         assert '限流' in tasks[3]['error'] and 'fixture supplier rejected request' in tasks[3]['error']
     if failure == 502:
         assert 'HTTP 502' in tasks[3]['error'] and tasks[3]['provider_request_id'] == 'fixture-request-3'
+    if failure == 'request-id-only':
+        assert tasks[3]['provider_request_id'] == 'task-diagnostic-only' and not tasks[3].get('upstream_task_id')
+    if failure in ('disconnect', 'request-id-only', 502):
+        task = describe_task(main.CANVAS_TASK_JOURNAL.get(tasks[3]['id']), detail=True)
+        assert task['status'] == 'unknown' and not task['can_query']
     for code in (401, 403, 429):
         assert '尺寸' not in main.friendly_image_error_detail('invalid size', '4096x4096', 'gpt-image-2', code)
     assert main.friendly_image_error_detail('invalid_value for quality', '4096x4096', 'gpt-image-2', 400) == ''

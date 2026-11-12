@@ -46,6 +46,79 @@ def test_json_edit_selects_one_path_and_does_not_repeat_submission(failure):
     asyncio.run(run())
 
 
+@pytest.mark.parametrize("query_failure", ["http", "supplier"])
+def test_tracked_edit_keeps_reference_and_queries_only_saved_id(tmp_path, query_failure):
+    app = tmp_path / "install/releases/fixture"
+    (app / "static").mkdir(parents=True)
+    (app / "main.py").write_text("# fixture", encoding="utf-8")
+    script = BOOTSTRAP.replace("main.api_headers = lambda **kwargs: {'Authorization':'Bearer fixture-only-key'}\n", "") + r'''
+import base64, io
+from PIL import Image
+from enterprise.generation_tasks import describe_task
+buffer=io.BytesIO(); Image.new('RGB',(32,32),'white').save(buffer,format='PNG')
+encoded=base64.b64encode(buffer.getvalue()).decode()
+reference='data:image/png;base64,'+encoded
+failure=sys.argv[4]
+task_id='canvas_img_'+'c'*32
+provider['image_edit_endpoint']='/v1/images/edits?route=existing&async=false'
+provider['protocol']='gemini'  # A shared catalog may also offer native Gemini.
+main.save_api_providers([provider])
+provider=main.get_api_provider_exact('zhenzhen')
+assert provider['protocol']=='gemini'
+main.provider_env_key_value=lambda _:'fixture-only-key'
+def reply(request):
+    calls.append((request.method,request.url.path))
+    assert request.headers['authorization']=='Bearer fixture-only-key' and 'x-goog-api-key' not in request.headers
+    if request.method == 'POST':
+        assert request.url.path == '/v1/images/edits'
+        assert dict(request.url.params) == {'route':'existing','async':'true'}
+        assert json.loads(request.content)['image'] == [reference]
+        return httpx.Response(200, json={'data':{'task_id':'fixture-edit-accepted'}},
+                              headers={'x-request-id':'fixture-edit-request'})
+    assert request.method == 'GET' and request.url.path == '/v1/images/tasks/fixture-edit-accepted'
+    saved=main.CANVAS_TASK_JOURNAL.get(task_id)['provider_receipts'][0]
+    assert saved['upstream_task_id']=='fixture-edit-accepted' and saved['provider_request_id']=='fixture-edit-request'
+    if failure == 'http':
+        return httpx.Response(503, json={'message':'fixture temporarily unavailable'})
+    if failure == 'supplier':
+        return httpx.Response(200, json={'data':{'status':'FAILURE','fail_reason':'fixture supplier job failed'}})
+    return httpx.Response(200, json={'data':{'status':'SUCCESS','data':{'data':[{'b64_json':encoded}]}}})
+main.httpx.AsyncClient=lambda **kw:original_client(transport=httpx.MockTransport(reply),**kw)
+async def run():
+    global failure
+    body=main.OnlineImageRequest(request_id='c'*32, provider_id='zhenzhen',model='gpt-image-2-all',
+        prompt='owned edit',size='1024x1024',quality='low',reference_images=[{'url':reference,'kind':'image'}])
+    initial=await main.create_canvas_image_task(body,None)
+    assert initial['task_id']==task_id
+    await asyncio.gather(*main.CANVAS_TASK_RUNNERS)
+    record=main.CANVAS_TASK_JOURNAL.get(task_id)
+    assert record['status']=='failed'
+    detail=describe_task(record,detail=True)
+    attempt=detail['attempts'][0]
+    assert attempt['upstream_task_id']=='fixture-edit-accepted'
+    if failure=='supplier':
+        assert detail['status']=='failed' and not detail['can_query'] and attempt['status']=='failed'
+        assert 'fixture supplier job failed' in detail['error']
+        assert len(calls)==2
+    else:
+        assert detail['status']=='unknown' and detail['can_query'] and attempt['status']=='unknown'
+        assert len(calls)==4
+        failure=None
+        result=await main.reconcile_canvas_image_task(task_id)
+        assert result['status']=='succeeded'
+        with Image.open(main.output_file_from_url(result['images'][0])) as output:
+            assert output.size==(32,32)
+        assert len(calls)==5
+    assert [path for method,path in calls if method=='POST']==['/v1/images/edits']
+asyncio.run(run())
+'''
+    result = subprocess.run([sys.executable, "-c", script, str(ROOT), str(tmp_path / "install"),
+                             str(tmp_path / "local"), query_failure], cwd=ROOT,
+                            env=dict(os.environ, PYTHONUTF8="1", PYTHONDONTWRITEBYTECODE="1"),
+                            capture_output=True, encoding="utf-8", timeout=40)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_layer_metadata_is_bounded_and_ignores_arbitrary_upstream_fields():
     meta = layer_metadata({"z_index": 0, "name": "x" * 400, "description": "y" * 2000,
         "bounding_box": {"absolute": [0, 1, 3, 4], "normalized": [0, 0, 1, float("nan")], "private": "ignored"}, "api_key": "never-copy"})

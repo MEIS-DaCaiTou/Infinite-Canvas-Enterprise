@@ -31,7 +31,9 @@ def provider_scope(provider):
 
 def can_reconcile(record):
     return record.get("type") == "online-image" and record.get("status") == "failed" and any(
-        (receipt.get("upstream_task_id") and receipt.get("provider_base_url")) or (receipt.get("result") or {}).get("images")
+        (receipt.get("upstream_task_id") and receipt.get("provider_base_url")
+         and receipt.get("state") not in {"succeeded", "failed"})
+        or (receipt.get("result") or {}).get("images")
         for receipt in record.get("provider_receipts") or []
     )
 

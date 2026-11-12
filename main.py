@@ -90,6 +90,8 @@ from enterprise.providers.zhenzhen import (
     image_profile as zhenzhen_image_profile,
     public_image_profiles as zhenzhen_public_image_profiles,
     submit_image as submit_zhenzhen_image,
+    async_image_submit_url as zhenzhen_async_image_submit_url,
+    image_submission_task_id as zhenzhen_image_submission_task_id,
     is_zhenzhen, image_headers as zhenzhen_image_headers,
     image_task_endpoint as zhenzhen_image_task_endpoint, query_image as query_zhenzhen_image,
     image_query_status as zhenzhen_image_query_status,
@@ -3678,7 +3680,7 @@ def log_net_error(context, exc, url=""):
         except Exception:
             pass
 
-def api_headers(json_body=True, provider=None, model=""):
+def api_headers(json_body=True, provider=None, model="", *, protocol=None):
     if provider:
         if is_codex_provider(provider) or is_gemini_cli_provider(provider):
             raise HTTPException(status_code=400, detail="CLI 协议使用本机登录态，不需要 API Key。当前入口应走对应 CLI 专用通道。")
@@ -3692,7 +3694,7 @@ def api_headers(json_body=True, provider=None, model=""):
             raise HTTPException(status_code=400, detail="未配置 COMFLY_API_KEY，请在 API/.env 中填写。")
     if provider and zhenzhen_image_profile(provider, model):
         return zhenzhen_image_headers(bearer_auth_value(api_key), json_body=json_body)
-    if provider and effective_protocol(provider, model) == "gemini" and not zhenzhen_image_profile(provider, model):
+    if provider and (protocol or effective_protocol(provider, model)) == "gemini":
         headers = {"Accept": "application/json", "x-goog-api-key": api_key}
     else:
         headers = {"Accept": "application/json", "Authorization": bearer_auth_value(api_key)}
@@ -6048,7 +6050,7 @@ def image_task_url_for_provider(provider, task_id):
 async def fetch_image_task_payload(client, task_id, provider=None):
     task_url = image_task_url_for_provider(provider, task_id)
     if is_zhenzhen(provider):
-        return await query_zhenzhen_image(client, task_url, api_headers(provider=provider), httpx_request_with_transient_retries)
+        return await query_zhenzhen_image(client, task_url, api_headers(provider=provider, protocol="openai"), httpx_request_with_transient_retries)
     response = await httpx_request_with_transient_retries(
         client,
         "GET",
@@ -10264,6 +10266,11 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
         raise HTTPException(status_code=400, detail=f"{provider.get('name') or provider['id']} 未配置 Base URL")
     gen_url = provider_endpoint_url(provider, "image_generation_endpoint", "/v1/images/generations")
     edit_url = provider_endpoint_url(provider, "image_edit_endpoint", "/v1/images/edits")
+    async_gen_url = async_edit_url = None
+    if receipt_sink is not None and is_zhenzhen(provider):
+        async_gen_url = zhenzhen_async_image_submit_url(gen_url)
+        async_edit_url = zhenzhen_async_image_submit_url(edit_url)
+        gen_url, edit_url = async_gen_url or gen_url, async_edit_url or edit_url
     refs = [ref for ref in (reference_images or []) if ref.get("url")]
     mask_refs = [ref for ref in refs if str(ref.get("role") or "").strip().lower() == "mask" or str(ref.get("name") or "").lower().endswith("_mask.png")]
     image_refs = [ref for ref in refs if ref not in mask_refs]
@@ -10368,7 +10375,7 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
             if quality:
                 body["quality"] = quality
             response = await client.post(gen_url, headers=api_headers(provider=provider, model=model), json=body)
-            if image_api_explicitly_rejected(response):
+            if not async_gen_url and image_api_explicitly_rejected(response):
                 response = await post_openai_edits()
         elif image_refs:
             # 1) OpenAI 协议的图生图/编辑用 multipart 提交到 /images/edits；
@@ -10396,7 +10403,7 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
                     if response.status_code >= 400:
                         edit_failed_status = response.status_code
                         edit_failed_text = response.text[:500]
-                        if image_api_explicitly_rejected(response):
+                        if not async_edit_url and image_api_explicitly_rejected(response):
                             response = None
                 except httpx.HTTPError as e:
                     raise provider_submission_unknown("图像编辑请求的响应中断，是否已被供应商受理尚不确定") from e
@@ -10434,7 +10441,7 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
                 headers=api_headers(provider=provider, model=model),
                 json=body,
             )
-            if image_api_explicitly_rejected(response):
+            if not async_gen_url and image_api_explicitly_rejected(response):
                 response = await post_openai_edits()
         response.raise_for_status()
         if receipt_sink is not None:
@@ -10442,21 +10449,26 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
         raw = submission_json(response, kind="图像")
         if receipt_sink is not None:
             receipt_sink.identify(raw=raw)
-        try:
-            return extract_image(raw), raw
-        except HTTPException as exc:
-            if image_request_mode == "openai-responses":
-                fallback_image = responses_output_text_image(raw)
-                if fallback_image:
-                    return fallback_image, raw
-                try:
-                    print(f"RS 响应中没有图片，原始返回（截断）：{json.dumps(raw, ensure_ascii=False)[:800]}")
-                except Exception:
-                    pass
-                raise provider_submission_unknown("图像提交已返回，但没有可核对的任务或图片结果") from exc
-            task_id = extract_task_id(raw)
-            if not task_id:
-                raise provider_submission_unknown("图像提交已返回，但没有可核对的任务或图片结果") from exc
+        # The async Images contract returns task_id. If a response contains
+        # both an ID and media, the original task is still authoritative.
+        async_zhenzhen_response = str(response.request.url) in (async_gen_url, async_edit_url)
+        task_id = zhenzhen_image_submission_task_id(raw) if async_zhenzhen_response else None
+        if not task_id:
+            try:
+                return extract_image(raw), raw
+            except HTTPException as exc:
+                if image_request_mode == "openai-responses":
+                    fallback_image = responses_output_text_image(raw)
+                    if fallback_image:
+                        return fallback_image, raw
+                    try:
+                        print(f"RS 响应中没有图片，原始返回（截断）：{json.dumps(raw, ensure_ascii=False)[:800]}")
+                    except Exception:
+                        pass
+                    raise provider_submission_unknown("图像提交已返回，但没有可核对的任务或图片结果") from exc
+                task_id = None if async_zhenzhen_response else extract_task_id(raw)
+                if not task_id:
+                    raise provider_submission_unknown("图像提交已返回，但没有可核对的任务或图片结果") from exc
         if receipt_sink is not None:
             # Persist accepted identity before polling; a restart never submits
             # it again. Failure to save is not proof the supplier rejected it.

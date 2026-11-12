@@ -7,6 +7,7 @@ existing routes; this module does not speculate about unknown model names.
 """
 from copy import deepcopy
 from urllib.parse import urlsplit, quote
+from httpx import URL
 from fastapi import HTTPException
 from enterprise.providers.image_task_protocol import SUCCESS_STATUSES, FAILED_STATUSES, task_status
 
@@ -88,6 +89,24 @@ async def submit_image(client, endpoint, headers, *, model, prompt, size, qualit
     return await client.post(endpoint, headers=headers, json=image_body(model, prompt, size, quality, references, aspect_parameters))
 
 
+def async_image_submit_url(endpoint):
+    """Opt standard Images endpoints into the supplier's async query protocol."""
+    url = URL(endpoint)
+    if url.path.rstrip("/").endswith(("/v1/images/generations", "/v1/images/edits")):
+        return str(url.copy_set_param("async", "true"))
+    return None
+
+
+def image_submission_task_id(payload):
+    """A request ID is diagnostic metadata, not a queryable image task ID."""
+    nested = payload.get("data")
+    for source in (payload, nested):
+        value = source.get("task_id") if isinstance(source, dict) else None
+        if isinstance(value, str) and 0 < len(value.strip()) <= 240:
+            return value.strip()
+    return None
+
+
 def image_headers(authorization, *, json_body=True):
     """Credentials are resolved by the application, never read or persisted here."""
     headers = {"Accept": "application/json", "Authorization": authorization}
@@ -105,7 +124,10 @@ async def query_image(client, endpoint, headers, request):
     """Query the original accepted identity; safe GET retries reuse shared policy."""
     response = await request(client, "GET", endpoint, attempts=3, headers=headers)
     response.raise_for_status()
-    return response.json()
+    payload = response.json()
+    if not isinstance(payload, dict):
+        raise ValueError("Invalid Zhenzhen image task response")
+    return payload
 
 
 def image_query_status(payload, *, has_images):
