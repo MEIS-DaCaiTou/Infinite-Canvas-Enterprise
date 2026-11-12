@@ -115,12 +115,17 @@ async def submit_image(client, endpoint, headers, *, model, prompt, size, qualit
     return await client.post(endpoint, headers=headers, json=body)
 
 
-def async_image_submit_url(endpoint):
-    """Opt standard Images endpoints into the supplier's async query protocol."""
+def async_image_submit_url(endpoint, query_endpoint):
+    """Opt in only when submission and original-task query share the Images route."""
     url = URL(endpoint)
-    if url.path.rstrip("/").endswith(("/v1/images/generations", "/v1/images/edits")):
-        return str(url.copy_set_param("async", "true"))
-    return None
+    query = URL(query_endpoint)
+    image_path, separator, _ = query.path.rpartition("/images/tasks/")
+    path = url.path.rstrip("/")
+    if not separator or path not in {f"{image_path}/images/generations", f"{image_path}/images/edits"}:
+        return None
+    if url.copy_with(path=path, query=None, fragment=None) != query.copy_with(path=path, query=None, fragment=None):
+        return None
+    return str(url.copy_set_param("async", "true"))
 
 
 def image_submission_task_id(payload):

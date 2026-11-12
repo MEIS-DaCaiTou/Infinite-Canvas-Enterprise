@@ -10268,8 +10268,9 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
     edit_url = provider_endpoint_url(provider, "image_edit_endpoint", "/v1/images/edits")
     async_gen_url = async_edit_url = None
     if receipt_sink is not None and is_zhenzhen(provider):
-        async_gen_url = zhenzhen_async_image_submit_url(gen_url)
-        async_edit_url = zhenzhen_async_image_submit_url(edit_url)
+        query_endpoint = image_task_url_for_provider(provider, "_")
+        async_gen_url = zhenzhen_async_image_submit_url(gen_url, query_endpoint)
+        async_edit_url = zhenzhen_async_image_submit_url(edit_url, query_endpoint)
         gen_url, edit_url = async_gen_url or gen_url, async_edit_url or edit_url
     refs = [ref for ref in (reference_images or []) if ref.get("url")]
     mask_refs = [ref for ref in refs if str(ref.get("role") or "").strip().lower() == "mask" or str(ref.get("name") or "").lower().endswith("_mask.png")]

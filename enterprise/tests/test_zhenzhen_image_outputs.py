@@ -10,8 +10,19 @@ import pytest
 from fastapi import HTTPException
 
 from enterprise.providers.image_outputs import layer_metadata
-from enterprise.providers.zhenzhen import image_body, submit_image
+from enterprise.providers.zhenzhen import async_image_submit_url, image_body, submit_image
 from enterprise.tests.test_canvas_image_recovery_main import BOOTSTRAP, ROOT
+
+
+def test_async_opt_in_requires_submit_and_query_to_share_origin_and_route():
+    query = "https://supplier.example/tenant/v1/images/tasks/_"
+    assert async_image_submit_url("https://supplier.example/tenant/v1/images/edits?route=existing&async=false", query) == (
+        "https://supplier.example/tenant/v1/images/edits?route=existing&async=true")
+    assert async_image_submit_url("https://supplier.example/tenant/v1/images/generations", query).endswith("?async=true")
+    assert async_image_submit_url("https://supplier.example/v1/images/edits", query) is None
+    assert async_image_submit_url("https://other.example/tenant/v1/images/edits", query) is None
+    assert async_image_submit_url("https://supplier.example/tenant/v1/images/edits",
+                                  "https://supplier.example/tenant/v1/videos/_") is None
 
 
 def test_layer_requires_one_source_and_sends_scalar_image_png_without_quality():
