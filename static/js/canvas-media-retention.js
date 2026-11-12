@@ -37,10 +37,12 @@
     root.CanvasRunPreparation={
         has:(node,canvasId)=>preparing.get(canvasId)?.has(node?.id) || false,
         active:canvasId=>Boolean(preparing.get(canvasId)?.size),
+        phase:(node,canvasId)=>preparing.get(canvasId)?.get(node?.id),
+        setPhase:(node,canvasId,phase)=>preparing.get(canvasId)?.set(node.id,phase),
         begin(node,canvasId){
             if(!node?.id || !canvasId || this.has(node,canvasId))return false;
-            if(!preparing.has(canvasId))preparing.set(canvasId,new Set());
-            preparing.get(canvasId).add(node.id);return true;
+            if(!preparing.has(canvasId))preparing.set(canvasId,new Map());
+            preparing.get(canvasId).set(node.id,'saving');return true;
         },
         end(node,canvasId){
             const ids=preparing.get(canvasId);ids?.delete(node?.id);

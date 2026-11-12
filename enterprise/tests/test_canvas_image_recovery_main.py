@@ -1,4 +1,5 @@
 """Actual main hooks survive a hard exit immediately after supplier acceptance."""
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -207,4 +208,75 @@ print('batch archive failure and legacy partial retain GET-only recovery')
     result = subprocess.run([sys.executable, '-c', script, str(ROOT), str(install), str(tmp_path / 'local'), str(legacy_partial)],
                             cwd=ROOT, env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1', PYTHONUTF8='1'),
                             capture_output=True, text=True, timeout=40)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+@pytest.mark.parametrize("failure", [None, 429, 502, "disconnect"])
+def test_independent_batch_receipts_and_supplier_status(tmp_path, failure):
+    install = tmp_path / "install"
+    app = install / "releases/fixture"
+    (app / "static").mkdir(parents=True)
+    (app / "main.py").write_text("# fixture", encoding="utf-8")
+    script = BOOTSTRAP + r"""
+from PIL import Image
+from enterprise.generation_tasks import describe_task
+
+failure = json.loads(sys.argv[4])
+posts = []
+def handler(request):
+    payload = json.loads(request.content)
+    index = int(payload['prompt'])
+    posts.append(index)
+    headers = {'x-request-id': f'fixture-request-{index}'}
+    if index == 3 and failure == 'disconnect':
+        raise httpx.ReadTimeout('fixture supplier reply interrupted', request=request)
+    if index == 3 and failure:
+        return httpx.Response(failure, headers=headers, json={'error': {'message': 'fixture supplier rejected request', 'code': 'invalid_value'}})
+    if index == 1:
+        return httpx.Response(200, headers=headers, json={'data':[{'url':'https://supplier.example/sync.png'}]})
+    return httpx.Response(200, headers=headers, json={'task_id':f'fixture-job-{index}'})
+main.httpx.AsyncClient = lambda **kwargs: original_client(transport=httpx.MockTransport(handler), **kwargs)
+
+async def wait(_, upstream_id, __):
+    assert upstream_id.startswith('fixture-job-')
+    return {'data':[{'url':f'https://supplier.example/{upstream_id}.png'}]}
+main.wait_for_image_task = wait
+
+async def save_image(image, prefix=''):
+    name = image['value'].rsplit('/', 1)[1]
+    Image.new('RGB', (16, 16), 'white').save(Path(main.OUTPUT_DIR) / name)
+    return f'/output/{name}'
+main.save_ai_image_to_output = save_image
+
+async def exercise():
+    requests = [main.OnlineImageRequest(prompt=str(index), provider_id='zhenzhen', model='gpt-image-2',
+        size='4096x4096', request_id=f'{index + 1:032x}') for index in range(4)]
+    receipts = await asyncio.gather(*(main.create_canvas_image_task(body) for body in requests))
+    duplicate = await main.create_canvas_image_task(requests[0])
+    assert duplicate['task_id'] == receipts[0]['task_id']
+    await asyncio.gather(*main.CANVAS_TASK_RUNNERS)
+    tasks = [await main.get_canvas_image_task(receipt['task_id']) for receipt in receipts]
+    assert sorted(posts) == [0, 1, 2, 3]
+    assert [task['status'] for task in tasks] == ['succeeded'] * 3 + (['failed'] if failure else ['succeeded'])
+    assert tasks[0]['upstream_task_id'] == 'fixture-job-0'
+    assert not tasks[1].get('upstream_task_id') and tasks[1]['provider_request_id'] == 'fixture-request-1'
+    attempt = describe_task(main.CANVAS_TASK_JOURNAL.get(tasks[1]['id']), detail=True)['attempts'][0]
+    assert not attempt['upstream_task_id'] and attempt['provider_request_id'] == 'fixture-request-1'
+    if failure:
+        assert tasks[3]['submission_status'] == ('failed' if failure == 429 else 'unknown')
+        assert '当前尺寸' not in tasks[3]['error']
+    if failure == 429:
+        assert '限流' in tasks[3]['error'] and 'fixture supplier rejected request' in tasks[3]['error']
+    if failure == 502:
+        assert 'HTTP 502' in tasks[3]['error'] and tasks[3]['provider_request_id'] == 'fixture-request-3'
+    for code in (401, 403, 429):
+        assert '尺寸' not in main.friendly_image_error_detail('invalid size', '4096x4096', 'gpt-image-2', code)
+    assert main.friendly_image_error_detail('invalid_value for quality', '4096x4096', 'gpt-image-2', 400) == ''
+    assert '尺寸' in main.friendly_image_error_detail('invalid size', '4096x4096', 'gpt-image-2', 400)
+asyncio.run(exercise())
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(ROOT), str(install), str(tmp_path / "local"), json.dumps(failure)],
+        cwd=ROOT, env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1", PYTHONUTF8="1"),
+        capture_output=True, encoding="utf-8", timeout=40,
+    )
     assert result.returncode == 0, result.stdout + result.stderr

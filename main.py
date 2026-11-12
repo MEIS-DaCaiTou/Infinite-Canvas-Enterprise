@@ -54,7 +54,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from enterprise.config import PATH_ROOTS as _CONFIG_PATH_ROOTS
 from enterprise.paths import get_path_roots, prepare_application_directories
 from enterprise.app_paths import AppPathLayout
-from enterprise.canvas_task_journal import CanvasTaskJournal, create_task_receipt
+from enterprise.canvas_task_journal import CanvasTaskJournal, TaskAlreadyExists, create_task_receipt
 from enterprise.local_json import atomic_write_json, read_json, document_lock
 from enterprise.local_uploads import kind_ext as _local_upload_kind_ext, display_name as _local_upload_display_name
 from enterprise.local_uploads import metadata_items as local_upload_metadata_items
@@ -2517,6 +2517,7 @@ class AIReference(BaseModel):
     mime: str = ""
 
 class OnlineImageRequest(CallSourceSelection):
+    request_id: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{32}$")
     source: Optional[TaskCanvasSource] = None
     prompt: str = Field(min_length=1, max_length=ONLINE_IMAGE_PROMPT_MAX_LENGTH)
     provider_id: str = "comfly"
@@ -4031,11 +4032,6 @@ def extract_task_id(data):
     if isinstance(nested, dict):
         return extract_task_id(nested)
     return None
-
-def extract_task_id_from_text(text):
-    value = str(text or "")
-    match = re.search(r"(?:task_id|taskId|task id)\s*[=:：]\s*([A-Za-z0-9_.:-]+)", value, re.IGNORECASE)
-    return match.group(1) if match else ""
 
 def images_api_unsupported(response):
     text = str(getattr(response, "text", "") or "").lower()
@@ -8785,10 +8781,6 @@ def gpt_image_2_size_error_message(size):
         "或切换到 nano-banana 生成更高分辨率。"
     )
 
-def gpt_image_2_size_exceeds_supported(size):
-    width, height = parse_size_pair(size)
-    return bool(width and height and (max(width, height) > GPT_IMAGE2_MAX_EDGE or width * height > GPT_IMAGE2_MAX_PIXELS))
-
 def apimart_size_resolution(size):
     width, height = parse_size_pair(size)
     if not width or not height:
@@ -8871,11 +8863,15 @@ def normalize_volcengine_size(size, model=""):
             break
     return f"{snapped_w}x{snapped_h}"
 
-def friendly_image_error_detail(text, size="", model=""):
+def friendly_image_error_detail(text, size="", model="", status_code=None):
     text = str(text or "")
     lower_text = text.lower()
-    if is_gpt_image_2_model(model) and gpt_image_2_size_exceeds_supported(size):
-        return gpt_image_2_size_error_message(size)
+    if status_code == 429 or "rate limit" in lower_text or "rate_limit" in lower_text:
+        return "供应商限流（HTTP 429），请稍后重试。" if status_code == 429 else "供应商限流，请稍后重试。"
+    if status_code == 401 or "unauthorized" in lower_text:
+        return "供应商鉴权失败，请核对当前渠道的 API 密钥。"
+    if status_code == 403:
+        return "供应商拒绝访问（HTTP 403），请核对当前渠道和模型权限。"
     mentions_size = any(token in lower_text for token in ["size", "resolution", "dimension"])
     is_gpt_size_error = is_gpt_image_2_model(model) and mentions_size and (
         "invalid" in lower_text
@@ -8895,18 +8891,14 @@ def friendly_image_error_detail(text, size="", model=""):
         pixel_match = re.search(r"at least (\d+) pixels", lower_text)
         pixels = pixel_match.group(1) if pixel_match else "3686400"
         return f"该模型要求更高分辨率，当前尺寸 {size or '过小'} 不满足最低像素要求（至少 {pixels} 像素）。火山 Seedream 5.0 建议从 2K 起步。"
-    if is_gpt_size_error or (("invalid size" in lower_text or "invalid_value" in lower_text) and is_gpt_image_2_model(model)):
+    if is_gpt_size_error:
         return gpt_image_2_size_error_message(size)
-    if "invalid size" in lower_text or "invalid_value" in lower_text:
+    if "invalid size" in lower_text:
         return f"该模型不支持当前尺寸：{size or '未指定'}。请尝试更换分辨率或模型。"
     if "inputtextsensitivecontentdetected" in lower_text or "policyviolation" in lower_text or "copyright restrictions" in lower_text:
         return "上游内容安全拦截了这段提示词，原因偏向版权/敏感内容限制。请改写提示词，避免直接出现具体 IP、角色名、品牌名、影视/动漫作品名，改成风格特征描述再试。"
     if "rejected by the safety system" in lower_text or "image_generation_user_error" in lower_text or "safety system" in lower_text or "content_policy_violation" in lower_text or "content policy" in lower_text:
         return "上游（Azure/OpenAI 系）内容安全系统拒绝了本次生图请求。可能是提示词或参考图触发了内容审核。请改写提示词、避免敏感/暴力/成人/名人/版权角色等描述；若使用了人物参考图，可换一张图再试。这是上游平台的审核策略，并非本系统报错。"
-    if "rate limit" in lower_text or "429" in lower_text:
-        return "请求过于频繁，已被上游限流，请稍后再试。"
-    if "unauthorized" in lower_text or "401" in lower_text:
-        return "API Key 无效或已过期，请到「API 设置」检查 Key。"
     if "model_not_found" in lower_text or "channel not found" in lower_text:
         return f"上游平台找不到模型「{model}」可用通道。可能该模型未在此账号开通，请换一个已开通的模型。"
     return ""
@@ -9988,7 +9980,7 @@ async def runninghub_upload_local_to_filename(client, provider, url, use_wallet=
         return raw["data"]["fileName"]
     raise HTTPException(status_code=502, detail=(raw.get("msg") if isinstance(raw, dict) else "") or f"RunningHub 上传素材失败：{raw}")
 
-async def generate_runninghub_entry_image(prompt, size, model, reference_images, provider, entry):
+async def generate_runninghub_entry_image(prompt, size, model, reference_images, provider, entry, receipt_sink=None):
     """运行 RunningHub 工作流 / AI 应用（与智能画布一致的运行方式），返回首张图片结果。"""
     kind = entry["kind"]
     entry_id = entry["id"]
@@ -10068,6 +10060,8 @@ async def generate_runninghub_entry_image(prompt, size, model, reference_images,
             body = {"apiKey": api_key, "webappId": entry_id, "nodeInfoList": node_info_list}
 
         response = await client.post(submit_url, headers=runninghub_app_headers(True, use_wallet), json=body)
+        if receipt_sink:
+            receipt_sink.identify(response.headers)
         raw = response.json()
         if not (isinstance(raw, dict) and raw.get("code") in (0, "0")):
             raise HTTPException(status_code=502, detail=(raw.get("msg") if isinstance(raw, dict) else "") or f"RunningHub 提交失败：{raw}")
@@ -10075,6 +10069,8 @@ async def generate_runninghub_entry_image(prompt, size, model, reference_images,
         if not task_id:
             raise HTTPException(status_code=502, detail=f"RunningHub 未返回 taskId：{raw}")
 
+        if receipt_sink:
+            await receipt_sink.accepted(str(task_id))
         query_url = runninghub_endpoint_url(provider, "/task/openapi/outputs")
         deadline = time.monotonic() + 1800
         last_payload = None
@@ -10095,10 +10091,10 @@ async def generate_runninghub_entry_image(prompt, size, model, reference_images,
             # 804 运行中 / 813 排队中 / 其他状态继续轮询
         raise HTTPException(status_code=504, detail=f"RunningHub 任务超时：{last_payload}")
 
-async def generate_runninghub_provider_image(prompt, size, model, reference_images=None, provider=None):
+async def generate_runninghub_provider_image(prompt, size, model, reference_images=None, provider=None, receipt_sink=None):
     entry = runninghub_entry_config_from_model(provider, model)
     if entry:
-        return await generate_runninghub_entry_image(prompt, size, model, reference_images, provider, entry)
+        return await generate_runninghub_entry_image(prompt, size, model, reference_images, provider, entry, receipt_sink)
     model_def = await runninghub_model_definition(provider, model)
     endpoint = runninghub_task_endpoint(provider, model_def.get("endpoint") or model)
     params = model_def.get("params") if isinstance(model_def.get("params"), list) else []
@@ -10139,6 +10135,8 @@ async def generate_runninghub_provider_image(prompt, size, model, reference_imag
         runninghub_apply_schema_defaults(body, params)
         response = await client.post(endpoint, headers=runninghub_json_headers(provider), json=body)
         response.raise_for_status()
+        if receipt_sink:
+            receipt_sink.identify(response.headers)
         raw = response.json()
         try:
             return runninghub_extract_image(raw), raw
@@ -10146,6 +10144,8 @@ async def generate_runninghub_provider_image(prompt, size, model, reference_imag
             task_id = runninghub_extract_task_id(raw)
             if not task_id:
                 raise HTTPException(status_code=502, detail=f"RunningHub 未返回 taskId 或图片结果：{raw}")
+        if receipt_sink:
+            await receipt_sink.accepted(str(task_id))
         result = await wait_for_runninghub_image_task(client, provider, task_id)
         return runninghub_extract_image(result), result
 
@@ -10242,7 +10242,7 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
     if is_jimeng_provider(provider):
         return await generate_jimeng_provider_image(prompt, size, model, reference_images, provider)
     if is_runninghub_provider(provider):
-        return await generate_runninghub_provider_image(prompt, size, model, reference_images, provider)
+        return await generate_runninghub_provider_image(prompt, size, model, reference_images, provider, receipt_sink)
     if effective_protocol(provider, model) == "gemini" and not builtin_image_profile:
         return await generate_gemini_provider_image(prompt, size, model, reference_images, provider, image_parameters)
     if is_volcengine_provider(provider):
@@ -10437,7 +10437,11 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
             if image_api_explicitly_rejected(response):
                 response = await post_openai_edits()
         response.raise_for_status()
+        if receipt_sink is not None:
+            receipt_sink.identify(response.headers)
         raw = submission_json(response, kind="图像")
+        if receipt_sink is not None:
+            receipt_sink.identify(raw=raw)
         try:
             return extract_image(raw), raw
         except HTTPException as exc:
@@ -12923,6 +12927,10 @@ async def build_online_image_result(payload: OnlineImageRequest, *, receipt_task
                 await sink.started(provider, model)
             kwargs = {"receipt_sink": sink} if sink else {}
             image_data, raw_item = await generate_ai_image(payload.prompt, payload.size, payload.quality, model, image_refs, provider["id"], {"aspect_ratio":payload.aspect_ratio, "resolution":payload.resolution}, **kwargs)
+        except JimengPendingError as exc:
+            if sink and exc.submit_id:
+                await sink.accepted(exc.submit_id)
+            raise
         except Exception as exc:
             if sink:
                 await sink.interrupted(exc)
@@ -12959,13 +12967,21 @@ async def build_online_image_result(payload: OnlineImageRequest, *, receipt_task
                 raise next((error for error in errors if getattr(error, "submission_unknown", False)), errors[0])
     except httpx.HTTPStatusError as exc:
         log_net_error(f"生图 HTTP状态错误 provider={provider.get('id')} model={model} size={payload.size}", exc)
-        if exc.response.status_code >= 500:
-            error = provider_submission_unknown(f"供应商返回 HTTP {exc.response.status_code}，是否已受理生成请求尚不确定")
+        text = exc.response.text or ""
+        raw_error = parse_error_payload_text(text)
+        provider_error = raw_error.get("error")
+        reported_message = provider_error.get("message") if isinstance(provider_error, dict) else provider_error
+        message = reported_message if isinstance(reported_message, str) else raw_error.get("message")
+        if exc.response.status_code >= 500 or exc.response.status_code == 408:
+            summary = f"供应商返回 HTTP {exc.response.status_code}"
+            if isinstance(message, str) and message.strip():
+                summary += f"（{message.strip()[:180]}）"
+            error = provider_submission_unknown(f"{summary}，是否已受理生成请求尚不确定")
             error.upstream_task_id = getattr(exc, "upstream_task_id", "")
             raise error from exc
-        text = exc.response.text or ''
-        friendly = friendly_image_error_detail(text, payload.size, model)
-        detail = friendly or f"上游生图接口错误：{text[:300]}"
+        friendly = friendly_image_error_detail(text, payload.size, model, exc.response.status_code)
+        explanation = str(message or text).strip()[:300]
+        detail = f"{friendly} 供应商返回：{explanation}" if friendly else f"上游生图接口错误（HTTP {exc.response.status_code}）：{explanation}"
         raise HTTPException(status_code=exc.response.status_code, detail=detail) from exc
     except httpx.HTTPError as exc:
         log_net_error(f"生图 网络/TLS错误 provider={provider.get('id')} model={model}", exc)
@@ -12980,6 +12996,10 @@ async def build_online_image_result(payload: OnlineImageRequest, *, receipt_task
         provider_name = provider.get("name") or provider["id"]
         raw_text = json.dumps(raw, ensure_ascii=False)[:800] if isinstance(raw, (dict, list)) else str(raw)[:800]
         raise HTTPException(status_code=502, detail=f"{provider_name} 没有返回图片：{raw_text}")
+    receipt = {}
+    if receipt_task_id:
+        task = await asyncio.to_thread(CANVAS_TASK_JOURNAL.get, receipt_task_id)
+        receipt = next(iter(task.get("provider_receipts") or []), {})
     result = {
         "prompt": payload.prompt,
         "images": local_urls,
@@ -12989,8 +13009,8 @@ async def build_online_image_result(payload: OnlineImageRequest, *, receipt_task
         "model": model,
         "provider_id": provider["id"],
         "provider_name": provider.get("name") or provider["id"],
-        "task_id": extract_task_id(raw) if isinstance(raw, dict) else None,
-        "request_id": raw.get("id") if isinstance(raw, dict) else None,
+        "task_id": receipt.get("upstream_task_id") if receipt_task_id else (extract_task_id(raw) if isinstance(raw, dict) else None),
+        "request_id": receipt.get("provider_request_id") if receipt_task_id else (raw.get("id") if isinstance(raw, dict) else None),
         "params": {"provider_id": provider["id"], "model": model, "size": payload.size, "quality": payload.quality, "n": count, "reference_images": refs},
         "raw_usage": raw.get("usage") if isinstance(raw, dict) else None,
     }
@@ -13220,12 +13240,12 @@ async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
     except Exception as exc:
         detail = task_error(getattr(exc, "detail", None) or str(exc))
         status_code = getattr(exc, "status_code", 500)
-        upstream_task_id = getattr(exc, "upstream_task_id", "") or extract_task_id_from_text(detail)
+        upstream_task_id = getattr(exc, "upstream_task_id", "")
         changes = {
             "status": "failed",
             "error": str(detail),
             "status_code": status_code,
-            "upstream_task_id": upstream_task_id,
+            **({"upstream_task_id": upstream_task_id} if upstream_task_id else {}),
         }
         if getattr(exc, "submission_unknown", False):
             changes.update(recovery_required=True, error_code="PROVIDER_SUBMISSION_UNKNOWN")
@@ -13234,25 +13254,42 @@ async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
 
 @app.post("/api/canvas-image-tasks")
 async def create_canvas_image_task(
-    payload: OnlineImageRequest, x_enterprise_user_id: Optional[str] = Header(default=None),
+    payload: OnlineImageRequest, x_enterprise_user_id: Optional[str] = Header(default=None), response: Response = None,
 ):
-    task_id = f"canvas_img_{uuid.uuid4().hex}"
-    binding = await asyncio.to_thread(prepare_canvas_call_binding, task_id, payload, x_enterprise_user_id)
-    await asyncio.to_thread(create_task_receipt, CANVAS_TASK_JOURNAL, {
-        **({'billing_context':binding} if binding else {}),
-        "id": task_id,
-        "type": "online-image",
-        "status": "queued",
-        "created_at": time.time(),
-        "updated_at": time.time(),
-        "result": None,
-        "error": "",
-        "provider_id": payload.provider_id,
-        "model": payload.model,
-        "source": payload.source.model_dump() if payload.source else None,
-        "provider_receipts": [{"index": index, "state": "started"} for index in range(max(1, min(8, int(payload.n or 1))))],
-    }, x_enterprise_user_id)
+    started_at = time.perf_counter()
+    task_id = f"canvas_img_{payload.request_id or uuid.uuid4().hex}"
+    user_id = x_enterprise_user_id if isinstance(x_enterprise_user_id, str) else ""
+
+    def existing_receipt(record):
+        if record.get("type") != "online-image" or record.get("enterprise_user_id", "") != user_id:
+            raise HTTPException(403, "任务归属不匹配")
+        return {"task_id": task_id, "status": record["status"]}
+
+    if payload.request_id:
+        existing = await asyncio.to_thread(CANVAS_TASK_JOURNAL.get, task_id)
+        if existing:
+            return existing_receipt(existing)
+    binding = await asyncio.to_thread(prepare_canvas_call_binding, task_id, payload, user_id)
+    try:
+        await asyncio.to_thread(create_task_receipt, CANVAS_TASK_JOURNAL, {
+            **({'billing_context':binding} if binding else {}),
+            "id": task_id,
+            "type": "online-image",
+            "status": "queued",
+            "created_at": time.time(),
+            "updated_at": time.time(),
+            "result": None,
+            "error": "",
+            "provider_id": payload.provider_id,
+            "model": payload.model,
+            "source": payload.source.model_dump() if payload.source else None,
+            "provider_receipts": [{"index": index, "state": "started"} for index in range(max(1, min(8, int(payload.n or 1))))],
+        }, user_id)
+    except TaskAlreadyExists:
+        return existing_receipt(await asyncio.to_thread(CANVAS_TASK_JOURNAL.get, task_id))
     await CANVAS_TASK_DISPATCH.enqueue(task_id, payload)
+    if response is not None:
+        response.headers["Server-Timing"] = f"task-receipt;dur={(time.perf_counter() - started_at) * 1000:.1f}"
     return {"task_id": task_id, "status": "queued"}
 
 @app.get("/api/canvas-image-tasks/{task_id}")
@@ -15793,9 +15830,16 @@ async def batch_crop_asset_library_items(payload: AssetLibraryBatchCropRequest):
     return {"library": lib, "added": len(added), "items": added}
 
 @app.put("/api/canvases/{canvas_id}")
-async def update_canvas(canvas_id: str, payload: CanvasSaveRequest):
+async def update_canvas(canvas_id: str, payload: CanvasSaveRequest, response: Response = None):
+    started_at = time.perf_counter()
     canvas = await asyncio.to_thread(update_canvas_document, canvas_id, payload)
+    saved_at = time.perf_counter()
     await manager.broadcast_canvas_updated(canvas_id, int(canvas.get("updated_at") or now_ms()), payload.client_id)
+    if response is not None:
+        response.headers["Server-Timing"] = (
+            f"canvas-write;dur={(saved_at - started_at) * 1000:.1f}, "
+            f"canvas-notify;dur={(time.perf_counter() - saved_at) * 1000:.1f}"
+        )
     return {"canvas": canvas}
 
 def update_canvas_document(canvas_id: str, payload: CanvasSaveRequest):
@@ -15887,7 +15931,7 @@ async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(d
             raw={'usage':result.get('raw_usage')}
         except httpx.HTTPStatusError as exc:
             text = exc.response.text or ""
-            detail = friendly_image_error_detail(text, image_size, model) or f"上游生图接口错误：{text[:300]}"
+            detail = friendly_image_error_detail(text, image_size, model, exc.response.status_code) or f"上游生图接口错误：{text[:300]}"
             raise HTTPException(status_code=exc.response.status_code, detail=detail) from exc
         except httpx.HTTPError as exc:
             log_net_error(f"对话生图 网络/TLS错误 model={model}", exc)
@@ -15964,7 +16008,7 @@ async def chat_agent(payload: ChatRequest, request: Request, x_user_id: str = He
                 raw_items.append({'usage':result.get('raw_usage')})
         except httpx.HTTPStatusError as exc:
             text = exc.response.text or ""
-            detail = friendly_image_error_detail(text, image_size, model) or f"上游生图接口错误：{text[:300]}"
+            detail = friendly_image_error_detail(text, image_size, model, exc.response.status_code) or f"上游生图接口错误：{text[:300]}"
             raise HTTPException(status_code=exc.response.status_code, detail=detail) from exc
         except httpx.HTTPError as exc:
             log_net_error(f"对话生图 网络/TLS错误 model={model}", exc)

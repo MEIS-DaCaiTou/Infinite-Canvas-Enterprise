@@ -20,6 +20,10 @@ from enterprise.runtime import performance
 from enterprise.paths import _assert_no_reparse
 
 
+class TaskAlreadyExists(ValueError):
+    pass
+
+
 class CanvasTaskJournal:
     def __init__(self, root: Path):
         self.root = Path(root)
@@ -105,7 +109,7 @@ class CanvasTaskJournal:
     def create(self, record: dict) -> None:
         with self._lock:
             if self.get(record["id"]) is not None:
-                raise ValueError("Canvas task already exists")
+                raise TaskAlreadyExists("Canvas task already exists")
             self._write({**record, "journal_version": 1})
 
     def mark_running(self, task_id: str) -> bool:

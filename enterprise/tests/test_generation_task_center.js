@@ -57,7 +57,7 @@ const flush=async()=>{for(let i=0;i<12;i++)await Promise.resolve();};
     button=list.querySelector('.generation-task-detail').querySelector('.generation-task-cancel');
     assert(button.disabled&&!button.onclick,'acknowledgement is not a confirmed cancellation');
     assert(!calls.some(([,url])=>/\/prompt|\/interrupt/.test(url)));
-    for(const path of ['static/canvas.html','static/smart-canvas.html'])assert(fs.readFileSync(path,'utf8').includes('generation-task-center.js?v=20261103.2'));
+    for(const path of ['static/canvas.html','static/smart-canvas.html','static/online.html'])assert(fs.readFileSync(path,'utf8').includes('generation-task-center.js?v=20261112.1'));
     assert(fs.readFileSync('static/js/canvas.js','utf8').includes("GenerationTaskCenter.openTasks({kind:'canvas_comfy'})"));
     console.log('task center: no-output cancel, retry, pending ack, both entrypoints; no provider POST');
 })().catch(error=>{console.error(error);process.exitCode=1;});

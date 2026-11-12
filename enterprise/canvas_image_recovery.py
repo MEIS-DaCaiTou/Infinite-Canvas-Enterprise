@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 from copy import deepcopy
 import logging
+import re
 import time
 from urllib.parse import urlsplit
 
@@ -39,6 +40,11 @@ def public_receipt(record):
     # Internal query binding is not frontend configuration or a credential.
     public = {**{key: value for key, value in record.items() if key != "provider_receipts"},
               "can_reconcile": can_reconcile(record)}
+    if record.get("type") == "online-image":
+        receipt = next(iter(record.get("provider_receipts") or []), {})
+        public.update(submission_status=receipt.get("state", ""),
+                      provider_request_id=receipt.get("provider_request_id", ""),
+                      provider_result_received=bool(receipt.get("generated_at")))
     from enterprise.accepted_task_recovery import recovery_candidate
     if (recovery_candidate(record)
             and (record.get("auto_recovery") or {}).get("status") in {"waiting", "querying"}):
@@ -50,20 +56,35 @@ def public_receipt(record):
 class ImageReceiptSink:
     def __init__(self, journal, task_id, index):
         self.journal, self.task_id, self.index = journal, task_id, index
+        self.provider_request_id = ""
+        self.upstream_task_id = ""
 
     async def started(self, provider, model):
         await asyncio.to_thread(self.journal.record_image_request, self.task_id, self.index,
                                 {"provider_id": provider["id"], "model": model, "state": "submitting", "started_at": time.time()})
 
-    async def accepted(self, upstream_task_id, provider):
+    def identify(self, headers=None, raw=None):
+        headers = headers or {}
+        raw = raw if isinstance(raw, dict) else {}
+        value = raw.get("request_id") or headers.get("x-request-id") or headers.get("request-id")
+        if not self.provider_request_id and isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_.:-]{1,240}", value):
+            self.provider_request_id = value
+
+    def request_identity(self):
+        return {"provider_request_id": self.provider_request_id} if self.provider_request_id else {}
+
+    async def accepted(self, upstream_task_id, provider=None):
         if not isinstance(upstream_task_id, str) or not 1 <= len(upstream_task_id) <= 240:
             raise ValueError("Invalid provider task identity")
+        self.upstream_task_id = upstream_task_id
         await asyncio.to_thread(self.journal.record_image_request, self.task_id, self.index,
-                                {**provider_scope(provider), "state": "accepted", "upstream_task_id": upstream_task_id, "accepted_at": time.time()})
+                                {**(provider_scope(provider) if provider else {}), **self.request_identity(), "state": "accepted", "upstream_task_id": upstream_task_id, "accepted_at": time.time()})
 
     async def generated(self, raw):
+        if not self.upstream_task_id:
+            self.identify(raw=raw)
         await asyncio.to_thread(self.journal.record_image_request, self.task_id, self.index,
-                                {"state": "generated", "reported_usage": reported_usage(raw), "generated_at": time.time()})
+                                {**self.request_identity(), "state": "generated", "reported_usage": reported_usage(raw), "generated_at": time.time()})
 
     async def completed(self, images, image_items):
         if not images:
@@ -74,8 +95,9 @@ class ImageReceiptSink:
     async def interrupted(self, exc):
         from enterprise.task_credentials import task_error
         ambiguous = getattr(exc, "submission_unknown", False) or getattr(exc, "status_code", 0) >= 500 or isinstance(exc, httpx.HTTPError)
-        if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code < 500:
-            ambiguous = False
+        if isinstance(exc, httpx.HTTPStatusError):
+            self.identify(exc.response.headers)
+            ambiguous = exc.response.status_code >= 500 or exc.response.status_code == 408
         record = await asyncio.to_thread(self.journal.get, self.task_id)
         previous = (record.get("provider_receipts") or [])[self.index]
         if previous.get("upstream_task_id") or previous.get("state") == "generated":
@@ -83,7 +105,7 @@ class ImageReceiptSink:
         if getattr(exc, "provider_task_failed", False):
             ambiguous = False
         await asyncio.to_thread(self.journal.record_image_request, self.task_id, self.index,
-                                {"state": "unknown" if ambiguous else "failed", "finished_at": None if ambiguous else time.time(),
+                                {**self.request_identity(), "state": "unknown" if ambiguous else "failed", "finished_at": None if ambiguous else time.time(),
                                  "error": task_error(getattr(exc, "detail", None) or str(exc))[:1200]})
 
 
