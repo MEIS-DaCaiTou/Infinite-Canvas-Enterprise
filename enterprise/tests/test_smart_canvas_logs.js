@@ -78,6 +78,7 @@ vm.runInContext([
   extractFunction('pendingSmartGenerationLog'),
   extractFunction('clearSmartPendingGenerationLog'),
   extractFunction('recordSmartPendingGenerationLog'),
+  extractFunction('appendSmartPendingResults'),
   extractFunction('finalizeSmartPendingTask'),
 ].join('\n'), pendingSandbox);
 
@@ -91,6 +92,10 @@ const pendingNode = {
   runStartedAt: 1000,
 };
 pendingSandbox.startSmartPendingGenerationLog(pendingNode, { nodeId: 'legacy-node', kind: 'image' }, 1000);
+assert.equal(pendingSandbox.appendSmartPendingResults(pendingNode, [{ url: '/assets/output/one.png' }], 'image'), true);
+assert.equal(pendingSandbox.appendSmartPendingResults(pendingNode, [{ url: '/assets/output/one.png' }], 'image'), false);
+assert.equal(pendingNode.pendingTasks.length, 2, 'partial results must not stop either task');
+assert.equal(pendingSandbox.logged.length, 0, 'partial results must not finish the log');
 pendingSandbox.finalizeSmartPendingTask(pendingNode, 'task-1', [{ url: '/assets/output/one.png' }]);
 pendingSandbox.finalizeSmartPendingTask(pendingNode, 'task-2', [{ url: '/assets/output/two.png' }]);
 assert.equal(pendingSandbox.logged.length, 1, 'completed multi-task recovery must write one log entry');
@@ -103,14 +108,11 @@ assert.equal(pendingNode.pendingGenerationLog, undefined, 'completed recovery mu
 
 for (const expected of [
   'canvas.logs = normalizeSmartGenerationLogs(canvas.logs);',
-  'logs:normalizeSmartGenerationLogs(storageCanvas.logs)',
-  'canvas.logs = mergeSmartGenerationLogs(canvas.logs, serverCanvas.logs);',
-  'startSmartPendingGenerationLog(outputSlot, runLog, runLogStart);',
-  'startSmartPendingGenerationLog(pendingNode, runLog, runLogStart);',
+  'logs:normalizeSmartGenerationLogs(stored.logs)',
+  'startSmartPendingGenerationLog(target, run, runLogStart);',
   'recordSmartPendingGenerationLog(node, additions, kind);',
   'const logState = pendingSmartGenerationLog(node, kind);',
-  'await resumeSmartPendingNode(outputSlot, {run:runLog, runLogStart, recordLog:false});',
-  'await resumeSmartPendingNode(pendingNode, {run:runLog, runLogStart, recordLog:false});',
+  'await resumeSmartPendingNode(target, {run, runLogStart, recordLog:false, submissions});',
 ]) {
   assert.ok(source.includes(expected), `missing regression hook: ${expected}`);
 }

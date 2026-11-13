@@ -38,6 +38,92 @@ id_path = roots.DATA_ROOT / 'fixture-local-task-id'
 '''
 
 
+@pytest.mark.parametrize("mode", ["first-write", "until-finish", "finish-retry", "finish-after-save", "path-probe", "unwritable"])
+def test_accepted_image_id_survives_receipt_write_failure(tmp_path, mode):
+    install = tmp_path / "install"
+    app = install / "releases/fixture"
+    (app / "static").mkdir(parents=True)
+    (app / "main.py").write_text("# fixture", encoding="utf-8")
+    script = BOOTSTRAP + r'''
+from enterprise.generation_tasks import describe_task
+from io import BytesIO
+from PIL import Image
+mode = sys.argv[4]
+task_id = 'canvas_img_' + 'f'*32
+journal = main.CANVAS_TASK_JOURNAL
+write = journal._write
+failed = 0
+failures_before_recovery = {'first-write': 1, 'until-finish': 2, 'finish-retry': 3, 'path-probe': 1}
+image = BytesIO()
+Image.new('RGB', (32,32), 'white').save(image, 'PNG')
+
+def fail_write(record):
+    global failed
+    if mode == 'finish-after-save':
+        state = record['provider_receipts'][0]['state']
+        fail = (failed == 0 and state == 'accepted') or (failed == 1 and record['status'] == 'failed')
+    else:
+        fail = mode == 'unwritable' or failed < failures_before_recovery[mode]
+    if record.get('upstream_task_id') and fail:
+        failed += 1
+        if mode=='path-probe':
+            from unittest.mock import patch
+            with patch('enterprise.paths.os.lstat', side_effect=PermissionError('fixture storage path inaccessible')):
+                write(record)
+            raise AssertionError('fixture path probe did not fail')
+        raise PermissionError('fixture journal write blocked')
+    write(record)
+journal._write = fail_write
+
+def reply(request):
+    path = request.url.path
+    if path == '/result.png':
+        calls.append((request.method,path))
+        return httpx.Response(200,content=image.getvalue(),headers={'content-type':'image/png'})
+    if request.method == 'GET':
+        saved = journal.get(task_id)['provider_receipts'][0]
+        assert saved['upstream_task_id']=='accepted-before-process-exit'
+        assert saved['provider_base_url']==provider['base_url']
+    return handler(request)
+main.httpx.AsyncClient = lambda **kw: original_client(transport=httpx.MockTransport(reply), **kw)
+
+async def exercise():
+    request = main.OnlineImageRequest(request_id='f'*32, provider_id='zhenzhen',model='gpt-image-2-all',prompt='fixture')
+    await main.create_canvas_image_task(request,None)
+    await asyncio.gather(*main.CANVAS_TASK_RUNNERS, return_exceptions=(mode=='unwritable'))
+    assert calls==[('POST','/v1/images/generations')]
+    public = await main.get_canvas_image_task(task_id)
+    assert public['recovery_required'] and public['error_code']=='PROVIDER_SUBMISSION_UNKNOWN'
+    assert '已受理' in public['error']
+    if mode=='finish-after-save':
+        assert failed==2
+    if mode=='unwritable':
+        assert not public['can_reconcile'] and not journal.get(task_id).get('upstream_task_id')
+        from enterprise.generation_tasks import GenerationTaskRepository
+        from enterprise import db
+        db.get_task_owner = lambda *_: 'owner'
+        db.list_owned_canvas_tasks = lambda *_args, **_kw: [
+            {'task_id':task_id, 'task_type':'canvas_image', 'created_at':1}]
+        repository = GenerationTaskRepository(journal.root,journal=journal)
+        for item in (repository.detail('owner',task_id),repository.page('owner',status='unknown')['items'][0]):
+            assert item['status']=='unknown' and '本地回执' in item['error'] and not item['can_query']
+        assert repository.detail('another-user',task_id) is None
+        return
+    assert public['can_reconcile']
+    detail = describe_task(journal.get(task_id),detail=True)
+    assert detail['status']=='unknown' and detail['attempts'][0]['status']=='unknown'
+    assert detail['attempts'][0]['upstream_task_id']=='accepted-before-process-exit'
+    recovered = await main.reconcile_canvas_image_task(task_id)
+    assert recovered['status']=='succeeded' and len(recovered['images'])==1
+    assert calls==[('POST','/v1/images/generations'),('GET','/v1/images/tasks/accepted-before-process-exit'),('GET','/result.png')]
+asyncio.run(exercise())
+'''
+    result = subprocess.run([sys.executable, "-c", script, str(ROOT), str(install), str(tmp_path / "local"), mode],
+                            cwd=ROOT, env=dict(os.environ, PYTHONUTF8="1", PYTHONDONTWRITEBYTECODE="1"),
+                            capture_output=True, text=True, encoding="utf-8", timeout=35)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 @pytest.mark.parametrize("crash_point", ["accepted", "before_reply"])
 def test_hard_exit_preserves_accepted_id_and_recovery_only_issues_get(tmp_path, crash_point):
     install = tmp_path / "install"
@@ -473,7 +559,13 @@ async def exercise():
     assert len(unknown)==1 and unknown[0]['status']==('failed' if last_attempt=='rejected' else 'unknown')
     archived={item['url'] for item in detail['items']}
     assert {Path(main.output_file_from_url(url)).read_bytes() for url in archived}=={source_images[0],source_images[1]}
-    assert (await main.get_canvas_image_task(task_id))['status']=='running'
+    for auto_state in (None,'waiting','querying'):
+        if auto_state:
+            reopened.record_auto_recovery(task_id, {'status':auto_state})
+        projected=await main.get_canvas_image_task(task_id)
+        assert projected['status']=='running'
+        assert projected['result']['status']=='partial' and set(projected['result']['images'])==archived
+        assert '仍在跟踪' in projected['result']['message']
     reopened.record_auto_recovery(task_id, {'status':'manual'})
     projected=await main.get_canvas_image_task(task_id)
     assert projected['status']=='partial' and set(projected['result']['images'])==archived

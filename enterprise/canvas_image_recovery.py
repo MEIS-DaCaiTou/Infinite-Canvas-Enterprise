@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 
 import httpx
 from fastapi import HTTPException
-from enterprise.providers.submission import reported_usage
+from enterprise.providers.submission import provider_submission_unknown, reported_usage
 from enterprise.runtime.logging import redact_text
 
 
@@ -30,7 +30,7 @@ def provider_scope(provider):
 
 
 def can_reconcile(record):
-    return record.get("type") == "online-image" and record.get("status") == "failed" and any(
+    return record.get("type") == "online-image" and record.get("status") == "failed" and not record.get("tracking_write_failed") and any(
         (receipt.get("upstream_task_id") and receipt.get("provider_base_url")
          and receipt.get("state") not in {"succeeded", "failed"})
         or (receipt.get("result") or {}).get("images")
@@ -50,6 +50,15 @@ def image_receipt_result(record, timestamp):
             "timestamp": timestamp}
 
 
+def provisional_image_result(record):
+    previous = record.get("result") or {}
+    timestamp = previous.get("timestamp") or record.get("created_at") or record.get("updated_at", 0)
+    result = image_receipt_result(record, timestamp)
+    if result["images"]:
+        return {**result, "status": "partial"}
+    return None
+
+
 def public_receipt(record):
     # Internal query binding is not frontend configuration or a credential.
     public = {**{key: value for key, value in record.items() if key != "provider_receipts"},
@@ -62,17 +71,17 @@ def public_receipt(record):
     from enterprise.accepted_task_recovery import recovery_candidate
     auto_state = (record.get("auto_recovery") or {}).get("status")
     partial = None
-    if record.get("type") == "online-image" and record.get("status") == "failed" and record.get("provider_receipts"):
-        previous = record.get("result") or {}
-        timestamp = previous.get("timestamp") or record.get("created_at") or record.get("updated_at", 0)
-        result = image_receipt_result(record, timestamp)
-        if result["status"] == "partial":
-            partial = result
-    if recovery_candidate(record) and (auto_state in {"waiting", "querying"} or (partial and not auto_state)):
+    if record.get("type") == "online-image" and record.get("status") in {"failed", "running"} and record.get("provider_receipts"):
+        partial = provisional_image_result(record)
+    if (partial and record.get("status") == "running") or (not record.get("tracking_write_failed") and recovery_candidate(record) and (
+            auto_state in {"waiting", "querying"} or (partial and not auto_state))):
         # A local tracking interruption is not a terminal supplier failure.
         public.update(status="running", error="", error_code="")
+        if partial:
+            public["result"] = {**partial, "message": "已归档的图片可用，其余仍在跟踪原任务"}
     elif partial:
-        public.update(status="partial", result=partial, message=partial["message"])
+        message = record["error"] if record.get("tracking_write_failed") else partial["message"]
+        public.update(status="partial", result={**partial, "message":message}, message=message)
     return public
 
 
@@ -81,6 +90,7 @@ class ImageReceiptSink:
         self.journal, self.task_id, self.index = journal, task_id, index
         self.provider_request_id = ""
         self.upstream_task_id = ""
+        self._acceptance = {}
 
     async def started(self, provider, model):
         await asyncio.to_thread(self.journal.record_image_request, self.task_id, self.index,
@@ -100,8 +110,17 @@ class ImageReceiptSink:
         if not isinstance(upstream_task_id, str) or not 1 <= len(upstream_task_id) <= 240:
             raise ValueError("Invalid provider task identity")
         self.upstream_task_id = upstream_task_id
-        await asyncio.to_thread(self.journal.record_image_request, self.task_id, self.index,
-                                {**(provider_scope(provider) if provider else {}), **self.request_identity(), "state": "accepted", "upstream_task_id": upstream_task_id, "accepted_at": time.time()})
+        self._acceptance = {**(provider_scope(provider) if provider else {}), **self.request_identity(),
+                            "upstream_task_id": upstream_task_id, "accepted_at": time.time()}
+        try:
+            await asyncio.to_thread(self.journal.record_image_request, self.task_id, self.index,
+                                    {**self._acceptance, "state": "accepted"})
+        except OSError as exc:
+            # Do not query or resubmit until the original ID has been recorded.
+            error = provider_submission_unknown("供应商已受理，但本地回执首次写入失败",
+                                                upstream_task_id=upstream_task_id)
+            error.image_receipt_write_failed = True
+            raise error from exc
 
     async def generated(self, raw):
         if not self.upstream_task_id:
@@ -121,15 +140,24 @@ class ImageReceiptSink:
         if isinstance(exc, httpx.HTTPStatusError):
             self.identify(exc.response.headers)
             ambiguous = exc.response.status_code >= 500 or exc.response.status_code == 408
-        record = await asyncio.to_thread(self.journal.get, self.task_id)
-        previous = (record.get("provider_receipts") or [])[self.index]
-        if previous.get("upstream_task_id") or previous.get("state") == "generated":
-            ambiguous = True  # Local query/archiving failure does not mean the supplier failed.
-        if getattr(exc, "provider_task_failed", False):
-            ambiguous = False
-        await asyncio.to_thread(self.journal.record_image_request, self.task_id, self.index,
-                                {**self.request_identity(), "state": "unknown" if ambiguous else "failed", "finished_at": None if ambiguous else time.time(),
-                                 "error": task_error(getattr(exc, "detail", None) or str(exc))[:1200]})
+        changes = {**self._acceptance, **self.request_identity()}
+        try:
+            record = await asyncio.to_thread(self.journal.get, self.task_id)
+            previous = (record.get("provider_receipts") or [])[self.index]
+            if self.upstream_task_id or previous.get("upstream_task_id") or previous.get("state") == "generated":
+                ambiguous = True  # Local tracking/archiving failure is not a supplier rejection.
+            if getattr(exc, "provider_task_failed", False):
+                ambiguous = False
+            changes.update(state="unknown" if ambiguous else "failed", finished_at=None if ambiguous else time.time(),
+                           error=task_error(getattr(exc, "detail", None) or str(exc))[:1200])
+            await asyncio.to_thread(self.journal.record_image_request, self.task_id, self.index, changes)
+        except OSError:
+            if not (self.upstream_task_id and getattr(exc, "submission_unknown", False)):
+                raise
+            # If storage is back at finalization, commit the ID and status together.
+            exc.unwritten_image_receipt = (self.index, {**changes, "state": "unknown", "finished_at": None,
+                "error": task_error(exc.detail)[:1200]})
+            logging.getLogger(__name__).warning("Accepted image receipt still unavailable for %s", self.task_id)
 
 
 class CanvasImageRecovery:

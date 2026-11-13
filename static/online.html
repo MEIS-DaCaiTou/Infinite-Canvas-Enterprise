@@ -24,7 +24,7 @@
     <script src="/static/js/history-bulk-manager.js?v=20261105.2"></script>
     <script src="/static/js/media-grid-window.js?v=20261105.2"></script>
     <link rel="stylesheet" href="/static/css/generation-task-center.css?v=20261015.1">
-    <script src="/static/js/canvas-task-query.js?v=20261113.1"></script>
+    <script src="/static/js/canvas-task-query.js?v=20261113.2"></script>
     <script src="/static/js/generation-task-center.js?v=20261112.1"></script>
     <style>
         #onlineTaskModal { --text:var(--accent); --muted:#64748b; --line:#94a3b866; width:min(680px, calc(100% - 24px)); max-height:90vh; margin:auto; border:1px solid var(--line); border-radius:20px; background:var(--card); color:var(--text); }
@@ -695,6 +695,7 @@
             const statuses = document.getElementById('onlineImageStatuses');
             statuses.replaceChildren();
             let hasResult = false;
+            let previewTaskId;
             try {
                 const payload = {prompt, provider_id:provider, model:selectedModel, size:currentSize(), reference_images:Object.values(refs).filter(Boolean)};
                 if(QUALITY_PROTOCOLS.has(providerProtocol(provider))) payload.quality = quality;
@@ -708,19 +709,28 @@
                     try {
                         const receipt = await CanvasTaskQuery.submitImage(request);
                         accepted = true;
-                        const showTask = task => show([CanvasTaskQuery.imageStatus(task), task.message || task.error].filter(Boolean).join(' · '));
+                        const showTask = task => {
+                            show([CanvasTaskQuery.imageStatus(task), task.message || task.error].filter(Boolean).join(' · '));
+                            const result = task.result;
+                            if(!result?.images?.length) return;
+                            if(!hasResult || previewTaskId === request.taskId){
+                                if(!hasResult){
+                                    previewTaskId = request.taskId;
+                                    out.classList.remove('hidden');
+                                    dl.classList.remove('hidden');
+                                    loader.classList.add('hidden');
+                                }
+                                if(!hasResult || currentResult?.images?.[0] !== result.images[0]){
+                                    out.src = result.images[0];
+                                    dl.href = result.images[0];
+                                }
+                                hasResult = true;
+                                currentResult = result;
+                            }
+                            if(['succeeded','partial'].includes(task.status)) renderHistoryCards([result], {prepend:true});
+                        };
                         showTask(receipt);
-                        const task = await CanvasTaskQuery.waitImage(request.taskId, {onStatus:showTask});
-                        if(!['succeeded','partial'].includes(task.status) || !task.result?.images?.length) return;
-                        const result = task.result;
-                        if(!hasResult){
-                            hasResult = true;
-                            currentResult = result;
-                            out.src = result.images[0]; out.classList.remove('hidden');
-                            dl.href = result.images[0]; dl.classList.remove('hidden');
-                            loader.classList.add('hidden');
-                        }
-                        renderHistoryCards([result], {prepend:true});
+                        await CanvasTaskQuery.waitImage(request.taskId, {onStatus:showTask});
                     } catch(error) {
                         const label = error.definiteRejection ? '明确失败' : accepted ? '原任务查询中断' : '平台回执待核对';
                         show(`${label} · ${error.message}`);

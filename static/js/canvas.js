@@ -1968,7 +1968,7 @@ async function createSmartCanvas(){
 }
 function openSmartCanvasPage(id){
     if(!id) return;
-    window.location.href = `/static/smart-canvas.html?id=${encodeURIComponent(id)}&v=20261113.1`;
+    window.location.href = `/static/smart-canvas.html?id=${encodeURIComponent(id)}&v=20261113.2`;
 }
 function toggleEmojiPicker(id, event){
     event?.preventDefault();
@@ -10639,7 +10639,7 @@ async function runCanvasImageBatch(node, out, run, payload, refs, count, opts){
         if(!opts.cascade && !outputs.length) showErrorModal(message, tr('canvas.apiFailed'));
     }
     if(opts.cascade && (results.includes('aborted') || settled.some(item => isCascadeAbortError(item.reason)))) throw cascadeAbortError(cascadeStopMessage());
-    if(opts.cascade && !results.some(result => result === 'succeeded' || result?.images?.length)){
+    if(opts.cascade && !results.some(result => result === 'succeeded' || result === 'partial' || result?.images?.length)){
         throw new Error(node.runError || settled.find(item => item.reason)?.reason.message || tr('canvas.generationFailed'));
     }
 }
@@ -12683,6 +12683,9 @@ async function pollCanvasImageTask(taskId, options={}){
                 if(latest.pending.retryReceipt) latest.pending.failed = false;
                 latest.pending.retryReceipt = false;
                 updateCanvasImageStatus(taskId, CanvasTaskQuery.imageStatus(data));
+                if(data.status === 'running' && data.result?.status === 'partial'){
+                    appendPendingImageResults(latest.out, latest.pending, data.result);
+                }
             }
             if(['succeeded','partial'].includes(data.status)){
                 completeCanvasImageTask(taskId, data.result || {});
@@ -12728,7 +12731,7 @@ function completeCanvasImageTask(taskId, result){
     if(!found) return;
     finishPendingImageOutput(found.out, found.pending, result);
 }
-function finishPendingImageOutput(out, pending, result){
+function appendPendingImageResults(out, pending, result, {settled=false}={}){
     const images = result.image_items?.length ? result.image_items : (result.images || []);
     const taskId = pending.canvasTaskId;
     const meta = {
@@ -12738,13 +12741,26 @@ function finishPendingImageOutput(out, pending, result){
     meta.run.request = requestMetaFromResult(result);
     if(pending.canvasTaskType==='comfy')Object.assign(meta.run,{canvasTaskId:taskId,canvasTaskStatus:'succeeded',taskStartedAt:pending.startedAt,taskFinishedAt:nowMs()});
     if(pending.canvasTaskType === 'online-image') Object.assign(meta.run, {canvasTaskId:taskId, imageBatchId:pending.imageBatchId});
-    const warning = result.status === 'partial' ? result.message : '';
     const appendBatch = pending.imageBatchId && (out.images || []).some(item => item.run?.imageBatchId === pending.imageBatchId);
-    out._pending = (out._pending || []).filter(p => p.id !== pending.id);
-    appendOutputImages(out, images, meta.run?.refs?.[0], [meta]);
     const gen = nodes.find(n => n.id === meta.run?.node?.id);
-    if(gen && (!pending.imageBatchId || !gen.activeImageBatchId || pending.appendGenerated || gen.activeImageBatchId === pending.imageBatchId)){
+    const isCurrentBatch = gen && (!pending.imageBatchId || !gen.activeImageBatchId || pending.appendGenerated || gen.activeImageBatchId === pending.imageBatchId);
+    const added = pending.canvasTaskType === 'online-image'
+        ? appendOutputImagesWithoutDuplicates(out, images, meta.run?.refs?.[0], [meta])
+        : (appendOutputImages(out, images, meta.run?.refs?.[0], [meta]), images.length);
+    if(added && isCurrentBatch){
         mergeGeneratedOutputs(gen, images, Boolean(pending.appendGenerated || appendBatch));
+    }
+    if(!settled && added){
+        refreshRunNodes(gen, out);
+        scheduleSave();
+    }
+    return {gen, isCurrentBatch, images, meta};
+}
+function finishPendingImageOutput(out, pending, result){
+    const {gen, isCurrentBatch, images, meta} = appendPendingImageResults(out, pending, result, {settled:true});
+    const warning = result.status === 'partial' ? result.message : '';
+    out._pending = (out._pending || []).filter(p => p.id !== pending.id);
+    if(isCurrentBatch){
         gen.runStatus = 'done';
         gen.runError = warning;
         gen.running = false;

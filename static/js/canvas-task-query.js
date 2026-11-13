@@ -120,6 +120,7 @@
     }
     function imageStatus(task) {
         if (task.status === 'partial') return '部分完成';
+        if (task.status === 'running' && task.result?.status === 'partial') return '部分完成，其余仍在跟踪';
         if (task.submission_status === 'unknown' || task.error_code === 'PROVIDER_SUBMISSION_UNKNOWN') {
             if (task.provider_result_received) return '供应商已返回，归档结果待核对';
             if (task.upstream_task_id) return '供应商已受理，结果待核对';

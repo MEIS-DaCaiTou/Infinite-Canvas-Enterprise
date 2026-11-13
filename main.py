@@ -12926,7 +12926,7 @@ async def fetch_upstream_models(provider_id: str):
         raise HTTPException(status_code=400, detail=f"{provider.get('name') or provider_id} 未配置 API Key")
     return await fetch_models_from_upstream(provider.get("base_url") or "", api_key, provider_protocol(provider), provider.get("image_request_mode") or "openai")
 
-async def build_online_image_result(payload: OnlineImageRequest, *, receipt_task_id=None):
+async def build_online_image_result(payload: OnlineImageRequest, *, receipt_task_id=None, unwritten_receipts=None):
     provider = get_api_provider(payload.provider_id)
     require_bound_generation(provider)
     default_model = (provider.get("image_models") or [IMAGE_MODEL])[0]
@@ -12948,6 +12948,9 @@ async def build_online_image_result(payload: OnlineImageRequest, *, receipt_task
         except Exception as exc:
             if sink:
                 await sink.interrupted(exc)
+                if unwritten_receipts is not None and getattr(exc, "unwritten_image_receipt", None):
+                    receipt_index, receipt = exc.unwritten_image_receipt
+                    unwritten_receipts[receipt_index] = receipt
             raise
         try:
             if sink:
@@ -12978,7 +12981,8 @@ async def build_online_image_result(payload: OnlineImageRequest, *, receipt_task
             if errors:
                 # Await all batch members so their accepted IDs/results remain
                 # durable even when one member loses its network response.
-                raise next((error for error in errors if getattr(error, "submission_unknown", False)), errors[0])
+                accepted_write_error = next((error for error in errors if getattr(error, "image_receipt_write_failed", False)), None)
+                raise accepted_write_error or next((error for error in errors if getattr(error, "submission_unknown", False)), errors[0])
     except httpx.HTTPStatusError as exc:
         log_net_error(f"生图 HTTP状态错误 provider={provider.get('id')} model={model} size={payload.size}", exc)
         text = exc.response.text or ""
@@ -13234,9 +13238,11 @@ async def reconcile_canvas_image_task(task_id: str):
 async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
     if not await asyncio.to_thread(CANVAS_TASK_JOURNAL.mark_running, task_id):
         return
+    unwritten_receipts = {}
+    receipt_write_failed = False
     try:
         receipt = await asyncio.to_thread(CANVAS_TASK_JOURNAL.get, task_id)
-        kwargs = {"receipt_task_id": task_id} if receipt.get("provider_receipts") else {}
+        kwargs = {"receipt_task_id": task_id, "unwritten_receipts": unwritten_receipts} if receipt.get("provider_receipts") else {}
         result = await build_online_image_result(payload, **kwargs)
         changes = {"status": "succeeded", "result": result, "error": ""}
     except JimengPendingError as exc:
@@ -13252,6 +13258,7 @@ async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
             "error": "",
         }
     except Exception as exc:
+        receipt_write_failed = getattr(exc, "image_receipt_write_failed", False)
         detail = task_error(getattr(exc, "detail", None) or str(exc))
         status_code = getattr(exc, "status_code", 500)
         upstream_task_id = getattr(exc, "upstream_task_id", "")
@@ -13263,7 +13270,22 @@ async def run_canvas_image_task(task_id: str, payload: OnlineImageRequest):
         }
         if getattr(exc, "submission_unknown", False):
             changes.update(recovery_required=True, error_code="PROVIDER_SUBMISSION_UNKNOWN")
-    await asyncio.to_thread(CANVAS_TASK_JOURNAL.finish, task_id, changes)
+    if unwritten_receipts or receipt_write_failed:
+        # Retry only the local receipt write. Never repeat the paid submission.
+        for delay in (0, .25, 1):
+            if delay:
+                await asyncio.sleep(delay)
+            try:
+                await asyncio.to_thread(CANVAS_TASK_JOURNAL.finish, task_id, changes, unwritten_image_receipts=unwritten_receipts)
+            except OSError:
+                if delay == 1:
+                    # A transient UI warning, never a source of resumable IDs.
+                    await asyncio.to_thread(CANVAS_TASK_JOURNAL.note_image_tracking_write_failure, task_id)
+                    raise
+            else:
+                break
+    else:
+        await asyncio.to_thread(CANVAS_TASK_JOURNAL.finish, task_id, changes)
     CANVAS_ACCEPTED_RECOVERY.notify(task_id)
 
 @app.post("/api/canvas-image-tasks")
@@ -13308,7 +13330,7 @@ async def create_canvas_image_task(
 
 @app.get("/api/canvas-image-tasks/{task_id}")
 async def get_canvas_image_task(task_id: str):
-    task = await asyncio.to_thread(CANVAS_TASK_JOURNAL.get, task_id)
+    task = await asyncio.to_thread(CANVAS_TASK_JOURNAL.get_for_display, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="画布任务不存在；此版本启用前的内存任务无法凭空恢复")
     return public_receipt(task)

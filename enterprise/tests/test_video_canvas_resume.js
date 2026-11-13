@@ -47,7 +47,7 @@ function setup(kind, nodes) {
     if(kind==='classic') functions(ctx,'canvas.js',['serializableCanvasNode','completeCanvasVideoTask','failCanvasVideoTask',
         'resumeCanvasVideoTask','resumeCanvasImageTasks','queryRecoverPendingOutput']);
     else functions(ctx,'smart-canvas.js',['smartPendingTasks','pendingSmartGenerationLog','clearSmartPendingGenerationLog',
-        'recordSmartPendingGenerationLog','finalizeSmartPendingTask','resumeSmartPendingNode','querySmartImageTaskNow']);
+        'recordSmartPendingGenerationLog','appendSmartPendingResults','finalizeSmartPendingTask','resumeSmartPendingNode','querySmartImageTaskNow']);
     return ctx;
 }
 function fixture(kind, taskId='video-one') {

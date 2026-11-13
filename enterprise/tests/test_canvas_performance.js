@@ -9,22 +9,27 @@ function load(ctx,name){
 }
 function fixture({size=async()=>'1024x1024',save=async()=>true,result=async()=>({images:['/output/synthetic.png']})}={}){
     const node={id:'gen',type:'generator',count:4,model:'gpt-image-2'},calls=[],timers=[],errors=[];
-    const ctx=vm.createContext({console,URLSearchParams,WeakSet,canvas:{id:'canvas'},nodes:[node],savingCanvasNow:false,
+    const ctx=vm.createContext({console,URLSearchParams,WeakSet,performance,crypto:require('node:crypto').webcrypto,
+        canvas:{id:'canvas'},nodes:[node],savingCanvasNow:false,
         saveCanvas:async()=>{calls.push('save');return save();},sleep:async()=>{},
         checkTextSelection:()=>true,cascadeTargetIdFromOptions:()=>'',generatorSources:()=>[{prompt:'synthetic',refs:[]}],
-        orderedSources:(_n,s)=>s,imageRefsOnly:()=>[],outputForNode:()=>null,runSnapshot:()=>({}),
+        orderedSources:(_n,s)=>s,imageRefsOnly:()=>[],outputForNode:()=>null,runSnapshot:(_node,prompt)=>({prompt}),
         resolveImageProviderId:()=> 'zhenzhen',resolveImageModel:x=>x,generatorSizeForRun:size,
         normalizedImageQuality:()=>'',CANVAS_REFERENCE_IMAGE_MAX:20,
         refreshRunNodes:()=>calls.push(ctx.CanvasRunPreparation.has(node,'canvas')?'preparing':'refresh'),
         nowMs:()=>1,tr:x=>x,mergeGeneratedOutputs:()=>{},addGenerationLog:()=>{},scheduleSave:()=>{},
         waitCanvasImageTaskResult:result,setTimeout:callback=>{timers.push(callback);},
-        collectRunMetas:()=>[],isCascadeAbortError:()=>false,showErrorModal:error=>errors.push(error),
+        collectRunMetas:()=>[],findPendingTask:()=>null,isCascadeAbortError:()=>false,showErrorModal:error=>errors.push(error),
         responseErrorMessage:async()=> 'controlled failure',
-        cascadeFetch:async(_url,options)=>{calls.push(JSON.parse(options.body));return {ok:true,json:async()=>({task_id:'id'+calls.length})};}
+        cascadeFetch:async(_url,options)=>{
+            const body=JSON.parse(options.body);calls.push(body);
+            return {ok:true,json:async()=>({task_id:'canvas_img_'+body.request_id})};
+        }
     });
     ctx.window=ctx;vm.runInContext(fs.readFileSync(path.join(root,'canvas-media-retention.js'),'utf8'),ctx);
     vm.runInContext(fs.readFileSync(path.join(root,'task-canvas-context.js'),'utf8'),ctx);
-    for(const name of ['taskCanvasSource','createCanvasImageTask','runGenerator'])load(ctx,name);
+    vm.runInContext(fs.readFileSync(path.join(root,'canvas-task-query.js'),'utf8'),ctx);
+    for(const name of ['taskCanvasSource','runCanvasImageBatch','runGenerator','updateCanvasImageStatus','failCanvasImageTask'])load(ctx,name);
     return {ctx,node,calls,timers,errors};
 }
 const posts=f=>f.calls.filter(v=>typeof v==='object');
@@ -56,15 +61,24 @@ async function run(){
         await new Promise(ok=>setImmediate(ok));change(moved);finish(true);await running;
         assert.equal(posts(moved).length,0,'navigation/deletion during source save prevents generation');
     }
-    const rejected=fixture();rejected.ctx.cascadeFetch=async()=>{rejected.calls.push({post:true});return {ok:false};};
+    const rejected=fixture(), reads=[];
+    rejected.ctx.cascadeFetch=async(url,options)=>{
+        if(options.method==='POST')rejected.calls.push(JSON.parse(options.body));
+        else reads.push(url);
+        return {ok:false,status:options.method==='POST'?503:404,json:async()=>({})};
+    };
+    const submit=rejected.ctx.CanvasTaskQuery.submitImage;
+    rejected.ctx.CanvasTaskQuery.submitImage=(request,options)=>submit(request,{...options,wait:async()=>{}});
     await rejected.ctx.runGenerator('gen');assert.equal(posts(rejected).length,4,'ambiguous failure does not automatically submit again');
+    assert.equal(reads.length,12);
+    assert(reads.every(url=>posts(rejected).some(body=>url==='/api/canvas-image-tasks/canvas_img_'+body.request_id)));
 
-    let finishResult;const concurrent=fixture({result:()=>new Promise(ok=>{finishResult=ok;})});
+    const finishResults=[];const concurrent=fixture({result:()=>new Promise(ok=>finishResults.push(ok))});
     const first=concurrent.ctx.runGenerator('gen');await new Promise(ok=>setImmediate(ok));
-    assert.equal(posts(concurrent).length,4);concurrent.timers[0]();
+    assert.equal(posts(concurrent).length,4);assert.equal(finishResults.length,4);
     concurrent.ctx.waitCanvasImageTaskResult=async()=>({images:['/output/second.png']});await concurrent.ctx.runGenerator('gen');
     assert.equal(posts(concurrent).length,8,'the existing post-preparation manual concurrency remains allowed');
-    finishResult({images:['/output/first.png']});await first;
+    finishResults.forEach(finish=>finish({images:['/output/first.png']}));await first;
     const dims=vm.createContext({getImageDimensions:async url=>url==='portrait'?{width:800,height:1200}:{width:1600,height:900},
         pendingPreviewSizeFromRefs:()=>{throw new Error('approximate or stale preview sizes cannot construct a paid request');},
         ratioPartsFromDimensions:(width,height)=>({width,height}),apiImageSize:(_ratio,_resolution,custom)=>custom});

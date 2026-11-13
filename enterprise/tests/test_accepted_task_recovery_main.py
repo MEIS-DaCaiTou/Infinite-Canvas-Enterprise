@@ -193,7 +193,7 @@ from enterprise import db
 from enterprise.canvas_image_recovery import provider_scope
 db.get_task_owner=lambda *_:'fixture-bob' if sys.argv[4]=='owner' else 'fixture-alice'
 db.get_user_by_id=lambda user_id:{'id':user_id}
-async def fail_after_acceptance(payload,receipt_task_id=None):
+async def fail_after_acceptance(payload,receipt_task_id=None,unwritten_receipts=None):
     from enterprise.canvas_image_recovery import ImageReceiptSink
     await ImageReceiptSink(main.CANVAS_TASK_JOURNAL,receipt_task_id,0).accepted('accepted-before-process-exit',provider)
     raise httpx.ReadTimeout('fixture query connection lost')

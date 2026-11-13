@@ -15361,7 +15361,7 @@ async function pollSmartCanvasTask(taskId, onStatus=()=>{}){
             if(task.status === 'jimeng_pending') throw new JimengPendingSignal({submitId:task.submit_id, kind:task.kind, queueInfo:task.queue_info, message:task.message});
             if(task.status === 'failed'){
                 const recoverTaskId = task.upstream_task_id || extractUpstreamTaskId(task.error || '') || (task.can_reconcile ? taskId : '');
-                if(recoverTaskId && (task.can_reconcile || !task.submission_status)){
+                if(recoverTaskId && (task.can_reconcile || (!task.submission_status && !task.recovery_required))){
                     throw Object.assign(new ImageTaskRecoverSignal({taskId, recoverTaskId, providerId:task.provider_id, canReconcile:task.can_reconcile, kind:'image', message:task.error || tr('smart.errRunFailed')}),
                         {imageStatus:CanvasTaskQuery.imageStatus(task)});
                 }
@@ -15420,12 +15420,7 @@ function recordSmartPendingGenerationLog(node, additions, kind='image'){
     clearSmartPendingGenerationLog(node);
     return true;
 }
-function finalizeSmartPendingTask(node, taskId, images, kind='image', options={}){
-    if(!node || !taskId) return false;
-    const pendingTask = smartPendingTasks(node).find(task => task.taskId === taskId);
-    if(!pendingTask) return false;
-    node.pendingTasks = smartPendingTasks(node).filter(task => task.taskId !== taskId);
-    node.pending = Math.max(0, Number(node.pending || 0) - 1);
+function appendSmartPendingResults(node, images, kind){
     const ext = kind === 'video' ? 'mp4' : kind === 'audio' ? 'mp3' : kind === 'text' ? 'txt' : 'png';
     const mediaItems = resultMediaUrls(images);
     const existing = cleanHistoryImages(node.images || []);
@@ -15447,6 +15442,13 @@ function finalizeSmartPendingTask(node, taskId, images, kind='image', options={}
         const urls = additions.map(item => item.url).filter(Boolean);
         logState.outputs = [...new Set([...(logState.outputs || []), ...urls])];
     }
+    return additions.length > 0;
+}
+function finalizeSmartPendingTask(node, taskId, images, kind='image', options={}){
+    if(!node || !smartPendingTasks(node).some(task => task.taskId === taskId)) return false;
+    node.pendingTasks = smartPendingTasks(node).filter(task => task.taskId !== taskId);
+    node.pending = Math.max(0, Number(node.pending || 0) - 1);
+    const added = appendSmartPendingResults(node, images, kind);
     if(!node.pending && smartPendingTasks(node).length === 0){
         delete node.pendingTasks;
         node.runFinishedAt = nowMs();
@@ -15461,7 +15463,7 @@ function finalizeSmartPendingTask(node, taskId, images, kind='image', options={}
         delete node.h;
         if(options.recordLog !== false) recordSmartPendingGenerationLog(node, [], kind);
     }
-    return additions.length > 0;
+    return added;
 }
 async function resumeSmartPendingNode(node, logContext={}){
     const tasks = smartPendingTasks(node);
@@ -15493,9 +15495,17 @@ async function resumeSmartPendingNode(node, logContext={}){
         };
         try {
             const onStatus = receipt => {
-                if(task.imageIndex === undefined || !isActive()) return;
+                if(!isActive()) return;
+                const partial = receipt.status === 'running' && receipt.result?.status === 'partial' ? receipt.result : null;
+                const added = partial && appendSmartPendingResults(node,
+                    partial.image_items?.length ? partial.image_items : partial.images, task.kind || 'image');
+                if(added) scheduleSave();
+                if(task.imageIndex === undefined){
+                    if(added) render();
+                    return;
+                }
                 const label = CanvasTaskQuery.imageStatus(receipt);
-                if(task.imageStatus === label) return;
+                if(!added && task.imageStatus === label) return;
                 Object.assign(task, {imageStatus:label, retryReceipt:false, failed:false});
                 render();
             };

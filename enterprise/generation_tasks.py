@@ -129,7 +129,7 @@ class GenerationTaskRepository:
         record = self.journal.get(task_id)
         if not record or record.get("type") != TYPES[task_type] or record.get("enterprise_user_id", user_id) != user_id:
             return None
-        return record
+        return self.journal.with_tracking_warning(record)
 
     def detail(self, user_id, task_id):
         for task_type in TYPES:
