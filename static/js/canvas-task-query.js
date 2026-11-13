@@ -84,5 +84,65 @@
         const result = await waitVideo(taskId, options);
         return result;
     }
-    window.CanvasTaskQuery = {query, runVideo, waitVideo, queryVideo, requestId};
+
+    function imageRequest(payload) {
+        const nonce = requestId();
+        return {taskId:'canvas_img_' + nonce, payload:{...payload, n:1, request_id:nonce}};
+    }
+    const imageUrl = taskId => '/api/canvas-image-tasks/' + encodeURIComponent(taskId);
+    const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+    async function readImage(taskId, {fetcher=fetch}={}) {
+        const response = await fetcher(imageUrl(taskId), {cache:'no-store'});
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.status) throw Object.assign(new Error(typeof data.detail === 'string' ? data.detail : '平台任务暂不可读'), {status:response.status});
+        return data;
+    }
+    async function submitImage(request, {fetcher=fetch, wait=delay}={}) {
+        try {
+            const response = await fetcher('/api/canvas-image-tasks', {
+                method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(request.payload)
+            });
+            const data = await response.json().catch(() => ({}));
+            if (response.ok && data.task_id === request.taskId) return data;
+            if (response.status >= 400 && response.status < 500 && response.status !== 408) {
+                throw Object.assign(new Error(typeof data.detail === 'string' ? data.detail : '平台拒绝提交（HTTP ' + response.status + '）'), {definiteRejection:true});
+            }
+        } catch (error) {
+            if (error.definiteRejection || error.name === 'AbortError') throw error;
+        }
+        // A dropped POST response can still have created a task. Only read the original ID.
+        for (const pause of [0, 300, 900]) {
+            if (pause) await wait(pause);
+            try { return await readImage(request.taskId, {fetcher}); }
+            catch (error) { if (error.name === 'AbortError') throw error; }
+        }
+        throw Object.assign(new Error('未收到平台回执。请先核对原任务，再决定是否重试。'), {imageTrackingUnknown:true});
+    }
+    function imageStatus(task) {
+        if (task.status === 'partial') return '部分完成';
+        if (task.status === 'running' && task.result?.status === 'partial') return '部分完成，其余仍在跟踪';
+        if (task.submission_status === 'unknown' || task.error_code === 'PROVIDER_SUBMISSION_UNKNOWN') {
+            if (task.provider_result_received) return '供应商已返回，归档结果待核对';
+            if (task.upstream_task_id) return '供应商已受理，结果待核对';
+            return '供应商受理结果待核对';
+        }
+        if (task.status === 'failed' && task.recovery_required) return '原任务结果待核对';
+        if (task.status === 'failed') return '明确失败';
+        if (task.status === 'cancelled') return '已取消';
+        if (task.status === 'succeeded') return '已完成';
+        if (task.submission_status === 'generated') return '供应商已返回，正在归档';
+        if (task.status === 'jimeng_pending' || task.submission_status === 'accepted' || task.upstream_task_id) return '供应商已受理';
+        return '平台任务已创建';
+    }
+    async function waitImage(taskId, {fetcher=fetch, wait=delay, onStatus=()=>{}}={}) {
+        for (let index = 0; index < 900; index++) {
+            const task = await readImage(taskId, {fetcher});
+            onStatus(task);
+            if (!['queued','running'].includes(task.status)) return task;
+            await wait(1800);
+        }
+        throw new Error('平台仍在跟踪原任务，请在“生成任务”中查看。');
+    }
+
+    window.CanvasTaskQuery = {query, runVideo, waitVideo, queryVideo, requestId, imageRequest, readImage, submitImage, imageStatus, waitImage};
 })();

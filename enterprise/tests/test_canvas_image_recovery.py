@@ -34,6 +34,26 @@ def new_journal(tmp_path, count=1):
     return journal
 
 
+def test_unwritable_batch_keeps_completed_images_without_waiting_for_a_dead_runner(tmp_path):
+    from enterprise.generation_tasks import describe_task
+    async def scenario():
+        journal = new_journal(tmp_path, 3)
+        await ImageReceiptSink(journal, "canvas_img_a", 0).completed(["/output/ready.png"], [])
+        await ImageReceiptSink(journal, "canvas_img_a", 1).accepted("saved-id", PROVIDER)
+        journal.note_image_tracking_write_failure("canvas_img_a")
+        stored = journal.get("canvas_img_a")
+        assert stored["status"] == "running"
+        record = journal.with_tracking_warning(stored)
+        projected = public_receipt(record)
+        assert projected["status"] == "partial"
+        assert projected["result"]["images"] == ["/output/ready.png"]
+        assert "本地回执" in projected["message"] and not projected["can_reconcile"]
+        detail = describe_task(record, detail=True)
+        assert detail["status"] == "partial" and detail["output_count"] == 1 and not detail["can_query"]
+        assert "本地回执" in detail["error"]
+    asyncio.run(scenario())
+
+
 def test_restart_queries_original_identity_and_caches_result(tmp_path):
     async def scenario():
         journal = new_journal(tmp_path)

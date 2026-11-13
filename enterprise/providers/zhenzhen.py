@@ -5,8 +5,10 @@ Generations accepts reference images as JSON for these documented families.
 Native Gemini, multipart masked editing and advanced layer outputs retain their
 existing routes; this module does not speculate about unknown model names.
 """
+import base64
 from copy import deepcopy
 from urllib.parse import urlsplit, quote
+from httpx import URL
 from fastapi import HTTPException
 from enterprise.providers.image_task_protocol import SUCCESS_STATUSES, FAILED_STATUSES, task_status
 
@@ -81,11 +83,59 @@ def image_body(model, prompt, size, quality, references, aspect_parameters):
     return body
 
 
-async def submit_image(client, endpoint, headers, *, model, prompt, size, quality, references, aspect_parameters, edit_endpoint=None):
+def _image_edit_files(references):
+    extensions = {"data:image/png": "png", "data:image/jpeg": "jpg", "data:image/webp": "webp"}
+    files = []
+    for index, value in enumerate(references, 1):
+        mime, separator, encoded = value.partition(";base64,")
+        if not separator or mime not in extensions:
+            raise HTTPException(400, "贞贞异步编辑需要 PNG、JPEG 或 WebP 图片文件。请先将远程图片导入素材库。")
+        try:
+            content = base64.b64decode(encoded, validate=True)
+        except ValueError as exc:
+            raise HTTPException(400, "参考图片无法解码，请重新选择图片。") from exc
+        if not content:
+            raise HTTPException(400, "参考图片为空，请重新选择图片。")
+        files.append(("image", (f"reference-{index}.{extensions[mime]}", content, mime.removeprefix("data:"))))
+    return files
+
+
+async def submit_image(client, endpoint, headers, *, model, prompt, size, quality, references, aspect_parameters,
+                       edit_endpoint=None, multipart_edit=False):
     # One chosen endpoint, one paid submission. No edits/generations probing.
+    body = image_body(model, prompt, size, quality, references, aspect_parameters)
     if references and IMAGE_MODELS[model].get("reference_endpoint") == "edits":
         endpoint = edit_endpoint or endpoint.removesuffix("/generations") + "/edits"
-    return await client.post(endpoint, headers=headers, json=image_body(model, prompt, size, quality, references, aspect_parameters))
+        if multipart_edit:
+            # The official async edits handler parses files even for models
+            # whose synchronous edits accept JSON. HTTPX adds the boundary.
+            files = _image_edit_files(body.pop("image"))
+            headers = {name: value for name, value in headers.items() if name.lower() != "content-type"}
+            return await client.post(endpoint, headers=headers, data=body, files=files)
+    return await client.post(endpoint, headers=headers, json=body)
+
+
+def async_image_submit_url(endpoint, query_endpoint):
+    """Opt in only when submission and original-task query share the Images route."""
+    url = URL(endpoint)
+    query = URL(query_endpoint)
+    image_path, separator, _ = query.path.rpartition("/images/tasks/")
+    path = url.path.rstrip("/")
+    if not separator or path not in {f"{image_path}/images/generations", f"{image_path}/images/edits"}:
+        return None
+    if url.copy_with(path=path, query=None, fragment=None) != query.copy_with(path=path, query=None, fragment=None):
+        return None
+    return str(url.copy_set_param("async", "true"))
+
+
+def image_submission_task_id(payload):
+    """A request ID is diagnostic metadata, not a queryable image task ID."""
+    nested = payload.get("data")
+    for source in (payload, nested):
+        value = source.get("task_id") if isinstance(source, dict) else None
+        if isinstance(value, str) and 0 < len(value.strip()) <= 240:
+            return value.strip()
+    return None
 
 
 def image_headers(authorization, *, json_body=True):
@@ -105,19 +155,22 @@ async def query_image(client, endpoint, headers, request):
     """Query the original accepted identity; safe GET retries reuse shared policy."""
     response = await request(client, "GET", endpoint, attempts=3, headers=headers)
     response.raise_for_status()
-    return response.json()
+    payload = response.json()
+    if not isinstance(payload, dict):
+        raise ValueError("Invalid Zhenzhen image task response")
+    return payload
 
 
 def image_query_status(payload, *, has_images):
     """Maintained async status contract; an unknown reply needs human review.
 
-    https://gpt-best.apifox.cn/api-356258956 documents IN_PROGRESS,
-    FAILURE and SUCCESS. Retain existing terminal aliases for managed proxies.
+    The documented statuses include IN_PROGRESS, FAILURE and SUCCESS.
+    A real async image query also returned NOT_START before completion.
     """
     status = task_status(payload)
     if status in FAILED_STATUSES:
         return "failed"
-    if status == "IN_PROGRESS":
+    if status in {"NOT_START", "IN_PROGRESS"}:
         return "running"
     if has_images and (not status or status in SUCCESS_STATUSES):
         return "succeeded"

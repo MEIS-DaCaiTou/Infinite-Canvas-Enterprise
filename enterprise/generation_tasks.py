@@ -104,6 +104,7 @@ def describe_task(record, *, detail=False):
         data["attempts"] = [{"id": f"{record['id']}:{index}", "index": index,
             "status": state if record.get("type") == "comfy" and state not in {"queued", "running"} else item.get("state") or item.get("phase") or state,
             "upstream_task_id": item.get("upstream_task_id") or item.get("prompt_id") or "",
+            "provider_request_id": item.get("provider_request_id") or "",
             "started_at": item.get("started_at"), "accepted_at": item.get("accepted_at"),
             "finished_at": item.get("finished_at"), "reported_usage": item.get("reported_usage"),
             "provider": item.get("provider_id") or data["provider"], "model": item.get("model") or data["model"],
@@ -128,7 +129,7 @@ class GenerationTaskRepository:
         record = self.journal.get(task_id)
         if not record or record.get("type") != TYPES[task_type] or record.get("enterprise_user_id", user_id) != user_id:
             return None
-        return record
+        return self.journal.with_tracking_warning(record)
 
     def detail(self, user_id, task_id):
         for task_type in TYPES:

@@ -65,7 +65,7 @@ async def scenario():
 asyncio.run(scenario())
 '''
     reader=setup+r'''
-async def controlled_generation(payload,receipt_task_id):
+async def controlled_generation(payload,receipt_task_id,unwritten_receipts=None):
     hdrs=main.api_headers(provider=main.get_api_provider_exact('zhenzhen'),model=payload.model)
     assert hdrs['Authorization']=='Bearer fixture-department-secret'
     assert not trace.exists(),'the original queued request must execute once'

@@ -119,6 +119,7 @@ def test_actual_startup_recovers_without_browser_or_new_submission(tmp_path, kin
 from enterprise import db
 from enterprise.canvas_image_recovery import provider_scope
 kind = sys.argv[4]
+main.CANVAS_ACCEPTED_RECOVERY.poll_delay = .05
 db.get_task_owner = lambda task_type, task_id: 'fixture-alice'
 db.get_user_by_id = lambda user_id: {'id':user_id}
 main.COMFYUI_INSTANCES = ['https://comfy.example/prefix']
@@ -127,6 +128,8 @@ def recovered_handler(request):
     assert request.method == 'GET', 'automatic recovery submitted work'
     if kind == 'online-image':
         assert request.url.path == '/v1/images/tasks/accepted-before-process-exit'
+        if len(calls)==1:
+            return httpx.Response(200,json={'data':{'status':'NOT_START'}})
         return httpx.Response(200,json={'data':{'status':'SUCCESS','data':{
             'data':[{'url':'https://supplier.example/result.png'}], 'usage':{'total_tokens':27}}}})
     assert request.url.path == '/prefix/history/accepted-comfy-id'
@@ -162,14 +165,14 @@ async def scenario():
         else:
             assert finished['result']['items'][0]['text']=='Recovered original prompt'
             assert Path(main.output_file_from_url(finished['result']['texts'][0])).is_file()
-        assert len(calls)==1 and all(method=='GET' for method,_ in calls), calls
+        assert len(calls)==(2 if kind=='online-image' else 1) and all(method=='GET' for method,_ in calls), calls
     finally:
         await main.shutdown_task_recovery()
     # The next application startup sees durable completion and issues no query.
     await main.startup_event()
     await asyncio.sleep(.03)
     await main.shutdown_task_recovery()
-    assert len(calls)==1
+    assert len(calls)==(2 if kind=='online-image' else 1)
 asyncio.run(scenario())
 print('actual startup original identity completed without browser or POST')
 '''
@@ -190,7 +193,7 @@ from enterprise import db
 from enterprise.canvas_image_recovery import provider_scope
 db.get_task_owner=lambda *_:'fixture-bob' if sys.argv[4]=='owner' else 'fixture-alice'
 db.get_user_by_id=lambda user_id:{'id':user_id}
-async def fail_after_acceptance(payload,receipt_task_id=None):
+async def fail_after_acceptance(payload,receipt_task_id=None,unwritten_receipts=None):
     from enterprise.canvas_image_recovery import ImageReceiptSink
     await ImageReceiptSink(main.CANVAS_TASK_JOURNAL,receipt_task_id,0).accepted('accepted-before-process-exit',provider)
     raise httpx.ReadTimeout('fixture query connection lost')
