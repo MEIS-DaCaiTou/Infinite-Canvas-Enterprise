@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -483,6 +485,9 @@ def _portable_ownership_case(tmp_path: Path):
         "supervisor_process_created_at": supervisor.created_at,
         "supervisor_executable": supervisor.executable,
         "lock_phase": "adopted",
+        "owner_pid": 9,
+        "owner_process_created_at": 99,
+        "owner_executable": str(python),
     }
     snapshot = {
         "runtime_state": state,
@@ -550,7 +555,7 @@ def test_running_reboot_state_reconciles_only_when_processes_are_absent_and_iden
     config, snapshot, _upstream_ports, _gateway_ports, _supervisor = _portable_ownership_case(tmp_path)
     controller = RuntimeController(config)
     called: list[tuple[object, object]] = []
-    monkeypatch.setattr("enterprise.runtime.control.process_identity", lambda _pid: None)
+    monkeypatch.setattr("enterprise.runtime.control.windows_process_parents", dict)
     monkeypatch.setattr(
         "enterprise.runtime.control._port_snapshots",
         lambda _config: (PortListenerSnapshot(3001, (), (), ()), PortListenerSnapshot(8000, (), (), ())),
@@ -558,7 +563,9 @@ def test_running_reboot_state_reconciles_only_when_processes_are_absent_and_iden
     monkeypatch.setattr(
         controller.store,
         "reconcile_reboot_stale_state",
-        lambda *, expected_lock, expected_state: called.append((expected_lock, expected_state)) or True,
+        lambda *, expected_lock, expected_state, still_quiescent: (
+            still_quiescent() and (called.append((expected_lock, expected_state)) or True)
+        ),
     )
     assert controller.reconcile_reboot_stale_runtime(snapshot) is True
     assert called == [(snapshot["lock"], snapshot["runtime_state"])]
@@ -578,10 +585,11 @@ def test_running_reboot_state_reconciliation_rejects_foreign_or_mismatched_ident
         lambda _config: (PortListenerSnapshot(3001, (), (), ()), PortListenerSnapshot(8000, (), (), ())),
     )
     monkeypatch.setattr("enterprise.runtime.control.process_identity", lambda _pid: None)
+    monkeypatch.setattr("enterprise.runtime.control.windows_process_parents", lambda: {supervisor.pid: 1})
     if mutation == "pid_reused_creation":
         monkeypatch.setattr(
             "enterprise.runtime.control.process_identity",
-            lambda pid: ProcessIdentity(pid, supervisor.created_at + 1, supervisor.executable)
+            lambda pid: ProcessIdentity(pid, supervisor.created_at - 1, supervisor.executable)
             if pid == supervisor.pid
             else None,
         )
@@ -601,7 +609,13 @@ def test_running_reboot_state_reconciliation_rejects_foreign_or_mismatched_ident
         snapshot["runtime_state"]["supervisor_command_identity"] = "0" * 64
     else:
         snapshot["lock"]["release_id"] = "release-B"
+    controller.store.write_state({**snapshot["runtime_state"], "schema_version": "runtime-supervisor-state-v1"})
+    controller.store.lock_path.write_text(json.dumps({**snapshot["lock"], "schema_version": "runtime-supervisor-state-v1"}))
+    snapshot.update(runtime_state=controller.store.read_state(), lock=controller.store.read_lock())
+    state_before = controller.store.state_path.read_bytes()
     assert controller.reconcile_reboot_stale_runtime(snapshot) is False
+    assert controller.store.state_path.read_bytes() == state_before
+    assert controller.store.lock_path.exists()
 
 
 def test_runtime_store_reconciles_exact_reboot_state_and_removes_only_matching_lock(tmp_path: Path) -> None:
@@ -621,12 +635,189 @@ def test_runtime_store_reconciles_exact_reboot_state_and_removes_only_matching_l
     store.lock_path.write_text(json.dumps(lock), encoding="utf-8")
     expected_lock = store.read_lock()
     assert expected_lock is not None
-    assert store.reconcile_reboot_stale_state(expected_lock=expected_lock, expected_state=expected_state) is True
+    assert store.reconcile_reboot_stale_state(expected_lock=expected_lock, expected_state=expected_state,
+                                             still_quiescent=lambda: True) is True
     assert store.read_lock() is None
     recovered = store.read_state()
     assert recovered is not None and recovered["state"] == "stopped"
     assert recovered["reboot_stale_reconciled"] is True
     assert recovered["upstream"]["pid"] is None and recovered["gateway"]["pid"] is None
+
+
+@pytest.mark.parametrize("blocker", [None, "corrupt_lock", "missing_context", "malformed_role", "unknown_process",
+                                       "unrecorded_child", "port_occupied", "upgrade", "foreign_marker", "pid_reused"])
+def test_starting_state_with_released_lock_can_be_reconciled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, blocker) -> None:
+    config, snapshot, *_ = _portable_ownership_case(tmp_path)
+    controller = RuntimeController(config)
+    state = {**snapshot["runtime_state"], "schema_version": "runtime-supervisor-state-v1", "state": "starting"}
+    controller.store.write_state(state)
+    monkeypatch.setattr("enterprise.runtime.control.windows_process_parents", dict)
+    monkeypatch.setattr(
+        "enterprise.runtime.control._port_snapshots",
+        lambda _config: (PortListenerSnapshot(3001, (), (), ()), PortListenerSnapshot(8000, (), (), ())),
+    )
+    if blocker == "corrupt_lock":
+        controller.store.lock_path.write_bytes(b'{partial')
+    elif blocker == "missing_context":
+        (controller.store.root / "launch-context.json").unlink()
+    elif blocker == "malformed_role":
+        state["upstream"].pop("executable")
+        controller.store.write_state(state)
+    elif blocker == "unknown_process":
+        monkeypatch.setattr("enterprise.runtime.control.windows_process_parents", lambda: {state["supervisor_pid"]: 1})
+        monkeypatch.setattr("enterprise.runtime.control.process_identity", lambda _pid: None)
+    elif blocker == "unrecorded_child":
+        monkeypatch.setattr("enterprise.runtime.control.windows_process_parents", lambda: {54: state["supervisor_pid"]})
+    elif blocker == "port_occupied":
+        monkeypatch.setattr("enterprise.runtime.control._port_snapshots", lambda _config: (
+            PortListenerSnapshot(3001, (53,), (), (53,)), PortListenerSnapshot(8000, (), (), ())))
+    elif blocker == "upgrade":
+        state_root = config.app_root.parents[1] / "state"
+        state_root.mkdir(parents=True)
+        (state_root / "system-update-active.lock").touch()
+    elif blocker == "foreign_marker":
+        controller.store.reconcile_path.write_bytes(b'maintenance record')
+    elif blocker == "pid_reused":
+        pid = state["supervisor_pid"]
+        monkeypatch.setattr("enterprise.runtime.control.windows_process_parents", lambda: {pid: 1})
+        monkeypatch.setattr("enterprise.runtime.control.process_identity", lambda _pid: ProcessIdentity(pid, 1000, "foreign.exe"))
+    allowed = blocker in (None, "pid_reused")
+    before = controller.store.state_path.read_bytes()
+    assert controller.reconcile_reboot_stale_runtime({"runtime_state": state, "lock": None}) is allowed
+    if allowed:
+        assert controller.store.read_state()["state"] == "stopped"
+        assert not controller.store.lock_path.exists()
+    else:
+        assert controller.store.state_path.read_bytes() == before
+        if blocker == "foreign_marker":
+            assert controller.store.reconcile_path.read_bytes() == b'maintenance record'
+
+
+@pytest.mark.parametrize(("previous", "recover"), [(None, True), ("stopped", True), ("healthy", False), ("corrupt", False)])
+def test_recovers_adopted_lock_before_current_state_was_published(tmp_path, monkeypatch, previous, recover):
+    config, snapshot, *_ = _portable_ownership_case(tmp_path)
+    controller = RuntimeController(config)
+    store = controller.store
+    if previous == "corrupt":
+        store.state_path.write_bytes(b'{partial')
+    elif previous:
+        store.write_state(initial_state(
+            instance_id="b" * 32, supervisor=ProcessIdentity(99, 90, config.python_executable),
+            mode="service-host",
+        ) | {"state": previous})
+    store.lock_path.write_text(json.dumps(snapshot["lock"] | {"schema_version": "runtime-supervisor-state-v1"}))
+    monkeypatch.setattr("enterprise.runtime.control.windows_process_parents", dict)
+    monkeypatch.setattr("enterprise.runtime.control.process_identity", lambda _pid: None)
+    monkeypatch.setattr("enterprise.runtime.control._port_snapshots", lambda _config: (
+        PortListenerSnapshot(3001, (), (), ()), PortListenerSnapshot(8000, (), (), ()),
+    ))
+    before = store.state_path.read_bytes() if store.state_path.exists() else None
+    assert controller.reconcile_reboot_stale_runtime({"runtime_state": store.read_state(), "lock": store.read_lock()}) is recover
+    if not recover:
+        assert store.state_path.read_bytes() == before
+        assert store.read_lock() is not None
+        return
+    recovered = store.read_state()
+    assert recovered["state"] == "stopped"
+    assert recovered["supervisor_instance_id"] == snapshot["lock"]["supervisor_instance_id"]
+    assert store.read_lock() is None
+
+
+def test_passive_recovery_leaves_live_original_launcher_in_control(tmp_path, monkeypatch):
+    config, snapshot, *_ = _portable_ownership_case(tmp_path)
+    controller = RuntimeController(config)
+    store = controller.store
+    lock = snapshot["lock"] | {"schema_version": "runtime-supervisor-state-v1"}
+    store.lock_path.write_text(json.dumps(lock), encoding="utf-8")
+    owner = store.lock_owner_identity(lock)
+    monkeypatch.setattr("enterprise.runtime.control.process_identity", lambda pid: owner if pid == owner.pid else None)
+    monkeypatch.setattr("enterprise.runtime.control.windows_process_parents", lambda: {owner.pid: 1})
+    monkeypatch.setattr("enterprise.runtime.control._port_snapshots", lambda _config: (
+        PortListenerSnapshot(3001, (), (), ()), PortListenerSnapshot(8000, (), (), ()),
+    ))
+    assert not controller.reconcile_reboot_stale_runtime({"runtime_state": None, "lock": store.read_lock()})
+    assert store.read_lock() == lock
+    assert not store.state_path.exists()
+
+
+@pytest.mark.parametrize("marker_name", ["system-update-active.lock", "install-upgrade-active.json", "upgrade-sequence-active.json"])
+@pytest.mark.parametrize("attempt", ["original", "foreign", "wrong_instance", "passive"])
+def test_maintenance_allows_only_launcher_to_settle_its_failed_attempt(tmp_path, monkeypatch, marker_name, attempt):
+    config, snapshot, *_ = _portable_ownership_case(tmp_path)
+    controller = RuntimeController(config)
+    store = controller.store
+    lock = snapshot["lock"] | {"schema_version": "runtime-supervisor-state-v1"}
+    if attempt in {"original", "wrong_instance"}:
+        lock["owner_pid"] = os.getpid()
+    store.lock_path.write_text(json.dumps(lock), encoding="utf-8")
+    marker = config.app_root.parents[1] / "state" / marker_name
+    marker.parent.mkdir(parents=True)
+    marker.write_bytes(b'maintenance fixture')
+    owner = ProcessIdentity(os.getpid(), lock["owner_process_created_at"], lock["owner_executable"])
+    monkeypatch.setattr("enterprise.runtime.control.process_identity", lambda pid: owner if pid == owner.pid else None)
+    monkeypatch.setattr("enterprise.runtime.control.windows_process_parents", lambda: {owner.pid: 1})
+    monkeypatch.setattr("enterprise.runtime.control._port_snapshots", lambda _config: (
+        PortListenerSnapshot(3001, (), (), ()), PortListenerSnapshot(8000, (), (), ()),
+    ))
+    if attempt == "passive":
+        assert not controller.reconcile_reboot_stale_runtime({"runtime_state": None, "lock": store.read_lock()})
+    else:
+        instance = "b" * 32 if attempt == "wrong_instance" else lock["supervisor_instance_id"]
+        assert controller._finish_failed_start(instance, timed_out=False) is (attempt == "original")
+    assert marker.read_bytes() == b'maintenance fixture'
+    if attempt == "original":
+        assert store.read_state()["state"] == "stopped"
+        assert store.read_lock() is None
+    else:
+        assert not store.state_path.exists()
+        assert store.read_lock() == lock
+
+
+@pytest.mark.parametrize(("child_created", "recover"), [(1001, True), (101, False), (None, False)])
+def test_pid_reuse_with_children_checks_child_creation_time(tmp_path, monkeypatch, child_created, recover):
+    config, snapshot, *_ = _portable_ownership_case(tmp_path)
+    controller = RuntimeController(config)
+    store = controller.store
+    state = snapshot["runtime_state"] | {"schema_version": "runtime-supervisor-state-v1", "state": "starting"}
+    store.write_state(state)
+    monkeypatch.setattr("enterprise.runtime.control.windows_process_parents", lambda: {10: 5, 45: 10})
+    processes = {10: ProcessIdentity(10, 1000, "foreign.exe")}
+    if child_created is not None:
+        processes[45] = ProcessIdentity(45, child_created, "child.exe")
+    monkeypatch.setattr("enterprise.runtime.control.process_identity", processes.get)
+    monkeypatch.setattr("enterprise.runtime.control._port_snapshots", lambda _config: (
+        PortListenerSnapshot(3001, (), (), ()), PortListenerSnapshot(8000, (), (), ()),
+    ))
+    assert controller.reconcile_reboot_stale_runtime({"runtime_state": state, "lock": None}) is recover
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires the Windows process-lifetime byte lock")
+@pytest.mark.parametrize("state_phase", ["starting", "stopped"])
+def test_interrupted_reconciliation_resumes_after_windows_guard_owner_exits(tmp_path: Path, state_phase) -> None:
+    store = RuntimeStateStore(tmp_path / "runtime")
+    instance = "a" * 32
+    state = initial_state(instance_id=instance, supervisor=ProcessIdentity(123, 123, "python.exe"), mode="service-host")
+    state.update(state=state_phase, reboot_stale_reconciled=(state_phase == "stopped"))
+    store.write_state(state)
+    marker = f"startup-reconcile-v1 {instance}\n".encode("ascii")
+    with subprocess.Popen([sys.executable, "-u", "-c",
+                           "import msvcrt,sys,time; from pathlib import Path; "
+                           "root=Path(sys.argv[1]); guard=(root/'runtime-reconcile.guard').open('a+b'); "
+                           "msvcrt.locking(guard.fileno(), msvcrt.LK_NBLCK, 1); "
+                           "(root/'runtime-reconcile.lock').write_bytes(bytes.fromhex(sys.argv[2])); "
+                           "print('locked'); time.sleep(30)", str(store.root), marker.hex()],
+                          stdout=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW) as process:
+        try:
+            assert process.stdout.readline().strip() == b"locked"
+            assert not store.reconcile_reboot_stale_state(expected_lock=None, expected_state=state,
+                                                         still_quiescent=lambda: True)
+        finally:
+            process.kill()
+            process.wait(timeout=10)
+    assert store.reconcile_reboot_stale_state(expected_lock=None, expected_state=state,
+                                             still_quiescent=lambda: True)
+    assert store.read_state()["state"] == "stopped"
+    assert not store.reconcile_path.exists()
 
 
 @pytest.mark.parametrize(

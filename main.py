@@ -261,10 +261,12 @@ async def startup_event():
     global GLOBAL_LOOP, PERFORMANCE_MONITOR
     PERFORMANCE_MONITOR = asyncio.create_task(performance.monitor("upstream"))
     GLOBAL_LOOP = asyncio.get_running_loop()
-    prepare_application_directories(PATH_ROOTS)
+    with performance.startup_phase("application_directories"):
+        prepare_application_directories(PATH_ROOTS)
     # Configuration bootstrap is intentionally startup-scoped.  Importing the
     # application must not create mutable files in either profile.
-    ensure_runtime_config_files()
+    with performance.startup_phase("runtime_config"):
+        ensure_runtime_config_files()
     # Persisted receipts survive process replacement. Ambiguous external work
     # is exposed for reconciliation, never automatically submitted twice.
     task_recovery = await performance.startup_stage("task_receipts", CANVAS_TASK_JOURNAL.recover)

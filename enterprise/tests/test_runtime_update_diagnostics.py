@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 import pytest
 
-from enterprise.runtime.control import RuntimeControlError, RuntimeController, RuntimeServiceHostStartupError
+from enterprise.runtime.control import RuntimeControlError, RuntimeController, RuntimeServiceHostStartupError, _startup_failure_details
 from enterprise.runtime.error_contract import public_lifecycle_details
 from enterprise.runtime.cli import _paths, main as runtime_cli_main
 from enterprise.path_safety import PathSafetyError
@@ -59,6 +59,39 @@ def test_portable_failure_retains_only_whitelisted_details():
     assert public_lifecycle_details(error.public_details) == {}
     error.code = "C:/private secret"
     assert stable_error_document(error)["code"] == "PORTABLE_BOOTSTRAP_INVALID"
+
+
+def test_startup_summary_uses_only_known_phases_from_the_failed_instance(tmp_path):
+    instance = "a" * 32
+    (tmp_path / "upstream.stderr.log").write_text(
+        f"INFO: startup_phase instance={instance} name=task_receipts outcome=started\n"
+        f"startup_phase instance={instance} name=unexpected_prompt outcome=failed\n"
+        f"startup_phase instance={'b' * 32} name=image_extensions outcome=completed\n",
+        encoding="utf-8",
+    )
+    snapshot = {"upstream_listener": {"inspection_failed": False, "listener_pids": []},
+                "gateway_listener": {"inspection_failed": True, "listener_pids": []}}
+    details = _startup_failure_details(tmp_path, instance, snapshot, state_settled=True)
+    assert public_lifecycle_details(details) == details == {
+        "startup_instance_id": instance, "startup_state_settled": True,
+        "upstream_port_status": "empty", "gateway_port_status": "unknown",
+        "upstream_last_startup_phase": "task_receipts", "upstream_last_startup_outcome": "started",
+    }
+
+
+def test_startup_summary_keeps_both_roles_when_upstream_restarts(tmp_path):
+    instance = "a" * 32
+    for role, phase, outcome in (("gateway", "gateway_database", "completed"),
+                                 ("upstream", "task_receipts", "started")):
+        (tmp_path / f"{role}.stderr.log").write_text(
+            f"startup_phase instance={instance} name={phase} outcome={outcome}\n", encoding="utf-8",
+        )
+    details = public_lifecycle_details(_startup_failure_details(tmp_path, instance, {}, state_settled=True))
+    assert details["upstream_last_startup_phase"] == "task_receipts"
+    assert details["upstream_last_startup_outcome"] == "started"
+    assert details["gateway_last_startup_phase"] == "gateway_database"
+    assert details["gateway_last_startup_outcome"] == "completed"
+    assert "last_startup_phase" not in details
 
 
 def test_direct_cli_uses_the_same_detail_allowlist():

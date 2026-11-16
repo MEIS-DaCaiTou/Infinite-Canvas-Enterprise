@@ -225,7 +225,10 @@ namespace InfiniteCanvas.Native {
         internal static void ExportReport(string path, Dictionary<string, object> result) {
             string[] keys = { "result", "code", "job_id", "source_release_id", "target_release_id", "source_version", "release_id",
                 "manifest_sha256", "source_manifest_sha256", "database_variant", "database_objects_sha256", "object_count",
-                "integrity_check", "terminal_state", "result_code", "source_recovery", "launcher_installed", "launcher_code", "worker_exit_code" };
+                "integrity_check", "terminal_state", "result_code", "source_recovery", "launcher_installed", "launcher_code", "worker_exit_code",
+                "failure_stage", "bootstrap_failure_category", "host_exit_code", "startup_instance_id", "startup_state_settled",
+                "upstream_last_startup_phase", "upstream_last_startup_outcome", "upstream_port_status",
+                "gateway_last_startup_phase", "gateway_last_startup_outcome", "gateway_port_status" };
             var summary = new Dictionary<string, object>();
             foreach (string key in keys) {
                 object value;

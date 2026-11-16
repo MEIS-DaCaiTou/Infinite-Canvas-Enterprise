@@ -177,6 +177,39 @@ def same_process(expected: ProcessIdentity | None, actual: ProcessIdentity | Non
     )
 
 
+def windows_process_parents() -> dict[int, int] | None:
+    """Snapshot PID/parent pairs even when a process cannot be opened."""
+    if os.name != "nt":
+        return None
+
+    class Entry(ctypes.Structure):
+        _fields_ = [("size", wintypes.DWORD), ("usage", wintypes.DWORD), ("pid", wintypes.DWORD),
+                    ("heap", ctypes.c_size_t), ("module", wintypes.DWORD), ("threads", wintypes.DWORD),
+                    ("parent", wintypes.DWORD), ("priority", wintypes.LONG), ("flags", wintypes.DWORD),
+                    ("image", wintypes.WCHAR * 260)]
+
+    api = _kernel32
+    api.CreateToolhelp32Snapshot.argtypes = (wintypes.DWORD, wintypes.DWORD)
+    api.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    for fn in (api.Process32FirstW, api.Process32NextW):
+        fn.argtypes = (wintypes.HANDLE, ctypes.POINTER(Entry))
+        fn.restype = wintypes.BOOL
+    handle = api.CreateToolhelp32Snapshot(2, 0)  # TH32CS_SNAPPROCESS
+    if handle == ctypes.c_void_p(-1).value:
+        return None
+    try:
+        entry = Entry()
+        entry.size = ctypes.sizeof(entry)
+        if not api.Process32FirstW(handle, ctypes.byref(entry)):
+            return None
+        parents = {int(entry.pid): int(entry.parent)}
+        while api.Process32NextW(handle, ctypes.byref(entry)):
+            parents[int(entry.pid)] = int(entry.parent)
+        return parents if ctypes.get_last_error() == 18 else None  # ERROR_NO_MORE_FILES
+    finally:
+        api.CloseHandle(handle)
+
+
 def inspect_port_listeners(port: int) -> PortListenerSnapshot:
     """Inspect TCP listeners through one fixed OS command, never a shell string."""
     if type(port) is not int or port < 1 or port > 65535:
