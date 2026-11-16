@@ -36,7 +36,7 @@ def test_child_drains_or_cancels_http_before_application_cleanup(tmp_path,monkey
         monkeypatch.setattr(child,'HTTP_DRAIN_TIMEOUT_SECONDS',.2)
         with socket.socket() as probe:
             probe.bind(('127.0.0.1',0));port=probe.getsockname()[1]
-        args=SimpleNamespace(runtime_mode='development',role='upstream',app_root=str(tmp_path),host='127.0.0.1',port=port,
+        args=SimpleNamespace(runtime_mode='development',instance_id=None,role='upstream',app_root=str(tmp_path),host='127.0.0.1',port=port,
                              runtime_stop_file=str(tmp_path/'stop'),shutdown_marker=str(tmp_path/'stopped'))
         serving=asyncio.create_task(child._serve(args));client=socket.socket()
         client.setsockopt(socket.SOL_SOCKET,socket.SO_RCVBUF,4096);client.setblocking(False)
@@ -74,7 +74,7 @@ def test_child_allows_short_inflight_request_to_finish(tmp_path,monkeypatch):
         monkeypatch.setattr(child,'HTTP_DRAIN_TIMEOUT_SECONDS',.6)
         with socket.socket() as probe:
             probe.bind(('127.0.0.1',0));port=probe.getsockname()[1]
-        args=SimpleNamespace(runtime_mode='development',role='upstream',app_root=str(tmp_path),host='127.0.0.1',port=port,
+        args=SimpleNamespace(runtime_mode='development',instance_id=None,role='upstream',app_root=str(tmp_path),host='127.0.0.1',port=port,
                              runtime_stop_file=str(tmp_path/'stop'),shutdown_marker=str(tmp_path/'stopped'))
         serving=asyncio.create_task(child._serve(args))
         try:
