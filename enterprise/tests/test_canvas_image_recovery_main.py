@@ -160,7 +160,7 @@ asyncio.run(create())
                            capture_output=True, text=True, timeout=40)
     assert first.returncode == (17 if crash_point == "accepted" else 18), first.stdout + first.stderr
     reader = BOOTSTRAP + r'''
-async def save_image(image, prefix=''):
+async def save_image(image, prefix='', *, receipt=None):
     assert image['value'] == 'https://supplier.example/result.png'
     from PIL import Image
     Image.new('RGB', (1, 1), 'white').save(Path(main.OUTPUT_DIR) / 'recovered-original.png')
@@ -201,7 +201,7 @@ print('hard-exit original task reconciled without another POST')
     assert "hard-exit original task reconciled without another POST" in second.stdout
 
 
-@pytest.mark.parametrize("stage", ["before_result_receipt", "before_history"])
+@pytest.mark.parametrize("stage", ["before_publish", "before_result_receipt", "before_history"])
 def test_sync_image_archive_recovery_requires_durable_task_association(tmp_path, stage):
     install = tmp_path / "install"
     app = install / "releases/fixture"
@@ -231,7 +231,20 @@ def interrupt(urls):
     assert Path(main.output_file_from_url(urls[0])).read_bytes() == encoded.getvalue()
     os._exit(19)
 
-if sys.argv[4] == 'before_result_receipt':
+if sys.argv[4] == 'before_publish':
+    operation = 'rename' if os.name == 'nt' else 'link'
+    publish = getattr(os, operation)
+    def before_publish(source, target, *args, **kwargs):
+        if str(source).endswith('.part') and 'online_' in str(target):
+            assert Path(source).read_bytes() == encoded.getvalue()
+            receipt = main.CANVAS_TASK_JOURNAL.get(id_path.read_text())['provider_receipts'][0]
+            assert receipt['state'] == 'generated' and receipt['archive']['url'].endswith(Path(target).name)
+            assert not Path(target).exists()
+            assert calls == [('POST', '/v1/images/generations')]
+            os._exit(19)
+        return publish(source, target, *args, **kwargs)
+    setattr(os, operation, before_publish)
+elif sys.argv[4] == 'before_result_receipt':
     async def before_result_receipt(self, urls, items):
         interrupt(urls)
     ImageReceiptSink.completed = before_result_receipt
@@ -260,28 +273,38 @@ def no_supplier_request(request):
 main.httpx.AsyncClient = lambda **kwargs: original_client(transport=httpx.MockTransport(no_supplier_request), **kwargs)
 assert main.CANVAS_TASK_JOURNAL.recover()['interrupted'] == 1
 task_id = id_path.read_text()
-files = list((roots.UPLOAD_ROOT / 'assets/output').glob('online_*.png'))
-assert len(files) == 1
+from PIL import Image
+archive_dir = roots.UPLOAD_ROOT / 'assets/output'
+files = list(archive_dir.glob('online_*.png'))
+stage = sys.argv[4]
+assert len(files) == (0 if stage == 'before_publish' else 1)
+Image.new('RGB', (4, 4), 'blue').save(archive_dir / ('online_' + 'a' * 32 + '.png'))
 assert read_records(main.HISTORY_FILE) == []
 async def recover():
     detail = describe_task(main.CANVAS_TASK_JOURNAL.get(task_id), detail=True)
-    assert not detail['attempts'][0]['upstream_task_id']
-    if sys.argv[4] == 'before_result_receipt':
-        assert detail['status'] == 'unknown' and not detail['output_count'] and not detail['can_query']
+    assert not detail['attempts'][0]['upstream_task_id'] and detail['can_query']
+    if stage == 'before_publish':
+        assert detail['status'] == 'unknown' and not detail['output_count']
+        assert len(list(archive_dir.glob('*.part'))) == 1
         try:
             await main.reconcile_canvas_image_task(task_id)
         except HTTPException as exc:
             assert exc.status_code == 409
         else:
-            raise AssertionError('An unassociated file must not be assigned to the task')
+            raise AssertionError('Neither a temporary file nor an unassociated file can be assigned')
         assert read_records(main.HISTORY_FILE) == []
     else:
-        assert detail['output_count'] == 1 and detail['can_query']
-        assert (await main.get_canvas_image_task(task_id))['result']['images'] == [detail['items'][0]['url']]
+        if stage == 'before_history':
+            assert detail['output_count'] == 1
+            assert (await main.get_canvas_image_task(task_id))['result']['images'] == [detail['items'][0]['url']]
+        else:
+            assert detail['status'] == 'unknown' and not detail['output_count']
         recovered = await main.reconcile_canvas_image_task(task_id)
         assert recovered['status'] == 'succeeded'
         assert [Path(main.output_file_from_url(url)) for url in recovered['images']] == files
+        assert recovered['image_items'][0]['natural_w'] == 8
         assert await main.reconcile_canvas_image_task(task_id) == recovered
+        assert (await main.get_canvas_image_task(task_id))['status'] == 'succeeded'
         rows = read_records(main.HISTORY_FILE)
         assert len(rows) == 1 and rows[0]['images'] == recovered['images']
     assert not calls
@@ -543,7 +566,7 @@ def handler(request):
     return httpx.Response(200, headers=headers, json={'task_id':f'fixture-job-{index}'})
 main.httpx.AsyncClient = lambda **kwargs: original_client(transport=httpx.MockTransport(handler), **kwargs)
 
-async def save_image(image, prefix=''):
+async def save_image(image, prefix='', *, receipt=None):
     name = image['value'].rsplit('/', 1)[1]
     Image.new('RGB', (16, 16), 'white').save(Path(main.OUTPUT_DIR) / name)
     return f'/output/{name}'

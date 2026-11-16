@@ -483,6 +483,7 @@ _MAIN_FLOW_BY_SYMBOL.update(
         "generate_gemini_cli_provider_image": "W15", "generate_jimeng_provider_image": "W15",
         "generate_jimeng_video": "W15", "generate_video_preview_image": "W15",
         "poll_angle_cloud": "W15", "runninghub_store_remote_output": "W15",
+        "publish_receipted_image": "W15", "save_ai_image_to_output.save": "W15",
         "save_ai_image_to_output": "W15", "save_comfy_text_output": "W15",
         "save_remote_video_to_output": "W15",
         "image_jpeg._build": "W16", "media_preview._build_preview": "W16",
@@ -710,7 +711,7 @@ def _flow_for_operation(file: str, symbol: str) -> str:
 # Wxx flow). Line numbers are deliberately excluded, while duplicate identical
 # calls remain duplicate records. Any added/removed/changed call drifts it.
 # W15 replaces the generic URL fallback with removal of this invocation's generated partial output.
-EXPECTED_SITE_MANIFEST_DIGEST = "11e83b36b059122b4e28e02f7f4ae77160aab25f292a15b18079739d4c41cef4"
+EXPECTED_SITE_MANIFEST_DIGEST = "5e6354022774f1dc9ed398638ab0ff4fd77f1ef52c4b8832382160efc211b3ed"
 
 FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W01", "main.py", "startup_event"),

@@ -138,6 +138,39 @@ def test_batch_keeps_completed_outputs_and_retries_only_unconfirmed_queries(tmp_
     asyncio.run(scenario())
 
 
+def test_batch_recovers_local_archive_while_only_querying_pending_original(tmp_path):
+    async def scenario():
+        task_id = "canvas_img_a"
+        journal = new_journal(tmp_path, 4)
+        await ImageReceiptSink(journal, task_id, 0).completed(["/output/ready.png"], [])
+        archive = {"url": "/assets/output/online_" + "a" * 32 + ".png", "kind": "image"}
+        local = ImageReceiptSink(journal, task_id, 1)
+        await local.accepted("already-archived-id", PROVIDER)
+        await local.generated({})
+        await local.plan_archive(archive)
+        await ImageReceiptSink(journal, task_id, 2).accepted("pending-id", PROVIDER)
+        journal.record_image_request(task_id, 3, {"state": "unknown"})
+        journal.recover()
+
+        queried, published = [], []
+        async def query(provider, upstream_task_id):
+            queried.append(upstream_task_id)
+            return {"status": "running"} if len(queried) == 1 else {
+                "status": "succeeded", "images": ["/output/third.png"]}
+        recovery = CanvasImageRecovery(journal, lambda _: PROVIDER, query, published.append,
+                                       read_archive=lambda plan: plan if plan == archive else None)
+        assert (await recovery.reconcile(task_id))["status"] == "running"
+        assert public_receipt(journal.get(task_id))["result"]["images"] == [
+            "/output/ready.png", archive["url"]]
+        result = await recovery.reconcile(task_id)
+        assert result["status"] == "partial"
+        assert result["images"] == ["/output/ready.png", archive["url"], "/output/third.png"]
+        assert await recovery.reconcile(task_id) == result
+        assert queried == ["pending-id", "pending-id"] and published == [result]
+        assert journal.get(task_id)["provider_receipts"][3]["state"] == "unknown"
+    asyncio.run(scenario())
+
+
 def test_partial_result_does_not_claim_unknown_or_failed_members_succeeded(tmp_path):
     async def scenario():
         journal = new_journal(tmp_path, 3)

@@ -8550,8 +8550,34 @@ async def upload_local_video_to_cloud(ref_url: str, service: str = "auto") -> Di
 async def upload_local_video_to_temp_sh(ref_url: str) -> Dict[str, str]:
     return await upload_local_video_to_cloud(ref_url, "auto")
 
-async def save_ai_image_to_output(image_data, prefix="online_", category="output"):
-    filename = f"{prefix}{uuid.uuid4().hex[:10]}.png"
+def publish_receipted_image(path, content):
+    # The final name is meaningful to recovery only after the whole file exists.
+    temporary = f"{path}.{uuid.uuid4().hex}.part"
+    try:
+        with open(temporary, "xb") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        if os.name == "nt":
+            os.rename(temporary, path)
+        else:
+            os.link(temporary, path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+
+
+async def save_ai_image_to_output(image_data, prefix="online_", category="output", *, receipt=None):
+    async def save(filename, path, content):
+        url = output_url_for(filename, category)
+        if receipt is None:
+            with open(path, "wb") as stream:
+                stream.write(content)
+        else:
+            await receipt.plan_archive(image_output_meta(url, image_data))
+            await asyncio.to_thread(publish_receipted_image, path, content)
+        return url
+    identity = uuid.uuid4().hex
+    filename = f"{prefix}{identity if receipt else identity[:10]}.png"
     path = output_path_for(filename, category)
     if image_data["type"] == "b64":
         mime_type = str(image_data.get("mime_type") or "").lower()
@@ -8561,9 +8587,7 @@ async def save_ai_image_to_output(image_data, prefix="online_", category="output
         elif "webp" in mime_type:
             filename = filename[:-4] + ".webp"
             path = output_path_for(filename, category)
-        with open(path, "wb") as f:
-            f.write(base64.b64decode(image_data["value"]))
-        return output_url_for(filename, category)
+        return await save(filename, path, base64.b64decode(image_data["value"]))
     value = image_data["value"]
     if value.startswith("/output/") or value.startswith("/assets/"):
         return value
@@ -8580,12 +8604,13 @@ async def save_ai_image_to_output(image_data, prefix="online_", category="output
             elif "webp" in content_type:
                 filename = filename[:-4] + ".webp"
                 path = output_path_for(filename, category)
-            with open(path, "wb") as f:
-                f.write(response.content)
-            return output_url_for(filename, category)
+            content = response.content
+            if receipt is None:
+                return await save(filename, path, content)
     except Exception as e:
         print(f"保存上游图片失败: {e}; url={value}")
         return value
+    return await save(filename, path, content)
 
 def image_output_meta(url, source_item=None):
     from enterprise.providers.image_outputs import layer_metadata
@@ -12961,8 +12986,10 @@ async def build_online_image_result(payload: OnlineImageRequest, *, receipt_task
                 image_items = [image_data]
             local_urls = []
             local_items = []
+            # A recoverable archive represents the single result of this supplier call.
+            archive_options = {"receipt": sink} if sink and len(image_items) == 1 else {}
             for item in image_items:
-                local_url = await save_ai_image_to_output(item, prefix="online_")
+                local_url = await save_ai_image_to_output(item, prefix="online_", **archive_options)
                 if local_url:
                     local_urls.append(local_url)
                     local_items.append(image_output_meta(local_url, item))
@@ -13226,8 +13253,22 @@ async def query_saved_image_task(provider, upstream_task_id):
         require_archived_image_outputs(result.get("images") or [])
     return result
 
+def read_receipted_image(meta):
+    path = output_file_from_url(meta["url"])
+    if not path or Path(path).is_symlink():
+        return None
+    try:
+        with Image.open(path) as image:
+            width, height = image.size
+            image.verify()
+    except (OSError, ValueError, Image.DecompressionBombError):
+        return None
+    return {**meta, "width": width, "height": height, "natural_w": width, "natural_h": height}
+
+
 CANVAS_IMAGE_RECOVERY = CanvasImageRecovery(CANVAS_TASK_JOURNAL, get_api_provider_exact,
-                                           query_saved_image_task, save_to_history, is_archived=image_outputs_are_archived)
+                                           query_saved_image_task, save_to_history, is_archived=image_outputs_are_archived,
+                                           read_archive=read_receipted_image)
 
 @app.post("/api/canvas-image-tasks/{task_id}/reconcile")
 async def reconcile_canvas_image_task(task_id: str):
