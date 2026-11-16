@@ -20,9 +20,10 @@ from enterprise.collection_query import (
 )
 from enterprise.history_records import HistoryUnavailable, read_records
 from enterprise.local_json import document_lock
+from enterprise.runtime import performance
 
 APPLICATION_ID = 0x49434851
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
 logger = logging.getLogger(__name__)
 
 
@@ -36,10 +37,34 @@ def _open_readonly(path):
     return conn
 
 
+def _open_existing(path):
+    return sqlite3.connect(path.resolve().as_uri() + '?mode=rw', uri=True)
+
+
 def _require_projection(conn):
     if (conn.execute('PRAGMA application_id').fetchone()[0] != APPLICATION_ID
             or conn.execute('PRAGMA user_version').fetchone()[0] != FORMAT_VERSION):
         raise IndexUnavailable(409, '目标不是当前历史查询索引，保留原文件。')
+
+
+def _metadata(conn):
+    return {key: json.loads(value) for key, value in conn.execute('SELECT * FROM projection_meta')}
+
+
+def _payload(row):
+    return json.dumps(row, ensure_ascii=False, allow_nan=False, separators=(',', ':'))
+
+
+def _project(records, identify, start):
+    for position, row in enumerate(records, start):
+        created = created_time(row)
+        record_type = row.get('type', 'zimage')
+        kind = row.get('kind', row.get('type'))
+        yield (position, identify(row), created, -created,
+               record_type if isinstance(record_type, str) else None,
+               kind if isinstance(kind, str) else None,
+               str(row.get('library_id') or ''), str(row.get('category_id') or ''),
+               int(bool(row.get('images'))), searchable_text(row), _payload(row))
 
 
 class HistoryQueryIndex:
@@ -50,6 +75,7 @@ class HistoryQueryIndex:
                 or self.target.is_symlink()):
             raise ValueError('Use a separate .sqlite3 projection path.')
 
+    @performance.timed('history.index_rebuild')
     def rebuild(self, identify, *, snapshot=None):
         """Build beside the target, then atomically publish a complete revision."""
         temporary = self.target.with_name('.' + self.target.name + '.' + uuid4().hex + '.tmp')
@@ -74,18 +100,9 @@ class HistoryQueryIndex:
                         eligible INTEGER NOT NULL, search_text TEXT NOT NULL, payload TEXT NOT NULL
                     );
                 ''')
-                def projected():
-                    for position, row in enumerate(records):
-                        created = created_time(row)
-                        record_type = row.get('type', 'zimage')
-                        kind = row.get('kind', row.get('type'))
-                        yield (position, identify(row), created, -created,
-                               record_type if isinstance(record_type, str) else None,
-                               kind if isinstance(kind, str) else None,
-                               str(row.get('library_id') or ''), str(row.get('category_id') or ''),
-                               int(bool(row.get('images'))), searchable_text(row),
-                               json.dumps(row, ensure_ascii=False, allow_nan=False, separators=(',', ':')))
-                conn.executemany('INSERT INTO history_rows VALUES (?,?,?,?,?,?,?,?,?,?,?)', projected())
+                # Number positions from the tail so prepending leaves all old rows in place.
+                conn.executemany('INSERT INTO history_rows VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+                                 _project(records, identify, -len(records)))
                 conn.executescript('''
                     CREATE INDEX history_newest ON history_rows(newest,history_id,position) WHERE eligible=1;
                     CREATE INDEX history_oldest ON history_rows(created,history_id,position) WHERE eligible=1;
@@ -115,16 +132,68 @@ class HistoryQueryIndex:
         finally:
             temporary.unlink(missing_ok=True)
 
+    def refresh(self, identify, *, snapshot):
+        if self.target.exists():
+            try:
+                if self._extend(identify, snapshot):
+                    return
+            except (OSError, sqlite3.Error, ValueError, TypeError, KeyError):
+                # The same rebuild path checks existing cache identity before publication.
+                pass
+        self.rebuild(identify, snapshot=snapshot)
+
+    @performance.timed('history.index_extend')
+    def _extend(self, identify, snapshot):
+        records, revision = snapshot
+        # Compare under a SQLite read snapshot, without blocking Gateway readers
+        # on the publication lock. A writable handle permits journal recovery.
+        with closing(_open_existing(self.target)) as conn:
+            conn.execute('BEGIN')
+            _require_projection(conn)
+            meta = _metadata(conn)
+            if file_revision(self.source) != revision:
+                raise QueryError(409, '历史文件已更新，本次索引维护取消。')
+            if meta['source'] != str(self.source):
+                return False
+            if meta['revision'] == revision:
+                return True
+            added = len(records) - meta['source_rows']
+            if added <= 0:
+                return False
+            # Compare complete payloads. An edit, deletion or reorder falls back to rebuild.
+            rows = conn.execute('SELECT position,payload FROM history_rows ORDER BY position')
+            index = added
+            for position, payload in rows:
+                if index >= len(records) or position != index - len(records) or payload != _payload(records[index]):
+                    return False
+                index += 1
+            if index != len(records):
+                return False
+        with document_lock(self.target), closing(_open_existing(self.target)) as conn:
+            _require_projection(conn)
+            if _metadata(conn) != meta or file_revision(self.source) != revision:
+                raise QueryError(409, '历史文件或索引已更新，本次索引维护取消。')
+            with conn:
+                conn.executemany('INSERT INTO history_rows VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+                                 _project(records[:added], identify, -len(records)))
+                conn.executemany('UPDATE projection_meta SET value=? WHERE key=?', [
+                    (json.dumps(revision), 'revision'), (json.dumps(len(records)), 'source_rows'),
+                ])
+                if file_revision(self.source) != revision:
+                    raise QueryError(409, '历史文件已更新，本次索引维护取消。')
+            return True
+
     def page(self, params, *, user_id, owners, admin, annotate):
         """Use the caller's current policy snapshot; this module grants no access."""
         options = query_options(params, actor=user_id, source='history')
         try:
             with document_lock(self.target), closing(_open_readonly(self.target)) as conn:
                 _require_projection(conn)
-                meta = {row['key']: json.loads(row['value']) for row in conn.execute('SELECT * FROM projection_meta')}
+                meta = _metadata(conn)
                 revision = file_revision(self.source)
                 if meta.get('source') != str(self.source) or meta.get('revision') != revision:
                     raise IndexUnavailable(409, '查询索引已过期，请按当前历史重新构建。')
+                offset = meta['source_rows']
                 order = 'newest' if options.sort == 'newest' else 'created'
                 conn.execute('PRAGMA temp_store=MEMORY')
                 if not admin:
@@ -151,13 +220,13 @@ class HistoryQueryIndex:
                     ).fetchall()
                     if len(anchors) > 1:
                         raise QueryError(409, '历史定位项重复，请刷新后继续。')
-                    return [*last[:2], anchors[0]['position']] if anchors else last
+                    return [*last[:2], anchors[0]['position'] + offset] if anchors else last
                 last = cursor_position(str(params.get('cursor') or ''), options, revision,
                                        rebase=rebase if params.get('continuation') == 'live' else None)
                 total = conn.execute('SELECT COUNT(*) FROM history_rows WHERE ' + where, values).fetchone()[0]
                 if last is not None:
                     where += f' AND ({order},history_id,position)>(?,?,?)'
-                    values = [*values, *last]
+                    values = [*values, *last[:2], last[2] - offset]
                 rows = conn.execute(
                     f'SELECT position,history_id,{order} AS sort_time,payload FROM history_rows WHERE {where} '
                     f'ORDER BY {order},history_id,position LIMIT ?', [*values, options.size+1]).fetchall()
@@ -169,7 +238,7 @@ class HistoryQueryIndex:
                     raise IndexUnavailable(409, '历史文件已更新，请重新校对查询索引。')
                 last_row = selected[-1] if more else None
                 cursor = next_cursor(options, revision, [
-                    last_row['sort_time'], last_row['history_id'], last_row['position'],
+                    last_row['sort_time'], last_row['history_id'], last_row['position'] + offset,
                 ]) if more else None
                 return {'items': items, 'next_cursor': cursor, 'total': total, 'page_size': options.size}
         except (OSError, sqlite3.Error, ValueError, TypeError, KeyError) as exc:
@@ -237,7 +306,7 @@ class HistoryQueryCache:
 
     def _build(self, snapshot):
         try:
-            self.index.rebuild(self.identify, snapshot=snapshot)
+            self.index.refresh(self.identify, snapshot=snapshot)
         except Exception as exc:
             # An optional background cache failure must not fail creative tasks.
             with self._lock:

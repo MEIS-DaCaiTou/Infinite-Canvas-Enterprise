@@ -1,7 +1,11 @@
 """Shadow projection parity, fresh ownership and failed-publication boundaries."""
 from copy import deepcopy
+from contextlib import closing
 import json
+from pathlib import Path
 import sqlite3
+import subprocess
+import sys
 
 import pytest
 
@@ -107,6 +111,93 @@ def test_replacement_invalidates_old_cursor_and_requires_rebuild(sample):
         index.page({'page_size': 2, 'cursor': old}, user_id='a', owners={}, admin=True, annotate=lambda row, _: row)
     assert error.value.status == 409
     compare_pages((rows[:5], index, sample[2], sample[3]), {'page_size': 2})
+
+
+def test_prepend_updates_only_new_projection_rows_and_keeps_cursor_parity(sample, monkeypatch):
+    rows, index, owners, users = sample
+    added = [deepcopy(rows[0]), {'timestamp': 20, 'images': ['/output/new.png']}]
+    records = added + rows
+    owners[history_id_for_record(added[1])] = 'a'
+    atomic_write_json(index.source, records)
+    monkeypatch.setattr(index, 'rebuild', lambda *a, **kw: pytest.fail('pure prepend rebuilt projection'))
+    projected = []
+    def identify(row):
+        projected.append(row)
+        return history_id_for_record(row)
+    index.refresh(identify, snapshot=(records, query.file_revision(index.source)))
+    assert projected == added
+    for sort in ('newest', 'oldest'):
+        compare_pages((records, index, owners, users), {'page_size': 1, 'sort': sort}, admin=True)
+        compare_pages((records, index, owners, users), {'page_size': 2, 'sort': sort})
+
+
+def test_prepend_with_edit_of_same_history_id_rebuilds_projection(sample):
+    rows, index, owners, users = sample
+    records = [{'timestamp': 20, 'images': ['/output/new.png']}, *deepcopy(rows)]
+    records[1]['name'] = 'edited without changing identity'
+    assert history_id_for_record(records[1]) == history_id_for_record(rows[0])
+    atomic_write_json(index.source, records)
+    index.refresh(history_id_for_record, snapshot=(records, query.file_revision(index.source)))
+    compare_pages((records, index, owners, users), {'page_size': 2}, admin=True)
+
+
+def test_concurrent_source_change_rolls_back_projection_rows_and_revision(sample):
+    rows, index, owners, users = sample
+    added = {'timestamp': 20, 'images': ['/output/new.png']}
+    records = [added, *rows]
+    atomic_write_json(index.source, records)
+    def identify(row):
+        atomic_write_json(index.source, rows[:1])
+        return history_id_for_record(row)
+    with pytest.raises(query.QueryError) as error:
+        index.refresh(identify, snapshot=(records, query.file_revision(index.source)))
+    assert error.value.status == 409
+    with closing(sqlite3.connect(index.target)) as conn:
+        assert conn.execute('SELECT COUNT(*) FROM history_rows').fetchone()[0] == len(rows)
+    index.refresh(history_id_for_record, snapshot=(rows[:1], query.file_revision(index.source)))
+    compare_pages((rows[:1], index, owners, users), {'page_size': 2}, admin=True)
+
+
+def test_restart_recovers_projection_interrupted_before_commit(sample):
+    rows, index, owners, users = sample
+    added = [{'timestamp': 100 + i, 'images': [f'/output/new-{i}.png'], 'prompt': 'x'*10000}
+             for i in range(10)]
+    records = added + rows
+    atomic_write_json(index.source, records)
+    revision = query.file_revision(index.source)
+    command = """
+import os, sys
+sys.path.insert(0, sys.argv[1])
+from enterprise import history_query_index as projection
+from enterprise.interceptors import history_id_for_record
+index = projection.HistoryQueryIndex(sys.argv[2], sys.argv[3])
+records = projection.read_records(index.source)
+file_revision = projection.file_revision
+revision = file_revision(index.source)
+open_existing = projection._open_existing
+def small_cache(path):
+    conn = open_existing(path)
+    conn.execute('PRAGMA cache_size=1')
+    return conn
+projection._open_existing = small_cache
+calls = iter([revision, revision])
+def interrupt(path):
+    try:
+        return next(calls)
+    except StopIteration:
+        os._exit(42)
+projection.file_revision = interrupt
+index.refresh(history_id_for_record, snapshot=(records, revision))
+"""
+    result = subprocess.run([sys.executable, '-B', '-c', command, str(Path(__file__).parents[2]),
+                             str(index.source), str(index.target)], capture_output=True, timeout=15)
+    assert result.returncode == 42, result.stderr
+    assert index.target.with_suffix('.sqlite3-journal').is_file()
+    with pytest.raises(projection.IndexUnavailable):
+        index.page({'page_size': 2}, user_id='a', owners=owners, admin=False, annotate=lambda row, _: row)
+    index.refresh(history_id_for_record, snapshot=(records, revision))
+    compare_pages((records, index, owners, users), {'page_size': 2}, admin=True)
+    assert projection.read_records(index.source) == records
 
 
 def test_source_update_during_page_cancels_the_result(sample):

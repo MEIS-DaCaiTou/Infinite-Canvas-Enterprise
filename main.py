@@ -352,7 +352,7 @@ RUNNINGHUB_THUMBNAIL_EXTS = (".jpg",)
 
 QUEUE = []
 QUEUE_LOCK = Lock()
-HISTORY_LOCK = Lock()
+HISTORY_WRITER = history_records.HistoryWriter(HISTORY_FILE)
 GLOBAL_CONFIG_LOCK = Lock()
 CONVERSATION_LOCK = Lock()
 CANVAS_LOCK = RLock()
@@ -3180,16 +3180,15 @@ def comfy_class_is_debug_text(class_type):
     return bool(ct) and any(h in ct for h in COMFY_DEBUG_TEXT_CLASS_HINTS)
 
 def save_to_history(record):
-    with HISTORY_LOCK:
-        try:
-            history_records.append_record(HISTORY_FILE, record)
-            return True
-        except history_records.HistoryUnavailable as exc:
-            # Generation is already complete. Preserve its result/receipt rather
-            # than converting a metadata failure into another paid submission.
-            record['history_warning'] = str(exc)
-            logging.warning('history_append_failed: result retained; history file not replaced')
-            return False
+    try:
+        HISTORY_WRITER.append(record)
+        return True
+    except history_records.HistoryUnavailable as exc:
+        # Generation is already complete. Preserve its result/receipt rather
+        # than converting a metadata failure into another paid submission.
+        record['history_warning'] = str(exc)
+        logging.warning('history_append_failed: result retained; history file not replaced')
+        return False
 
 def get_comfy_history(comfy_address, prompt_id):
     try:

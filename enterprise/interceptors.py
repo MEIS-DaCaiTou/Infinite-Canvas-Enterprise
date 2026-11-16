@@ -88,7 +88,7 @@ def start_collection_queries():
     global _HISTORY_QUERIES
     if ENTERPRISE_HISTORY_QUERY_INDEX_ENABLED and _HISTORY_QUERIES is None:
         _HISTORY_QUERIES = HistoryQueryCache(
-            HistoryQueryIndex(_HISTORY_FILE, PATH_ROOTS.CACHE_ROOT / 'queries' / 'history-v1.sqlite3'),
+            HistoryQueryIndex(_HISTORY_FILE, PATH_ROOTS.CACHE_ROOT / 'queries' / 'history-v2.sqlite3'),
             history_id_for_record, min_source_bytes=_COLLECTION_QUERIES.max_cached_bytes,
         )
 
