@@ -201,6 +201,102 @@ print('hard-exit original task reconciled without another POST')
     assert "hard-exit original task reconciled without another POST" in second.stdout
 
 
+@pytest.mark.parametrize("stage", ["before_result_receipt", "before_history"])
+def test_sync_image_archive_recovery_requires_durable_task_association(tmp_path, stage):
+    install = tmp_path / "install"
+    app = install / "releases/fixture"
+    (app / "static").mkdir(parents=True)
+    (app / "main.py").write_text("# fixture", encoding="utf-8")
+    writer = BOOTSTRAP + r'''
+from base64 import b64encode
+from io import BytesIO
+from PIL import Image
+from enterprise.canvas_image_recovery import ImageReceiptSink
+
+# A synchronous OpenAI-compatible route returns bytes with no supplier task ID.
+provider.update(id='fixture-sync', base_url='https://supplier.example/v1')
+encoded = BytesIO()
+Image.new('RGB', (8, 8), 'orange').save(encoded, format='PNG')
+def complete(request):
+    assert request.method == 'POST' and request.url.path == '/v1/images/generations'
+    assert 'async' not in request.url.params
+    assert not calls
+    assert json.loads(request.content).get('n', 1) == 1
+    calls.append((request.method, request.url.path))
+    return httpx.Response(200, json={'data': [{'b64_json': b64encode(encoded.getvalue()).decode('ascii')}]})
+main.httpx.AsyncClient = lambda **kwargs: original_client(transport=httpx.MockTransport(complete), **kwargs)
+
+def interrupt(urls):
+    assert calls == [('POST', '/v1/images/generations')]
+    assert Path(main.output_file_from_url(urls[0])).read_bytes() == encoded.getvalue()
+    os._exit(19)
+
+if sys.argv[4] == 'before_result_receipt':
+    async def before_result_receipt(self, urls, items):
+        interrupt(urls)
+    ImageReceiptSink.completed = before_result_receipt
+else:
+    def before_history(record):
+        receipt = main.CANVAS_TASK_JOURNAL.get(id_path.read_text())['provider_receipts'][0]
+        assert receipt['state'] == 'succeeded' and not receipt.get('upstream_task_id')
+        interrupt(record['images'])
+    main.save_to_history = before_history
+
+async def create():
+    response = await main.create_canvas_image_task(main.OnlineImageRequest(
+        prompt='synchronous image fixture', provider_id=provider['id'], model='fixture-model'), None)
+    id_path.write_text(response['task_id'])
+    await asyncio.gather(*main.CANVAS_TASK_RUNNERS)
+asyncio.run(create())
+'''
+    reader = BOOTSTRAP + r'''
+from enterprise.generation_tasks import describe_task
+from enterprise.history_records import read_records
+from fastapi import HTTPException
+
+def no_supplier_request(request):
+    calls.append((request.method, request.url.path))
+    raise AssertionError('Local recovery must not call the supplier')
+main.httpx.AsyncClient = lambda **kwargs: original_client(transport=httpx.MockTransport(no_supplier_request), **kwargs)
+assert main.CANVAS_TASK_JOURNAL.recover()['interrupted'] == 1
+task_id = id_path.read_text()
+files = list((roots.UPLOAD_ROOT / 'assets/output').glob('online_*.png'))
+assert len(files) == 1
+assert read_records(main.HISTORY_FILE) == []
+async def recover():
+    detail = describe_task(main.CANVAS_TASK_JOURNAL.get(task_id), detail=True)
+    assert not detail['attempts'][0]['upstream_task_id']
+    if sys.argv[4] == 'before_result_receipt':
+        assert detail['status'] == 'unknown' and not detail['output_count'] and not detail['can_query']
+        try:
+            await main.reconcile_canvas_image_task(task_id)
+        except HTTPException as exc:
+            assert exc.status_code == 409
+        else:
+            raise AssertionError('An unassociated file must not be assigned to the task')
+        assert read_records(main.HISTORY_FILE) == []
+    else:
+        assert detail['output_count'] == 1 and detail['can_query']
+        assert (await main.get_canvas_image_task(task_id))['result']['images'] == [detail['items'][0]['url']]
+        recovered = await main.reconcile_canvas_image_task(task_id)
+        assert recovered['status'] == 'succeeded'
+        assert [Path(main.output_file_from_url(url)) for url in recovered['images']] == files
+        assert await main.reconcile_canvas_image_task(task_id) == recovered
+        rows = read_records(main.HISTORY_FILE)
+        assert len(rows) == 1 and rows[0]['images'] == recovered['images']
+    assert not calls
+asyncio.run(recover())
+'''
+    args = [str(ROOT), str(install), str(tmp_path / "local"), stage]
+    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", PYTHONUTF8="1")
+    first = subprocess.run([sys.executable, "-c", writer, *args], cwd=ROOT, env=env,
+                           capture_output=True, text=True, timeout=40)
+    assert first.returncode == 19, first.stdout + first.stderr
+    second = subprocess.run([sys.executable, "-c", reader, *args], cwd=ROOT, env=env,
+                            capture_output=True, text=True, timeout=40)
+    assert second.returncode == 0, second.stdout + second.stderr
+
+
 def test_archive_failure_keeps_original_receipt_available_for_get_only_retry(tmp_path):
     install = tmp_path / 'install'
     app = install / 'releases/fixture'
