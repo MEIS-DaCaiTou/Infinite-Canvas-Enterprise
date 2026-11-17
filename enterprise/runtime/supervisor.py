@@ -1328,6 +1328,8 @@ class RuntimeSupervisor:
         try:
             self._acquire()
             self.logs.write("launcher.log", "service_host_started", supervisor_instance_id=self.instance_id, mode=self.config.mode)
+            if self.config.runtime_mode == "portable-release":
+                self._persist_state()
             self._start_role("upstream")
             if self.roles["upstream"].process is None:
                 raise RuntimeSupervisorError("initial upstream child could not be started")
@@ -1338,14 +1340,16 @@ class RuntimeSupervisor:
             self._finalize_stop(request=self._stop_request, reason="manual_stop")
             return_code = 0
         except KeyboardInterrupt:
-            self._best_effort_failure_cleanup("foreground_interrupt")
+            if self._acquired:
+                self._best_effort_failure_cleanup("foreground_interrupt")
             return_code = 0
         except Exception as exc:
             try:
                 self._log("supervisor_unhandled_failure", failure_category=_failure_category(exc))
             except Exception:
                 pass
-            self._best_effort_failure_cleanup("supervisor_failure")
+            if self._acquired:
+                self._best_effort_failure_cleanup("supervisor_failure")
             return_code = 2
         finally:
             if self._job is not None:
@@ -1363,11 +1367,11 @@ class RuntimeSupervisor:
             self.state["active_control_command"] = None
             self.state["active_control_request_id"] = None
             self.state["stop_phase"] = None
-            try:
-                self._persist_state()
-            except Exception:
-                pass
             if self._acquired:
+                try:
+                    self._persist_state()
+                except Exception:
+                    pass
                 self.store.release_lock(self.instance_id)
             try:
                 self.logs.write("launcher.log", "service_host_stopped", supervisor_instance_id=self.instance_id, mode=self.config.mode)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import time
 import uuid
@@ -13,6 +14,7 @@ from typing import Any
 from enterprise.path_safety import PathSafetyError, assert_no_reparse_ancestors
 
 from .health import gateway_health, tcp_check, upstream_health
+from .install_maintenance import maintenance_active
 from .error_contract import public_lifecycle_details
 from .windows import current_job_diagnostics
 from .handoff_lifecycle import HANDOFF_CONTROL_SECONDS, host_creation_flags
@@ -24,6 +26,7 @@ from .ownership import (
     portable_supervisor_command_identity,
     process_identity,
     same_process,
+    windows_process_parents,
 )
 from .process import bundled_python, windows_extended_process_path
 from .launch_context import (
@@ -35,7 +38,7 @@ from .launch_context import (
 )
 from .preflight import StartupPreflightResult
 from .readiness import classify_portable_readiness
-from .state import STARTUP_LOCK_GRACE_SECONDS, RuntimeStateStore
+from .state import PORTABLE_IDENTITY_FIELDS, STARTUP_LOCK_GRACE_SECONDS, RuntimeStateStore, initial_state
 from .supervisor import RuntimeStartBlocked, SupervisorConfig
 
 
@@ -53,13 +56,15 @@ class RuntimeServiceHostStartupError(RuntimeControlError):
     code = "RUNTIME_SERVICE_HOST_EARLY_EXIT"
 
     def __init__(self, *, exit_code: int, failure_category: str,
-                 failure_stage: str = "service_host_readiness_wait") -> None:
+                 failure_stage: str = "service_host_readiness_wait",
+                 diagnostics: dict[str, object] | None = None) -> None:
         super().__init__(
             "runtime service host did not become healthy",
             public_details={
                 "failure_stage": failure_stage,
                 "host_exit_code": exit_code,
                 "bootstrap_failure_category": failure_category,
+                **(diagnostics or {}),
             },
         )
 
@@ -184,6 +189,20 @@ def _current(identity: ProcessIdentity | None) -> bool:
     return identity is not None and same_process(identity, process_identity(identity.pid))
 
 
+def _saved_process_is_quiescent(saved: ProcessIdentity, parents: dict[int, int]) -> bool:
+    replacement = process_identity(saved.pid) if saved.pid in parents else None
+    if saved.pid in parents and (replacement is None or replacement.created_at <= saved.created_at):
+        return False
+    # Windows retains the parent's numeric PID after that parent exits.
+    # A child younger than the replacement process cannot belong to the old parent.
+    for pid, parent in parents.items():
+        if parent == saved.pid:
+            child = process_identity(pid)
+            if replacement is None or child is None or child.created_at <= replacement.created_at:
+                return False
+    return True
+
+
 def _role_owned_by_state(state: dict[str, Any] | None, role: str, identities: tuple[ProcessIdentity, ...]) -> bool:
     expected = _identity_from_role(state.get(role)) if state else None
     return expected is not None and any(same_process(expected, identity) for identity in identities)
@@ -209,6 +228,29 @@ def _port_failure_result(upstream: PortListenerSnapshot, gateway: PortListenerSn
     if upstream.has_listeners or gateway.has_listeners:
         return "foreign_port_occupant"
     return None
+
+
+def _startup_failure_details(log_root: Path, instance_id: str, snapshot: dict[str, Any],
+                             *, state_settled: bool) -> dict[str, object]:
+    details = {"startup_instance_id": instance_id, "startup_state_settled": state_settled}
+    for role in ("upstream", "gateway"):
+        listener = snapshot.get(f"{role}_listener")
+        details[f"{role}_port_status"] = ("unknown" if not listener or listener["inspection_failed"] else
+                                          "listening" if listener["listener_pids"] else "empty")
+        try:
+            with (log_root / f"{role}.stderr.log").open("rb") as stream:
+                stream.seek(max(0, os.fstat(stream.fileno()).st_size - 32768))
+                tail = stream.read(32768).decode("utf-8", errors="replace")
+        except OSError:
+            continue
+        pattern = rf"(?:^|[ \t])startup_phase instance={instance_id} name=([a-z_]+) outcome=([a-z]+)\b"
+        phase_key, outcome_key = f"{role}_last_startup_phase", f"{role}_last_startup_outcome"
+        for phase, outcome in reversed(re.findall(pattern, tail, re.MULTILINE)):
+            candidate = public_lifecycle_details({phase_key: phase, outcome_key: outcome})
+            if len(candidate) == 2:
+                details.update(candidate)
+                break
+    return details
 
 
 def inspect_runtime(config: SupervisorConfig) -> dict[str, Any]:
@@ -416,39 +458,67 @@ class RuntimeController:
             return self.store.clear_stale_lock(expected_instance_id=lock.get("supervisor_instance_id"))
         return False
 
-    def reconcile_reboot_stale_runtime(self, snapshot: dict[str, Any]) -> bool:
-        """Recover only an identity-complete owned instance proven absent after reboot."""
+    def reconcile_reboot_stale_runtime(self, snapshot: dict[str, Any], *, failed_instance_id: str | None = None) -> bool:
+        """Settle an owned instance whose host and children have exited."""
 
         if self.config.runtime_mode != "portable-release":
             return False
         state = snapshot.get("runtime_state")
         lock = snapshot.get("lock")
-        if type(state) is not dict or type(lock) is not dict or lock.get("lock_phase") != "adopted":
+        if state is not None and type(state) is not dict:
+            return False
+        if lock is None:
+            if type(state) is not dict:
+                return False
+            if failed_instance_id is None and state.get("state") != "starting" and not (
+                state.get("state") == "stopped" and os.path.lexists(self.store.reconcile_path)
+            ):
+                return False
+        elif type(lock) is not dict or lock.get("lock_phase") != "adopted":
             return False
         try:
             context = read_launch_context(self.config.runtime_root / LAUNCH_CONTEXT_FILENAME)
         except Exception:
             return False
-        instance_id = state.get("supervisor_instance_id")
-        state_supervisor = _supervisor_identity_from_state(state)
-        lock_supervisor = _supervisor_identity_from_state(lock)
+        instance_id = context.instance_id
+        authority = lock if lock is not None else state
+        supervisor = _supervisor_identity_from_state(authority)
+        owner = self.store.lock_owner_identity(lock)
+        state_is_current = type(state) is dict and state.get("supervisor_instance_id") == instance_id
         if (
-            not isinstance(instance_id, str)
-            or not instance_id
-            or state_supervisor is None
-            or lock_supervisor is None
-            or not same_process(state_supervisor, lock_supervisor)
-            or process_identity(state_supervisor.pid) is not None
-            or context.instance_id != instance_id
-            or lock.get("supervisor_instance_id") != instance_id
+            authority.get("supervisor_instance_id") != instance_id
+            or failed_instance_id is not None and instance_id != failed_instance_id
+            or supervisor is None or supervisor.pid <= 0 or supervisor.created_at <= 0
+            or state_is_current and not same_process(supervisor, _supervisor_identity_from_state(state))
         ):
             return False
-        for role in ("upstream", "gateway"):
-            identity = _identity_from_role(state.get(role))
-            if identity is not None and process_identity(identity.pid) is not None:
-                return False
-        upstream, gateway = _port_snapshots(self.config)
-        if not _ports_are_confirmed_clear(upstream, gateway):
+        if lock is not None and (owner is None or owner.pid <= 0 or not 0 < owner.created_at <= supervisor.created_at):
+            return False
+        role_identity_fields = ("pid", "process_created_at", "executable")
+        identities = [supervisor]
+        previous_supervisor = None
+        if state is not None:
+            if not state_is_current:
+                previous_supervisor = _supervisor_identity_from_state(state)
+                if (state.get("state") != "stopped" or previous_supervisor is None
+                        or previous_supervisor.pid <= 0
+                        or not 0 < previous_supervisor.created_at <= supervisor.created_at
+                        or any(state.get(key) is not None for key in (
+                            "active_control_request", "active_control_command", "active_control_request_id", "stop_phase",
+                        ))):
+                    return False
+            for role in ("upstream", "gateway"):
+                role_state = state.get(role)
+                if type(role_state) is not dict or not all(field in role_state for field in role_identity_fields):
+                    return False
+                if all(role_state[field] is None for field in role_identity_fields):
+                    continue
+                identity = _identity_from_role(role_state)
+                if not state_is_current or identity is None or identity.pid <= 0 or identity.created_at < supervisor.created_at:
+                    return False
+                identities.append(identity)
+        expected_executable = os.path.normcase(os.path.abspath(str(self.config.python_executable)))
+        if any(os.path.normcase(os.path.abspath(item.executable)) != expected_executable for item in identities):
             return False
         expected_command = portable_supervisor_command_identity(
             app_root=self.config.app_root,
@@ -459,22 +529,84 @@ class RuntimeController:
             upstream_port=self.config.upstream_port,
             gateway_port=self.config.gateway_port,
         )
-        identity_matches = bool(
-            state.get("supervisor_command_identity") == expected_command == lock.get("supervisor_command_identity")
-            and state.get("runtime_mode") == "portable-release" == lock.get("runtime_mode")
-            and state.get("release_id") == context.release_id == lock.get("release_id") == self.config.release_id
-            and state.get("release_manifest_sha256") == context.release_manifest_sha256 == lock.get("release_manifest_sha256") == self.config.release_manifest_sha256
-            and state.get("release_payload_tree_sha256") == context.release_payload_tree_sha256 == lock.get("release_payload_tree_sha256") == self.config.release_payload_tree_sha256
-            and state.get("runtime_manifest_sha256") == context.runtime_manifest_sha256 == lock.get("runtime_manifest_sha256") == self.config.runtime_manifest_sha256
-            and state.get("enterprise_commit") == context.enterprise_commit == lock.get("enterprise_commit") == self.config.enterprise_commit
-            and state.get("enterprise_tree") == context.enterprise_tree == lock.get("enterprise_tree") == self.config.enterprise_tree
-            and state.get("startup_preflight_sha256") == context.startup_preflight_sha256 == lock.get("startup_preflight_sha256") == self.config.startup_preflight_sha256
-            and state.get("launch_context_identity") == context.identity == lock.get("launch_context_identity")
-        )
-        return identity_matches and self.store.reconcile_reboot_stale_state(
+        expected = {
+            "supervisor_instance_id": instance_id,
+            "supervisor_command_identity": expected_command,
+            "portable_identity_schema": "env-1b1c-portable-runtime-identity-v2",
+            "runtime_mode": "portable-release",
+            "launch_context_identity": context.identity,
+        }
+        for field in ("release_id", "release_manifest_sha256", "release_payload_tree_sha256", "runtime_manifest_sha256",
+                      "enterprise_commit", "enterprise_tree", "startup_preflight_sha256"):
+            value = getattr(context, field)
+            if value != getattr(self.config, field):
+                return False
+            expected[field] = value
+        if any(record.get(key) != value for record in (state if state_is_current else None, lock) if record is not None
+               for key, value in expected.items()):
+            return False
+
+        def still_quiescent() -> bool:
+            state_root = self.config.app_root.parent.parent / "state"
+            if maintenance_active(state_root) or os.path.lexists(state_root / "system-update-active.lock"):
+                # Update and rollback use the same launcher. A failed attempt can
+                # retire only its own adopted runtime, under the reconcile fence.
+                if failed_instance_id is None or not same_process(owner, process_identity(os.getpid())):
+                    return False
+            try:
+                if read_launch_context(self.config.runtime_root / LAUNCH_CONTEXT_FILENAME).identity != context.identity:
+                    return False
+            except (RuntimeError, OSError):
+                return False
+            saved_processes = tuple(item for item in (*identities, previous_supervisor) if item is not None)
+            if any(_current(item) for item in saved_processes):
+                return False
+            parents = windows_process_parents()
+            if parents is None:
+                return False
+            if failed_instance_id is None and owner is not None and owner.pid in parents:
+                launcher = process_identity(owner.pid)
+                if launcher is None or launcher.created_at <= owner.created_at:
+                    return False
+            if not all(_saved_process_is_quiescent(item, parents) for item in saved_processes):
+                return False
+            return _ports_are_confirmed_clear(*_port_snapshots(self.config))
+
+        adopted_state = None
+        if not state_is_current:
+            # The host adopted the lock before it could publish its runtime state.
+            adopted_state = initial_state(
+                instance_id=instance_id, supervisor=supervisor, mode="service-host",
+                runtime_mode=self.config.runtime_mode,
+                runtime_identity={key: expected[key] for key in PORTABLE_IDENTITY_FIELDS},
+                supervisor_command_identity=expected_command,
+            )
+        return self.store.reconcile_reboot_stale_state(
             expected_lock=lock,
             expected_state=state,
+            still_quiescent=still_quiescent,
+            **({"adopted_state": adopted_state} if adopted_state is not None else {}),
         )
+
+    def _finish_failed_start(self, instance_id: str, *, timed_out: bool) -> bool:
+        lock = self.store.read_lock()
+        if self.config.runtime_mode == "portable-release":
+            state = self.store.read_state()
+            if (state and state.get("supervisor_instance_id") == instance_id) or (
+                lock and lock.get("supervisor_instance_id") == instance_id and lock.get("lock_phase") == "adopted"
+            ):
+                if state and state.get("state") == "stopped" and not os.path.lexists(self.store.lock_path):
+                    return True
+                return self.reconcile_reboot_stale_runtime(
+                    {"runtime_state": state, "lock": lock}, failed_instance_id=instance_id,
+                )
+            if state is None and os.path.lexists(self.store.state_path):
+                return False
+        if lock and lock.get("supervisor_instance_id") == instance_id and (
+            lock.get("lock_phase") == "reserved" or timed_out and self.config.runtime_mode != "portable-release"
+        ):
+            self.store.release_lock(instance_id)
+        return not os.path.lexists(self.store.lock_path)
 
     @staticmethod
     def _stop_owned_start_host(host: subprocess.Popen[bytes]) -> bool:
@@ -510,7 +642,18 @@ class RuntimeController:
             ):
                 raise RuntimeStartBlocked("portable runtime ownership or readiness is untrusted")
             return {"result": "already_running", "status": snapshot}
+        if self.config.runtime_mode == "portable-release" and (
+            snapshot.get("runtime_state") is None and os.path.lexists(self.store.state_path)
+            or snapshot.get("lock") is None and os.path.lexists(self.store.lock_path)
+        ):
+            raise RuntimeStartBlocked("portable runtime state or lock could not be verified")
         if disposition in {"stale_runtime_state", "startup_in_progress"}:
+            state = snapshot.get("runtime_state")
+            if self.config.runtime_mode == "portable-release" and (
+                state and state.get("state") != "stopped"
+                or (snapshot.get("lock") or {}).get("lock_phase") == "adopted"
+            ):
+                raise RuntimeStartBlocked("portable runtime state requires recovery")
             if not self._clear_stale_if_safe(snapshot):
                 raise RuntimeStartBlocked("runtime startup is already in progress")
         elif disposition != "stopped":
@@ -687,6 +830,7 @@ class RuntimeController:
                 pass
             raise RuntimeControlError("runtime service host could not be started", public_details=details) from exc
         deadline = time.monotonic() + wait_seconds
+        current = snapshot
         while time.monotonic() < deadline:
             current = inspect_runtime(self.config)
             state = current.get("runtime_state")
@@ -706,9 +850,8 @@ class RuntimeController:
                 return {"result": "started", "status": current}
             host_exit_code = host.poll()
             if host_exit_code is not None:
-                lock = self.store.read_lock()
-                if lock and lock.get("supervisor_instance_id") == instance_id and lock.get("lock_phase") == "reserved":
-                    self.store.release_lock(instance_id)
+                state_settled = self._finish_failed_start(instance_id, timed_out=False)
+                diagnostics = _startup_failure_details(logs.root, instance_id, current, state_settled=state_settled)
                 failure_category = (
                     _bootstrap_failure_category(bootstrap_path)
                     if bootstrap_path is not None
@@ -724,23 +867,23 @@ class RuntimeController:
                         supervisor_instance_id=instance_id,
                         host_exit_code=host_exit_code,
                         bootstrap_failure_category=failure_category,
+                        **diagnostics,
                     )
                 except OSError:
                     pass
                 raise RuntimeServiceHostStartupError(
                     exit_code=host_exit_code,
                     failure_category=failure_category,
+                    diagnostics=diagnostics,
                 )
             time.sleep(0.25)
-        lock = self.store.read_lock()
         if host.poll() is None:
             self._stop_owned_start_host(host)
-        lock = self.store.read_lock()
-        if host.poll() is not None and lock and lock.get("supervisor_instance_id") == instance_id:
-            self.store.release_lock(instance_id)
+        state_settled = host.poll() is not None and self._finish_failed_start(instance_id, timed_out=True)
         if bootstrap_path is not None:
             _discard_bootstrap_failure(bootstrap_path, logs=logs)
-        details = {"failure_stage": "service_host_readiness_wait"}
+        details = {"failure_stage": "service_host_readiness_wait",
+                   **_startup_failure_details(logs.root, instance_id, current, state_settled=state_settled)}
         try:
             logs.write("launcher.log", "service_host_start_failed", code="RUNTIME_CONTROL_ERROR",
                        supervisor_instance_id=instance_id, **details)

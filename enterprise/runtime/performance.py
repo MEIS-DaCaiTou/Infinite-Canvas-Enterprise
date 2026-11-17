@@ -8,12 +8,15 @@ from contextlib import contextmanager
 from functools import wraps
 import json
 import logging
+import re
+import sys
 from threading import Lock
 from time import perf_counter
 
 _lock = Lock()
 _samples = {}
 logger = logging.getLogger('uvicorn.error.performance')
+_startup_instance = '-'
 # The fixed runtime defaults to warning. Keep only this bounded diagnostic
 # stream visible without enabling verbose HTTP/framework logs globally.
 
@@ -70,15 +73,39 @@ async def monitor(role, *, interval=.5, flush_seconds=60):
         raise
 
 
-async def startup_stage(name, fn, *, threaded=True):
+def set_startup_instance(instance_id):
+    global _startup_instance
+    _startup_instance = instance_id if isinstance(instance_id, str) and re.fullmatch(r'[0-9a-f]{32}', instance_id) else '-'
+
+
+@contextmanager
+def startup_phase(name, *, before_uvicorn=False):
+    counts = {}
     logger.setLevel(logging.INFO)
     started = perf_counter()
+    def emit(outcome):
+        line = (f'startup_phase instance={_startup_instance} name={name} outcome={outcome} '
+                f'elapsed_ms={(perf_counter()-started)*1000:.1f} counts={json.dumps(counts)}')
+        if before_uvicorn:
+            try:
+                print(line, file=sys.stderr, flush=True)
+            except OSError:
+                pass
+        else:
+            logger.info(line)
+    emit('started')
     try:
-        result = await asyncio.to_thread(fn) if threaded else await fn()
+        yield counts
     except BaseException:
-        logger.info('startup_phase name=%s elapsed_ms=%.1f outcome=failed', name, (perf_counter()-started)*1000)
+        emit('failed')
         raise
-    counts = result if isinstance(result, dict) else {}
-    counts = {key: value for key, value in counts.items() if isinstance(value, (int, float))}
-    logger.info('startup_phase name=%s elapsed_ms=%.1f counts=%s', name, (perf_counter()-started)*1000, json.dumps(counts))
+    else:
+        emit('completed')
+
+
+async def startup_stage(name, fn, *, threaded=True):
+    with startup_phase(name) as counts:
+        result = await asyncio.to_thread(fn) if threaded else await fn()
+        if isinstance(result, dict):
+            counts.update({key: value for key, value in result.items() if isinstance(value, (int, float))})
     return result

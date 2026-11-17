@@ -560,6 +560,7 @@ _OTHER_FLOW_BY_SYMBOL: dict[tuple[str, str], str] = {
     ("enterprise/runtime/state.py", "RuntimeStateStore.release_lock"): "W26",
     ("enterprise/runtime/state.py", "RuntimeStateStore.remove_ack"): "W26",
     ("enterprise/runtime/state.py", "RuntimeStateStore.reconcile_reboot_stale_state"): "W26",
+    ("enterprise/runtime/state.py", "RuntimeStateStore._reconcile_stale_state"): "W26",
     ("enterprise/runtime/state.py", "RuntimeStateStore.reserve_lock"): "W26",
     ("enterprise/runtime/state.py", "RuntimeStateStore._reservation_survives_reconcile"): "W26",
     ("enterprise/runtime/state.py", "_atomic_json_replace"): "W26",
@@ -711,7 +712,8 @@ def _flow_for_operation(file: str, symbol: str) -> str:
 # Wxx flow). Line numbers are deliberately excluded, while duplicate identical
 # calls remain duplicate records. Any added/removed/changed call drifts it.
 # W15 replaces the generic URL fallback with removal of this invocation's generated partial output.
-EXPECTED_SITE_MANIFEST_DIGEST = "5e6354022774f1dc9ed398638ab0ff4fd77f1ef52c4b8832382160efc211b3ed"
+# W26 covers the shared runtime reconciliation guard and owned-state cleanup.
+EXPECTED_SITE_MANIFEST_DIGEST = "8b3bf797cbf0f0875063950cd153f81bc38db4ddc2ca319bd397ae8a55ddc673"
 
 FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W01", "main.py", "startup_event"),

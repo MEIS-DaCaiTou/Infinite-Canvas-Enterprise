@@ -306,8 +306,9 @@ HEALTH_UPSTREAM_OUTER_DEADLINE_SECONDS = 2.5
 @app.on_event("startup")
 async def startup() -> None:
     global _http_client, _health_probe_lock, _health_probe_task, _performance_monitor
-    require_gateway_database_ready(PATH_ROOTS, DB_PATH)
-    ensure_db_schema()
+    with performance.startup_phase("gateway_database"):
+        require_gateway_database_ready(PATH_ROOTS, DB_PATH)
+        ensure_db_schema()
     _http_client = httpx.AsyncClient(
         base_url=UPSTREAM_URL,
         timeout=httpx.Timeout(connect=10, read=300, write=300, pool=10),
@@ -318,7 +319,8 @@ async def startup() -> None:
     _health_probe_lock = asyncio.Lock()
     app.state.upstream_client = _http_client
     _health_probe_task = None
-    start_collection_queries()
+    with performance.startup_phase("gateway_collection_queries"):
+        start_collection_queries()
     print(f"[企业版] 网关启动，监听 0.0.0.0:{GATEWAY_PORT}")
     print(f"[企业版] 上游服务地址: {UPSTREAM_URL}")
 
