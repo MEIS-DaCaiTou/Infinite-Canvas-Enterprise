@@ -9,12 +9,13 @@ from __future__ import annotations
 import asyncio
 from copy import deepcopy
 import logging
+import re
 import time
 from urllib.parse import urlsplit
 
 import httpx
 from fastapi import HTTPException
-from enterprise.providers.submission import reported_usage
+from enterprise.providers.submission import provider_submission_unknown, reported_usage
 from enterprise.runtime.logging import redact_text
 
 
@@ -28,42 +29,117 @@ def provider_scope(provider):
             "image_request_mode": str(provider.get("image_request_mode") or "")}
 
 
+def planned_archive(receipt):
+    if receipt.get("state") not in {"generated", "unknown"}:
+        return None
+    meta = receipt.get("archive")
+    url = meta.get("url") if isinstance(meta, dict) else None
+    if isinstance(url, str) and re.fullmatch(r"/assets/output/online_[0-9a-f]{32}\.(?:png|jpg|webp)", url):
+        return meta
+    return None
+
+
 def can_reconcile(record):
-    return record.get("type") == "online-image" and record.get("status") == "failed" and any(
-        (receipt.get("upstream_task_id") and receipt.get("provider_base_url")) or (receipt.get("result") or {}).get("images")
+    return record.get("type") == "online-image" and record.get("status") == "failed" and not record.get("tracking_write_failed") and any(
+        (receipt.get("upstream_task_id") and receipt.get("provider_base_url")
+         and receipt.get("state") not in {"succeeded", "failed"})
+        or (receipt.get("result") or {}).get("images") or planned_archive(receipt)
         for receipt in record.get("provider_receipts") or []
     )
+
+
+def image_receipt_result(record, timestamp):
+    receipts = record["provider_receipts"]
+    images = [url for item in receipts for url in (item.get("result") or {}).get("images", [])]
+    items = [meta for item in receipts for meta in (item.get("result") or {}).get("image_items", [])]
+    all_succeeded = all(item["state"] == "succeeded" for item in receipts)
+    return {"status": "succeeded" if all_succeeded else ("partial" if images else "failed"),
+            "task_id": record["id"], "images": images, "image_items": items,
+            "message": "" if all_succeeded else "已保留完成的图片；其余请在生成任务中核对原任务与账单，不会自动重新生成",
+            "provider_id": record.get("provider_id"), "model": record.get("model"), "type": "online",
+            "timestamp": timestamp}
+
+
+def provisional_image_result(record):
+    previous = record.get("result") or {}
+    timestamp = previous.get("timestamp") or record.get("created_at") or record.get("updated_at", 0)
+    result = image_receipt_result(record, timestamp)
+    if result["images"]:
+        return {**result, "status": "partial"}
+    return None
 
 
 def public_receipt(record):
     # Internal query binding is not frontend configuration or a credential.
     public = {**{key: value for key, value in record.items() if key != "provider_receipts"},
               "can_reconcile": can_reconcile(record)}
+    if record.get("type") == "online-image":
+        receipt = next(iter(record.get("provider_receipts") or []), {})
+        public.update(submission_status=receipt.get("state", ""),
+                      provider_request_id=receipt.get("provider_request_id", ""),
+                      provider_result_received=bool(receipt.get("generated_at")))
     from enterprise.accepted_task_recovery import recovery_candidate
-    if (recovery_candidate(record)
-            and (record.get("auto_recovery") or {}).get("status") in {"waiting", "querying"}):
+    auto_state = (record.get("auto_recovery") or {}).get("status")
+    partial = None
+    if record.get("type") == "online-image" and record.get("status") in {"failed", "running"} and record.get("provider_receipts"):
+        partial = provisional_image_result(record)
+    if (partial and record.get("status") == "running") or (not record.get("tracking_write_failed") and recovery_candidate(record) and (
+            auto_state in {"waiting", "querying"} or (partial and not auto_state))):
         # A local tracking interruption is not a terminal supplier failure.
         public.update(status="running", error="", error_code="")
+        if partial:
+            public["result"] = {**partial, "message": "已归档的图片可用，其余仍在跟踪原任务"}
+    elif partial:
+        message = record["error"] if record.get("tracking_write_failed") else partial["message"]
+        public.update(status="partial", result={**partial, "message":message}, message=message)
     return public
 
 
 class ImageReceiptSink:
     def __init__(self, journal, task_id, index):
         self.journal, self.task_id, self.index = journal, task_id, index
+        self.provider_request_id = ""
+        self.upstream_task_id = ""
+        self._acceptance = {}
 
     async def started(self, provider, model):
         await asyncio.to_thread(self.journal.record_image_request, self.task_id, self.index,
                                 {"provider_id": provider["id"], "model": model, "state": "submitting", "started_at": time.time()})
 
-    async def accepted(self, upstream_task_id, provider):
+    def identify(self, headers=None, raw=None):
+        headers = headers or {}
+        raw = raw if isinstance(raw, dict) else {}
+        value = raw.get("request_id") or headers.get("x-request-id") or headers.get("request-id")
+        if not self.provider_request_id and isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_.:-]{1,240}", value):
+            self.provider_request_id = value
+
+    def request_identity(self):
+        return {"provider_request_id": self.provider_request_id} if self.provider_request_id else {}
+
+    async def accepted(self, upstream_task_id, provider=None):
         if not isinstance(upstream_task_id, str) or not 1 <= len(upstream_task_id) <= 240:
             raise ValueError("Invalid provider task identity")
-        await asyncio.to_thread(self.journal.record_image_request, self.task_id, self.index,
-                                {**provider_scope(provider), "state": "accepted", "upstream_task_id": upstream_task_id, "accepted_at": time.time()})
+        self.upstream_task_id = upstream_task_id
+        self._acceptance = {**(provider_scope(provider) if provider else {}), **self.request_identity(),
+                            "upstream_task_id": upstream_task_id, "accepted_at": time.time()}
+        try:
+            await asyncio.to_thread(self.journal.record_image_request, self.task_id, self.index,
+                                    {**self._acceptance, "state": "accepted"})
+        except OSError as exc:
+            # Do not query or resubmit until the original ID has been recorded.
+            error = provider_submission_unknown("供应商已受理，但本地回执首次写入失败",
+                                                upstream_task_id=upstream_task_id)
+            error.image_receipt_write_failed = True
+            raise error from exc
 
     async def generated(self, raw):
+        if not self.upstream_task_id:
+            self.identify(raw=raw)
         await asyncio.to_thread(self.journal.record_image_request, self.task_id, self.index,
-                                {"state": "generated", "reported_usage": reported_usage(raw), "generated_at": time.time()})
+                                {**self.request_identity(), "state": "generated", "reported_usage": reported_usage(raw), "generated_at": time.time()})
+
+    async def plan_archive(self, meta):
+        await asyncio.to_thread(self.journal.record_image_request, self.task_id, self.index, {"archive": meta})
 
     async def completed(self, images, image_items):
         if not images:
@@ -74,23 +150,33 @@ class ImageReceiptSink:
     async def interrupted(self, exc):
         from enterprise.task_credentials import task_error
         ambiguous = getattr(exc, "submission_unknown", False) or getattr(exc, "status_code", 0) >= 500 or isinstance(exc, httpx.HTTPError)
-        if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code < 500:
-            ambiguous = False
-        record = await asyncio.to_thread(self.journal.get, self.task_id)
-        previous = (record.get("provider_receipts") or [])[self.index]
-        if previous.get("upstream_task_id") or previous.get("state") == "generated":
-            ambiguous = True  # Local query/archiving failure does not mean the supplier failed.
-        if getattr(exc, "provider_task_failed", False):
-            ambiguous = False
-        await asyncio.to_thread(self.journal.record_image_request, self.task_id, self.index,
-                                {"state": "unknown" if ambiguous else "failed", "finished_at": None if ambiguous else time.time(),
-                                 "error": task_error(getattr(exc, "detail", None) or str(exc))[:1200]})
+        if isinstance(exc, httpx.HTTPStatusError):
+            self.identify(exc.response.headers)
+            ambiguous = exc.response.status_code >= 500 or exc.response.status_code == 408
+        changes = {**self._acceptance, **self.request_identity()}
+        try:
+            record = await asyncio.to_thread(self.journal.get, self.task_id)
+            previous = (record.get("provider_receipts") or [])[self.index]
+            if self.upstream_task_id or previous.get("upstream_task_id") or previous.get("state") == "generated":
+                ambiguous = True  # Local tracking/archiving failure is not a supplier rejection.
+            if getattr(exc, "provider_task_failed", False):
+                ambiguous = False
+            changes.update(state="unknown" if ambiguous else "failed", finished_at=None if ambiguous else time.time(),
+                           error=task_error(getattr(exc, "detail", None) or str(exc))[:1200])
+            await asyncio.to_thread(self.journal.record_image_request, self.task_id, self.index, changes)
+        except OSError:
+            if not (self.upstream_task_id and getattr(exc, "submission_unknown", False)):
+                raise
+            # If storage is back at finalization, commit the ID and status together.
+            exc.unwritten_image_receipt = (self.index, {**changes, "state": "unknown", "finished_at": None,
+                "error": task_error(exc.detail)[:1200]})
+            logging.getLogger(__name__).warning("Accepted image receipt still unavailable for %s", self.task_id)
 
 
 class CanvasImageRecovery:
-    def __init__(self, journal, resolve_provider, query, publish, *, is_archived=None):
+    def __init__(self, journal, resolve_provider, query, publish, *, is_archived=None, read_archive=None):
         self.journal, self.resolve_provider, self.query, self.publish = journal, resolve_provider, query, publish
-        self.is_archived = is_archived
+        self.is_archived, self.read_archive = is_archived, read_archive
         self._active = {}
 
     async def shutdown(self):
@@ -138,7 +224,7 @@ class CanvasImageRecovery:
         if record.get("status") == "succeeded":
             return {**record["result"], "status": "succeeded"}
         if (record.get("result") or {}).get("status") == "partial" and not any(
-            item.get("upstream_task_id") and item.get("state") not in {"succeeded", "failed"}
+            planned_archive(item) or (item.get("upstream_task_id") and item.get("state") not in {"succeeded", "failed"})
             for item in record.get("provider_receipts") or []
         ):
             return record["result"]
@@ -146,6 +232,18 @@ class CanvasImageRecovery:
             return {"status": "running", "message": "原任务仍在跟踪，请稍后查询", "task_id": task_id}
         if not can_reconcile(record):
             raise HTTPException(409, "没有可续查的已绑定任务回执；请核对供应商任务与账单，不要自动重新生成")
+
+        if self.read_archive:
+            restored = False
+            for receipt in record["provider_receipts"]:
+                archive = planned_archive(receipt)
+                if archive and (meta := await asyncio.to_thread(self.read_archive, archive)):
+                    await asyncio.to_thread(self.journal.record_image_request, task_id, receipt["index"],
+                                            {"state": "succeeded", "error": "", "finished_at": time.time(),
+                                             "result": {"images": [meta["url"]], "image_items": [meta]}}, recovering=True)
+                    restored = True
+            if restored:
+                record = await asyncio.to_thread(self.journal.get, task_id)
 
         # Validate all bindings before any supplier request. Key rotation is
         # allowed, endpoint/protocol reassignment is not.
@@ -193,16 +291,14 @@ class CanvasImageRecovery:
                     "message": f"原任务查询暂未确认{reason}，请稍后再查；没有重新生成" if query_unknown else "原任务仍在生成中，请稍后再查询"}
 
         record = await asyncio.to_thread(self.journal.get, task_id)
-        receipts = record["provider_receipts"]
-        images = [url for item in receipts for url in (item.get("result") or {}).get("images", [])]
-        items = [meta for item in receipts for meta in (item.get("result") or {}).get("image_items", [])]
-        all_succeeded = all(item["state"] == "succeeded" for item in receipts)
-        message = "" if all_succeeded else "部分请求未确认或已失败；已找回的结果已保留，其余请核对供应商任务与账单，不要自动重新生成"
-        result = {"status": "succeeded" if all_succeeded else ("partial" if images else "failed"),
-                  "task_id": task_id, "images": images, "image_items": items, "message": message,
-                  "provider_id": record.get("provider_id"), "model": record.get("model"), "type": "online", "timestamp": time.time()}
+        result = image_receipt_result(record, time.time())
+        if not result["images"] and any(planned_archive(receipt) and not receipt.get("upstream_task_id")
+                                        for receipt in record["provider_receipts"]):
+            raise HTTPException(409, "原任务的本地图片归档不可读取，请核对原任务和账单")
+        if (record.get("result") or {}).get("images") == result["images"] and result["status"] == "partial":
+            return record["result"]
         await asyncio.to_thread(self.journal.finish_image_recovery, task_id, result)
-        if images:
+        if result["images"]:
             try:
                 await asyncio.to_thread(self.publish, deepcopy(result))
             except OSError:

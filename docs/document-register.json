@@ -1,8 +1,8 @@
 {
   "schema_version": "enterprise-documents-v1",
-  "reviewed_at": "2026-11-05",
+  "reviewed_at": "2026-11-13",
   "audit_base_commit": "03de4f721b3a1cda4498155e9e507b54edf2d402",
-  "scope": "2026-11-05 PERF1105 on PR #210 Head 03de4f7, codex/fix-online-history-performance: supplied production logs and canvas copy diagnosis, 512px previews, shared cold builds, history viewport and live continuation, threaded canvas/history file I/O, and bounded runtime timing summaries. Evidence and limits are in the current status and convergence record. Full JSON rewrites, interruption recovery and production capacity remain open.",
+  "scope": "2026-11-13 targeted status update for Zhenzhen image async submission and original-task recovery. The earlier PERF1105 audit baseline and remaining production capacity work are retained in the current status.",
   "documents": [
     {
       "path": ".github/PULL_REQUEST_TEMPLATE.md",
@@ -159,7 +159,7 @@
       "path": "docs/CURRENT_PROJECT_STATUS.md",
       "kind": "authority",
       "authority": "status",
-      "reviewed_at": "2026-11-05"
+      "reviewed_at": "2026-11-13"
     },
     {
       "path": "docs/data/DATA-MVP-1-INDEPENDENT-REVIEW-2026-09.md",

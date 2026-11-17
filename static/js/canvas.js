@@ -1968,7 +1968,7 @@ async function createSmartCanvas(){
 }
 function openSmartCanvasPage(id){
     if(!id) return;
-    window.location.href = `/static/smart-canvas.html?id=${encodeURIComponent(id)}&v=20261104.2`;
+    window.location.href = `/static/smart-canvas.html?id=${encodeURIComponent(id)}&v=20261113.2`;
 }
 function toggleEmojiPicker(id, event){
     event?.preventDefault();
@@ -6043,7 +6043,7 @@ function pendingOutputStyle(pending){
     return ` style="aspect-ratio:${Math.max(1, size.w)}/${Math.max(1, size.h)}"`;
 }
 function renderPendingOutput(pending){
-    if(['cancelled','failed'].includes(pending?.canvasTaskStatus)){
+    if(pending?.canvasTaskType !== 'online-image' && ['cancelled','failed'].includes(pending?.canvasTaskStatus)){
         const label=pending.canvasTaskStatus==='cancelled'?(langIsEn()?'Cancelled':'已取消'):(langIsEn()?'Failed':'失败');
         return `<div class="output-img-wrap comfy-ended-output" data-pending-id="${escapeAttr(pending.id)}"${pendingOutputStyle(pending)}><div class="comfy-ended-label">${label}</div><button class="output-del" title="${tr('common.delete')}">×</button></div>`;
     }
@@ -6051,19 +6051,22 @@ function renderPendingOutput(pending){
         const taskId = pending.recoverTaskId || '';
         const querying = Boolean(pending.querying);
         const msg = pending.error || tr('canvas.generationFailed');
-        const sub = taskId ? `任务 ID：${escapeHtml(taskId)}` : '没有任务 ID，无法查询';
+        const sub = pending.imageStatus ? escapeHtml(msg) : taskId ? `任务 ID：${escapeHtml(taskId)}` : '没有任务 ID，无法查询';
+        const badge = !pending.imageStatus || pending.imageStatus === '明确失败' ? '失败'
+            : pending.imageStatus === '供应商已受理' ? '已受理'
+            : pending.imageStatus === '已取消' ? '已取消' : '待核对';
         return `<div class="output-img-wrap loading-wrap recoverable" data-pending-id="${escapeAttr(pending.id)}"${pendingOutputStyle(pending)}>
-            <span class="output-time-pill failed">失败</span>
+            <span class="output-time-pill ${badge === '失败' ? 'failed' : 'running'}">${badge}</span>
             <div class="output-recover-state">
                 <i data-lucide="refresh-cw" class="${querying ? 'spinning' : ''}"></i>
-                <div class="output-recover-title">${querying ? '查询中' : '任务未丢失'}</div>
+                <div class="output-recover-title">${querying ? '查询中' : escapeHtml(pending.imageStatus || '任务未丢失')}</div>
                 <div class="output-recover-sub" title="${escapeAttr(msg)}">${sub}</div>
-                <button class="output-recover-query" type="button" ${taskId && !querying ? '' : 'disabled'}>${querying ? '查询中...' : '查询结果'}</button>
+                ${taskId || pending.retryReceipt ? `<button class="output-recover-query" type="button" ${querying ? 'disabled' : ''}>${querying ? '查询中...' : '查询结果'}</button>` : ''}
             </div>
             <button class="output-del" title="${tr('common.delete')}">×</button>
         </div>`;
     }
-    return `<div class="output-img-wrap loading-wrap" data-pending-id="${escapeAttr(pending.id)}"${pendingOutputStyle(pending)}><span class="output-time-pill running">${formatRunDuration(nowMs() - Number(pending.startedAt || nowMs()))}</span><div class="output-spinner"></div><button class="output-del" title="${tr('common.delete')}">×</button></div>`;
+    return `<div class="output-img-wrap loading-wrap" data-pending-id="${escapeAttr(pending.id)}"${pendingOutputStyle(pending)}><span class="output-time-pill running">${formatRunDuration(nowMs() - Number(pending.startedAt || nowMs()))}</span><div class="output-spinner"></div>${pending.imageStatus ? `<span class="comfy-output-status">${escapeHtml(pending.imageStatus)}</span>` : ''}<button class="output-del" title="${tr('common.delete')}">×</button></div>`;
 }
 function captureOutputScrolls(){
     const state = new Map();
@@ -6447,7 +6450,9 @@ function bindOutputWrap(wrap, node){
             e.preventDefault();
             e.stopPropagation();
             const pid = wrap.dataset.pendingId;
-            if(pid) queryRecoverPendingOutput(pid);
+            const pending = pendingById(node, pid);
+            if(pending?.retryReceipt) pollCanvasImageTask(pending.canvasTaskId);
+            else if(pid) queryRecoverPendingOutput(pid);
         };
     }
     const getEntry=()=>wrap.dataset.pendingId
@@ -8403,7 +8408,7 @@ function renderGeneratorBody(node){
             </div>
         </div>
         <div class="gen-run-row">
-            <button class="gen-btn ${node.running ? 'running' : ''}" ${node.running || CanvasRunPreparation.has(node,canvas?.id) ? 'disabled' : ''}><i data-lucide="zap" class="w-4 h-4"></i>${CanvasRunPreparation.has(node,canvas?.id) ? (langIsEn()?'Preparing…':'准备中…') : node.running ? tr('canvas.generating') : tr('canvas.apiGenerate')}</button>
+            <button class="gen-btn ${node.running ? 'running' : ''}" ${node.running || CanvasRunPreparation.has(node,canvas?.id) ? 'disabled' : ''}><i data-lucide="zap" class="w-4 h-4"></i>${CanvasRunPreparation.has(node,canvas?.id) ? (CanvasRunPreparation.phase(node,canvas?.id)==='submitting' ? (langIsEn()?'Submitting tasks…':'提交任务中…') : (langIsEn()?'Saving canvas…':'保存画布中…')) : node.running ? tr('canvas.generating') : tr('canvas.apiGenerate')}</button>
             ${cascadeBtnHtml(node)}
         </div>
         ${retryBarHtml(node)}
@@ -10074,9 +10079,8 @@ async function runRhNode(nodeId, opts={}){
     }
 }
 async function runRhModelNode(node, opts={}){
-    if(!node || (node.running && !opts.cascade)) return;
+    if(!node || CanvasRunPreparation.has(node,canvas?.id) || (node.running && !opts.cascade)) return;
     if(!checkTextSelection(node,opts))return;
-    const cascadeTargetId = cascadeTargetIdFromOptions(opts);
     const selectedRef = rhSelectedEntryRef(node);
     const model = selectedRef?.id || node.rhModel || node.model || '';
     if(!model){
@@ -10091,86 +10095,16 @@ async function runRhModelNode(node, opts={}){
     const refs = imageRefsOnly(media.refs || []);
     if(!prompt && !refs.length){ alert(tr('canvas.needPromptOrImage')); return; }
     const count = Math.max(1, Math.min(8, Number(node.count || 1)));
-    let out = outputForNode(node, 500);
+    const out = outputForNode(node, 500);
     const run = runSnapshot(node, prompt || 'Edit the reference images.', refs);
     run.taskLabel = 'RunningHub';
-    const payload = {
-        prompt:prompt || 'Edit the reference images.',
-        provider_id:'runninghub',
-        model,
-        size:await generatorSizeForRun(node, refs),
-        reference_images:refs.slice(0, CANVAS_REFERENCE_IMAGE_MAX)
-    };
+    const payload = {prompt:run.prompt, provider_id:'runninghub', model,
+        reference_images:refs.slice(0, CANVAS_REFERENCE_IMAGE_MAX)};
     const quality = normalizedImageQuality(node.quality);
     if(quality) payload.quality = quality;
-    let pendingIds = [];
-    const startedAt = nowMs();
-    if(!opts.cascade){
-        node.running = true;
-        refreshRunNodes(node, out);
-        setTimeout(() => { node.running = false; refreshRunNodes(node, out); }, 2000);
-    }
-    try {
-        const taskInfos = await Promise.all(Array.from({length:count}, () => createCanvasImageTask(payload, {cascadeTargetId,sourceNode:node})));
-        if(!out){
-            let outputs = [];
-            for(const task of taskInfos){
-                const result = await waitCanvasImageTaskResult(task.task_id, {cascadeTargetId});
-                outputs.push(...(result.images || []));
-                run.request = requestMetaFromResult(result);
-            }
-            if(!outputs.length) throw new Error(tr('canvas.generationFailed'));
-            mergeGeneratedOutputs(node, outputs, Boolean(opts.cascade));
-            addGenerationLog({run, outputs, runMs:nowMs() - startedAt});
-            node.runStatus = 'done';
-            node.runError = '';
-            node.running = false;
-            refreshRunNodes(node, out);
-            scheduleSave();
-            return;
-        }
-        pendingIds = taskInfos.map(() => uid('p'));
-        out._pending = [
-            ...(out._pending || []),
-            ...taskInfos.map((task, index) => makePendingForRun(pendingIds[index], run, node, {refs, requestSize:payload.size, cascadeTargetId}, {
-                canvasTaskId:task.task_id,
-                canvasTaskType:'online-image',
-                providerId:payload.provider_id,
-                model:payload.model,
-                appendGenerated:Boolean(opts.cascade)
-            }))
-        ];
-        refreshRunNodes(node, out);
-        scheduleSave();
-        await saveCanvas();
-        const statuses = await Promise.all(taskInfos.map(task => pollCanvasImageTask(task.task_id, {cascadeTargetId})));
-        if(statuses.includes('aborted')) throw cascadeAbortError(cascadeStopMessage());
-        if(statuses.includes('failed')) throw new Error(node.runError || tr('canvas.generationFailed'));
-    } catch(err) {
-        const remainingPending = pendingIds.map(id => pendingById(out, id)).filter(Boolean);
-        const removableIds = remainingPending.filter(p => !(p.failed && p.recoverTaskId)).map(p => p.id);
-        if(removableIds.length){
-            const metas = collectRunMetas(out, removableIds);
-            addGenerationLog({run, outputs:[], runMs:Math.max(...metas.map(m => m.runMs || 0), 0), error:err.message || String(err)});
-            if(out) out._pending = (out._pending || []).filter(p => !removableIds.includes(p.id));
-        }
-        if(isCascadeAbortError(err)){
-            node.running = false;
-            refreshRunNodes(node, out);
-            scheduleSave();
-            if(opts.cascade) throw err;
-            return;
-        }
-        node.runStatus = 'failed';
-        node.runError = err.message || String(err);
-        node.running = false;
-        refreshRunNodes(node, out);
-        scheduleSave();
-        if(remainingPending.some(p => p.failed && p.recoverTaskId) && !removableIds.length) return;
-        if(opts.cascade) throw err;
-        showErrorModal(err.message || tr('canvas.generationFailed'), tr('canvas.apiFailed'));
-    }
+    return runCanvasImageBatch(node, out, run, payload, refs, count, opts);
 }
+
 function renderComfySettings(container, node){
     const mode = node.mode || 'text';
     // Leave room for input previews and the run button; larger nodes get more parameter space.
@@ -10613,100 +10547,109 @@ async function runGenerator(genId, opts={}){
     const gen = nodes.find(n => n.id === genId);
     if(!gen || CanvasRunPreparation.has(gen,canvas?.id) || (gen.running && !opts.cascade)) return;
     if(!checkTextSelection(gen,opts))return;
-    const cascadeTargetId = cascadeTargetIdFromOptions(opts);
     const sources = orderedSources(gen, generatorSources(gen));
     const prompt = sources.map(s => s.prompt).filter(Boolean).join('\n\n');
     const refs = imageRefsOnly(sources.flatMap(s => s.refs || []));
     if(!prompt && !refs.length){ alert(tr('canvas.needPromptOrImage')); return; }
     const count = Math.max(1, Math.min(8, Number(gen.count || 1)));
-    let out = outputForNode(gen, 460);
+    const out = outputForNode(gen, 460);
     const run = runSnapshot(gen, prompt || 'Edit the reference images.', refs);
-    if(!CanvasRunPreparation.begin(gen,canvas?.id))return;
-    const originId=canvas?.id;
-    let payload,source,startedAt;
-    refreshRunNodes(gen,out);
+    const payload = {prompt:run.prompt, provider_id:resolveImageProviderId(gen.apiProvider || 'comfly'),
+        model:resolveImageModel(gen.model), reference_images:refs.slice(0, CANVAS_REFERENCE_IMAGE_MAX),
+        ...(window.CanvasModelPicker?.imageParameters(gen) || {})};
+    const quality = normalizedImageQuality(gen.quality);
+    if(quality) payload.quality = quality;
+    return runCanvasImageBatch(gen, out, run, payload, refs, count, opts);
+}
+
+async function runCanvasImageBatch(node, out, run, payload, refs, count, opts){
+    const originId = canvas?.id;
+    if(!CanvasRunPreparation.begin(node, originId)) return;
+    const cascadeTargetId = cascadeTargetIdFromOptions(opts);
+    const startedAt = nowMs();
+    let saveMs, submitStarted;
+    let tracking;
+    refreshRunNodes(node, out);
     try {
-        payload={prompt:prompt || 'Edit the reference images.',
-            provider_id:resolveImageProviderId(gen.apiProvider || 'comfly'),model:resolveImageModel(gen.model),
-            size:await generatorSizeForRun(gen,refs),reference_images:refs.slice(0,CANVAS_REFERENCE_IMAGE_MAX),
-            ...(window.CanvasModelPicker?.imageParameters(gen) || {})};
-        const quality=normalizedImageQuality(gen.quality);if(quality)payload.quality=quality;
-        if(canvas?.id!==originId || !nodes.some(node=>node.id===genId))throw new Error('已离开来源画布或节点，本次未提交生成任务');
-        startedAt=nowMs();
-        source=await taskCanvasSource(gen);
-    }catch(error){
-        if(opts.cascade)throw error;
-        showErrorModal(error.message || tr('canvas.generationFailed'),tr('canvas.apiFailed'));return;
-    }finally{
-        CanvasRunPreparation.end(gen,originId);
-        if(canvas?.id===originId)refreshRunNodes(gen,out);
-    }
-    let pendingIds = [];
-    if(!opts.cascade){
-        gen.running = true;
-        refreshRunNodes(gen, out);
-        // API 支持并发：2s 后即可再次点击，任务仍由 pending 卡片继续追踪
-        setTimeout(() => { gen.running = false; refreshRunNodes(gen, out); }, 2000);
-    }
-    try {
-        const taskInfos = await Promise.all(Array.from({length:count}, () => createCanvasImageTask(payload, {cascadeTargetId,sourceNode:gen,confirmedSource:source})));
-        if(!out){
-            let outputs = [];
-            for(const task of taskInfos){
-                const result = await waitCanvasImageTaskResult(task.task_id, {cascadeTargetId});
-                outputs.push(...(result.images || []));
-                run.request = requestMetaFromResult(result);
+        payload.size = await generatorSizeForRun(node, refs);
+        const saveStarted = performance.now();
+        try { payload.source = await taskCanvasSource(node); }
+        finally { saveMs = Math.round(performance.now() - saveStarted); }
+        if(canvas?.id !== originId || !nodes.includes(node)) throw new Error('已离开来源画布或节点，本次未提交生成任务');
+
+        CanvasRunPreparation.setPhase(node, originId, 'submitting');
+        const requests = Array.from({length:count}, () => CanvasTaskQuery.imageRequest(payload));
+        node.activeImageBatchId = requests[0].taskId;
+        if(out){
+            out._pending = [...(out._pending || []), ...requests.map(request => makePendingForRun(
+                uid('p'), run, node, {refs, requestSize:payload.size, cascadeTargetId}, {
+                    canvasTaskId:request.taskId, canvasTaskType:'online-image', imageStatus:'正在提交平台任务',
+                    providerId:payload.provider_id, model:payload.model, imageBatchId:requests[0].taskId, appendGenerated:Boolean(opts.cascade)
+                }))];
+            scheduleSave();
+        }
+        refreshRunNodes(node, out);
+        submitStarted = performance.now();
+        const submissions = requests.map(async request => {
+            try {
+                const task = await CanvasTaskQuery.submitImage(request, {
+                    fetcher:(url, init) => cascadeFetch(url, init, {cascadeTargetId})
+                });
+                updateCanvasImageStatus(request.taskId, CanvasTaskQuery.imageStatus(task));
+            } catch(error) {
+                if(!isCascadeAbortError(error)){
+                    failCanvasImageTask(request.taskId, error.message, {
+                        imageStatus:error.imageTrackingUnknown ? '平台回执待核对' : '明确失败',
+                        retryReceipt:Boolean(error.imageTrackingUnknown)
+                    });
+                }
+                throw error;
             }
-            if(!outputs.length) throw new Error(tr('canvas.generationFailed'));
-            mergeGeneratedOutputs(gen, outputs, Boolean(opts.cascade));
-            addGenerationLog({run, outputs, runMs:nowMs() - startedAt});
-            gen.runStatus = 'done';
-            gen.runError = '';
-            gen.running = false;
-            refreshRunNodes(gen, out);
-            scheduleSave();
-            return;
-        }
-        pendingIds = taskInfos.map(() => uid('p'));
-        if(out) out._pending = [
-            ...(out._pending || []),
-            ...taskInfos.map((task, index) => makePendingForRun(pendingIds[index], run, gen, {refs, requestSize:payload.size, cascadeTargetId}, {
-                canvasTaskId:task.task_id,
-                canvasTaskType:'online-image',
-                providerId:payload.provider_id,
-                model:payload.model,
-                appendGenerated:Boolean(opts.cascade)
-            }))
-        ];
-        refreshRunNodes(gen, out);
+        });
+        tracking = Promise.allSettled(submissions.map(async (submission, index) => {
+            await submission;
+            const taskId = requests[index].taskId;
+            if(!out) return waitCanvasImageTaskResult(taskId, {cascadeTargetId});
+            return pollCanvasImageTask(taskId, {cascadeTargetId});
+        }));
+        await Promise.allSettled(submissions);
+    } catch(error){
+        if(opts.cascade) throw error;
+        showErrorModal(error.message || tr('canvas.generationFailed'), tr('canvas.apiFailed'));
+        return;
+    } finally {
+        CanvasRunPreparation.end(node, originId);
+        if(canvas?.id === originId) refreshRunNodes(node, out);
+        console.info('[canvas-image-submit]', {count, saveMs, submitMs:submitStarted === undefined ? undefined : Math.round(performance.now() - submitStarted)});
+    }
+    const settled = await tracking;
+    if(canvas?.id !== originId) return;
+    const results = settled.filter(item => item.status === 'fulfilled').map(item => item.value);
+    if(!out){
+        const outputs = results.flatMap(result => result.images || []);
+        const failure = settled.find(item => item.status === 'rejected')?.reason;
+        const warning = results.find(result => result.status === 'partial')?.message;
+        const message = failure?.message || warning || tr('canvas.generationFailed');
+        if(outputs.length) mergeGeneratedOutputs(node, outputs, Boolean(opts.cascade));
+        node.runStatus = outputs.length ? 'done' : 'failed';
+        node.runError = failure || warning ? message : '';
+        addGenerationLog({run, outputs, runMs:nowMs() - startedAt, ...(failure || warning ? {error:message} : {})});
+        refreshRunNodes(node, out);
         scheduleSave();
-        await saveCanvas();
-        const statuses = await Promise.all(taskInfos.map(task => pollCanvasImageTask(task.task_id, {cascadeTargetId})));
-        if(statuses.includes('aborted')) throw cascadeAbortError(cascadeStopMessage());
-        if(statuses.includes('failed')) throw new Error(gen.runError || tr('canvas.generationFailed'));
-    } catch(err) {
-        const remainingPending = pendingIds.map(id => pendingById(out, id)).filter(Boolean);
-        const removableIds = remainingPending.filter(p => !(p.failed && p.recoverTaskId)).map(p => p.id);
-        if(removableIds.length){
-            const metas = collectRunMetas(out, removableIds);
-            addGenerationLog({run, outputs:[], runMs:Math.max(...metas.map(m => m.runMs || 0), 0), error:err.message || String(err)});
-            if(out) out._pending = (out._pending||[]).filter(p => !removableIds.includes(p.id));
-        }
-        if(isCascadeAbortError(err)){
-            gen.running = false;
-            refreshRunNodes(gen, out);
-            scheduleSave();
-            throw err;
-        }
-        gen.runStatus = 'failed'; gen.runError = err.message || String(err);
-        gen.running = false;
-        refreshRunNodes(gen, out);
-        scheduleSave();
-        if(remainingPending.some(p => p.failed && p.recoverTaskId) && !removableIds.length) return;
-        if(opts.cascade) throw err;
-        showErrorModal(err.message || tr('canvas.generationFailed'), tr('canvas.apiFailed'));
+        if(!opts.cascade && !outputs.length) showErrorModal(message, tr('canvas.apiFailed'));
+    }
+    if(opts.cascade && (results.includes('aborted') || settled.some(item => isCascadeAbortError(item.reason)))) throw cascadeAbortError(cascadeStopMessage());
+    if(opts.cascade && !results.some(result => result === 'succeeded' || result === 'partial' || result?.images?.length)){
+        throw new Error(node.runError || settled.find(item => item.reason)?.reason.message || tr('canvas.generationFailed'));
     }
 }
+function updateCanvasImageStatus(taskId, label){
+    const found = findPendingTask(taskId);
+    if(!found || found.pending.canvasTaskType !== 'online-image' || found.pending.imageStatus === label) return;
+    found.pending.imageStatus = label;
+    refreshNodes([found.out.id]);
+}
+
 async function runGeneratorLegacy(genId, opts={}){
     const gen = nodes.find(n => n.id === genId);
     if(!gen || (gen.running && !opts.cascade)) return;
@@ -12590,17 +12533,6 @@ function focusTaskSource(){
         render();
     });
 }
-async function createCanvasImageTask(payload, options={}){
-    const source=options.confirmedSource || await taskCanvasSource(options.sourceNode);
-    if(source && (canvas?.id!==source.canvas_id || !nodes.some(node=>node.id===source.node_id)))throw new Error('已离开来源画布或节点，本次未提交生成任务');
-    const res = await cascadeFetch('/api/canvas-image-tasks', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({...payload,source})
-    }, options);
-    if(!res.ok) throw new Error(await responseErrorMessage(res, tr('canvas.generationFailed')));
-    return res.json();
-}
 async function createCanvasComfyTask(payload, options={}){
     const source=await taskCanvasSource(options.sourceNode);
     const res = await cascadeFetch('/api/canvas-comfy-tasks', {
@@ -12673,29 +12605,6 @@ function providerIdForPending(pending){
         || pending?.run?.node?.provider_id
         || 'comfly';
 }
-function completeRecoverPendingOutput(out, pending, result){
-    if(!out || !pending || !result) return;
-    const images = result.image_items?.length ? result.image_items : (result.images || []);
-    if(!images.length) return;
-    const meta = {
-        runMs: nowMs() - Number(pending.startedAt || nowMs()),
-        run: pending.run || {},
-    };
-    meta.run.request = requestMetaFromResult(result);
-    out._pending = (out._pending || []).filter(p => p.id !== pending.id);
-    appendOutputImages(out, images, meta.run?.refs?.[0], [meta]);
-    const gen = nodes.find(n => n.id === meta.run?.node?.id);
-    if(gen){
-        mergeGeneratedOutputs(gen, images, Boolean(pending.appendGenerated));
-        gen.runStatus = 'done';
-        gen.runError = '';
-        gen.running = false;
-    }
-    addGenerationLog({run:meta.run, outputs:images, runMs:meta.runMs || 0,
-        error:result.status === 'partial' ? result.message : ''});
-    refreshRunNodes(gen, out);
-    scheduleSave();
-}
 async function queryRecoverPendingOutput(pendingId){
     let out = findOutputByPendingId(pendingId);
     let pending = pendingById(out, pendingId);
@@ -12706,7 +12615,7 @@ async function queryRecoverPendingOutput(pendingId){
         return;
     }
     const sourceCanvasId=canvas?.id, outputId=out.id;
-    const videoActive = () => {
+    const pendingActive = () => {
         if(canvas?.id !== sourceCanvasId) return false;
         const currentOut=nodes.find(n=>n.id===outputId), currentPending=pendingById(currentOut,pendingId);
         if(!currentOut || !currentPending) return false;
@@ -12718,7 +12627,7 @@ async function queryRecoverPendingOutput(pendingId){
     try {
         if(pending.canvasTaskType === 'video'){
             const data = await CanvasTaskQuery.queryVideo(pending.canvasTaskId);
-            if(!videoActive()) return;
+            if(!pendingActive()) return;
             if(data.status === 'succeeded') completeCanvasVideoTask(out, pending, data);
             else if(['queued','running','unknown'].includes(data.status)){
                 pending.failed=false;
@@ -12728,14 +12637,9 @@ async function queryRecoverPendingOutput(pendingId){
         }
         const data = await window.CanvasTaskQuery.query({canvasTaskId:pending.canvasTaskId,
             canReconcile:pending.canReconcile, providerId:providerIdForPending(pending), upstreamTaskId:taskId});
+        if(!pendingActive()) return;
         if(data.status === 'succeeded' || data.status === 'partial'){
-            completeRecoverPendingOutput(out, pending, data);
-            if(data.status === 'partial'){
-                const gen = nodes.find(n => n.id === pending.run?.node?.id);
-                if(gen){ gen.runStatus = 'failed'; gen.runError = data.message; refreshNodes([gen.id]); }
-                showErrorModal(data.message, tr('canvas.apiFailed'));
-                scheduleSave();
-            }
+            if(data.image_items?.length || data.images?.length) finishPendingImageOutput(out, pending, data);
             return;
         }
         if(data.status === 'failed'){
@@ -12746,18 +12650,12 @@ async function queryRecoverPendingOutput(pendingId){
             setStatus(pending.error);
         }
     } catch(err) {
-        if(pending.canvasTaskType === 'video' && !videoActive()) return;
+        if(!pendingActive()) return;
         pending.error = err.message || '查询失败';
         showErrorModal(pending.error, tr('canvas.apiFailed'));
     } finally {
-        if(pending.canvasTaskType === 'video'){
-            if(canvas?.id !== sourceCanvasId) return;
-            out=nodes.find(n=>n.id===outputId);
-            if(!out) return;
-        }
-        const latest = pendingById(out, pendingId);
-        if(latest){
-            latest.querying = false;
+        if(pendingActive()){
+            pending.querying = false;
             refreshNodes([out.id]);
             scheduleSave();
         }
@@ -12776,15 +12674,28 @@ async function pollCanvasImageTask(taskId, options={}){
             if(cascadeTargetId) ensureCascadeActive(cascadeTargetId);
             const res = await cascadeFetch(`/api/canvas-image-tasks/${encodeURIComponent(taskId)}`, {}, {cascadeTargetId});
             if(!res.ok){
-                if(res.status === 404) throw new Error(cascadeBackendRestartMessage());
+                if(res.status === 404) throw new Error('原平台任务暂不可读，请到生成任务核对');
                 throw new Error(await responseErrorMessage(res, tr('canvas.generationFailed')));
             }
             const data = await res.json();
-            if(data.status === 'succeeded'){
-                completeCanvasImageTask(taskId, data.result || {});
-                return 'succeeded';
+            const latest = findPendingTask(taskId);
+            if(latest?.pending.canvasTaskType === 'online-image'){
+                if(latest.pending.retryReceipt) latest.pending.failed = false;
+                latest.pending.retryReceipt = false;
+                updateCanvasImageStatus(taskId, CanvasTaskQuery.imageStatus(data));
+                if(data.status === 'running' && data.result?.status === 'partial'){
+                    appendPendingImageResults(latest.out, latest.pending, data.result);
+                }
             }
-            if(data.status === 'failed'){
+            if(['succeeded','partial'].includes(data.status)){
+                completeCanvasImageTask(taskId, data.result || {});
+                return data.status;
+            }
+            if(data.status === 'jimeng_pending'){
+                failCanvasImageTask(taskId, data.message || '可在生成任务中核对原任务', {imageStatus:'供应商已受理'});
+                return 'running';
+            }
+            if(data.status === 'failed' || data.status === 'cancelled'){
                 failCanvasImageTask(taskId, data.error || tr('canvas.generationFailed'), data);
                 return 'failed';
             }
@@ -12793,7 +12704,7 @@ async function pollCanvasImageTask(taskId, options={}){
     } catch(err) {
         const message = normalizeCanvasTaskError(err, tr('canvas.generationFailed'));
         if(isCascadeAbortError(err)) return 'aborted';
-        failCanvasImageTask(taskId, message);
+        failCanvasImageTask(taskId, message, {imageStatus:'原任务查询中断', retryReceipt:true});
         return 'failed';
     } finally {
         activeCanvasTaskPolls.delete(taskId);
@@ -12806,36 +12717,56 @@ async function waitCanvasImageTaskResult(taskId, options={}){
         if(cascadeTargetId) ensureCascadeActive(cascadeTargetId);
         const res = await cascadeFetch(`/api/canvas-image-tasks/${encodeURIComponent(taskId)}`, {}, {cascadeTargetId});
         if(!res.ok){
-            if(res.status === 404) throw new Error(cascadeBackendRestartMessage());
+            if(res.status === 404) throw new Error('原平台任务暂不可读，请到生成任务核对');
             throw new Error(await responseErrorMessage(res, tr('canvas.generationFailed')));
         }
         const data = await res.json();
-        if(data.status === 'succeeded') return data.result || {};
-        if(data.status === 'failed') throw new Error(data.error || tr('canvas.generationFailed'));
+        if(['succeeded','partial'].includes(data.status)) return data.result || {};
+        if(!['queued','running'].includes(data.status)) throw new Error(data.error || data.message || CanvasTaskQuery.imageStatus(data));
         await sleep(1800);
     }
 }
 function completeCanvasImageTask(taskId, result){
     const found = findPendingTask(taskId);
     if(!found) return;
-    const {out, pending} = found;
+    finishPendingImageOutput(found.out, found.pending, result);
+}
+function appendPendingImageResults(out, pending, result, {settled=false}={}){
+    const images = result.image_items?.length ? result.image_items : (result.images || []);
+    const taskId = pending.canvasTaskId;
     const meta = {
         runMs: nowMs() - Number(pending.startedAt || nowMs()),
-        run: pending.run || {},
+        run: {...pending.run},
     };
     meta.run.request = requestMetaFromResult(result);
     if(pending.canvasTaskType==='comfy')Object.assign(meta.run,{canvasTaskId:taskId,canvasTaskStatus:'succeeded',taskStartedAt:pending.startedAt,taskFinishedAt:nowMs()});
-    const images = result.image_items?.length ? result.image_items : (result.images || []);
-    out._pending = (out._pending || []).filter(p => p.id !== pending.id);
-    appendOutputImages(out, images, meta.run?.refs?.[0], [meta]);
+    if(pending.canvasTaskType === 'online-image') Object.assign(meta.run, {canvasTaskId:taskId, imageBatchId:pending.imageBatchId});
+    const appendBatch = pending.imageBatchId && (out.images || []).some(item => item.run?.imageBatchId === pending.imageBatchId);
     const gen = nodes.find(n => n.id === meta.run?.node?.id);
-    if(gen){
-        mergeGeneratedOutputs(gen, images, Boolean(pending.appendGenerated));
+    const isCurrentBatch = gen && (!pending.imageBatchId || !gen.activeImageBatchId || pending.appendGenerated || gen.activeImageBatchId === pending.imageBatchId);
+    const added = pending.canvasTaskType === 'online-image'
+        ? appendOutputImagesWithoutDuplicates(out, images, meta.run?.refs?.[0], [meta])
+        : (appendOutputImages(out, images, meta.run?.refs?.[0], [meta]), images.length);
+    if(added && isCurrentBatch){
+        mergeGeneratedOutputs(gen, images, Boolean(pending.appendGenerated || appendBatch));
+    }
+    if(!settled && added){
+        refreshRunNodes(gen, out);
+        scheduleSave();
+    }
+    return {gen, isCurrentBatch, images, meta};
+}
+function finishPendingImageOutput(out, pending, result){
+    const {gen, isCurrentBatch, images, meta} = appendPendingImageResults(out, pending, result, {settled:true});
+    const warning = result.status === 'partial' ? result.message : '';
+    out._pending = (out._pending || []).filter(p => p.id !== pending.id);
+    if(isCurrentBatch){
         gen.runStatus = 'done';
-        gen.runError = '';
+        gen.runError = warning;
         gen.running = false;
     }
-    addGenerationLog({run:meta.run, outputs:images, runMs:meta.runMs || 0});
+    addGenerationLog({run:meta.run, outputs:images, runMs:meta.runMs || 0, ...(warning ? {error:warning} : {})});
+    if(warning) setStatus(warning);
     refreshRunNodes(gen, out);
     scheduleSave();
 }
@@ -12845,13 +12776,17 @@ function failCanvasImageTask(taskId, message, taskData={}){
     const {out, pending} = found;
     const run = pending.run || {};
     const runMs = nowMs() - Number(pending.startedAt || nowMs());
-    const recoverTaskId = taskData?.upstream_task_id || taskData?.task_id || extractUpstreamTaskId(message) || (taskData?.can_reconcile ? taskId : '');
+    const recoverTaskId = taskData.upstream_task_id || (taskData.can_reconcile ? taskId : '');
     const gen = nodes.find(n => n.id === run?.node?.id);
-    if(recoverTaskId){
+    if(recoverTaskId || pending.canvasTaskType === 'online-image'){
+        if(pending.canvasTaskType === 'online-image'){
+            pending.imageStatus = taskData.imageStatus || CanvasTaskQuery.imageStatus({...taskData, status:'failed'});
+            pending.retryReceipt = Boolean(taskData.retryReceipt);
+        }
         pending.failed = true;
         pending.querying = false;
         pending.error = message || tr('canvas.generationFailed');
-        pending.recoverTaskId = recoverTaskId;
+        pending.recoverTaskId = pending.canvasTaskType === 'online-image' && !taskData.can_reconcile ? '' : recoverTaskId;
         pending.canReconcile = Boolean(taskData?.can_reconcile);
         pending.providerId = taskData?.provider_id || pending.providerId || providerIdForPending(pending);
         pending.canvasTaskStatus = 'failed';
@@ -12881,7 +12816,7 @@ function resumeCanvasImageTasks(){
     nodes.filter(n => n.type === 'output').forEach(out => {
         (out._pending || []).forEach(p => {
             if(p.canvasTaskType === 'video' && p.canvasTaskId && !p.failed) resumeCanvasVideoTask(out, p);
-            if(p.canvasTaskType === 'online-image' && p.canvasTaskId && !p.failed) pollCanvasImageTask(p.canvasTaskId, {cascadeTargetId:p.cascadeTargetId || ''});
+            if(p.canvasTaskType === 'online-image' && p.canvasTaskId && (!p.failed || p.retryReceipt)) pollCanvasImageTask(p.canvasTaskId, {cascadeTargetId:p.cascadeTargetId || ''});
         });
     });
 }
