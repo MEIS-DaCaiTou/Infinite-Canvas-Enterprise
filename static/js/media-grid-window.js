@@ -17,7 +17,8 @@
             this.height=options.height;this.columns=options.columns;this.footer=null;this.empty=null;
             this.before=this.spacer();this.after=this.spacer();
             element.append(this.before,this.after);
-            this.scroll=()=>this.schedule();element.addEventListener('scroll',this.scroll,{passive:true});
+            this.scroller=options.scrollElement||element;
+            this.scroll=()=>this.schedule();this.scroller.addEventListener('scroll',this.scroll,{passive:true});
             this.resize=new ResizeObserver(()=>this.schedule());this.resize.observe(element);
         }
         spacer(){
@@ -40,7 +41,11 @@
             const tracks=style.gridTemplateColumns.trim().split(/\s+/);
             this.columns=tracks.every(track=>/^\d+(?:\.\d+)?px$/.test(track))?tracks.length:this.options.columns;
             this.gap=parseFloat(style.rowGap)||0;
-            const window=range(this.items.length,this.columns,this.height,this.gap,element.scrollTop,element.clientHeight);
+            const rect=this.scroller===element?null:element.getBoundingClientRect();
+            const scale=rect?rect.width/Math.max(1,element.clientWidth):1;
+            const top=rect?Math.max(0,-rect.top/scale):element.scrollTop;
+            const viewport=rect?this.scroller.innerHeight/scale:element.clientHeight;
+            const window=range(this.items.length,this.columns,this.height,this.gap,top,viewport);
             this.before.hidden=!window.before;this.before.style.height=window.before+'px';
             this.after.hidden=!window.after;this.after.style.height=window.after+'px';
             const retained=new Map();let position=this.before.nextSibling;
@@ -75,7 +80,7 @@
         clear(){this.setItems([],{reset:true});}
         dispose(){
             this.clear();this.destroyed=true;cancelAnimationFrame(this.frame);
-            this.resize.disconnect();this.element.removeEventListener('scroll',this.scroll);
+            this.resize.disconnect();this.scroller.removeEventListener('scroll',this.scroll);
             this.before.remove();this.after.remove();
         }
     }

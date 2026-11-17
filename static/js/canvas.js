@@ -225,9 +225,11 @@ window.addEventListener('message', event => {
     if(event.data?.type === 'canvas-focus'){
         // 从其他标签页切换回画布时，重新拉取工作流列表并刷新节点
         refreshCanvasConfigFromSettings();
-        if(canvas) syncRemoteCanvasNow();
+        checkRemoteCanvasVersion();
     }
 });
+document.addEventListener('visibilitychange', checkRemoteCanvasVersion);
+window.addEventListener('online', checkRemoteCanvasVersion);
 window.addEventListener('studio-lang-change', () => {
     document.title = tr('canvas.title');
     refreshGateViewControls();
@@ -387,6 +389,7 @@ let saveCanvasAgain = false;
 let applyingRemoteCanvas = false;
 let remoteSyncTimer = null;
 let remoteSyncInterval = null;
+let remoteCanvasReadBusy = false;
 let remoteSyncBusy = false;
 let lastCanvasUpdatedAt = 0;
 let models = {gpt:'gpt-image-2', nano:'nano-banana-pro'};
@@ -2185,31 +2188,44 @@ async function refreshMissingCanvasAssets(){
     }catch(e){console.warn('canvas asset check failed',e);return [];}
 }
 async function syncRemoteCanvasNow(){
-    if(!canvas) return;
+    if(!canvas || remoteCanvasReadBusy || !CanvasViewActivity.isVisible()) return;
+    const requestedId = canvas.id;
+    remoteCanvasReadBusy = true;
     try {
-        const res = await fetch(`/api/canvases/${canvas.id}`);
+        const res = await fetch(`/api/canvases/${encodeURIComponent(requestedId)}`, {cache:'no-store'});
         if(!res.ok) throw new Error(tr('canvas.openFailed'));
         const data = await res.json();
         const remote = data.canvas;
-        if(Number(remote?.updated_at || 0) >= Number(lastCanvasUpdatedAt || 0)){
+        if(canvas?.id === requestedId && CanvasViewActivity.isVisible() && Number(remote?.updated_at || 0) >= Number(lastCanvasUpdatedAt || 0)){
             applyRemoteCanvasData(remote);
         }
     } catch(e) {
         console.error(e);
         setStatus('Sync failed');
+    } finally {
+        remoteCanvasReadBusy = false;
     }
 }
 async function checkRemoteCanvasVersion(){
-    if(!canvas || applyingRemoteCanvas || remoteSyncBusy) return;
-    if(document.hidden) return;
+    if(!canvas || applyingRemoteCanvas || remoteSyncBusy || remoteCanvasReadBusy || !CanvasViewActivity.isVisible()) return;
+    const requestedId = canvas.id;
     remoteSyncBusy = true;
     try {
-        const res = await fetch(`/api/canvases/${canvas.id}/meta`);
+        const res = await fetch(`/api/canvases/${encodeURIComponent(requestedId)}/meta`, {cache:'no-store'});
         if(!res.ok) throw new Error('meta failed');
         const meta = await res.json();
+        if(canvas?.id !== requestedId || !CanvasViewActivity.isVisible()) return;
         const remoteUpdatedAt = Number(meta.updated_at || 0);
-        if(remoteUpdatedAt > Number(lastCanvasUpdatedAt || 0)){
+        const localUpdatedAt = Number(lastCanvasUpdatedAt || 0);
+        if(remoteUpdatedAt > localUpdatedAt){
             await syncRemoteCanvasNow();
+        } else if(remoteUpdatedAt === localUpdatedAt && !localCanvasDirty && !savingCanvasNow && !canvasSaveConflict){
+            // Renames and icon changes leave the saved content revision intact.
+            if(meta.title && meta.title !== canvas.title){
+                canvas.title = meta.title;
+                if(currentCanvasTitle) currentCanvasTitle.textContent = meta.title;
+            }
+            if(meta.icon) canvas.icon = meta.icon;
         }
     } catch(e) {
         // 轮询失败不打扰创作；下一轮会重试。

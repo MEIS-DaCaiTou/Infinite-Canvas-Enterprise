@@ -1674,7 +1674,7 @@
         </script>
 
         <main class="stage">
-            <iframe id="frame-zimage" data-src="/static/zimage.html?v=2026.07.5.1783221066" class="active" scrolling="yes"></iframe>
+            <iframe id="frame-zimage" data-src="/static/zimage.html?v=20261105.3" class="active" scrolling="yes"></iframe>
             <iframe id="frame-enhance" data-src="/static/enhance.html?v=2026.07.5.1783221066" scrolling="yes"></iframe>
             <iframe id="frame-klein" data-src="/static/klein.html?v=2026.07.5.1783221066" scrolling="yes"></iframe>
             <iframe id="frame-angle" data-src="/static/angle.html?v=2026.07.5.1783221066" scrolling="yes"></iframe>
@@ -1940,9 +1940,12 @@
         }
         document.addEventListener('DOMContentLoaded', restoreActivePage, { once:true });
 
+        let queueStatusPending = false;
         async function syncStatus() {
+            if(document.hidden || queueStatusPending) return;
+            queueStatusPending = true;
             try {
-                const res = await fetch(`/api/queue_status?client_id=${CID}`);
+                const res = await fetch(`/api/queue_status?client_id=${CID}`, {cache:'no-store'});
                 const data = await res.json();
                 const monitor = document.getElementById('nano-monitor');
                 const queueVal = document.getElementById('queue-val');
@@ -1958,7 +1961,9 @@
                     if (queueVal) queueVal.innerText = total > 0 ? total : '0';
                     if (logoDot) logoDot.style.backgroundColor = 'var(--text)';
                 }
-            } catch (e) { }
+            } catch (e) { } finally {
+                queueStatusPending = false;
+            }
         }
 
         const host = window.location.host;
@@ -1987,6 +1992,7 @@
                 }
             };
             setInterval(syncStatus, 2000);
+            document.addEventListener('visibilitychange', syncStatus);
         }
 
         // --- 夜间模式 ---

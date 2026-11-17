@@ -12,6 +12,9 @@ import pytest
     'test_comfy_image_mapping.js',
     'test_image_node_metadata.js',
     'test_canvas_image_edit.js',
+    'test_online_history_media.js',
+    'test_history_bulk_window.js',
+    'test_canvas_version_polling.js',
 ])
 def test_frontend_contract(name):
     root=Path(__file__).parents[2]

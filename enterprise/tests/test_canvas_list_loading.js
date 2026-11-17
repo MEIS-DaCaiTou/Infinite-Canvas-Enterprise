@@ -61,8 +61,8 @@ async function run(){
  const loader=element(),masonry={innerHTML:'existing cards'},cards=[];
  const h=vm.createContext({window:{StudioI18n:{lang:()=> 'zh'}},document:{getElementById:id=>id==='masonry'?masonry:loader},
   tr:x=>x,isLoading:false,historyLoadFailed:false,historyCursor:null,historyHasMore:true,historyRetryPage:0,historyStale:false,historyLegacy:false,historyFailureKind:"",historyFailureStatus:0,allHistory:[{id:'old'}],currentIndex:1,PAGE_SIZE:10,
-  renderImageCard:x=>cards.push(x.id),console:{warn(){}},fetch:async()=>({ok:false,status:503})});
- load(h,online,['historyLoaderLabel','loadHistory']);await h.loadHistory(0);
+  historyRows:[],paintHistory(){},renderHistoryCards:rows=>cards.push(...rows.map(row=>row.id)),console:{warn(){}},fetch:async()=>({ok:false,status:503})});
+ load(h,online,['historyLoaderLabel','removeHistoryCard','loadHistory']);await h.loadHistory(0);
  assert.equal(h.isLoading,false);assert.equal(h.historyLoadFailed,true);assert.equal(masonry.innerHTML,'existing cards');
  assert.equal(h.allHistory[0].id,'old');assert.equal(loader.classList.contains('hidden'),false);
  assert.equal(h.historyFailureKind,'http');
@@ -73,6 +73,11 @@ async function run(){
  h.fetch=async()=>({ok:true,status:200,redirected:true,url:'http://127.0.0.1:18000/enterprise/login'});await h.loadHistory(0);assert.ok(h.historyLoaderLabel().includes('登录已失效'));
  h.fetch=async()=>({ok:true,json:async()=>[{id:'new'}]});await h.loadHistory(0);
  assert.equal(h.historyLoadFailed,false);assert.deepEqual(cards,['new']);
+ // Legacy array pagination must not skip the next unseen row after deletion.
+ h.PAGE_SIZE=2;cards.length=0;
+ h.fetch=async()=>({ok:true,json:async()=>[1,2,3,4].map(id=>({id,timestamp:id}))});
+ await h.loadHistory(0);h.removeHistoryCard(1);await h.loadHistory(1);
+ assert.deepEqual(cards,[1,2,3,4]);h.PAGE_SIZE=10;
  // Real page envelope: failure retries the original cursor, not the first page.
  cards.length=0;
  h.fetch=async url=>{assert.ok(url.includes('page_size=10'));return {ok:true,json:async()=>({items:[{id:'p1',timestamp:1}],next_cursor:'next-token'})};};

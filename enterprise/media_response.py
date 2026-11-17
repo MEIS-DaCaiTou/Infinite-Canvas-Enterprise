@@ -4,7 +4,8 @@ from urllib.parse import quote
 
 def media_response_headers(content_type, filename='download'):
     mime = str(content_type or '').split(';', 1)[0].strip().lower()
-    headers = {'X-Content-Type-Options':'nosniff',
+    # Reuse of the browser copy requires a fresh gateway authorization check.
+    headers = {'Cache-Control':'private, no-cache', 'X-Content-Type-Options':'nosniff',
         'Content-Security-Policy':"sandbox; default-src 'none'; base-uri 'none'; form-action 'none'"}
     # SVG can execute script and embed active documents. Raster/audio/video keep
     # ordinary inline playback; other types remain downloadable as before.

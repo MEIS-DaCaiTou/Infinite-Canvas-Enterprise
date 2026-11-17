@@ -1,6 +1,8 @@
 # Enterprise Test Scripts
 
-Reviewed: 2026-11-04
+Reviewed: 2026-11-05
+
+2026-11-05 PERF1105。原前端 pytest 入口共 18 项参数，包含在线历史缩略图、离屏批量操作和旧数组分页。`test_history_response_work.py` 检查历史写入线程化、原子追加及 2K/4K 冷缓存构建和复用。`test_history_live_paging.py` 覆盖 JSON 与 SQLite 翻页期间的新增、删除及撤权。`test_performance_io.py` 使用临时画布和环回 HTTP 测版本缓存、并发冲突、启动计时和连接交接等待。普通成员撤权复用 `test_upload_isolation.py` 的临时库。完整浏览器及性能样本见[收敛记录](../../docs/ops/DEVELOPMENT-CONVERGENCE-2026-10-30.md#2026-11-05-历史画布与运行诊断perf1105)。
 
 2026-11-04发行后修复收口：原 `test_character_frontend_suite.py` CI入口现收集16个脚本，新增工作流加载/图片映射、视频输出、原图尺寸及图片编辑回归；没有新CI作业。固定发行运行时两组不同定向用例94项通过（含全部16项前端入口），另9个原有Node脚本通过。新增 `test_comfy_input_images.py` 使用真实2K/4K及4500×6000像素，验证像素/透明度、等比缩放、原图不变、失败和并发上限；`test_static_html_cache.py` 验证HTML 200/304重新校验及脚本/媒体Range兼容。完整Edge证据和真实GPU/现场未测边界见[CURRENT](../../docs/CURRENT_PROJECT_STATUS.md)及[原收敛记录](../../docs/ops/DEVELOPMENT-CONVERGENCE-2026-10-30.md)。远端CI由本批PR单列，旧发行全量结果不冒充本批结果。
 

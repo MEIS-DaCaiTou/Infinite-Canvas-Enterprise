@@ -16,6 +16,7 @@ import uuid
 from copy import deepcopy
 from pathlib import Path
 
+from enterprise.runtime import performance
 from enterprise.paths import _assert_no_reparse
 
 
@@ -325,12 +326,14 @@ class CanvasTaskJournal:
                 raise ValueError("Canvas text task is not running")
             self._write({**record, "llm_result":value, "updated_at":time.time()})
 
+    @performance.timed("startup.receipt_scan")
     def recover(self) -> dict:
         """Startup-only, before accepting traffic; no provider/network calls."""
         counts = {"interrupted": 0, "corrupt": 0}
         with self._lock:
             _assert_no_reparse(self.root, "CANVAS_TASK_ROOT")
             for path in self.root.glob("*.json"):
+                performance.observe("startup.receipts_seen", 0)
                 try:
                     record = self.get(path.stem)
                 except (ValueError, UnicodeError):

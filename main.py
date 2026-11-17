@@ -60,6 +60,8 @@ from enterprise.local_uploads import kind_ext as _local_upload_kind_ext, display
 from enterprise.local_uploads import metadata_items as local_upload_metadata_items
 from enterprise.resource_index import ResourceReferenceIndex
 from enterprise import history_records
+from enterprise.runtime import performance
+from enterprise.canvas_metadata import CanvasMetadata
 from enterprise.media_download import open_media
 from enterprise.workflow_archive import MAX_UPLOAD, MAX_WORKFLOW, inspect_archive, copy_resource
 from enterprise.path_safety import assert_path_within_root, assert_no_reparse_ancestors, PathSafetyError
@@ -237,6 +239,8 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 GLOBAL_LOOP = None
+PERFORMANCE_MONITOR = None
+CANVAS_META_CACHE = CanvasMetadata()
 APP_VERSION = "2026.06.03"
 GITHUB_REPO_URL = "https://github.com/hero8152/Infinite-Canvas"
 GITHUB_VERSION_URL = "https://raw.githubusercontent.com/hero8152/Infinite-Canvas/main/VERSION"
@@ -254,7 +258,8 @@ MODELSCOPE_TREE_URL = "https://www.modelscope.ai/api/v1/studio/daniel8152/Infini
 
 @app.on_event("startup")
 async def startup_event():
-    global GLOBAL_LOOP
+    global GLOBAL_LOOP, PERFORMANCE_MONITOR
+    PERFORMANCE_MONITOR = asyncio.create_task(performance.monitor("upstream"))
     GLOBAL_LOOP = asyncio.get_running_loop()
     prepare_application_directories(PATH_ROOTS)
     # Configuration bootstrap is intentionally startup-scoped.  Importing the
@@ -262,26 +267,26 @@ async def startup_event():
     ensure_runtime_config_files()
     # Persisted receipts survive process replacement. Ambiguous external work
     # is exposed for reconciliation, never automatically submitted twice.
-    task_recovery = await asyncio.to_thread(CANVAS_TASK_JOURNAL.recover)
+    task_recovery = await performance.startup_stage("task_receipts", CANVAS_TASK_JOURNAL.recover)
     if any(task_recovery.values()):
         logging.getLogger(__name__).warning("Canvas task recovery: %s", task_recovery)
     # 启动时整理资产库：给所有图片分组（含默认角色/场景）建好文件夹，并把根目录里的旧素材归整进去。
     try:
-        await asyncio.to_thread(migrate_asset_library_into_dirs)
+        await performance.startup_stage("asset_directories", migrate_asset_library_into_dirs)
     except Exception as exc:
         print(f"资产库分组整理失败: {exc}")
     # 修复历史遗留的双重扩展名素材（foo.png.png → foo.png），否则这些卡片无法显示
     try:
-        await asyncio.to_thread(migrate_double_extension_uploads)
+        await performance.startup_stage("double_extensions", migrate_double_extension_uploads)
     except Exception as exc:
         print(f"修复双重扩展名素材失败: {exc}")
     # 纠正内容与扩展名不符的图片（如 WebP 内容却叫 .png），否则严格客户端解不出来
     try:
-        await asyncio.to_thread(migrate_mislabeled_image_extensions)
+        await performance.startup_stage("image_extensions", migrate_mislabeled_image_extensions)
     except Exception as exc:
         print(f"纠正图片扩展名失败: {exc}")
-    await CANVAS_ACCEPTED_RECOVERY.start()
-    await CANVAS_TASK_DISPATCH.start()
+    await performance.startup_stage("accepted_recovery", CANVAS_ACCEPTED_RECOVERY.start, threaded=False)
+    await performance.startup_stage("pending_dispatch", CANVAS_TASK_DISPATCH.start, threaded=False)
 
 @app.on_event("shutdown")
 async def shutdown_task_recovery():
@@ -290,6 +295,9 @@ async def shutdown_task_recovery():
     await CANVAS_IMAGE_RECOVERY.shutdown()
     await CANVAS_VIDEO_TASKS.shutdown()
     await CANVAS_COMFY_RECOVERY.shutdown()
+    if PERFORMANCE_MONITOR:
+        PERFORMANCE_MONITOR.cancel()
+        await asyncio.gather(PERFORMANCE_MONITOR, return_exceptions=True)
 
 
 @app.websocket("/ws/stats")
@@ -6174,6 +6182,16 @@ def generate_video_preview_image(path: str, width: int) -> Image.Image:
         except OSError:
             pass
 
+try:
+    MEDIA_PREVIEW_CONCURRENCY = int(os.environ.get('ENTERPRISE_MEDIA_PREVIEW_CONCURRENCY', '2'))
+    if MEDIA_PREVIEW_CONCURRENCY < 1:
+        raise ValueError
+except ValueError:
+    logging.getLogger(__name__).warning('Invalid ENTERPRISE_MEDIA_PREVIEW_CONCURRENCY; using 2')
+    MEDIA_PREVIEW_CONCURRENCY = 2
+MEDIA_PREVIEW_GATE = asyncio.Semaphore(MEDIA_PREVIEW_CONCURRENCY)
+MEDIA_PREVIEW_PENDING = {}
+
 @app.get("/api/media-preview")
 async def media_preview(url: str, w: int = 512):
     path = output_file_from_url(url)
@@ -6198,15 +6216,48 @@ async def media_preview(url: str, w: int = 512):
                 img = ImageOps.exif_transpose(source)
                 img.thumbnail((width, width), Image.LANCZOS)
                 img = img.convert("RGBA" if image_has_alpha(img) else "RGB")
+        fd, temporary = tempfile.mkstemp(dir=MEDIA_PREVIEW_DIR, suffix=".tmp")
+        os.close(fd)
         try:
-            img.save(webp_path, format="WEBP", quality=80, method=1)   # method=1 生成更快（缩略图不追求极致压缩）
-            return webp_path, "image/webp"
-        except Exception:
-            img.save(png_path, format="PNG")
-            return png_path, "image/png"
+            try:
+                img.save(temporary, format="WEBP", quality=80, method=1)
+                target, mime = webp_path, "image/webp"
+            except Exception:
+                img.save(temporary, format="PNG")
+                target, mime = png_path, "image/png"
+            # Other users only see a complete cache entry, including when two
+            # cold requests build the same image concurrently.
+            os.replace(temporary, target)
+            return target, mime
+        finally:
+            if os.path.exists(temporary):
+                os.remove(temporary)
 
+    async def build():
+        waiting = time.perf_counter()
+        async with MEDIA_PREVIEW_GATE:
+            performance.observe('preview.cold_wait', (time.perf_counter()-waiting)*1000)
+            if os.path.exists(webp_path):
+                return webp_path, 'image/webp'
+            if os.path.exists(png_path):
+                return png_path, 'image/png'
+            with performance.measure('preview.build'):
+                return await asyncio.to_thread(_build_preview)
+
+    task = MEDIA_PREVIEW_PENDING.get(webp_path)
+    if task is None:
+        task = asyncio.create_task(build())
+        MEDIA_PREVIEW_PENDING[webp_path] = task
+        def completed(future):
+            if MEDIA_PREVIEW_PENDING.get(webp_path) is future:
+                MEDIA_PREVIEW_PENDING.pop(webp_path, None)
+            if not future.cancelled():
+                future.exception()  # A disconnected client may have no waiter.
+        task.add_done_callback(completed)
     try:
-        out_path, media_type = await asyncio.to_thread(_build_preview)
+        # One cold job per file revision/size. Disconnecting one viewer must
+        # not cancel another viewer's shared build; original media is separate.
+        out_path, media_type = await asyncio.shield(task)
         return FileResponse(out_path, media_type=media_type)
     except Exception as exc:
         raise HTTPException(status_code=415, detail=f"无法生成预览图：{exc}") from exc
@@ -6708,6 +6759,7 @@ def migrate_asset_library_into_dirs():
         print(f"资产库分组整理：加载失败 {exc}")
         return
     changed = False
+    items_seen = 0
     for library in lib.get("libraries", []) or []:
         for cat in library.get("categories", []) or []:
             if (cat.get("type") or "image") != "image":
@@ -6724,6 +6776,7 @@ def migrate_asset_library_into_dirs():
                 print(f"资产库分组整理：建文件夹失败 {exc}")
                 continue
             for item in (cat.get("items") or []):
+                items_seen += 1
                 raw_url = urllib.parse.unquote(str(item.get("url") or "").split("?", 1)[0])
                 m = re.match(r"^/assets/library/([^/]+)$", raw_url)  # 仅匹配仍在根目录的文件
                 if not m:
@@ -6745,6 +6798,7 @@ def migrate_asset_library_into_dirs():
             save_asset_library(lib)
         except Exception as exc:
             print(f"资产库分组整理：保存失败 {exc}")
+    return {"items_seen": items_seen, "directory_changed": int(changed)}
 
 def asset_library_workflow_category(lib, library_id="", category_id=""):
     library = find_asset_library(lib, library_id)
@@ -11045,10 +11099,12 @@ def migrate_double_extension_uploads():
     """修复历史遗留的双重扩展名（如 foo.png.png）：去掉重复的一层，并同步重命名 caption/classification 旁车文件。
     旧版 URL 导入会把自带扩展名的 entry.name 又拼一次 ext，导致文件名重复后缀、URL 对不上而无法显示。"""
     if not os.path.isdir(LOCAL_UPLOAD_DIR):
-        return
+        return {"files_seen": 0, "changed": 0}
     renamed = 0
+    files_seen = 0
     for current, _dirs, files in os.walk(LOCAL_UPLOAD_DIR):
         for name in files:
+            files_seen += 1
             m = _DOUBLE_EXT_RE.search(name)
             if not m or m.group(1).lower() not in _DOUBLE_EXT_MEDIA:
                 continue
@@ -11073,6 +11129,7 @@ def migrate_double_extension_uploads():
                         pass
     if renamed:
         print(f"修复双重扩展名素材: {renamed} 个")
+    return {"files_seen": files_seen, "changed": renamed}
 
 def _sniff_image_ext_bytes(head):
     """按文件头魔数判断真实图片格式，返回规范扩展名（含点），无法识别返回 None。"""
@@ -11100,11 +11157,13 @@ def migrate_mislabeled_image_extensions():
     """有些采集来的图片内容与扩展名不符（例如 WebP 内容却叫 .png），导致服务端按错误 content-type 返回、
     严格的客户端（PS UXP）解不出来。这里按真实魔数纠正扩展名，并同步重命名 caption/classification 旁车。"""
     if not os.path.isdir(LOCAL_UPLOAD_DIR):
-        return
+        return {"files_seen": 0, "changed": 0}
     img_exts = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
     fixed = 0
+    files_seen = 0
     for current, _dirs, files in os.walk(LOCAL_UPLOAD_DIR):
         for name in files:
+            files_seen += 1
             ext = os.path.splitext(name)[1].lower()
             if ext not in img_exts:
                 continue
@@ -11135,6 +11194,7 @@ def migrate_mislabeled_image_extensions():
                         pass
     if fixed:
         print(f"纠正图片扩展名(内容与后缀不符): {fixed} 个")
+    return {"files_seen": files_seen, "changed": fixed}
 
 @app.post("/api/local-assets/upload")
 async def upload_local_assets(files: List[UploadFile] = File(...), folder: str = Form("")):
@@ -12934,7 +12994,7 @@ async def build_online_image_result(payload: OnlineImageRequest, *, receipt_task
         "params": {"provider_id": provider["id"], "model": model, "size": payload.size, "quality": payload.quality, "n": count, "reference_images": refs},
         "raw_usage": raw.get("usage") if isinstance(raw, dict) else None,
     }
-    save_to_history(result)
+    await asyncio.to_thread(save_to_history, result)
     if GLOBAL_LOOP:
         asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(result), GLOBAL_LOOP)
     return result
@@ -13015,7 +13075,7 @@ async def query_image_task_result(payload: ImageTaskQueryRequest, *, store_histo
                         "raw": raw,
                     }
                     if store_history:
-                        save_to_history(result)
+                        await asyncio.to_thread(save_to_history, result)
                     if store_history and GLOBAL_LOOP:
                         asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(result), GLOBAL_LOOP)
                     return result
@@ -13091,7 +13151,7 @@ async def query_image_task_result(payload: ImageTaskQueryRequest, *, store_histo
             "raw": raw,
         }
         if store_history:
-            save_to_history(result)
+            await asyncio.to_thread(save_to_history, result)
         if store_history and GLOBAL_LOOP:
             asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(result), GLOBAL_LOOP)
         return result
@@ -14468,17 +14528,16 @@ async def create_canvas(payload: CanvasCreateRequest):
 
 @app.get("/api/canvases/{canvas_id}/meta")
 async def get_canvas_meta(canvas_id: str):
-    canvas = load_canvas(canvas_id)
-    return {
-        "id": canvas.get("id"),
-        "updated_at": canvas.get("updated_at", 0),
-        "title": canvas.get("title", "未命名画布"),
-        "icon": canvas.get("icon", "layers"),
-        "kind": normalize_canvas_kind(canvas.get("kind")),
-    }
+    meta = await asyncio.to_thread(CANVAS_META_CACHE.get, canvas_path(canvas_id), lambda: load_canvas(canvas_id))
+    return {"id": meta.get("id"), "updated_at": meta.get("updated_at") or 0,
+            "title": meta.get("title") or "未命名画布", "icon": meta.get("icon") or "layers",
+            "kind": normalize_canvas_kind(meta.get("kind"))}
 
 @app.post("/api/canvases/{canvas_id}/meta")
 async def update_canvas_meta(canvas_id: str, payload: CanvasMetaUpdate):
+    return await asyncio.to_thread(update_canvas_meta_document, canvas_id, payload)
+
+def update_canvas_meta_document(canvas_id: str, payload: CanvasMetaUpdate):
     """更新画布的轻量元数据（标题/图标/负责人/颜色/置顶）。
     刻意不走 save_canvas（它会刷新 updated_at），以免打标签/置顶把画布顶到列表最前。"""
     with CANVAS_LOCK, document_lock(canvas_path(canvas_id)):
@@ -14504,10 +14563,13 @@ async def update_canvas_meta(canvas_id: str, payload: CanvasMetaUpdate):
 
 @app.get("/api/canvases/{canvas_id}")
 async def get_canvas(canvas_id: str):
-    return {"canvas": load_canvas(canvas_id)}
+    return {"canvas": await asyncio.to_thread(load_canvas, canvas_id)}
 
 @app.post("/api/canvases/{canvas_id}/touch")
 async def touch_canvas(canvas_id: str):
+    return await asyncio.to_thread(touch_canvas_document, canvas_id)
+
+def touch_canvas_document(canvas_id: str):
     with CANVAS_LOCK, document_lock(canvas_path(canvas_id)):
         canvas = load_canvas(canvas_id)
         # Opening is activity, not a content edit. Keep list recency without
@@ -15732,6 +15794,11 @@ async def batch_crop_asset_library_items(payload: AssetLibraryBatchCropRequest):
 
 @app.put("/api/canvases/{canvas_id}")
 async def update_canvas(canvas_id: str, payload: CanvasSaveRequest):
+    canvas = await asyncio.to_thread(update_canvas_document, canvas_id, payload)
+    await manager.broadcast_canvas_updated(canvas_id, int(canvas.get("updated_at") or now_ms()), payload.client_id)
+    return {"canvas": canvas}
+
+def update_canvas_document(canvas_id: str, payload: CanvasSaveRequest):
     with CANVAS_LOCK, document_lock(canvas_path(canvas_id)):
         canvas = load_canvas(canvas_id)
         current_updated_at = int(canvas.get("updated_at") or 0)
@@ -15753,8 +15820,7 @@ async def update_canvas(canvas_id: str, payload: CanvasSaveRequest):
         canvas["logs"] = payload.logs[-500:]
         canvas["settings"] = payload.settings or {}
         save_canvas(canvas)
-    await manager.broadcast_canvas_updated(canvas_id, int(canvas.get("updated_at") or now_ms()), payload.client_id)
-    return {"canvas": canvas}
+    return canvas
 
 @app.delete("/api/canvases/{canvas_id}")
 async def delete_canvas(canvas_id: str):
@@ -16177,7 +16243,7 @@ async def poll_angle_cloud(req: CloudPollRequest):
                         local_path = img_url
 
                     record = {"timestamp": time.time(), "prompt": f"Resumed {task_id}", "images": [local_path], "type": "angle"}
-                    save_to_history(record)
+                    await asyncio.to_thread(save_to_history, record)
                     if req.client_id:
                         await manager.send_personal_message({"type": "cloud_status", "status": "SUCCEED", "task_id": task_id}, req.client_id)
                     return {"url": local_path}
@@ -16267,7 +16333,7 @@ async def generate_angle_cloud(req: CloudGenRequest):
                         local_path = img_url
 
                     record = {"timestamp": time.time(), "prompt": req.prompt, "images": [local_path], "type": "angle"}
-                    save_to_history(record)
+                    await asyncio.to_thread(save_to_history, record)
                     if req.client_id:
                         await manager.send_personal_message({"type": "cloud_status", "status": "SUCCEED", "task_id": task_id}, req.client_id)
                     if GLOBAL_LOOP:
@@ -16371,7 +16437,7 @@ async def generate_cloud(req: CloudGenRequest):
                         "images": [local_path],
                         "type": normalize_history_type(req.type, "zimage"),
                     }
-                    save_to_history(record)
+                    await asyncio.to_thread(save_to_history, record)
                     try:
                         await manager.broadcast_new_image(record)
                     except Exception:
@@ -16472,7 +16538,7 @@ async def ms_generate(req: MsGenerateRequest):
                             "type": normalize_history_type(req.type, "klein"),
                             "model": req.model,
                         }
-                        save_to_history(record)
+                        await asyncio.to_thread(save_to_history, record)
                         if GLOBAL_LOOP:
                             asyncio.run_coroutine_threadsafe(manager.broadcast_new_image(record), GLOBAL_LOOP)
                         return {"url": local_path, "task_id": task_id}
