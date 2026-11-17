@@ -16507,7 +16507,9 @@ def prepare_comfy_workflow(req):
         raise Exception(f"Workflow file not found: {req.workflow_json}")
 
     with open(workflow_path, 'r', encoding='utf-8') as f:
-        workflow = json.load(f)
+        # The editable document may carry legacy top-level metadata.
+        workflow = {node_id: node for node_id, node in json.load(f).items()
+                    if isinstance(node, dict) and "class_type" in node}
 
     seed = random.randint(1, 4294967295)
 
@@ -17303,7 +17305,8 @@ def get_workflow(name: str, include_definitions: bool = False, backend: str = ""
             response = requests.get(comfy_endpoint(workflow_backend(name, backend), "/object_info"), timeout=(5, 15))
             response.raise_for_status()
             definitions = response.json()
-            classes = {node.get("class_type") for node in workflow.values()}
+            classes = {node["class_type"] for node in workflow.values()
+                       if isinstance(node, dict) and "class_type" in node}
             result["definitions"] = {key: value for key, value in definitions.items() if key in classes}
             result["missing_classes"] = sorted(classes - definitions.keys())
         except (requests.RequestException, ValueError, HTTPException):
