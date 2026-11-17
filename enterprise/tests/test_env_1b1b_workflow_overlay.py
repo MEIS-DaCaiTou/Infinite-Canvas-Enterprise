@@ -21,7 +21,9 @@ def test_workflow_overlay_copies_before_config_and_never_deletes_shipped_source(
 import asyncio
 import hashlib
 import json
+import sys
 from pathlib import Path
+sys.path.insert(0, str(Path.cwd()))
 from enterprise.paths import derive_development_path_roots, install_path_roots_for_process
 install_path_roots_for_process(derive_development_path_roots(Path.cwd()))
 import main
@@ -124,6 +126,38 @@ main.prepare_comfy_workflow(main.GenerateRequest(type="zimage", workflow_json="c
 main.save_workflow_config("builtin.json", main.WorkflowConfig(fields=[main.WorkflowField(id="f",node="1",input="text")]))
 assert main.workflow_enabled("builtin.json", {"fields":[{"id":"f"}]})
 assert any(item["name"] == "builtin.json" for item in main.list_workflows()["workflows"])
+# Legacy metadata is editable but must not enter the executable H3 graph.
+h3 = {
+    "1": {"class_type": "LoadImage", "inputs": {"image": "template-first.png"}},
+    "2": {"class_type": "LoadImage", "inputs": {"image": "template-last.png"}},
+    "3": {"class_type": "MiniMaxH3ImageToVideo", "inputs": {"first_frame": ["1", 0], "last_frame": ["2", 0]}},
+    "source": "user",
+    "metadata": {"exporter": "legacy"},
+}
+main.upload_workflow(main.WorkflowUploadRequest(name="h3", workflow=h3))
+main.save_workflow_config("custom/h3.json", main.WorkflowConfig(enabled=True))
+assert main.get_workflow("custom/h3.json")["workflow"] == h3
+class Definitions:
+    def raise_for_status(self):
+        pass
+    def json(self):
+        return {"LoadImage": {}, "MiniMaxH3ImageToVideo": {}}
+main.requests.get = lambda *_args, **_kwargs: Definitions()
+inspected = main.get_workflow("custom/h3.json", include_definitions=True)
+assert set(inspected["definitions"]) == {"LoadImage", "MiniMaxH3ImageToVideo"}
+assert inspected["missing_classes"] == []
+for mode in ("first", "last", "both"):
+    values = {"__ice_frame_mode": mode}
+    if mode != "last":
+        values["ice_frame:1"] = "own-first.png"
+    if mode != "first":
+        values["ice_frame:2"] = "own-last.png"
+    request = main.GenerateRequest(type="workflow-custom", workflow_json="custom/h3.json", workflow_values=values)
+    executable, _ = main.prepare_comfy_workflow(request)
+    assert set(executable) == {"1", "2", "3"}
+    assert ("first_frame" in executable["3"]["inputs"]) == (mode != "last")
+    assert ("last_frame" in executable["3"]["inputs"]) == (mode != "first")
+    assert main.get_workflow("custom/h3.json")["workflow"] == h3
 print("overlay-pass")
 ''' % str(tmp_path).replace("\\", "\\\\")
     completed = subprocess.run(
@@ -132,6 +166,6 @@ print("overlay-pass")
         env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"),
         capture_output=True,
         text=True,
-        check=True,
     )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
     assert completed.stdout.rstrip().endswith("overlay-pass")

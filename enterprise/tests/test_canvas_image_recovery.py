@@ -34,6 +34,26 @@ def new_journal(tmp_path, count=1):
     return journal
 
 
+def test_unwritable_batch_keeps_completed_images_without_waiting_for_a_dead_runner(tmp_path):
+    from enterprise.generation_tasks import describe_task
+    async def scenario():
+        journal = new_journal(tmp_path, 3)
+        await ImageReceiptSink(journal, "canvas_img_a", 0).completed(["/output/ready.png"], [])
+        await ImageReceiptSink(journal, "canvas_img_a", 1).accepted("saved-id", PROVIDER)
+        journal.note_image_tracking_write_failure("canvas_img_a")
+        stored = journal.get("canvas_img_a")
+        assert stored["status"] == "running"
+        record = journal.with_tracking_warning(stored)
+        projected = public_receipt(record)
+        assert projected["status"] == "partial"
+        assert projected["result"]["images"] == ["/output/ready.png"]
+        assert "本地回执" in projected["message"] and not projected["can_reconcile"]
+        detail = describe_task(record, detail=True)
+        assert detail["status"] == "partial" and detail["output_count"] == 1 and not detail["can_query"]
+        assert "本地回执" in detail["error"]
+    asyncio.run(scenario())
+
+
 def test_restart_queries_original_identity_and_caches_result(tmp_path):
     async def scenario():
         journal = new_journal(tmp_path)
@@ -115,6 +135,39 @@ def test_batch_keeps_completed_outputs_and_retries_only_unconfirmed_queries(tmp_
         assert result["images"] == ["/output/local.png", "/output/original-1.png", "/output/original-2.png"]
         assert result["status"] == "succeeded"
         assert calls == ["original-1", "original-2", "original-2"] and len(published) == 1
+    asyncio.run(scenario())
+
+
+def test_batch_recovers_local_archive_while_only_querying_pending_original(tmp_path):
+    async def scenario():
+        task_id = "canvas_img_a"
+        journal = new_journal(tmp_path, 4)
+        await ImageReceiptSink(journal, task_id, 0).completed(["/output/ready.png"], [])
+        archive = {"url": "/assets/output/online_" + "a" * 32 + ".png", "kind": "image"}
+        local = ImageReceiptSink(journal, task_id, 1)
+        await local.accepted("already-archived-id", PROVIDER)
+        await local.generated({})
+        await local.plan_archive(archive)
+        await ImageReceiptSink(journal, task_id, 2).accepted("pending-id", PROVIDER)
+        journal.record_image_request(task_id, 3, {"state": "unknown"})
+        journal.recover()
+
+        queried, published = [], []
+        async def query(provider, upstream_task_id):
+            queried.append(upstream_task_id)
+            return {"status": "running"} if len(queried) == 1 else {
+                "status": "succeeded", "images": ["/output/third.png"]}
+        recovery = CanvasImageRecovery(journal, lambda _: PROVIDER, query, published.append,
+                                       read_archive=lambda plan: plan if plan == archive else None)
+        assert (await recovery.reconcile(task_id))["status"] == "running"
+        assert public_receipt(journal.get(task_id))["result"]["images"] == [
+            "/output/ready.png", archive["url"]]
+        result = await recovery.reconcile(task_id)
+        assert result["status"] == "partial"
+        assert result["images"] == ["/output/ready.png", archive["url"], "/output/third.png"]
+        assert await recovery.reconcile(task_id) == result
+        assert queried == ["pending-id", "pending-id"] and published == [result]
+        assert journal.get(task_id)["provider_receipts"][3]["state"] == "unknown"
     asyncio.run(scenario())
 
 

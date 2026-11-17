@@ -66,7 +66,9 @@ const event=()=>({preventDefault(){this.prevented=true;},stopPropagation(){this.
     const pending={...entries[0],run:{...entries[0].run}},out={_pending:[pending]},generator={id:'same-node'};let appended;
     Object.assign(context,{nodes:[generator],findPendingTask:()=>({out,pending}),requestMetaFromResult:()=>({}),nowMs:()=>Date.now(),
         appendOutputImages:(_out,_images,_reference,metas)=>appended=metas[0],mergeGeneratedOutputs(){},addGenerationLog(){},refreshRunNodes(){},scheduleSave(){}});
-    vm.runInNewContext(findFunction('completeCanvasImageTask'),context);
+    for(const name of ['appendPendingImageResults','finishPendingImageOutput','completeCanvasImageTask']){
+        vm.runInNewContext(findFunction(name),context);
+    }
     context.completeCanvasImageTask('job-a',{images:['/output/result.png']});
     assert.equal(appended.run.canvasTaskId,'job-a');assert.equal(appended.run.canvasTaskStatus,'succeeded');assert.equal(out._pending.length,0);
     controls.track({task_id:'stage-one',status:'queued'},'same-node','stage-scope');
