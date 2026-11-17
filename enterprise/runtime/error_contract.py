@@ -32,6 +32,11 @@ _BOOTSTRAP_CATEGORIES = frozenset({
     "bootstrap_output_unclassified",
     "bootstrap_capture_unavailable",
 })
+STARTUP_PHASES = frozenset({
+    "portable_binding", "application_import", "serve", "application_directories", "runtime_config",
+    "task_receipts", "asset_directories", "double_extensions", "image_extensions", "accepted_recovery",
+    "pending_dispatch", "gateway_database", "gateway_collection_queries",
+})
 
 
 def public_lifecycle_details(value: object) -> dict[str, object]:
@@ -43,6 +48,20 @@ def public_lifecycle_details(value: object) -> dict[str, object]:
         result["failure_stage"] = value["failure_stage"]
     if isinstance(value.get("bootstrap_failure_category"), str) and value["bootstrap_failure_category"] in _BOOTSTRAP_CATEGORIES:
         result["bootstrap_failure_category"] = value["bootstrap_failure_category"]
+    for key, allowed in (
+        ("upstream_last_startup_phase", STARTUP_PHASES),
+        ("upstream_last_startup_outcome", {"started", "completed", "failed"}),
+        ("gateway_last_startup_phase", STARTUP_PHASES),
+        ("gateway_last_startup_outcome", {"started", "completed", "failed"}),
+        ("upstream_port_status", {"empty", "listening", "unknown"}),
+        ("gateway_port_status", {"empty", "listening", "unknown"}),
+    ):
+        if isinstance(value.get(key), str) and value[key] in allowed:
+            result[key] = value[key]
+    if type(value.get("startup_state_settled")) is bool:
+        result["startup_state_settled"] = value["startup_state_settled"]
+    if isinstance(value.get("startup_instance_id"), str) and re.fullmatch(r"[0-9a-f]{32}", value["startup_instance_id"]):
+        result["startup_instance_id"] = value["startup_instance_id"]
     for key in ("errno", "winerror", "host_exit_code"):
         number = value.get(key)
         if type(number) is int and -(2**31) <= number <= 2**32 - 1:

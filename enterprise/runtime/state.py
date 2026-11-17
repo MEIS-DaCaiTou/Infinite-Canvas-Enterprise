@@ -9,7 +9,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .logging import redact_value, utc_now
 from .ownership import ProcessIdentity, process_identity, same_process
@@ -312,24 +312,58 @@ class RuntimeStateStore:
     def reconcile_reboot_stale_state(
         self,
         *,
-        expected_lock: dict[str, Any],
-        expected_state: dict[str, Any],
+        expected_lock: dict[str, Any] | None,
+        expected_state: dict[str, Any] | None,
+        still_quiescent: Callable[[], bool],
+        adopted_state: dict[str, Any] | None = None,
     ) -> bool:
         """Atomically claim and reconcile one fully validated reboot-stale instance."""
 
         self.initialize()
+        # This file stays in place. The OS releases the byte lock if this
+        # process exits. The existing reconcile marker fences launch/repair.
         try:
-            with self.reconcile_path.open("x", encoding="ascii", newline="") as handle:
-                handle.write(str(expected_state.get("supervisor_instance_id")) + "\n")
-                handle.flush()
-                os.fsync(handle.fileno())
-        except FileExistsError:
+            with (self.root / "runtime-reconcile.guard").open("a+b") as guard:
+                guard.seek(0)
+                if os.name == "nt":
+                    import msvcrt
+                    msvcrt.locking(guard.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(guard.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return self._reconcile_stale_state(expected_lock, expected_state, still_quiescent, adopted_state)
+        except (OSError, RuntimeStateError):
             return False
+
+    def _reconcile_stale_state(self, expected_lock, expected_state, still_quiescent, adopted_state) -> bool:
+        state = adopted_state if adopted_state is not None else expected_state
+        if state is None:
+            return False
+        instance_id = state["supervisor_instance_id"]
+        marker = f"startup-reconcile-v1 {instance_id}\n".encode("ascii")
         try:
-            if self.read_lock() != expected_lock or self.read_state() != expected_state:
+            # Publish a complete marker or leave the existing maintenance
+            # marker alone. The same instance can resume a prior interrupted write.
+            temporary = self.reconcile_path.with_name(f"reconcile-{uuid.uuid4().hex}.tmp")
+            try:
+                with temporary.open("xb") as handle:
+                    handle.write(marker)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.link(temporary, self.reconcile_path)
+            finally:
+                temporary.unlink(missing_ok=True)
+        except FileExistsError:
+            with self.reconcile_path.open("rb") as handle:
+                if handle.read(len(marker) + 1) != marker:
+                    return False
+        try:
+            if (self.read_lock() != expected_lock or self.read_state() != expected_state
+                    or expected_lock is None and os.path.lexists(self.lock_path)
+                    or expected_state is None and os.path.lexists(self.state_path)
+                    or not still_quiescent()):
                 return False
-            instance_id = expected_state.get("supervisor_instance_id")
-            recovered = dict(expected_state)
+            recovered = dict(state)
             recovered.update(
                 {
                     "state": "stopped",
@@ -344,21 +378,18 @@ class RuntimeStateStore:
                 value = dict(recovered.get(role) or {})
                 value.update({"pid": None, "process_created_at": None, "executable": None, "state": "stopped"})
                 recovered[role] = value
-            self.write_state(recovered)
-            if self.read_lock() != expected_lock:
-                return False
-            current = self.read_state()
-            if not current or current.get("supervisor_instance_id") != instance_id or current.get("reboot_stale_reconciled") is not True:
-                return False
-            self.lock_path.unlink()
+            if recovered != expected_state:
+                self.write_state(recovered)
+            if expected_lock is not None:
+                if self.read_lock() != expected_lock:
+                    return False
+                self.lock_path.unlink()
             return True
-        except (FileNotFoundError, OSError, RuntimeStateError):
-            return False
         finally:
-            try:
+            with self.reconcile_path.open("rb") as handle:
+                owned = handle.read(len(marker) + 1) == marker
+            if owned:
                 self.reconcile_path.unlink()
-            except FileNotFoundError:
-                pass
 
     def submit_command(
         self,

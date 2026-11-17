@@ -1287,6 +1287,10 @@ def test_lock_cleanup_identity_and_early_failure_paths() -> None:
                     "failure_stage": "service_host_readiness_wait",
                     "host_exit_code": 1,
                     "bootstrap_failure_category": "module_not_found",
+                    "startup_instance_id": exc.public_details["startup_instance_id"],
+                    "startup_state_settled": True,
+                    "upstream_port_status": "unknown",
+                    "gateway_port_status": "unknown",
                 }
             else:
                 raise AssertionError("exited service host was accepted")

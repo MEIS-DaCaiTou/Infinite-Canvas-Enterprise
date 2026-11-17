@@ -23,7 +23,17 @@
     <script src="/static/js/image-preview.js?v=2026.07.5.1782696713"></script>
     <script src="/static/js/history-bulk-manager.js?v=20261105.2"></script>
     <script src="/static/js/media-grid-window.js?v=20261105.2"></script>
+    <link rel="stylesheet" href="/static/css/generation-task-center.css?v=20261015.1">
+    <script src="/static/js/canvas-task-query.js?v=20261113.2"></script>
+    <script src="/static/js/generation-task-center.js?v=20261112.1"></script>
     <style>
+        #onlineTaskModal { --text:var(--accent); --muted:#64748b; --line:#94a3b866; width:min(680px, calc(100% - 24px)); max-height:90vh; margin:auto; border:1px solid var(--line); border-radius:20px; background:var(--card); color:var(--text); }
+        #onlineTaskModal::backdrop { background:#11182788; }
+        #onlineTaskModal .log-panel { display:flex; flex-direction:column; }
+        #onlineTaskModal header { display:flex; align-items:center; justify-content:space-between; padding:12px 16px; font-weight:700; }
+        #onlineTaskModal header button, #onlineTasksButton { border:1px solid #94a3b866; border-radius:12px; padding:6px 12px; font-size:13px; }
+        #onlineImageStatuses { list-style:none; padding:0; font-size:12px; line-height:1.65; overflow-wrap:anywhere; }
+        #onlineImageStatuses li { margin-block:3px; }
         @import url('/static/vendor/css/fonts.css?v=2026.07.5.1782696732');
         :root { --accent:#111827; --bg:#f9fafb; --card:#fff; --easing:cubic-bezier(0.4,0,0.2,1); }
         body { background:var(--bg); font-family:'Inter',-apple-system,sans-serif; color:var(--accent); -webkit-font-smoothing:antialiased; }
@@ -217,6 +227,8 @@
                     <i data-lucide="zap" class="w-4 h-4 text-yellow-400"></i>
                     <span class="tracking-[0.3em] text-[11px] uppercase" data-i18n="online.generate">Generate</span>
                 </button>
+                <button type="button" id="onlineTasksButton" onclick="openOnlineTasks()">生成任务</button>
+                <ul id="onlineImageStatuses" aria-label="本批图片状态" aria-live="polite"></ul>
             </div>
 
             <div class="lg:col-span-7">
@@ -235,6 +247,13 @@
             <button id="loadMoreTrigger" type="button" class="hidden">Load More Archive</button>
         </section>
     </div>
+
+    <dialog id="onlineTaskModal" aria-label="生成任务">
+        <section class="log-panel">
+            <header><h2>生成任务</h2><form method="dialog"><button>关闭</button></form></header>
+            <div id="onlineTaskLog" class="log-list"></div>
+        </section>
+    </dialog>
 
     <dialog id="lightbox" aria-label="图片预览" onclick="handleOutsideClick(event)" class="gallery-lightbox">
         <button id="lightboxClose" type="button" aria-label="关闭图片预览" autofocus onclick="closeLightbox()" class="text-gray-500"><i data-lucide="x" class="w-8 h-8"></i></button>
@@ -659,22 +678,66 @@
             document.getElementById(`del${index}`).classList.add('hidden');
         }
 
+        const onlineTaskModal = document.getElementById('onlineTaskModal');
+        GenerationTaskCenter.attach({modalId:'onlineTaskModal', listId:'onlineTaskLog', tasksOnly:true});
+        onlineTaskModal.addEventListener('close', () => onlineTaskModal.classList.remove('open'));
+        function openOnlineTasks(){
+            onlineTaskModal.showModal();
+            GenerationTaskCenter.openTasks({kind:'canvas_image'});
+        }
+
         async function submitImage(){
             const prompt = document.getElementById('promptInput').value.trim();
             if(!prompt){ alert(tr('online.promptRequired')); return; }
             const btn = document.getElementById('genBtn'), loader = document.getElementById('loader'), placeholder = document.getElementById('placeholder'), out = document.getElementById('outputImg'), dl = document.getElementById('downloadBtn');
+            if(btn.disabled) return;
             btn.disabled = true; placeholder.classList.add('hidden'); out.classList.add('hidden'); dl.classList.add('hidden'); loader.classList.remove('hidden');
+            const statuses = document.getElementById('onlineImageStatuses');
+            statuses.replaceChildren();
+            let hasResult = false;
+            let previewTaskId;
             try {
-                const reqBody = { prompt, provider_id:provider, model:selectedModel, size:currentSize(), n:outputCount, reference_images:Object.values(refs).filter(Boolean) };
-                if(QUALITY_PROTOCOLS.has(providerProtocol(provider))) reqBody.quality = quality;
-                const result = await fetch('/api/online-image', {
-                    method:'POST', headers:{'Content-Type':'application/json'},
-                    body:JSON.stringify(reqBody)
-                }).then(async r => { if(!r.ok) {const error=(await r.json()).detail;throw new Error(error?.message || error || '生成失败');}; return r.json(); });
-                currentResult = result; out.src = result.images[0]; out.classList.remove('hidden'); dl.href = result.images[0]; dl.classList.remove('hidden'); renderHistoryCards([result], {prepend:true});
-            } catch(err) {
-                alert(err.message || 'Generation failed'); placeholder.classList.remove('hidden');
+                const payload = {prompt, provider_id:provider, model:selectedModel, size:currentSize(), reference_images:Object.values(refs).filter(Boolean)};
+                if(QUALITY_PROTOCOLS.has(providerProtocol(provider))) payload.quality = quality;
+                await Promise.all(Array.from({length:outputCount}, async (_, index) => {
+                    const row = document.createElement('li');
+                    const show = label => { row.textContent = `图片 ${index + 1} · ${label}`; };
+                    show('正在提交平台任务');
+                    statuses.append(row);
+                    const request = CanvasTaskQuery.imageRequest(payload);
+                    let accepted = false;
+                    try {
+                        const receipt = await CanvasTaskQuery.submitImage(request);
+                        accepted = true;
+                        const showTask = task => {
+                            show([CanvasTaskQuery.imageStatus(task), task.message || task.error].filter(Boolean).join(' · '));
+                            const result = task.result;
+                            if(!result?.images?.length) return;
+                            if(!hasResult || previewTaskId === request.taskId){
+                                if(!hasResult){
+                                    previewTaskId = request.taskId;
+                                    out.classList.remove('hidden');
+                                    dl.classList.remove('hidden');
+                                    loader.classList.add('hidden');
+                                }
+                                if(!hasResult || currentResult?.images?.[0] !== result.images[0]){
+                                    out.src = result.images[0];
+                                    dl.href = result.images[0];
+                                }
+                                hasResult = true;
+                                currentResult = result;
+                            }
+                            if(['succeeded','partial'].includes(task.status)) renderHistoryCards([result], {prepend:true});
+                        };
+                        showTask(receipt);
+                        await CanvasTaskQuery.waitImage(request.taskId, {onStatus:showTask});
+                    } catch(error) {
+                        const label = error.definiteRejection ? '明确失败' : accepted ? '原任务查询中断' : '平台回执待核对';
+                        show(`${label} · ${error.message}`);
+                    }
+                }));
             } finally {
+                if(!hasResult) placeholder.classList.remove('hidden');
                 loader.classList.add('hidden'); btn.disabled = false;
             }
         }

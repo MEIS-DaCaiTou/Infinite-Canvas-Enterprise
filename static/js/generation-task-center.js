@@ -3,7 +3,7 @@
     'use strict';
     const esc=value=>String(value ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     const labels={queued:'排队中',running:'运行中',succeeded:'已完成',failed:'明确失败',cancelled:'已取消',unknown:'待核对',partial:'部分结果',unavailable:'记录不可读'};
-    const attemptLabels={...labels,started:'已登记',submitting:'提交中',accepted:'已受理',generated:'待归档',querying:'核对中',manual:'需人工核对'};
+    const attemptLabels={...labels,started:'平台已创建',submitting:'正在向供应商提交',accepted:'供应商已受理',generated:'待归档',querying:'核对中',manual:'需人工核对'};
     const label=value=>attemptLabels[value] || value;
     async function json(url,options={}){
         const response=await fetch(url,{cache:'no-store',...options});
@@ -55,14 +55,15 @@
         root.addEventListener('focus',refreshSourceHints);
         root.setInterval(refreshSourceHints,10000);
     }
-    function attach({modalId,listId,createPrompt,previewMedia,canvasContext,addResult}){
+    function attach({modalId,listId,createPrompt,previewMedia,canvasContext,addResult,tasksOnly=false}){
         const modal=document.getElementById(modalId),logs=document.getElementById(listId);
         if(!modal || !logs)return;
         const tabs=document.createElement('div');tabs.className='generation-task-tabs';tabs.setAttribute('role','tablist');
         tabs.innerHTML='<button type="button" role="tab" aria-selected="true" data-view="logs">生成日志</button><button type="button" role="tab" aria-selected="false" data-view="tasks">生成任务</button><span>仅显示本人任务</span>';
         const pane=document.createElement('div');pane.className='generation-task-pane';pane.hidden=true;
         pane.innerHTML='<div class="generation-task-filters"><select aria-label="任务状态"><option value="">全部状态</option>'+Object.entries(labels).map(([key,label])=>`<option value="${key}">${label}</option>`).join('')+'</select><select aria-label="任务类型"><option value="">全部类型</option><option value="canvas_image">API 图片</option><option value="canvas_comfy">ComfyUI</option><option value="canvas_video">API 视频</option><option value="canvas_llm">LLM 文本</option><option value="canvas_audio">角色语音</option></select><button type="button" data-refresh>刷新</button></div><div class="generation-task-status" role="status"></div><div class="generation-task-list"></div><button type="button" class="generation-task-more" hidden>查看更早任务</button>';
-        logs.before(tabs);logs.after(pane);
+        if(!tasksOnly) logs.before(tabs);
+        logs.after(pane);
         const list=pane.querySelector('.generation-task-list'),notice=pane.querySelector('[role=status]'),more=pane.querySelector('.generation-task-more');
         const filters=pane.querySelectorAll('select'),details=new Map();
         let rows=[],cursor=null,view='logs',epoch=0,timer=null,expanded='',loading=false,pending=false,openingView='logs';
@@ -97,6 +98,8 @@
                 return `<div><span>子请求 ${item.index+1} · ${esc(label(item.status))}</span>
                     <small>${esc(item.provider || '')} · ${esc(item.model || '')}</small>
                     <code>${esc(item.upstream_task_id || '未取得供应商任务 ID')}</code>
+                    ${item.started_at?`<small>提交 ${esc(date(item.started_at))}${item.accepted_at?' · 受理 '+esc(date(item.accepted_at)):''}${item.finished_at?' · 结束 '+esc(date(item.finished_at)):''}</small>`:''}
+                    ${item.provider_request_id?`<code>供应商请求 ID：${esc(item.provider_request_id)}</code>`:''}
                     ${item.error?`<small>${esc(item.error)}</small>`:''}
                     ${counts.length?`<small>供应商报告用量：${counts.map(([key,value])=>`${esc(key)} ${esc(value)}`).join(' · ')}</small>`:''}
                     ${usage.reported_cost!==undefined?`<small>供应商报告费用 ${esc(usage.reported_cost)} ${esc(usage.currency || '（币种未提供）')}，尚非平台结算</small>`:''}</div>`;

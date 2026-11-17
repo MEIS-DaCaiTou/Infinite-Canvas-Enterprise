@@ -17,7 +17,11 @@ from copy import deepcopy
 from pathlib import Path
 
 from enterprise.runtime import performance
-from enterprise.paths import _assert_no_reparse
+from enterprise.paths import PathRootsError, _assert_no_reparse
+
+
+class TaskAlreadyExists(ValueError):
+    pass
 
 
 class CanvasTaskJournal:
@@ -27,13 +31,36 @@ class CanvasTaskJournal:
             raise ValueError("Canvas task root must be absolute")
         self._lock = threading.RLock()
         self._comfy_queue_index = None
+        self._image_tracking_warnings: dict[str, None] = {}
+
+    def note_image_tracking_write_failure(self, task_id: str) -> None:
+        """Keep a bounded, process-local notice when even the final write fails."""
+        with self._lock:
+            self._image_tracking_warnings[task_id] = None
+            if len(self._image_tracking_warnings) > 256:
+                self._image_tracking_warnings.pop(next(iter(self._image_tracking_warnings)))
+
+    def with_tracking_warning(self, record: dict) -> dict:
+        if record.get("type") != "online-image" or record.get("status") != "running":
+            return record
+        with self._lock:
+            if record["id"] not in self._image_tracking_warnings:
+                return record
+        return {**record, "status": "failed", "recovery_required": True, "tracking_write_failed": True,
+                "error_code": "PROVIDER_SUBMISSION_UNKNOWN",
+                "error": "供应商已受理，但本地回执暂不可保存。请核对原任务及账单，不要直接重新提交。"}
 
     def _path(self, task_id: str) -> Path:
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,160}", task_id):
             raise ValueError("Invalid canvas task identifier")
-        _assert_no_reparse(self.root, "CANVAS_TASK_ROOT")
         path = self.root / (task_id + ".json")
-        _assert_no_reparse(path, "CANVAS_TASK_RECORD")
+        try:
+            _assert_no_reparse(self.root, "CANVAS_TASK_ROOT")
+            _assert_no_reparse(path, "CANVAS_TASK_RECORD")
+        except PathRootsError as exc:
+            if exc.code != "PATH_LSTAT_FAILED":
+                raise
+            raise OSError("Canvas task storage is temporarily inaccessible") from exc
         return path
 
     def _write(self, record: dict) -> None:
@@ -65,6 +92,10 @@ class CanvasTaskJournal:
             if not isinstance(data, dict) or data.get("id") != task_id or data.get("journal_version") != 1:
                 raise ValueError("Invalid canvas task record")
             return data
+
+    def get_for_display(self, task_id: str) -> dict | None:
+        record = self.get(task_id)
+        return self.with_tracking_warning(record) if record is not None else None
 
     @staticmethod
     def _queue_projection(record):
@@ -105,7 +136,7 @@ class CanvasTaskJournal:
     def create(self, record: dict) -> None:
         with self._lock:
             if self.get(record["id"]) is not None:
-                raise ValueError("Canvas task already exists")
+                raise TaskAlreadyExists("Canvas task already exists")
             self._write({**record, "journal_version": 1})
 
     def mark_running(self, task_id: str) -> bool:
@@ -167,13 +198,25 @@ class CanvasTaskJournal:
                     "error": "待执行任务的输入、权限或原调用配置已变化/不可用，已停止执行；未重新生成，请核对后再发起新任务。",
                     "updated_at": time.time()})
 
-    def finish(self, task_id: str, changes: dict) -> None:
+    def finish(self, task_id: str, changes: dict, *, unwritten_image_receipts=None) -> None:
         with self._lock:
             record = self.get(task_id)
             if record and record.get("type") == "comfy" and record.get("status") == "cancelled":
                 return
             if record is None or record.get("status") != "running":
                 raise ValueError("Canvas task is not running")
+            if unwritten_image_receipts:
+                receipts = list(record["provider_receipts"])
+                upstream_id = record.get("upstream_task_id")
+                for index, receipt in unwritten_image_receipts.items():
+                    previous = receipts[index]
+                    if previous.get("state") in {"succeeded", "failed"}:
+                        continue
+                    if previous.get("upstream_task_id", receipt["upstream_task_id"]) != receipt["upstream_task_id"]:
+                        raise ValueError("Provider task identity cannot change")
+                    receipts[index] = {**previous, **receipt, "index": index}
+                    upstream_id = upstream_id or receipt["upstream_task_id"]
+                changes = {**changes, "provider_receipts": receipts, "upstream_task_id": upstream_id}
             self._write({**record, **changes, "id": task_id, "updated_at": time.time()})
 
     def record_comfy_cancellation(self, task_id: str, acknowledged: bool):

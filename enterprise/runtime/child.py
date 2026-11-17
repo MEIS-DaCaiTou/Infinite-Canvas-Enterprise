@@ -46,27 +46,32 @@ def _load_application(role: str, app_root: Path):
 
 
 async def _serve(args: argparse.Namespace) -> int:
+    app_root = Path(args.app_root).absolute()
+    if str(app_root) not in sys.path:
+        sys.path.insert(0, str(app_root))
+    from enterprise.runtime import performance
+
+    performance.set_startup_instance(args.instance_id)
     if args.runtime_mode == "portable-release":
-        app_root = Path(args.app_root).absolute()
         expected_entry = app_root / "enterprise" / "runtime" / "child.py"
         try:
             if expected_entry.resolve() != Path(__file__).resolve():
                 return 2
         except OSError:
             return 2
-        if str(app_root) not in sys.path:
-            sys.path.insert(0, str(app_root))
-        from enterprise.runtime.portable import validate_portable_process_binding
+        with performance.startup_phase("portable_binding", before_uvicorn=True):
+            from enterprise.runtime.portable import validate_portable_process_binding
 
-        validate_portable_process_binding(
-            app_root=app_root,
-            runtime_root=Path(args.runtime_root),
-            instance_id=args.instance_id,
-            expected_context_identity=args.launch_context_identity,
-        )
-    import uvicorn
+            validate_portable_process_binding(
+                app_root=app_root,
+                runtime_root=Path(args.runtime_root),
+                instance_id=args.instance_id,
+                expected_context_identity=args.launch_context_identity,
+            )
+    with performance.startup_phase("application_import", before_uvicorn=True):
+        import uvicorn
 
-    application = _load_application(args.role, Path(args.app_root))
+        application = _load_application(args.role, app_root)
     config = uvicorn.Config(application, host=args.host, port=args.port, log_level="warning", access_log=False,
                             timeout_graceful_shutdown=HTTP_DRAIN_TIMEOUT_SECONDS)
     server = uvicorn.Server(config)
@@ -82,7 +87,9 @@ async def _serve(args: argparse.Namespace) -> int:
 
     watcher = asyncio.create_task(watch_stop_file())
     try:
-        await server.serve()
+        # The listening/ready transition is confirmed by the supervisor's probes.
+        with performance.startup_phase("serve", before_uvicorn=True):
+            await server.serve()
         if stop_file.is_file():
             marker.parent.mkdir(parents=True, exist_ok=True)
             marker.write_text("graceful_shutdown\n", encoding="utf-8")

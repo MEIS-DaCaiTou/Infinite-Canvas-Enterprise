@@ -483,6 +483,7 @@ _MAIN_FLOW_BY_SYMBOL.update(
         "generate_gemini_cli_provider_image": "W15", "generate_jimeng_provider_image": "W15",
         "generate_jimeng_video": "W15", "generate_video_preview_image": "W15",
         "poll_angle_cloud": "W15", "runninghub_store_remote_output": "W15",
+        "publish_receipted_image": "W15", "save_ai_image_to_output.save": "W15",
         "save_ai_image_to_output": "W15", "save_comfy_text_output": "W15",
         "save_remote_video_to_output": "W15",
         "image_jpeg._build": "W16", "media_preview._build_preview": "W16",
@@ -560,6 +561,7 @@ _OTHER_FLOW_BY_SYMBOL: dict[tuple[str, str], str] = {
     ("enterprise/runtime/state.py", "RuntimeStateStore.release_lock"): "W26",
     ("enterprise/runtime/state.py", "RuntimeStateStore.remove_ack"): "W26",
     ("enterprise/runtime/state.py", "RuntimeStateStore.reconcile_reboot_stale_state"): "W26",
+    ("enterprise/runtime/state.py", "RuntimeStateStore._reconcile_stale_state"): "W26",
     ("enterprise/runtime/state.py", "RuntimeStateStore.reserve_lock"): "W26",
     ("enterprise/runtime/state.py", "RuntimeStateStore._reservation_survives_reconcile"): "W26",
     ("enterprise/runtime/state.py", "_atomic_json_replace"): "W26",
@@ -711,7 +713,8 @@ def _flow_for_operation(file: str, symbol: str) -> str:
 # Wxx flow). Line numbers are deliberately excluded, while duplicate identical
 # calls remain duplicate records. Any added/removed/changed call drifts it.
 # W15 replaces the generic URL fallback with removal of this invocation's generated partial output.
-EXPECTED_SITE_MANIFEST_DIGEST = "753371cadf7aa032777d7e71112d10675a8050a09ef6604fd2fe3ae43cc734f5"
+# W26 covers the shared runtime reconciliation guard and owned-state cleanup.
+EXPECTED_SITE_MANIFEST_DIGEST = "8e41b3bfe71cfc71194ca06d50237836aa1437a54b9cb67f116ae333c2e8e50d"
 
 FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W01", "main.py", "startup_event"),
