@@ -233,7 +233,7 @@ def test_gateway_factory_uses_cache_root_and_disable_switch(env, monkeypatch, tm
     monkeypatch.setattr(api, 'ENTERPRISE_HISTORY_QUERY_INDEX_ENABLED', True)
     api.start_collection_queries()
     cache = api._HISTORY_QUERIES
-    assert cache.index.target == tmp_path/'cache/queries/history-v1.sqlite3'
+    assert cache.index.target == tmp_path/'cache/queries/history-v2.sqlite3'
     assert cache.min_source_bytes == api._COLLECTION_QUERIES.max_cached_bytes
     assert payload(api.handle_collection_query(a,'api/history',{'page_size':2}))['total'] == 0
     assert not (tmp_path/'cache').exists()

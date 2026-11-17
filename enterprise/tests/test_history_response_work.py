@@ -35,17 +35,18 @@ def test_async_history_completion_keeps_loop_free_and_original_atomic_append(tmp
                 if isinstance(call.func,ast.Attribute) and call.func.attr=='to_thread' and call.args and isinstance(call.args[0],ast.Name) and call.args[0].id=='save_to_history':
                     call_sites.append((fn.name,statement))
     assert len(call_sites)==7
-    scope={'asyncio':asyncio,'logging':logging,'HISTORY_LOCK':threading.Lock(),
-           'HISTORY_FILE':tmp_path/'history.json','history_records':history_records}
+    path = tmp_path/'history.json'
+    scope={'asyncio':asyncio,'logging':logging,'HISTORY_WRITER':history_records.HistoryWriter(path),
+           'history_records':history_records}
     exec(compile(ast.Module(body=[functions['save_to_history']],type_ignores=[]),'actual_history_writer','exec'),scope)
     # Execute the exact completion statement from the real online endpoint.
     statement=next(node for name,node in call_sites if name=='build_online_image_result')
     fn=ast.parse('async def complete(result):\n    pass\n    return result').body[0];fn.body[0]=statement
     exec(compile(ast.fix_missing_locations(ast.Module(body=[fn],type_ignores=[])),'actual_online_completion','exec'),scope)
-    entered,release=threading.Event(),threading.Event();append=history_records.append_record
+    entered,release=threading.Event(),threading.Event();append=history_records._prepend_records
     def delayed(*args,**kwargs):
         entered.set();assert release.wait(2);return append(*args,**kwargs)
-    monkeypatch.setattr(history_records,'append_record',delayed)
+    monkeypatch.setattr(history_records,'_prepend_records',delayed)
     async def check():
         records=[{'timestamp':1},{'timestamp':2}]
         tasks=[asyncio.create_task(scope['complete'](row)) for row in records]
@@ -55,7 +56,7 @@ def test_async_history_completion_keeps_loop_free_and_original_atomic_append(tmp
             assert not any(task.done() for task in tasks)
         finally:release.set()
         assert await asyncio.gather(*tasks)==records
-        assert {row['timestamp'] for row in history_records.read_records(scope['HISTORY_FILE'])}=={1,2}
+        assert {row['timestamp'] for row in history_records.read_records(path)}=={1,2}
     asyncio.run(check())
 
 

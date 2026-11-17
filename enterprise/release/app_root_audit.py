@@ -505,6 +505,7 @@ _OTHER_FLOW_BY_SYMBOL: dict[tuple[str, str], str] = {
     # Disposable history read projection beside the original DATA_ROOT JSON.
     # Rebuild publishes a complete temporary SQLite file; JSON stays authoritative.
     ("enterprise/history_query_index.py", "HistoryQueryIndex.rebuild"): "W07",
+    ("enterprise/history_query_index.py", "_open_existing"): "W07",
     ("enterprise/history_query_index.py", "_open_readonly"): "W07",
     ("tools/check_history_query_index.py", "ownership_snapshot"): "W31",
     # Explicit private media copies use the existing W15 output storage flow.
@@ -713,7 +714,7 @@ def _flow_for_operation(file: str, symbol: str) -> str:
 # calls remain duplicate records. Any added/removed/changed call drifts it.
 # W15 replaces the generic URL fallback with removal of this invocation's generated partial output.
 # W26 covers the shared runtime reconciliation guard and owned-state cleanup.
-EXPECTED_SITE_MANIFEST_DIGEST = "8b3bf797cbf0f0875063950cd153f81bc38db4ddc2ca319bd397ae8a55ddc673"
+EXPECTED_SITE_MANIFEST_DIGEST = "8e41b3bfe71cfc71194ca06d50237836aa1437a54b9cb67f116ae333c2e8e50d"
 
 FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W01", "main.py", "startup_event"),
