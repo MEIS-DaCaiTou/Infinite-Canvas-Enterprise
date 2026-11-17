@@ -1,6 +1,16 @@
 # Infinite Canvas Enterprise 当前项目状态
 
-更新时间：2026-11-13
+更新时间：2026-11-18
+
+## 2026-11-18 正式发行 2026.11.2
+
+[v2026.11.2](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.11.2) 已正式发布，Windows 发行标识为 `ice-2026.11.2-e4f94b8a9671`。标签和 8 项资产绑定主线产品提交 `e4f94b8a9671efca5619395f706b08503f4a0fec`，公开匿名下载已逐项核对大小和 SHA-256。发行登记文档后续更新独立于冻结资产。
+
+#210、#211、#212、#214、#215 已按顺序合入主线，覆盖工作流与画布编辑、历史浏览与并发写入、图片任务追踪和 Windows 启动中断后的手动恢复。[主线 CI](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/44003005854) 的 Enterprise 2,476 项、Runtime 398 项通过。开发机实测 2026.11.1 的完整离线升级向导、Windows 登记及登记后原账号、两类画布和素材读写，固定 EXE 重启后数据可读。负责人确认测试主机从 2026.11.1 升至 2026.11.2 后正常启动使用。
+
+从 2026.11.1 升级使用本地下载的 [InfiniteCanvasSetup.exe](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/download/v2026.11.2/InfiniteCanvasSetup.exe)，停服务后选择原安装目录并保留数据。沿用现有数据库结构。随包未添加在线更新路线，旧版本直升及客户网络和设备验收另行处理。本次发布未操作客户设备。
+
+下方历史章节的候选、PR 和待办状态保留各自采集时点。
 
 ## 2026-11-13 贞贞图片任务异步接入（本地候选）
 

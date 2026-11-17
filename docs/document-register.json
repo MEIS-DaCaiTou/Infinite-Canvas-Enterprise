@@ -1,8 +1,8 @@
 {
   "schema_version": "enterprise-documents-v1",
-  "reviewed_at": "2026-11-13",
-  "audit_base_commit": "03de4f721b3a1cda4498155e9e507b54edf2d402",
-  "scope": "2026-11-13 targeted status update for Zhenzhen image async submission and original-task recovery. The earlier PERF1105 audit baseline and remaining production capacity work are retained in the current status.",
+  "reviewed_at": "2026-11-18",
+  "audit_base_commit": "e4f94b8a9671efca5619395f706b08503f4a0fec",
+  "scope": "2026-11-18 targeted delivery status registration for v2026.11.2, built from e4f94b8a9671efca5619395f706b08503f4a0fec. Main CI, full graphical 11.1 upgrade, Windows registration and business checks passed. Owner confirmed test host use. Eight release assets verified anonymously. Customer deployment remains separate.",
   "documents": [
     {
       "path": ".github/PULL_REQUEST_TEMPLATE.md",
@@ -159,7 +159,7 @@
       "path": "docs/CURRENT_PROJECT_STATUS.md",
       "kind": "authority",
       "authority": "status",
-      "reviewed_at": "2026-11-13"
+      "reviewed_at": "2026-11-18"
     },
     {
       "path": "docs/data/DATA-MVP-1-INDEPENDENT-REVIEW-2026-09.md",
@@ -483,7 +483,7 @@
       "path": "docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md",
       "kind": "authority",
       "authority": "roadmap",
-      "reviewed_at": "2026-11-04"
+      "reviewed_at": "2026-11-18"
     },
     {
       "path": "docs/runbooks/SEC-1B2-PRODUCTION-ACTIVATION-RUNBOOK-2026-07.md",
@@ -589,7 +589,7 @@
       "path": "PROJECT_SCOPE_LOCK.md",
       "kind": "authority",
       "authority": "scope",
-      "reviewed_at": "2026-11-04"
+      "reviewed_at": "2026-11-18"
     },
     {
       "path": "README.md",

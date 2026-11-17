@@ -1,6 +1,8 @@
 # Infinite Canvas Enterprise 开发路线图（2026–2027）
 
-更新时间：2026-11-04
+更新时间：2026-11-18
+
+2026-11-18交付进展：[v2026.11.2](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.11.2) 已发行。11.1 离线原位升级的开发机完整向导、Windows 登记、登记后读写已通过，负责人确认测试主机正常使用。客户设备与生产窗口仍待单独确认。其余工程顺序沿用下方已批准路线，准确状态见[当前状态](../CURRENT_PROJECT_STATUS.md)。
 
 2026-11-04当前动作：负责人已批准收口发行后工作流输入/加载、图片编辑与输出复用修复并提交PR，先完成相关回归、代码审查与CI。保留完整项目预览，未授权本批合并/发布或客户设备操作。之后继续原P1资产写入内部回包及一致性、持续容量测量，P2跨SQLite/JSON中断恢复，再推进服务器适配；不因PR收口另建任务队列。准确实现与交付状态见[CURRENT](../CURRENT_PROJECT_STATUS.md)。
 
