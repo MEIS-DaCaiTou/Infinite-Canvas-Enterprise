@@ -495,6 +495,9 @@ _MAIN_FLOW_BY_SYMBOL.update(
 )
 
 _OTHER_FLOW_BY_SYMBOL: dict[tuple[str, str], str] = {
+    # Optional upload preparation encodes to BytesIO only; no APP_ROOT or source
+    # asset is written. Keep this explicit save call in the existing upload flow.
+    ("enterprise/comfy_input_images.py", "prepare_image"): "W13",
     # Shared atomic primitive; W07/W08/W09 callers retain their own locks/roots.
     ("enterprise/local_json.py", "atomic_write_json"): "W09",
     ("enterprise/local_json.py", "document_lock"): "W09",
@@ -707,7 +710,7 @@ def _flow_for_operation(file: str, symbol: str) -> str:
 # Wxx flow). Line numbers are deliberately excluded, while duplicate identical
 # calls remain duplicate records. Any added/removed/changed call drifts it.
 # W15 replaces the generic URL fallback with removal of this invocation's generated partial output.
-EXPECTED_SITE_MANIFEST_DIGEST = "c65afe7d033f673f93158d594b1303160bb22315d2fcc00318452f9e425d91ba"
+EXPECTED_SITE_MANIFEST_DIGEST = "89db97e1bd2d5899c7ae370ec08808a8519ea8eb883a67f4e8f3a7b8d2bbc8d0"
 
 FLOW_ANCHORS: tuple[FlowAnchor, ...] = (
     FlowAnchor("W01", "main.py", "startup_event"),

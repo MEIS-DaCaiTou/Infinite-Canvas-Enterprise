@@ -122,6 +122,9 @@ function inputLabel(name){
 
 let workflows = [];
 let selectedName = '';
+let workflowListLoad = null;
+let workflowSelectionRequest = null;
+let definitionRequest = null;
 let currentWorkflow = null;
 let currentDefinitions = {};
 let imageGroupCandidates = [];
@@ -132,6 +135,8 @@ let isBuiltin = false;
 let previewValues = {};         // field_id -> 发给后端的值（图片：comfy 文件名）
 let previewRandomActive = {};   // field_id -> 筛子运行时是否激活；未设置时默认激活
 let previewImageUrls = {};      // field_id -> 浏览器可显示的本地 URL（仅图片字段）
+let previewImageOptions = {};
+let previewImageInfo = '';
 let testSession = new ComfyWorkflowSession();
 
 let workspaceMode = 'graph';
@@ -152,6 +157,22 @@ const previewCard = document.getElementById('previewContent');
 const miniCanvasHost = document.getElementById('miniCanvasHost');
 
 function setStatus(text){ statusEl.textContent = text || ''; }
+async function readWorkflowSettings(url, controller=new AbortController()){
+    // Only these read-only settings requests have a deadline, not task execution.
+    const timer=setTimeout(()=>controller.abort(),12000);
+    try {
+        const response=await fetch(url,{signal:controller.signal});
+        if(!response.ok) throw new Error(`HTTP ${response.status}`);
+        return await response.json();
+    } finally {clearTimeout(timer);}
+}
+function workflowReadFailed(message,retry){
+    setStatus(message);
+    const button=document.createElement('button');
+    button.type='button';button.className='ghost-btn';button.style.marginLeft='8px';
+    button.textContent=currentLang()==='en'?'Retry':'重试';button.onclick=retry;
+    statusEl.appendChild(button);
+}
 function escapeHtml(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function escapeAttr(s){ return escapeHtml(s); }
 function fieldKind(f){ return ComfyWorkflowFields.kind(f); }
@@ -209,11 +230,11 @@ function syncMiniFields(){
 let comfyInstances = [];
 async function loadComfyInstances(){
     try {
-        const data = await fetch('/api/comfyui/instances').then(r => r.json());
+        const data = await readWorkflowSettings('/api/comfyui/instances');
         comfyInstances = Array.isArray(data.instances) ? data.instances : [];
         renderComfyInstances();
         if(currentConfig) renderBackendChoice();
-    } catch(e){ console.error(e); }
+    } catch(e){ workflowReadFailed(currentLang()==='en'?'Could not load backends; previous values are kept.':'后端列表读取失败，已有地址已保留。',loadComfyInstances); }
 }
 function renderComfyInstances(){
     const el = document.getElementById('comfyInstancesList');
@@ -232,17 +253,21 @@ function renderBackendChoice(){
     if(!box){box=document.createElement('div');box.id='workflowBackendChoice';subEl.after(box);}
     const normalize=addr=>{try{return new URL(addr.includes('://')?addr:'http://'+addr).href.replace(/\/$/,'');}catch{return addr;}};
     const selected=normalize(currentConfig.backend || comfyInstances[0] || '');
-    box.innerHTML=`<label>执行后端 <select aria-label="工作流执行后端" onchange="changeWorkflowBackend(this.value)">${comfyInstances.map(addr=>`<option value="${escapeAttr(addr)}" ${normalize(addr)===selected?'selected':''}>${escapeHtml(addr)}</option>`).join('')}</select></label> <button class="ghost-btn" type="button" onclick="refreshWorkflowDefinitions(this)">${tr('comfy.refreshChoices')}</button><div>${escapeHtml(currentDefinitionWarning)}</div>`;
+    const reading=definitionRequest?.name===selectedName && definitionRequest?.backend===(currentConfig.backend || '');
+    box.innerHTML=`<label>执行后端 <select aria-label="工作流执行后端" onchange="changeWorkflowBackend(this.value)">${comfyInstances.map(addr=>`<option value="${escapeAttr(addr)}" ${normalize(addr)===selected?'selected':''}>${escapeHtml(addr)}</option>`).join('')}</select></label> <button class="ghost-btn" type="button" onclick="refreshWorkflowDefinitions(this)" ${reading?'disabled':''}>${tr('comfy.refreshChoices')}</button><div>${escapeHtml(currentDefinitionWarning)}</div>`;
 }
 async function refreshWorkflowDefinitions(button){
     if(!selectedName || !currentConfig) return;
     const name=selectedName, backend=currentConfig.backend || '';
+    definitionRequest?.controller.abort();
+    const request={name,backend,controller:new AbortController()};
+    definitionRequest=request;
+    currentDefinitionWarning=currentLang()==='en'?'Reading backend choices; the saved workflow is ready to edit':'正在后台读取节点定义，本地工作流已可编辑';
+    renderBackendChoice();
     if(button) button.disabled=true;
     try {
-        const response=await fetch(`/api/workflows/${encodeURIComponent(name)}?`+new URLSearchParams({include_definitions:'true',backend}));
-        if(!response.ok) throw new Error(tr('comfy.choicesFailed'));
-        const data=await response.json();
-        if(selectedName!==name || currentConfig.backend!==backend) return;
+        const data=await readWorkflowSettings(`/api/workflows/${encodeURIComponent(name)}?`+new URLSearchParams({include_definitions:'true',backend}),request.controller);
+        if(definitionRequest!==request || selectedName!==name || (currentConfig?.backend || '')!==backend) return;
         currentDefinitions=data.definitions || {};
         currentDefinitionWarning=data.definition_warning || '';
         currentConfig=ComfyWorkflowFields.normalizeWorkflow({...data,config:currentConfig}).config;
@@ -252,8 +277,15 @@ async function refreshWorkflowDefinitions(button){
             if(profile.options?.length) field.options=[...new Set([...profile.options,...(field.options || [])])];
         }
         renderEditor();renderPreview();renderWorkspaceView();
-    } catch(error){setStatus(error.message);}
-    finally {if(button) button.disabled=false;}
+    } catch(error){
+        if(definitionRequest!==request || selectedName!==name || (currentConfig?.backend || '')!==backend) return;
+        currentDefinitionWarning=currentLang()==='en'
+            ? (error.name==='AbortError'?'Backend choices timed out; local edits are kept. Retry when connected.':'Backend choices could not be read; local edits are kept. Retry when connected.')
+            : (error.name==='AbortError'?'节点定义读取超时，本地修改已保留；可重试读取':'节点定义读取失败，本地修改已保留；可重试读取');
+    } finally {
+        if(definitionRequest===request){definitionRequest=null;renderBackendChoice();}
+        if(button) button.disabled=false;
+    }
 }
 function changeWorkflowBackend(value){
     currentConfig.backend=value;
@@ -304,8 +336,10 @@ async function saveComfyInstances(){
 }
 
 async function loadList(){
-    try {
-        const data = await fetch('/api/workflows?include_disabled=true').then(r=>r.json());
+    if(workflowListLoad) return workflowListLoad;
+    workflowListLoad=(async()=>{try {
+        const data = await readWorkflowSettings('/api/workflows?include_disabled=true');
+        if(!Array.isArray(data.workflows)) throw new Error('Invalid workflow list');
         workflows = data.workflows || [];
         renderList();
         // 自动加载：当前没选中 或 之前选中的已不存在 → 选第一个
@@ -313,7 +347,8 @@ async function loadList(){
         if(!stillExists && workflows.length){
             await selectWorkflow(workflows[0].name);
         }
-    } catch(e){ setStatus(tr('comfy.loadFailed')); console.error(e); }
+    } catch(e){workflowReadFailed(tr('comfy.loadFailed'),()=>loadList());}})();
+    try {await workflowListLoad;} finally {workflowListLoad=null;}
 }
 // iframe 在 index.html 里通过 switchUI 显示，首次显示时可能 DOMContentLoaded 已经过去；
 // 添加一个 pageshow 监听确保进入页面时一定刷新
@@ -323,7 +358,7 @@ window.addEventListener('pageshow', () => {
 
 function renderList(){
     listEl.innerHTML = workflows.map(w => `
-        <button class="workflow-card ${w.name===selectedName?'active':''}" type="button" onclick="selectWorkflow('${escapeHtml(w.name)}')">
+        <button class="workflow-card ${w.name===(workflowSelectionRequest?.name || selectedName)?'active':''}" type="button" onclick="selectWorkflow('${escapeHtml(w.name)}')">
             <span class="workflow-icon"><i data-lucide="${w.builtin?'package':'file-json-2'}" class="w-3.5 h-3.5"></i></span>
             <span class="min-w-0" style="flex:1">
                 <div class="workflow-name">${escapeHtml(w.title)}</div>
@@ -336,13 +371,21 @@ function renderList(){
 }
 
 async function selectWorkflow(name){
-    selectedName = name;
+    workflowSelectionRequest?.controller.abort();
+    definitionRequest?.controller.abort();definitionRequest=null;
+    const request={name,controller:new AbortController()};
+    workflowSelectionRequest=request;
     renderList();
+    let loaded=false;
     try {
         setStatus(tr('comfy.loading'));
-        let data = await fetch(`/api/workflows/${encodeURIComponent(name)}?include_definitions=true`).then(r=>r.json());
+        // Render local graph/config first. Remote ComfyUI definitions are optional.
+        let data = await readWorkflowSettings(`/api/workflows/${encodeURIComponent(name)}`,request.controller);
+        if(workflowSelectionRequest!==request) return;
+        if(!data.workflow || typeof data.workflow!=='object') throw new Error('Invalid workflow');
         data = ComfyWorkflowFields.normalizeWorkflow(data);
-        if(selectedName !== name) return;
+        selectedName = name;
+        previewImageInfo='';
         currentDefinitions = data.definitions || {};
         imageGroupCandidates = data.image_group_candidates || [];
         currentFieldRoles = data.field_roles || {};
@@ -375,7 +418,13 @@ async function selectWorkflow(name){
         setTimeout(() => graphFit(), 50);
         restoreTestTask();
         setStatus('');
-    } catch(e){ setStatus(tr('comfy.openFailed')); console.error(e); }
+        loaded=true;
+    } catch(e){
+        if(workflowSelectionRequest===request) workflowReadFailed(tr('comfy.openFailed'),()=>selectWorkflow(name));
+    } finally {
+        if(workflowSelectionRequest===request){workflowSelectionRequest=null;renderList();}
+    }
+    if(loaded) refreshWorkflowDefinitions();
 }
 
 function fieldFor(node, input){
@@ -504,6 +553,7 @@ function renderEditor(){
     document.getElementById('nodesToggle').style.display = workspaceMode === 'graph' ? 'flex' : 'none';
     renderBackendChoice();
     renderImageGroupOptions();
+    renderImageMappingOptions();
     workflowTitleInput.value = currentConfig.title || selectedName.replace('.json','');
     subEl.textContent = tf('comfy.nodeStats', {nodes:Object.keys(currentWorkflow).length, fields:currentConfig.fields.length}) + (isBuiltin ? ` · ${tr('comfy.builtin')}` : '');
     deleteBtn.style.display = isBuiltin ? 'none' : 'inline-flex';
@@ -868,7 +918,7 @@ function renderInputRow(nodeId, inputKey, rawValue){
     const f = fieldFor(nodeId, inputKey);
     const active = !!f;
     if(active && f.default!=null)rawValue=f.default;
-    const showExtras = active && (['slider','number','dropdown','boolean'].includes(f.type) || (['text','textarea'].includes(f.type) && f.input!=='filename_prefix'));
+    const showExtras = active && (['slider','number','dropdown','boolean','image'].includes(f.type) || (['text','textarea'].includes(f.type) && f.input!=='filename_prefix'));
     // 原始值类型徽章
     let valueBadge = '';
     const typeOf = typeof rawValue;
@@ -904,6 +954,10 @@ function renderInputRow(nodeId, inputKey, rawValue){
 }
 
 function renderExtras(f){
+    if(f.type==='image' && !(currentConfig.image_groups || []).length){
+        const images=currentConfig.fields.filter(field=>field.type==='image');
+        return `<div class="extras-row"><label>${currentLang()==='en'?'Canvas image':'画布图片'} <select class="small-select" aria-label="${escapeAttr(f.name)} 画布图片来源" onchange="updateField('${f.id}','media_index',this.value===''?null:Number(this.value))"><option value="" ${f.media_index==null?'selected':''}>${currentLang()==='en'?'In field order':'按字段顺序'}</option>${images.map((_,index)=>`<option value="${index}" ${f.media_index===index?'selected':''}>${currentLang()==='en'?'Image':'第'} ${index+1}${currentLang()==='en'?'':' 张连接图片'}</option>`).join('')}</select></label></div>`;
+    }
     if(f.type==='boolean')return `<div class="extras-row"><label>默认状态 <input type="checkbox" ${ComfyWorkflowFields.coerceValue(f,f.default)?'checked':''} aria-label="${escapeAttr(f.name)} 默认开启" onchange="updateField('${f.id}','default',this.checked)"><span>${ComfyWorkflowFields.coerceValue(f,f.default)?'开启':'关闭'}</span></label></div>`;
     if(['text','textarea'].includes(f.type) && f.input!=='filename_prefix') return `<div class="extras-row"><label>输入用途 <select class="small-select" onchange="updateField('${f.id}','role',this.value)">${[['prompt','创作提示词'],['negative','负面提示词'],['system','系统提示词'],['parameter','普通参数']].map(([value,label])=>`<option value="${value}" ${f.role===value?'selected':''}>${label}</option>`).join('')}</select></label></div>`;
     if(f.type === 'slider' || f.type === 'number'){
@@ -1071,7 +1125,7 @@ function closeImagePreview(){
 }
 
 function renderPreview(){
-    const fields = ComfyWorkflowFields.runtimeFields(currentConfig || {});
+    const fields = ComfyWorkflowFields.runtimeFields(ComfyWorkflowFields.frameConfig(currentWorkflow || {},currentConfig || {},previewValues.__ice_frame_mode));
     if(!fields.length){
         previewCard.innerHTML = `<div class="preview-empty">${tr('comfy.previewEmpty')}</div>`;
         return;
@@ -1082,10 +1136,27 @@ function renderPreview(){
             <i data-lucide="play" class="w-4 h-4"></i><span>${tr('comfy.runTest')}</span>
         </button>`;
     previewCard.innerHTML = `
+        ${ComfyWorkflowFields.frameOptionsHtml(currentWorkflow || {},{comfyFrameMode:previewValues.__ice_frame_mode},'data-preview-frame-option',currentLang()==='en')}
+        ${fields.some(f=>fieldKind(f)==='image')?ComfyWorkflowFields.imageOptionsHtml(previewImageOptions,'data-preview-image-option',currentLang()==='en'):''}
+        ${previewImageInfo?`<div class="muted-note">${escapeHtml(previewImageInfo)}</div>`:''}
         ${fieldsHtml}
         ${runButton}
         ${resultHtml}
     `;
+    previewCard.querySelectorAll('[data-preview-frame-option]').forEach(input=>input.onchange=()=>{testSession.set('__ice_frame_mode',input.value);renderPreview();});
+    previewCard.querySelectorAll('[data-preview-image-option]').forEach(input=>input.onchange=()=>{
+        previewImageOptions={...previewImageOptions,[input.dataset.previewImageOption]:input.value};
+        previewImageInfo='';
+        // Clear already-uploaded references so changing the option cannot reuse old bytes.
+        testSession.uploads.clear();
+        for(const field of fields.filter(f=>fieldKind(f)==='image')){
+            const urls=[testSession.urls[field.id]].flat().filter(Boolean);
+            urls.filter(url=>url.startsWith('blob:')).forEach(url=>URL.revokeObjectURL(url));
+            delete testSession.urls[field.id];
+            testSession.set(field.id,field.type==='image_group'?[]:'');
+        }
+        renderPreview();
+    });
     refreshIcons();
     refreshTestState();
     refreshParameterActivity();
@@ -1388,6 +1459,7 @@ async function pickImage(fieldId){
     if(!field) return;
     input.accept = mediaAccept(fieldKind(field));
     const session = testSession, workflowName = selectedName, backend = currentConfig.backend || '';
+    const imageOptions=previewImageOptions;
     input.onchange = async () => {
         const file = input.files[0];
         if(!file){input.remove();return;}
@@ -1396,9 +1468,10 @@ async function pickImage(fieldId){
         const changed = () => {if(testSession === session) refreshTestViews();};
         await session.upload(fieldId, file, async chosen => {
             const form = new FormData(); form.append('files', chosen);
-            const res = await fetch('/api/upload?' + new URLSearchParams({workflow:workflowName,backend}), {method:'POST',body:form});
+            const res = await fetch('/api/upload?' + new URLSearchParams({workflow:workflowName,backend,...ComfyWorkflowFields.imageUploadQuery(imageOptions)}), {method:'POST',body:form});
             const data = await res.json();
             if(!res.ok) throw new Error(data.detail || mediaUploadFailedText(fieldKind(field)));
+            if(testSession===session && previewImageOptions===imageOptions)previewImageInfo=ComfyWorkflowFields.imageUploadDescription(data.files?.[0]?.image_info);
             return data.files?.[0];
         }, changed);
         input.remove();
@@ -1444,10 +1517,13 @@ async function onRun(){
     }
     await session.execute(async values => {
         const runFields = applyActiveRandomValues(values);
-        const runtimeFields=ComfyWorkflowFields.runtimeFields(config);
+        const activeConfig=ComfyWorkflowFields.frameConfig(currentWorkflow,config,runFields.__ice_frame_mode);
+        const activeIds=new Set(activeConfig.fields.map(f=>f.id));
+        for(const f of config.fields)if(!activeIds.has(f.id))delete runFields[f.id];
+        const runtimeFields=ComfyWorkflowFields.runtimeFields(activeConfig);
         const missing = runtimeFields.filter(f => isMediaField(f) && (f.type==='image_group' ? !Array.isArray(runFields[f.id]) || runFields[f.id].length<f.min_images || runFields[f.id].length>f.max_images : !runFields[f.id]));
         if(missing.length) throw new Error(ComfyWorkflowFields.missingMessage(missing,currentLang()==='en'));
-        config.fields.forEach(f => {runFields[f.id]=ComfyWorkflowFields.coerceValue(f,runFields[f.id]);});
+        activeConfig.fields.forEach(f => {runFields[f.id]=ComfyWorkflowFields.coerceValue(f,runFields[f.id]);});
         const state=ComfyWorkflowFields.executionState(currentWorkflow,config,runFields);
         if(state.errors.length)throw new Error(state.errors[0]);
         const requestId=ComfyWorkflowSession.requestId();
@@ -1552,6 +1628,30 @@ function renderImageGroupOptions(){
         return `<div><label><input type="checkbox" ${active?'checked':''} onchange="toggleImageGroup(${index},this.checked)"> 可变图片输入（首张主体，其余参考）</label>${active?`<label> 最少 <input aria-label="最少图片" type="number" min="1" max="${candidate.supported_max}" value="${active.min_images}" class="small-input comfy-count-input" onchange="updateImageGroup(${index},'min_images',this.value)"></label><label> 最多 <input aria-label="最多图片" type="number" min="1" max="${candidate.supported_max}" value="${active.max_images}" class="small-input comfy-count-input" onchange="updateImageGroup(${index},'max_images',this.value)"></label>`:''}</div>`;
     }).join('');
 }
+
+function renderImageMappingOptions(){
+    let panel=document.getElementById('workflowImageMapping');
+    if(!panel){panel=document.createElement('div');panel.id='workflowImageMapping';panel.className='workflow-parameter-status';subEl.after(panel);}
+    panel.replaceChildren();
+    const candidates=ComfyWorkflowFields.imageInputCandidates(currentWorkflow);
+    const missing=candidates.filter(c=>!currentConfig.fields.some(f=>String(f.node)===c.node && f.input===c.input)
+        && !(currentConfig.image_groups || []).some(g=>g.source_nodes.includes(c.node)));
+    const text=document.createElement('span');
+    text.textContent=ComfyWorkflowFields.imageMappingSummary(currentWorkflow,currentConfig,currentLang()==='en');panel.append(text);
+    panel.style.display=text.textContent?'':'none';panel.classList.toggle('has-warning',missing.length>0);
+    if(!missing.length)return;
+    const button=document.createElement('button');button.type='button';button.className='ghost-btn';
+    button.textContent=currentLang()==='en'?'Map image inputs':'补齐图片映射';
+    button.onclick=()=>{
+        for(const candidate of missing){
+            currentConfig.fields.push({id:makeFieldId(),node:candidate.node,input:candidate.input,name:candidate.name,type:'image',role:'parameter',default:''});
+        }
+        testSession.revision++;
+        renderEditor();renderPreview();
+        setStatus(currentLang()==='en'?'Image mappings added. Save configuration to use them on canvas.':'已补齐图片映射；保存配置后在画布生效。首尾帧可分别选图，也可将两项来源都设为第 1 张。');
+    };
+    panel.append(button);
+}
 function toggleImageGroup(index,enabled){
     const candidate=imageGroupCandidates[index];
     currentConfig.image_groups=(currentConfig.image_groups || []).filter(g=>g.id!==candidate.id);
@@ -1588,7 +1688,7 @@ function pickGroupImages(id){
         (session.urls[id] || []).forEach(url=>URL.revokeObjectURL(url));session.urls[id]=files.map(file=>URL.createObjectURL(file));
         await session.uploadMany(id,files,async file=>{
             const form=new FormData();form.append('files',file);
-            const response=await fetch('/api/upload?'+new URLSearchParams({workflow:name,backend}),{method:'POST',body:form});
+            const response=await fetch('/api/upload?'+new URLSearchParams({workflow:name,backend,...ComfyWorkflowFields.imageUploadQuery(previewImageOptions)}),{method:'POST',body:form});
             const data=await response.json();if(!response.ok)throw new Error(data.detail || '上传失败');return data.files?.[0];
         },()=>{if(testSession===session)refreshTestViews();});
     };input.click();

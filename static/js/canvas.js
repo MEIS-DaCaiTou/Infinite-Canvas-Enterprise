@@ -92,6 +92,7 @@ function canvasActivateVideoPreview(img){
         if(fallback){
             fallback.controls = true;
             fallback.muted = false;
+            fallback.parentElement?.querySelector?.('.canvas-video-play')?.style?.setProperty('display', 'none');
             fallback.play?.().catch(() => {});
             return true;
         }
@@ -1964,7 +1965,7 @@ async function createSmartCanvas(){
 }
 function openSmartCanvasPage(id){
     if(!id) return;
-    window.location.href = `/static/smart-canvas.html?id=${encodeURIComponent(id)}&v=2026.05.22.1`;
+    window.location.href = `/static/smart-canvas.html?id=${encodeURIComponent(id)}&v=20261104.2`;
 }
 function toggleEmojiPicker(id, event){
     event?.preventDefault();
@@ -2445,6 +2446,7 @@ document.getElementById('editTextCanvas')?.addEventListener('dblclick', event =>
         beginEditTextInline(hit);
     }
 });
+ImageEditPreferences.bindBrushSizes();
 ['paintBrushSize','paintBrushColor'].forEach(id => {
     const control = document.getElementById(id);
     if(!control) return;
@@ -4069,6 +4071,7 @@ async function applyImageDropPayloadToNode(nodeId, payload){
         const file = files[0];
         if(file?.url) {
             pushUndo();
+            clearImageNodeDimensions(node);
             node.url = file.url;
             node.name = file.name || outputImageName(file.url);
             node.mediaKind = 'image';
@@ -4079,6 +4082,7 @@ async function applyImageDropPayloadToNode(nodeId, payload){
     }
     if(payload.type === 'url' && payload.url){
         pushUndo();
+        clearImageNodeDimensions(node);
         node.url = payload.url;
         node.name = outputImageName(payload.url);
         node.mediaKind = isVideoUrl(payload.url) ? 'video' : isAudioUrl(payload.url) ? 'audio' : 'image';
@@ -4156,6 +4160,7 @@ async function fillImageNode(nodeId, files, opts={}){
     const file = data.files?.[0];
     const node = nodes.find(n => n.id === nodeId);
     if(file && node){
+        clearImageNodeDimensions(node);
         node.url = file.url;
         node.name = file.name;
         node.mediaKind = file.kind || mediaKindForUpload(imgs[0]);
@@ -4167,6 +4172,7 @@ function setImageNodeFromOutput(nodeId, url){
     const node = nodes.find(n => n.id === nodeId);
     if(!node || node.type !== 'image' || !url || isVideoUrl(url) || isAudioUrl(url)) return;
     pushUndo();
+    clearImageNodeDimensions(node);
     node.url = url;
     node.name = outputImageName(url);
     node.mediaKind = 'image';
@@ -4182,6 +4188,7 @@ function clearImageNode(nodeId, event=null){
     const node = nodes.find(n => n.id === nodeId);
     if(!node || node.type !== 'image') return;
     pushUndo();
+    clearImageNodeDimensions(node);
     node.url = '';
     node.mediaKind = 'image';
     node.name = '空白图片';
@@ -5346,7 +5353,8 @@ function setCropAspectPreset(preset='free'){
     cropAspectRatio = cropRatioFromPreset(cropAspectPreset);
     syncCropRatioButtons();
     if(cropState && imageEditMode === 'crop' && cropAspectRatio){
-        fitCropRectToAspect(cropAspectRatio);
+        const {w,h}=cropBounds();
+        fitCropRectToAspect(cropAspectRatio,{x:0,y:0,w,h});
         renderCropBox();
     }
 }
@@ -5645,6 +5653,7 @@ async function applyImageCrop(){
     const base = (node.name || 'image').replace(/\.[^.]+$/, '');
     const file = await uploadCroppedBlob(blob, `${base}_crop.png`);
     if(file){
+        clearImageNodeDimensions(node);
         node.url = file.url;
         node.name = file.name;
         closeImageEditor();
@@ -5676,6 +5685,7 @@ async function applyImageOutpaint(){
     const base = (node.name || 'image').replace(/\.[^.]+$/, '');
     const file = await uploadCroppedBlob(blob, `${base}_outpaint.png`);
     if(file){
+        clearImageNodeDimensions(node);
         node.url = file.url;
         node.name = file.name;
         node.mediaKind = 'image';
@@ -5739,6 +5749,7 @@ async function applyImageBrush(){
     const base = (node.name || 'image').replace(/\.[^.]+$/, '');
     const file = await uploadCroppedBlob(blob, `${base}_paint.png`);
     if(file){
+        clearImageNodeDimensions(node);
         node.url = file.url;
         node.name = file.name;
         closeImageEditor();
@@ -5795,6 +5806,7 @@ async function applyImageResize(){
     const suffix = `${Math.round(resized.scale * 100)}pct`;
     const file = await uploadCroppedBlob(resized.blob, `${base}_resize_${suffix}.png`);
     if(!file) return;
+    clearImageNodeDimensions(node);
     node.url = file.url;
     node.name = file.name;
     node.mediaKind = 'image';
@@ -5843,20 +5855,43 @@ function restoreMediaPlaybackState(media, state){
 function transplantNodeMediaElement(oldNodeEl,newNodeEl){
     CanvasMediaRetention.transplant(oldNodeEl,newNodeEl,captureMediaPlaybackState,restoreMediaPlaybackState);
 }
+function imageNodeMetadataHtml(node){
+    const w=Number(node.natural_w),h=Number(node.natural_h);
+    if(!Number.isInteger(w) || !Number.isInteger(h) || w<=0 || h<=0)
+        return `<div class="image-metadata">${langIsEn()?'Reading image dimensions…':'读取图片信息…'}</div>`;
+    const divisor=gcdInt(w,h),ratio=`${w/divisor}:${h/divisor}`;
+    return `<div class="image-metadata" title="${w} × ${h} · ${ratio}"><span>${w} × ${h}</span><span>${ratio}</span></div>`;
+}
+function clearImageNodeDimensions(node){
+    delete node.natural_w;
+    delete node.natural_h;
+    delete node._naturalSizeLoading;
+}
+const canvasOriginalImageMeasurements=new WeakMap();
 function measureCanvasOriginalImageNodes(root=nodesEl){
     root.querySelectorAll?.('.image-node img[data-original-src]').forEach(imgEl => {
         if(imgEl.dataset.previewKind === 'video') return;
         const nodeEl = imgEl.closest('.image-node');
         const node = nodes.find(n => n.id === nodeEl?.dataset.id);
-        if(!node || node.type !== 'image' || !node.url || node.natural_w || node.natural_h || node._naturalSizeLoading) return;
-        const original = imgEl.dataset.originalSrc || node.url;
+        if(!node || node.type !== 'image' || !node.url || node.natural_w && node.natural_h) return;
+        const source=node.url;
+        const original = imgEl.dataset.originalSrc || source;
         if(!original) return;
-        node._naturalSizeLoading = true;
-        loadCanvasOriginalImageDimensions(original).then(size => {
-            node._naturalSizeLoading = false;
-            if(!size || node.natural_w || node.natural_h) return;
+        const active=canvasOriginalImageMeasurements.get(node);
+        if(active?.url===original && active.source===source)return;
+        const measurement={url:original,source};
+        canvasOriginalImageMeasurements.set(node,measurement);
+        const loaded=!isCanvasPreviewImage(imgEl) && imgEl.naturalWidth>0 && imgEl.naturalHeight>0
+            ? {w:imgEl.naturalWidth,h:imgEl.naturalHeight} : null;
+        (loaded ? Promise.resolve(loaded) : loadCanvasOriginalImageDimensions(original)).then(size => {
+            if(canvasOriginalImageMeasurements.get(node)!==measurement)return;
+            canvasOriginalImageMeasurements.delete(node);
+            if(node.url!==source || !nodes.includes(node) || node.natural_w && node.natural_h) return;
+            const info=nodesEl.querySelector(`.image-node[data-id="${CSS.escape(node.id)}"] .image-metadata`);
+            if(!size){if(info)info.textContent=langIsEn()?'Dimensions unavailable':'尺寸暂不可用';return;}
             node.natural_w = size.w;
             node.natural_h = size.h;
+            if(info)info.outerHTML=imageNodeMetadataHtml(node);
             scheduleSave();
         });
     });
@@ -6104,7 +6139,7 @@ function renderNode(node){
             const missing = isMissingAssetUrl(node.url);
             const mediaKind = mediaKindForNode(node);
             const isEditableImage = mediaKind === 'image' && !missing;
-            body.innerHTML = `<div class="image-preview-wrap">${missing ? missingAssetHtml(node.url) : canvasPreviewImgHtml(node.url, 768, 'draggable="false"')}</div><div class="image-caption text-[11px] text-gray-400 truncate">${escapeHtml(node.name || 'image')}${missing ? ` · ${langIsEn() ? 'missing' : '文件缺失'}` : ''}</div>`;
+            body.innerHTML = `<div class="image-preview-wrap">${missing ? missingAssetHtml(node.url) : canvasPreviewImgHtml(node.url, 768, 'draggable="false"')}</div><div class="image-caption text-[11px] text-gray-400 truncate">${escapeHtml(node.name || 'image')}${missing ? ` · ${langIsEn() ? 'missing' : '文件缺失'}` : ''}</div>${isEditableImage ? imageNodeMetadataHtml(node) : ''}`;
             if(!missing && mediaKind !== 'image'){
                 const mediaHtml = mediaKind === 'video'
                     ? `<div class="media-card video-card">${canvasVideoPreviewHtml(node.url, 768, 'draggable="false" data-video-fallback-attrs="controls"')}<button class="canvas-video-play" type="button" title="播放"><i data-lucide="play"></i></button></div>`
@@ -6177,7 +6212,7 @@ function renderNode(node){
             if(loadedImg && loadedImg.complete && loadedImg.naturalHeight > 0){
                 requestAnimationFrame(refreshGeometry);
             } else if(loadedImg) {
-                loadedImg.onload = () => refreshGeometryAfterLayout();
+                loadedImg.onload = () => {measureCanvasOriginalImageNodes(el);refreshGeometryAfterLayout();};
             }
         } else {
         body.innerHTML = `<div class="blank-image"><i data-lucide="image-plus" class="w-7 h-7"></i><div class="text-[11px] font-bold">${tr('canvas.clickDragPasteImage')}</div></div>`;
@@ -6291,6 +6326,28 @@ function renderNode(node){
     if(inp) inp.onmousedown = e => { if(e.button === 0 && !e.shiftKey) startLink(e, node.id, 'in'); };
     return el;
 }
+function bindOutputDrag(wrap,node){
+    const item=(node.images || []).find(item=>outputUrlValue(item)===wrap.dataset.outputUrl);
+    if(!item || isMissingAssetUrl(wrap.dataset.outputUrl))return;
+    const kind=mediaKindForOutputItem(item);
+    if(!['image','video','audio','text'].includes(kind))return;
+    wrap.draggable=true;
+    const img=wrap.querySelector('img');
+    if(img)img.draggable=false;
+    wrap.ondragstart=event=>{
+        event.stopPropagation();
+        if(event.target.closest?.('button,audio')){event.preventDefault();return;}
+        wrap.dataset.dragging='1';
+        const url=wrap.dataset.outputUrl;
+        const payload={url,kind,name:item.name || outputImageName(url),result_id:item.result_id || url,run_id:item.run_id || ''};
+        event.dataTransfer.effectAllowed='copy';
+        event.dataTransfer.setData('application/x-canvas-asset',JSON.stringify(payload));
+        event.dataTransfer.setData('text/uri-list',url);
+        if(kind==='image')event.dataTransfer.setData('application/x-canvas-output-image',url);
+        if(img?.isConnected)setOutputDragPreview(event,img);
+    };
+    wrap.ondragend=()=>setTimeout(()=>{delete wrap.dataset.dragging;},0);
+}
 function bindOutputWrap(wrap, node){
     const img = wrap.querySelector('img');
     const video = wrap.querySelector('video');
@@ -6299,38 +6356,42 @@ function bindOutputWrap(wrap, node){
     const playBtn = wrap.querySelector('.canvas-video-play');
     const del = wrap.querySelector('.output-del');
     const recoverQuery = wrap.querySelector('.output-recover-query');
+    const isVideo=mediaKindForOutputItem((node.images || []).find(item=>outputUrlValue(item)===wrap.dataset.outputUrl))==='video';
+    bindOutputDrag(wrap,node);
     if(img){
-        img.draggable = true;
-        img.ondragstart = e => {
-            e.stopPropagation();
-            img.dataset.dragging = '1';
-            setOutputDragPreview(e, img);
-            e.dataTransfer.effectAllowed = 'copy';
-            e.dataTransfer.setData('application/x-canvas-output-image', img.dataset.url);
-            e.dataTransfer.setData('text/uri-list', img.dataset.url);
-        };
-        img.ondragend = () => setTimeout(() => { delete img.dataset.dragging; }, 0);
         img.onclick = e => {
             e.stopPropagation();
-            if(img.dataset.dragging) return;
-            openOutputLightbox(img.dataset.url, node);
+            if(wrap.dataset.dragging) return;
+            if(isVideo){wrap.onmouseleave?.();canvasActivateVideoPreview(wrap);}
+            else openOutputLightbox(img.dataset.url, node);
         };
     }
-    wrap.addEventListener('click', e => {
-        const fallbackVideo = e.target.closest?.('video[data-output-video-fallback]');
-        if(!fallbackVideo || !wrap.contains(fallbackVideo)) return;
+    if(isVideo){
+      const openVideoPreview=(e,open=true)=>{
+        if(wrap.dataset.dragging || e.target.closest?.('button:not(.canvas-video-play)'))return;
+        const currentVideo=wrap.querySelector('video');
+        if(currentVideo?.controls){
+            const rect=currentVideo.getBoundingClientRect();
+            // Native controls are retargeted to <video>; clicks on their bar
+            // must remain playback/seek actions rather than opening a modal.
+            if(e.clientY>=rect.bottom-64*rect.height/currentVideo.offsetHeight)return;
+        }
+        e.preventDefault();
         e.stopPropagation();
-        openOutputLightbox(fallbackVideo.dataset.url, node);
-    });
-    if(video){
-        video.onclick = e => {
-            e.stopPropagation();
-            openOutputLightbox(video.dataset.url, node);
-        };
+        if(!open)return;
+        currentVideo?.pause();
+        wrap.onmouseleave?.();
+        openOutputLightbox(wrap.dataset.outputUrl,node);
+      };
+      // The native player may handle the second press before the dblclick
+      // bubbles out of its controls. Intercept the picture's second press.
+      wrap.addEventListener('mousedown',e=>{if(e.button===0 && e.detail===2)openVideoPreview(e,false)},true);
+      wrap.addEventListener('dblclick',openVideoPreview,true);
     }
     if(fileCard){
         fileCard.onclick = e => {
             e.stopPropagation();
+            if(wrap.dataset.dragging)return;
             const url = wrap.dataset.outputUrl;
             if(url){const item=ComfyOutputs.items(node.images || []).find(item=>item.url===url);if(item?.kind==='text')openCanvasText(item,node);else downloadUrl(url, outputDownloadName(url)).catch(err => alert(err.message || '下载失败'));}
         };
@@ -6353,7 +6414,7 @@ function bindOutputWrap(wrap, node){
             refreshNodes([node.id]);
         };
     }
-    if(playBtn && img){
+    if(playBtn){
         playBtn.onmousedown = e => {
             e.preventDefault();
             e.stopPropagation();
@@ -6361,7 +6422,7 @@ function bindOutputWrap(wrap, node){
         playBtn.onclick = e => {
             e.preventDefault();
             e.stopPropagation();
-            canvasActivateVideoPreview(wrap);
+            if(!wrap.dataset.dragging){wrap.onmouseleave?.();canvasActivateVideoPreview(wrap);}
         };
     }
     if(recoverQuery){
@@ -8851,9 +8912,9 @@ function currentComfyWorkflow(node){
     const selected = validComfyWorkflowName(node.comfyWorkflow || comfyWorkflows[0]?.name || '');
     return comfyWorkflowCache[selected] || null;
 }
-async function ensureComfyWorkflow(name){
+async function ensureComfyWorkflow(name, refresh=false){
     if(!hasComfyWorkflow(name)) return null;
-    if(comfyWorkflowCache[name]) return comfyWorkflowCache[name];
+    if(!refresh && comfyWorkflowCache[name]) return comfyWorkflowCache[name];
     const res = await fetch(`/api/workflows/${encodeURIComponent(name)}`);
     if(!res.ok){
         delete comfyWorkflowCache[name];
@@ -10096,6 +10157,8 @@ async function runRhModelNode(node, opts={}){
 }
 function renderComfySettings(container, node){
     const mode = node.mode || 'text';
+    // Leave room for input previews and the run button; larger nodes get more parameter space.
+    container.style.maxHeight = `${Math.max(84, Number(node.h || 460) - 310)}px`;
     if(mode === 'text'){
         container.innerHTML = `
             <div class="gen-settings-row">
@@ -10140,6 +10203,10 @@ function renderComfySettings(container, node){
             </div>
             ${!selected ? `<div class="text-[11px] text-slate-400">${tr('canvas.comfyNoWorkflow')}</div>` : !hasComfyWorkflow(selected) ? '<div class="muted-note">原工作流已停用或移除，请重新选择或在工作流设置中启用</div>' : (!data ? `<div class="text-[11px] text-slate-400">${tr('canvas.comfyLoadingWorkflow')}</div>` : '')}
             ${data ? settingFields.map(f => renderComfyCustomField(node, f)).join('') || `<div class="text-[11px] text-slate-400">${tr('canvas.comfyNoExtraParams')}</div>` : ''}
+            ${data ? ComfyWorkflowFields.frameOptionsHtml(data.workflow,node,'data-field',langIsEn()) : ''}
+            ${data ? `<div class="muted-note">${escapeHtml(ComfyWorkflowFields.imageMappingSummary(data.workflow,data.config,langIsEn(),node.comfyFrameMode))}</div>` : ''}
+            ${data && ComfyWorkflowFields.runtimeFields(data.config).some(f=>comfyFieldKind(f)==='image') ? ComfyWorkflowFields.imageOptionsHtml(node,'data-field',langIsEn()) : ''}
+            ${node._comfyImageInfo ? `<div class="muted-note">${escapeHtml(node._comfyImageInfo)}</div>` : ''}
         `;
         if(selected && hasComfyWorkflow(selected) && !data) ensureComfyWorkflow(selected).then(data => {if(data) render();});
     } else {
@@ -10234,9 +10301,15 @@ function updateComfyField(node, input, event){
     }
     const field = input.dataset.field;
     if(!field) return;
+    if(field==='comfyFrameMode'){node[field]=input.value;refreshNodes([node.id]);scheduleSave();return;}
+    if(field==='comfyImageMode' || field==='comfyImageMaxEdge'){
+        node[field]=input.value;delete node._comfyImageInfo;
+        if(field==='comfyImageMode')refreshNodes([node.id]);
+        scheduleSave();return;
+    }
     if(field === 'comfyWorkflow'){
         node.comfyWorkflow = validComfyWorkflowName(input.value);
-        node.comfyParams = {};
+        node.comfyParams = {};delete node.comfyFrameMode;
         ensureComfyWorkflow(node.comfyWorkflow).then(() => render());
         scheduleSave();
         return;
@@ -10798,7 +10871,7 @@ async function resumeCanvasVideoTask(out, pending){
     } catch(error){ if(isActive()) failCanvasVideoTask(out, pending, error); }
     finally { activeCanvasVideoPolls.delete(initialPending); }
 }
-async function uploadCanvasUrlToComfy(url, workflow="", backend=""){
+async function uploadCanvasUrlToComfy(url, workflow="", backend="", imageOptions={}){
     const blob = await fetch(url).then(r => {
         if(!r.ok) throw new Error(langIsEn() ? 'Image read failed' : '图片读取失败');
         return r.blob();
@@ -10806,16 +10879,19 @@ async function uploadCanvasUrlToComfy(url, workflow="", backend=""){
     const filename = (url || '').split('/').pop()?.split('?')[0] || `canvas_${Date.now()}.png`;
     const form = new FormData();
     form.append('files', blob, filename);
-    const data = await fetch('/api/upload?' + new URLSearchParams({workflow:workflow || 'Z-Image.json',backend}), {method:'POST', body:form}).then(async r => {
+    const data = await fetch('/api/upload?' + new URLSearchParams({workflow:workflow || 'Z-Image.json',backend,...ComfyWorkflowFields.imageUploadQuery(imageOptions)}), {method:'POST', body:form}).then(async r => {
         if(!r.ok) throw new Error(await responseErrorMessage(r, langIsEn() ? 'Image upload to ComfyUI failed' : '图片上传到 ComfyUI 失败'));
         return r.json();
     });
-    return data.files?.[0]?.comfy_name || filename;
+    imageOptions.onImageInfo?.(data.files?.[0]?.image_info);
+    const uploaded=data.files?.[0]?.comfy_name;
+    if(!uploaded || typeof uploaded!=='string')throw new Error('ComfyUI 未返回上传文件名，请重试上传；不会使用模板图片');
+    return uploaded;
 }
-async function comfyNameForRef(ref, workflow="", backend=""){
+async function comfyNameForRef(ref, workflow="", backend="", imageOptions={}){
     if(!workflow && ref.comfy_name) return ref.comfy_name;
     if(!ref.url) throw new Error(langIsEn() ? 'Missing input image' : '缺少输入图片');
-    return uploadCanvasUrlToComfy(ref.url,workflow,backend);
+    return uploadCanvasUrlToComfy(ref.url,workflow,backend,imageOptions);
 }
 async function runComfyUpscale(imageUrl, resolution, options={}){
     if(!imageUrl) throw new Error(actionFailed('studio.superResolution', langIsEn() ? 'missing input image' : '缺少输入图片'));
@@ -11468,9 +11544,9 @@ async function runComfyNode(nodeId, opts={}){
         try {
             const workflowName = validComfyWorkflowName(node.comfyWorkflow || comfyWorkflows[0]?.name || '');
             if(workflowName && !hasComfyWorkflow(workflowName)) throw new Error('原工作流已停用或移除，请在工作流设置中启用或选择其他工作流');
-            const wf = await ensureComfyWorkflow(workflowName);
+            const wf = await ensureComfyWorkflow(workflowName,true);
             if(!wf) throw new Error(tr('canvas.comfyNoWorkflow'));
-            ComfyWorkflowFields.requireMedia(wf.config, {image:refs, video:videoRefsOnly(allRefs), audio:audioRefsOnly(allRefs)}, langIsEn());
+            ComfyWorkflowFields.requireMedia(ComfyWorkflowFields.frameConfig(wf.workflow,wf.config,node.comfyFrameMode), {image:refs, video:videoRefsOnly(allRefs), audio:audioRefsOnly(allRefs)}, langIsEn());
         } catch(e){
             node.runStatus = 'failed'; node.runError = e.message || String(e);
             if(opts.cascade) throw e;
@@ -11531,9 +11607,11 @@ async function runComfyNode(nodeId, opts={}){
             if(node.comfyWorkflow && node.comfyWorkflow !== workflowName) node.comfyWorkflow = workflowName;
             const wf = await ensureComfyWorkflow(workflowName);
             if(!workflowName || !wf) throw new Error(tr('canvas.comfyNoWorkflow'));
+            const inputOptions={comfyImageMode:node.comfyImageMode,comfyImageMaxEdge:node.comfyImageMaxEdge,
+                onImageInfo:info=>{node._comfyImageInfo=ComfyWorkflowFields.imageUploadDescription(info);refreshNodes([node.id]);}};
             const values = await ComfyWorkflowFields.canvasValues(wf.config, {
-                prompt, workflow:wf.workflow, media:{image:refs, video:videoRefsOnly(allRefs), audio:audioRefsOnly(allRefs)},
-                parameters:node.comfyParams || {}, mediaName:ref=>comfyNameForRef(ref,workflowName,wf.config.backend), english:langIsEn(),
+                prompt, workflow:wf.workflow, frameMode:node.comfyFrameMode, media:{image:refs, video:videoRefsOnly(allRefs), audio:audioRefsOnly(allRefs)},
+                parameters:node.comfyParams || {}, mediaName:ref=>comfyNameForRef(ref,workflowName,wf.config.backend,inputOptions), english:langIsEn(),
                 randomValue:f => {
                     if(!comfyRandomEnabled(f) || !comfyRandomActive(node, f.id)) return undefined;
                     (node.comfyParams ||= {})[f.id] = comfyRandomValue(f);
@@ -12158,6 +12236,7 @@ function clearNodeContentBeforeDelete(id){
     if(!node) return false;
     if(node.type === 'image' && node.url){
         pushUndo();
+        clearImageNodeDimensions(node);
         node.url = '';
         node.mediaKind = 'image';
         node.name = tr('canvas.imageCard');
@@ -12803,7 +12882,7 @@ function renderOutputMedia(item, useGridLayout=false){
         return `<div class="output-img-wrap" data-output-url="${safe}"${resultIdentity} data-missing-url="${safe}"${gridStyle}>${missingAssetHtml(url, true)}${timePill}<button class="output-del" title="${tr('common.delete')}">×</button></div>`;
     }
     if(kind === 'video'){
-        return `<div class="output-img-wrap" data-output-url="${safe}"${resultIdentity}${gridStyle}>${canvasVideoPreviewHtml(url, useGridLayout ? 512 : 768, 'alt="video output" data-video-fallback-attrs="controls data-output-video-fallback=&quot;1&quot;"')}${timePill}<button class="canvas-video-play output-video-play" type="button" title="播放"><i data-lucide="play"></i></button><div class="output-video-badge"><i data-lucide="play" class="w-3 h-3"></i>VIDEO</div><button class="output-del" title="${tr('common.delete')}">×</button></div>`;
+        return `<div class="output-img-wrap" data-output-url="${safe}"${resultIdentity}${gridStyle}>${canvasVideoPreviewHtml(url, useGridLayout ? 512 : 768, 'alt="video output" data-video-fallback-attrs="data-output-video-fallback=&quot;1&quot;"')}${timePill}<button class="canvas-video-play output-video-play" type="button" title="播放"><i data-lucide="play"></i></button><div class="output-video-badge"><i data-lucide="play" class="w-3 h-3"></i>VIDEO</div><button class="output-del" title="${tr('common.delete')}">×</button></div>`;
     }
     if(kind === 'audio'){
         return `<div class="output-img-wrap output-audio-wrap" data-output-url="${safe}"${resultIdentity}${gridStyle}><div class="output-audio-card"><i data-lucide="file-audio" class="w-7 h-7"></i><span>${escapeHtml(outputImageName(url))}</span><audio src="${safe}" data-url="${safe}" controls preload="metadata"></audio></div>${timePill}<button class="output-del" title="${tr('common.delete')}">×</button></div>`;
@@ -13593,6 +13672,7 @@ function openOutputLightbox(url, out){
             downloadUrl(url, outputDownloadName(url)).catch(err => alert(err.message || '下载失败'));
         };
         outputLightbox.classList.add('open');
+        reconcileOutputPreviewFullscreen();
         refreshIcons();
         return;
     }
@@ -13619,6 +13699,15 @@ function openOutputLightbox(url, out){
     outputLightbox.classList.add('open');
     refreshIcons();
 }
+function reconcileOutputPreviewFullscreen(){
+    const player=document.fullscreenElement;
+    if(outputLightbox.classList.contains('open') && player?.matches('video') && player.closest('.output-img-wrap')){
+        // Native double-click fullscreen can race the card's preview event.
+        // Preserve fullscreen requested inside the large preview itself.
+        document.exitFullscreen().catch(()=>{});
+    }
+}
+document.addEventListener('fullscreenchange',reconcileOutputPreviewFullscreen);
 function closeOutputLightbox(){
     outputLightbox.classList.remove('open');
     setOutputCompareMode(false);
@@ -14917,7 +15006,7 @@ board.addEventListener('dragover', e => {
         dropOverlay.classList.remove('active');
         return;
     }
-    if(hasImageDropData(e.dataTransfer) || hasOutputImageDrag(e.dataTransfer)){
+    if(hasImageDropData(e.dataTransfer) || hasOutputImageDrag(e.dataTransfer) || dropDataTypes(e.dataTransfer).includes('application/x-canvas-asset')){
         e.preventDefault();
         e.dataTransfer.dropEffect = 'copy';
         dropOverlay.classList.add('active');
@@ -14938,10 +15027,11 @@ board.addEventListener('drop', async e => {
         try {
             const payload = JSON.parse(e.dataTransfer.getData('application/x-canvas-asset') || '{}');
             if(payload?.url) {
+                const point=screenToWorld(e.clientX,e.clientY);
                 if(String(payload.kind || '').toLowerCase() === 'workflow') await importWorkflowAssetUrl(payload.url, payload.name || 'workflow');
-                else createImageCardFromUrl(payload.url, screenToWorld(e.clientX, e.clientY), payload.name || 'asset');
+                else await createInputFromOutput(payload,point);
             }
-        } catch(err) {}
+        } catch(err) {showErrorModal(err.message || '添加输入节点失败','添加输入节点');}
         return;
     }
     if(isCanvasInputDrag(e.dataTransfer)) {
@@ -15110,11 +15200,26 @@ window.onload = async () => {
 };
 
 
+function createPromptFromOutput(text,item,point){
+    const p=point || defaultPoint(0,0);
+    return addNode({id:uid('prompt'),type:'prompt',x:p.x,y:p.y,text,
+        sourceResultId:item.result_id || item.url,sourceRunId:item.run_id || ''});
+}
+async function createInputFromOutput(item,point){
+    if(!ensureCanvas())return;
+    if(item.kind==='text'){
+        const canvasId=canvas.id,text=await ComfyOutputs.text(item);
+        if(canvas?.id===canvasId)return createPromptFromOutput(text,item,point);
+    }else if(['image','video','audio'].includes(mediaKindForOutputItem(item))){
+        const p=point || defaultPoint(0,0);
+        return addNode({id:uid('img'),type:'image',x:p.x,y:p.y,url:item.url,name:item.name || outputImageName(item.url),mediaKind:mediaKindForOutputItem(item),
+            sourceResultId:item.result_id || item.url,sourceRunId:item.run_id || ''});
+    }
+}
 function openCanvasText(item,source){
     return ComfyOutputs.open(item,{
         createPrompt:(text,result)=>{
-            nodes.push({id:uid('prompt'),type:'prompt',x:(source?.x || 0)+360,y:source?.y || 0,text,
-                sourceResultId:result.result_id,sourceRunId:result.run_id || ''});render();scheduleSave();
+            createPromptFromOutput(text,result,{x:(source?.x || 0)+360,y:source?.y || 0});
         },
         select:result=>{
             const stored=(source.images || source.generatedOutputs || []).find(value=>outputUrlValue(value)===result.url);

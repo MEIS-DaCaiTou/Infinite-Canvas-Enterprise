@@ -77,7 +77,7 @@ function retiredWorkflowKeepsIdentityWithoutRenderLoop(){
     }).join('\n');
     const node = {id:'old',type:'comfy',mode:'custom',comfyWorkflow:'custom/retired.json'};
     let lookups = 0, renders = 0, saves = 0;
-    const container = {innerHTML:'',querySelectorAll:()=>[]};
+    const container = {innerHTML:'',style:{},querySelectorAll:()=>[]};
     const context = vm.createContext({nodes:[node],comfyWorkflows:[{name:'custom/current.json',title:'Available'}],comfyWorkflowCache:{},
         escapeHtml:value=>value,tr:key=>key,comfyFieldKind:()=>'',scheduleSave:()=>{saves++;},
         ensureComfyWorkflow:async()=>{lookups++;return null;},render:()=>{renders++;}});
