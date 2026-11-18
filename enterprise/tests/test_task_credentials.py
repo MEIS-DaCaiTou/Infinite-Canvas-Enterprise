@@ -96,7 +96,7 @@ def test_original_query_keeps_old_key_after_rotation_and_transfer(bound):
     service.rotate_source(p['design'],department['id'],department['revision'],'fixture-rotated')
     service.assign_member(p['admin'],ops,'employee')
     calls=[]
-    async def query(provider,upstream_id):
+    async def query(provider,upstream_id, *, plan_archive):
         calls.append(('query',upstream_id,binding.scoped_api_key(provider)))
         return {'status':'running'}
     recovery=CanvasImageRecovery(journal,lambda _:PROVIDER,query,lambda _:None)

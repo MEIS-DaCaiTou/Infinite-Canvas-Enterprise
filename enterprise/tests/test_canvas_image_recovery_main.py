@@ -160,7 +160,7 @@ asyncio.run(create())
                            capture_output=True, text=True, timeout=40)
     assert first.returncode == (17 if crash_point == "accepted" else 18), first.stdout + first.stderr
     reader = BOOTSTRAP + r'''
-async def save_image(image, prefix='', *, receipt=None):
+async def save_image(image, prefix='', *, plan_archive=None):
     assert image['value'] == 'https://supplier.example/result.png'
     from PIL import Image
     Image.new('RGB', (1, 1), 'white').save(Path(main.OUTPUT_DIR) / 'recovered-original.png')
@@ -318,6 +318,177 @@ asyncio.run(recover())
     second = subprocess.run([sys.executable, "-c", reader, *args], cwd=ROOT, env=env,
                             capture_output=True, text=True, timeout=40)
     assert second.returncode == 0, second.stdout + second.stderr
+
+
+@pytest.mark.parametrize("stage", ["before_publish", "before_receipt"])
+def test_background_single_image_archive_recovers_after_process_exit(tmp_path, stage):
+    install = tmp_path / "install"
+    app = install / "releases/fixture"
+    (app / "static").mkdir(parents=True)
+    (app / "main.py").write_text("# fixture", encoding="utf-8")
+    script = BOOTSTRAP + r'''
+from io import BytesIO
+from PIL import Image
+from enterprise import db
+
+stage, process = sys.argv[4:]
+task_id = 'canvas_img_' + 'a' * 32
+archive_path = roots.DATA_ROOT / 'fixture-archive-url'
+journal = main.CANVAS_TASK_JOURNAL
+main.CANVAS_ACCEPTED_RECOVERY.poll_delay = .02
+posts = 0
+background = process == 'restart'
+images = []
+for index in range(3):
+    buffer = BytesIO()
+    Image.new('RGB', (8, 8), (index * 60, 20, 100)).save(buffer, format='PNG')
+    images.append(buffer.getvalue())
+
+def supplier(request):
+    global posts
+    path = request.url.path
+    calls.append((request.method, path))
+    if request.method == 'POST':
+        assert process == 'initial' and not background
+        assert path == '/v1/images/generations' and request.url.params['async'] == 'true'
+        assert json.loads(request.content).get('n', 1) == 1
+        posts += 1
+        if posts == 4:
+            return httpx.Response(429, json={'error': {'message': 'fixture rate limit'}})
+        return httpx.Response(200, json={'task_id': f'original-{posts - 1}'})
+    assert request.method == 'GET'
+    if process == 'restart' and stage == 'before_receipt':
+        return httpx.Response(410, json={'message': 'fixture result expired'})
+    if path.startswith('/v1/images/tasks/'):
+        index = int(path.rsplit('-', 1)[1])
+        if index == 2 and not background:
+            return httpx.Response(503, json={'message': 'fixture initial query unavailable'})
+        return httpx.Response(200, json={'status': 'SUCCESS',
+            'data': [{'url': f'https://supplier.example/result-{index}.png'}],
+            'usage': {'total_tokens': index + 10}})
+    index = int(path.removeprefix('/result-').removesuffix('.png'))
+    return httpx.Response(200, content=images[index], headers={'content-type': 'image/png'})
+
+main.httpx.AsyncClient = lambda **kwargs: original_client(transport=httpx.MockTransport(supplier), **kwargs)
+
+def target_receipt():
+    return next(item for item in journal.get(task_id)['provider_receipts']
+                if item.get('upstream_task_id') == 'original-2')
+
+async def submit_and_interrupt():
+    global background
+    db.ensure_db_schema()
+    connection = db.get_db()
+    try:
+        with connection:
+            connection.executemany(
+                "INSERT INTO users (id, username, password_hash, display_name, role, is_admin, auth_version, is_active, created_at) "
+                "VALUES (?, ?, 'fixture', ?, 'user', 0, 1, 1, 1)",
+                [(name, name, name) for name in ('fixture-alice', 'fixture-bob')],
+            )
+    finally:
+        connection.close()
+    request = main.OnlineImageRequest(request_id='a' * 32, provider_id='zhenzhen',
+        model='gpt-image-2-all', prompt='fixture', n=4)
+    assert (await main.create_canvas_image_task(request, 'fixture-alice'))['task_id'] == task_id
+    await asyncio.gather(*main.CANVAS_TASK_RUNNERS)
+    assert posts == 4
+    assert sorted(item['state'] for item in journal.get(task_id)['provider_receipts']) == [
+        'failed', 'succeeded', 'succeeded', 'unknown']
+    background = True
+
+    if stage == 'before_publish':
+        operation = 'rename' if os.name == 'nt' else 'link'
+        publish = getattr(os, operation)
+        def interrupt_publish(source, target, *args, **kwargs):
+            if Path(source).suffix == '.part' and Path(target).name.startswith('online_'):
+                receipt = target_receipt()
+                assert receipt['state'] == 'generated'
+                assert Path(source).read_bytes() == images[2] and not Path(target).exists()
+                assert receipt['archive']['url'].endswith(Path(target).name)
+                archive_path.write_text(receipt['archive']['url'], encoding='utf-8')
+                os._exit(19)
+            return publish(source, target, *args, **kwargs)
+        setattr(os, operation, interrupt_publish)
+    else:
+        write = journal.record_image_request
+        def interrupt_receipt(key, index, changes, *, recovering=False):
+            if recovering and changes.get('state') == 'succeeded':
+                url, = changes['result']['images']
+                assert Path(main.output_file_from_url(url)).read_bytes() == images[2]
+                archive_path.write_text(url, encoding='utf-8')
+                os._exit(19)
+            return write(key, index, changes, recovering=recovering)
+        journal.record_image_request = interrupt_receipt
+
+    await main.startup_event()
+    try:
+        async with asyncio.timeout(8):
+            while (journal.get(task_id).get('auto_recovery') or {}).get('status') != 'complete':
+                await asyncio.sleep(.02)
+        raise AssertionError('Background recovery missed the archive interruption point')
+    finally:
+        await main.shutdown_task_recovery()
+
+async def check_recovery():
+    from enterprise import gateway
+    from enterprise.auth import create_token
+    url = archive_path.read_text(encoding='utf-8')
+    record = journal.get(task_id)
+    assert record['auto_recovery']['status'] == 'querying'
+    path = main.output_file_from_url(url)
+    assert bool(path and Path(path).is_file()) == (stage == 'before_receipt')
+    await main.startup_event()
+    try:
+        async with asyncio.timeout(8):
+            while journal.get(task_id)['auto_recovery']['status'] not in {'complete', 'manual'}:
+                await asyncio.sleep(.02)
+        owner = db.get_user_by_username('fixture-alice')
+        other = db.get_user_by_username('fixture-bob')
+        token = lambda user: {'Cookie': 'enterprise_token=' + create_token(user['id'])}
+        async with (
+            original_client(transport=httpx.ASGITransport(app=main.app), base_url='http://upstream') as upstream,
+            original_client(transport=httpx.ASGITransport(app=gateway.app), base_url='http://testserver') as client,
+        ):
+            gateway._http_client = gateway.app.state.upstream_client = upstream
+            task_path = '/enterprise/api/me/generation-tasks/' + task_id
+            detail = await client.get(task_path, headers=token(owner))
+            assert detail.status_code == 200, detail.text
+            data = detail.json()
+            assert data['status'] == 'partial' and data['output_count'] == 3, data
+            assert sorted(item['status'] for item in data['attempts']) == ['failed', 'succeeded', 'succeeded', 'succeeded']
+            recovered = target_receipt()
+            assert recovered['reported_usage']['total_tokens'] == 12
+            recovered_url, = recovered['result']['images']
+            if stage == 'before_receipt':
+                assert recovered_url == url
+                assert calls == []
+            else:
+                assert calls == [('GET', '/v1/images/tasks/original-2'), ('GET', '/result-2.png')]
+            public = await client.get('/api/canvas-image-tasks/' + task_id, headers=token(owner))
+            assert set(public.json()['result']['images']) == {item['url'] for item in data['items']}
+            assert (await client.get(task_path, headers=token(other))).status_code == 404
+            result_bytes = set()
+            for item in data['items']:
+                response = await client.get(item['url'], headers=token(owner))
+                assert response.status_code == 200
+                result_bytes.add(response.content)
+                assert (await client.get(item['url'], headers=token(other))).status_code == 404
+            assert result_bytes == set(images)
+            assert (await client.get(recovered_url, headers=token(owner))).content == images[2]
+    finally:
+        await main.shutdown_task_recovery()
+
+asyncio.run(submit_and_interrupt() if process == 'initial' else check_recovery())
+'''
+    environment = dict(os.environ, PYTHONUTF8="1", PYTHONDONTWRITEBYTECODE="1",
+                       JWT_SECRET="fixture-authentication-key-for-isolated-tests")
+    for process, expected in (("initial", 19), ("restart", 0)):
+        run = subprocess.run(
+            [sys.executable, "-c", script, str(ROOT), str(install), str(tmp_path / "local"), stage, process],
+            cwd=ROOT, env=environment, capture_output=True, text=True, timeout=40,
+        )
+        assert run.returncode == expected, run.stdout + run.stderr
 
 
 def test_archive_failure_keeps_original_receipt_available_for_get_only_retry(tmp_path):
@@ -566,7 +737,7 @@ def handler(request):
     return httpx.Response(200, headers=headers, json={'task_id':f'fixture-job-{index}'})
 main.httpx.AsyncClient = lambda **kwargs: original_client(transport=httpx.MockTransport(handler), **kwargs)
 
-async def save_image(image, prefix='', *, receipt=None):
+async def save_image(image, prefix='', *, plan_archive=None):
     name = image['value'].rsplit('/', 1)[1]
     Image.new('RGB', (16, 16), 'white').save(Path(main.OUTPUT_DIR) / name)
     return f'/output/{name}'

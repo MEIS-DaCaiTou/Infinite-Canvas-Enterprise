@@ -8567,18 +8567,18 @@ def publish_receipted_image(path, content):
         Path(temporary).unlink(missing_ok=True)
 
 
-async def save_ai_image_to_output(image_data, prefix="online_", category="output", *, receipt=None):
+async def save_ai_image_to_output(image_data, prefix="online_", category="output", *, plan_archive=None):
     async def save(filename, path, content):
         url = output_url_for(filename, category)
-        if receipt is None:
+        if plan_archive is None:
             with open(path, "wb") as stream:
                 stream.write(content)
         else:
-            await receipt.plan_archive(image_output_meta(url, image_data))
+            await plan_archive(image_output_meta(url, image_data))
             await asyncio.to_thread(publish_receipted_image, path, content)
         return url
     identity = uuid.uuid4().hex
-    filename = f"{prefix}{identity if receipt else identity[:10]}.png"
+    filename = f"{prefix}{identity if plan_archive else identity[:10]}.png"
     path = output_path_for(filename, category)
     if image_data["type"] == "b64":
         mime_type = str(image_data.get("mime_type") or "").lower()
@@ -8606,7 +8606,7 @@ async def save_ai_image_to_output(image_data, prefix="online_", category="output
                 filename = filename[:-4] + ".webp"
                 path = output_path_for(filename, category)
             content = response.content
-            if receipt is None:
+            if plan_archive is None:
                 return await save(filename, path, content)
     except Exception as e:
         print(f"保存上游图片失败: {e}; url={value}")
@@ -12988,7 +12988,7 @@ async def build_online_image_result(payload: OnlineImageRequest, *, receipt_task
             local_urls = []
             local_items = []
             # A recoverable archive represents the single result of this supplier call.
-            archive_options = {"receipt": sink} if sink and len(image_items) == 1 else {}
+            archive_options = {"plan_archive": sink.plan_archive} if sink and len(image_items) == 1 else {}
             for item in image_items:
                 local_url = await save_ai_image_to_output(item, prefix="online_", **archive_options)
                 if local_url:
@@ -13102,7 +13102,7 @@ async def adopt_call_source(payload: AdoptCallSourceRequest, x_enterprise_user_i
 async def query_image_task(payload: ImageTaskQueryRequest):
     return await query_image_task_result(payload)
 
-async def query_image_task_result(payload: ImageTaskQueryRequest, *, store_history=True, bound_provider=None):
+async def query_image_task_result(payload: ImageTaskQueryRequest, *, store_history=True, bound_provider=None, plan_archive=None):
     provider = bound_provider if bound_provider is not None else get_api_provider(payload.provider_id)
     task_id = str(payload.task_id or "").strip()
     if is_runninghub_provider(provider):
@@ -13196,8 +13196,9 @@ async def query_image_task_result(payload: ImageTaskQueryRequest, *, store_histo
     if image_items:
         local_urls = []
         local_items = []
+        archive_options = {"plan_archive": functools.partial(plan_archive, raw=raw)} if plan_archive and len(image_items) == 1 else {}
         for item in image_items:
-            local_url = await save_ai_image_to_output(item, prefix="online_")
+            local_url = await save_ai_image_to_output(item, prefix="online_", **archive_options)
             if local_url:
                 local_urls.append(local_url)
                 local_items.append(image_output_meta(local_url, item))
@@ -13248,8 +13249,11 @@ def require_archived_image_outputs(images):
         raise HTTPException(502, "供应商已返回结果，但本地图片归档未完成；请稍后续查原任务，不要重新生成")
 
 
-async def query_saved_image_task(provider, upstream_task_id):
-    result = await query_image_task_result(ImageTaskQueryRequest(provider_id=provider["id"], task_id=upstream_task_id), store_history=False, bound_provider=provider)
+async def query_saved_image_task(provider, upstream_task_id, *, plan_archive):
+    result = await query_image_task_result(
+        ImageTaskQueryRequest(provider_id=provider["id"], task_id=upstream_task_id),
+        store_history=False, bound_provider=provider, plan_archive=plan_archive,
+    )
     if result.get("status") == "succeeded":
         require_archived_image_outputs(result.get("images") or [])
     return result

@@ -64,7 +64,7 @@ def test_restart_queries_original_identity_and_caches_result(tmp_path):
         assert "provider_receipts" not in public_receipt(restarted.get("canvas_img_a"))
         assert "provider_base_url" not in str(public_receipt(restarted.get("canvas_img_a")))
         calls, published = [], []
-        async def query(provider, upstream_task_id):
+        async def query(provider, upstream_task_id, *, plan_archive):
             calls.append((provider["base_url"], upstream_task_id))
             return {"status": "succeeded", "images": ["/output/restored.png"]}
         service = CanvasImageRecovery(restarted, lambda _: deepcopy(PROVIDER), query, published.append)
@@ -85,7 +85,7 @@ def test_concurrent_queries_are_single_flight_even_when_one_browser_disconnects(
         journal.recover()
         entered, release = asyncio.Event(), asyncio.Event()
         calls = []
-        async def query(provider, task_id):
+        async def query(provider, task_id, *, plan_archive):
             calls.append(task_id)
             entered.set()
             await release.wait()
@@ -109,7 +109,7 @@ def test_changed_supplier_is_rejected_before_query(tmp_path, changed):
         journal = new_journal(tmp_path)
         await ImageReceiptSink(journal, "canvas_img_a", 0).accepted("private-original-id", PROVIDER)
         journal.recover()
-        async def query(*args): pytest.fail("old identity was sent to changed supplier")
+        async def query(*args, **_kwargs): pytest.fail("old identity was sent to changed supplier")
         service = CanvasImageRecovery(journal, lambda _: {**PROVIDER, **changed}, query, lambda _: None)
         with pytest.raises(HTTPException) as error: await service.reconcile("canvas_img_a")
         assert error.value.status_code == 409
@@ -124,7 +124,7 @@ def test_batch_keeps_completed_outputs_and_retries_only_unconfirmed_queries(tmp_
         for index in (1, 2): await ImageReceiptSink(journal, "canvas_img_a", index).accepted(f"original-{index}", PROVIDER)
         journal.recover()
         calls, published = [], []
-        async def query(provider, task_id):
+        async def query(provider, task_id, *, plan_archive):
             calls.append(task_id)
             if task_id == "original-2" and calls.count(task_id) == 1:
                 raise httpx.ReadTimeout("query disconnected")
@@ -153,7 +153,7 @@ def test_batch_recovers_local_archive_while_only_querying_pending_original(tmp_p
         journal.recover()
 
         queried, published = [], []
-        async def query(provider, upstream_task_id):
+        async def query(provider, upstream_task_id, *, plan_archive):
             queried.append(upstream_task_id)
             return {"status": "running"} if len(queried) == 1 else {
                 "status": "succeeded", "images": ["/output/third.png"]}
@@ -176,7 +176,7 @@ def test_partial_result_does_not_claim_unknown_or_failed_members_succeeded(tmp_p
         journal = new_journal(tmp_path, 3)
         for index in (0, 1): await ImageReceiptSink(journal, "canvas_img_a", index).accepted(f"original-{index}", PROVIDER)
         journal.recover()
-        async def query(provider, task_id):
+        async def query(provider, task_id, *, plan_archive):
             return {"status": "succeeded", "images": ["/output/retained.png"]} if task_id == "original-0" else {"status": "failed"}
         service = CanvasImageRecovery(journal, lambda _: PROVIDER, query, lambda _: None)
         result = await service.reconcile("canvas_img_a")
@@ -191,7 +191,7 @@ def test_missing_id_never_causes_submission_or_legacy_guessing(tmp_path):
     async def scenario():
         journal = new_journal(tmp_path)
         journal.recover()
-        async def query(*args): pytest.fail("no accepted identity exists")
+        async def query(*args, **_kwargs): pytest.fail("no accepted identity exists")
         service = CanvasImageRecovery(journal, lambda _: pytest.fail("no supplier should be chosen"), query, lambda _: None)
         with pytest.raises(HTTPException) as error: await service.reconcile("canvas_img_a")
         assert error.value.status_code == 409 and not public_receipt(journal.get("canvas_img_a"))["can_reconcile"]
@@ -206,7 +206,7 @@ def test_partial_cache_keeps_local_member_and_queries_pending_original_id(tmp_pa
         journal.recover()
         journal.finish_image_recovery('canvas_img_a', {'status':'partial','images':['/output/kept.png'],'message':'prior partial'})
         calls = []
-        async def query(provider, key):
+        async def query(provider, key, *, plan_archive):
             calls.append(key)
             return {'status':'succeeded','images':['/output/recovered.png']}
         recovery = CanvasImageRecovery(journal, lambda _:PROVIDER, query, lambda _:None)
@@ -221,7 +221,7 @@ def test_unknown_provider_payload_is_manual_not_terminal_or_infinite_running(tmp
         journal = new_journal(tmp_path)
         await ImageReceiptSink(journal, 'canvas_img_a', 0).accepted('original', PROVIDER)
         journal.recover()
-        async def query(*_): return {'status':'manual','message':'unrecognized supplier response'}
+        async def query(*_, **_kwargs): return {'status':'manual','message':'unrecognized supplier response'}
         recovery = CanvasImageRecovery(journal, lambda _:PROVIDER, query, lambda _:None)
         assert (await recovery.reconcile('canvas_img_a'))['status']=='manual'
         record=journal.get('canvas_img_a')
@@ -238,7 +238,7 @@ def test_credential_rotation_does_not_persist_keys_and_task_identity_is_immutabl
         with pytest.raises(ValueError): await ImageReceiptSink(journal, "canvas_img_a", 0).accepted("replacement", PROVIDER)
         journal.recover()
         current = {**PROVIDER, "api_key": "rotated-test-secret"}
-        async def query(provider, task_id):
+        async def query(provider, task_id, *, plan_archive):
             assert provider["api_key"] == "rotated-test-secret" and task_id == "original"
             return {"status": "succeeded", "images": ["/output/result.png"]}
         service = CanvasImageRecovery(journal, lambda _: current, query, lambda _: None)
@@ -255,7 +255,7 @@ def test_local_empty_output_and_history_failure_do_not_lose_accepted_identity(tm
         await sink.accepted("original", PROVIDER)
         with pytest.raises(HTTPException): await sink.completed([], [])
         journal.recover()
-        async def query(*args): return {"status": "succeeded", "images": ["/output/result.png"]}
+        async def query(*args, **_kwargs): return {"status": "succeeded", "images": ["/output/result.png"]}
         def publish(*args): raise OSError("history unavailable")
         service = CanvasImageRecovery(journal, lambda _: PROVIDER, query, publish)
         assert (await service.reconcile("canvas_img_a"))["status"] == "succeeded"
@@ -268,7 +268,7 @@ def test_query_auth_failure_preserves_unknown_and_explains_configuration(tmp_pat
         journal = new_journal(tmp_path)
         await ImageReceiptSink(journal, "canvas_img_a", 0).accepted("original", PROVIDER)
         journal.recover()
-        async def query(*args): raise HTTPException(400, "do not expose raw secret or upstream body")
+        async def query(*args, **_kwargs): raise HTTPException(400, "do not expose raw secret or upstream body")
         service = CanvasImageRecovery(journal, lambda _: PROVIDER, query, lambda _: None)
         result = await service.reconcile("canvas_img_a")
         assert result["status"] == "unknown" and "HTTP 400" in result["message"]
@@ -281,7 +281,7 @@ def test_partial_synchronous_output_is_available_without_inventing_a_query_id(tm
         journal = new_journal(tmp_path, 2)
         await ImageReceiptSink(journal, "canvas_img_a", 0).completed(["/output/retained.png"], [])
         journal.recover()
-        async def query(*args): pytest.fail("synchronous result needs no supplier query")
+        async def query(*args, **_kwargs): pytest.fail("synchronous result needs no supplier query")
         service = CanvasImageRecovery(journal, lambda _: pytest.fail("no accepted supplier identity"), query, lambda _: None)
         assert public_receipt(journal.get("canvas_img_a"))["can_reconcile"]
         result = await service.reconcile("canvas_img_a")
@@ -293,7 +293,7 @@ def test_existing_completed_v1_result_needs_no_provider_access(tmp_path):
     async def scenario():
         journal = new_journal(tmp_path)
         journal.finish("canvas_img_a", {"status": "succeeded", "result": {"images": ["/output/existing.png"]}})
-        async def query(*args): pytest.fail("completed result must not query")
+        async def query(*args, **_kwargs): pytest.fail("completed result must not query")
         service = CanvasImageRecovery(journal, lambda _: pytest.fail("completed result must not resolve supplier"), query, lambda _: None)
         result = await service.reconcile("canvas_img_a")
         assert result["status"] == "succeeded" and result["images"] == ["/output/existing.png"]

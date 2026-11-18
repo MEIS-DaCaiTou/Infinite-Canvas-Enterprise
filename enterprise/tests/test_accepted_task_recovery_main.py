@@ -26,7 +26,7 @@ def inspect(request):
     if not authorized:return httpx.Response(401,json={'error':'fixture authentication denied'})
     return httpx.Response(200,json={'status':'SUCCESS','data':[{'url':'https://supplier.example/result.png'}]} if finished else {'status':'IN_PROGRESS'})
 main.httpx.AsyncClient=lambda **kwargs:original_client(transport=httpx.MockTransport(inspect),**kwargs)
-async def archive(image,prefix='', *, receipt=None):
+async def archive(image,prefix='', *, plan_archive=None):
     from PIL import Image
     Image.new('RGB',(1,1),'white').save(Path(main.OUTPUT_DIR)/'resumed.png')
     return '/output/resumed.png'
@@ -136,7 +136,7 @@ def recovered_handler(request):
     return httpx.Response(200,json={'accepted-comfy-id':{'status':{'completed':True},
         'outputs':{'9':{'text':['Recovered original prompt']}}}})
 main.httpx.AsyncClient = lambda **kwargs: original_client(transport=httpx.MockTransport(recovered_handler), **kwargs)
-async def archive_image(image,prefix='', *, receipt=None):
+async def archive_image(image,prefix='', *, plan_archive=None):
     from PIL import Image
     Image.new('RGB',(1,1),'white').save(Path(main.OUTPUT_DIR)/'auto-recovered.png')
     return '/output/auto-recovered.png'
