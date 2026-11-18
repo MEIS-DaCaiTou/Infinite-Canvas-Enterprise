@@ -5,15 +5,176 @@ using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Web.Script.Serialization;
+using Microsoft.Win32.SafeHandles;
 
 namespace InfiniteCanvas.Native {
     internal sealed class InstallIdentity {
         internal string Root, AppRoot, ReleaseId, ManifestSha, Python;
+    }
+
+    // Client for the supervisor's existing control mailbox. It never loads code
+    // from the installation to inspect or stop an already running instance.
+    internal sealed class RuntimeMailbox : IDisposable {
+        private const string Schema = "runtime-supervisor-state-v1";
+        private const uint WaitTimeout = 258;
+        private static readonly Regex InstanceId = new Regex(@"\A[0-9a-f]{16,64}\z");
+        private static readonly Regex RequestId = new Regex(@"\A[0-9a-f]{32}\z");
+        private readonly string runtimeRoot, releaseId, instanceId, contextIdentity;
+        private readonly Dictionary<string, object> state;
+        private readonly SafeWaitHandle host;
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern SafeWaitHandle OpenProcess(uint access, bool inherit, int pid);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool GetProcessTimes(SafeWaitHandle process, out long created,
+            out long exited, out long kernel, out long user);
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern bool QueryFullProcessImageName(SafeWaitHandle process, int flags, StringBuilder path, ref int length);
+        [DllImport("kernel32.dll")]
+        private static extern uint WaitForSingleObject(SafeWaitHandle handle, uint milliseconds);
+
+        private RuntimeMailbox(string runtimeRoot, string releaseId, string instanceId, string contextIdentity,
+                               Dictionary<string, object> state, SafeWaitHandle host) {
+            this.runtimeRoot = runtimeRoot;
+            this.releaseId = releaseId;
+            this.instanceId = instanceId;
+            this.contextIdentity = contextIdentity;
+            this.state = state;
+            this.host = host;
+        }
+
+        private static object Value(Dictionary<string, object> record, string key) {
+            object value;
+            return record.TryGetValue(key, out value) ? value : null;
+        }
+        private static long Number(Dictionary<string, object> record, string key) {
+            object value = Value(record, key);
+            return value is int || value is long ? Convert.ToInt64(value) : -1;
+        }
+        private static bool SameImage(string expected, string reported) {
+            if (reported == null) return false;
+            if (reported.StartsWith(@"\\?\", StringComparison.Ordinal)) reported = reported.Substring(4);
+            return String.Equals(expected, reported, StringComparison.OrdinalIgnoreCase);
+        }
+
+        internal static RuntimeMailbox Observe(string installRoot, bool forStop) {
+            try {
+                var root = Path.GetFullPath(installRoot);
+                Core.SafePath(root, false);
+                if (forStop && new[] { "system-update-active.lock", "install-upgrade-active.json",
+                                       "upgrade-sequence-active.json", "install-mvp-active.lock" }
+                    .Any(marker => File.Exists(Core.Under(root, "state/" + marker, true)))) return null;
+                var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+                if (String.IsNullOrEmpty(local)) return null;
+                var runtime = Core.Under(local, "InfiniteCanvasEnterprise/runtime", true);
+                var contextPath = Core.Under(runtime, "launch-context.json", true);
+                var lockPath = Core.Under(runtime, "runtime-supervisor.lock", true);
+                var statePath = Core.Under(runtime, "runtime-state.json", true);
+                if (!File.Exists(contextPath) || !File.Exists(lockPath) || !File.Exists(statePath)) return null;
+
+                var raw = Core.ReadBytes(contextPath, 16384);
+                var context = Core.Document(raw);
+                var identity = Core.Hash(raw);  // Same canonical launch-context bytes the supervisor binds.
+                var release = Core.Text(context, "release_id");
+                var instance = Core.Text(context, "instance_id");
+                if (Core.Text(context, "schema_version") != "env-1b1c-runtime-launch-context-v2"
+                    || !Core.Component.IsMatch(release) || !InstanceId.IsMatch(instance)
+                    || Core.Text(context, "app_root_relative") != "releases/" + release) return null;
+
+                var expected = Core.Under(root, "releases/" + release + "/python/python.exe", true);
+                var state = Core.ReadJson(statePath, 65536);
+                var runtimeLock = Core.ReadJson(lockPath, 65536);
+                if (!Equals(Value(runtimeLock, "lock_phase"), "adopted")) return null;
+                var pid = Number(state, "supervisor_pid");
+                var created = Number(state, "supervisor_process_created_at");
+                if (pid < 1 || pid > Int32.MaxValue || created <= 0 || Number(state, "state_generation") < 0) return null;
+                foreach (var record in new[] { state, runtimeLock }) {
+                    if (!Equals(Value(record, "schema_version"), Schema)
+                        || !Equals(Value(record, "runtime_mode"), "portable-release")
+                        || !Equals(Value(record, "supervisor_instance_id"), instance)
+                        || !Equals(Value(record, "release_id"), release)
+                        || !Equals(Value(record, "launch_context_identity"), identity)
+                        || Number(record, "supervisor_pid") != pid || Number(record, "supervisor_process_created_at") != created
+                        || !SameImage(expected, Value(record, "supervisor_executable") as string)) return null;
+                }
+                var process = OpenProcess(0x101000, false, (int)pid);  // SYNCHRONIZE | QUERY_LIMITED_INFORMATION.
+                var image = new StringBuilder(32768);
+                var length = image.Capacity;
+                long start, exited, kernel, user;
+                if (process.IsInvalid || !GetProcessTimes(process, out start, out exited, out kernel, out user)
+                    || start != created || !QueryFullProcessImageName(process, 0, image, ref length)
+                    || !SameImage(expected, image.ToString()) || WaitForSingleObject(process, 0) != WaitTimeout) {
+                    process.Dispose();
+                    return null;
+                }
+                return new RuntimeMailbox(runtime, release, instance, identity, state, process);
+            } catch (IOException) { return null; }
+              catch (UnauthorizedAccessException) { return null; }
+              catch (InvalidOperationException) { return null; }
+              catch (ArgumentException) { return null; }
+        }
+
+        internal Dictionary<string, object> Status() {
+            return new Dictionary<string, object> {
+                { "result", "observed" }, { "state", Value(state, "state") }, { "running_release_id", releaseId },
+                { "inspection_source", "supervisor_mailbox" }, { "worker_exit_code", 0 }
+            };
+        }
+
+        internal Dictionary<string, object> Stop() {
+            var control = Core.Under(runtimeRoot, "control");
+            var request = Value(state, "active_control_request_id") as string;
+            if (!Equals(Value(state, "active_control_command"), "stop") || request == null || !RequestId.IsMatch(request)) {
+                if (WaitForSingleObject(host, 0) != WaitTimeout) throw Core.Block("NATIVE_RUNTIME_OWNERSHIP_CHANGED");
+                request = Guid.NewGuid().ToString("N");
+                var path = Core.Under(control, "cmd-" + request.Substring(0, 16) + ".json", true);
+                var temporary = Core.Under(control, "native-" + request + ".tmp", true);
+                Core.WriteResult(temporary, new Dictionary<string, object> {
+                    { "schema_version", Schema }, { "request_id", request }, { "command", "stop" },
+                    { "supervisor_instance_id", instanceId }, { "issued_at", DateTime.UtcNow.ToString("o") },
+                    { "expected_state_generation", Number(state, "state_generation") },
+                    { "launch_context_identity", contextIdentity }
+                });
+                try { File.Move(temporary, path); }
+                finally { if (File.Exists(temporary)) File.Delete(temporary); }
+            }
+            var ackPath = Core.Under(control, "ack-" + request.Substring(0, 16) + ".json", true);
+            var timer = Stopwatch.StartNew();
+            while (timer.ElapsedMilliseconds < 60000) {
+                Core.SafePath(ackPath, true);
+                if (File.Exists(ackPath)) {
+                    var ack = Core.ReadJson(ackPath, 65536);
+                    if (!Equals(Value(ack, "schema_version"), Schema)
+                        || !Equals(Value(ack, "command"), "stop") || !Equals(Value(ack, "request_id"), request)
+                        || !Equals(Value(ack, "supervisor_instance_id"), instanceId)
+                        || !Equals(Value(ack, "launch_context_identity"), contextIdentity))
+                        throw Core.Block("NATIVE_RUNTIME_ACK_UNTRUSTED");
+                    var result = Core.Text(ack, "result");
+                    if (result != "stopped" || WaitForSingleObject(host, 0) == 0) {
+                        var outcome = Status();
+                        outcome["result"] = result;
+                        outcome["worker_exit_code"] = result == "stopped" ? 0 : 2;
+                        if (result == "stopped") {
+                            outcome["state"] = "stopped";
+                            ack["supervisor_exit_confirmed"] = true;
+                        }
+                        outcome["ack"] = ack;
+                        return outcome;
+                    }
+                }
+                Thread.Sleep(200);
+            }
+            throw Core.Block("NATIVE_RUNTIME_STOP_UNCONFIRMED");
+        }
+
+        public void Dispose() { host.Dispose(); }
     }
 
     internal static class Core {

@@ -31,8 +31,26 @@ namespace InfiniteCanvas.Native {
                 return 2;
             }
         }
-        internal static Dictionary<string, object> Execute(string root, string command) {
-            var install = Core.Identify(root); Core.VerifyPayload(install);
+        internal static Dictionary<string, object> Execute(string root, string command, bool quickStatus = false) {
+            if (command == "stop" || (command == "status" && quickStatus)) {
+                using (var mailbox = RuntimeMailbox.Observe(root, command == "stop")) {
+                    if (mailbox != null) return command == "stop" ? mailbox.Stop() : mailbox.Status();
+                }
+            }
+            InstallIdentity install;
+            try {
+                install = Core.Identify(root);
+                Core.VerifyPayload(install);
+            } catch (Exception exc) when (command == "status" && !quickStatus) {
+                // Preserve detailed CLI status on healthy installations. On a
+                // damaged copy expose the running instance without loading Python.
+                using (var mailbox = RuntimeMailbox.Observe(root, false)) {
+                    if (mailbox == null) throw;
+                    var result = mailbox.Status();
+                    result["release_integrity_code"] = Core.Code(exc);
+                    return result;
+                }
+            }
             if (command == "tool-info") return new Dictionary<string, object> { { "result", "verified" }, { "native_tool_contract", 2 }, { "release_id", install.ReleaseId } };
             if (command == "identity") return new Dictionary<string, object> { { "result", "verified" }, { "release_id", install.ReleaseId }, { "manifest_sha256", install.ManifestSha } };
             if (!new[] { "start", "stop", "restart", "status", "health" }.Contains(command)) throw Core.Block("NATIVE_COMMAND_INVALID");
@@ -66,12 +84,14 @@ namespace InfiniteCanvas.Native {
             FormClosing += (s, e) => { if (busy) { e.Cancel = true; state.Text = "操作正在进行，请等待结果。关闭窗口不会作为停止服务的操作。"; } };
         }
         private async Task Run(string command) {
-            busy = true; buttons.Enabled = false; state.Text = "正在校验当前版本并执行操作，请稍候……";
+            busy = true; buttons.Enabled = false; state.Text = "正在处理，请稍候……";
             try {
-                var result = await Task.Run(() => LauncherProgram.Execute(AppDomain.CurrentDomain.BaseDirectory, command));
+                var result = await Task.Run(() => LauncherProgram.Execute(AppDomain.CurrentDomain.BaseDirectory, command, quickStatus: true));
                 lastResult = result;
                 int exit = Convert.ToInt32(result["worker_exit_code"]);
                 state.Text = exit == 0 ? "操作完成。" + (result.ContainsKey("state") ? "服务状态：" + result["state"] : "") + " 关闭本窗口不停止服务。" : "操作未完成，请导出诊断摘要。";
+                if (exit == 0 && command == "status" && result.ContainsKey("inspection_source"))
+                    state.Text = "已识别当前服务实例。服务状态为 " + result["state"] + "。程序完整性在启动和重启时校验。";
                 string url = Core.BrowserUrl(result);
                 if (exit == 0 && command == "start" && url != null) Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
             } catch (Exception exc) { lastResult = new Dictionary<string, object> { { "result", "blocked" }, { "code", Core.Code(exc) } }; state.Text = "操作被安全阻止：" + Core.Code(exc); }
