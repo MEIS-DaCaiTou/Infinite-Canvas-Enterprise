@@ -71,7 +71,6 @@ from enterprise.admin_api import router as admin_router
 from enterprise.user_model_api import router as user_model_router
 from enterprise.character_api import create_router as create_character_router
 from enterprise.generation_task_api import router as generation_task_router
-from enterprise.production_order_api import router as production_order_router
 from enterprise.comfy_queue_api import router as comfy_queue_router
 from enterprise.department_api import create_router as create_department_router
 from enterprise.update_api import router as update_router
@@ -289,7 +288,6 @@ app.include_router(admin_router, prefix="/enterprise")
 app.include_router(user_model_router, prefix="/enterprise")
 app.include_router(create_character_router(), prefix="/enterprise")
 app.include_router(generation_task_router, prefix="/enterprise")
-app.include_router(production_order_router, prefix="/enterprise")
 app.include_router(comfy_queue_router, prefix="/enterprise")
 app.include_router(create_department_router(), prefix="/enterprise")
 app.include_router(update_router, prefix="/enterprise")

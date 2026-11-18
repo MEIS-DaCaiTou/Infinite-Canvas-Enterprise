@@ -2521,7 +2521,6 @@ class AIReference(BaseModel):
     mime: str = ""
 
 class OnlineImageRequest(CallSourceSelection):
-    strict_model: bool = False
     request_id: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{32}$")
     source: Optional[TaskCanvasSource] = None
     prompt: str = Field(min_length=1, max_length=ONLINE_IMAGE_PROMPT_MAX_LENGTH)
@@ -2548,10 +2547,7 @@ def prepare_canvas_call_binding(task_id, payload, owner):
     # Reject unsaved/inaccessible provenance before making any billing entry.
     accepted_source(getattr(payload, 'source', None), owner, CANVAS_TASK_JOURNAL.root.parent / 'canvases')
     provider_id = getattr(payload, 'provider_id', None) or getattr(payload, 'provider', 'comfly')
-    if isinstance(payload, OnlineImageRequest) and payload.strict_model:
-        provider = strict_online_image_provider(payload)
-    else:
-        provider = get_api_provider(provider_id)
+    provider = get_api_provider(provider_id)
     if isinstance(payload, CanvasLLMRequest):
         fallback = preferred_chat_model(provider)
     elif isinstance(payload, CanvasVideoRequest):
@@ -10262,9 +10258,8 @@ async def generate_runninghub_video(payload, provider):
         local_urls = [await save_remote_video_to_output(url, prefix="rh_video_") for url in urls]
         return {"videos": local_urls, "task_id": task_id, "raw": result}
 
-async def generate_ai_image(prompt, size, quality, model, reference_images=None, provider_id="comfly", image_parameters=None, receipt_sink=None, *, provider=None):
-    if provider is None:
-        provider = get_api_provider(provider_id)
+async def generate_ai_image(prompt, size, quality, model, reference_images=None, provider_id="comfly", image_parameters=None, receipt_sink=None):
+    provider = get_api_provider(provider_id)
     builtin_image_profile = zhenzhen_image_profile(provider, model)
     if provider["id"] == "modelscope":
         return await generate_modelscope_provider_image(prompt, size, model, reference_images, provider)
@@ -12957,15 +12952,8 @@ async def fetch_upstream_models(provider_id: str):
         raise HTTPException(status_code=400, detail=f"{provider.get('name') or provider_id} 未配置 API Key")
     return await fetch_models_from_upstream(provider.get("base_url") or "", api_key, provider_protocol(provider), provider.get("image_request_mode") or "openai")
 
-def strict_online_image_provider(payload: OnlineImageRequest):
-    provider = get_api_provider_exact(payload.provider_id)
-    if not payload.model or payload.model not in provider.get("image_models", []):
-        raise HTTPException(400, "所选图像型号已不可用，请核对渠道配置")
-    return provider
-
-
 async def build_online_image_result(payload: OnlineImageRequest, *, receipt_task_id=None, unwritten_receipts=None):
-    provider = strict_online_image_provider(payload) if payload.strict_model else get_api_provider(payload.provider_id)
+    provider = get_api_provider(payload.provider_id)
     require_bound_generation(provider)
     default_model = (provider.get("image_models") or [IMAGE_MODEL])[0]
     model = selected_model(payload.model, default_model)
@@ -12978,8 +12966,6 @@ async def build_online_image_result(payload: OnlineImageRequest, *, receipt_task
             if sink:
                 await sink.started(provider, model)
             kwargs = {"receipt_sink": sink} if sink else {}
-            if payload.strict_model:
-                kwargs["provider"] = provider
             image_data, raw_item = await generate_ai_image(payload.prompt, payload.size, payload.quality, model, image_refs, provider["id"], {"aspect_ratio":payload.aspect_ratio, "resolution":payload.resolution}, **kwargs)
         except JimengPendingError as exc:
             if sink and exc.submit_id:
