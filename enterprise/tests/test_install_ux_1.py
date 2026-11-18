@@ -174,7 +174,7 @@ def test_setup_finishes_upgrade_before_success_page_and_suppresses_launch_on_fai
     assert "maintenance_support_rebuild_required" in source and "无需单独修复" in source
     observer = source[source.index("procedure ObserveMaintenancePhase("):source.index("function UTF8Bytes(")]
     assert "\"phase\":\"UPGRADING\"" in observer and "ObservedPhase := 'UPGRADING'" in observer
-    bridge = source[source.index("function RunBridge:"):source.index("function RegisterLifecycle:")]
+    bridge = source[source.index("function RunBridgeOnce:"):source.index("function RegisterLifecycle:")]
     assert "if FinalizingUpgrade then begin\n    ObservedPhase := 'AWAITING_REGISTRATION';\n    PaintMaintenanceProgress;" in bridge
     pages = source[source.index("procedure CurPageChanged("):source.index("function UpdateReadyMemo(")]
     assert "CurPageID = wpFinished" in pages and "FinishedLabel.Caption := UpgradeCompletionCaption" in pages
@@ -444,7 +444,7 @@ def test_installer_source_is_single_user_gui_and_keeps_credentials_off_process_s
     assert "LastStableCode := ExceptionCode" in source
     assert "ExtractTemporaryFile('{#ArchiveFilename}')" in source
     assert "ExtractTemporaryFile('install-ux-bundle\\" not in source
-    assert "MoveExtractedAssetToBundle('{#ArchiveFilename}')" in source
+    assert "MoveExtractedAssetToBundle('{#ArchiveFilename}', StageRoot)" in source
     assert "WaitForPipeServer(PipeName)" in source
     assert "WaitNamedPipeW(PipeName, PipeWaitMilliseconds)" not in source
     assert "Deadline := GetTickCount64 + PipeWaitMilliseconds" in source
@@ -605,3 +605,51 @@ def test_github_provider_ignores_installer_exe_and_keeps_three_core_asset_select
     assert candidates[0].inventory_url.endswith("/2")
     assert candidates[0].archive_url.endswith("/3")
     assert not candidates[0].archive_url.endswith("/4")
+
+@pytest.mark.parametrize(("cache_code", "handler_entered", "expected_code"), [
+    ("INSTALL_CACHE_UNPROVEN", False, "INSTALL_UPGRADE_RESTAGE_REQUIRED"),
+    ("INSTALL_CACHE_CHANGED", False, "INSTALL_UPGRADE_RESTAGE_REQUIRED"),
+    ("INSTALL_CACHE_CONTENT_UNPROVEN", False, "INSTALL_UPGRADE_RESTAGE_REQUIRED"),
+    ("INSTALL_CACHE_BUSY", False, "INSTALL_CACHE_BUSY"),
+    ("INSTALL_CACHE_CHANGED", True, "INSTALL_CACHE_CHANGED"),
+])
+def test_upgrade_restages_only_before_dispatch(monkeypatch, tmp_path, cache_code, handler_entered, expected_code):
+    from contextlib import contextmanager
+    from enterprise import fresh_install, install_cache, install_setup_bridge as bridge
+    from enterprise.runtime import portable
+
+    monkeypatch.setattr(portable, "windows_local_app_data_known_folder", lambda: tmp_path / "local")
+    monkeypatch.setattr(bridge, "_release_asset_directory", lambda _: tmp_path / "assets")
+    monkeypatch.setattr(bridge, "_validated_install_root", lambda *_a, **_kw: tmp_path / "install")
+    monkeypatch.setattr(fresh_install, "verify_release_assets", lambda _: "verified")
+    called = []
+
+    @contextmanager
+    def staging(**options):
+        assert options["verified"] == "verified"
+        if not handler_entered:
+            raise install_cache.CacheError(cache_code)
+        yield None
+
+    def handler(*args, **kwargs):
+        called.append("handler")
+        raise install_cache.CacheError(cache_code)
+
+    monkeypatch.setattr(install_cache, "setup_cache_session", staging)
+    monkeypatch.setattr(bridge, "_execute_install_request", handler)
+    with pytest.raises((bridge.SetupBridgeError, install_cache.CacheError), match=expected_code) as error:
+        bridge._run_install_request({
+            "schema_version": bridge.UPGRADE_REQUEST_SCHEMA, "operation": "upgrade-retained",
+        }, raw_app_root=tmp_path)
+    assert error.value.code == expected_code
+    assert called == (["handler"] if handler_entered else [])
+
+
+def test_setup_retry_reprepares_once_and_publishes_only_complete_stage():
+    source = (Path(__file__).resolve().parents[2] / "installer/windows/InfiniteCanvasEnterprise.iss").read_text(encoding="utf8")
+    retry = source[source.index("function RunBridge: Boolean;"):source.index("function TakePart(")]
+    assert retry.count("RunBridgeOnce") == 2
+    assert "INSTALL_UPGRADE_RESTAGE_REQUIRED" in retry and "PersistentBundle" in retry
+    assert retry.index("BundleRoot := ''") < retry.index("PrepareBundle;") < retry.rindex("RunBridgeOnce")
+    bundle = source[source.index("procedure PrepareBundle;\nvar"):source.index("function PrepareToInstall(")]
+    assert bundle.index("ExtractArchive(") < bundle.index("BundleRoot := StageRoot")

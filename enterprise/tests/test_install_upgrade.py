@@ -484,3 +484,30 @@ def test_unowned_source_entry_refuses_before_any_upgrade_publication(installed):
     with pytest.raises(upgrade.InstallUpgradeError, match="SOURCE_ENTRY_UNPROVEN"):
         upgrade.upgrade_retained(**arguments(f))
     assert not (root / "state/install-upgrades").exists()
+
+def test_setup_inspection_reuses_its_verified_release_assets(installed, monkeypatch):
+    from enterprise import fresh_install, install_setup_bridge as bridge
+    from enterprise.runtime import portable
+
+    fixture = installed
+    assets = fixture["target_assets"]
+    root = fixture["roots"].INSTALL_ROOT
+    verified_by = []
+    original = fresh_install.verify_release_assets
+
+    def verify(directory):
+        verified_by.append(directory)
+        return original(directory)
+
+    monkeypatch.setattr(portable, "windows_local_app_data_known_folder", lambda: fixture["local"])
+    monkeypatch.setattr(bridge, "_release_asset_directory", lambda _: assets)
+    monkeypatch.setattr(bridge, "_validated_install_root", lambda *_a, **_kw: root)
+    monkeypatch.setattr(fresh_install, "verify_release_assets", verify)
+    monkeypatch.setattr(upgrade, "verify_release_assets", verify)
+    before = protected(fixture)
+    result = bridge._run_install_request({
+        "schema_version": bridge.UPGRADE_REQUEST_SCHEMA, "operation": "inspect-upgrade",
+    }, raw_app_root=assets)
+    assert result["upgrade_state"] == "ELIGIBLE"
+    assert verified_by == [assets]
+    assert protected(fixture) == before

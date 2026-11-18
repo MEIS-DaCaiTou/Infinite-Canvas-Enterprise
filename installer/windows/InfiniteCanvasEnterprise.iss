@@ -592,12 +592,12 @@ begin
     RaiseException('INSTALL_EMBEDDED_ASSET_HASH_MISMATCH');
 end;
 
-procedure MoveExtractedAssetToBundle(const FileName: String);
+procedure MoveExtractedAssetToBundle(const FileName, StageRoot: String);
 var
   SourcePath, TargetPath: String;
 begin
   SourcePath := AddBackslash(ExpandConstant('{tmp}')) + FileName;
-  TargetPath := AddBackslash(BundleRoot) + FileName;
+  TargetPath := AddBackslash(StageRoot) + FileName;
   if not RenameFile(SourcePath, TargetPath) then
     RaiseException('INSTALL_EMBEDDED_ASSET_EXTRACTION_FAILED');
 end;
@@ -609,7 +609,7 @@ begin
     IntToStr(Random(2147483647)) + '|' + ExpandConstant('{tmp}')), 1, 32));
 end;
 
-function RunBridge: Boolean;
+function RunBridgeOnce: Boolean;
 var
   RawRoot, PythonExe, BridgePath, PipeSuffix, Parameters: String;
   Request, Response: String;
@@ -708,6 +708,19 @@ begin
     end;
   end;
   Response := '';
+end;
+
+function RunBridge: Boolean;
+begin
+  Result := RunBridgeOnce;
+  if Result or not IsUpgradeOperation or not PersistentBundle or
+     (LastStableCode <> 'INSTALL_UPGRADE_RESTAGE_REQUIRED') then exit;
+  { The worker rejected the stage before executing the operation.
+    Leave the old directory and ledger intact, and rebuild from this Setup. }
+  Log('Upgrade staging rejected before execution; preparing one new bundle.');
+  BundleRoot := '';
+  PrepareBundle;
+  Result := RunBridgeOnce;
 end;
 
 function TakePart(var Value: String; Separator: String): String;
@@ -1423,7 +1436,7 @@ end;
 
 procedure PrepareBundle;
 var
-  MetadataPath, ArchivePath, ManifestPath, InventoryPath, RawDir, CacheRoot: String;
+  MetadataPath, ArchivePath, ManifestPath, InventoryPath, RawDir, CacheRoot, StageRoot: String;
   FreeBytes, TotalBytes, RequiredBytes: Int64;
 begin
     if BundleRoot <> '' then begin
@@ -1440,8 +1453,8 @@ begin
       if not GetSpaceOnDisk64(ExtractFileDrive(CacheRoot) + '\', FreeBytes, TotalBytes) then
         RaiseException('INSTALL_DISK_SPACE_CHECK_FAILED');
       if FreeBytes < RequiredBytes then RaiseException('INSTALL_DISK_SPACE_INSUFFICIENT');
-      BundleRoot := CacheRoot + '\' + BuildPipeSuffix + '\install-ux-bundle';
-    end else BundleRoot := ExpandConstant('{tmp}\install-ux-bundle');
+      StageRoot := CacheRoot + '\' + BuildPipeSuffix + '\install-ux-bundle';
+    end else StageRoot := ExpandConstant('{tmp}\install-ux-bundle');
     SetStage('验证安装包', 1);
     LastStableCode := 'INSTALL_TEMP_ROOT_UNSAFE';
     if HasExistingReparseLeaf(ExpandConstant('{tmp}')) then
@@ -1453,15 +1466,15 @@ begin
     ExtractTemporaryFile('installer-metadata.json');
     ExtractTemporaryFile('InfiniteCanvas.exe');
     ExtractTemporaryFile('native-entry-build-record.json');
-    if DirExists(BundleRoot) then
+    if DirExists(StageRoot) then
       RaiseException('INSTALL_TEMP_ROOT_UNSAFE');
-    ForceDirectories(BundleRoot);
-    MoveExtractedAssetToBundle('{#ArchiveFilename}');
-    MoveExtractedAssetToBundle('{#ManifestFilename}');
-    MoveExtractedAssetToBundle('{#InventoryFilename}');
-    ArchivePath := BundleRoot + '\{#ArchiveFilename}';
-    ManifestPath := BundleRoot + '\{#ManifestFilename}';
-    InventoryPath := BundleRoot + '\{#InventoryFilename}';
+    ForceDirectories(StageRoot);
+    MoveExtractedAssetToBundle('{#ArchiveFilename}', StageRoot);
+    MoveExtractedAssetToBundle('{#ManifestFilename}', StageRoot);
+    MoveExtractedAssetToBundle('{#InventoryFilename}', StageRoot);
+    ArchivePath := StageRoot + '\{#ArchiveFilename}';
+    ManifestPath := StageRoot + '\{#ManifestFilename}';
+    InventoryPath := StageRoot + '\{#InventoryFilename}';
     MetadataPath := ExpandConstant('{tmp}\installer-metadata.json');
     LastStableCode := 'INSTALL_EMBEDDED_ASSET_VERIFICATION_FAILED';
     RequireEmbeddedFile(ArchivePath, '{#ArchiveSha256}', StrToInt64('{#ArchiveSize}'));
@@ -1470,16 +1483,17 @@ begin
     RequireEmbeddedFile(MetadataPath, '{#MetadataSha256}', StrToInt64('{#MetadataSize}'));
     RequireEmbeddedFile(ExpandConstant('{tmp}\InfiniteCanvas.exe'), '{#NativeEntrySha256}', StrToInt64('{#NativeEntrySize}'));
     RequireEmbeddedFile(ExpandConstant('{tmp}\native-entry-build-record.json'), '{#NativeRecordSha256}', StrToInt64('{#NativeRecordSize}'));
-    ForceDirectories(BundleRoot + '\native-entry');
-    if not RenameFile(ExpandConstant('{tmp}\InfiniteCanvas.exe'), BundleRoot + '\native-entry\InfiniteCanvas.exe') or
-       not RenameFile(ExpandConstant('{tmp}\native-entry-build-record.json'), BundleRoot + '\native-entry\native-entry-build-record.json') then
+    ForceDirectories(StageRoot + '\native-entry');
+    if not RenameFile(ExpandConstant('{tmp}\InfiniteCanvas.exe'), StageRoot + '\native-entry\InfiniteCanvas.exe') or
+       not RenameFile(ExpandConstant('{tmp}\native-entry-build-record.json'), StageRoot + '\native-entry\native-entry-build-record.json') then
       RaiseException('INSTALL_EMBEDDED_ASSET_EXTRACTION_FAILED');
 
     SetStage('准备程序文件', 2);
     LastStableCode := 'INSTALL_ARCHIVE_EXTRACTION_FAILED';
-    RawDir := BundleRoot + '\raw';
+    RawDir := StageRoot + '\raw';
     ForceDirectories(RawDir);
     ExtractArchive(ArchivePath, RawDir, '', True, nil);
+    BundleRoot := StageRoot;
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
