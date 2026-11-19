@@ -18,7 +18,7 @@
 | 完整文档导航与维护规则 | [文档索引](docs/README.md) / [登记表](docs/document-register.json) |
 | 开发、代码边界和安全 | [工作流](CODEX_WORKFLOW.md) / [代码边界](CODE_BOUNDARIES.md) / [安全基线](SECURITY_BASELINE.md) |
 
-Windows 正式发行 [v2026.11.2](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.11.2) 提供离线安装包，已验证 2026.11.1 保留数据升级。源码、主线检查、发行与设备验收分别见[当前状态](docs/CURRENT_PROJECT_STATUS.md)。
+Windows 正式发行 2026.11.3 提供离线安装包。已验证从 2026.11.1 和 2026.11.2 原位升级并保留数据。[下载和发行说明](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.11.3) · [当前状态](docs/CURRENT_PROJECT_STATUS.md)
 
 当前正式形态为Windows单机/LAN；服务器适配、单企业试部署与桌面小样已获准按[唯一路线图](docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md)推进，尚未成为现成Linux/容器/多实例产品。开放PR建议见[文档/PR盘点](docs/ops/DOC-3-DOCUMENT-SYSTEM-AUDIT-2026-10.md#2026-10-31-开发前状态清理与pr盘点)。
 

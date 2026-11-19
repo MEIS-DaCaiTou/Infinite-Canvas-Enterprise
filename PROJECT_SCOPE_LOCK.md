@@ -1,6 +1,8 @@
 # Infinite Canvas Enterprise 项目范围锁定
 
-更新时间：2026-11-18
+更新时间：2026-11-19
+
+2026-11-19 发行收口。负责人批准合并和公开发行 2026.11.3。#217 的原提交随 #218 合入主线，发布标签及 8 项公开资产绑定 `a5613da`，逐项通过匿名下载校验。Windows 离线原位升级覆盖 2026.11.1 和 2026.11.2，沿用 Schema 4。负责人确认两条测试机路线及生产设备从 2026.11.1 直升均通过。[正式发行](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.11.3) · [当前状态](docs/CURRENT_PROJECT_STATUS.md)
 
 2026-11-18发行收口：负责人确认测试主机从 2026.11.1 升级后正常使用，并批准 [v2026.11.2 正式发行](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.11.2)。公开资产绑定 `e4f94b8a9671efca5619395f706b08503f4a0fec`，沿用 2026.11.1 离线保留数据路径，本次无新增在线路线或数据库迁移。客户设备升级继续单独授权和验收。
 

@@ -1,8 +1,8 @@
 {
   "schema_version": "enterprise-documents-v1",
-  "reviewed_at": "2026-11-18",
-  "audit_base_commit": "e4f94b8a9671efca5619395f706b08503f4a0fec",
-  "scope": "2026-11-18 targeted delivery status registration for v2026.11.2, built from e4f94b8a9671efca5619395f706b08503f4a0fec. Main CI, full graphical 11.1 upgrade, Windows registration and business checks passed. Owner confirmed test host use. Eight release assets verified anonymously. Customer deployment remains separate.",
+  "reviewed_at": "2026-11-19",
+  "audit_base_commit": "a5613dabb6307ceeae4d3bdfc67979b78363ccd7",
+  "scope": "2026-11-19 delivery status registration for v2026.11.3. Main merge and CI match the frozen installation package. Eight published assets passed anonymous download and integrity checks. Owner confirmed test host upgrades from 11.1 and 11.2 and the production host upgrade from 11.1.",
   "documents": [
     {
       "path": ".github/PULL_REQUEST_TEMPLATE.md",
@@ -159,7 +159,7 @@
       "path": "docs/CURRENT_PROJECT_STATUS.md",
       "kind": "authority",
       "authority": "status",
-      "reviewed_at": "2026-11-18"
+      "reviewed_at": "2026-11-19"
     },
     {
       "path": "docs/data/DATA-MVP-1-INDEPENDENT-REVIEW-2026-09.md",
@@ -483,7 +483,7 @@
       "path": "docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md",
       "kind": "authority",
       "authority": "roadmap",
-      "reviewed_at": "2026-11-18"
+      "reviewed_at": "2026-11-19"
     },
     {
       "path": "docs/runbooks/SEC-1B2-PRODUCTION-ACTIVATION-RUNBOOK-2026-07.md",
@@ -589,12 +589,12 @@
       "path": "PROJECT_SCOPE_LOCK.md",
       "kind": "authority",
       "authority": "scope",
-      "reviewed_at": "2026-11-18"
+      "reviewed_at": "2026-11-19"
     },
     {
       "path": "README.md",
       "kind": "entry",
-      "reviewed_at": "2026-10-29"
+      "reviewed_at": "2026-11-19"
     },
     {
       "path": "release/windows/license-evidence/lucide-ISC-and-feather-MIT.txt",

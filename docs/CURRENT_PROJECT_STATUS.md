@@ -1,6 +1,16 @@
 # Infinite Canvas Enterprise 当前项目状态
 
-更新时间：2026-11-18
+更新时间：2026-11-19
+
+## 2026-11-19 正式发行 2026.11.3
+
+2026.11.3 已公开发行。发行标识为 `ice-2026.11.3-a5613dabb630`，标签与 8 项资产绑定 `a5613dabb6307ceeae4d3bdfc67979b78363ccd7`。每项资产均通过匿名下载、大小和 SHA-256 校验。[正式发行](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/tag/v2026.11.3) · [Windows 安装包](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/releases/download/v2026.11.3/InfiniteCanvasSetup.exe)
+
+#217 随 #218 合入主线 `7fa6c5d212272826b75130e43394e1dbda1f6884`。后台续查图片可按原任务找回，异常回执可隔离，素材归属从明确的任务输出登记。此版还改进了 Windows 离线升级的启动等待、失败自动回滚和诊断 ZIP 导出。合并后的源码树与验收包一致，主线 Enterprise、Runtime、固定 EXE 和文档检查通过。[PR #218](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/pull/218) · [主线 Enterprise 与 Runtime](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/44475454579) · [固定 EXE](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/44475454545) · [文档](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/actions/runs/44475454580)
+
+负责人确认测试机从 2026.11.1 和 2026.11.2 升级正常，生产设备从 2026.11.1 直升后正常运行。开发机用同一包实测 2026.11.1 完整图形向导、Windows 登记、账号和两类画布及素材读写，也实测了新版本启动超时后自动恢复 11.1。升级使用本地安装包并选择原安装目录和保留数据，数据库沿用 Schema 4。
+
+下方记录保留各自的验证时点。
 
 ## 2026-11-18 正式发行 2026.11.2
 
