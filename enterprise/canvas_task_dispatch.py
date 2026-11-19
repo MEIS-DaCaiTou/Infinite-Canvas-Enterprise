@@ -103,11 +103,13 @@ class CanvasTaskDispatch:
                 self.active.pop(task_id, None)
             task.add_done_callback(done)
 
-    async def start(self):
+    async def start(self, records=None):
         self.closed = False
         if self.comfy_queue:
             await self.comfy_queue.start()
-        for record in await asyncio.to_thread(self.journal.pending_dispatches):
+        if records is None:
+            records = await asyncio.to_thread(self.journal.pending_dispatches)
+        for record in records:
             if self.comfy_queue and record.get('type') == 'comfy' and not record.get('comfy_queue'):
                 item = await asyncio.to_thread(self.inputs.get, record['id'])
                 backend = (item or {}).get('payload', {}).get('backend')

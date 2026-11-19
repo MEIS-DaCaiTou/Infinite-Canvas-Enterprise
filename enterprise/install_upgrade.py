@@ -17,7 +17,7 @@ import uuid
 from enterprise import install_cache as files, install_lifecycle as lifecycle
 from enterprise import install_database_preparation as database_preparation
 from enterprise import install_upgrade_support as support_cache
-from enterprise.fresh_install import verify_release_assets
+from enterprise.fresh_install import VerifiedReleaseAssets, verify_release_assets
 from enterprise.install_entry import ENTRY_NAME, _record, _snapshot, verify_entry_bundle, validate_installation_record
 from enterprise.ops.update import mvp
 from enterprise.migrations.versioned import restore_database_backup
@@ -121,8 +121,16 @@ def _eligible(roots, source, target):
     return metadata, preparation
 
 
-def inspect_upgrade(*, install_root, release_dir, local_app_data_base):
-    assets = verify_release_assets(Path(release_dir))
+def _upgrade_assets(release_dir, verified_assets: VerifiedReleaseAssets | None) -> VerifiedReleaseAssets:
+    if verified_assets is None:
+        return verify_release_assets(Path(release_dir))
+    if verified_assets.manifest_path.parent != Path(release_dir):
+        _fail("INSTALL_UPGRADE_ASSET_DIRECTORY_MISMATCH")
+    return verified_assets
+
+
+def inspect_upgrade(*, install_root, release_dir, local_app_data_base, verified_assets=None):
+    assets = _upgrade_assets(release_dir, verified_assets)
     if files._exists(Path(install_root) / "state" / ACTIVE_NAME):
         tx, state = _load(install_root, local_app_data_base, assets)
         # Read-only state is not proof that execution or registration completed.
@@ -324,18 +332,23 @@ class _Transaction:
                 _fail("INSTALL_UPGRADE_TOOL_CHANGED")
 
     def launcher(self, app_root, command):
+        rollback_controller = None
         if command == "start":
             if app_root.name == self.plan["target_release_id"]:
                 self.publish()
             elif app_root.name == self.plan["source_release_id"]:
                 self.database_identity(remember=True)
                 self.restore()
+                # The update engine has verified the installed controller. Its
+                # rollback entry uses the original Python and starts original
+                # service code under the restored pointer.
+                rollback_controller = self.roots.RELEASE_ROOT / self.plan["target_release_id"]
             else:
                 _fail()
             self.refresh(app_root.name)
         if command == "health" and app_root.name == self.plan["target_release_id"]:
             _checkpoint("target_health")
-        return mvp._run_launcher(app_root, command)
+        return mvp._run_launcher(app_root, command, rollback_controller=rollback_controller)
 
     def release_active(self):
         self.basics()
@@ -368,13 +381,13 @@ def _transfer_lock(roots, token, job_id):
 
 
 def upgrade_retained(*, install_root, release_dir, native_entry_dir, setup_executable,
-                     local_app_data_base, confirm_no_active_tasks=False, notify_progress=None):
+                     local_app_data_base, confirm_no_active_tasks=False, notify_progress=None, verified_assets=None):
     if confirm_no_active_tasks is not True:
         _fail("INSTALL_UPGRADE_TASK_CONFIRMATION_REQUIRED")
     root = files._safe(Path(install_root))
     if files._exists(root / "state" / ACTIVE_NAME):
         _fail("INSTALL_UPGRADE_EXPLICIT_RECOVERY_REQUIRED")
-    assets = verify_release_assets(Path(release_dir))
+    assets = _upgrade_assets(release_dir, verified_assets)
     roots, record, source = lifecycle.current_source(install_root=root, local_app_data_base=local_app_data_base)
     metadata, preparation = _eligible(roots, source, assets.manifest)
     support = _source_support(root, record["installation_id"])
@@ -570,7 +583,7 @@ def _load(install_root, local_app_data_base, assets):
     return tx, state
 
 
-def recover_upgrade(*, install_root, release_dir, local_app_data_base, confirm_no_active_tasks=False):
+def recover_upgrade(*, install_root, release_dir, local_app_data_base, confirm_no_active_tasks=False, verified_assets=None):
     """Explicit interrupted-operation recovery; shared backups prove DB restore.
 
     Stop a proven target before reverting its pointer/tools. A successful engine
@@ -578,7 +591,7 @@ def recover_upgrade(*, install_root, release_dir, local_app_data_base, confirm_n
     """
     if confirm_no_active_tasks is not True:
         _fail("INSTALL_UPGRADE_TASK_CONFIRMATION_REQUIRED")
-    assets = verify_release_assets(Path(release_dir))
+    assets = _upgrade_assets(release_dir, verified_assets)
     tx, state = _load(install_root, local_app_data_base, assets)
     with files._lease(tx.directory / "runner.lock", tx.plan["lease"]):
         job_id = state.get("job_id")
@@ -661,15 +674,18 @@ def recover_upgrade(*, install_root, release_dir, local_app_data_base, confirm_n
             os.link(files._io(tx.directory / "recovery-fence.json"), files._io(lock))
             marker = lifecycle._marker(lock)
         tx.state("ROLLING_BACK", job_id=job_id)
+        pointer = read_current_release_result_from_state_root(tx.roots.STATE_ROOT)
         target = tx.roots.RELEASE_ROOT / tx.plan["target_release_id"]
-        if target.exists():
+        if pointer.release.release_id == tx.plan["target_release_id"]:
             manifest = read_release_manifest_v2(target / "release-manifest.json")
-            if manifest.raw_sha256 != tx.plan["target_manifest_sha256"]:
+            if manifest.raw_sha256 != pointer.release.manifest_sha256 or manifest.raw_sha256 != tx.plan["target_manifest_sha256"]:
                 _fail()
             verify_materialized_release(target, inventory_path=target / "release-payload-inventory.json")
             code, details = mvp._run_launcher(target, "stop")
             if code != 0 or not details:
                 _fail("INSTALL_UPGRADE_TARGET_STOP_UNCONFIRMED")
+        elif pointer.release.manifest_sha256 != tx.plan["source_manifest_sha256"]:
+            _fail()
         lifecycle._runtime_quiescent(tx.roots)
         if lifecycle._database_contract(tx.roots) != tx.plan["database_contract"]:
             if plan["database_update"]["mode"] != "versioned-forward-migration":
@@ -702,9 +718,9 @@ def recover_upgrade(*, install_root, release_dir, local_app_data_base, confirm_n
         return tx.public("ROLLED_BACK")
 
 
-def finish_upgrade(*, install_root, release_dir, local_app_data_base, verify_registration):
+def finish_upgrade(*, install_root, release_dir, local_app_data_base, verify_registration, verified_assets=None):
     """Finalize only after the target Setup/uninstaller registration is proven."""
-    assets = verify_release_assets(Path(release_dir))
+    assets = _upgrade_assets(release_dir, verified_assets)
     tx, state = _load(install_root, local_app_data_base, assets)
     with files._lease(tx.directory / "runner.lock", tx.plan["lease"]):
         if state["state"] not in {"AWAITING_REGISTRATION", "COMPLETE"} or "job_id" not in state:

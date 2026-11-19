@@ -74,9 +74,9 @@ def test_offline_department_activation_and_target_failure(department_install, mo
     media = (f['roots'].DATA_ROOT/'media.bin').read_bytes()
     original_launch = upgrade.mvp._run_launcher
     if target_failure:
-        monkeypatch.setattr(upgrade.mvp, '_run_launcher', lambda app, command:
+        monkeypatch.setattr(upgrade.mvp, '_run_launcher', lambda app, command, **kwargs:
             (2, {'code':'SYSTEM_UPDATE_TARGET_HEALTH_FAILED'})
-            if command == 'health' and app.name.startswith('ice-2026.07.7-') else original_launch(app, command))
+            if command == 'health' and app.name.startswith('ice-2026.07.7-') else original_launch(app, command, **kwargs))
     assert upgrade.inspect_upgrade(install_root=f['roots'].INSTALL_ROOT, release_dir=f['target_assets'],
         local_app_data_base=f['local'])['database_update_mode'] == 'versioned-forward-migration'
     result = upgrade.upgrade_retained(**arguments(f))

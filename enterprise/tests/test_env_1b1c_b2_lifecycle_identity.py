@@ -773,6 +773,37 @@ def test_maintenance_allows_only_launcher_to_settle_its_failed_attempt(tmp_path,
         assert store.read_lock() == lock
 
 
+@pytest.mark.parametrize("blocker", [None, "wrong_job", "active_owner", "foreign_port"])
+def test_rollback_can_settle_the_adopted_target_even_when_gateway_never_started(tmp_path, monkeypatch, blocker):
+    config, snapshot, *_ = _portable_ownership_case(tmp_path)
+    controller = RuntimeController(config)
+    store = controller.store
+    state = snapshot["runtime_state"] | {"schema_version": "runtime-supervisor-state-v1", "state": "starting"}
+    state["gateway"] = {"pid": None, "process_created_at": None, "executable": None}
+    lock = snapshot["lock"] | {"schema_version": "runtime-supervisor-state-v1"}
+    store.write_state(state)
+    store.lock_path.write_text(json.dumps(lock), encoding="utf-8")
+    marker = config.app_root.parents[1] / "state" / "system-update-active.lock"
+    marker.parent.mkdir(parents=True)
+    marker.write_text("rollback fence", encoding="utf-8")
+    owner = ProcessIdentity(lock["owner_pid"], lock["owner_process_created_at"], lock["owner_executable"])
+    monkeypatch.setattr("enterprise.runtime.control.process_identity",
+                        lambda pid: owner if blocker == "active_owner" and pid == owner.pid else None)
+    monkeypatch.setattr("enterprise.runtime.control.windows_process_parents",
+                        lambda: {owner.pid: 1} if blocker == "active_owner" else {})
+    listeners = (99,) if blocker == "foreign_port" else ()
+    monkeypatch.setattr("enterprise.runtime.control._port_snapshots", lambda _config: (
+        PortListenerSnapshot(3001, listeners, (), listeners), PortListenerSnapshot(8000, (), (), ()),
+    ))
+    assert controller.reconcile_reboot_stale_runtime(
+        {"runtime_state": store.read_state(), "lock": store.read_lock()},
+        failed_instance_id=lock["supervisor_instance_id"], rollback_matches=lambda: blocker != "wrong_job",
+    ) is (blocker is None)
+    assert store.lock_path.exists() is (blocker is not None)
+    assert store.read_state()["state"] == ("stopped" if blocker is None else "starting")
+    assert marker.read_text(encoding="utf-8") == "rollback fence"
+
+
 @pytest.mark.parametrize(("child_created", "recover"), [(1001, True), (101, False), (None, False)])
 def test_pid_reuse_with_children_checks_child_creation_time(tmp_path, monkeypatch, child_created, recover):
     config, snapshot, *_ = _portable_ownership_case(tmp_path)

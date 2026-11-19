@@ -1,5 +1,6 @@
 """Actual application startup/shutdown, private roots and query-only transport."""
 import os
+import shutil
 import subprocess
 import sys
 
@@ -26,7 +27,7 @@ def inspect(request):
     if not authorized:return httpx.Response(401,json={'error':'fixture authentication denied'})
     return httpx.Response(200,json={'status':'SUCCESS','data':[{'url':'https://supplier.example/result.png'}]} if finished else {'status':'IN_PROGRESS'})
 main.httpx.AsyncClient=lambda **kwargs:original_client(transport=httpx.MockTransport(inspect),**kwargs)
-async def archive(image,prefix='', *, receipt=None):
+async def archive(image,prefix='', *, plan_archive=None):
     from PIL import Image
     Image.new('RGB',(1,1),'white').save(Path(main.OUTPUT_DIR)/'resumed.png')
     return '/output/resumed.png'
@@ -136,7 +137,7 @@ def recovered_handler(request):
     return httpx.Response(200,json={'accepted-comfy-id':{'status':{'completed':True},
         'outputs':{'9':{'text':['Recovered original prompt']}}}})
 main.httpx.AsyncClient = lambda **kwargs: original_client(transport=httpx.MockTransport(recovered_handler), **kwargs)
-async def archive_image(image,prefix='', *, receipt=None):
+async def archive_image(image,prefix='', *, plan_archive=None):
     from PIL import Image
     Image.new('RGB',(1,1),'white').save(Path(main.OUTPUT_DIR)/'auto-recovered.png')
     return '/output/auto-recovered.png'
@@ -179,6 +180,97 @@ print('actual startup original identity completed without browser or POST')
     result = subprocess.run([sys.executable, "-c", script, str(ROOT), str(install), str(tmp_path / "local"), kind],
         cwd=ROOT, env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1", PYTHONUTF8="1"),
         capture_output=True, text=True, timeout=35)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("damage", ["unreadable", "bad-attempt"])
+def test_startup_isolates_bad_receipt_and_recovers_original_task(tmp_path, damage):
+    install = tmp_path / "install"
+    app = install / "releases/fixture"
+    (app / "static").mkdir(parents=True)
+    (app / "main.py").write_text("# fixture", encoding="utf-8")
+    (app / "enterprise-static").mkdir()
+    shutil.copy2(ROOT / "enterprise-static/login.html", app / "enterprise-static/login.html")
+    script = BOOTSTRAP + r'''
+from base64 import b64encode
+from io import BytesIO
+from unittest.mock import patch
+
+from PIL import Image
+from enterprise import db, gateway
+from enterprise.canvas_image_recovery import provider_scope
+from enterprise.canvas_task_journal import create_task_receipt
+from enterprise.tests.ready_user_fixture import insert_ready_user_fixture
+
+damage = sys.argv[4]
+username, password = 'fixture-member', 'fixture-member-password'
+db.ensure_db_schema()
+owner = insert_ready_user_fixture(db.DB_PATH, username=username, password_hash=db._hash_password(password),
+                                  display_name='Fixture member')['id']
+
+journal = main.CANVAS_TASK_JOURNAL
+record = {'id': 'normal-after-restart', 'type': 'online-image', 'status': 'running',
+          'provider_receipts': [{'index': 0, 'state': 'accepted',
+                                 'upstream_task_id': 'accepted-before-process-exit', **provider_scope(provider)}]}
+create_task_receipt(journal, record, owner)
+bad_id = 'requires-review'
+bad_path = journal.root / (bad_id + '.json')
+db.record_task_owner(owner, 'canvas_image', bad_id, source='fixture')
+bad = {**record, 'id': bad_id, 'status': 'failed', 'journal_version': 1, 'enterprise_user_id': owner}
+if damage == 'bad-attempt':
+    bad['provider_receipts'] = ['invalid attempt']
+original = json.dumps(bad).encode('utf-8')
+bad_path.write_bytes(original)
+
+buffer = BytesIO()
+Image.new('RGB', (8, 8), 'blue').save(buffer, format='PNG')
+def supplier(request):
+    calls.append((request.method, request.url.path))
+    assert request.method == 'GET' and request.url.path == '/v1/images/tasks/accepted-before-process-exit'
+    return httpx.Response(200, json={'status': 'SUCCESS', 'data': [
+        {'b64_json': b64encode(buffer.getvalue()).decode('ascii')},
+    ]})
+main.httpx.AsyncClient = lambda **kwargs: original_client(transport=httpx.MockTransport(supplier), **kwargs)
+main.CANVAS_ACCEPTED_RECOVERY.poll_delay = .02
+read_text = Path.read_text
+def guarded_read(path, *args, **kwargs):
+    if damage == 'unreadable' and path == bad_path:
+        raise PermissionError('fixture individual receipt is inaccessible')
+    return read_text(path, *args, **kwargs)
+
+async def scenario():
+    with patch.object(Path, 'read_text', guarded_read):
+        await main.startup_event()
+        try:
+            async with asyncio.timeout(8):
+                while journal.get(record['id'])['status'] != 'succeeded':
+                    await asyncio.sleep(.02)
+            async with (
+                original_client(transport=httpx.ASGITransport(app=main.app), base_url='http://upstream') as upstream,
+                original_client(transport=httpx.ASGITransport(app=gateway.app), base_url='http://gateway') as client,
+            ):
+                gateway.app.state.upstream_client = upstream
+                assert (await client.get('/enterprise/login')).status_code == 200
+                login = await client.post('/enterprise/login', json={'username': username, 'password': password})
+                assert login.status_code == 200 and login.json()['role'] == 'user', login.text
+                response = await client.get('/enterprise/api/me/generation-tasks')
+                assert response.status_code == 200, response.text
+                assert {item['id']: item['status'] for item in response.json()['items']} == {
+                    record['id']: 'succeeded', bad_id: 'unavailable',
+                }
+            assert calls == [('GET', '/v1/images/tasks/accepted-before-process-exit')]
+        finally:
+            await main.shutdown_task_recovery()
+    assert bad_path.read_bytes() == original
+
+asyncio.run(scenario())
+'''
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(ROOT), str(install), str(tmp_path / "local"), damage],
+        cwd=ROOT, env=dict(os.environ, PYTHONUTF8="1", PYTHONDONTWRITEBYTECODE="1",
+                           JWT_SECRET="fixture-authentication-key-for-isolated-tests"),
+        capture_output=True, text=True, encoding="utf-8", timeout=40,
+    )
     assert result.returncode == 0, result.stdout + result.stderr
 
 

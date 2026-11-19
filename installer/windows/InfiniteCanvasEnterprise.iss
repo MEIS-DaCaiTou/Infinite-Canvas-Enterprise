@@ -94,6 +94,7 @@ var
   StopConfirmation, DesktopOption, LaunchOption: TNewCheckBox;
   InstallProgress: TOutputProgressWizardPage;
   DetachButton, StatusButton: TNewButton;
+  DiagnosticButton: TNewButton;
   SelectedInstallRoot: String;
   BundleRoot: String;
   LastStableCode: String;
@@ -592,12 +593,12 @@ begin
     RaiseException('INSTALL_EMBEDDED_ASSET_HASH_MISMATCH');
 end;
 
-procedure MoveExtractedAssetToBundle(const FileName: String);
+procedure MoveExtractedAssetToBundle(const FileName, StageRoot: String);
 var
   SourcePath, TargetPath: String;
 begin
   SourcePath := AddBackslash(ExpandConstant('{tmp}')) + FileName;
-  TargetPath := AddBackslash(BundleRoot) + FileName;
+  TargetPath := AddBackslash(StageRoot) + FileName;
   if not RenameFile(SourcePath, TargetPath) then
     RaiseException('INSTALL_EMBEDDED_ASSET_EXTRACTION_FAILED');
 end;
@@ -609,7 +610,7 @@ begin
     IntToStr(Random(2147483647)) + '|' + ExpandConstant('{tmp}')), 1, 32));
 end;
 
-function RunBridge: Boolean;
+function RunBridgeOnce: Boolean;
 var
   RawRoot, PythonExe, BridgePath, PipeSuffix, Parameters: String;
   Request, Response: String;
@@ -708,6 +709,19 @@ begin
     end;
   end;
   Response := '';
+end;
+
+function RunBridge: Boolean;
+begin
+  Result := RunBridgeOnce;
+  if Result or not IsUpgradeOperation or not PersistentBundle or
+     (LastStableCode <> 'INSTALL_UPGRADE_RESTAGE_REQUIRED') then exit;
+  { The worker rejected the stage before executing the operation.
+    Leave the old directory and ledger intact, and rebuild from this Setup. }
+  Log('Upgrade staging rejected before execution; preparing one new bundle.');
+  BundleRoot := '';
+  PrepareBundle;
+  Result := RunBridgeOnce;
 end;
 
 function TakePart(var Value: String; Separator: String): String;
@@ -952,6 +966,32 @@ begin
     (MaintenanceOperation <> 'inspect-upgrade') and not IsCacheOperation;
 end;
 
+procedure ExportSetupDiagnostics(Sender: TObject);
+var
+  ArchivePath, ToolPath, Arguments: String;
+  ExitCode: Integer;
+begin
+  ArchivePath := 'canvas-setup-' + GetDateTimeString('yyyymmdd-hhnnss', '', '') + '.zip';
+  if not GetSaveFileName('保存故障诊断 ZIP', ArchivePath, '',
+      '诊断 ZIP (*.zip)|*.zip', 'zip') then exit;
+  try
+    ToolPath := AddBackslash(BundleRoot) + 'native-entry\InfiniteCanvas.exe';
+    if not FileExists(ToolPath) then begin
+      ToolPath := ExpandConstant('{tmp}\InfiniteCanvas.exe');
+      if not FileExists(ToolPath) then ExtractTemporaryFile('InfiniteCanvas.exe');
+    end;
+    RequireEmbeddedFile(ToolPath, '{#NativeEntrySha256}', StrToInt64('{#NativeEntrySize}'));
+    Arguments := '--export-diagnostics --install-root "' + SelectedInstallRoot +
+      '" --archive-file "' + ArchivePath + '" --setup-log "' + ExpandConstant('{log}') +
+      '" --setup-code "' + LastStableCode + '"';
+    if not Exec(ToolPath, Arguments, ExpandConstant('{tmp}'), SW_HIDE, ewWaitUntilTerminated, ExitCode)
+       or (ExitCode <> 0) then RaiseException('INSTALL_DIAGNOSTICS_EXPORT_FAILED');
+    MsgBox('故障诊断 ZIP 已保存。', mbInformation, MB_OK);
+  except
+    MsgBox('导出未完成。请选择本机可写位置和新文件名。' + #13#10 + GetExceptionMessage, mbError, MB_OK);
+  end;
+end;
+
 procedure InitializeWizard;
 begin
   FindRegisteredInstall;
@@ -1051,6 +1091,13 @@ begin
   DetachButton.Top := InstallProgress.SurfaceHeight - DetachButton.Height;
   DetachButton.OnClick := @DetachProgress;
   DetachButton.Visible := False;
+  DiagnosticButton := TNewButton.Create(WizardForm);
+  DiagnosticButton.Parent := WizardForm;
+  DiagnosticButton.Caption := '导出诊断';
+  DiagnosticButton.SetBounds(ScaleX(16), WizardForm.CancelButton.Top,
+    ScaleX(104), WizardForm.CancelButton.Height);
+  DiagnosticButton.OnClick := @ExportSetupDiagnostics;
+  DiagnosticButton.Visible := False;
   if HeadlessLifecycle then begin
     SelectedInstallRoot := HeadlessRoot;
     ExistingEntryRepair := True;
@@ -1078,6 +1125,7 @@ end;
 
 procedure CurPageChanged(CurPageID: Integer);
 begin
+  if CurPageID <> wpPreparing then DiagnosticButton.Visible := False;
   if CurPageID = wpReady then begin
     StopConfirmation.Visible := RequiresStoppedService;
     StopConfirmation.Checked := False;
@@ -1423,7 +1471,7 @@ end;
 
 procedure PrepareBundle;
 var
-  MetadataPath, ArchivePath, ManifestPath, InventoryPath, RawDir, CacheRoot: String;
+  MetadataPath, ArchivePath, ManifestPath, InventoryPath, RawDir, CacheRoot, StageRoot: String;
   FreeBytes, TotalBytes, RequiredBytes: Int64;
 begin
     if BundleRoot <> '' then begin
@@ -1440,8 +1488,8 @@ begin
       if not GetSpaceOnDisk64(ExtractFileDrive(CacheRoot) + '\', FreeBytes, TotalBytes) then
         RaiseException('INSTALL_DISK_SPACE_CHECK_FAILED');
       if FreeBytes < RequiredBytes then RaiseException('INSTALL_DISK_SPACE_INSUFFICIENT');
-      BundleRoot := CacheRoot + '\' + BuildPipeSuffix + '\install-ux-bundle';
-    end else BundleRoot := ExpandConstant('{tmp}\install-ux-bundle');
+      StageRoot := CacheRoot + '\' + BuildPipeSuffix + '\install-ux-bundle';
+    end else StageRoot := ExpandConstant('{tmp}\install-ux-bundle');
     SetStage('验证安装包', 1);
     LastStableCode := 'INSTALL_TEMP_ROOT_UNSAFE';
     if HasExistingReparseLeaf(ExpandConstant('{tmp}')) then
@@ -1453,15 +1501,15 @@ begin
     ExtractTemporaryFile('installer-metadata.json');
     ExtractTemporaryFile('InfiniteCanvas.exe');
     ExtractTemporaryFile('native-entry-build-record.json');
-    if DirExists(BundleRoot) then
+    if DirExists(StageRoot) then
       RaiseException('INSTALL_TEMP_ROOT_UNSAFE');
-    ForceDirectories(BundleRoot);
-    MoveExtractedAssetToBundle('{#ArchiveFilename}');
-    MoveExtractedAssetToBundle('{#ManifestFilename}');
-    MoveExtractedAssetToBundle('{#InventoryFilename}');
-    ArchivePath := BundleRoot + '\{#ArchiveFilename}';
-    ManifestPath := BundleRoot + '\{#ManifestFilename}';
-    InventoryPath := BundleRoot + '\{#InventoryFilename}';
+    ForceDirectories(StageRoot);
+    MoveExtractedAssetToBundle('{#ArchiveFilename}', StageRoot);
+    MoveExtractedAssetToBundle('{#ManifestFilename}', StageRoot);
+    MoveExtractedAssetToBundle('{#InventoryFilename}', StageRoot);
+    ArchivePath := StageRoot + '\{#ArchiveFilename}';
+    ManifestPath := StageRoot + '\{#ManifestFilename}';
+    InventoryPath := StageRoot + '\{#InventoryFilename}';
     MetadataPath := ExpandConstant('{tmp}\installer-metadata.json');
     LastStableCode := 'INSTALL_EMBEDDED_ASSET_VERIFICATION_FAILED';
     RequireEmbeddedFile(ArchivePath, '{#ArchiveSha256}', StrToInt64('{#ArchiveSize}'));
@@ -1470,16 +1518,17 @@ begin
     RequireEmbeddedFile(MetadataPath, '{#MetadataSha256}', StrToInt64('{#MetadataSize}'));
     RequireEmbeddedFile(ExpandConstant('{tmp}\InfiniteCanvas.exe'), '{#NativeEntrySha256}', StrToInt64('{#NativeEntrySize}'));
     RequireEmbeddedFile(ExpandConstant('{tmp}\native-entry-build-record.json'), '{#NativeRecordSha256}', StrToInt64('{#NativeRecordSize}'));
-    ForceDirectories(BundleRoot + '\native-entry');
-    if not RenameFile(ExpandConstant('{tmp}\InfiniteCanvas.exe'), BundleRoot + '\native-entry\InfiniteCanvas.exe') or
-       not RenameFile(ExpandConstant('{tmp}\native-entry-build-record.json'), BundleRoot + '\native-entry\native-entry-build-record.json') then
+    ForceDirectories(StageRoot + '\native-entry');
+    if not RenameFile(ExpandConstant('{tmp}\InfiniteCanvas.exe'), StageRoot + '\native-entry\InfiniteCanvas.exe') or
+       not RenameFile(ExpandConstant('{tmp}\native-entry-build-record.json'), StageRoot + '\native-entry\native-entry-build-record.json') then
       RaiseException('INSTALL_EMBEDDED_ASSET_EXTRACTION_FAILED');
 
     SetStage('准备程序文件', 2);
     LastStableCode := 'INSTALL_ARCHIVE_EXTRACTION_FAILED';
-    RawDir := BundleRoot + '\raw';
+    RawDir := StageRoot + '\raw';
     ForceDirectories(RawDir);
     ExtractArchive(ArchivePath, RawDir, '', True, nil);
+    BundleRoot := StageRoot;
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
@@ -1521,7 +1570,7 @@ begin
         exit;
       end;
       if UpgradeState = 'ROLLED_BACK' then begin
-        Result := '离线升级已恢复来源版本和原工具；业务数据未恢复旧备份。请检查原入口后再决定升级，不会登记目标版本。';
+        Result := '离线升级未完成，已还原来源版本和原工具。可导出诊断 ZIP，再从原入口确认服务。';
         exit;
       end;
       RaiseException('INSTALL_UPGRADE_RECOVERY_REQUIRED');
@@ -1573,6 +1622,7 @@ begin
     CredentialPage.Values[1] := '';
     CredentialPage.Values[2] := '';
     InstallProgress.Hide;
+    DiagnosticButton.Visible := (Result <> '') and ExistingEntryRepair;
   end;
 end;
 

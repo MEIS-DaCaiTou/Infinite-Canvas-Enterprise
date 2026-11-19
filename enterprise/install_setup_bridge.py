@@ -338,15 +338,24 @@ def _run_install_request(
     )
     from enterprise.install_cache import CacheError, setup_cache_session, finish_setup_cache
     response = None
+    executing = False
     try:
         with setup_cache_session(local_app_data_base=known_folder, assets=assets,
                                  raw_app_root=raw_app_root, verified=verified, target=target,
                                  client=_AUTHENTICATED_CLIENT.get()) as session:
+            executing = True
             response = _execute_install_request(request, assets=assets, verified=verified, target=target,
                                                 known_folder=known_folder, notify_progress=notify_progress)
             finish_setup_cache(session, response)
-    except (CacheError, OSError):
+    except (CacheError, OSError) as exc:
         if response is None:
+            # A fresh stage is safe to try only before invoking the upgrade
+            # handler. Keep the old cache and any existing transaction intact.
+            if (not executing and request.get("schema_version") == UPGRADE_REQUEST_SCHEMA
+                    and isinstance(exc, CacheError) and exc.code in {
+                        "INSTALL_CACHE_UNPROVEN", "INSTALL_CACHE_CHANGED", "INSTALL_CACHE_CONTENT_UNPROVEN",
+                    }):
+                raise SetupBridgeError("INSTALL_UPGRADE_RESTAGE_REQUIRED") from exc
             raise  # Pre-operation/operation failures cannot be disguised as success.
         response["cache_warning"] = "INSTALL_CACHE_RETAINED"
     return response
@@ -357,7 +366,10 @@ def _execute_install_request(request, *, assets, verified, target, known_folder,
     from enterprise.install_entry import repair_fixed_entry, recover_fixed_entry, verify_entry_bundle
     if request.get("schema_version") == UPGRADE_REQUEST_SCHEMA:
         from enterprise.install_upgrade import inspect_upgrade, upgrade_retained, recover_upgrade, finish_upgrade
-        arguments = dict(install_root=target, release_dir=assets, local_app_data_base=known_folder)
+        # Reuse the verification in this authenticated, cache-leased request.
+        # The update engine still verifies the copied artifacts before it can switch.
+        arguments = dict(install_root=target, release_dir=assets, local_app_data_base=known_folder,
+                         verified_assets=verified)
         operation = request["operation"]
         if operation == "inspect-upgrade":
             result = inspect_upgrade(**arguments)
