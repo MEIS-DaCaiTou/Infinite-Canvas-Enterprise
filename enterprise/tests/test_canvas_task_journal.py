@@ -191,3 +191,18 @@ print('durable main hooks passed')
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert "durable main hooks passed" in completed.stdout
     assert sorted(p.relative_to(app).as_posix() for p in app.rglob("*") if p.is_file()) == ["main.py"]
+
+
+@pytest.mark.parametrize("scan", ["recover", "recovery_candidates", "pending_dispatches", "comfy_queue_records"])
+def test_journal_directory_enumeration_error_is_not_an_empty_journal(tmp_path, monkeypatch, scan):
+    journal = CanvasTaskJournal(tmp_path)
+    iterdir = Path.iterdir
+
+    def deny_task_directory(path):
+        if path == tmp_path:
+            raise PermissionError("fixture task directory is inaccessible")
+        return iterdir(path)
+
+    monkeypatch.setattr(Path, "iterdir", deny_task_directory)
+    with pytest.raises(PermissionError):
+        getattr(journal, scan)()

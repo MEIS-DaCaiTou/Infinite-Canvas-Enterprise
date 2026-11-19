@@ -36,33 +36,45 @@ def task_state(record):
     return "failed"
 
 
-def result_items(record):
+def result_items(record, *, normalize_url=None):
     from enterprise.providers.image_outputs import layer_metadata
-    result = record.get("result") or {}
-    items = list(result.get("items") or [])
-    if not items:
-        items.extend(result.get("image_items") or [])
-        for key, kind in (("images", "image"), ("videos", "video"), ("audios", "audio"), ("texts", "text"), ("files", "file")):
-            items.extend({"url": item, "kind": kind} if isinstance(item, str) else {"kind": kind, **item}
-                         for item in result.get(key) or [])
-        if not items and isinstance(result.get("image"), str):
+    results = [record.get("result")]
+    attempts = record.get("provider_receipts")
+    if isinstance(attempts, list):
+        results.extend(attempt.get("result") for attempt in attempts if isinstance(attempt, dict))
+    items = []
+    for result in results:
+        if not isinstance(result, dict):
+            continue
+        first_item = len(items)
+        for key, kind in (("items", "image"), ("image_items", "image"), ("images", "image"), ("videos", "video"),
+                          ("audios", "audio"), ("texts", "text"), ("files", "file"), ("outputs", "file")):
+            values = result.get(key)
+            if isinstance(values, list):
+                items.extend(
+                    {"url": item, "kind": kind} if isinstance(item, str) else {"kind": kind, **item}
+                    for item in values if isinstance(item, (str, dict))
+                )
+        if len(items) == first_item and isinstance(result.get("image"), str):
             items.append({"url": result["image"], "kind": "image"})
-    for attempt in record.get("provider_receipts") or []:
-        items.extend((attempt.get("result") or {}).get("image_items") or [])
-        for key, kind in (("images", "image"), ("videos", "video")):
-            items.extend({"url": value, "kind": kind} for value in (attempt.get("result") or {}).get(key, []))
+
     unique = {}
     for item in items:
-        if isinstance(item, str):
-            item = {"url": item, "kind": "image"}
-        if not isinstance(item, dict):
+        url = item.get("url")
+        if not isinstance(url, str):
             continue
-        url = str(item.get("url") or "")
-        parsed = urlsplit(url)
-        path = unquote(parsed.path).replace("\\", "/")
-        if parsed.scheme or parsed.netloc or not path.startswith(("/assets/output/", "/output/")) or ".." in path.split("/"):
+        try:
+            parsed = urlsplit(url)
+            if ".." in unquote(parsed.path).replace("\\", "/").split("/"):
+                continue
+            if normalize_url:
+                url = normalize_url(url)
+                parsed = urlsplit(url)
+        except ValueError:
             continue
-        unique.setdefault(url, {**{key: item[key] for key in ("url", "kind", "name", "text", "result_id", "run_id", "created_at") if key in item}, **layer_metadata(item)})
+        if parsed.scheme or parsed.netloc or not unquote(parsed.path).startswith(("/assets/output/", "/output/")):
+            continue
+        unique.setdefault(url, {"url": url, **{key: item[key] for key in ("kind", "name", "text", "result_id", "run_id", "created_at") if key in item}, **layer_metadata(item)})
     return list(unique.values())
 
 

@@ -1529,20 +1529,22 @@ def handle_collection_query(user, path, params):
         return JSONResponse({'message': str(exc)}, status_code=exc.status)
 
 
-def _history_records_from_generation_payload(data: Any) -> list[dict]:
+def _history_records_from_generation_payload(data: Any, *, output_urls: list[str] | None = None) -> list[dict]:
     if not isinstance(data, dict):
         return []
-    if isinstance(data.get("images"), list) and data.get("timestamp"):
+    if output_urls is None and isinstance(data.get("images"), list) and data.get("timestamp"):
         return [data]
 
-    response_urls = set(_history_resource_urls(data))
+    response_urls = set(output_urls if output_urls is not None else _history_resource_urls(data))
     response_task_id = str(data.get("task_id") or data.get("request_id") or data.get("prompt_id") or "").strip()
     matches = []
     for record in _load_history_records():
         if response_task_id and _history_record_task_id(record) == response_task_id:
             matches.append(record)
             break
-        if response_urls and response_urls.intersection(_history_resource_urls(record)):
+        stored_urls = (_history_resource_urls(record) if output_urls is None
+                       else _canvas_task_output_urls(record, direct=True))
+        if response_urls and response_urls.intersection(stored_urls):
             matches.append(record)
             break
     return matches
@@ -1554,7 +1556,7 @@ def _history_records_from_generation_response(path: str, data: Any) -> list[dict
     return _history_records_from_generation_payload(data)
 
 
-def _record_history_record_for_user_id(user_id: str, record: Mapping[str, Any], source: str) -> None:
+def _record_history_record_for_user_id(user_id: str, record: Mapping[str, Any], source: str, *, record_resources=True) -> None:
     history_id = history_id_for_record(record)
     primary_resource = _history_record_primary_resource(record)
     task_id = _history_record_task_id(record)
@@ -1569,14 +1571,15 @@ def _record_history_record_for_user_id(user_id: str, record: Mapping[str, Any], 
         )
     except Exception as exc:
         print(f"[enterprise] record history owner failed: user={user_id} history={history_id} error={exc}")
-    record_resource_urls_for_user(user_id, f"history:{history_id}", record)
+    if record_resources:
+        record_resource_urls_for_user(user_id, f"history:{history_id}", record)
 
 
-def record_history_payload_for_user_id(user_id: str, source: str, data: Any) -> None:
+def record_history_payload_for_user_id(user_id: str, source: str, data: Any, *, output_urls: list[str] | None = None) -> None:
     if not user_id:
         return
-    for record in _history_records_from_generation_payload(data):
-        _record_history_record_for_user_id(user_id, record, source)
+    for record in _history_records_from_generation_payload(data, output_urls=output_urls):
+        _record_history_record_for_user_id(user_id, record, source, record_resources=output_urls is None)
 
 
 def record_generated_history_for_user(user: dict, path: str, method: str, data: Any) -> None:
@@ -2852,25 +2855,39 @@ def _record_task_owner_safe(
         print(f"[enterprise] record task owner failed: user={user_id} type={task_type} task={task_id} error={exc}")
 
 
+def _canvas_task_output_urls(data: Any, *, direct=False) -> list[str]:
+    from enterprise.generation_tasks import result_items
+    if not isinstance(data, dict):
+        return []
+    record = {"result": data} if direct and "result" not in data else data
+    return [item["url"] for item in result_items(record, normalize_url=normalize_resource_url)]
+
+
 def _record_task_response_resources(
     user: dict,
     path: str,
     task_type: str,
     task_id: str,
     data: Any,
+    *,
+    output_urls: list[str] | None = None,
 ) -> None:
     task_id = str(task_id or "").strip()
     if not task_id:
         return
-    owner = edb.get_task_owner(task_type, task_id)
-    if not owner and task_type != TASK_TYPE_PROVIDER_IMAGE:
-        owner = task_owner_for_id(task_id)
-    if not owner and not _is_admin(user):
-        owner = _user_id(user)
+    if output_urls is not None:
+        owner = edb.get_canvas_image_task_owner(task_id)
+    else:
+        owner = edb.get_task_owner(task_type, task_id)
+        if not owner and task_type != TASK_TYPE_PROVIDER_IMAGE:
+            owner = task_owner_for_id(task_id)
+        if not owner and not _is_admin(user):
+            owner = _user_id(user)
     if not owner:
         return
-    record_resource_urls_for_user(owner, f"task:{task_type}:{path}", data)
-    for resource_url in _extract_local_resource_urls(data):
+    urls = output_urls if output_urls is not None else list(_extract_local_resource_urls(data))
+    record_resource_urls_for_user(owner, f"task:{task_type}:{path}", urls)
+    for resource_url in urls:
         _record_task_owner_safe(
             owner,
             task_type,
@@ -2879,7 +2896,8 @@ def _record_task_response_resources(
             resource_url=resource_url,
             status=_task_status_from_data(data),
         )
-    record_history_payload_for_user_id(owner, path, data)
+    if output_urls is None or (output_urls and task_type != TASK_TYPE_CANVAS_LLM):
+        record_history_payload_for_user_id(owner, path, data, output_urls=output_urls)
 
 
 def _record_generic_task_owners_from_response(
@@ -2968,14 +2986,14 @@ def _record_query_task_response_resources(
 
 
 def record_resources_from_data(user: dict, path: str, method: str, data: Any, request_body: bytes | None = None) -> None:
-    if method.upper() == "POST" and path.startswith("api/canvas-llm-tasks/") and path.endswith("/reconcile"):
-        from enterprise.generation_tasks import result_items
-        _record_task_response_resources(user, "api/image-task-query", TASK_TYPE_CANVAS_LLM, _canvas_task_id_from_path(path), [item["url"] for item in result_items(data)])
-        return
-    if method.upper() == "POST" and path.startswith(("api/canvas-image-tasks/", "api/canvas-video-tasks/")) and path.endswith("/reconcile"):
-        # Admin inspection preserves the original task owner's output rights.
-        _record_task_response_resources(user, "api/image-task-query", TASK_TYPE_CANVAS_VIDEO if path.startswith("api/canvas-video-tasks/") else TASK_TYPE_CANVAS_IMAGE, _canvas_task_id_from_path(path), data)
-        return
+    if method.upper() == "POST" and path.endswith("/reconcile"):
+        task_type = {"api/canvas-llm-tasks": TASK_TYPE_CANVAS_LLM, "api/canvas-image-tasks": TASK_TYPE_CANVAS_IMAGE,
+                     "api/canvas-video-tasks": TASK_TYPE_CANVAS_VIDEO}.get(path.rsplit("/", 2)[0])
+        if task_type:
+            # A reconcile response can be the result itself instead of a receipt envelope.
+            _record_task_response_resources(user, path, task_type, _canvas_task_id_from_path(path), data,
+                                            output_urls=_canvas_task_output_urls(data, direct=True))
+            return
     if (
         method.upper() in {"POST", "PUT", "PATCH", "DELETE"}
         and _record_asset_library_response_resources(user, path, method, request_body, data)
@@ -3162,11 +3180,8 @@ def _post_process_sync(
     if canvas_task_id and method == "GET" and status_code == 200:
         task_owner = edb.get_canvas_image_task_owner(canvas_task_id)
         if task_owner:
-            if path.startswith("api/canvas-llm-tasks/"):
-                from enterprise.generation_tasks import result_items
-                record_resource_urls_for_user(task_owner, path, [item["url"] for item in result_items(data)])
-            else:
-                record_resource_urls_for_user(task_owner, path, data)
+            output_urls = _canvas_task_output_urls(data)
+            record_resource_urls_for_user(task_owner, path, output_urls)
             upstream_task_id = str(data.get("upstream_task_id") or "") if isinstance(data, dict) else ""
             if upstream_task_id and not path.startswith(("api/canvas-video-tasks/", "api/canvas-llm-tasks/")):
                 _record_task_owner_safe(
@@ -3177,8 +3192,8 @@ def _post_process_sync(
                     upstream_task_id=upstream_task_id,
                     status=str(data.get("status") or ""),
                 )
-            if not path.startswith("api/canvas-llm-tasks/") and isinstance(data, dict) and str(data.get("status") or "").lower() == "succeeded":
-                record_history_payload_for_user_id(task_owner, path, data)
+            if output_urls and not path.startswith("api/canvas-llm-tasks/") and str(data.get("status") or "").lower() == "succeeded":
+                record_history_payload_for_user_id(task_owner, path, data, output_urls=output_urls)
 
     if status_code in (200, 201):
         _record_generic_task_owners_from_response(user, path, method, data, request_body)

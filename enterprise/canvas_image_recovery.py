@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from copy import deepcopy
+from functools import partial
 import logging
 import re
 import time
@@ -210,6 +211,14 @@ class CanvasImageRecovery:
         await asyncio.to_thread(self.journal.record_reconciliation, task_id, result.get("status", "unknown"), result.get("message", ""))
         return result
 
+    async def _plan_archive(self, task_id, receipt, meta, *, raw):
+        await asyncio.to_thread(
+            self.journal.record_image_request, task_id, receipt["index"],
+            {"state": "generated", "archive": meta, "generated_at": receipt.get("generated_at") or time.time(),
+             "reported_usage": {**(receipt.get("reported_usage") or {}), **reported_usage(raw)}},
+            recovering=True,
+        )
+
     async def _reconcile(self, task_id):
         record = await asyncio.to_thread(self.journal.get, task_id)
         if not record or record.get("type") != "online-image":
@@ -263,7 +272,10 @@ class CanvasImageRecovery:
             try:
                 from enterprise.task_credentials import credential_scope
                 with credential_scope(record):
-                    result = await self.query(providers[index], receipt["upstream_task_id"])
+                    result = await self.query(
+                        providers[index], receipt["upstream_task_id"],
+                        plan_archive=partial(self._plan_archive, task_id, receipt),
+                    )
                     from enterprise.task_credentials import task_error
                     result = {**result, **{key:task_error(result[key]) for key in ('message','error') if key in result}}
             except (HTTPException, httpx.HTTPError, ValueError, OSError) as exc:

@@ -11,6 +11,7 @@ Run from the repository root:
 import asyncio
 import json
 import os
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -263,6 +264,45 @@ async def _run_checks() -> None:
             {"status":"succeeded", "videos":["/assets/output/recovered-video.mp4"]})
         assert edb.get_resource_owner("/assets/output/recovered-video.mp4") == user_a["id"]
 
+        # Output fields grant access through both task reads. References in
+        # descriptive fields and an existing owner's resource stay protected.
+        unrelated = "/assets/output/unrelated-fixture.png"
+        other_output = "/assets/output/other-member-fixture.png"
+        edb.record_resource_owner(user_b["id"], other_output, "fixture")
+        history_record = {
+            "task_id": "canvas-img-a", "type": "online", "timestamp": 1234,
+            "images": ["/assets/output/continued-a.png"],
+            "params": {"note": unrelated},
+        }
+        interceptors._HISTORY_FILE.write_text(json.dumps([history_record]), encoding="utf-8")
+        for task_kind, task_id, method, suffix, result in (
+            ("image", "canvas-img-a", "GET", "", {"images": ["/assets/output/partial-a.png"]}),
+            ("comfy", "canvas-comfy-a", "GET", "", {"items": [
+                {"url": "/assets/output/produced-a.txt", "kind": "text", "text": unrelated},
+            ]}),
+            ("image", "canvas-img-a", "POST", "/reconcile", {"images": ["/assets/output/continued-a.png"]}),
+            ("video", "canvas-video-a", "POST", "/reconcile", {"videos": ["/assets/output/continued-a.mp4"]}),
+        ):
+            key = next(iter(result))
+            output = result[key][0]
+            resource = output["url"] if isinstance(output, dict) else output
+            # Known outputs may also include an existing resource. Its owner
+            # stays the same even when an administrator loads the response.
+            result[key].append(other_output)
+            result["message"] = unrelated
+            result["metadata"] = {"note": unrelated}
+            path = f"api/canvas-{task_kind}-tasks/{task_id}{suffix}"
+            status = "running" if task_kind == "image" and method == "GET" else "succeeded"
+            data = {"status": status, "result": result} if method == "GET" else {"status": status, **result}
+            await _post_process_json(interceptors, path, method, actor_admin, data)
+            assert edb.get_resource_owner(resource) == user_a["id"]
+            assert await interceptors.pre_process(resource.lstrip("/"), "GET", actor_a) is None
+            denied = await interceptors.pre_process(resource.lstrip("/"), "GET", actor_b)
+            assert denied is not None and denied.status_code == 404
+            assert edb.get_resource_owner(unrelated) is None
+            assert edb.get_resource_owner(other_output) == user_b["id"]
+        assert edb.get_history_owner(interceptors.history_id_for_record(history_record)) == user_a["id"]
+
         # Video tasks record task owner and output resource owner from the response.
         await _post_process_json(
             interceptors,
@@ -274,6 +314,14 @@ async def _run_checks() -> None:
         assert edb.get_task_owner("canvas_video", "video-task-a") == user_a["id"]
         assert edb.get_resource_owner("/assets/output/video-task-a.mp4") == user_a["id"]
         assert not interceptors.can_access_resource(actor_b, "/assets/output/video-task-a.mp4")
+
+
+def test_task_history_isolation():
+    result = subprocess.run(
+        [sys.executable, "-B", str(Path(__file__).resolve())], cwd=ROOT,
+        env=dict(os.environ, PYTHONUTF8="1"), text=True, encoding="utf-8", capture_output=True, timeout=40,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 if __name__ == "__main__":

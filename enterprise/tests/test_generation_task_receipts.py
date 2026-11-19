@@ -37,7 +37,7 @@ def test_submission_fact_and_local_archive_error_stay_unknown(tmp_path):
         assert receipt['reported_usage']['total_tokens']==17
         journal.recover()
         queries=[]
-        async def query(provider,key):
+        async def query(provider,key, *, plan_archive):
             queries.append(key)
             return {'status':'succeeded','images':['/output/restored.png'],'raw':{}}
         result=await CanvasImageRecovery(journal,lambda _:PROVIDER,query,lambda _:None).reconcile('canvas_img_a')

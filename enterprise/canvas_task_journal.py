@@ -8,6 +8,7 @@ Only task state/results are stored, not request payloads or provider settings.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import threading
@@ -91,7 +92,47 @@ class CanvasTaskJournal:
                 return None
             if not isinstance(data, dict) or data.get("id") != task_id or data.get("journal_version") != 1:
                 raise ValueError("Invalid canvas task record")
+            for field in ("result", "comfy_receipt", "comfy_queue", "reconciliation", "auto_recovery"):
+                if data.get(field) is not None and not isinstance(data[field], dict):
+                    raise ValueError(f"Invalid canvas task field: {field}")
+            receipts = data.get("provider_receipts")
+            if receipts is not None and (not isinstance(receipts, list) or any(
+                not isinstance(item, dict)
+                or item.get("state") is not None and not isinstance(item["state"], str)
+                or item.get("result") is not None and not isinstance(item["result"], dict)
+                for item in receipts
+            )):
+                raise ValueError("Invalid canvas task provider receipts")
+            if data.get("status") is not None and not isinstance(data["status"], str):
+                raise ValueError("Invalid canvas task status")
             return data
+
+    def _scan_records(self, counts: dict | None = None):
+        _assert_no_reparse(self.root, "CANVAS_TASK_ROOT")
+        # An absent directory is a new journal. An existing directory we
+        # cannot enumerate must fail the startup check, including on 3.14.
+        try:
+            paths = list(self.root.iterdir())
+        except FileNotFoundError:
+            return
+        for path in paths:
+            if not path.match("*.json"):
+                continue
+            if counts is not None:
+                performance.observe("startup.receipts_seen", 0)
+            try:
+                record = self.get(path.stem)
+            except (OSError, ValueError, PathRootsError) as exc:
+                if counts is not None:
+                    reason = "unreadable" if isinstance(exc, OSError) else "corrupt"
+                    counts[reason] = counts.get(reason, 0) + 1
+                    if counts[reason] <= 5:
+                        logging.getLogger(__name__).warning(
+                            "Canvas task record requires review: %r (%s)", path.name, reason,
+                        )
+                continue
+            if record is not None:
+                yield record
 
     def get_for_display(self, task_id: str) -> dict | None:
         record = self.get(task_id)
@@ -107,15 +148,10 @@ class CanvasTaskJournal:
         """Rebuild once; normal queue ticks do not scan history or copy result bodies."""
         with self._lock:
             if self._comfy_queue_index is None:
-                self._comfy_queue_index = {}
-                _assert_no_reparse(self.root, 'CANVAS_TASK_ROOT')
-                for path in self.root.glob('*.json'):
-                    try:
-                        record = self.get(path.stem)
-                        if record and record.get('type') == 'comfy':
-                            self._comfy_queue_index[record['id']] = self._queue_projection(record)
-                    except (ValueError, UnicodeError):
-                        continue
+                self._comfy_queue_index = {
+                    record['id']: self._queue_projection(record)
+                    for record in self._scan_records() if record.get('type') == 'comfy'
+                }
             return deepcopy(list(self._comfy_queue_index.values()))
 
     def claim_comfy_dispatch(self, task_id):
@@ -178,15 +214,7 @@ class CanvasTaskJournal:
 
     def pending_dispatches(self) -> list[dict]:
         with self._lock:
-            records = []
-            _assert_no_reparse(self.root, "CANVAS_TASK_ROOT")
-            for path in self.root.glob("*.json"):
-                try:
-                    record = self.get(path.stem)
-                except (ValueError, UnicodeError):
-                    continue
-                if pending_dispatch(record):
-                    records.append(record)
+            records = [record for record in self._scan_records() if pending_dispatch(record)]
             return sorted(records, key=lambda item: (item.get("created_at", 0), item["id"]))
 
     def reject_dispatch(self, task_id: str) -> None:
@@ -295,17 +323,8 @@ class CanvasTaskJournal:
     def recovery_candidates(self) -> list[dict]:
         """Startup-only index rebuild; normal queries do not rescan the directory."""
         from enterprise.accepted_task_recovery import recovery_candidate
-        records = []
         with self._lock:
-            _assert_no_reparse(self.root, "CANVAS_TASK_ROOT")
-            for path in self.root.glob("*.json"):
-                try:
-                    record = self.get(path.stem)
-                except (ValueError, UnicodeError):
-                    continue
-                if recovery_candidate(record):
-                    records.append(record)
-        return records
+            return [record for record in self._scan_records() if recovery_candidate(record)]
 
     def record_image_request(self, task_id: str, index: int, changes: dict, *, recovering=False) -> None:
         return self.record_provider_request(task_id, index, changes, recovering=recovering)
@@ -374,16 +393,8 @@ class CanvasTaskJournal:
         """Startup-only, before accepting traffic; no provider/network calls."""
         counts = {"interrupted": 0, "corrupt": 0}
         with self._lock:
-            _assert_no_reparse(self.root, "CANVAS_TASK_ROOT")
-            for path in self.root.glob("*.json"):
-                performance.observe("startup.receipts_seen", 0)
-                try:
-                    record = self.get(path.stem)
-                except (ValueError, UnicodeError):
-                    # Preserve damaged evidence; GET fails, never invent success.
-                    counts["corrupt"] += 1
-                    continue
-                if record is not None and record.get("status") in {"queued", "running"}:
+            for record in self._scan_records(counts):
+                if record.get("status") in {"queued", "running"}:
                     if pending_dispatch(record):
                         counts["queued"] = counts.get("queued", 0) + 1
                         continue
