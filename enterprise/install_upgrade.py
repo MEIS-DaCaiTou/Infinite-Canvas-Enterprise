@@ -332,18 +332,23 @@ class _Transaction:
                 _fail("INSTALL_UPGRADE_TOOL_CHANGED")
 
     def launcher(self, app_root, command):
+        rollback_controller = None
         if command == "start":
             if app_root.name == self.plan["target_release_id"]:
                 self.publish()
             elif app_root.name == self.plan["source_release_id"]:
                 self.database_identity(remember=True)
                 self.restore()
+                # The update engine has verified the installed controller. Its
+                # rollback entry uses the original Python and starts original
+                # service code under the restored pointer.
+                rollback_controller = self.roots.RELEASE_ROOT / self.plan["target_release_id"]
             else:
                 _fail()
             self.refresh(app_root.name)
         if command == "health" and app_root.name == self.plan["target_release_id"]:
             _checkpoint("target_health")
-        return mvp._run_launcher(app_root, command)
+        return mvp._run_launcher(app_root, command, rollback_controller=rollback_controller)
 
     def release_active(self):
         self.basics()
@@ -669,15 +674,18 @@ def recover_upgrade(*, install_root, release_dir, local_app_data_base, confirm_n
             os.link(files._io(tx.directory / "recovery-fence.json"), files._io(lock))
             marker = lifecycle._marker(lock)
         tx.state("ROLLING_BACK", job_id=job_id)
+        pointer = read_current_release_result_from_state_root(tx.roots.STATE_ROOT)
         target = tx.roots.RELEASE_ROOT / tx.plan["target_release_id"]
-        if target.exists():
+        if pointer.release.release_id == tx.plan["target_release_id"]:
             manifest = read_release_manifest_v2(target / "release-manifest.json")
-            if manifest.raw_sha256 != tx.plan["target_manifest_sha256"]:
+            if manifest.raw_sha256 != pointer.release.manifest_sha256 or manifest.raw_sha256 != tx.plan["target_manifest_sha256"]:
                 _fail()
             verify_materialized_release(target, inventory_path=target / "release-payload-inventory.json")
             code, details = mvp._run_launcher(target, "stop")
             if code != 0 or not details:
                 _fail("INSTALL_UPGRADE_TARGET_STOP_UNCONFIRMED")
+        elif pointer.release.manifest_sha256 != tx.plan["source_manifest_sha256"]:
+            _fail()
         lifecycle._runtime_quiescent(tx.roots)
         if lifecycle._database_contract(tx.roots) != tx.plan["database_contract"]:
             if plan["database_update"]["mode"] != "versioned-forward-migration":

@@ -335,7 +335,7 @@ def _public_runtime_snapshot(value: object, *, key: str = "") -> object:
     return value
 
 
-def execute_portable_command(*, app_root: Path, command: str) -> tuple[dict[str, object], int]:
+def execute_portable_command(*, app_root: Path, command: str, start_wait_seconds: int = 60) -> tuple[dict[str, object], int]:
     """Run one formal command through the existing STAB-1 lifecycle."""
 
     if command not in PORTABLE_COMMANDS:
@@ -471,7 +471,7 @@ def execute_portable_command(*, app_root: Path, command: str) -> tuple[dict[str,
         }, 2
     if command == "start":
         assert preflight is not None
-        payload = controller.start(preflight=preflight.result)
+        payload = controller.start(preflight=preflight.result, wait_seconds=start_wait_seconds)
         result = str(payload.get("result"))
         return _public_runtime_snapshot(payload), 0 if result in {"started", "already_running"} else 2
     if command == "stop":

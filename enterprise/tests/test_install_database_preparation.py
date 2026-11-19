@@ -48,7 +48,7 @@ def test_empty_wal_preflight_is_readonly_and_fenced_preparation_preserves_main_b
         return original(database, **kwargs)
     monkeypatch.setattr(upgrade.database_preparation, "_checkpoint_quiescent_database", checkpoint)
     if target_failure:
-        monkeypatch.setattr(upgrade.mvp, "_run_launcher", lambda app, command:
+        monkeypatch.setattr(upgrade.mvp, "_run_launcher", lambda app, command, **_:
             (2, {"code": "SYSTEM_UPDATE_TARGET_HEALTH_FAILED"})
             if command == "health" and app.name.startswith("ice-2026.07.7-") else (0, {"result": "stopped"}))
     result = upgrade.upgrade_retained(**arguments(f))

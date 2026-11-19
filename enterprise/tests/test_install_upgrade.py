@@ -84,7 +84,7 @@ def installed(tmp_path, monkeypatch):
     setup = tmp_path / "synthetic-setup.exe"; setup.write_bytes(b"MZ-unit-setup-not-executable")
     monkeypatch.setattr(lifecycle, "_runtime_quiescent", lambda _roots: None)
     calls = []
-    def launch(app_root, command):
+    def launch(app_root, command, **_):
         calls.append((app_root.name, command))
         return 0, {"result": "healthy" if command == "health" else "stopped" if command == "stop" else "started"}
     monkeypatch.setattr(upgrade.mvp, "_run_launcher", launch)
@@ -152,7 +152,7 @@ def test_page_upgraded_source_without_registration_uses_existing_entry_repair(in
     assert upgrade.inspect_upgrade(**args)["upgrade_state"] == "ELIGIBLE"
     installation = (roots.STATE_ROOT / "installation.json").read_bytes()
     if target_failure:
-        monkeypatch.setattr(upgrade.mvp, "_run_launcher", lambda app, command:
+        monkeypatch.setattr(upgrade.mvp, "_run_launcher", lambda app, command, **_:
             (2, {"code": "SYSTEM_UPDATE_TARGET_HEALTH_FAILED"})
             if command == "health" and app.name.startswith("ice-2026.07.7-")
             else (0, {"result": "stopped"}))
@@ -202,7 +202,7 @@ def test_stopped_wal_mode_source_does_not_gain_sidecars_from_shared_reads(instal
         assert conn.execute("PRAGMA journal_mode=WAL").fetchone()[0] == "wal"
     before = protected(f)
     if target_failure:
-        def launch(app_root, command):
+        def launch(app_root, command, **_):
             return (2, {"code": "SYSTEM_UPDATE_TARGET_HEALTH_FAILED"}) if command == "health" and app_root.name.startswith("ice-2026.07.7-") else (0, {"result": "stopped"})
         monkeypatch.setattr(upgrade.mvp, "_run_launcher", launch)
     if retained:
@@ -236,15 +236,42 @@ def test_interrupted_native_field_publication_recovers_original_objects_without_
 def test_target_health_failure_restores_native_objects_before_source_start(installed, monkeypatch):
     f = installed; root = f["roots"].INSTALL_ROOT
     before = files._file(root / "InfiniteCanvas.exe")
-    def launch(app_root, command):
+    def launch(app_root, command, *, rollback_controller=None):
         if app_root.name != f["roots"].APP_ROOT.name and command == "health":
             return 2, {"code": "RUNTIME_HEALTH_FAILED"}
         if app_root.name == f["roots"].APP_ROOT.name and command == "start":
             assert files._file(root / "InfiniteCanvas.exe") == before
+            assert rollback_controller.parent == f["roots"].RELEASE_ROOT
+            assert rollback_controller.name.startswith("ice-2026.07.7-")
+        else:
+            assert rollback_controller is None
         return 0, {"result": "ok"}
     monkeypatch.setattr(upgrade.mvp, "_run_launcher", launch)
     result = upgrade.upgrade_retained(**arguments(f))
     assert result["upgrade_state"] == "ROLLED_BACK" and files._file(root / "InfiniteCanvas.exe") == before
+
+
+def test_resume_rollback_with_source_pointer_already_restored(installed, monkeypatch):
+    f = installed
+    roots = f["roots"]
+
+    def launch(app_root, command, **_):
+        if command == "start":
+            return 2, {"code": "RUNTIME_CONTROL_ERROR", "failure_stage": "service_host_readiness_wait"}
+        return 0, {"result": "stopped"}
+
+    monkeypatch.setattr(upgrade.mvp, "_run_launcher", launch)
+    with pytest.raises(upgrade.InstallUpgradeError, match="INSTALL_UPGRADE_RECOVERY_REQUIRED"):
+        upgrade.upgrade_retained(**arguments(f))
+    assert upgrade.read_current_release_result_from_state_root(roots.STATE_ROOT).release.release_id == roots.APP_ROOT.name
+
+    def no_runtime_command(*args, **kwargs):
+        pytest.fail("Recovery must inspect quiescence without stopping the inactive candidate")
+
+    monkeypatch.setattr(upgrade.mvp, "_run_launcher", no_runtime_command)
+    assert upgrade.recover_upgrade(install_root=roots.INSTALL_ROOT, release_dir=f["target_assets"],
+        local_app_data_base=f["local"], confirm_no_active_tasks=True)["upgrade_state"] == "ROLLED_BACK"
+    assert not (roots.STATE_ROOT / upgrade.ACTIVE_NAME).exists()
 
 
 def source_support(fixture, damage="none"):
@@ -370,7 +397,7 @@ def test_damaged_cache_upgrade_failure_restores_original_program_and_cache(insta
     f = installed; root = f["roots"].INSTALL_ROOT; original = source_support(f, "checksum")
     business = protected(f); entry = files._file(root / "InfiniteCanvas.exe")
     if failure == "health":
-        monkeypatch.setattr(upgrade.mvp, "_run_launcher", lambda app, command:
+        monkeypatch.setattr(upgrade.mvp, "_run_launcher", lambda app, command, **_:
             (2, {"code": "RUNTIME_HEALTH_FAILED"}) if app != f["roots"].APP_ROOT and command == "health"
             else (0, {"result": "ok"}))
         result = upgrade.upgrade_retained(**arguments(f))

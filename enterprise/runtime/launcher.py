@@ -10,6 +10,7 @@ from pathlib import Path
 
 
 _COMMANDS = frozenset({"start", "stop", "restart", "status", "health"})
+_ROLLBACK_START = "rollback-start"
 
 
 def _blocked(code: str) -> int:
@@ -62,13 +63,18 @@ def _sanitize_python_environment() -> None:
     sys.dont_write_bytecode = True
 
 
-def _bootstrap_identity(script_path: Path) -> Path:
+def _bootstrap_identity(script_path: Path, *, rollback: bool = False) -> Path:
     script = script_path.absolute()
     if not _safe_existing_path(script, directory=False) or script.name != "launcher.py":
         raise RuntimeError("PORTABLE_BOOTSTRAP_INVALID")
-    app_root = script.parents[2]
-    if app_root.parent.name.casefold() != "releases" or not _safe_existing_path(app_root, directory=True):
+    controller_root = script.parents[2]
+    if controller_root.parent.name.casefold() != "releases" or not _safe_existing_path(controller_root, directory=True):
         raise RuntimeError("PORTABLE_RELEASE_LAYOUT_INVALID")
+    app_root = controller_root
+    if rollback:
+        app_root = Path(sys.executable).absolute().parent.parent
+        if not _same_path(app_root.parent, controller_root.parent) or _same_path(app_root, controller_root):
+            raise RuntimeError("PORTABLE_RELEASE_LAYOUT_INVALID")
     expected_python = app_root / "python" / "python.exe"
     if not _safe_existing_path(expected_python, directory=False):
         raise RuntimeError("PORTABLE_PYTHON_MISSING")
@@ -94,21 +100,27 @@ def _bootstrap_identity(script_path: Path) -> Path:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
-    if len(arguments) != 2 or arguments[0] != "portable" or arguments[1] not in _COMMANDS:
+    rollback = arguments == ["portable", _ROLLBACK_START]
+    if not rollback and (len(arguments) != 2 or arguments[0] != "portable" or arguments[1] not in _COMMANDS):
         return _blocked("RUNTIME_MODE_INVALID")
     if not _python_isolation_ready():
         return _blocked("PORTABLE_PYTHON_ISOLATION_REQUIRED")
     _sanitize_python_environment()
     try:
-        app_root = _bootstrap_identity(Path(__file__))
+        app_root = _bootstrap_identity(Path(__file__), rollback=rollback)
     except RuntimeError as exc:
         code = str(exc) if str(exc).isupper() and len(str(exc)) <= 64 else "PORTABLE_BOOTSTRAP_INVALID"
         return _blocked(code)
-    sys.path.insert(0, str(app_root))
+    sys.path.insert(0, str(Path(__file__).absolute().parents[2]))
     try:
         from enterprise.runtime.portable import execute_portable_command, stable_error_document
 
-        payload, exit_code = execute_portable_command(app_root=app_root, command=arguments[1])
+        if rollback:
+            # The source supervisor keeps its own readiness budget per role.
+            # Allow its gateway time to start after a slow upstream cold start.
+            payload, exit_code = execute_portable_command(app_root=app_root, command="start", start_wait_seconds=120)
+        else:
+            payload, exit_code = execute_portable_command(app_root=app_root, command=arguments[1])
     except BaseException as exc:
         try:
             payload = stable_error_document(exc)

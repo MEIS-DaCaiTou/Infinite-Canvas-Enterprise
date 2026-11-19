@@ -995,9 +995,13 @@ def _pointer_for(target: ReleaseManifestV2, previous_release_id: str | None) -> 
     )
 
 
-def _run_launcher(app_root: Path, command: str, *, timeout: int = 120) -> tuple[int, dict[str, Any]]:
+def _run_launcher(app_root: Path, command: str, *, timeout: int = 120,
+                  rollback_controller: Path | None = None) -> tuple[int, dict[str, Any]]:
     python = app_root / "python" / "python.exe"
-    launcher = app_root / "enterprise" / "runtime" / "launcher.py"
+    launcher = (rollback_controller or app_root) / "enterprise" / "runtime" / "launcher.py"
+    if rollback_controller is not None:
+        command = "rollback-start"
+        timeout = 240
     if not python.is_file() or not launcher.is_file():
         return 2, {"code": "SYSTEM_UPDATE_FORMAL_ENTRY_MISSING"}
     environment = dict(os.environ)
