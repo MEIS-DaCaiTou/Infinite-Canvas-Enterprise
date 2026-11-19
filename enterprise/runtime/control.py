@@ -9,7 +9,7 @@ import time
 import uuid
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from enterprise.path_safety import PathSafetyError, assert_no_reparse_ancestors
 
@@ -253,6 +253,26 @@ def _startup_failure_details(log_root: Path, instance_id: str, snapshot: dict[st
     return details
 
 
+def _startup_observation(snapshot: dict[str, Any], instance_id: str) -> dict[str, Any]:
+    state, lock = snapshot.get("runtime_state") or {}, snapshot.get("lock") or {}
+    result = {
+        "start_disposition": snapshot.get("start_disposition"),
+        "supervisor_current": snapshot.get("supervisor_identity_current"),
+        "owned_child_current": snapshot.get("owned_child_current"),
+    }
+    if state.get("supervisor_instance_id") == instance_id:
+        result.update({key: state.get(key) for key in (
+            "state", "release_id", "supervisor_pid", "supervisor_process_created_at",
+        )})
+        for role in ("upstream", "gateway"):
+            child = state.get(role) or {}
+            result[f"{role}_pid"] = child.get("pid")
+            result[f"{role}_process_created_at"] = child.get("process_created_at")
+    if lock.get("supervisor_instance_id") == instance_id:
+        result.update({key: lock.get(key) for key in ("lock_phase", "owner_pid", "owner_process_created_at")})
+    return result
+
+
 def inspect_runtime(config: SupervisorConfig) -> dict[str, Any]:
     """Read-only state, lock, listener ownership, and bounded HTTP health snapshot."""
     store = RuntimeStateStore(config.runtime_root)
@@ -458,7 +478,10 @@ class RuntimeController:
             return self.store.clear_stale_lock(expected_instance_id=lock.get("supervisor_instance_id"))
         return False
 
-    def reconcile_reboot_stale_runtime(self, snapshot: dict[str, Any], *, failed_instance_id: str | None = None) -> bool:
+    def reconcile_reboot_stale_runtime(
+        self, snapshot: dict[str, Any], *, failed_instance_id: str | None = None,
+        rollback_matches: Callable[[], bool] | None = None,
+    ) -> bool:
         """Settle an owned instance whose host and children have exited."""
 
         if self.config.runtime_mode != "portable-release":
@@ -548,11 +571,16 @@ class RuntimeController:
 
         def still_quiescent() -> bool:
             state_root = self.config.app_root.parent.parent / "state"
+            owns_failed_start = failed_instance_id is not None and same_process(owner, process_identity(os.getpid()))
             if maintenance_active(state_root) or os.path.lexists(state_root / "system-update-active.lock"):
                 # Update and rollback use the same launcher. A failed attempt can
-                # retire only its own adopted runtime, under the reconcile fence.
-                if failed_instance_id is None or not same_process(owner, process_identity(os.getpid())):
+                # be retired by its launcher or by the job that recorded it.
+                if not owns_failed_start and (
+                    failed_instance_id is None or rollback_matches is None or not rollback_matches()
+                ):
                     return False
+            elif rollback_matches is not None:
+                return False
             try:
                 if read_launch_context(self.config.runtime_root / LAUNCH_CONTEXT_FILENAME).identity != context.identity:
                     return False
@@ -564,7 +592,7 @@ class RuntimeController:
             parents = windows_process_parents()
             if parents is None:
                 return False
-            if failed_instance_id is None and owner is not None and owner.pid in parents:
+            if not owns_failed_start and owner is not None and owner.pid in parents:
                 launcher = process_identity(owner.pid)
                 if launcher is None or launcher.created_at <= owner.created_at:
                     return False
@@ -867,6 +895,7 @@ class RuntimeController:
                         supervisor_instance_id=instance_id,
                         host_exit_code=host_exit_code,
                         bootstrap_failure_category=failure_category,
+                        startup_observation=_startup_observation(current, instance_id),
                         **diagnostics,
                     )
                 except OSError:
@@ -886,7 +915,8 @@ class RuntimeController:
                    **_startup_failure_details(logs.root, instance_id, current, state_settled=state_settled)}
         try:
             logs.write("launcher.log", "service_host_start_failed", code="RUNTIME_CONTROL_ERROR",
-                       supervisor_instance_id=instance_id, **details)
+                       supervisor_instance_id=instance_id, startup_observation=_startup_observation(current, instance_id),
+                       **details)
         except OSError:
             pass
         raise RuntimeControlError("runtime service host startup timed out", public_details=details)

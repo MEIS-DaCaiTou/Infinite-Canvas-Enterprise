@@ -412,6 +412,20 @@ def execute_portable_command(*, app_root: Path, command: str) -> tuple[dict[str,
     if command == "start" and snapshot.get("start_disposition") in {"startup_in_progress", "stale_runtime_state"}:
         if controller.reconcile_reboot_stale_runtime(snapshot):
             snapshot = inspect_runtime(config)
+    if command == "stop" and preflight is not None and snapshot.get("start_disposition") in {
+        "startup_in_progress", "stale_runtime_state",
+    }:
+        from enterprise.ops.update.mvp import UpdateJobStore
+
+        store = UpdateJobStore(roots)
+        release_id = preflight.result.release_id
+        manifest_sha256 = preflight.result.release_manifest_sha256
+        failed_start = store.failed_target_start(release_id, manifest_sha256)
+        if failed_start and controller.reconcile_reboot_stale_runtime(
+            snapshot, failed_instance_id=failed_start[1],
+            rollback_matches=lambda: store.failed_target_start(release_id, manifest_sha256) == failed_start,
+        ):
+            snapshot = inspect_runtime(config)
     if manifest_error is not None:
         snapshot["release_manifest_v2_valid"] = False
         snapshot["release_manifest_error_code"] = str(getattr(manifest_error, "code", "CURRENT_RELEASE_INVALID"))

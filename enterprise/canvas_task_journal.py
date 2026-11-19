@@ -56,7 +56,6 @@ class CanvasTaskJournal:
             raise ValueError("Invalid canvas task identifier")
         path = self.root / (task_id + ".json")
         try:
-            _assert_no_reparse(self.root, "CANVAS_TASK_ROOT")
             _assert_no_reparse(path, "CANVAS_TASK_RECORD")
         except PathRootsError as exc:
             if exc.code != "PATH_LSTAT_FAILED":
@@ -388,8 +387,30 @@ class CanvasTaskJournal:
                 raise ValueError("Canvas text task is not running")
             self._write({**record, "llm_result":value, "updated_at":time.time()})
 
+    def recover_for_startup(self) -> tuple[dict, list[dict], list[dict]]:
+        from enterprise.accepted_task_recovery import recovery_candidate
+
+        accepted, pending, comfy = [], [], {}
+        valid_receipts = 0
+
+        def collect(record):
+            nonlocal valid_receipts
+            valid_receipts += 1
+            if recovery_candidate(record):
+                accepted.append(record)
+            if pending_dispatch(record):
+                pending.append(record)
+            if record.get("type") == "comfy":
+                comfy[record["id"]] = self._queue_projection(record)
+
+        with self._lock:
+            counts = self.recover(observe_record=collect)
+            self._comfy_queue_index = comfy
+        counts["valid_receipts"] = valid_receipts
+        return counts, accepted, sorted(pending, key=lambda record: (record.get("created_at", 0), record["id"]))
+
     @performance.timed("startup.receipt_scan")
-    def recover(self) -> dict:
+    def recover(self, *, observe_record=None) -> dict:
         """Startup-only, before accepting traffic; no provider/network calls."""
         counts = {"interrupted": 0, "corrupt": 0}
         with self._lock:
@@ -397,16 +418,18 @@ class CanvasTaskJournal:
                 if record.get("status") in {"queued", "running"}:
                     if pending_dispatch(record):
                         counts["queued"] = counts.get("queued", 0) + 1
-                        continue
-                    previous = record["status"]
-                    self._write({
-                        **record, "status": "failed", "recovery_required": True,
-                        "interrupted_status": previous,
-                        "error_code": "runtime_interrupted",
-                        "error": "服务重启中断了本地任务跟踪；请核对供应商结果后再决定是否重新提交。",
-                        "updated_at": time.time(),
-                    })
-                    counts["interrupted"] += 1
+                    else:
+                        record = {
+                            **record, "status": "failed", "recovery_required": True,
+                            "interrupted_status": record["status"],
+                            "error_code": "runtime_interrupted",
+                            "error": "服务重启中断了本地任务跟踪；请核对供应商结果后再决定是否重新提交。",
+                            "updated_at": time.time(),
+                        }
+                        self._write(record)
+                        counts["interrupted"] += 1
+                if observe_record is not None:
+                    observe_record(record)
         return counts
 
 

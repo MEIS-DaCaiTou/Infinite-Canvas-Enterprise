@@ -62,11 +62,13 @@ class AcceptedTaskRecovery:
         self._wake = asyncio.Event()
         self._closed = True
 
-    async def start(self):
+    async def start(self, records=None):
         if self._runner:
             return
         self._closed = False
-        for record in await asyncio.to_thread(self.journal.recovery_candidates):
+        if records is None:
+            records = await asyncio.to_thread(self.journal.recovery_candidates)
+        for record in records:
             if (record.get("auto_recovery") or {}).get("status") != "manual":
                 self.notify(record["id"], (record.get("auto_recovery") or {}).get("next_query_at") or 0)
         self._runner = asyncio.create_task(self._run())

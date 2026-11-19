@@ -305,6 +305,39 @@ class UpdateJobStore:
             raise UpdateMvpError("SYSTEM_UPDATE_STATE_INVALID")
         return payload
 
+    def failed_target_start(self, release_id: str, manifest_sha256: str) -> tuple[str, str] | None:
+        """Identify the failed start recorded by the active rollback job."""
+        try:
+            assert_no_reparse_ancestors(self.lock_path)
+            fence = _bounded_json(self.lock_path, 16 * 1024, missing="SYSTEM_UPDATE_LOCK_MISSING", invalid="SYSTEM_UPDATE_LOCK_INVALID")
+            if fence.get("schema_version") != LOCK_SCHEMA:
+                return None
+            job_id = self.validate_job_id(fence.get("job_id"))
+            assert_no_reparse_ancestors(self.job_root(job_id) / "status.json")
+            assert_no_reparse_ancestors(self.job_root(job_id) / "plan.json")
+            status, plan = self.read_status(job_id), self.read_plan(job_id)
+        except (OSError, PathSafetyError, UpdateMvpError):
+            return None
+        if (
+            status["state"] not in {"ROLLING_BACK", "RECOVERY_REQUIRED"}
+            or status.get("target_release_id") != release_id
+            or plan.get("target_release_id") != release_id
+            or plan.get("target_manifest_sha256") != manifest_sha256
+            or status.get("actor_user_id") != plan.get("actor_user_id")
+        ):
+            return None
+        phases = status.get("runtime_phases")
+        attempt = phases.get("target_start") if isinstance(phases, dict) else None
+        if not isinstance(attempt, dict) or attempt.get("command") != "start" or attempt.get("release_id") != release_id:
+            return None
+        instance_id = attempt.get("startup_instance_id")
+        if (
+            type(attempt.get("launcher_exit_code")) is int and attempt["launcher_exit_code"] != 0
+            and isinstance(instance_id, str) and JOB_ID_RE.fullmatch(instance_id)
+        ):
+            return job_id, instance_id
+        return None
+
     def active_handoff_reservation(self, job_id: str, source_release_id: str) -> tuple[int, int]:
         """Read the API reservation without adopting, creating or unlocking it.
 

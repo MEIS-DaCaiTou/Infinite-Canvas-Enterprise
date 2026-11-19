@@ -15,6 +15,18 @@ namespace InfiniteCanvas.Native {
                 if (args.Length == 0) {
                     Application.EnableVisualStyles(); Application.Run(new LauncherForm()); return 0;
                 }
+                if (args[0] == "--export-diagnostics") {
+                    var diagnosticOptions = Core.Options(args, new[] { "--export-diagnostics" },
+                        new[] { "--install-root", "--archive-file", "--setup-log", "--setup-code" });
+                    var operation = new Dictionary<string, object>();
+                    string value, setupLog;
+                    if (diagnosticOptions.TryGetValue("--setup-code", out value)) operation["code"] = value;
+                    diagnosticOptions.TryGetValue("--setup-log", out setupLog);
+                    string installRoot = diagnosticOptions.TryGetValue("--install-root", out value)
+                        ? value : AppDomain.CurrentDomain.BaseDirectory;
+                    NativeDiagnostics.Export(diagnosticOptions["--archive-file"], installRoot, operation, setupLog);
+                    return 0;
+                }
                 var options = Core.Options(args, new[] { "--identity", "--tool-info", "--start", "--stop", "--restart", "--status", "--health" }, new[] { "--install-root", "--result-file" });
                 var command = options.Keys.Where(k => k != "--install-root" && k != "--result-file").ToArray();
                 if (command.Length != 1) throw Core.Block("NATIVE_ARGUMENT_INVALID");
@@ -72,12 +84,18 @@ namespace InfiniteCanvas.Native {
                 string command = pair.Item2; button.Click += async (s, e) => await Run(command); buttons.Controls.Add(button);
             }
             var export = new Button { Text = "导出诊断", Width = 105, Height = 38 };
-            export.Click += (s, e) => {
-                if (lastResult == null) { state.Text = "请先查看状态或执行操作，再导出诊断摘要。"; return; }
+            export.Click += async (s, e) => {
                 using (var dialog = new SaveFileDialog { Filter = "诊断 ZIP|*.zip", FileName = "canvas-native-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".zip", OverwritePrompt = true }) {
                     if (dialog.ShowDialog(this) != DialogResult.OK) return;
-                    try { Core.ExportReport(dialog.FileName, lastResult); state.Text = "诊断摘要已导出；完整运行日志可在管理后台更新中心导出。"; }
+                    busy = true; buttons.Enabled = false;
+                    var operation = lastResult ?? new Dictionary<string, object>();
+                    string path = dialog.FileName;
+                    try {
+                        await Task.Run(() => NativeDiagnostics.Export(path, AppDomain.CurrentDomain.BaseDirectory, operation));
+                        state.Text = "故障诊断 ZIP 已保存。可将整个文件交给维护人员。";
+                    }
                     catch (Exception exc) { state.Text = "导出未完成：" + Core.Code(exc); }
+                    finally { busy = false; buttons.Enabled = true; }
                 }
             }; buttons.Controls.Add(export);
             Controls.Add(buttons);
@@ -89,7 +107,8 @@ namespace InfiniteCanvas.Native {
                 var result = await Task.Run(() => LauncherProgram.Execute(AppDomain.CurrentDomain.BaseDirectory, command, quickStatus: true));
                 lastResult = result;
                 int exit = Convert.ToInt32(result["worker_exit_code"]);
-                state.Text = exit == 0 ? "操作完成。" + (result.ContainsKey("state") ? "服务状态：" + result["state"] : "") + " 关闭本窗口不停止服务。" : "操作未完成，请导出诊断摘要。";
+                state.Text = exit == 0 ? "操作完成。" + (result.ContainsKey("state") ? "服务状态：" + result["state"] : "") + " 关闭本窗口不停止服务。" :
+                    "操作未完成。" + (result.ContainsKey("code") ? "错误代码：" + result["code"] + "。" : "") + "请导出故障诊断 ZIP。";
                 if (exit == 0 && command == "status" && result.ContainsKey("inspection_source"))
                     state.Text = "已识别当前服务实例。服务状态为 " + result["state"] + "。程序完整性在启动和重启时校验。";
                 string url = Core.BrowserUrl(result);

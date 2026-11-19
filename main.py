@@ -271,26 +271,25 @@ async def startup_event():
         ensure_runtime_config_files()
     # Persisted receipts survive process replacement. Ambiguous external work
     # is exposed for reconciliation, never automatically submitted twice.
-    task_recovery = await performance.startup_stage("task_receipts", CANVAS_TASK_JOURNAL.recover)
-    if any(task_recovery.values()):
+    with performance.startup_phase("task_receipts") as counts:
+        task_recovery, accepted, pending = await asyncio.to_thread(CANVAS_TASK_JOURNAL.recover_for_startup)
+        counts.update(task_recovery)
+    if any(value for key, value in task_recovery.items() if key != "valid_receipts"):
         logging.getLogger(__name__).warning("Canvas task recovery: %s", task_recovery)
-    # 启动时整理资产库：给所有图片分组（含默认角色/场景）建好文件夹，并把根目录里的旧素材归整进去。
-    try:
-        await performance.startup_stage("asset_directories", migrate_asset_library_into_dirs)
-    except Exception as exc:
-        print(f"资产库分组整理失败: {exc}")
-    # 修复历史遗留的双重扩展名素材（foo.png.png → foo.png），否则这些卡片无法显示
-    try:
-        await performance.startup_stage("double_extensions", migrate_double_extension_uploads)
-    except Exception as exc:
-        print(f"修复双重扩展名素材失败: {exc}")
-    # 纠正内容与扩展名不符的图片（如 WebP 内容却叫 .png），否则严格客户端解不出来
-    try:
-        await performance.startup_stage("image_extensions", migrate_mislabeled_image_extensions)
-    except Exception as exc:
-        print(f"纠正图片扩展名失败: {exc}")
-    await performance.startup_stage("accepted_recovery", CANVAS_ACCEPTED_RECOVERY.start, threaded=False)
-    await performance.startup_stage("pending_dispatch", CANVAS_TASK_DISPATCH.start, threaded=False)
+    # An installer can roll back a trial runtime before it accepts traffic.
+    # Legacy asset moves belong to a normal startup of the committed release.
+    if not maintenance_active(PATH_ROOTS.STATE_ROOT):
+        for stage, repair, label in (
+            ("asset_directories", migrate_asset_library_into_dirs, "资产库分组整理"),
+            ("double_extensions", migrate_double_extension_uploads, "修复双重扩展名素材"),
+            ("image_extensions", migrate_mislabeled_image_extensions, "纠正图片扩展名"),
+        ):
+            try:
+                await performance.startup_stage(stage, repair)
+            except Exception as exc:
+                print(f"{label}失败: {exc}")
+    await performance.startup_stage("accepted_recovery", lambda: CANVAS_ACCEPTED_RECOVERY.start(accepted), threaded=False)
+    await performance.startup_stage("pending_dispatch", lambda: CANVAS_TASK_DISPATCH.start(pending), threaded=False)
 
 @app.on_event("shutdown")
 async def shutdown_task_recovery():

@@ -94,6 +94,7 @@ var
   StopConfirmation, DesktopOption, LaunchOption: TNewCheckBox;
   InstallProgress: TOutputProgressWizardPage;
   DetachButton, StatusButton: TNewButton;
+  DiagnosticButton: TNewButton;
   SelectedInstallRoot: String;
   BundleRoot: String;
   LastStableCode: String;
@@ -965,6 +966,32 @@ begin
     (MaintenanceOperation <> 'inspect-upgrade') and not IsCacheOperation;
 end;
 
+procedure ExportSetupDiagnostics(Sender: TObject);
+var
+  ArchivePath, ToolPath, Arguments: String;
+  ExitCode: Integer;
+begin
+  ArchivePath := 'canvas-setup-' + GetDateTimeString('yyyymmdd-hhnnss', '', '') + '.zip';
+  if not GetSaveFileName('保存故障诊断 ZIP', ArchivePath, '',
+      '诊断 ZIP (*.zip)|*.zip', 'zip') then exit;
+  try
+    ToolPath := AddBackslash(BundleRoot) + 'native-entry\InfiniteCanvas.exe';
+    if not FileExists(ToolPath) then begin
+      ToolPath := ExpandConstant('{tmp}\InfiniteCanvas.exe');
+      if not FileExists(ToolPath) then ExtractTemporaryFile('InfiniteCanvas.exe');
+    end;
+    RequireEmbeddedFile(ToolPath, '{#NativeEntrySha256}', StrToInt64('{#NativeEntrySize}'));
+    Arguments := '--export-diagnostics --install-root "' + SelectedInstallRoot +
+      '" --archive-file "' + ArchivePath + '" --setup-log "' + ExpandConstant('{log}') +
+      '" --setup-code "' + LastStableCode + '"';
+    if not Exec(ToolPath, Arguments, ExpandConstant('{tmp}'), SW_HIDE, ewWaitUntilTerminated, ExitCode)
+       or (ExitCode <> 0) then RaiseException('INSTALL_DIAGNOSTICS_EXPORT_FAILED');
+    MsgBox('故障诊断 ZIP 已保存。', mbInformation, MB_OK);
+  except
+    MsgBox('导出未完成。请选择本机可写位置和新文件名。' + #13#10 + GetExceptionMessage, mbError, MB_OK);
+  end;
+end;
+
 procedure InitializeWizard;
 begin
   FindRegisteredInstall;
@@ -1064,6 +1091,13 @@ begin
   DetachButton.Top := InstallProgress.SurfaceHeight - DetachButton.Height;
   DetachButton.OnClick := @DetachProgress;
   DetachButton.Visible := False;
+  DiagnosticButton := TNewButton.Create(WizardForm);
+  DiagnosticButton.Parent := WizardForm;
+  DiagnosticButton.Caption := '导出诊断';
+  DiagnosticButton.SetBounds(ScaleX(16), WizardForm.CancelButton.Top,
+    ScaleX(104), WizardForm.CancelButton.Height);
+  DiagnosticButton.OnClick := @ExportSetupDiagnostics;
+  DiagnosticButton.Visible := False;
   if HeadlessLifecycle then begin
     SelectedInstallRoot := HeadlessRoot;
     ExistingEntryRepair := True;
@@ -1091,6 +1125,7 @@ end;
 
 procedure CurPageChanged(CurPageID: Integer);
 begin
+  if CurPageID <> wpPreparing then DiagnosticButton.Visible := False;
   if CurPageID = wpReady then begin
     StopConfirmation.Visible := RequiresStoppedService;
     StopConfirmation.Checked := False;
@@ -1535,7 +1570,7 @@ begin
         exit;
       end;
       if UpgradeState = 'ROLLED_BACK' then begin
-        Result := '离线升级已恢复来源版本和原工具；业务数据未恢复旧备份。请检查原入口后再决定升级，不会登记目标版本。';
+        Result := '离线升级未完成，已还原来源版本和原工具。可导出诊断 ZIP，再从原入口确认服务。';
         exit;
       end;
       RaiseException('INSTALL_UPGRADE_RECOVERY_REQUIRED');
@@ -1587,6 +1622,7 @@ begin
     CredentialPage.Values[1] := '';
     CredentialPage.Values[2] := '';
     InstallProgress.Hide;
+    DiagnosticButton.Visible := (Result <> '') and ExistingEntryRepair;
   end;
 end;
 

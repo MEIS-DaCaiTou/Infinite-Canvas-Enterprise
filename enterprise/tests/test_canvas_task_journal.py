@@ -86,6 +86,28 @@ def test_corrupt_record_is_preserved_and_reported_not_silently_dropped(tmp_path)
         journal.get("broken")
 
 
+def test_startup_reuses_one_scan_for_recovery_dispatch_and_queue(tmp_path, monkeypatch):
+    journal = CanvasTaskJournal(tmp_path)
+    journal.create({**record("waiting"), "dispatch_version": 1, "created_at": 2})
+    journal.create({**record("comfy"), "type": "comfy", "dispatch_version": 1, "created_at": 1})
+    journal.create(record("in_flight"))
+    assert journal.mark_running("in_flight")
+    get_record = journal.get
+    read_ids = []
+
+    def read(task_id):
+        read_ids.append(task_id)
+        return get_record(task_id)
+
+    monkeypatch.setattr(journal, "get", read)
+    counts, accepted, pending = journal.recover_for_startup()
+    assert counts == {"interrupted": 1, "corrupt": 0, "queued": 2, "valid_receipts": 3}
+    assert not accepted
+    assert [item["id"] for item in pending] == ["comfy", "waiting"]
+    assert [item["id"] for item in journal.comfy_queue_records()] == ["comfy"]
+    assert sorted(read_ids) == ["comfy", "in_flight", "waiting"]
+
+
 @pytest.mark.parametrize("task_id", ["../outside", "x/y", "x\\y", "", "x" * 161])
 def test_record_path_cannot_escape_root(tmp_path, task_id):
     with pytest.raises(ValueError):
