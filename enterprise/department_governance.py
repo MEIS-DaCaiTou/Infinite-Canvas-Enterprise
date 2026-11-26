@@ -13,6 +13,7 @@ import uuid
 
 from enterprise import db
 from enterprise.credential_vault import WindowsCredentialVault, VaultUnavailable
+from enterprise.credential_pool import encode_keys, decode_keys
 from enterprise.security_audit import append_security_audit_event, SecurityAuditError
 
 
@@ -90,6 +91,9 @@ class DepartmentGovernance:
         except (sqlite3.Error, SecurityAuditError) as exc:
             conn.rollback()
             raise GovernanceError('DEPARTMENT_STORAGE_UNAVAILABLE', 503) from exc
+        except VaultUnavailable as exc:
+            conn.rollback()
+            raise GovernanceError('CREDENTIAL_VAULT_UNAVAILABLE', 503) from exc
         except Exception:
             conn.rollback()
             raise
@@ -291,8 +295,14 @@ class DepartmentGovernance:
         with self.session(principal) as (conn, actor):
             rows = conn.execute('SELECT * FROM credential_sources ORDER BY scope DESC,name,id').fetchall()
             if manage:
-                return [dict(row) for row in rows if _company(actor) or
-                        (row['scope'] == 'department' and _manages(conn, actor, row['department_id']))]
+                result = []
+                for row in rows:
+                    if _company(actor) or (row['scope'] == 'department' and _manages(conn, actor, row['department_id'])):
+                        revision = conn.execute('SELECT sealed_secret FROM credential_revisions WHERE id=? AND source_id=?',
+                                                (row['current_revision'], row['id'])).fetchone()
+                        keys = decode_keys(self.vault.open(bytes(revision[0]), row['id'] + ':' + row['current_revision']))
+                        result.append({**dict(row), 'key_count': len(keys)})
+                return result
             return [dict(row) for row in rows if self._source_access(conn, actor, row)]
 
     def source_preview(self, principal, provider_id):
@@ -319,7 +329,7 @@ class DepartmentGovernance:
         source_id, revision = uuid.uuid4().hex, uuid.uuid4().hex
         with self.session(principal, write=True) as (conn, actor):
             _require(_company(actor) if scope == 'company' else _manages(conn, actor, department_id))
-            encrypted = self.vault.seal(secret, source_id + ':' + revision)
+            encrypted = self.vault.seal(encode_keys(secret), source_id + ':' + revision)
             conn.execute('INSERT INTO credential_sources '
                          '(id,provider_id,name,scope,department_id,procurement,account_ref,current_revision) '
                          'VALUES (?,?,?,?,?,?,?,?)',
@@ -339,7 +349,7 @@ class DepartmentGovernance:
         with self.session(principal, write=True) as (conn, actor):
             source = self._managed_source(conn, actor, source_id)
             _require(source['current_revision'] == expected_revision, 'CREDENTIAL_REVISION_CONFLICT', 409)
-            encrypted = self.vault.seal(secret, source_id + ':' + revision)
+            encrypted = self.vault.seal(encode_keys(secret), source_id + ':' + revision)
             conn.execute('INSERT INTO credential_revisions VALUES (?,?,?,?)',
                          (revision, source_id, encrypted, int(time.time())))
             conn.execute('UPDATE credential_sources SET current_revision=? WHERE id=?', (revision, source_id))
@@ -395,9 +405,10 @@ class DepartmentGovernance:
                        'ORDER BY scope DESC,name,id', (provider_id,)) if self._source_access(conn, actor, r)]
             chosen = next((r for r in sources if r['id'] == source_id), None) if source_id else next(iter(sources), None)
             _require(chosen, 'NO_AUTHORIZED_CALL_SOURCE', 403)
-            revision = conn.execute('SELECT 1 FROM credential_revisions WHERE id=? AND source_id=?',
+            revision = conn.execute('SELECT sealed_secret FROM credential_revisions WHERE id=? AND source_id=?',
                                     (chosen['current_revision'], chosen['id'])).fetchone()
             _require(revision, 'CREDENTIAL_REVISION_UNAVAILABLE', 503)
+            keys = decode_keys(self.vault.open(bytes(revision[0]), chosen['id'] + ':' + chosen['current_revision']))
             snap = {'task_id':task_id, 'user_id':actor['id'],
                     'department_id':member['department_id'] if member else None, 'project_id':project_id,
                     'provider_id':provider_id, 'model':model, 'source_id':chosen['id'],
@@ -405,6 +416,13 @@ class DepartmentGovernance:
                     'account_ref':chosen['account_ref'], 'revision_id':chosen['current_revision']}
             snap['pricing_version'] = pricing_version  # Unknown pricing stays explicit; no guessed rate.
             snap['expected_attempts'] = expected_attempts
+            if len(keys) > 1:
+                # Read the last append-only binding, rather than counting the
+                # growing history on every task. HTTP never holds this lock.
+                previous = conn.execute('SELECT snapshot_json FROM generation_billing_context '
+                                        'WHERE source_id=? AND revision_id=? ORDER BY rowid DESC LIMIT 1',
+                                        (chosen['id'], chosen['current_revision'])).fetchone()
+                snap['credential_slot'] = (json.loads(previous[0]).get('credential_slot', 0) + 1) % len(keys) if previous else 0
             conn.execute('INSERT INTO generation_billing_context VALUES (?,?,?,?,?,?,?,?)',
                 (task_id, actor['id'], snap['department_id'], project_id, chosen['id'], chosen['current_revision'],
                  json.dumps(snap, ensure_ascii=False), int(time.time())))
@@ -419,11 +437,14 @@ class DepartmentGovernance:
         """
         conn = self.connect()
         try:
-            row = conn.execute('SELECT c.source_id,c.revision_id,r.sealed_secret FROM generation_billing_context c '
+            row = conn.execute('SELECT c.source_id,c.revision_id,r.sealed_secret,c.snapshot_json FROM generation_billing_context c '
                                'JOIN credential_revisions r ON r.id=c.revision_id AND r.source_id=c.source_id '
                                'WHERE c.task_id=?', (identifier(task_id),)).fetchone()
             _require(row, 'TASK_CREDENTIAL_BINDING_REQUIRED', 409)
-            return self.vault.open(bytes(row[2]), row[0] + ':' + row[1])
+            keys = decode_keys(self.vault.open(bytes(row[2]), row[0] + ':' + row[1]))
+            slot = json.loads(row[3]).get('credential_slot', 0)
+            _require(type(slot) is int and 0 <= slot < len(keys), 'TASK_CREDENTIAL_UNAVAILABLE', 503)
+            return keys[slot]
         except VaultUnavailable as exc:
             raise GovernanceError('TASK_CREDENTIAL_UNAVAILABLE', 503) from exc
         finally:

@@ -1,6 +1,9 @@
 /* Presentation-only vocabulary. User names, department names and provider data stay intact. */
 (function(){
     const phrases = {
+        "个 Key":"keys", "API Key（每行一个）":"API keys (one per line)", "新 API Key（每行一个）":"New API keys (one per line)",
+        "每行填写一个 API Key":"Enter one API key per line",
+        "同渠道多个 Key 按新任务轮换分配；已提交任务继续使用原 Key。多个 Key 是否独享额度，以供应商账号规则为准。":"New tasks rotate across this channel's keys; accepted tasks keep their original key. Independent quotas depend on the provider account.",
         "算力与队列":"Compute & Queue", "管理 ComfyUI 算力、用户限额和工作流排队":"Manage ComfyUI capacity, user limits and workflow queues", "保存设置":"Save settings", "当前任务":"Current tasks",
         "管理后台 · 无限画布企业版":"Administration · Infinite Canvas Enterprise",
         "加载中…":"Loading…", "用户覆盖":"User overrides", "请选择用户":"Select a user", "为单个用户设置 inherit / allow / deny。inherit 表示继承全局默认值。":"Set inherit, allow or deny for a user. Inherit uses the global default.", "状态：正常优先":"Status: active first", "每页条数":"Rows per page", "上一页":"Previous", "下一页":"Next", "全部":"All",

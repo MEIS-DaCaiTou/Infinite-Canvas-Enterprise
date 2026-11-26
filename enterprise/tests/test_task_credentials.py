@@ -74,6 +74,43 @@ def test_two_parallel_runners_keep_distinct_credentials(bound):
     assert not binding.credential_bound()
 
 
+def test_pool_round_robin_is_atomic_persistent_and_frozen_per_task(bound):
+    from concurrent.futures import ThreadPoolExecutor
+    from enterprise.department_governance import DepartmentGovernance
+    service,p,design,ops,journal,company,department,create=bound
+    service.rotate_source(p['design'],department['id'],department['revision'],
+                          'fixture-pool-a\nfixture-pool-b\nfixture-pool-c\nfixture-pool-a')
+    with ThreadPoolExecutor(max_workers=6) as workers:
+        records=list(workers.map(lambda index:create('pool-task-'+str(index)),range(6)))
+    slots=[record['billing_context']['snapshot']['credential_slot'] for record in records]
+    assert sorted(slots)==[0,0,1,1,2,2]
+    assert service.sources(p['design'],manage=True)[0]['key_count']==3
+    reopened=DepartmentGovernance(connect=service.connect)
+    for record in records:
+        original=record['billing_context']['snapshot']
+        again=reopened.accept_context(p['employee'],task_id=record['id'],provider_id='comfly',model='gpt-image-2')
+        assert again==original
+        with binding.credential_scope(record,service=reopened):
+            assert binding.scoped_api_key(PROVIDER)==['fixture-pool-a','fixture-pool-b','fixture-pool-c'][original['credential_slot']]
+    next_record=create('pool-task-after-restart')
+    assert next_record['billing_context']['snapshot']['credential_slot']==0
+    assert 'fixture-pool' not in json.dumps(records+service.sources(p['design'],manage=True))
+
+
+def test_pool_rotation_does_not_change_original_query_key_or_permissions(bound):
+    service,p,design,ops,journal,company,department,create=bound
+    revised=service.rotate_source(p['design'],department['id'],department['revision'],'fixture-pool-a\nfixture-pool-b')
+    create('pool-first')
+    record=create('pool-second')
+    assert record['billing_context']['snapshot']['credential_slot']==1
+    service.rotate_source(p['design'],department['id'],revised['revision'],'fixture-new-a\nfixture-new-b')
+    service.assign_member(p['admin'],ops,'employee')
+    with binding.credential_scope(record,service=service):
+        assert binding.scoped_api_key(PROVIDER)=='fixture-pool-b'
+    with pytest.raises(HTTPException):
+        create('pool-cross-department',department['id'])
+
+
 def test_revocation_stops_unsubmitted_task_without_company_fallback(bound):
     service,p,design,ops,journal,company,department,create=bound
     record=create()

@@ -55,6 +55,24 @@ def replace_refs(text,mapping):
     return text
 
 
+def test_layer_zip_keeps_manifest_file_mapping_and_all_requested_layers(tmp_path):
+    scope=media_scope(tmp_path)
+    (tmp_path/'output/layer.png').write_bytes(b'layer fixture')
+    document={'version':1,'width':1000,'height':760,'layers':[{'id':'one','x':10,'visible':False}]}
+    payload=SimpleNamespace(urls=[],items=[{'url':'/output/layer.png','name':'layer-001.png'},
+        {'url':'/output/layer.png','name':'layer-002.png'}],filename='layers.zip',manifest=document)
+    response=asyncio.run(scope['download_canvas_assets'](payload))
+    with zipfile.ZipFile(BytesIO(response.body)) as archive:
+        assert set(archive.namelist())=={'layer-001.png','layer-002.png','layers.json'}
+        saved=json.loads(archive.read('layers.json'))
+        assert saved['document']==document
+        assert [row['file'] for row in saved['files']]==['layer-001.png','layer-002.png']
+    scope['fetch_remote_media_bytes']=lambda _:None
+    payload.items.append({'url':'/output/missing.png','name':'missing.png'})
+    with pytest.raises(HTTPException,match='部分图层'):
+        asyncio.run(scope['download_canvas_assets'](payload))
+
+
 @pytest.mark.parametrize('url', ['http://127.0.0.1:18001/api/config/token','http://[::1]/',
     'http://2130706433/','http://127.1/','http://10.0.0.1/','http://169.254.169.254/',
     'http://[::ffff:127.0.0.1]/','http://user:password@public.example/'])

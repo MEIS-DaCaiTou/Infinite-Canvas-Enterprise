@@ -16,7 +16,7 @@ from enterprise import db
 from enterprise.department_governance import DepartmentGovernance, GovernanceError
 from enterprise.department_costs import DepartmentCosts
 from enterprise.canvas_image_recovery import provider_scope
-from enterprise.providers.zhenzhen import is_zhenzhen
+from enterprise.providers.suppliers import supports_managed_source
 from enterprise.runtime.logging import redact_text
 
 _binding = ContextVar('task_credential_binding', default=None)
@@ -44,8 +44,8 @@ def prepare_task_binding(service, record, selection, user_id, provider):
         conn.close()
     if not configured and not explicit:
         return None  # Existing global settings are adopted only by an administrator.
-    if not is_zhenzhen(provider):
-        raise HTTPException(400, '当前来源接线仅支持已验证的贞贞HTTP协议')
+    if not supports_managed_source(provider):
+        raise HTTPException(400, '当前来源接线支持贞贞平台和火山方舟HTTP协议')
     safe_provider = provider_scope(provider)
     actor = db.get_user_by_id(user_id)
     if not actor:
@@ -108,7 +108,7 @@ def task_error(value):
 
 
 def require_bound_generation(provider):
-    if credential_bound() or not is_zhenzhen(provider):
+    if credential_bound() or not supports_managed_source(provider):
         return
     conn = db.get_db()
     try:

@@ -133,6 +133,8 @@ html.studio-theme-dark body .recommend-tag.recommend-perk-tag svg { color:#b98cf
 .field-frame.is-disabled { background:var(--soft); border-color:var(--line); cursor:not-allowed; }
 .field-frame input { width:100%; height:34px; padding:0 10px; border:0; background:transparent; color:var(--text); outline:none; font-size:13px; font-weight:650; }
 .field-frame input:disabled { color:var(--muted); cursor:not-allowed; }
+#supplierInput { width:100%; height:34px; padding:0 10px; border:0; background:transparent; color:var(--text); outline:none; font-size:13px; font-weight:650; cursor:pointer; }
+#supplierInput:disabled { color:var(--muted); cursor:not-allowed; }
 /* 暗色下让输入框/模型行底色比卡片更浅一档，形成层次 */
 body.studio-theme-dark .field-frame { background:var(--soft); border-color:var(--line-strong); }
 body.studio-theme-dark .field-frame:focus-within { border-color:#f5f6f8; }

@@ -1,5 +1,25 @@
 # 依赖与外部集成
 
+2026-11-25 MKT-02 无新增第三方运行依赖。官网公开多尺寸 lazy chunk 只用于分析状态、样式及 targets 协议，未执行或引入整包；其服务端重构图提示未公开。新面板复用已安装图标／i18n／model-picker／任务，个人预设复用 Pydantic、FastAPI、现有 JSON 锁与原子写入。贞贞真实复杂服装双尺寸与拆层对照、官方方舟兼容保留及预算分别见[原记录](../ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#mkt-02)。没有 API 限流或自动换来源；未因测试切换供应商而修改生产渠道。
+
+2026-11-25 MKT-01 不新增第三方依赖：营销 UI 与旧编辑器共用拆分能力函数，供应商独立处理线上的字段命名。贞贞 5.5 同步响应的 zindex／boundingBox／outputType 转成共同字段；异步查询只留 URL，新拆层采用同步，旧回执的原 ID／凭据／续查不改。实测未生效的层数上限与 OCR 不继续开放；方舟能力另行保留。公开官网脚本仅作为状态／协议参考，未执行整包或假定已知私有提示词。方舟账号欠费和生成图像保真缺陷分别登记到[原记录](../ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#mkt-01)，不转成新的限流策略。
+
+2026-11-24 SUP-04.S55：共同 Seedream 5.5 规则在 `seedream_capabilities.py`，方舟原生协议／旧尺寸算法在 `providers/volcengine_images.py`，两供应商预设和能力由 `providers/suppliers.py` 提供；main 只装配现有素材、凭据和任务。官方同步与贞贞异步分别保留，原加密部门来源扩到官方图片，没有新第三方运行依赖。官方模型目录可见但真实生成被账号设置上限暂停拒绝，负责人暂缓；HTTP／JS／重启验证及浏览器不可用边界见[原记录](../ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#sup-04-s55)。Windows DPAPI 仍需后续服务器凭据适配，协议抽离不代表容器部署通过。
+
+2026-11-24 SUP-03.Z：`providers/zhenzhen.py` 增加公开预设和显式保存配置，原 API 设置读取它；可选 `supplier` 标签与平台 ID 分离，旧 ID／主机和企业代理识别复用同一模块，模型能力／提交／查询与部门凭据／任务边界不变。无新依赖或通用插件层。供应商参考提交仍为 `T8-penguin-canvas@6181ef59`；只读目录与原真实样本、设置／三 Key／Alpha 验证见[原集成记录](../ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#sup-03-z)。其他供应商待定不阻塞当前收口。
+
+2026-11-24 SUP-03.3.R：`providers/responses_images.py` 是现有 Responses 图片编码、后台／SSE／直接返回模块，只依赖标准库和 HTTPX。main 装配原素材 URL 与 `ImageReceiptSink` 受理回调；`canvas_image_recovery`／`canvas_task_journal` 保存不可变原 ID 和可选私有原查询地址，沿用原权限、凭据与归档。不新增服务或自动查询策略。原页面、前后请求与中断恢复验证见[同一记录](../ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#sup-03-3-responses)；APIMart／图像视频代理保留原分支，未声称生产已用。
+
+2026-11-23 SUP-03.2：`providers/openai_images.py` 为标准 Images／Agnes JSON 请求与原明确拒绝策略边界；素材作用域使用已有 `image_reference_preparation.py`，业务身份、凭据与持久任务仍由原服务装配。没有新第三方应用依赖，模块不导入 Windows／业务数据库／main。13 组前后请求、175 项定向检查及原页面／重启手动查询记录见[同一集成记录](../ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#sup-03-2)；剩余协议不由此宣称全部迁移。
+
+2026-11-23 后续实现：已批准的同渠道多 Key 使用 `credential_pool.py` 编解码、原部门来源事务冻结 slot 与原凭据版本续查，没有额外库或数据库迁移；SUP-03.1 的 `providers/image_execution.py` 为供应商无关的结果／受理／轮询边界，main 和贞贞执行入口装配它。其余编码分支逐路迁移。SUP-01.E 参考 `T8-penguin-canvas@6181ef59` 核对工坊两款 GPT Image2.5 的同步和像素尺寸，未引入该客户端依赖；两套供应商渠道分别维护。已实现、模拟／真实验证及余项见[同一记录](../ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#asset-1123-and-supplier-followup)。下方同日“没有多 Key”是后续批准前的撤限时点。
+
+2026-11-23 SUP-02 更正：删除本轮 API 限流及图片队列管理模块，原并行提交／ComfyUI 队列边界恢复；`image_reference_preparation.py` 只做授权素材提交副本，原 journal／任务中心显示摘要。部门来源及凭据版本复用 `department_governance.py`、`task_credentials.py`，当前没有多 Key 负载分配，新增供应商绑定与分配先确认方案。见[更正记录](../ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#sup-02-no-throttle)。
+
+2026-11-21 SUP-01 本地候选：贞贞 16 个生产名称的能力和尺寸组合、服务端验证及三处原页面参数已接公共规则。准确入口为 `providers/zhenzhen.py`、`provider_image_profiles.py`、`model-picker.js`，main 仅增加校验／投影；任务队列、素材和完整执行链抽离仍按 SUP-02／SUP-03。证据与未覆盖范围见[原实施记录](../ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#sup-01)，不能将本地模拟写成真实渠道或正式版全部兼容。
+
+2026-11-20 供应商源码参考补充。`providers/zhenzhen.py`／`zhenzhen_video.py`、`provider_image_profiles.py`、提交／查询解析和 ComfyUI 客户端已有独立职责；`main.py` 仍集中配置、素材、供应商分派和部分执行，页面参数处理也未完全统一。四项执行边界和依赖方向见[ADR-PROVIDER-001](../decisions/ADR-PROVIDER-001-MODEL-COMPATIBILITY-AND-EXECUTION-BOUNDARIES-2026-11.md)，工作编号和验收见[路线图 4.2.1](../roadmap/DEVELOPMENT-ROADMAP-2026-2027.md#provider-compatibility-batches)。本文只提供导航，当前正式版和未提交候选见 CURRENT。
+
 2026-10-31本地接口与资源核对：即时预览、兼容语音和角色整套资产已接原任务/媒体链路，但仅按已取得的具体模型和效果证据声明，固定语音列表不是全部Provider支持证明。既有vendor来源、许可和分发清单继续保留，a2a6831原人体修复与旧“仅本地排除资源”的策略分清时点。CLI是否可用看实际配置，Linux固定依赖、凭据替代和Electron/Tauri比较尚待本阶段验证；不额外引入付费服务或框架。
 
 > 源码参考快照（2026-10-13）：main@e89a288（已合并 #154/#155/#156）；产品功能源码基点 #156@4bdd9a1 保留；C5/C6/C7 已合并，构建与验收范围仍引用其准确记录。本文是代码/运行参考，当前 PR/CI、Release 和验收只见 [CURRENT](../CURRENT_PROJECT_STATUS.md)，实施顺序只认路线图。

@@ -1,0 +1,14 @@
+const assert=require('node:assert/strict'),V=require('../../static/js/canvas-layer-viewport.js');
+const stage={width:1000,height:800},rect={x:0,y:0,width:1024,height:1536},fit=V.fit(stage,rect);
+assert.equal(fit.y,20);assert.equal(fit.zoom,760/1536);
+const point={x:320,y:400},view={x:70,y:-40,zoom:.5},world={x:(point.x-view.x)/view.zoom,y:(point.y-view.y)/view.zoom};
+const zoomed=V.zoomAt(view,2,point);
+assert.equal((point.x-zoomed.x)/zoomed.zoom,world.x);assert.equal((point.y-zoomed.y)/zoomed.zoom,world.y);
+assert.equal(V.zoomAt(view,40,point).zoom,4);assert.equal(V.zoomAt(view,.01,point,.05).zoom,.05);
+assert.deepEqual(V.wheel(view,{deltaX:12,deltaY:35},point),{x:58,y:-75,zoom:.5});
+assert.ok(V.wheel(view,{ctrlKey:true,deltaY:-10},point).zoom>view.zoom);
+const selection={x:200,y:400,width:100,height:200},focused=V.fit(stage,selection,60);
+assert.equal(focused.x+250*focused.zoom,500);assert.equal(focused.y+500*focused.zoom,400);
+assert.equal(V.keyAction({key:'+',ctrlKey:true}),'zoom-in');assert.equal(V.keyAction({key:'0',metaKey:true}),'zoom-fit');
+assert.equal(V.keyAction({key:'@',code:'Digit2',shiftKey:true}),'zoom-selection');assert.equal(V.keyAction({key:'+',ctrlKey:true,altKey:true}),'');
+console.log('Fullscreen viewport: centered fit, selection focus, anchored zoom, pan, bounds and keyboard commands passed');

@@ -10,7 +10,7 @@ import pytest
 from fastapi import HTTPException
 
 from enterprise.providers.image_outputs import layer_metadata
-from enterprise.providers.zhenzhen import async_image_submit_url, image_body, submit_image
+from enterprise.providers.zhenzhen import async_image_submit_url, image_body, submit_image, normalize_layer_outputs
 from enterprise.tests.test_canvas_image_recovery_main import BOOTSTRAP, ROOT
 
 
@@ -191,7 +191,9 @@ def test_layer_metadata_is_bounded_and_ignores_arbitrary_upstream_fields():
     assert layer_metadata({"z_index": True}) == {}
 
 
-def test_actual_image_task_archives_all_layers_and_keeps_metadata_after_reopen(tmp_path):
+@pytest.mark.parametrize('model,wire', [('seedream-v5-flash/layer-decomposition','snake'),
+    ('seedream-v5.5/layer-decomposition','snake'), ('seedream-v5.5/layer-decomposition','camel')])
+def test_actual_image_task_archives_all_layers_and_keeps_metadata_after_reopen(tmp_path, model, wire):
     app = tmp_path / "install/releases/fixture"
     (app / "static").mkdir(parents=True)
     (app / "main.py").write_text("# owned", encoding="utf-8")
@@ -200,7 +202,8 @@ import base64, io
 from PIL import Image
 from enterprise.generation_tasks import describe_task
 buf=io.BytesIO();Image.new('RGBA',(8,8),(255,0,0,80)).save(buf,format='PNG');encoded=base64.b64encode(buf.getvalue()).decode()
-model='seedream-v5-flash/layer-decomposition'
+model=sys.argv[4]
+wire=sys.argv[5]
 provider['image_models']=[model]
 main.provider_env_key_value=lambda _:'fixture-only-key'
 wrapped=main.extract_images({'result':{'images':[{'url':'https://media.invalid/layer.png','b64_json':encoded,'z_index':0,'name':'layer 0'}]}})
@@ -214,11 +217,24 @@ def response(request):
     assert request.method=='POST' and request.url.path=='/v1/images/generations'
     body=json.loads(request.content)
     assert isinstance(body['image'],str) and body['output_format']=='png' and 'quality' not in body
-    return httpx.Response(200,json={'data':[{'b64_json':encoded,'z_index':i,'name':'layer '+str(i),
-        'bounding_box':{'absolute':[0,0,8,8],'normalized':[0,0,1,1]}} for i in range(2)]})
+    if model == 'seedream-v5.5/layer-decomposition':
+        assert 'background' not in body and body['watermark'] is False
+        assert 'layer_decomposition_options' not in body
+        assert body['size']=='auto'
+    items=[{'b64_json':encoded,'z_index':i,'name':'layer '+str(i),
+        'bounding_box':{'absolute':[0,0,8,8],'normalized':[0,0,1,1]},
+        'output_format':'png','text_recognition':{'text':'Sale','lines':[]}} for i in range(2)]
+    if wire=='camel':
+        for item in items:
+            for snake,camel in [('z_index','zindex'),('bounding_box','boundingBox'),('output_format','outputType')]:
+                item[camel]=item.pop(snake)
+    return httpx.Response(200,json={'data':items})
 main.httpx.AsyncClient=lambda **kw:original_client(transport=httpx.MockTransport(response),**kw)
 async def run():
-    request=main.OnlineImageRequest(provider_id='zhenzhen',model=model,prompt='split',reference_images=[{'url':'data:image/png;base64,'+encoded,'kind':'image'}])
+    request=main.OnlineImageRequest(provider_id='zhenzhen',model=model,prompt='split',
+        **({'layer_options':{},'size':'auto'} if model=='seedream-v5.5/layer-decomposition' else {}),
+        background_mode='auto',
+        reference_images=[{'url':'data:image/png;base64,'+encoded,'kind':'image'}])
     task=await main.create_canvas_image_task(request,None)
     await asyncio.gather(*main.CANVAS_TASK_RUNNERS)
     record=main.CANVAS_TASK_JOURNAL.get(task['task_id'])
@@ -230,12 +246,27 @@ async def run():
     from enterprise.canvas_task_journal import CanvasTaskJournal
     reopened=CanvasTaskJournal(main.CANVAS_TASK_JOURNAL.root).get(task['task_id'])
     assert reopened['result']['image_items']==record['result']['image_items']
+    assert reopened['result']['image_items'][1]['text_recognition']['text']=='Sale'
+    if model=='seedream-v5.5/layer-decomposition':
+        assert reopened['creation_settings']['layer_options']=={'text_recognition':False}
     assert len(calls)==1
     for url in record['result']['images']:
         with Image.open(main.output_file_from_url(url)) as image:assert image.mode=='RGBA'
 asyncio.run(run())
 '''
-    result = subprocess.run([sys.executable, "-c", script, str(ROOT), str(tmp_path / "install"), str(tmp_path / "local")],
+    result = subprocess.run([sys.executable, "-c", script, str(ROOT), str(tmp_path / "install"), str(tmp_path / "local"), model, wire],
         cwd=ROOT, env=dict(os.environ, PYTHONUTF8="1", PYTHONDONTWRITEBYTECODE="1"), capture_output=True,
         text=True, encoding="utf-8", timeout=45)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_observed_camel_layer_fields_are_normalized_without_inventing_ocr_or_mutating_raw():
+    raw={'data':[{'url':'https://media.invalid/layer.png','zindex':2,'outputType':'png',
+        'boundingBox':{'absolute':[302,0,1024,1536],'normalized':[295,0,1000,1000]},'name':'服装'}]}
+    result=normalize_layer_outputs(raw)
+    assert 'z_index' not in raw['data'][0]
+    meta=layer_metadata(result['data'][0])
+    assert meta=={'z_index':2,'output_format':'png','name':'服装',
+        'bounding_box':raw['data'][0]['boundingBox']}
+    assert 'text_recognition' not in meta
+    assert normalize_layer_outputs({'data':[{'z_index':0,'zindex':9}]})['data'][0]['z_index']==0

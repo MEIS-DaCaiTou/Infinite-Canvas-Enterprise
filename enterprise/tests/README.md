@@ -1,6 +1,24 @@
 # Enterprise Test Scripts
 
-Reviewed: 2026-11-05
+Reviewed: 2026-11-26
+
+MKT-01.B4 后续反馈：原 annotations／interactions／editor／smart-edit 检查补显隐准确目标、失焦提交不打断 click、文字输入时隐藏预览、双击保留画板、退出后新会话为空以及已受理任务不删除。仍纳入原 test_canvas_layers.py，图层及文档契约 36 项通过，无新增 CI 作业或付费调用。真实页面三轮标记取消、输入／双击／显隐／关闭重开，以及普通身份回读的准确范围追加[原 B4 记录](../../docs/ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#mkt-01-b4)，不以函数通过外推全部浏览器或新模型质量。
+
+MKT-01.B4：新增 `test_canvas_layer_viewport.js` 验证适配／选中项聚焦、锚点不漂移、滚轮与键盘缩放；`test_canvas_layer_annotations.js` 验证共用六色、透明多行输入、确认／取消单次回调及文字移动／缩放。Editor／SmartEdit 原用例补全屏呈现上下文与退出恢复，纳入原 `test_canvas_layers.py`；不新增 CI 作业。原页面的输入、拖拽、双击、百分比、英文提示、父窗口保留、两种模型本机模拟及普通身份隔离见[原 B4 记录](../../docs/ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#mkt-01-b4)，与旧真实任务回读及 D1 模型效果边界分开。
+
+MKT-01.B3：新增 `test_canvas_layer_export.js` 检查原图 ZIP 保留、文字／标注栅格化、旋转边界、隐藏／不透明度分离、文档不可变与真正分层 PSD 往返及 Alpha；`test_canvas_layer_editor.js` 检查独立下载选项、融合打开不提交、菜单互斥、本地合并和草稿保留。均纳入原图层 Python 测试；图层和文档契约合计 34 项通过。原页面真实点击、普通身份接口、原任务回读、复杂服装二进制导出夹具和原生保存事件缺项分开记录，见[原 B3 记录](../../docs/ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#mkt-01-b3)。本轮不新增付费模型测试或全量 CI 作业。
+
+MKT-01.D1：`test_canvas_layer_edit_result.js` 检查框外源像素、矩形并集、半透明 Alpha 及原回包不变；原 smart-edit 用例增加并发完成只准备一个资产、保存重开复用派生结果。creation-settings 检查当前贞贞透明关闭、opaque／auto 及官方能力分别保留，旧协议配置不覆盖准确内置能力。原页面与既有真实复杂服装产物复合、两次新真实补验和本机模拟生成分别记录，不把函数像素检查或模型接口成功当成复杂视觉通过，见[原 D1 记录](../../docs/ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#mkt-01-d1)。
+
+同日 B2 动画／多行反馈：原 smart-edit 检查增加紧凑／长文本／显式换行／窄窗口及清空布局判定。原页面另采样连续缩放中间几何，并验证正文整行、参数下置、清空、撤销、模型切换及重开；不将函数判定测试当成动画流畅度证据。原模型任务契约不变，本轮未增加真实调用。
+
+2026-11-26 同 B2：原 `test_canvas_layer_smart_edit.js` 增加标记裁切边界、引用身份和顺序、未知原文、BR／末行光标及提交序列化检查。实际页面另以真实框选／拖拽验证缩略图、引用移动不复制、删除撤销、光标换行、示例视频暂停与草稿重开；不新增 CI 作业或付费调用。准确覆盖见[原 B2 记录](../../docs/ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#mkt-01-b2)。
+
+2026-11-25 MKT-01.B2：`node enterprise/tests/test_canvas_layer_smart_edit.js` 运行实际共用尺寸函数、能力控件、源尺寸导出、指示坐标、原任务 adapter、幂等回填、源变更、关闭状态、异步挂载及 Alpha 校验；纳入原 `test_canvas_layers.py`，不新增 CI 作业。真实服装改色与透明失败、管理员页面与普通账号模拟、停用后回读分别记录在[同一实施记录](../../docs/ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#mkt-01-b2)，不以模拟或像素通道检查冒充局部保真通过。
+
+同批保真补验：`test_canvas_layer_interactions.js` 新增 20 轮原始素材／编辑参数保持、普通移出禁止重绘／上传、新编辑不恢复旧素材、异步解码重建 DOM 前固定几何。真实原页面三轮后比较 1018×1030 RGBA 文件字节与解码像素，保留原素材及透明通道；20 轮参数测试与真实鼠标证据分开。测试复用原图层 pytest 入口，无付费模型调用。
+
+2026-11-25 MKT-02.D1／MKT-01.B1：`node enterprise/tests/test_canvas_layer_interactions.js` 执行实际 Surface、图层提取、画布 adapter、创建、框选和剪贴板函数，覆盖单击、抖动、框外释放、独立节点／撤销边界、旋转裁切／Alpha 元数据、重复避让及选中集合内外引用。新增五轮双向移动数量守恒、整体撤销、松手位置／大小和解码失败不丢图；前端四项纳入原 test_canvas_layers.py 入口，与 multi_size／separation／studio_select 脚本定向运行，不新增 CI 作业。原页面真实鼠标拖入／拖出、保存重开及本地合并另见[同一实施记录](../../docs/ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#mkt-ui-1125)；浏览器工具拦截原生复制粘贴快捷键，函数通过不代替该现场验收。没有新增付费生成；下文旧版本结果保留其原时点。
 
 2026-11-05 PERF1105。原前端 pytest 入口共 18 项参数，包含在线历史缩略图、离屏批量操作和旧数组分页。`test_history_response_work.py` 检查历史写入线程化、原子追加及 2K/4K 冷缓存构建和复用。`test_history_live_paging.py` 覆盖 JSON 与 SQLite 翻页期间的新增、删除及撤权。`test_performance_io.py` 使用临时画布和环回 HTTP 测版本缓存、并发冲突、启动计时和连接交接等待。普通成员撤权复用 `test_upload_isolation.py` 的临时库。完整浏览器及性能样本见[收敛记录](../../docs/ops/DEVELOPMENT-CONVERGENCE-2026-10-30.md#2026-11-05-历史画布与运行诊断perf1105)。
 

@@ -962,12 +962,12 @@ function apiImageSize(ratioValue, resolutionValue, customRatioValue = '', custom
     if(resolutionValue === 'auto') return 'auto';
     if(resolutionValue === 'custom') return String(customSizeValue || '').trim();
     const resolutionKey = resolutionValue || '1k';
-    if(ratioValue === 'custom' || ratioValue === 'source' || String(ratioValue).includes(':') || resolutionKey === '512'){
+    if(ratioValue === 'custom' || ratioValue === 'source' || String(ratioValue).includes(':') || ['512','1.5k'].includes(resolutionKey)){
         const ratio = window.CanvasModelPicker?.imageParameters({ratio:ratioValue, customRatio:customRatioValue}).aspect_ratio || customRatioValue;
         const parsed = parseRatioValue(ratio);
-        const longSide = resolutionKey === '512' ? 512 : (RES_LONG_SIDE[resolutionKey] || 1024);
+        const longSide = resolutionKey === '512' ? 512 : resolutionKey === '1.5k' ? 1536 : (RES_LONG_SIDE[resolutionKey] || 1024);
         if(parsed){
-            const pixelLimit = RES_PIXEL_LIMIT[resolutionKey] || (longSide * longSide);
+            const pixelLimit = resolutionKey === '1.5k' ? 2359296 : RES_PIXEL_LIMIT[resolutionKey] || (longSide * longSide);
             const rawWidth = parsed >= 1 ? longSide : Math.min(longSide * parsed, Math.sqrt(pixelLimit * parsed));
             const rawHeight = parsed >= 1 ? Math.min(longSide / parsed, Math.sqrt(pixelLimit / parsed)) : longSide;
             const width = Math.floor(rawWidth / 16) * 16;
@@ -1002,18 +1002,17 @@ function exceedsFourKStandard(width, height){
 }
 function normalizeApiNodeSizeChoice(node){
     if(!node) return;
-    const allowAuto = isGptImageAutoSizeModel(resolveImageModel(node.model));
-    if(allowAuto && node._apiResolutionUserSet !== true && (!node.resolution || node.resolution === '1k' || node.resolution === 'auto')) node.resolution = defaultApiImageResolution(node.model);
-    else if(!node.resolution) node.resolution = defaultApiImageResolution(node.model);
-    if(!allowAuto && node.resolution === 'auto') node.resolution = '1k';
+    if(!node.resolution) node.resolution = defaultApiImageResolution(node.model);
 }
 async function generatorSizeForRun(gen, refs){
     if((gen.ratio || 'square') === 'source'){
         const ref = refs?.[0];
+        if(!ref?.url) throw new Error('原图比例需要先添加参考图，本次未提交生成任务');
         if(ref?.url){
             try {
                 const dims=await getImageDimensions(ref.url);
-                const parts = ratioPartsFromDimensions(dims.width, dims.height);
+                const common = gcdInt(dims.width, dims.height);
+                const parts = {width:dims.width / common, height:dims.height / common};
                 gen.customRatioWidth = String(parts.width);
                 gen.customRatioHeight = String(parts.height);
                 gen.customRatio = `${parts.width}:${parts.height}`;
@@ -8426,7 +8425,7 @@ function renderGeneratorBody(node){
         const providerModels = providerImageModels(node.apiProvider);
         if(!providerModels.includes(resolveImageModel(node.model))) node.model = providerModels[0] || '';
         node._apiResolutionUserSet = false;
-        node.resolution = defaultApiImageResolution(node.model);
+        if(!node.resolution) node.resolution = defaultApiImageResolution(node.model);
         modelSelect.innerHTML = imageModelOptions(node.model, node.apiProvider);
         syncSizeControls();
         syncQualityControls();
@@ -8438,7 +8437,7 @@ function renderGeneratorBody(node){
         e.stopPropagation();
         node.model = e.target.value;
         node._apiResolutionUserSet = false;
-        if(node.resolution !== 'custom') node.resolution = defaultApiImageResolution(node.model);
+        if(!node.resolution) node.resolution = defaultApiImageResolution(node.model);
         syncSizeControls();
         syncQualityControls();
         scheduleSave();
@@ -8454,6 +8453,12 @@ function renderGeneratorBody(node){
     const customHInput = wrap.querySelector('.custom-h-input');
     const fitSizeBtn = wrap.querySelector('.fit-size-btn');
     const referenceImages = ordered.flatMap(src => src.refs || []);
+    const ratioChoices = [...ratioSelect.options].map(option => [option.value, option.textContent]);
+    const resolutionChoices = [...resolutionSelect.options].map(option => [option.value, option.textContent]);
+    const sizeNotice = document.createElement('div');
+    sizeNotice.className = 'muted-note';
+    sizeNotice.setAttribute('role','status');
+    customSizeRow.after(sizeNotice);
     const syncQualityControls = () => {
         const profile = window.CanvasModelPicker?.profileFor(apiProviders.find(p => p.id === node.apiProvider), node.model) || {};
         qualitySelect.disabled = profile.supports_quality === false;
@@ -8492,7 +8497,8 @@ function renderGeneratorBody(node){
         try {
             const dims = await getImageDimensions(ref.url);
             if(requestId !== sourceRatioRequest || node.ratio !== 'source') return;
-            const parts = ratioPartsFromDimensions(dims.width, dims.height);
+            const common = gcdInt(dims.width, dims.height);
+            const parts = {width:dims.width / common, height:dims.height / common};
             node.customRatioWidth = String(parts.width);
             node.customRatioHeight = String(parts.height);
             node.customRatio = `${parts.width}:${parts.height}`;
@@ -8503,35 +8509,24 @@ function renderGeneratorBody(node){
     };
     const syncSizeControls = () => {
         normalizeApiNodeSizeChoice(node);
-        const autoOption = resolutionSelect.querySelector('option[value="auto"]');
-        if(autoOption) autoOption.disabled = !isGptImageAutoSizeModel(resolveImageModel(node.model));
-        const squareOption = ratioSelect.querySelector('option[value="square"]');
         const profile = window.CanvasModelPicker?.profileFor(apiProviders.find(p => p.id === node.apiProvider), node.model) || {};
-        (profile.ratios || []).forEach(ratio => {
-            if(![...ratioSelect.options].some(option => option.textContent.trim() === ratio)) ratioSelect.add(new Option(ratio, ratio));
-        });
-        if(profile.resolutions?.includes('512') && !resolutionSelect.querySelector('option[value="512"]')) resolutionSelect.add(new Option('512', '512'));
-        [...ratioSelect.options].forEach(option => {
-            const ratio = option.textContent.trim();
-            option.disabled = Boolean(profile.ratios?.length && /^\d+:\d+$/.test(ratio) && !profile.ratios.includes(ratio));
-        });
-        [...resolutionSelect.options].forEach(option => {
-            if(['512','1k','2k','4k'].includes(option.value)) option.disabled = Boolean(profile.resolutions?.length && !profile.resolutions.includes(option.value.toUpperCase()));
-        });
-        resolutionSelect.querySelector('option[value="model-default"]')?.remove();
-        if(profile.supports_image_size === false) resolutionSelect.add(new Option(profile.fixed_resolution ? `模型固定 ${profile.fixed_resolution}` : '模型默认', 'model-default'));
+        const resolutions = [...new Set([...resolutionChoices.map(([value]) => value), ...(profile.resolutions || []).map(value => value.toLowerCase())])];
+        const choices = window.CanvasModelPicker.sizeChoices(profile, ratioChoices, resolutions, node,
+            (ratio,resolution) => apiImageSize(ratio,resolution,node.customRatio || '',node.customSize || ''));
+        window.CanvasModelPicker.syncSizeSelect(ratioSelect, choices.ratios, node.ratio || 'square');
+        const resLabels = Object.fromEntries(resolutionChoices);
+        const resChoices = profile.supports_image_size === false
+            ? [['model-default',profile.fixed_resolution ? `模型固定 ${profile.fixed_resolution}` : '模型默认']]
+            : choices.resolutions.map(value => [value,resLabels[value] || value.toUpperCase()]);
+        window.CanvasModelPicker.syncSizeSelect(resolutionSelect, resChoices, profile.supports_image_size === false ? 'model-default' : node.resolution);
+        const autoOption = resolutionSelect.querySelector('option[value="auto"]');
+        if(autoOption && profile.supports_auto_size === undefined) autoOption.disabled = !isGptImageAutoSizeModel(resolveImageModel(node.model));
         resolutionSelect.disabled = profile.supports_image_size === false;
         resolutionSelect.title = profile.supports_image_size === false ? (profile.fixed_resolution ? `模型固定 ${profile.fixed_resolution}` : '分辨率由模型决定') : '';
-        if(squareOption){
-            squareOption.disabled = false;
-            squareOption.title = '';
-        }
-        const ratioValue = node.ratio && [...ratioSelect.options].some(opt => opt.value === node.ratio) ? node.ratio : 'square';
-        ratioSelect.value = ratioValue;
-        resolutionSelect.value = profile.supports_image_size === false ? 'model-default' : (node.resolution || defaultApiImageResolution(node.model));
-        ratioSelect.disabled = node.resolution === 'custom' || node.resolution === 'auto';
+        const customResolution = node.resolution === 'custom' && profile.supports_image_size !== false;
+        ratioSelect.disabled = customResolution || node.resolution === 'auto';
         customRatioRow.style.display = (node.resolution !== 'auto' && (node.ratio === 'custom' || node.ratio === 'source')) ? 'flex' : 'none';
-        customSizeRow.style.display = node.resolution === 'custom' ? 'flex' : 'none';
+        customSizeRow.style.display = customResolution ? 'flex' : 'none';
         customRatioWInput.disabled = node.ratio === 'source';
         customRatioHInput.disabled = node.ratio === 'source';
         customRatioWInput.value = node.customRatioWidth || '';
@@ -8540,6 +8535,9 @@ function renderGeneratorBody(node){
         customHInput.value = node.customHeight || '';
         if(fitSizeBtn) fitSizeBtn.disabled = !referenceImages.some(ref => ref.url);
         syncQualityControls();
+        const sizeError = window.CanvasModelPicker.sizeError(profile,apiImageSize(node.ratio,node.resolution,node.customRatio || '',node.customSize || ''),window.CanvasModelPicker.imageParameters(node));
+        sizeNotice.textContent = window.CanvasModelPicker.validationNotice(sizeError);
+        sizeNotice.hidden = !sizeError;
         if(node.ratio === 'source') updateSourceRatioFromFirstRef();
     };
     qualitySelect.onmousedown = e => e.stopPropagation();
@@ -10572,6 +10570,10 @@ async function runCanvasImageBatch(node, out, run, payload, refs, count, opts){
     refreshRunNodes(node, out);
     try {
         payload.size = await generatorSizeForRun(node, refs);
+        Object.assign(payload, window.CanvasModelPicker.imageParameters(node));
+        const profile = window.CanvasModelPicker.profileFor(apiProviders.find(provider => provider.id === payload.provider_id),payload.model);
+        const sizeError = window.CanvasModelPicker.sizeError(profile,payload.size,payload);
+        if(sizeError) throw new Error(window.CanvasModelPicker.validationNotice(sizeError,true));
         const saveStarted = performance.now();
         try { payload.source = await taskCanvasSource(node); }
         finally { saveMs = Math.round(performance.now() - saveStarted); }

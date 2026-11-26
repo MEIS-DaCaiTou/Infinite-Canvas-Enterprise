@@ -6,6 +6,11 @@ const CANVAS_LIST_PROJECT_KEY = 'canvasListCurrentProjectId';
 const shell = document.getElementById('shell');
 const world = document.getElementById('world');
 const composer = document.getElementById('composer');
+let marketingPanelOwner = '';
+function setMarketingPanel(owner,open){
+    if(open){marketingPanelOwner=owner;composer.classList.remove('open');}
+    else if(marketingPanelOwner===owner){marketingPanelOwner='';updateComposer();}
+}
 const createMenu = document.getElementById('createMenu');
 const promptInput = document.getElementById('promptInput');
 const mentionPicker = document.getElementById('mentionPicker');
@@ -1039,7 +1044,7 @@ function isSmartGroupNode(node){
     return Boolean(node && node.type === 'smart-group');
 }
 function isSmartRunnableNode(node){
-    return Boolean(isSmartImageNode(node) || isSmartGroupNode(node));
+    return Boolean(node && !node.layerDocument && !node.layerDraft && (isSmartImageNode(node) || isSmartGroupNode(node)));
 }
 function isHistoryGroupNode(node){
     return Boolean(isSmartImageNode(node) && (node.isHistoryGroup || node.historyFor));
@@ -1328,6 +1333,7 @@ function syncSelectionUi(){
     smartSelectionUiImage = {nodeId:selectedImage.nodeId || '', index:Number(selectedImage.index ?? -1)};
     syncSmartSelectedImageResolution(world);
     syncRunButtonState();
+    window.CanvasLayerNode?.layout();
     scheduleConnectionLayerRefresh();
 }
 function isNodeSelected(id){
@@ -1914,6 +1920,10 @@ function smartGroupImageGridLayout(node){
     return {cols, rows, visibleRows, width, height, thumb:baseThumb};
 }
 function imageLayout(images, scale=1, node=null){
+    if(node?.layerDocument || node?.layerDraft){
+        const doc=node.layerDraft || node.layerDocument,width=Number(node.w) || 340;
+        return {cols:1,rows:1,width,height:Math.round(width*doc.height/doc.width),thumb:96,single:true};
+    }
     if(node?.type === 'smart-group'){
         const groupThumbLayout = smartGroupThumbLayout(node);
         if(groupThumbLayout) return groupThumbLayout;
@@ -2107,6 +2117,7 @@ function arrangeSelectedSmartNodes(){
 }
 function applyViewport(){
     world.style.transform = `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.scale})`;
+    if(composer.classList.contains('open')) positionComposerForNode(selectedNode());
     // world 被 transform:scale 缩放后，其内部带 backdrop-filter 的卡片（参数设置/合成卡等）
     // 会被部分浏览器（Chrome/Edge 等 Blink 内核）当作独立合成层先按 1x 栅格化、再整体缩放，
     // 缩小时位图被降采样 → 组件发虚。缩放态下关闭这些 backdrop-filter（底色本身已接近不透明，
@@ -2115,6 +2126,7 @@ function applyViewport(){
     shell.style.backgroundSize = '24px 24px';
     shell.style.backgroundPosition = '0 0';
     renderMinimap();
+    window.CanvasLayerNode?.layout();
 }
 function screenToWorld(event){
     const rect = shell.getBoundingClientRect();
@@ -2261,6 +2273,10 @@ function toggleZoomPreview(){
 }
 function imageProviders(){
     return (apiProviders || []).filter(p => p.enabled !== false && p.id !== 'modelscope' && p.id !== 'volcengine' && (p.image_models || []).length);
+}
+function volcengineImageProviders(){
+    return (apiProviders || []).filter(p => p.enabled !== false &&
+        (p.id === 'volcengine' || p.protocol === 'volcengine' || p.supplier === 'volcengine'));
 }
 function volcengineProvider(){
     return (apiProviders || []).find(p => p.id === 'volcengine' && p.enabled !== false) || {
@@ -2497,8 +2513,9 @@ function sanitizeSmartApiSelection(target=settings){
             const models = volcengineVideoModels();
             if(!models.includes(target.videoModel)) target.videoModel = models[0] || '';
         } else {
-            target.provider_id = 'volcengine';
-            const models = providerImageModels('volcengine');
+            const provider = volcengineImageProviders().find(p=>p.id===target.provider_id) || volcengineProvider();
+            target.provider_id = provider.id;
+            const models = providerImageModels(provider.id);
             if(!models.includes(target.model)) target.model = models[0] || '';
         }
         return target;
@@ -2510,8 +2527,7 @@ function sanitizeSmartApiSelection(target=settings){
     }
     if((target.engine || 'api') === 'api' && (target.apiKind || 'image') !== 'video'){
         const allowAuto = isGptImageAutoSizeModel(target.model);
-        if(!target.resolution || (allowAuto && target.resolution === 'auto')) target.resolution = allowAuto ? defaultSmartApiResolution(target.model) : '1k';
-        if(!allowAuto && target.resolution === 'auto') target.resolution = '1k';
+        if(!target.resolution) target.resolution = allowAuto ? defaultSmartApiResolution(target.model) : '1k';
     }
     if(target.videoProvider){
         const models = providerVideoModels(target.videoProvider);
@@ -2666,12 +2682,12 @@ function apiImageSize(ratioValue, resolutionValue, customRatioValue='', customSi
     if(resolutionValue === 'auto') return 'auto';
     if(resolutionValue === 'custom') return String(customSizeValue || '').trim();
     const resolutionKey = resolutionValue || '1k';
-    if(ratioValue === 'custom' || ratioValue === 'source' || String(ratioValue).includes(':') || resolutionKey === '512'){
+    if(ratioValue === 'custom' || ratioValue === 'source' || String(ratioValue).includes(':') || ['512','1.5k'].includes(resolutionKey)){
         const ratio = window.CanvasModelPicker?.imageParameters({ratio:ratioValue, customRatio:customRatioValue}).aspect_ratio || customRatioValue;
         const parsed = parseRatioValue(ratio);
-        const longSide = resolutionKey === '512' ? 512 : (RES_LONG_SIDE[resolutionKey] || 1024);
+        const longSide = resolutionKey === '512' ? 512 : resolutionKey === '1.5k' ? 1536 : (RES_LONG_SIDE[resolutionKey] || 1024);
         if(parsed){
-            const pixelLimit = RES_PIXEL_LIMIT[resolutionKey] || (longSide * longSide);
+            const pixelLimit = resolutionKey === '1.5k' ? 2359296 : RES_PIXEL_LIMIT[resolutionKey] || (longSide * longSide);
             const rawWidth = parsed >= 1 ? longSide : Math.min(longSide * parsed, Math.sqrt(pixelLimit * parsed));
             const rawHeight = parsed >= 1 ? Math.min(longSide / parsed, Math.sqrt(pixelLimit / parsed)) : longSide;
             const width = Math.floor(rawWidth / 16) * 16;
@@ -2686,8 +2702,7 @@ function normalizeApiSizeSettings(prefix=''){
     const ratioKey = prefix ? `${prefix}Ratio` : 'ratio';
     const resKey = prefix ? `${prefix}Resolution` : 'resolution';
     const allowAuto = !prefix && settings.engine === 'api' && settings.apiKind !== 'video' && isGptImageAutoSizeModel(settings.model);
-    if(!settings[resKey] || (allowAuto && settings[resKey] === 'auto')) settings[resKey] = allowAuto ? defaultSmartApiResolution(settings.model) : '1k';
-    if(!allowAuto && settings[resKey] === 'auto') settings[resKey] = '1k';
+    if(!settings[resKey]) settings[resKey] = allowAuto ? defaultSmartApiResolution(settings.model) : '1k';
     if(settings[resKey] === 'auto' && !settings[ratioKey]) settings[ratioKey] = 'square';
 }
 async function ensureComfyWorkflow(name){
@@ -2805,14 +2820,14 @@ function renderDynamicParams(){
     else if(settings.engine === 'runninghub') renderRunningHubParams();
     else renderComfyParams();
     bindDynamicParams();
-    if(settings.engine === 'api') {
+    if(isApiLikeEngine(settings.engine)) {
         const sourceHint=document.createElement('span');sourceHint.className='call-source-hint';
         dynamicParams.append(sourceHint);
         const providerId=settings.apiKind === 'video' ? settings.videoProvider : settings.provider_id;
         window.CallSourceHint?.update(sourceHint, apiProviders.find(provider=>provider.id===providerId));
     }
     const modelList = dynamicParams.querySelector('.model-control .model-list');
-    if(modelList && settings.engine === 'api') {
+    if(modelList && isApiLikeEngine(settings.engine)) {
         const video = settings.apiKind === 'video';
         window.CanvasModelPicker?.mountList(modelList, {
             kind:video ? 'video' : 'image',
@@ -2864,10 +2879,10 @@ function renderApiVideoParams(){
     `;
 }
 function renderVolcengineParams(){
-    const provider = volcengineProvider();
-    const providers = [provider];
-    const models = providerImageModels('volcengine');
-    settings.provider_id = 'volcengine';
+    const providers = volcengineImageProviders();
+    const provider = providers.find(p=>p.id===settings.provider_id) || volcengineProvider();
+    const models = providerImageModels(provider.id);
+    settings.provider_id = provider.id;
     if(!settings.model || !models.includes(settings.model)) settings.model = models[0] || '';
     normalizeApiSizeSettings('');
     const outpaintLocked = settings.outpaintResolutionLocked === true;
@@ -3282,19 +3297,23 @@ function renderSizePickerControl(prefix='', includeSource=false){
     const ratioKey = prefix ? `${prefix}Ratio` : 'ratio';
     const resKey = prefix ? `${prefix}Resolution` : 'resolution';
     const scope = sizePickerScope(prefix);
-    const options = (!prefix && settings.engine === 'api') ? ['auto','1k','2k','4k'] : ['1k','2k','4k'];
-    const currentRes = settings[resKey] || ((!prefix && settings.engine === 'api') ? defaultSmartApiResolution(settings.model) : '1k');
+    const options = (!prefix && isApiLikeEngine(settings.engine)) ? ['auto','1k','2k','4k'] : ['1k','2k','4k'];
+    const currentRes = settings[resKey] || ((!prefix && isApiLikeEngine(settings.engine)) ? defaultSmartApiResolution(settings.model) : '1k');
     const currentRatio = settings[ratioKey] || 'square';
-    const profile = !prefix && settings.engine === 'api' ? (window.CanvasModelPicker?.profileFor(apiProviderById(settings.provider_id), settings.model) || {}) : {};
+    const profile = !prefix && isApiLikeEngine(settings.engine) ? (window.CanvasModelPicker?.profileFor(apiProviderById(settings.provider_id), settings.model) || {}) : {};
     const displayLabel = profile.supports_image_size === false ? `${ratioLabel(prefix)} · ${profile.fixed_resolution || '模型默认'}` : sizePickerLabel(prefix);
     if(profile.resolutions?.includes('512')) options.push('512');
-    const allowAuto = !prefix && settings.engine === 'api' && settings.apiKind !== 'video' && isGptImageAutoSizeModel(settings.model);
+    const allowAuto = !prefix && isApiLikeEngine(settings.engine) && settings.apiKind !== 'video' && (profile.supports_auto_size ?? isGptImageAutoSizeModel(settings.model));
     const ratios = [
         ['square','1:1','正方形'], ['portrait','2:3','竖图'], ['landscape','3:2','横图'], ['portrait43','3:4','竖图'], ['landscape43','4:3','横图'],
         ['story','9:16','竖屏'], ['wide','16:9','宽屏'], ['ultrawide','21:9','超宽'], ['ultratall','9:21','超竖'],
         ...(includeSource ? [['source', sourceImageRatioLabel(prefix) || '原图', '适配输入']] : [])
     ];
     (profile.ratios || []).forEach(ratio => { if(!ratios.some(([,label]) => label === ratio)) ratios.push([ratio,ratio,'模型支持']); });
+    (profile.resolutions || []).forEach(value => { if(!options.includes(value.toLowerCase())) options.push(value.toLowerCase()); });
+    const choices = window.CanvasModelPicker.sizeChoices(profile,ratios,options,settings,
+        (ratio,resolution) => apiImageSize(ratio,resolution,settings.customRatio || '',settings.customSize || ''));
+    const sizeError = window.CanvasModelPicker.sizeError(profile,sizeForRun(settings),window.CanvasModelPicker.imageParameters(settings));
     const wKey = prefix ? `${prefix}CustomWidth` : 'customWidth';
     const hKey = prefix ? `${prefix}CustomHeight` : 'customHeight';
     return `<div class="smart-control size-picker-control ${scope === 'auto' ? 'auto-mode' : ''} ${scope === 'custom' ? 'custom-mode' : ''}">
@@ -3305,16 +3324,16 @@ function renderSizePickerControl(prefix='', includeSource=false){
                 <div class="size-picker-scope">
                     <button type="button" class="${scope === 'auto' ? 'active' : ''}" data-size-scope="auto" data-size-prefix="${escapeHtml(prefix)}" ${allowAuto ? '' : 'disabled'}>自动</button>
                     <button type="button" class="${scope === 'preset' ? 'active' : ''}" data-size-scope="preset" data-size-prefix="${escapeHtml(prefix)}">系统参数</button>
-                    <button type="button" class="${scope === 'custom' ? 'active' : ''}" data-size-scope="custom" data-size-prefix="${escapeHtml(prefix)}">自定义</button>
+                    <button type="button" class="${scope === 'custom' ? 'active' : ''}" data-size-scope="custom" data-size-prefix="${escapeHtml(prefix)}" ${profile.supports_custom_size === false ? 'disabled' : ''}>自定义</button>
                 </div>
             </div>
             ${scope === 'auto' ? `<div class="size-picker-pane size-picker-auto"><div class="size-picker-note"><strong>自动尺寸</strong><span>使用模型默认尺寸，或由支持自动尺寸的模型自行决定。</span></div></div>` : ''}
             ${scope === 'preset' ? `<div class="size-picker-pane size-picker-preset">
                 <div class="size-picker-list">
-                    ${ratios.filter(([,label]) => !profile.ratios?.length || !/^\d+:\d+$/.test(label) || profile.ratios.includes(label)).map(([value, label, sub]) => `<button type="button" class="size-picker-option ${value === currentRatio ? 'active' : ''}" data-smart-param="${ratioKey}" data-smart-value="${escapeHtml(value)}"><span>${escapeHtml(label)}</span><small>${escapeHtml(sub)}</small></button>`).join('')}
+                    ${choices.ratios.map(([value, label, sub]) => `<button type="button" class="size-picker-option ${value === currentRatio ? 'active' : ''}" data-smart-param="${ratioKey}" data-smart-value="${escapeHtml(value)}"><span>${escapeHtml(label)}</span><small>${escapeHtml(sub)}</small></button>`).join('')}
                 </div>
                 <div class="size-picker-list">
-                    ${profile.supports_image_size === false ? `<span class="size-picker-note">${profile.fixed_resolution ? `模型固定 ${escapeHtml(profile.fixed_resolution)}` : '分辨率由模型决定'}</span>` : options.filter(v => v !== 'auto' && (!profile.resolutions?.length || profile.resolutions.includes(v.toUpperCase()))).map(value => `<button type="button" class="size-picker-option ${value === currentRes ? 'active' : ''}" data-smart-param="${resKey}" data-smart-value="${value}"><span>${value.toUpperCase()}</span><small>${escapeHtml(apiImageSize(currentRatio === 'source' ? 'square' : currentRatio, value, settings[prefix ? `${prefix}CustomRatio` : 'customRatio'] || '', '') || '')}</small></button>`).join('')}
+                    ${profile.supports_image_size === false ? `<span class="size-picker-note">${profile.fixed_resolution ? `模型固定 ${escapeHtml(profile.fixed_resolution)}` : '分辨率由模型决定'}</span>` : choices.resolutions.filter(v => v !== 'auto').map(value => `<button type="button" class="size-picker-option ${value === currentRes ? 'active' : ''}" data-smart-param="${resKey}" data-smart-value="${value}"><span>${value.toUpperCase()}</span><small>${escapeHtml(apiImageSize(currentRatio === 'source' ? 'square' : currentRatio, value, settings[prefix ? `${prefix}CustomRatio` : 'customRatio'] || '', '') || '')}</small></button>`).join('')}
                 </div>
             </div>` : ''}
             ${scope === 'custom' ? `<div class="size-picker-pane size-picker-custom">
@@ -3323,6 +3342,7 @@ function renderSizePickerControl(prefix='', includeSource=false){
                     <div class="size-custom-row"><input type="number" data-param="${wKey}" value="${escapeHtml(settings[wKey] || '')}" placeholder="宽度"><span>×</span><input type="number" data-param="${hKey}" value="${escapeHtml(settings[hKey] || '')}" placeholder="高度"></div>
                 </div>
             </div>` : ''}
+            ${sizeError ? `<div class="size-picker-note" role="status">${escapeHtml(window.CanvasModelPicker.validationNotice(sizeError))}</div>` : ''}
         </div>
     </div>`;
 }
@@ -3352,7 +3372,7 @@ function renderInlineCustomSizeFields(prefix=''){
     </div>`;
 }
 function renderQualityControl(){
-    const profile = settings.engine === 'api' ? (window.CanvasModelPicker?.profileFor(apiProviderById(settings.provider_id), settings.model) || {}) : {};
+    const profile = isApiLikeEngine(settings.engine) ? (window.CanvasModelPicker?.profileFor(apiProviderById(settings.provider_id), settings.model) || {}) : {};
     if(profile.supports_quality === false) return '';
     const value = settings.quality || 'auto';
     const labels = {auto:tr('smart.qualityAuto'), low:tr('smart.qualityLow'), medium:tr('smart.qualityMid'), high:tr('smart.qualityHigh')};
@@ -4045,7 +4065,8 @@ function bindDynamicParams(){
             const scope = btn.dataset.sizeScope;
             const resKey = prefix ? `${prefix}Resolution` : 'resolution';
             const ratioKey = prefix ? `${prefix}Ratio` : 'ratio';
-            const allowAuto = !prefix && settings.engine === 'api' && settings.apiKind !== 'video' && isGptImageAutoSizeModel(settings.model);
+            const profile = !prefix && isApiLikeEngine(settings.engine) ? window.CanvasModelPicker.profileFor(apiProviderById(settings.provider_id),settings.model) : {};
+            const allowAuto = !prefix && settings.engine === 'api' && settings.apiKind !== 'video' && (profile.supports_auto_size ?? isGptImageAutoSizeModel(settings.model));
             if(scope === 'auto'){
                 if(!allowAuto) return;
                 settings[resKey] = 'auto';
@@ -4053,7 +4074,7 @@ function bindDynamicParams(){
             } else if(scope === 'custom'){
                 settings[resKey] = 'custom';
             } else {
-                settings[resKey] = ['512','1k','2k','4k'].includes(settings[resKey]) ? settings[resKey] : sizePickerDefaultResolution(prefix);
+                settings[resKey] = ['512','1k','1.5k','2k','4k'].includes(settings[resKey]) ? settings[resKey] : sizePickerDefaultResolution(prefix);
                 if(!settings[ratioKey] || settings[ratioKey] === 'custom') settings[ratioKey] = 'square';
             }
             persistActiveSmartSettings();
@@ -5991,6 +6012,8 @@ async function loadCanvas(skipRetainedDraft=false){
         resumeSmartLLMTasks();
         if(cleanedDetachedInputs || cleanedCompletedState || recoveredLoopOutputs || hiddenCompletedTimers) scheduleSave();
         resumeSmartPendingTasks();
+        nodes.filter(node=>node.layerEditTarget&&!node.layerEditTarget.state&&!smartPendingTasks(node).length&&node.images?.length)
+            .forEach(node=>applySmartLayerEditResult(node,node.images[0]).catch(error=>toast(error.message)));
         resumeJimengPendingNodes();
         startCanvasMetaPoll();
         const retained = skipRetainedDraft ? null : CanvasConflictDraft.read(canvasId);
@@ -6120,6 +6143,9 @@ function cloneSmartNode(node, dx=0, dy=0){
     copy.x = (Number(node.x) || 0) + dx;
     copy.y = (Number(node.y) || 0) + dy;
     clearSmartNodeTransientRunState(copy, {clearRunHistory:true});
+    delete copy.layerTaskId;
+    delete copy.sourceTaskId;
+    delete copy.layerEditTarget;
     if(copy.type === 'smart-group') copy.title = copy.title || '智能分组';
     return copy;
 }
@@ -6159,6 +6185,14 @@ function pasteNodes(){
             copy.inputNodeIds = copy.inputNodeIds.map(id => idMap.get(id)).filter(Boolean);
         }
         if(copy.sourceNodeId) copy.sourceNodeId = idMap.get(copy.sourceNodeId) || '';
+        for(const key of ['layerParentNodeId','mergeSourceNodeId']){
+            if(copy[key]){if(idMap.has(copy[key]))copy[key]=idMap.get(copy[key]);else delete copy[key];}
+        }
+        for(const doc of [copy.layerDocument,copy.layerDraft]){
+            for(const layer of doc?.layers || []){
+                if(layer.sourceNodeId){if(idMap.has(layer.sourceNodeId))layer.sourceNodeId=idMap.get(layer.sourceNodeId);else delete layer.sourceNodeId;}
+            }
+        }
     });
     const newConnections = (nodeClipboard.connections || []).map(conn => ({
         ...conn,
@@ -6374,6 +6408,7 @@ function moveNodeElementsDuringDrag(){
     if(active && (dragState.group || [{id:dragState.id}]).some(item => item.id === active.id)){
         positionComposerForNode(active);
     }
+    window.CanvasLayerNode?.layout();
     scheduleInteractionLayerRefresh();
 }
 function updateNodeElementDuringResize(node){
@@ -7346,6 +7381,7 @@ function smartGroupBodyHtml(node){
     </div>`;
 }
 function nodeBodyHtml(node, layout){
+    if(node.layerDocument || node.layerDraft)return CanvasLayerNode.html(node,layout);
     if(node.type === 'smart-group') return smartGroupBodyHtml(node);
     if(node.type === 'smart-prompt') return promptNodeBodyHtml(node);
     if(node.type === 'smart-loop') return smartLoopBodyHtml(node);
@@ -7393,9 +7429,10 @@ function jimengPendingBodyHtml(node, layout){
     </div>`;
 }
 function smartImageTaskStatusHtml(node){
+    const editNotice=node.layerEditTarget?CanvasLayerSmartEdit.outputNotice(node):'';
     const tasks = [...smartPendingTasks(node).filter(task => task.imageStatus), ...(node.imageTaskIssues || [])];
-    if(!tasks.length) return '';
-    return `<div class="smart-image-task-status">${tasks.sort((a,b) => a.imageIndex - b.imageIndex).map(task =>
+    if(!tasks.length) return editNotice;
+    return editNotice+`<div class="smart-image-task-status">${tasks.sort((a,b) => a.imageIndex - b.imageIndex).map(task =>
         `<div title="${escapeHtml(task.error || '')}">图片 ${task.imageIndex + 1} · ${escapeHtml(task.imageStatus)}
         ${(task.canReconcile && task.failed || task.retryReceipt) ? `<button type="button" data-image-task-query="${escapeHtml(node.id)}" data-task-id="${escapeHtml(task.taskId)}">查询结果</button>` : ''}
         ${task.error ? `<small>${escapeHtml(task.error)}</small>` : ''}</div>`).join('')}</div>`;
@@ -7426,6 +7463,7 @@ function smartNodeToolbarImageIndex(node){
     return 0;
 }
 function smartNodeToolbarHtml(node){
+    if(node.layerDocument || node.layerDraft)return CanvasLayerNode.toolbar(node);
     const isImageNode = node?.type === 'smart-image' || !node?.type;
     const images = node?.images || [];
     if(!isImageNode || !images.some(img => img?.url)) return '';
@@ -7437,6 +7475,8 @@ function smartNodeToolbarHtml(node){
     const gridLabel = imageCount > 1 ? '宫格拼接' : '宫格切分';
     const actions = [
         {key:'preview', icon:'eye', label:'预览', enabled:kind === 'image' || kind === 'video'},
+        {key:'layers', icon:'layers', label:tr('layers.tool'), enabled:canEditImage},
+        {key:'marketing', icon:'shopping-bag', label:tr('layers.marketing'), enabled:canEditImage},
         {key:'crop', icon:'crop', label:'裁剪', enabled:canEditImage},
         {key:'outpaint', icon:'expand', label:'扩图', enabled:canEditImage},
         {key:'mask', icon:'brush', label:'遮罩', enabled:canEditImage},
@@ -7445,8 +7485,8 @@ function smartNodeToolbarHtml(node){
         {key:'download', icon:'download', label:'下载', enabled:true}
     ];
     return `<div class="smart-node-floating-menu" data-smart-node-menu="1">${actions.map(action => `
-        <button type="button" data-smart-node-action="${escapeAttr(action.key)}" data-node-id="${escapeAttr(node.id)}" ${action.enabled ? '' : 'disabled'} title="${escapeAttr(action.label)}">
-            <i data-lucide="${escapeAttr(action.icon)}"></i><span>${escapeHtml(action.label)}</span>
+        <button type="button" data-smart-node-action="${escapeAttr(action.key)}" data-node-id="${escapeAttr(node.id)}" ${action.enabled ? '' : 'disabled'} title="${escapeAttr(action.label)}" ${action.key==='layers'?'data-i18n-title="layers.tool"':''}>
+            <i data-lucide="${escapeAttr(action.icon)}"></i><span ${action.key==='layers'?'data-i18n="layers.tool"':''}>${escapeHtml(action.label)}</span>
         </button>`).join('')}</div>`;
 }
 function duplicateSmartNodeMediaToCanvas(node, imageIndex){
@@ -7464,7 +7504,7 @@ function duplicateSmartNodeMediaToCanvas(node, imageIndex){
     scheduleSave();
     toast('已添加到画布');
 }
-function runSmartNodeToolbarAction(nodeId, action){
+function runSmartNodeToolbarAction(nodeId, action, anchor){
     const node = nodes.find(n => n.id === nodeId);
     if(!node) return;
     const index = smartNodeToolbarImageIndex(node);
@@ -7474,12 +7514,20 @@ function runSmartNodeToolbarAction(nodeId, action){
     selectedId = nodeId;
     selectedIds = [];
     selectedImage = {nodeId, index};
+    if(action === 'marketing'){
+        canvasLayerSeparation.menu(nodeId,anchor || world.querySelector(`[data-id="${CSS.escape(nodeId)}"] [data-smart-node-action="marketing"]`));
+        return;
+    }
     if(action === 'download'){
         downloadPreviewFile(node.images?.[index] || item);
         return;
     }
     if(action === 'canvas'){
         duplicateSmartNodeMediaToCanvas(node, index);
+        return;
+    }
+    if(action === 'layers'){
+        openSmartLayerBoard(node,index);
         return;
     }
     if(kind !== 'image' && action !== 'preview'){
@@ -7629,7 +7677,7 @@ function render(){
         const isImageNode = node.type === 'smart-image' || !node.type;
         const isJimengPending = Boolean(node.jimengPending && node.jimengPending.submitId && imgs.length === 0);
         const isQueued = Boolean(node.queued && imgs.length === 0 && !node.pending && !isJimengPending);
-        const isEmpty = isImageNode && imgs.length === 0 && !node.pending && !isQueued && !isJimengPending;
+        const isEmpty = isImageNode && imgs.length === 0 && !node.pending && !isQueued && !isJimengPending && !node.layerDocument && !node.layerDraft;
         const isHistory = isHistoryGroupNode(node);
         const isGroup = isImageNode && imgs.length > 1;
         const isPending = ((node.pending || isQueued || isJimengPending) && imgs.length === 0);
@@ -7644,7 +7692,7 @@ function render(){
             <div class="node-body">${body}</div>
             ${isCompactMember && (isPrompt || isLoop) ? '<div class="smart-group-member-grab" title="拖动移出分组"></div>' : ''}
             <div class="node-hint">${hint}</div>
-            ${imgs.length || node.pending || isQueued || isJimengPending || isPrompt || isLoop || isSmartGroup ? '<div class="node-resize-handle" data-resize="1"></div>' : ''}
+            ${!node.layerDocument && !node.layerDraft && (imgs.length || node.pending || isQueued || isJimengPending || isPrompt || isLoop || isSmartGroup) ? '<div class="node-resize-handle" data-resize="1"></div>' : ''}
             <div class="node-port port-in" data-port="in" title="input"></div>
             <div class="node-port port-out" data-port="out" title="output"></div>
         </div>`;
@@ -7678,6 +7726,8 @@ function render(){
         }
     });
     restoreMediaPlaybackStates(mediaStates);
+    smartSelectionUiNodeIds=new Set(selectedNodeIds());
+    smartSelectionUiImage={...selectedImage};
     bindNodeEvents();
     bindConnectionEvents();
     updateComposer();
@@ -8243,6 +8293,7 @@ function pickMediaForSmartNode(nodeId){
     input.click();
 }
 function bindNodeEvents(){
+    CanvasLayerNode.bind(world);
     world.querySelectorAll('.image-node').forEach(el => {
         const id = el.dataset.id;
         const nodeForControls = nodes.find(n => n.id === id);
@@ -8308,7 +8359,7 @@ function bindNodeEvents(){
             btn.addEventListener('click', e => {
                 e.preventDefault();
                 e.stopPropagation();
-                runSmartNodeToolbarAction(btn.dataset.nodeId || id, btn.dataset.smartNodeAction);
+                runSmartNodeToolbarAction(btn.dataset.nodeId || id, btn.dataset.smartNodeAction,btn);
             });
         });
         el.querySelectorAll('[data-smart-group-action]').forEach(btn => {
@@ -11473,11 +11524,22 @@ function positionComposerForNode(node){
     if(!node) return;
     const rect = nodeRect(node);
     const gap = 14;
-    const cardW = 540;
+    const scale = viewport.scale;
+    const cardW = Math.min(540, (shell.clientWidth - 32) / scale);
     composer.style.width = `${cardW}px`;
-    composer.style.left = `${rect.x + rect.width / 2 - cardW / 2}px`;
-    composer.style.top = `${rect.y + rect.height + gap}px`;
+    const margin = 16 / scale;
+    const minX = -viewport.x / scale + margin;
+    const minY = (84 - viewport.y) / scale;
+    const dock = document.getElementById('canvasDock').getBoundingClientRect();
+    const bottom = dock.top - shell.getBoundingClientRect().top - 12;
+    const maxX = (shell.clientWidth - viewport.x) / scale - cardW - margin;
+    const maxY = (bottom - viewport.y) / scale - composer.offsetHeight;
+    composer.style.left = `${Math.max(minX, Math.min(rect.x + rect.width / 2 - cardW / 2, maxX))}px`;
+    composer.style.top = `${Math.max(minY, Math.min(rect.y + rect.height + gap, maxY))}px`;
 }
+new ResizeObserver(() => {
+    if(composer.classList.contains('open')) positionComposerForNode(selectedNode());
+}).observe(composer);
 let composerUpdateTimer = 0;
 let composerUpdateSeq = 0;
 function scheduleComposerUpdate(delay=120){
@@ -11500,6 +11562,7 @@ function updateComposer(){
     composerUpdateSeq++;
     const node = selectedNode();
     syncRunButtonState(node);
+    if(marketingPanelOwner || node?.layerDocument || node?.layerDraft){composer.classList.remove('open');return;}
     if(smartCascadeSilentSelection && !activeComposerSubject){
         composer.classList.remove('open');
         if(cascadeRunBtn) cascadeRunBtn.style.display = 'none';
@@ -12069,6 +12132,10 @@ function appendImagesToSmartNode(uploaded, targetId='', opts={}){
     let node = targetGroup ? null : (nodes.find(n => n.id === targetId) || selectedNode());
     if(node && !isSmartImageNode(node)) node = null;
     if(opts.forceNew) node = null;
+    if(node?.layerDocument || node?.layerDraft){
+        CanvasLayerNode.addAssets(node.id,images.filter(file=>mediaKindForItem(file)==='image')).catch(error=>toast(error.message));
+        return node;
+    }
     if(!node){
         const groupRect = targetGroup ? nodeRect(targetGroup) : null;
         const center = opts.point || (groupRect ? {x:groupRect.x + groupRect.width / 2, y:groupRect.y + groupRect.height / 2} : viewportCenter());
@@ -12343,6 +12410,11 @@ function connectInputNode(fromId, toId){
     const from = nodes.find(n => n.id === fromId);
     const to = nodes.find(n => n.id === toId);
     if(!from || !to || from.id === to.id) return false;
+    if(to.layerDocument || to.layerDraft){
+        const items=imagesForNode(from).filter(item=>CanvasAssetShelf.mediaKind(item)==='image');
+        if(!items.length)return false;
+        CanvasLayerNode.addAssets(to.id,items,from.id).catch(error=>toast(error.message));
+    }
     if(to.type === 'smart-loop'){
         const groupImages = isSmartGroupNode(from) ? imagesForNode(from).filter(img => img?.url) : [];
         const groupPrompts = isSmartGroupNode(from) ? promptTextItemsForNode(from).filter(Boolean) : [];
@@ -14786,6 +14858,8 @@ async function runApiGeneration(prompt, refs, runSettings=settings, {node, targe
         size:sizeForRun(runSettings), quality:runSettings.quality || 'auto',
         reference_images:imageRefsOnly(refs).slice(0, SMART_REFERENCE_IMAGE_MAX),
         ...(window.CanvasModelPicker?.imageParameters(runSettings) || {})};
+    const sizeError = window.CanvasModelPicker.sizeError(window.CanvasModelPicker.profileFor(apiProviderById(payload.provider_id),payload.model),payload.size,payload);
+    if(sizeError) throw new Error(window.CanvasModelPicker.validationNotice(sizeError,true));
     const requests = Array.from({length:count}, () => CanvasTaskQuery.imageRequest(payload));
     if(!target){
         const settled = await Promise.allSettled(requests.map(async request => {
@@ -15459,10 +15533,17 @@ function finalizeSmartPendingTask(node, taskId, images, kind='image', options={}
         node.title = node.images.length > 1 ? (kind === 'video' ? 'Videos' : kind === 'audio' ? 'Audios' : kind === 'text' ? 'Texts' : 'Group') : (kind === 'video' ? 'Video' : kind === 'audio' ? 'Audio' : kind === 'text' ? 'Text' : 'Image');
         if(node.images.length > 1 && (!Number.isFinite(Number(node.scale)) || Number(node.scale) === MEDIA_NODE_DEFAULT_SCALE || Number(node.scale) === MEDIA_GROUP_PREVIOUS_DEFAULT_SCALE)) node.scale = MEDIA_GROUP_DEFAULT_SCALE;
         else node.scale = mediaNodeDefaultScale(node);
-        delete node.w;
-        delete node.h;
+        if(!node.layerParentNodeId){delete node.w;delete node.h;}
         if(options.recordLog !== false) recordSmartPendingGenerationLog(node, [], kind);
     }
+    if(node.layerTaskId===taskId){
+        node.layerDocument=CanvasLayerDocument.fromOutputs(images,node.layerSource);
+        node.images=[node.layerSource || node.layerDocument.layers[0]?.asset].filter(Boolean);
+        node.title=tr('layers.result');
+        const placed=CanvasLayerLayout.freeRect(nodeRect(node),nodes.filter(n=>n!==node).map(nodeRect));
+        node.x=placed.x;node.y=placed.y;node.h=placed.height;
+    }
+    if(node.layerEditTarget && images.length)applySmartLayerEditResult(node,images[0]).catch(error=>toast(error.message));
     return added;
 }
 async function resumeSmartPendingNode(node, logContext={}){
@@ -15578,6 +15659,7 @@ async function resumeSmartPendingNode(node, logContext={}){
                 }
             }
             failures.push(e);
+            if(node.layerEditTarget)canvasLayerEditor.smartEdit.failed(task.taskId,e.message || tr('smart.errRunFailed'));
             logTaskFailure(e.message || tr('smart.errRunFailed'), task);
             if(e && typeof e === 'object') e.smartGenerationLogged = true;
             if(task.imageIndex === undefined) toast((e.message || tr('smart.errRunFailed')).slice(0, 160));
@@ -15832,6 +15914,7 @@ function createNodeFromMenu(type){
     const groupId = createMenuGroupId;
     closeCreateMenu();
     if(type === 'group') return createSmartGroupNode(p.x - 170, p.y - 110);
+    if(type === 'layers')return createSmartLayerBoard(p);
     let created = null;
     if(type === 'prompt') created = createPromptNode(p.x - 158, p.y - 97);
     else if(type === 'loop') created = createLoopNode(p.x - 135, p.y - 95);
@@ -16331,6 +16414,15 @@ window.onmouseup = e => {
             scheduleSave();
             return;
         }
+        const dropPoint=screenToWorld(e),moved=(dragState.group||[]).some(item=>{const n=nodes.find(n=>n.id===item.id);return n&&(Math.abs(n.x-item.ox)>1||Math.abs(n.y-item.oy)>1);});
+        const layerTarget=moved&&!dragState.ctrlGroup&&(dragState.group||[]).length<=1&&draggedNode&&!draggedNode.layerDocument&&!draggedNode.layerDraft
+            ? [...nodes].reverse().find(n=>{if(n===draggedNode||!(n.layerDocument||n.layerDraft))return false;const r=nodeRect(n);return dropPoint.x>=r.x&&dropPoint.x<=r.x+r.width&&dropPoint.y>=r.y&&dropPoint.y<=r.y+r.height;}) : null;
+        const layerItems=layerTarget?(draggedNode.images||[]).filter(item=>CanvasAssetShelf.mediaKind(item)==='image'):[];
+        if(layerItems.length===1&&draggedNode.images.length===1&&!draggedNode.running&&!draggedNode.pending){
+            const placed=nodeRect(draggedNode);
+            restoreDraggedNodePosition();discardPendingUndo();clearDropHighlight();dragState=null;suppressNodeClickUntil=Date.now()+250;
+            CanvasLayerNode.moveAsset(layerTarget.id,layerItems[0],draggedNode.id,placed).catch(error=>toast(error.message));render();scheduleSave();return;
+        }
         const autoTarget = draggedNode && dragState.ctrlGroup ? dragConnectTargetFor(draggedNode, screenToWorld(e)) : null;
         const insertHit = draggedNode?.type === 'smart-loop' && dragState.ctrlGroup && (dragState.group || []).length <= 1
             ? insertionConnectionForNode(draggedNode)
@@ -16413,6 +16505,7 @@ window.onmouseup = e => {
         clearDropHighlight();
         loopInsertPreview = null;
         dragState = null;
+        window.CanvasLayerNode?.layout();
         scheduleSave();
         scheduleConnectionLayerRefresh();
     }
@@ -17290,6 +17383,7 @@ document.getElementById('imageEditStage').addEventListener('wheel', event => {
     stage.scrollTop = contentY * scale - my;
 }, {passive:false});
 window.addEventListener('resize', () => {
+    if(composer.classList.contains('open')) positionComposerForNode(selectedNode());
     if(cropState) syncImageEditOverflow();
     if(panoramaState.enabled) resizePanoramaViewer();
 });
@@ -17321,6 +17415,8 @@ window.addEventListener('message', event => {
     }
 });
 window.addEventListener('studio-lang-change', () => {
+    document.title = canvas?.title || tr('canvas.smartCanvas');
+    document.getElementById('smartTitle').textContent = canvas?.title || tr('canvas.smartCanvas');
     renderDynamicParams();
     renderInputThumbsRow(selectedNode());
     renderAssetLibrary();
@@ -17391,6 +17487,203 @@ CharacterStudio.mount({
 });
 
 // Shared collection UI; preserve existing typed media insertion and saves.
+function createSmartLayerBoard(point,source,sourceRect){
+    const node=createImageNodeAt(point,source?[{...source}]:[],{select:true});
+    node.layerDocument=CanvasLayerDocument.fromOutputs(source?[source]:[],source || {width:768,height:1024});
+    node.layerSource=source?{...source}:null;node.title=tr('layers.title');node.w=340;
+    node.h=Math.round(node.w*node.layerDocument.height/node.layerDocument.width);
+    selectedIds=[];selectedImage={nodeId:'',index:-1};
+    const candidate={x:sourceRect?sourceRect.x+sourceRect.width+160:node.x,y:sourceRect?sourceRect.y:node.y,width:node.w,height:node.h};
+    const placed=CanvasLayerLayout.freeRect(candidate,nodes.filter(n=>n!==node).map(nodeRect));node.x=placed.x;node.y=placed.y;
+    render();scheduleSave();return node;
+}
+async function openSmartLayerBoard(node,index){
+    if(node.layerDocument || node.layerDraft)return canvasLayerEditor.open(node.id,index);
+    const source={...node.images[index]},rect=nodeRect(node);
+    const board=createSmartLayerBoard({x:rect.x+rect.width+250,y:rect.y+rect.height/2},source,rect);
+    addConnection(node.id,board.id);render();
+    await canvasLayerEditor.open(board.id,0);
+}
+async function uploadLayerComposite(data,name='composition.png',content_type='image/png'){
+    const response=await fetch('/api/ai/upload-base64',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({name,content_type,data})});
+    const result=await response.json();if(!response.ok)throw new Error(result.detail || tr('layers.imageFailed'));
+    return result.files[0];
+}
+let layerCanvasPick=null;
+function beginLayerCanvasPick(targetId,callback){
+    endLayerCanvasPick();layerCanvasPick={targetId,callback};document.body.classList.add('layer-picking');
+    const banner=document.createElement('div');banner.id='layerPickBanner';banner.className='layer-pick-banner';
+    banner.innerHTML='<span>'+escapeHtml(tr('layers.pickingHint'))+'</span><button type="button" aria-label="'+escapeAttr(tr('layers.cancel'))+'">×</button>';
+    banner.querySelector('button').onclick=endLayerCanvasPick;document.body.append(banner);
+}
+function endLayerCanvasPick(){layerCanvasPick=null;document.body.classList.remove('layer-picking');document.getElementById('layerPickBanner')?.remove();}
+function createLayerResultNode(source,doc,images,runSettings,options={}){
+    const sourceRect=nodeRect(source),rect=CanvasLayerLayout.resultRect(sourceRect,doc,nodes.filter(n=>n.id!==source.id).map(nodeRect));
+    const target=createNode(rect.x,rect.y,images,{select:options.select!==false,skipUndo:true});
+    target.w=rect.width;target.h=rect.height;target.runSettings={engine:'api',apiKind:'image',count:1,...runSettings};
+    addConnection(source.id,target.id,'flow');
+    if(options.select!==false){const frame=CanvasLayerLayout.frame(sourceRect,rect,{scale:viewport.scale,width:shell.clientWidth,height:shell.clientHeight});viewport.scale=safeScale(frame.scale);centerViewportOnWorldPoint(frame);}
+    return target;
+}
+let layerFocusAnimation;
+function setLayerEditViewport(next){
+    cancelAnimationFrame(layerFocusAnimation);const before={...viewport},started=performance.now();
+    const animate=time=>{const progress=Math.min(1,(time-started)/220),ease=1-(1-progress)**3;
+        for(const key of ['x','y','scale'])viewport[key]=before[key]+(next[key]-before[key])*ease;
+        applyViewport();if(progress<1)layerFocusAnimation=requestAnimationFrame(animate);else scheduleSave();};
+    layerFocusAnimation=requestAnimationFrame(animate);
+}
+function smartLayerBounds(id,layerId){
+    const item=world.querySelector(`[data-layer-node="${CSS.escape(id)}"] [data-surface-layer="${CSS.escape(layerId)}"]`);
+    if(item)return item.getBoundingClientRect();
+    const node=nodes.find(n=>n.id===id),board=world.querySelector(`[data-layer-node="${CSS.escape(id)}"] .layer-inline-surface`);
+    if(!node||!board)return;
+    const doc=CanvasLayerSession.get(node).doc,layer=doc.layers.find(l=>l.id===layerId);if(!layer)return;
+    const r=board.getBoundingClientRect(),left=r.left+layer.x/doc.width*r.width,top=r.top+layer.y/doc.height*r.height,width=layer.width/doc.width*r.width,height=layer.height/doc.height*r.height;
+    return {left,top,width,height,right:left+width,bottom:top+height};
+}
+async function applySmartLayerEditResult(target,item){
+    const binding=target.layerEditTarget;if(binding.state)return;
+    const sourceCanvas=canvas,prepared=await canvasLayerEditor.smartEdit.prepareOutput(binding,item);
+    if(canvas!==sourceCanvas||!nodes.includes(target))return;
+    const original=nodes.find(n=>n.id===binding.nodeId);
+    const result=prepared.state==='ready'?(original?CanvasLayerSmartEdit.applyResult(CanvasLayerSession.get(original),binding,target.sourceTaskId,prepared.item):'source-changed'):prepared.state;
+    binding.state=result;
+    if(result==='applied'){
+        canvasLayerAdapter.draft(original.id,CanvasLayerDocument.clone(CanvasLayerSession.get(original).doc));
+        CanvasLayerNode.changed(original.id)?.catch(error=>toast(error.message));
+    }
+    if(result==='alpha-missing')toast(tr('layers.editAlphaMissing'));
+    canvasLayerEditor.smartEdit.completed(target,result);
+    render();scheduleSave();
+}
+world.addEventListener('pointerdown',event=>{if(layerCanvasPick && event.target.closest('.image-node')){event.preventDefault();event.stopImmediatePropagation();}},true);
+world.addEventListener('click',event=>{
+    if(!layerCanvasPick)return;event.preventDefault();event.stopImmediatePropagation();
+    const source=nodes.find(node=>node.id===event.target.closest('.image-node')?.dataset.id);if(!source || source.id===layerCanvasPick.targetId)return;
+    const items=imagesForNode(source).filter(item=>CanvasAssetShelf.mediaKind(item)==='image');if(!items.length)return;
+    const pick=layerCanvasPick;endLayerCanvasPick();pick.callback(items,source.id);addConnection(source.id,pick.targetId,'input');scheduleSave();
+},true);
+document.addEventListener('keydown',event=>{if(layerCanvasPick && event.key==='Escape'){event.preventDefault();event.stopImmediatePropagation();endLayerCanvasPick();}},true);
+const canvasLayerAdapter={
+    node:id=>nodes.find(node=>node.id===id),
+    isSelected:id=>isNodeSelected(id),
+    isSingleSelected:id=>selectedNodeIds().length===1&&isNodeSelected(id),
+    render:()=>render(),
+    pickLibrary:()=>CanvasLayerAssets.pick(),
+    pickFromCanvas:(id,callback)=>beginLayerCanvasPick(id,callback),
+    select:id=>{selectedId=id;selectedIds=[];selectedImage={nodeId:'',index:-1};syncSelectionUi();updateComposer();},
+    upload:uploadLayerComposite,
+    imageSize:(ratio,resolution)=>apiImageSize('source',resolution,ratio),
+    layerBounds:smartLayerBounds,
+    focusLayer:(id,layerId)=>{
+        const before={canvasId:canvas.id,viewport:{...viewport}},r=smartLayerBounds(id,layerId);
+        if(!r)return before;
+        const center=screenToWorld({clientX:r.left+r.width/2,clientY:r.top+r.height/2});
+        const height=Math.max(100,shell.clientHeight-340),scale=Math.min(8,viewport.scale*Math.min(Math.max(100,shell.clientWidth-160)/r.width,height/r.height));
+        setLayerEditViewport({scale,x:shell.clientWidth/2-center.x*scale,y:90+height/2-center.y*scale});return before;
+    },
+    restoreViewport:before=>{if(canvas?.id===before.canvasId)setLayerEditViewport(before.viewport);},
+    pan:(dx,dy)=>{cancelAnimationFrame(layerFocusAnimation);viewport.x+=dx;viewport.y+=dy;applyViewport();},
+    zoom:(x,y,delta)=>{cancelAnimationFrame(layerFocusAnimation);const p=screenToWorld({clientX:x,clientY:y}),r=shell.getBoundingClientRect(),scale=Math.max(.05,Math.min(8,viewport.scale*Math.exp(-delta*.002)));viewport.scale=scale;viewport.x=x-r.left-p.x*scale;viewport.y=y-r.top-p.y*scale;applyViewport();},
+    saveEditSettings:(id,value)=>{const node=nodes.find(n=>n.id===id);if(node){node.layerSmartEdit=value;scheduleSave();}},
+    sourcePreview:providerId=>CallSourceHint.preview(providerId),
+    pendingEdit:(id,layerId)=>nodes.find(n=>n.layerEditTarget?.nodeId===id&&n.layerEditTarget.layerId===layerId&&n.pendingTasks?.length)?.sourceTaskId||'',
+    onEditOpen:()=>{canvasMultiSize.close();canvasLayerSeparation.close();setMarketingPanel('layer-edit',true);CanvasLayerNode.layout();},
+    onEditClose:()=>{setMarketingPanel('layer-edit',false);CanvasLayerNode.layout();},
+    moveInto:(node,sourceId,doc)=>{
+        const source=nodes.find(n=>n.id===sourceId);
+        if(!nodes.includes(node)||!source||source===node)throw new Error(tr('layers.taskMissing'));
+        pushUndo();node.layerDraft=doc;
+        nodes=nodes.filter(n=>n!==source);
+        canvas.connections=(canvas.connections||[]).filter(c=>c.from!==sourceId&&c.to!==sourceId);
+        nodes.forEach(n=>{if(Array.isArray(n.inputNodeIds))n.inputNodeIds=n.inputNodeIds.filter(id=>id!==sourceId);if(isSmartGroupNode(n))n.items=(n.items||[]).filter(id=>id!==sourceId);});
+        selectedId=node.id;selectedIds=[];selectedImage={nodeId:'',index:-1};scheduleSave();
+    },
+    detach:(node,plan,asset,geometry={x:node.x,y:node.y,width:Number(node.w)||340})=>{
+        if(!nodes.includes(node))throw new Error(tr('layers.taskMissing'));
+        pushUndo();const scale=geometry.width/plan.remaining.width;
+        node.layerDraft=plan.remaining;
+        const target=createNode(geometry.x+plan.bounds.x*scale,geometry.y+plan.bounds.y*scale,[asset],{select:true,skipUndo:true});
+        target.w=plan.bounds.width*scale;target.h=plan.bounds.height*scale;
+        target.layerElement={previewUrl:asset.url,document:CanvasLayerDocument.clone(plan.document)};
+        selectedIds=[];selectedImage={nodeId:target.id,index:0};scheduleSave();
+        return target;
+    },
+    flush:async id=>{const node=nodes.find(node=>node.id===id);if(node?.layerDraft)await taskCanvasSource(node);},
+    draft:(id,doc)=>{const node=nodes.find(node=>node.id===id);if(node){node.layerDraft=doc;scheduleSave();}},
+    separate:async(id,index,parameters)=>{
+        const sourceCanvas=canvas,original=nodes.find(node=>node.id===id);
+        const {_reference,_references,_editTarget,_stayOnSource,...settings}=parameters;
+        const doc=original.layerDraft || original.layerDocument;
+        const image={...(_reference || original.layerSource || original.images[index] || doc?.layers.find(layer=>layer.kind==='image')?.asset)};
+        const pixels=!settings.layer_options&&/^([1-9]\d*)x([1-9]\d*)$/.exec(settings.size||'');
+        const resultDocument=pixels?{width:Number(pixels[1]),height:Number(pixels[2])}:doc || {width:image.width || 1024,height:image.height || 1024};
+        pushUndo();const target=createLayerResultNode(original,resultDocument,settings.layer_options?[image]:[],settings,{select:!_stayOnSource});
+        target.layerParentNodeId=id;
+        if(_editTarget)target.layerEditTarget=structuredClone(_editTarget);
+        if(settings.creation_title)target.title=settings.creation_title;
+        if(settings.layer_options){target.layerSource=image;target.layerSettings=structuredClone(settings);target.title=tr('layers.result');}
+        const request=CanvasTaskQuery.imageRequest({...settings,n:1,reference_images:_references||[image]});
+        if(settings.layer_options)target.layerTaskId=request.taskId;
+        target.sourceTaskId=request.taskId;
+        target.pendingTasks=[{taskId:request.taskId,kind:'image',imageIndex:0,providerId:parameters.provider_id,model:parameters.model}];
+        target.pending=1;render();
+        try{request.payload.source=await taskCanvasSource(target);}
+        catch(error){delete target.pendingTasks;target.pending=0;scheduleSave();throw error;}
+        if(canvas!==sourceCanvas)throw new Error(tr('layers.taskMissing'));
+        const submissions=new Map([[request.taskId,CanvasTaskQuery.submitImage(request)]]);
+        resumeSmartPendingNode(target,{recordLog:false,submissions}).catch(error=>toast(error.message));
+        return target;
+    },
+    query:async id=>{const node=nodes.find(node=>node.id===id);if(node)await resumeSmartPendingNode(node,{recordLog:false});},
+    merge:async(id,data,doc)=>{
+        const source=nodes.find(node=>node.id===id),sourceCanvas=canvas,asset=await uploadLayerComposite(data,'merged-layers.png');
+        if(canvas!==sourceCanvas)throw new Error(tr('layers.taskMissing'));
+        pushUndo();const provider=apiProviders.find(p=>p.enabled!==false && p.primary) || apiProviders.find(p=>p.enabled!==false);
+        const target=createLayerResultNode(source,doc,[{...asset,width:doc.width,height:doc.height,natural_w:doc.width,natural_h:doc.height}],{provider_id:provider?.id || '',model:provider?.image_models?.[0] || ''});
+        target.mergeSourceNodeId=id;render();await taskCanvasSource(target);return target;
+    },
+    commit:async(id,doc,data,options={})=>{
+        const originalCanvas=canvas,node=nodes.find(node=>node.id===id);
+        if(!node)throw new Error(tr('layers.taskMissing'));
+        const draftAtStart=node.layerDraft;
+        const asset=await uploadLayerComposite(data);
+        if(canvas!==originalCanvas || !nodes.includes(node))throw new Error(tr('layers.taskMissing'));
+        if(node.layerDraft!==draftAtStart)return;
+        if(!options.skipUndo)pushUndo();node.layerDocument=doc;node.layerDraft=doc;
+        node.images=[{...asset,width:doc.width,height:doc.height,natural_w:doc.width,natural_h:doc.height}];
+        node.title=tr('layers.title');render();
+        if(!await taskCanvasSource(node))throw new Error(tr('layers.saveFailed'));
+        if(node.layerDraft===doc)delete node.layerDraft;
+        scheduleSave();
+    }
+};
+const canvasLayerEditor=CanvasLayerEditor.install(canvasLayerAdapter);
+canvasLayerEditor.smartEdit=CanvasLayerSmartEdit.install(canvasLayerAdapter,canvasLayerEditor);
+CanvasLayerNode.install(canvasLayerAdapter,canvasLayerEditor);
+const marketingCanvasAdapter={
+    node:canvasLayerAdapter.node,index:id=>smartNodeToolbarImageIndex(canvasLayerAdapter.node(id)),
+    bounds:(id,index)=>{
+        const element=world.querySelector(`[data-id="${CSS.escape(id)}"] [data-image-index="${index}"] img`);
+        if(!element)return null;
+        const r=element.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height,
+            naturalWidth:element.naturalWidth,naturalHeight:element.naturalHeight,fit:getComputedStyle(element).objectFit};
+    }
+};
+const canvasMultiSize=CanvasMultiSize.install({...marketingCanvasAdapter,
+    onOpen:()=>{canvasLayerSeparation.close();setMarketingPanel('multi-size',true);},onClose:()=>setMarketingPanel('multi-size',false),
+    sourcePreview:providerId=>CallSourceHint.preview(providerId),
+    generate:(id,index,request,target,reference)=>canvasLayerAdapter.separate(id,index,{...request,_reference:reference})
+});
+const canvasLayerSeparation=CanvasLayerSeparation.install({...marketingCanvasAdapter,
+    onOpen:()=>{canvasMultiSize.close();setMarketingPanel('separation',true);},onClose:()=>setMarketingPanel('separation',false),
+    separate:canvasLayerAdapter.separate,
+    marketingActions:[{id:'multi-size',icon:'scan',label:()=>tr('multiSize.entry'),description:()=>tr('multiSize.description'),
+        open:(id,index)=>canvasMultiSize.open(id,index)}]
+});
+
 canvasAssetShelf=window.CanvasAssetShelf?.install({
     items:()=>window.CanvasAssetShelf.mediaFromNodes(nodes),
     insert:(item,screenPoint)=>createImageNodeAt(screenPoint?screenToWorld({clientX:screenPoint.x,clientY:screenPoint.y}):viewportCenter(),

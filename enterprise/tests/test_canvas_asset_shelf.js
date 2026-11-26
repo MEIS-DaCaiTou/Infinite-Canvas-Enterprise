@@ -2,6 +2,13 @@
 const assert=require('node:assert/strict');
 const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
 const {ReferenceShelf,mediaFromNodes,dropIntent,previewUrl}=require('../../static/js/canvas-asset-shelf.js');
+// Exercise the real shared ID generator with the API surface available on HTTP
+// LAN pages: getRandomValues exists while native randomUUID is absent.
+const idContext=vm.createContext({window:{},Uint8Array,crypto:{getRandomValues:bytes=>require('node:crypto').webcrypto.getRandomValues(bytes)}});
+vm.runInContext(fs.readFileSync(path.join(__dirname,'../../static/js/canvas-task-query.js'),'utf8'),idContext);
+global.CanvasTaskQuery=idContext.window.CanvasTaskQuery;
+assert.equal(typeof idContext.crypto.randomUUID,'undefined');
+assert.match(global.CanvasTaskQuery.requestId(),/^[0-9a-f]{32}$/);
 function previewRegressions(){
     const previousLocation=global.location,previousPreview=global.canvasMediaPreviewUrl,calls=[];
     try{
@@ -122,6 +129,13 @@ async function run(){
     await assert.rejects(model.collect(source,clothes),/权限已变化/);
     assert.equal(calls.filter(row=>row.method==='POST').length,writes,'a deleted/revoked library never falls back to writing into another library');
     await model.selectLibrary('mine');
+    const removable=await model.lookup({match_url:second.url}),fileCount=files.size;
+    await model.remove(removable.id);
+    assert.equal(await model.lookup({item_id:removable.id}),null,'saved entry is removed from the selected library');
+    assert.equal(files.size,fileCount,'deleting a collection must preserve bytes reused by canvases');
+    const deletions=calls.filter(row=>row.method==='DELETE').length;
+    await assert.rejects(model.remove('missing-item'),/素材已删除/);
+    assert.equal(calls.filter(row=>row.method==='DELETE').length,deletions,'missing entries do not target another collection');
     actor='bob';const before=calls.filter(row=>row.method==='POST').length;
     await assert.rejects(model.collect(source,pose),/账号已变化/);assert.equal(calls.filter(row=>row.method==='POST').length,before);
     const found=mediaFromNodes([{id:'a',type:'image',url:'/assets/input/a.png'},

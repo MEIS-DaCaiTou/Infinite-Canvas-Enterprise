@@ -209,11 +209,71 @@
     }
     function imageParameters(source) {
         const ratios = {square:'1:1', portrait:'2:3', landscape:'3:2', portrait43:'3:4', landscape43:'4:3', story:'9:16', wide:'16:9', ultrawide:'21:9', ultratall:'9:21'};
-        const ratio = source.ratio === 'custom' ? source.customRatio : source.ratio === 'source' ? '' : (ratios[source.ratio] || source.ratio);
-        return {aspect_ratio:ratio || '', resolution:['512','1k','2k','4k'].includes(source.resolution) ? source.resolution.toUpperCase() : ''};
+        const ratio = ['custom','source'].includes(source.ratio) ? source.customRatio : (ratios[source.ratio] || source.ratio);
+        return {aspect_ratio:source.resolution === 'auto' ? 'auto' : ratio || '', resolution:['512','1k','1.5k','2k','4k'].includes(source.resolution) ? source.resolution.toUpperCase() : ''};
+    }
+    function parameterText(zh,en) { return window.StudioI18n?.lang?.() === 'en' ? en : zh; }
+    function validationNotice(error,submitting=false) {
+        return error ? error + (submitting
+            ? parameterText('；原参数已保留，本次未提交','; original settings kept; no task submitted')
+            : parameterText('；原参数已保留','; original settings kept')) : '';
+    }
+    function sizeError(profile, size, parameters={}) {
+        if(!profile.mode) return '';
+        const raw = String(size || '').trim().toLowerCase();
+        if(profile.mode === 'aspect-size'){
+            const ratio = parameters.aspect_ratio || raw;
+            if(ratio === 'auto') return '';
+            const parts = String(ratio).split(':').map(Number);
+            if(profile.ratios?.length && !profile.ratios.some(value => {
+                const [w,h] = value.split(':').map(Number);
+                return parts.length === 2 && parts[0] * h === parts[1] * w;
+            })) return parameterText('当前模型不支持画幅 ' + ratio + '，请重新选择','Unsupported aspect ratio ' + ratio + '; choose another ratio');
+            if(profile.supports_image_size !== false && profile.resolutions?.length && !profile.resolutions.includes(String(parameters.resolution || '').toUpperCase())) return parameterText('当前模型不支持该分辨率，请重新选择','Unsupported resolution; choose another resolution');
+            return '';
+        }
+        if(!['size_rules','size_presets','resolutions','supports_auto_size'].some(key => key in profile)) return '';
+        if(raw === 'auto') return profile.supports_auto_size === false ? parameterText('当前模型不支持自动尺寸，请重新选择','Automatic size is unavailable for this model') : '';
+        if(profile.resolutions?.includes(raw.toUpperCase())) return '';
+        if(profile.size_presets?.length && !profile.size_presets.includes(raw)) return parameterText('当前模型仅开放已维护尺寸，请重新选择','Choose a maintained size preset for this model');
+        if(profile.supports_custom_size === false && !profile.size_presets?.length) return parameterText('当前模型不支持自定义像素尺寸，请选择已维护分辨率','Choose a supported resolution instead of custom pixel dimensions');
+        if(parameters.resolution && profile.resolutions?.length && !profile.resolutions.includes(parameters.resolution.toUpperCase())) return parameterText('当前模型不支持该分辨率，请重新选择','Unsupported resolution; choose another resolution');
+        const match = raw.match(/^([1-9]\d*)x([1-9]\d*)$/);
+        if(!match) return parameterText('请填写有效的宽高像素','Enter a valid width and height in pixels');
+        const [w,h] = match.slice(1).map(Number), rules = profile.size_rules || {};
+        if(rules.multiple && (w % rules.multiple || h % rules.multiple)) return parameterText(`宽高必须都是 ${rules.multiple} 的倍数`,`Width and height must be multiples of ${rules.multiple}`);
+        if(rules.max_edge && Math.max(w,h) > rules.max_edge) return parameterText(`当前模型最长边不能超过 ${rules.max_edge}px`,`The maximum edge is ${rules.max_edge}px`);
+        if(rules.max_aspect && Math.max(w,h) > Math.min(w,h) * rules.max_aspect) return parameterText(`当前模型长短边比例不能超过 ${rules.max_aspect}:1`,`The maximum aspect ratio is ${rules.max_aspect}:1`);
+        if((rules.min_pixels && w*h < rules.min_pixels) || (rules.max_pixels && w*h > rules.max_pixels)) return parameterText('当前尺寸的像素总数超出模型范围，请重新选择','The pixel count is outside this model’s range');
+        return '';
+    }
+    function sizeChoices(profile, ratios, resolutions, source, sizeFor) {
+        if(!profile.mode) return {ratios, resolutions};
+        const allowedRes = values => values.filter(value => {
+            if(value === 'custom') return profile.supports_custom_size !== false;
+            if(value === 'auto') return profile.supports_auto_size === true;
+            return !profile.resolutions?.length || profile.resolutions.includes(value.toUpperCase());
+        });
+        const ratioChoices = [...ratios];
+        for(const ratio of profile.ratios || []){
+            if(!ratioChoices.some(([value]) => imageParameters({ratio:value}).aspect_ratio === ratio)) ratioChoices.push([ratio,ratio,'模型支持']);
+        }
+        const legal = (ratio,resolution) => !sizeError(profile,sizeFor(ratio,resolution),imageParameters({...source,ratio,resolution}));
+        return {
+            ratios:ratioChoices.filter(([value]) => value === 'source' || (value === 'custom' ? profile.supports_custom_size !== false : allowedRes(resolutions).filter(r => !['auto','custom'].includes(r)).some(r => legal(value,r)))),
+            resolutions:profile.supports_image_size === false ? [] : allowedRes(resolutions).filter(value => ['auto','custom'].includes(value) || legal(source.ratio || 'square',value)),
+        };
+    }
+    function syncSizeSelect(select, choices, current) {
+        select.replaceChildren(...choices.map(([value,label]) => new Option(label,value)));
+        if(current && !choices.some(([value]) => value === current)){
+            const option = new Option(current + parameterText('（原值）',' (saved value)'), current);
+            option.disabled = true; select.add(option);
+        }
+        select.value = current || '';
     }
     function preferredModel(kind, providerId, models) {
         return models.find(model => favorites.has(JSON.stringify([kind,providerId,model]))) || models[0] || '';
     }
-    window.CanvasModelPicker = {mountSelect, mountList, profileFor, videoProfileFor, videoToggleSupported, videoChoices, imageParameters, preferredModel};
+    window.CanvasModelPicker = {mountSelect, mountList, profileFor, videoProfileFor, videoToggleSupported, videoChoices, imageParameters, sizeError, sizeChoices, syncSizeSelect, validationNotice, preferredModel};
 })();

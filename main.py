@@ -32,7 +32,7 @@ import functools
 from pathlib import Path
 import html
 import xml.etree.ElementTree as ET
-from typing import List, Dict, Any, Optional, Tuple
+from typing import Annotated, List, Dict, Any, Optional, Tuple, Literal
 from threading import Lock, RLock, Thread
 import httpx
 from PIL import Image, ImageOps
@@ -41,7 +41,8 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Uplo
 from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response, StreamingResponse, JSONResponse
-from pydantic import BaseModel, Field, PrivateAttr
+from pydantic import BaseModel, Field, PrivateAttr, StringConstraints, model_validator
+from pydantic_core import PydanticCustomError
 from enterprise.providers.comfy_workflow import (
     image_group_candidates, validate_image_groups, apply_workflow_values, field_role, select_history_outputs, workflow_seed,
 )
@@ -55,6 +56,7 @@ from enterprise.config import PATH_ROOTS as _CONFIG_PATH_ROOTS
 from enterprise.paths import get_path_roots, prepare_application_directories
 from enterprise.app_paths import AppPathLayout
 from enterprise.canvas_task_journal import CanvasTaskJournal, TaskAlreadyExists, create_task_receipt
+from enterprise.image_layers import LayerOptions, layer_parameters, supports_layer_options
 from enterprise.local_json import atomic_write_json, read_json, document_lock
 from enterprise.local_uploads import kind_ext as _local_upload_kind_ext, display_name as _local_upload_display_name
 from enterprise.local_uploads import metadata_items as local_upload_metadata_items
@@ -82,16 +84,38 @@ from enterprise.providers.submission import (
     image_api_explicitly_rejected, provider_submission_unknown, submission_json,
     httpx_request_with_transient_retries,
 )
+from enterprise.providers.image_execution import complete_image_submission, poll_image_task
+from enterprise.providers.openai_images import submit_image as submit_openai_image, submit_json_image
+from enterprise.providers.responses_images import (
+    submit as submit_responses_image, submit_stream as submit_responses_image_stream,
+    image_body as responses_image_body, task_endpoint as responses_task_endpoint,
+    query_state as responses_query_state,
+    size_instruction as responses_image_size_instruction_impl,
+    tool_size as responses_proxy_tool_size_impl, no_image_detail as responses_no_image_detail,
+    output_text_image as responses_output_text_image, response_wrap as _responses_wrap,
+)
+from enterprise.image_reference_preparation import edit_reference_files
+from enterprise.providers.suppliers import (
+    supplier_id as builtin_supplier_id, configure_provider as configure_builtin_supplier,
+    provider_presets as builtin_provider_presets, public_image_profiles as builtin_public_image_profiles,
+    supports_managed_source,
+    image_task_query_supported,
+)
+from enterprise.providers.volcengine_images import (
+    image_profile as ark_image_profile, execute_image as execute_ark_image,
+    normalize_legacy_size as normalize_volcengine_size, is_seedream_model as is_volcengine_seedream_model,
+)
 from enterprise.provider_image_profiles import (
     IMAGE_PROFILE_TEMPLATES, ImageProfileError, build_aspect_parameters,
-    normalize_image_profile, normalize_model_image_profiles, image_profile_for,
+    normalize_image_profile, normalize_model_image_profiles, image_profile_for, validate_image_size,
 )
 from enterprise.providers.zhenzhen import (
+    provider_preset as zhenzhen_provider_preset, configure_provider as configure_zhenzhen_provider,
+    execute_image as execute_zhenzhen_image,
+    image_submission_task_id as zhenzhen_image_submission_task_id,
     image_profile as zhenzhen_image_profile,
     public_image_profiles as zhenzhen_public_image_profiles,
-    submit_image as submit_zhenzhen_image,
     async_image_submit_url as zhenzhen_async_image_submit_url,
-    image_submission_task_id as zhenzhen_image_submission_task_id,
     is_zhenzhen, image_headers as zhenzhen_image_headers,
     image_task_endpoint as zhenzhen_image_task_endpoint, query_image as query_zhenzhen_image,
     image_query_status as zhenzhen_image_query_status,
@@ -1340,10 +1364,12 @@ def normalize_provider(item):
         video_models = model_list_from_values(locked_rule.get("video_models") or [])
     groups = {"image": model_list_from_values(item.get("image_models") or []),
               "chat": model_list_from_values(item.get("chat_models") or []), "video": video_models}
-    if is_zhenzhen({"id": provider_id, "base_url": base_url}):
+    supplier = builtin_supplier_id({**item, "id": provider_id, "base_url": base_url, "protocol": protocol})
+    if supplier == "zhenzhen":
         groups = correct_known_groups(groups)
     return {
         "id": provider_id,
+        "supplier": supplier,
         "name": name,
         "base_url": base_url,
         "protocol": protocol,
@@ -1394,11 +1420,12 @@ def public_provider(provider):
     key = provider_env_key_value(provider["id"])
     item = {
         **provider,
+        "supplier": builtin_supplier_id(provider),
         "has_key": bool(key),
         "key_preview": mask_secret(key),
         "key_env": provider_key_env(provider["id"]),
-        "managed_source_supported": is_zhenzhen(provider),
-        "builtin_model_image_profiles": zhenzhen_public_image_profiles(provider),
+        "managed_source_supported": supports_managed_source(provider),
+        "builtin_model_image_profiles": builtin_public_image_profiles(provider),
         "builtin_model_video_profiles": zhenzhen_public_video_profiles(provider),
     }
     if provider.get("id") == "runninghub":
@@ -2519,18 +2546,40 @@ class AIReference(BaseModel):
     kind: str = ""
     mime: str = ""
 
+ImageVariantPrompt = Annotated[str, StringConstraints(
+    strip_whitespace=True, min_length=1, max_length=ONLINE_IMAGE_PROMPT_MAX_LENGTH,
+)]
+
+
 class OnlineImageRequest(CallSourceSelection):
     request_id: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{32}$")
     source: Optional[TaskCanvasSource] = None
-    prompt: str = Field(min_length=1, max_length=ONLINE_IMAGE_PROMPT_MAX_LENGTH)
+    prompt: str = Field(max_length=ONLINE_IMAGE_PROMPT_MAX_LENGTH)
     provider_id: str = "comfly"
     model: str = ""
     size: str = "1024x1024"
     aspect_ratio: str = ""
     resolution: str = ""
     quality: str = "auto"
+    background_mode: Literal["auto", "preserve", "opaque", "transparent"] = "auto"
+    layer_options: LayerOptions | None = None
     n: int = 1
     reference_images: List[AIReference] = []
+    creation_title: str = Field(default="", max_length=100)
+    variant_prompts: list[ImageVariantPrompt] | None = Field(default=None, min_length=1, max_length=8)
+
+    @model_validator(mode="after")
+    def validate_variant_count(self):
+        if not self.prompt and self.layer_options is None:
+            raise PydanticCustomError("string_too_short", "提示词不能为空")
+        if self.layer_options is not None:
+            if not supports_layer_options(self.model):
+                raise ValueError("当前模型不支持分层选项")
+            if self.n != 1 or len(self.reference_images) != 1:
+                raise ValueError("图层拆分使用一张原图和一次请求")
+        if self.variant_prompts is not None and len(self.variant_prompts) != self.n:
+            raise PydanticCustomError("image_variant_count", "逐图提示词数量须与生成张数一致")
+        return self
 
 class ImageTaskQueryRequest(BaseModel):
     provider_id: str = "comfly"
@@ -2663,6 +2712,7 @@ class RunningHubWorkflowConfig(BaseModel):
 
 class ApiProviderPayload(BaseModel):
     id: str = ""
+    supplier: str = ""
     name: str = ""
     base_url: str = ""
     protocol: str = "openai"
@@ -2706,6 +2756,12 @@ class ChatRequest(CallSourceSelection):
     reference_images: List[AIReference] = []
     provider: str = "comfly"
     ms_model: str = ""
+    agent_request_id: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{32}$")
+    agent_image_count: Optional[int] = Field(default=None, ge=1, le=8)
+    agent_image_template: str = Field(default="", max_length=100)
+    agent_image_variants: Optional[list[ImageVariantPrompt]] = Field(default=None, min_length=1, max_length=8)
+    agent_creation_type: Literal["agent", "image"] = "agent"
+    agent_background: Literal["auto", "preserve", "opaque", "transparent"] = "auto"
 
 def chat_system_prompt(payload):
     prompt = str(getattr(payload, "system_prompt", "") or "").strip()
@@ -2787,6 +2843,7 @@ class CanvasAssetDownloadRequest(BaseModel):
     urls: List[str] = []
     items: List[Dict[str, Any]] = []
     filename: str = "canvas-output-images.zip"
+    manifest: Optional[Dict[str, Any]] = None
 
 class CanvasWorkflowExportRequest(BaseModel):
     nodes: List[Dict[str, Any]] = []
@@ -3246,6 +3303,24 @@ def load_conversation(user_id, conversation_id):
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail="对话不存在")
     return read_json(path)
+
+def record_agent_message(user_id, conversation_id, message, *, replace=False):
+    with CONVERSATION_LOCK:
+        conversation = load_conversation(user_id, conversation_id)
+        messages = conversation["messages"]
+        for index, existing in enumerate(messages):
+            if existing.get("id") == message["id"]:
+                if not replace:
+                    return conversation, False
+                messages[index] = message
+                break
+        else:
+            if not messages:
+                conversation["title"] = display_title(message["content"])
+            messages.append(message)
+        conversation["updated_at"] = now_ms()
+        atomic_write_json(conversation_path(user_id, conversation_id), conversation)
+    return conversation, True
 
 def list_conversations(user_id):
     records = []
@@ -4040,37 +4115,10 @@ def images_api_unsupported(response):
     return "images api is not supported" in text or "not supported for this platform" in text
 
 def responses_image_size_instruction(size: str) -> str:
-    """RS 中转多为网页版逆向：结构化 size 参数（tool.size / 顶层 size / --size 尾注）全被无视，
-    只有内部模型能“听懂”的自然语言比例要求有效（实测中文明确说横版+比例+禁止正方形可让
-    1:1 变成 3:2 横版）。这里生成中英双语的强化指令。"""
-    match = re.match(r"^\s*(\d{2,5})\s*[xX*]\s*(\d{2,5})\s*$", str(size or ""))
-    if not match:
-        return ""
-    width, height = int(match.group(1)), int(match.group(2))
-    if width <= 0 or height <= 0:
-        return ""
-    if width == height:
-        return "请生成正方形图片（宽高比 1:1）。Generate a SQUARE image (aspect ratio 1:1)."
-    from fractions import Fraction
-    ratio = Fraction(width, height).limit_denominator(32)
-    rw, rh = ratio.numerator, ratio.denominator
-    if width > height:
-        zh_shape, en_shape = "横版（宽幅）", "LANDSCAPE (wide)"
-    else:
-        zh_shape, en_shape = "竖版（长幅）", "PORTRAIT (tall)"
-    return (
-        f"请生成{zh_shape}图片：宽高比 {rw}:{rh}，目标尺寸为宽 {width} × 高 {height} 像素，绝对不要输出正方形（1:1）。"
-        f" Generate a {en_shape} image with aspect ratio {rw}:{rh}, target size {width}x{height} pixels (width x height)."
-        f" Never output a square 1:1 image. Do not swap width and height."
-    )
+    return responses_image_size_instruction_impl(size)
 
 def responses_proxy_tool_size(size: str) -> str:
-    """部分 RS 中转把 image_generation.size 当成 height x width；这里只对 RS 模式做兼容翻转。"""
-    match = re.match(r"^\s*(\d{2,5})\s*[xX*]\s*(\d{2,5})\s*$", str(size or ""))
-    if not match:
-        return str(size or "").strip()
-    width, height = match.group(1), match.group(2)
-    return f"{height}x{width}" if width != height else f"{width}x{height}"
+    return responses_proxy_tool_size_impl(size)
 
 async def responses_input_image_url(ref) -> str:
     """RS / Responses 的 input_image。
@@ -4104,194 +4152,19 @@ async def responses_input_image_url(ref) -> str:
     data_url = reference_to_data_url({"url": local_path}, max_size=1536)
     return data_url if data_url.startswith("data:") else ""
 
-def responses_no_image_detail(data) -> str:
-    if not isinstance(data, dict):
-        return ""
-    details = []
-    error = data.get("error")
-    if isinstance(error, dict):
-        msg = error.get("message") or error.get("detail") or error.get("code")
-        if msg:
-            details.append(str(msg))
-    output_text = data.get("output_text")
-    if isinstance(output_text, str) and output_text.strip():
-        details.append(output_text.strip()[:300])
-    output = data.get("output")
-    if isinstance(output, list):
-        for item in output:
-            if not isinstance(item, dict) or item.get("type") != "image_generation_call":
-                continue
-            status = item.get("status")
-            if status:
-                details.append(f"image_generation_call.status={status}")
-            item_error = item.get("error")
-            if isinstance(item_error, dict):
-                msg = item_error.get("message") or item_error.get("detail") or item_error.get("code")
-                if msg:
-                    details.append(str(msg))
-            elif isinstance(item_error, str) and item_error.strip():
-                details.append(item_error.strip())
-    joined = "；".join(dict.fromkeys(details))
-    return f"RS / Responses 没有返回图片数据{f'：{joined}' if joined else ''}"
 
-def responses_output_text_image(raw):
-    """兜底解析：部分 RS 中转不返回标准 image_generation_call，而是把生图结果
-    以 output_text 里的 markdown 图片链接（![...](url)）或裸图片 URL 返回。"""
-    texts = []
-    def collect(value, depth=0):
-        if depth > 6 or len(texts) > 40:
-            return
-        if isinstance(value, str):
-            if value.strip():
-                texts.append(value)
-            return
-        if isinstance(value, list):
-            for item in value:
-                collect(item, depth + 1)
-            return
-        if isinstance(value, dict):
-            for key in ("output", "content", "text", "output_text", "message", "response"):
-                if key in value:
-                    collect(value[key], depth + 1)
-    collect(raw)
-    for text in texts:
-        match = re.search(r"!\[[^\]]*\]\((https?://[^)\s]+)\)", text)
-        if match:
-            return {"type": "url", "value": match.group(1)}
-        match = re.search(r"https?://[^\s)\"'<>]+\.(?:png|jpe?g|webp|gif)(?:\?[^\s)\"'<>]*)?", text, re.I)
-        if match:
-            return {"type": "url", "value": match.group(0)}
-    return None
 
-def _responses_wrap(url, status_code, payload):
-    return httpx.Response(
-        status_code,
-        headers={"content-type": "application/json"},
-        content=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        request=httpx.Request("POST", url),
-    )
 
 RESPONSES_REJECT_STATUSES = {400, 404, 405, 415, 422}
 RESPONSES_POLL_INTERVAL = 5.0
 RESPONSES_POLL_MAX_SECONDS = 1500.0
 
-async def post_openai_responses(client, url, headers, body):
-    """RS / Responses 请求。图片编辑经常超过 120 秒，非流式请求会被中转前面的
-    Cloudflare 读超时掐断（Error 524）。策略按可靠性排序：
-    1) background:true 后台任务 + 轮询 GET /v1/responses/{id}（每个请求都秒回，彻底绕开超时）；
-    2) 后台模式被拒（4xx 参数类错误）→ SSE 流式；
-    3) 流式也被拒 → 非流式直接请求。
-    5xx/超时一律不自动重试，避免上游已开始生成后重复扣费。"""
-    bg_body = dict(body)
-    bg_body["background"] = True
-    # A lost response may already have incurred a paid generation.
-    resp = await client.post(url, headers=headers, json=bg_body)
-    if resp.status_code in RESPONSES_REJECT_STATUSES:
-        print(f"RS background 模式被拒（{resp.status_code}），改走流式：{resp.text[:200]}")
-        return await post_openai_responses_stream(client, url, headers, body)
-    if resp.status_code >= 400:
-        if resp.status_code == 524:
-            return _responses_wrap(url, 502, {"error": {"message": (
-                "中转在 background 模式下仍然 524 超时：该渠道对 /v1/responses 的 background/stream 都不透传，"
-                "无法完成超过 120 秒的图片编辑。请换支持 Responses 透传的渠道。上游原文："
-                f"{resp.text[:300]}"
-            )}})
-        return resp
-    try:
-        data = resp.json()
-    except ValueError:
-        return resp
-    status = str((data or {}).get("status") or "").lower()
-    rid = str((data or {}).get("id") or "").strip()
-    if status not in {"queued", "in_progress", "processing", "pending", "running"} or not rid:
-        return resp  # 中转忽略 background 直接同步返回了结果（或未知结构），交给下游解析
-    # 轮询后台任务
-    retrieve_url = f"{url.rstrip('/')}/{urllib.parse.quote(rid)}"
-    deadline = time.monotonic() + RESPONSES_POLL_MAX_SECONDS
-    transient_failures = 0
-    while time.monotonic() < deadline:
-        await asyncio.sleep(RESPONSES_POLL_INTERVAL)
-        try:
-            poll = await client.get(retrieve_url, headers=headers)
-        except httpx.HTTPError as e:
-            transient_failures += 1
-            if transient_failures > 5:
-                return _responses_wrap(url, 502, {"error": {"message": f"RS 后台任务轮询连续失败：{e}（任务 id={rid}）"}})
-            continue
-        if poll.status_code >= 400:
-            transient_failures += 1
-            if transient_failures > 5:
-                return _responses_wrap(url, 502, {"error": {"message": f"RS 后台任务轮询失败（{poll.status_code}）：{poll.text[:200]}（任务 id={rid}）"}})
-            continue
-        transient_failures = 0
-        try:
-            data = poll.json()
-        except ValueError:
-            continue
-        status = str((data or {}).get("status") or "").lower()
-        if status == "completed":
-            return _responses_wrap(url, 200, data)
-        if status in {"failed", "cancelled", "incomplete"}:
-            return _responses_wrap(url, 502, data)
-    return _responses_wrap(url, 502, {"error": {"message": f"RS 后台任务超过 {int(RESPONSES_POLL_MAX_SECONDS)}s 仍未完成（任务 id={rid}）"}})
+async def post_openai_responses(client, url, headers, body, *, on_accepted=None):
+    return await submit_responses_image(client, url, headers, body, on_accepted=on_accepted,
+        poll_interval=RESPONSES_POLL_INTERVAL, poll_max_seconds=RESPONSES_POLL_MAX_SECONDS)
 
 async def post_openai_responses_stream(client, url, headers, body):
-    """RS / Responses 的 SSE 流式请求：流式从一开始就持续有事件字节返回，
-    不会触发中转的 Cloudflare 120s 读超时。收到 response.completed 后
-    把完整 response 对象包装成普通 httpx.Response，下游解析逻辑不变。"""
-    request = httpx.Request("POST", url)
-
-    def wrap(status_code, payload):
-        return _responses_wrap(url, status_code, payload)
-
-    stream_body = dict(body)
-    stream_body["stream"] = True
-    try:
-        async with client.stream("POST", url, headers=headers, json=stream_body) as resp:
-            ctype = (resp.headers.get("content-type") or "").lower()
-            if resp.status_code >= 400 or "text/event-stream" not in ctype:
-                content = await resp.aread()
-                # 个别中转不支持 responses 流式（对 stream 参数直接报错）→ 回退一次非流式。
-                # 仅对“请求被拒绝”类状态码回退，5xx/超时不重试，避免上游已开始生成后重复扣费。
-                if resp.status_code in {400, 404, 405, 415, 422}:
-                    print(f"RS 流式请求被拒（{resp.status_code}），回退非流式：{content[:200]!r}")
-                    return await client.post(url, headers=headers, json=body)
-                return httpx.Response(resp.status_code, headers=resp.headers, content=content, request=request)
-            completed = None
-            error_payload = None
-            partial_b64 = ""
-            async for line in resp.aiter_lines():
-                if not line.startswith("data:"):
-                    continue
-                chunk = line[5:].strip()
-                if not chunk or chunk == "[DONE]":
-                    continue
-                try:
-                    event = json.loads(chunk)
-                except ValueError:
-                    continue
-                if not isinstance(event, dict):
-                    continue
-                etype = str(event.get("type") or "")
-                if etype in {"response.completed", "response.incomplete"} and isinstance(event.get("response"), dict):
-                    completed = event["response"]
-                elif etype == "response.failed":
-                    failed = event.get("response")
-                    error_payload = failed if isinstance(failed, dict) else {"error": {"message": "response.failed"}}
-                elif etype == "error":
-                    message = event.get("message") or event.get("error") or chunk[:300]
-                    error_payload = {"error": {"message": str(message)}}
-                elif etype.endswith("partial_image") and isinstance(event.get("partial_image_b64"), str):
-                    partial_b64 = event["partial_image_b64"]
-            if completed is None and error_payload is None and partial_b64:
-                # 流被提前掐断但已收到分片图：用最后一张分片兜底
-                completed = {"output": [{"type": "image_generation_call", "status": "completed", "result": partial_b64}]}
-            if completed is not None:
-                return wrap(200, completed)
-            return wrap(502, error_payload or {"error": {"message": "RS 流式响应结束但没有 response.completed 事件"}})
-    except httpx.HTTPError:
-        # Keep the ambiguous submission with its original caller; do not POST again.
-        raise
+    return await submit_responses_image_stream(client, url, headers, body)
 
 def provider_protocol(provider):
     return str((provider or {}).get("protocol") or "openai").strip().lower()
@@ -6037,6 +5910,8 @@ async def generate_jimeng_video(payload: CanvasVideoRequest, provider):
 
 def image_task_url_for_provider(provider, task_id):
     base_url = (provider.get("base_url") if provider else AI_BASE_URL).rstrip("/")
+    if normalize_image_request_mode((provider or {}).get('image_request_mode')) == 'openai-responses':
+        return responses_task_endpoint(provider_endpoint_url(provider, 'image_generation_endpoint', '/v1/responses'), task_id)
     # 异步生图（openai-video-proxy）模式优先于 apimart 协议判断：
     # 提交走 /v1/videos，轮询必须走 /v1/videos/{id}；否则 protocol=apimart 的平台会错走 /v1/tasks/{id}
     if normalize_image_request_mode((provider or {}).get("image_request_mode")) == "openai-video-proxy":
@@ -6047,8 +5922,10 @@ def image_task_url_for_provider(provider, task_id):
         return zhenzhen_image_task_endpoint(base_url, task_id)
     return f"{base_url}/images/tasks/{task_id}" if base_url.endswith("/v1") else f"{base_url}/v1/images/tasks/{task_id}"
 
-async def fetch_image_task_payload(client, task_id, provider=None):
-    task_url = image_task_url_for_provider(provider, task_id)
+async def fetch_image_task_payload(client, task_id, provider=None, *, query_endpoint=None):
+    if not image_task_query_supported(provider):
+        raise HTTPException(400, "方舟图片接口同步返回，不支持使用 request_id 续查；请核对原调用记录")
+    task_url = query_endpoint or image_task_url_for_provider(provider, task_id)
     if is_zhenzhen(provider):
         return await query_zhenzhen_image(client, task_url, api_headers(provider=provider, protocol="openai"), httpx_request_with_transient_retries)
     response = await httpx_request_with_transient_retries(
@@ -6066,32 +5943,8 @@ async def wait_for_image_task(client, task_id, provider=None):
     timeout = APIMART_IMAGE_TASK_TIMEOUT if is_apimart else IMAGE_TASK_TIMEOUT
     interval = APIMART_IMAGE_POLL_INTERVAL if is_apimart else IMAGE_POLL_INTERVAL
     initial_delay = APIMART_IMAGE_INITIAL_POLL_DELAY if is_apimart else 0
-    deadline = time.monotonic() + timeout
-    last_payload = {}
-    while time.monotonic() < deadline:
-        if initial_delay:
-            await asyncio.sleep(min(initial_delay, max(0.0, deadline - time.monotonic())))
-            initial_delay = 0
-            if time.monotonic() >= deadline:
-                break
-        last_payload = await fetch_image_task_payload(client, task_id, provider)
-        status = image_task_status(last_payload)
-        if not status:
-            try:
-                if extract_image(last_payload):
-                    return last_payload
-            except HTTPException:
-                pass
-        if status in IMAGE_TASK_SUCCESS_STATUSES:
-            return last_payload
-        if status in IMAGE_TASK_FAILED_STATUSES:
-            error = HTTPException(status_code=502, detail=f"生图任务失败：{image_task_fail_reason(last_payload)}")
-            error.provider_task_failed = True
-            raise error
-        await asyncio.sleep(min(interval, max(0.0, deadline - time.monotonic())))
-    raw_text = json.dumps(last_payload, ensure_ascii=False)[:800] if last_payload else ""
-    extra = f"，最后响应：{raw_text}" if raw_text else ""
-    raise HTTPException(status_code=504, detail=f"生图任务超时（已等待 {int(timeout)} 秒），task_id={task_id}{extra}")
+    return await poll_image_task(client, task_id, provider, timeout=timeout, interval=interval,
+        initial_delay=initial_delay, fetch_payload=fetch_image_task_payload, extract_image=extract_image)
 
 def output_storage(category="output"):
     return (OUTPUT_INPUT_DIR, "input") if category == "input" else (OUTPUT_OUTPUT_DIR, "output")
@@ -8835,60 +8688,6 @@ def apimart_size_resolution(size):
     best = min(common, key=lambda item: abs(ratio - item[0] / item[1]))
     return best[2], resolution
 
-VOLCENGINE_MIN_PIXELS = 3_686_400
-VOLCENGINE_MIN_EDGE = 1536
-VOLCENGINE_MAX_EDGE = 4096
-VOLCENGINE_RATIO_CHOICES = [
-    (1, 1, "1:1"),
-    (4, 3, "4:3"),
-    (3, 4, "3:4"),
-    (16, 9, "16:9"),
-    (9, 16, "9:16"),
-    (21, 9, "21:9"),
-    (9, 21, "9:21"),
-    (3, 2, "3:2"),
-    (2, 3, "2:3"),
-    (5, 4, "5:4"),
-    (4, 5, "4:5"),
-]
-
-def is_volcengine_seedream_model(model):
-    value = str(model or "").strip().lower()
-    return "seedream" in value or "doubao-seedream" in value
-
-def normalize_volcengine_size(size, model=""):
-    width, height = parse_size_pair(size)
-    raw = str(size or "").strip().lower()
-    if not width or not height:
-        if raw == "4k":
-            return "4096x4096"
-        if raw == "2k":
-            return "2048x2048"
-        return "2048x2048" if is_volcengine_seedream_model(model) else (size or "1024x1024")
-    if not is_volcengine_seedream_model(model):
-        return f"{width}x{height}"
-    ratio = width / max(1, height)
-    best_ratio = min(VOLCENGINE_RATIO_CHOICES, key=lambda item: abs(ratio - item[0] / item[1]))
-    rw, rh = best_ratio[0], best_ratio[1]
-    scale = max(
-        (VOLCENGINE_MIN_PIXELS / max(1, rw * rh)) ** 0.5,
-        VOLCENGINE_MIN_EDGE / max(1, min(rw, rh)),
-    )
-    target_w = rw * scale
-    target_h = rh * scale
-    cap = min(1.0, VOLCENGINE_MAX_EDGE / max(target_w, target_h))
-    target_w *= cap
-    target_h *= cap
-    snapped_w = max(64, int(target_w // 16) * 16)
-    snapped_h = max(64, int(target_h // 16) * 16)
-    while snapped_w * snapped_h < VOLCENGINE_MIN_PIXELS:
-        if snapped_w <= snapped_h:
-            snapped_w += 16
-        else:
-            snapped_h += 16
-        if max(snapped_w, snapped_h) > VOLCENGINE_MAX_EDGE:
-            break
-    return f"{snapped_w}x{snapped_h}"
 
 def friendly_image_error_detail(text, size="", model="", status_code=None):
     text = str(text or "")
@@ -9112,24 +8911,26 @@ def volcengine_image_payload(ref):
         return None
     return value
 
-async def generate_volcengine_provider_image(prompt, size, model, reference_images=None, provider=None):
+async def generate_volcengine_provider_image(prompt, size, model, reference_images=None, provider=None, image_parameters=None,
+                                            receipt_sink=None, prepared_inputs=None):
     endpoint = volcengine_endpoint_url(provider)
-    size = normalize_volcengine_size(size, model)
-    body = {
-        "model": model,
-        "prompt": prompt,
-        "size": size,
-        "response_format": "url",
-    }
-    images = [volcengine_image_payload(ref) for ref in (reference_images or [])[:ONLINE_IMAGE_REFERENCE_MAX]]
-    images = [value for value in images if value]
-    if images:
-        body["image"] = images
-    async with httpx.AsyncClient(timeout=httpx.Timeout(connect=20.0, read=1800.0, write=120.0, pool=20.0)) as client:
-        response = await client.post(endpoint, headers=api_headers(provider=provider), json=body)
-        response.raise_for_status()
-        raw = response.json()
-        return extract_image(raw), raw
+    parameters = image_parameters or {}
+    refs = [ref for ref in (reference_images or []) if ref.get("url")]
+    if not ark_image_profile(provider, model):
+        refs = refs[:ONLINE_IMAGE_REFERENCE_MAX]
+    if ark_image_profile(provider, model) and any(str(ref.get("role") or "").lower() == "mask" or str(ref.get("name") or "").lower().endswith("_mask.png") for ref in refs):
+        raise HTTPException(400, "Seedream 5.5 官方接口不接受 mask 参数")
+    from enterprise.creation_settings import native_background_parameters
+    background = native_background_parameters(provider, model, parameters.get("background_mode", "auto"))
+    references = await prepared_inputs.urls(refs) if prepared_inputs else [volcengine_image_payload(ref) for ref in refs]
+    async def before_request(request):
+        prepared_inputs.validate_request(request)
+    async with httpx.AsyncClient(timeout=httpx.Timeout(connect=20.0, read=1800.0, write=120.0, pool=20.0),
+            event_hooks={"request": [before_request]} if prepared_inputs else None) as client:
+        return await execute_ark_image(client, endpoint, api_headers(provider=provider, model=model),
+            provider=provider, model=model, prompt=prompt, size=size, references=references,
+            extract_image=extract_image, receipt_sink=receipt_sink,
+            layer_options=parameters.get("layer_options"), background_options=background)
 
 def runninghub_api_headers(provider):
     api_key = str((provider or {}).get("api_key") or "").strip() or runninghub_api_key(provider)
@@ -10257,8 +10058,10 @@ async def generate_runninghub_video(payload, provider):
         local_urls = [await save_remote_video_to_output(url, prefix="rh_video_") for url in urls]
         return {"videos": local_urls, "task_id": task_id, "raw": result}
 
-async def generate_ai_image(prompt, size, quality, model, reference_images=None, provider_id="comfly", image_parameters=None, receipt_sink=None):
+async def generate_ai_image(prompt, size, quality, model, reference_images=None, provider_id="comfly", image_parameters=None, receipt_sink=None, prepared_inputs=None):
+    from enterprise.creation_settings import native_background_parameters
     provider = get_api_provider(provider_id)
+    background_options = native_background_parameters(provider, model, (image_parameters or {}).get("background_mode", "auto"))
     builtin_image_profile = zhenzhen_image_profile(provider, model)
     if provider["id"] == "modelscope":
         return await generate_modelscope_provider_image(prompt, size, model, reference_images, provider)
@@ -10273,14 +10076,17 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
     if effective_protocol(provider, model) == "gemini" and not builtin_image_profile:
         return await generate_gemini_provider_image(prompt, size, model, reference_images, provider, image_parameters)
     if is_volcengine_provider(provider):
-        return await generate_volcengine_provider_image(prompt, size, model, reference_images, provider)
+        return await generate_volcengine_provider_image(prompt, size, model, reference_images, provider, image_parameters,
+                                                       receipt_sink=receipt_sink, prepared_inputs=prepared_inputs)
     is_gpt2 = is_gpt_image_2_model(model)
     image_profile = image_profile_for(provider, model)
     is_aspect_image = image_profile.get("mode") == "aspect-size"
     aspect_params = aspect_image_parameters(size, image_profile, image_parameters) if is_aspect_image else None
     is_apimart = is_apimart_provider(provider)
-    # 不对 GPT 尺寸做任何缩小/拦截：用户选什么尺寸就原样发给上游；
-    # 若超过 GPT 的最大像素限制被上游拒绝，再由 friendly_image_error_detail 给出友好的像素上限提示。
+    try:
+        validate_image_size(size, image_profile, image_parameters)
+    except ImageProfileError as exc:
+        raise HTTPException(400, str(exc)) from exc
     quality = str(quality or "").strip().lower()
     if quality not in {"low", "medium", "high"}:
         quality = ""
@@ -10294,8 +10100,8 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
     async_gen_url = async_edit_url = None
     if receipt_sink is not None and is_zhenzhen(provider):
         query_endpoint = image_task_url_for_provider(provider, "_")
-        async_gen_url = zhenzhen_async_image_submit_url(gen_url, query_endpoint)
-        async_edit_url = zhenzhen_async_image_submit_url(edit_url, query_endpoint)
+        async_gen_url = zhenzhen_async_image_submit_url(gen_url, query_endpoint, model=model)
+        async_edit_url = zhenzhen_async_image_submit_url(edit_url, query_endpoint, model=model)
         gen_url, edit_url = async_gen_url or gen_url, async_edit_url or edit_url
     refs = [ref for ref in (reference_images or []) if ref.get("url")]
     mask_refs = [ref for ref in refs if str(ref.get("role") or "").strip().lower() == "mask" or str(ref.get("name") or "").lower().endswith("_mask.png")]
@@ -10308,36 +10114,30 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
     if is_aspect_image:
         image_request_mode = "openai"
     request_timeout = httpx.Timeout(connect=20.0, read=1800.0, write=120.0, pool=20.0) if (is_aspect_image or is_gpt2 or is_apimart or image_request_mode in {"openai-json", "openai-video-proxy", "openai-responses"}) else AI_REQUEST_TIMEOUT
-    async with httpx.AsyncClient(timeout=request_timeout) as client:
+    async def before_image_request(request):
+        prepared_inputs.validate_request(request)
+    async with httpx.AsyncClient(timeout=request_timeout, event_hooks={'request': [before_image_request]} if prepared_inputs else None) as client:
         response = None
-        async def post_openai_edits(edit_files=None):
-            data = {"model": model, "prompt": prompt, "size": size}
-            if is_aspect_image:
-                data.pop("size")
-                data.update(aspect_params)
-            if quality:
-                data["quality"] = quality
-            return await client.post(
-                edit_url,
-                headers=api_headers(json_body=False, provider=provider, model=model),
-                data=data,
-                files=edit_files if edit_files is not None else {},
-            )
-
         if builtin_image_profile and not mask_refs:
-            response = await submit_zhenzhen_image(
+            return await execute_zhenzhen_image(
                 client, gen_url, api_headers(provider=provider, model=model),
+                provider=provider, extract_image=extract_image, extract_task_id=extract_task_id,
+                wait_for_task=wait_for_image_task, receipt_sink=receipt_sink,
+                async_endpoints=(async_gen_url, async_edit_url),
                 model=model, prompt=prompt, size=size, quality=quality,
-                references=[reference_to_data_url(ref, max_size=1536) for ref in image_refs],
+                references=await prepared_inputs.urls(image_refs) if prepared_inputs else [reference_to_data_url(ref, max_size=1536) for ref in image_refs],
                 aspect_parameters=aspect_params,
+                background_options=background_options,
+                layer_options=(image_parameters or {}).get("layer_options"),
                 edit_endpoint=edit_url,
                 multipart_edit=bool(async_edit_url),
             )
         elif is_aspect_image and not image_refs:
-            body = {"model": model, "prompt": prompt, "response_format": "url", **aspect_params}
-            if quality:
-                body["quality"] = quality
-            response = await client.post(gen_url, headers=api_headers(provider=provider, model=model), json=body)
+            response = await submit_openai_image(client, gen_url, edit_url,
+                headers=api_headers(provider=provider, model=model),
+                edit_headers=api_headers(json_body=False, provider=provider, model=model),
+                model=model, prompt=prompt, size=size, quality=quality, aspect=aspect_params,
+                allow_generation_fallback=False)
         elif image_request_mode == "openai-video-proxy":
             body = {
                 "model": model,
@@ -10353,35 +10153,18 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
                 json=body,
             )
         elif image_request_mode == "openai-responses":
-            tool = {"type": "image_generation"}
-            tool["action"] = "edit" if image_refs else "generate"
-            if size and str(size).strip().lower() != "auto":
-                tool["size"] = responses_proxy_tool_size(size)
-            if quality:
-                tool["quality"] = quality
-            size_instruction = responses_image_size_instruction(size)
-            input_text = f"{size_instruction}\n\n{prompt}" if size_instruction else prompt
-            content = [{"type": "input_text", "text": input_text}]
-            for ref in image_refs[:ONLINE_IMAGE_REFERENCE_MAX]:
-                image_url = await responses_input_image_url(ref)
-                if image_url:
-                    content.append({"type": "input_image", "image_url": image_url})
-            body = {
-                "model": model,
-                "input": [{"role": "user", "content": content}],
-                "tools": [tool],
-            }
+            body = responses_image_body(model, prompt, size, quality,
+                [await responses_input_image_url(ref) for ref in image_refs[:ONLINE_IMAGE_REFERENCE_MAX]], background_options)
             responses_url = provider_endpoint_url(provider, "image_generation_endpoint", "/v1/responses")
-            response = await post_openai_responses(client, responses_url, api_headers(provider=provider, model=model), body)
+            async def accepted_response(response_id, query_endpoint, accepted):
+                receipt_sink.identify(accepted.headers, raw=accepted.json())
+                await receipt_sink.accepted(response_id, provider, query_endpoint=query_endpoint)
+            options = {"on_accepted": accepted_response} if receipt_sink is not None else {}
+            response = await post_openai_responses(client, responses_url, api_headers(provider=provider, model=model), body, **options)
         elif image_request_mode == "openai-json":
-            # Agnes 等“OpenAI JSON 图片接口”统一走 /images/generations：
-            # 不使用 /images/edits，不传顶层 response_format/n/quality；
-            # 文生图只传 extra_body.response_format，图生图把参考图放进 extra_body.image。
-            extra_body = {"response_format": "url"}
-            if image_refs:
-                extra_body["image"] = [reference_to_data_url(ref, max_size=1536) for ref in image_refs[:ONLINE_IMAGE_REFERENCE_MAX]]
-            body = {"model": model, "prompt": prompt, "size": size, "extra_body": extra_body}
-            response = await client.post(gen_url, headers=api_headers(provider=provider, model=model), json=body)
+            response = await submit_json_image(client, gen_url, api_headers(provider=provider, model=model),
+                model=model, prompt=prompt, size=size,
+                references=[reference_to_data_url(ref, max_size=1536) for ref in image_refs[:ONLINE_IMAGE_REFERENCE_MAX]])
         elif is_apimart:
             apimart_size, resolution = apimart_size_resolution(size)
             # APIMart 的 GPT-Image-2 图生图仍走 /images/generations，
@@ -10397,121 +10180,32 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
             if image_refs:
                 body["image_urls"] = [reference_to_data_url(ref, max_size=1536) for ref in image_refs[:ONLINE_IMAGE_REFERENCE_MAX]]
             response = await client.post(gen_url, headers=api_headers(provider=provider, model=model), json=body)
-        elif is_gpt2 and not image_refs and not mask_refs:
-            body = {"model": model, "prompt": prompt, "size": size}
-            if quality:
-                body["quality"] = quality
-            response = await client.post(gen_url, headers=api_headers(provider=provider, model=model), json=body)
-            if not async_gen_url and image_api_explicitly_rejected(response):
-                response = await post_openai_edits()
-        elif image_refs:
-            # 1) OpenAI 协议的图生图/编辑用 multipart 提交到 /images/edits；
-            # GPT-Image-2 参考图不能走 /images/generations JSON，否则部分平台会忽略原图或报 Images API unsupported。
-            files = []
-            opened = []
-            edit_failed_status = None
-            edit_failed_text = ""
-            try:
-                for ref in image_refs[:ONLINE_IMAGE_REFERENCE_MAX]:
-                    path = image_reference_file(ref)
-                    if not path:
-                        continue
-                    fh = open(path, "rb")
-                    opened.append(fh)
-                    files.append(("image", (os.path.basename(path), fh, content_type_for_path(path))))
-                if mask_refs:
-                    mask_path = output_file_from_url(mask_refs[0].get("url", ""))
-                    if mask_path:
-                        fh = open(mask_path, "rb")
-                        opened.append(fh)
-                        files.append(("mask", (os.path.basename(mask_path), fh, content_type_for_path(mask_path))))
-                try:
-                    response = await post_openai_edits(files)
-                    if response.status_code >= 400:
-                        edit_failed_status = response.status_code
-                        edit_failed_text = response.text[:500]
-                        if not async_edit_url and image_api_explicitly_rejected(response):
-                            response = None
-                except httpx.HTTPError as e:
-                    raise provider_submission_unknown("图像编辑请求的响应中断，是否已被供应商受理尚不确定") from e
-            finally:
-                for fh in opened:
-                    fh.close()
-            # 2) edits 失败 → 非 GPT-Image-2 可回退到 /images/generations + JSON image:[urls/base64]（grsai 风格）
-            if response is None:
-                if is_gpt2 or is_aspect_image:
-                    raise HTTPException(
-                        status_code=502,
-                        detail=f"{model} 编辑接口 /images/edits 调用失败：{edit_failed_text[:300] or edit_failed_status}。已停止自动重试，避免上游可能已扣费后再次请求。"
-                    )
-                print(f"/images/edits failed ({edit_failed_status}): {edit_failed_text[:200]!a} -> fallback /images/generations + image:[] JSON")
-                image_payload = [reference_to_data_url(ref, max_size=1536) for ref in image_refs[:ONLINE_IMAGE_REFERENCE_MAX]]
-                body = {
-                    "model": model, "prompt": prompt, "size": size,
-                    "response_format": "url", "n": 1,
-                    "image": image_payload,
-                }
-                if quality:
-                    body["quality"] = quality
-                response = await client.post(gen_url, headers=api_headers(provider=provider, model=model), json=body)
-                if image_api_explicitly_rejected(response):
-                    raise HTTPException(
-                        status_code=502,
-                        detail=f"编辑接口 /images/edits 调用失败，且该平台不支持 /images/generations：{edit_failed_text[:300] or edit_failed_status}"
-                    )
         else:
-            body = {"model": model, "prompt": prompt, "size": size, "response_format": "url", "n": 1}
-            if quality:
-                body["quality"] = quality
-            response = await client.post(
-                gen_url,
-                headers=api_headers(provider=provider, model=model),
-                json=body,
-            )
-            if not async_gen_url and image_api_explicitly_rejected(response):
-                response = await post_openai_edits()
-        response.raise_for_status()
-        if receipt_sink is not None:
-            receipt_sink.identify(response.headers)
-        raw = submission_json(response, kind="图像")
-        if receipt_sink is not None:
-            receipt_sink.identify(raw=raw)
-        # The async Images contract returns task_id. If a response contains
-        # both an ID and media, the original task is still authoritative.
-        async_zhenzhen_response = str(response.request.url) in (async_gen_url, async_edit_url)
-        task_id = zhenzhen_image_submission_task_id(raw) if async_zhenzhen_response else None
-        if not task_id:
-            try:
-                return extract_image(raw), raw
-            except HTTPException as exc:
-                if image_request_mode == "openai-responses":
-                    fallback_image = responses_output_text_image(raw)
-                    if fallback_image:
-                        return fallback_image, raw
-                    try:
-                        print(f"RS 响应中没有图片，原始返回（截断）：{json.dumps(raw, ensure_ascii=False)[:800]}")
-                    except Exception:
-                        pass
-                    raise provider_submission_unknown("图像提交已返回，但没有可核对的任务或图片结果") from exc
-                task_id = None if async_zhenzhen_response else extract_task_id(raw)
-                if not task_id:
-                    raise provider_submission_unknown("图像提交已返回，但没有可核对的任务或图片结果") from exc
-        if receipt_sink is not None:
-            # Persist accepted identity before polling; a restart never submits
-            # it again. Failure to save is not proof the supplier rejected it.
-            await receipt_sink.accepted(task_id, provider)
-        try:
-            task_result = await wait_for_image_task(client, task_id, provider)
-            return extract_image(task_result), task_result
-        except (HTTPException, httpx.HTTPError, ValueError) as exc:
-            if getattr(exc, "provider_task_failed", False):
-                setattr(exc, "upstream_task_id", task_id)
-                raise
-            raise provider_submission_unknown("已受理的图像任务查询未能确认最终结果", upstream_task_id=task_id) from exc
+            arguments = dict(headers=api_headers(provider=provider, model=model),
+                edit_headers=api_headers(json_body=False, provider=provider, model=model),
+                model=model, prompt=prompt, size=size, quality=quality, background=background_options,
+                aspect=aspect_params, gpt2=is_gpt2, mask=bool(mask_refs),
+                allow_generation_fallback=not async_gen_url, allow_edit_fallback=not async_edit_url)
+            if image_refs:
+                async def reference_urls():
+                    return await prepared_inputs.urls(image_refs) if prepared_inputs else [reference_to_data_url(ref, max_size=1536) for ref in image_refs[:ONLINE_IMAGE_REFERENCE_MAX]]
+                files = edit_reference_files(image_refs, mask_refs, preparation=prepared_inputs,
+                        resolve_image=image_reference_file,
+                        resolve_mask=lambda ref: output_file_from_url(ref.get("url", "")),
+                        content_type=content_type_for_path, max_references=ONLINE_IMAGE_REFERENCE_MAX)
+                response = await submit_openai_image(client, gen_url, edit_url,
+                    edit_files=files, reference_urls=reference_urls, **arguments)
+            else:
+                response = await submit_openai_image(client, gen_url, edit_url, **arguments)
+        return await complete_image_submission(response, client=client, provider=provider,
+            extract_image=extract_image, extract_task_id=extract_task_id, wait_for_task=wait_for_image_task,
+            receipt_sink=receipt_sink,
+            async_task_id=zhenzhen_image_submission_task_id if str(response.request.url) in (async_gen_url, async_edit_url) else None,
+            fallback_image=responses_output_text_image if image_request_mode == 'openai-responses' else None)
 
 def upstream_message_from_record(item):
     role = item.get("role")
-    if role not in {"user", "assistant"} or item.get("type") == "image":
+    if role not in {"user", "assistant"} or item.get("type") in {"image", "image-task", "task-error"}:
         return None
     attachments = item.get("attachments") or []
     if attachments and role == "user":
@@ -10544,10 +10238,24 @@ CN_NUMERAL_MAP = {
     "一": 1, "二": 2, "两": 2, "俩": 2, "三": 3, "四": 4,
 }
 
-def latest_chat_image_refs(conversation, limit=1):
+def latest_chat_image_refs(conversation, limit=1, owner=None):
+    from enterprise.generation_tasks import result_items
+    from enterprise.interceptors import record_resource_urls_for_user
+
     refs = []
     for item in reversed(conversation.get("messages") or []):
-        url = item.get("image_url") if isinstance(item, dict) else ""
+        if not isinstance(item, dict):
+            continue
+        url = item.get("image_url") or ""
+        if owner and item.get("type") == "image-task" and item.get("task_id"):
+            try:
+                receipt = CANVAS_TASK_JOURNAL.get(item["task_id"])
+            except (OSError, ValueError):
+                continue
+            if receipt and receipt.get("enterprise_user_id") == owner:
+                url = next((result["url"] for result in result_items(receipt) if result.get("kind") == "image"), "")
+                if url:
+                    record_resource_urls_for_user(owner, "agent_image_task", [url])
         if url:
             refs.append({"url": url, "name": item.get("content") or "上一张图片", "role": "source"})
         if len(refs) >= limit:
@@ -10665,20 +10373,28 @@ async def legacy_chat_completion(payload, body, owner):
     result=await LEGACY_TEXT_CALLS.call(payload,owner,provider,body['model'],submit)
     return result['raw']
 
+def chat_image_source_selection(payload, provider_id):
+    return {
+        "call_source_id": (payload.image_call_source_id or (payload.call_source_id if payload.provider == provider_id else None))
+            if payload.mode == "agent" else payload.call_source_id,
+        "business_project_id": payload.business_project_id,
+    }
+
+
 async def legacy_chat_image(payload, owner, prompt, size, model, refs, provider_id):
-    selection={'call_source_id':(payload.image_call_source_id or (payload.call_source_id if payload.provider==provider_id else None)) if payload.mode=='agent' else payload.call_source_id,
-               'business_project_id':payload.business_project_id}
+    selection = chat_image_source_selection(payload, provider_id)
     request=OnlineImageRequest(prompt=prompt,size=size,quality=payload.quality,model=model,
-        provider_id=provider_id,reference_images=refs,**selection)
+        provider_id=provider_id,reference_images=refs,background_mode=payload.agent_background,**selection)
     from enterprise.legacy_call_sources import managed_selection
     if not managed_selection(DepartmentGovernance(),get_api_provider(provider_id),selection):
-        data,raw=await generate_ai_image(prompt,size,payload.quality,model,refs,provider_id)
+        from enterprise.creation_settings import background_prompt
+        data,raw=await generate_ai_image(background_prompt(prompt, payload.agent_background),size,payload.quality,model,refs,provider_id,
+            {"background_mode": payload.agent_background})
         return {'images':[await save_ai_image_to_output(data,prefix='chat_')],
                 'raw_usage':raw.get('usage') if isinstance(raw,dict) else None}
     return await online_image(request,owner)
 
-async def decide_chat_agent_action(payload, conversation, refs, owner=None):
-    has_previous_image = bool(latest_chat_image_refs(conversation, 1))
+async def decide_chat_agent_action(payload, conversation, refs, owner=None, *, has_previous_image=False):
     fallback = heuristic_agent_decision(payload.message, refs, has_previous_image)
     provider_cfg = get_api_provider(payload.provider) if payload.provider not in ("modelscope",) else {}
     if is_codex_provider(provider_cfg):
@@ -10933,6 +10649,21 @@ class Base64UploadRequest(BaseModel):
     data: str = ""            # 纯 base64 或 data:URL
     name: str = ""
     content_type: str = ""
+
+
+class ImageSegmentationRequest(BaseModel):
+    data: str = Field(min_length=1, max_length=28_000_000)
+
+
+@app.post('/api/image-segmentation')
+async def segment_image_foreground(payload: ImageSegmentationRequest):
+    from enterprise.image_segmentation import segment_data_url
+    try:
+        return await asyncio.to_thread(segment_data_url, payload.data)
+    except (FileNotFoundError, ModuleNotFoundError):
+        raise HTTPException(503, detail={'code': 'SEGMENTATION_UNAVAILABLE', 'message': '本机尚未安装主体识别模型'})
+    except (ValueError, OSError) as error:
+        raise HTTPException(400, detail={'code': 'SEGMENTATION_IMAGE_INVALID', 'message': str(error)})
 
 @app.post("/api/ai/upload-base64")
 async def upload_ai_base64(payload: Base64UploadRequest):
@@ -12231,7 +11962,8 @@ async def ai_models():
 
 @app.get("/api/providers")
 async def api_providers():
-    return {"providers": public_api_providers(), "image_profile_templates": IMAGE_PROFILE_TEMPLATES}
+    return {"providers": public_api_providers(), "image_profile_templates": IMAGE_PROFILE_TEMPLATES,
+            "provider_presets": builtin_provider_presets()}
 
 @app.put("/api/providers")
 async def save_providers(payload: List[ApiProviderPayload]):
@@ -12243,12 +11975,12 @@ async def save_providers(payload: List[ApiProviderPayload]):
     for item in payload:
         values = item.dict(exclude={"api_key"})
         submitted = item.dict(exclude_unset=True)
-        # Older settings clients do not know capability profiles. Preserve them
-        # when omitted; an explicitly submitted empty mapping still clears one.
-        for field in ("image_profile", "model_image_profiles"):
+        # Preserve supplier identity and profiles omitted by older settings clients.
+        # An explicitly submitted empty value still requests clearing that field.
+        for field in ("image_profile", "model_image_profiles", "supplier"):
             if field not in submitted:
-                values[field] = previous.get(item.id.strip().lower(), {}).get(field, {})
-        provider = normalize_provider(values)
+                values[field] = previous.get(item.id.strip().lower(), {}).get(field, "" if field == "supplier" else {})
+        provider = normalize_provider(configure_builtin_supplier(values))
         if provider["id"] == "runninghub":
             provider = preserve_runninghub_hidden_overrides(provider)
         if any(existing["id"] == provider["id"] for existing in providers):
@@ -12952,20 +12684,32 @@ async def fetch_upstream_models(provider_id: str):
     return await fetch_models_from_upstream(provider.get("base_url") or "", api_key, provider_protocol(provider), provider.get("image_request_mode") or "openai")
 
 async def build_online_image_result(payload: OnlineImageRequest, *, receipt_task_id=None, unwritten_receipts=None):
+    from enterprise.creation_settings import background_prompt
     provider = get_api_provider(payload.provider_id)
     require_bound_generation(provider)
     default_model = (provider.get("image_models") or [IMAGE_MODEL])[0]
     model = selected_model(payload.model, default_model)
     refs = [ref.dict() for ref in payload.reference_images if ref.url]
     image_refs = image_references(refs)
+    if payload.background_mode == "preserve" and not image_refs:
+        raise HTTPException(400, "保留背景需要先添加参考图")
     count = max(1, min(8, int(payload.n or 1)))
+    prompts = payload.variant_prompts or [payload.prompt] * count
+    prepared_inputs = None
+    if receipt_task_id and (is_zhenzhen(provider) or ark_image_profile(provider, model)):
+        from enterprise.image_reference_preparation import ImageReferencePreparation
+        prepared_inputs = ImageReferencePreparation(image_refs, image_reference_file,
+            observe=lambda summary: CANVAS_TASK_JOURNAL.record_image_preparation(receipt_task_id, summary))
     async def generate_one(index):
         sink = ImageReceiptSink(CANVAS_TASK_JOURNAL, receipt_task_id, index) if receipt_task_id else None
         try:
             if sink:
                 await sink.started(provider, model)
             kwargs = {"receipt_sink": sink} if sink else {}
-            image_data, raw_item = await generate_ai_image(payload.prompt, payload.size, payload.quality, model, image_refs, provider["id"], {"aspect_ratio":payload.aspect_ratio, "resolution":payload.resolution}, **kwargs)
+            if prepared_inputs:
+                kwargs['prepared_inputs'] = prepared_inputs
+            image_data, raw_item = await generate_ai_image(background_prompt(prompts[index], payload.background_mode), payload.size, payload.quality, model, image_refs, provider["id"], {"aspect_ratio":payload.aspect_ratio, "resolution":payload.resolution, "background_mode":payload.background_mode,
+                **({"layer_options": payload.layer_options.model_dump(exclude_none=True)} if payload.layer_options is not None else {})}, **kwargs)
         except JimengPendingError as exc:
             if sink and exc.submit_id:
                 await sink.accepted(exc.submit_id)
@@ -13056,7 +12800,8 @@ async def build_online_image_result(payload: OnlineImageRequest, *, receipt_task
         "provider_name": provider.get("name") or provider["id"],
         "task_id": receipt.get("upstream_task_id") if receipt_task_id else (extract_task_id(raw) if isinstance(raw, dict) else None),
         "request_id": receipt.get("provider_request_id") if receipt_task_id else (raw.get("id") if isinstance(raw, dict) else None),
-        "params": {"provider_id": provider["id"], "model": model, "size": payload.size, "quality": payload.quality, "n": count, "reference_images": refs},
+        "params": {"provider_id": provider["id"], "model": model, "size": payload.size, "quality": payload.quality, "n": count, "background_mode":payload.background_mode, "reference_images": refs,
+            **({"layer_options": payload.layer_options.model_dump(exclude_none=True)} if payload.layer_options is not None else {})},
         "raw_usage": raw.get("usage") if isinstance(raw, dict) else None,
     }
     await asyncio.to_thread(save_to_history, result)
@@ -13101,7 +12846,7 @@ async def adopt_call_source(payload: AdoptCallSourceRequest, x_enterprise_user_i
 async def query_image_task(payload: ImageTaskQueryRequest):
     return await query_image_task_result(payload)
 
-async def query_image_task_result(payload: ImageTaskQueryRequest, *, store_history=True, bound_provider=None, plan_archive=None):
+async def query_image_task_result(payload: ImageTaskQueryRequest, *, store_history=True, bound_provider=None, plan_archive=None, bound_query_endpoint=None):
     provider = bound_provider if bound_provider is not None else get_api_provider(payload.provider_id)
     task_id = str(payload.task_id or "").strip()
     if is_runninghub_provider(provider):
@@ -13169,7 +12914,8 @@ async def query_image_task_result(payload: ImageTaskQueryRequest, *, store_histo
     timeout = httpx.Timeout(connect=20.0, read=300.0, write=60.0, pool=20.0)
     try:
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-            raw = await fetch_image_task_payload(client, task_id, provider)
+            query_options = {'query_endpoint': bound_query_endpoint} if bound_query_endpoint else {}
+            raw = await fetch_image_task_payload(client, task_id, provider, **query_options)
     except httpx.HTTPStatusError as exc:
         log_net_error(f"查询生图任务 HTTP状态错误 provider={provider.get('id')} task_id={task_id}", exc)
         text = exc.response.text or ""
@@ -13192,6 +12938,14 @@ async def query_image_task_result(payload: ImageTaskQueryRequest, *, store_histo
                        "Zhenzhen 原任务回包状态或结果无法确认，请人工核对；不会重新生成")
             return {"status": state, "task_id": task_id, "provider_id": provider["id"],
                     "message": message, "error": message if state == "failed" else "", "raw": raw}
+    if normalize_image_request_mode(provider.get('image_request_mode')) == 'openai-responses':
+        state = responses_query_state(raw)
+        if state != 'succeeded':
+            message = (image_task_fail_reason(raw) if state == 'failed' else
+                       '原任务仍在生成中' if state == 'running' else
+                       'Responses 原任务状态无法确认，请人工核对；不会重新生成')
+            return {'status': state, 'task_id': task_id, 'provider_id': provider['id'],
+                    'message': message, 'error': message if state == 'failed' else '', 'raw': raw}
     if image_items:
         local_urls = []
         local_items = []
@@ -13248,10 +13002,11 @@ def require_archived_image_outputs(images):
         raise HTTPException(502, "供应商已返回结果，但本地图片归档未完成；请稍后续查原任务，不要重新生成")
 
 
-async def query_saved_image_task(provider, upstream_task_id, *, plan_archive):
+async def query_saved_image_task(provider, upstream_task_id, *, plan_archive, query_endpoint=None):
     result = await query_image_task_result(
         ImageTaskQueryRequest(provider_id=provider["id"], task_id=upstream_task_id),
         store_history=False, bound_provider=provider, plan_archive=plan_archive,
+        **({'bound_query_endpoint': query_endpoint} if query_endpoint else {}),
     )
     if result.get("status") == "succeeded":
         require_archived_image_outputs(result.get("images") or [])
@@ -13338,8 +13093,15 @@ async def create_canvas_image_task(
     payload: OnlineImageRequest, x_enterprise_user_id: Optional[str] = Header(default=None), response: Response = None,
 ):
     started_at = time.perf_counter()
+    result = await submit_canvas_image_task(payload, x_enterprise_user_id)
+    if response is not None:
+        response.headers["Server-Timing"] = f"task-receipt;dur={(time.perf_counter() - started_at) * 1000:.1f}"
+    return result
+
+
+async def submit_canvas_image_task(payload: OnlineImageRequest, owner: Optional[str]):
     task_id = f"canvas_img_{payload.request_id or uuid.uuid4().hex}"
-    user_id = x_enterprise_user_id if isinstance(x_enterprise_user_id, str) else ""
+    user_id = owner if isinstance(owner, str) else ""
 
     def existing_receipt(record):
         if record.get("type") != "online-image" or record.get("enterprise_user_id", "") != user_id:
@@ -13351,9 +13113,14 @@ async def create_canvas_image_task(
         if existing:
             return existing_receipt(existing)
     binding = await asyncio.to_thread(prepare_canvas_call_binding, task_id, payload, user_id)
+    provider = get_api_provider(payload.provider_id)
+    recorded_model = selected_model(payload.model, (provider.get('image_models') or [IMAGE_MODEL])[0])
     try:
         await asyncio.to_thread(create_task_receipt, CANVAS_TASK_JOURNAL, {
             **({'billing_context':binding} if binding else {}),
+            **({"creation_title": payload.creation_title} if payload.creation_title else {}),
+            "creation_settings": {"count": payload.n, "background": payload.background_mode,
+                **({"layer_options": payload.layer_options.model_dump(exclude_none=True)} if payload.layer_options is not None else {})},
             "id": task_id,
             "type": "online-image",
             "status": "queued",
@@ -13362,15 +13129,13 @@ async def create_canvas_image_task(
             "result": None,
             "error": "",
             "provider_id": payload.provider_id,
-            "model": payload.model,
+            "model": recorded_model,
             "source": payload.source.model_dump() if payload.source else None,
             "provider_receipts": [{"index": index, "state": "started"} for index in range(max(1, min(8, int(payload.n or 1))))],
         }, user_id)
     except TaskAlreadyExists:
         return existing_receipt(await asyncio.to_thread(CANVAS_TASK_JOURNAL.get, task_id))
     await CANVAS_TASK_DISPATCH.enqueue(task_id, payload)
-    if response is not None:
-        response.headers["Server-Timing"] = f"task-receipt;dur={(time.perf_counter() - started_at) * 1000:.1f}"
     return {"task_id": task_id, "status": "queued"}
 
 @app.get("/api/canvas-image-tasks/{task_id}")
@@ -13576,12 +13341,16 @@ def build_image_param_fields(engine: str, provider: dict, model: str):
         size_field["resolution_note"] = "模型固定 " + profile["fixed_resolution"] if profile.get("fixed_resolution") else "分辨率由模型决定"
     if profile.get("supports_quality") is False:
         fields = [field for field in fields if field["key"] != "quality"]
+    for key in ("size_rules", "size_presets", "supports_auto_size", "supports_custom_size"):
+        if key in profile:
+            size_field[key] = profile[key]
     refs_field["max"] = profile.get("max_references", ONLINE_IMAGE_REFERENCE_MAX)
     fields.append(refs_field)
     return fields
 
 @app.get("/api/image-params")
 async def image_params(provider_id: str = "", model: str = ""):
+    from enterprise.creation_settings import supports_transparent_background
     providers = load_api_providers()
     provider = next((p for p in providers if p.get("id") == (provider_id or "").strip().lower()), None) or {}
     if is_runninghub_provider(provider):
@@ -13596,6 +13365,7 @@ async def image_params(provider_id: str = "", model: str = ""):
         "engine": engine,
         "submit": "/api/canvas-image-tasks",
         "fields": build_image_param_fields(engine, provider, model),
+        "background": {"transparent": supports_transparent_background(provider, model)},
     }
 
 # --- Canvas Video ---
@@ -14779,6 +14549,7 @@ async def download_canvas_assets(payload: CanvasAssetDownloadRequest):
     buffer = BytesIO()
     used_names = set()
     count = 0
+    files = []
     raw_items = payload.items or [{"url": url} for url in payload.urls]
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         for raw in raw_items[:1000]:
@@ -14816,6 +14587,11 @@ async def download_canvas_assets(payload: CanvasAssetDownloadRequest):
             else:
                 zf.writestr(archive_name, content)
             count += 1
+            files.append({"url": text, "file": archive_name})
+        if getattr(payload, "manifest", None) is not None:
+            if count != len(raw_items):
+                raise HTTPException(400, "部分图层暂不可读，请重试图层导出")
+            zf.writestr("layers.json", json.dumps({"version": 1, "document": payload.manifest, "files": files}, ensure_ascii=False))
     if count <= 0:
         raise HTTPException(status_code=404, detail="没有可下载的本地图片")
     buffer.seek(0)
@@ -16039,34 +15815,35 @@ async def chat(payload: ChatRequest, request: Request, x_user_id: str = Header(d
 @app.post("/api/chat/agent")
 async def chat_agent(payload: ChatRequest, request: Request, x_user_id: str = Header(default=""), x_enterprise_user_id: Optional[str] = Header(default=None)):
     user_id = safe_user_id(x_user_id, request)
-    conversation = (
-        load_conversation(user_id, payload.conversation_id)
-        if payload.conversation_id
-        else new_conversation(user_id, display_title(payload.message))
-    )
-    if not conversation.get("messages"):
-        conversation["title"] = display_title(payload.message)
+    conversation_id = payload.conversation_id or new_conversation(user_id, display_title(payload.message))["id"]
 
     refs = [ref.dict() for ref in payload.reference_images if ref.url]
     image_refs = image_references(refs)
     user_message = {
-        "id": uuid.uuid4().hex,
+        "id": payload.agent_request_id or uuid.uuid4().hex,
         "role": "user",
         "content": payload.message,
         "created_at": now_ms(),
         "attachments": refs,
         "mode": "agent",
+        "creation_settings": {"type": payload.agent_creation_type, "count": payload.agent_image_count, "background": payload.agent_background},
     }
-    conversation["messages"].append(user_message)
-    conversation["updated_at"] = now_ms()
-    save_conversation(user_id, conversation)
+    conversation, added = record_agent_message(user_id, conversation_id, user_message)
+    if not added:
+        return {"conversation": conversation}
 
-    decision = await decide_chat_agent_action(payload, conversation, image_refs, x_enterprise_user_id)
+    previous_images = await asyncio.to_thread(latest_chat_image_refs, conversation, owner=x_enterprise_user_id)
+    if payload.agent_image_template or payload.agent_creation_type == "image":
+        decision = {"action": "edit_image" if image_refs else "generate_image", "prompt": payload.message}
+    else:
+        decision = await decide_chat_agent_action(
+            payload, conversation, image_refs, x_enterprise_user_id, has_previous_image=bool(previous_images),
+        )
     action = decision.get("action") or "chat"
     tool_refs = image_refs[:]
     inherited_size = ""
     if action == "edit_image" and not tool_refs:
-        tool_refs = latest_chat_image_refs(conversation, 1)
+        tool_refs = previous_images
         inherited_size = image_size_from_reference(tool_refs[0]) if tool_refs else ""
     if action == "edit_image" and not tool_refs:
         action = "generate_image"
@@ -16077,9 +15854,44 @@ async def chat_agent(payload: ChatRequest, request: Request, x_user_id: str = He
         model = selected_model(payload.image_model or default_model, default_model)
         prompt = decision.get("prompt") or payload.message
         prompt_size = chat_prompt_size_override(payload.message, payload.size) or chat_prompt_size_override(prompt, payload.size)
-        image_size = prompt_size or inherited_size or payload.size
-        requested_count = 1 if action == "edit_image" else chat_requested_image_count(payload.message)
-        prompts = chat_split_parallel_prompts(prompt, requested_count)
+        fallback_size = (payload.size or inherited_size) if payload.agent_request_id else (inherited_size or payload.size)
+        image_size = prompt_size or fallback_size or "1024x1024"
+        requested_count = payload.agent_image_count or (1 if action == "edit_image" else chat_requested_image_count(payload.message))
+        prompts = payload.agent_image_variants or chat_split_parallel_prompts(prompt, requested_count)
+        if payload.agent_request_id and x_enterprise_user_id:
+            image_request = OnlineImageRequest(
+                request_id=payload.agent_request_id,
+                provider_id=image_provider["id"],
+                model=model,
+                prompt=prompt,
+                size=image_size,
+                quality=payload.quality,
+                background_mode=payload.agent_background,
+                reference_images=tool_refs,
+                n=len(prompts),
+                variant_prompts=prompts,
+                creation_title=payload.agent_image_template or "图片创作",
+                **chat_image_source_selection(payload, image_provider["id"]),
+            )
+            assistant_message = {
+                "id": uuid.uuid4().hex,
+                "role": "assistant",
+                "type": "image-task",
+                "task_id": f"canvas_img_{payload.agent_request_id}",
+                "image_title": image_request.creation_title,
+                "content": decision.get("reply") or "",
+                "created_at": now_ms(),
+                "agent_action": action,
+            }
+            conversation, _ = record_agent_message(user_id, conversation_id, assistant_message)
+            try:
+                await submit_canvas_image_task(image_request, x_enterprise_user_id)
+            except HTTPException as exc:
+                assistant_message.pop("task_id")
+                detail = exc.detail.get("message") if isinstance(exc.detail, dict) else exc.detail
+                assistant_message.update(type="task-error", content=str(detail or "图片任务未受理"))
+                conversation, _ = record_agent_message(user_id, conversation_id, assistant_message, replace=True)
+            return {"conversation": conversation, "message": assistant_message, "agent": {"action": action, "decision": decision}}
         local_urls = []
         raw_items = []
         try:
@@ -16117,9 +15929,7 @@ async def chat_agent(payload: ChatRequest, request: Request, x_user_id: str = He
         assistant_message = await build_chat_text_reply(payload, conversation, x_enterprise_user_id)
         assistant_message["agent_action"] = "chat"
 
-    conversation["messages"].append(assistant_message)
-    conversation["updated_at"] = now_ms()
-    save_conversation(user_id, conversation)
+    conversation, _ = record_agent_message(user_id, conversation_id, assistant_message)
     return {"conversation": conversation, "message": assistant_message, "agent": {"action": action, "decision": decision}}
 
 @app.post("/api/chat/stream")

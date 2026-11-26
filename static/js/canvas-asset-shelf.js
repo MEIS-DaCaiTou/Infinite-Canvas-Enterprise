@@ -124,10 +124,17 @@
             const duplicate=await this.lookup({category_id:cat.id,match_url:item.url});
             if(duplicate)return{label:'已保存在 '+folder.name,item:duplicate};
             const key=cat.id+'\n'+item.url;
-            if(!this.pending.has(key))this.pending.set(key,root.crypto.randomUUID());
+            if(!this.pending.has(key))this.pending.set(key,root.CanvasTaskQuery.requestId());
             const data=await this.request('/api/asset-library/items','POST',{library_id:libraryId,category_id:cat.id,url:item.url,name:item.name,classify:false,collect_request_id:this.pending.get(key)});
             this.adopt(data);this.pending.delete(key);
             return{label:'已保存到 '+folder.name,item:data.item,undo:data.already_saved?null:{kind:'collect',libraryId,id:data.item.id,to:cat.id}};
+        }
+        async remove(itemId){
+            await this.refresh({catalog:true});
+            if(!this.library || !await this.lookup({item_id:itemId}))throw new Error('素材已删除或无权访问，请刷新后重试');
+            // Remove the collection entry through the existing owner-checked API.
+            // A canvas may already reference the stored copy; retain its bytes.
+            this.adopt(await this.request('/api/asset-library/items/'+encodeURIComponent(itemId)+'?keep_file=true','DELETE'));
         }
         async undo(action){
             await this.refresh({catalog:true});
@@ -179,7 +186,7 @@
         const listenView=(el,type,fn,options={})=>el.addEventListener(type,fn,{...options,signal:viewController.signal});
         const model=new ReferenceShelf(root.fetch.bind(root));
         let open=false,view='canvas',active='inbox',queue=Promise.resolve(),pointerDrag=null,ghost=null;
-        let lastActions=[],statusTimer=null,searchTimer=null,suppressClickUntil=0,selectionLoaded=false,displayLimit=24;
+        let lastActions=[],statusTimer=null,searchTimer=null,suppressClickUntil=0,selectionLoaded=false,displayLimit=24,pendingDelete='';
         const trigger=element('button','reference-shelf-toggle');
         trigger.type='button';trigger.setAttribute('aria-label','资产整理');trigger.setAttribute('aria-expanded','false');
         trigger.append(icon('folder-open'),element('span','','资产整理'));
@@ -290,10 +297,17 @@
                 card.append(thumbnail(item,false,(el,type,fn,options)=>el.addEventListener(type,fn,options)),element('span','reference-shelf-card-name',item.name || '未命名素材'));
                 if(view==='saved'){
                     const plus=element('button','reference-shelf-insert');plus.type='button';plus.setAttribute('aria-label','放入画布：'+(item.name || '素材'));plus.append(icon('plus'));card.append(plus);
+                    const remove=element('button','reference-shelf-delete');remove.type='button';remove.append(icon('trash-2'));card.append(remove);
                 }
                 icons(card);return card;
             },
-            update:(card,item)=>{card._shelfItem=item;card._shelfOrigin=view==='saved'?'library':'canvas';},
+            update:(card,item)=>{
+                card._shelfItem=item;card._shelfOrigin=view==='saved'?'library':'canvas';
+                const remove=card.querySelector('.reference-shelf-delete');
+                if(remove){const confirming=pendingDelete===item.id;remove.classList.toggle('is-confirming',confirming);
+                    remove.setAttribute('aria-label',(confirming?'确认删除素材：':'删除素材：')+(item.name || '素材'));
+                    remove.title=confirming?'再次点击从资产库删除，画布引用与原图保留':'从资产库删除';}
+            },
             release:releaseMedia,
         });
         function render(){
@@ -344,11 +358,16 @@
         });
         listen(gallery,'click',event=>{
             const card=event.target.closest('[data-shelf-card]');
+            if(card && event.target.closest('.reference-shelf-delete') && Date.now()>=suppressClickUntil){
+                const item=card._shelfItem;
+                if(pendingDelete!==item.id){pendingDelete=item.id;notify('再次点击删除确认；画布引用与原图保留');render();return;}
+                run(async()=>{await model.remove(item.id);pendingDelete='';setUndo(lastActions.filter(action=>action.id!==item.id));notify('已从资产库删除，画布引用与原图保留');});return;
+            }
             if(card && event.target.closest('.reference-shelf-insert') && Date.now()>=suppressClickUntil)insert(card._shelfItem);
         });
         listen(gallery,'dblclick',event=>{
             const card=event.target.closest('[data-shelf-card]');
-            if(card?._shelfOrigin==='library' && !event.target.closest('video,audio') && Date.now()>=suppressClickUntil)insert(card._shelfItem);
+            if(card?._shelfOrigin==='library' && !event.target.closest('button,video,audio') && Date.now()>=suppressClickUntil)insert(card._shelfItem);
         });
         function newName(type){
             panel.querySelector('.reference-shelf-create-form')?.remove();

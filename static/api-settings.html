@@ -19,9 +19,9 @@
     <script src="/static/vendor/js/tailwindcss-cdn.js?v=2026.07.5.1782696751"></script>
     <script src="/static/vendor/js/lucide.js?v=2026.07.5.1782696749"></script>
     <script src="/static/js/theme.js?v=2026.07.5.1783117645"></script>
-    <script src="/static/js/i18n.js?v=20261025.1"></script>
+    <script src="/static/js/i18n.js?v=20261124.seedream-dual"></script>
     <link rel="stylesheet" href="/static/css/theme.css?v=2026.07.5.1782696682">
-    <link rel="stylesheet" href="/static/css/api-settings.css?v=20261025.1">
+    <link rel="stylesheet" href="/static/css/api-settings.css?v=2026.11.24.zhenzhen">
   <link rel="stylesheet" href="/static/css/studio-select.css?v=20261103.8">
   <script src="/static/js/studio-select.js?v=20261103.8" defer></script>
 </head>
@@ -75,6 +75,17 @@
                             </div>
                         </div>
                         <div class="form">
+                            <label class="field full">
+                                <span class="label" data-i18n="api.supplierType">平台类型</span>
+                                <div class="field-frame">
+                                    <select id="supplierInput">
+                                        <option value="" data-i18n="api.customSupplier">自定义平台</option>
+                                        <option value="zhenzhen" data-i18n="api.supplierZhenzhen">贞贞平台 · ai.t8star.org</option>
+                                        <option value="volcengine" data-i18n="api.supplierVolcengine">火山方舟 · 官方接口</option>
+                                    </select>
+                                </div>
+                                <span id="supplierHint" class="hint" hidden></span>
+                            </label>
                             <label class="field full">
                                 <span class="label" data-i18n="api.platformName">平台名称</span>
                                 <div class="field-frame"><input id="nameInput" type="text" placeholder="Comfly"></div>
@@ -159,8 +170,8 @@
                                     <div class="rh-key-item">
                                         <div class="rh-key-head">
                                             <div>
-                                                <div class="rh-key-title" data-i18n="api.volcengineArkKey">方舟 API Key · 生成视频</div>
-                                                <div class="rh-key-desc" data-i18n="api.volcengineArkKeyDesc">用于 Seedance 2.0 生成接口，Authorization: Bearer。</div>
+                                                <div class="rh-key-title" data-i18n="api.volcengineArkKey">方舟 API Key · 图片与视频</div>
+                                                <div class="rh-key-desc" data-i18n="api.volcengineArkKeyDesc">用于 Seedream 图片和 Seedance 视频接口，Authorization: Bearer。</div>
                                             </div>
                                         </div>
                                         <span id="volcArkKeyHint" class="hint"></span>
@@ -579,6 +590,6 @@
         </div>
     </div>
 
-    <script src="/static/js/api-settings.js?v=2026.10.13"></script>
+    <script src="/static/js/api-settings.js?v=20261125.settings-permission-01"></script>
 </body>
 </html>

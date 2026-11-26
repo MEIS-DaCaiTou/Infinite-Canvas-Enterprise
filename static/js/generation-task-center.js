@@ -1,6 +1,7 @@
 /* Personal durable receipts inside the existing canvas log panel. No generation endpoint. */
 (function(root){
     'use strict';
+    const tr=(zh,en)=>root.StudioI18n?.lang?.()==='en'?en:zh;
     const esc=value=>String(value ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     const labels={queued:'排队中',running:'运行中',succeeded:'已完成',failed:'明确失败',cancelled:'已取消',unknown:'待核对',partial:'部分结果',unavailable:'记录不可读'};
     const attemptLabels={...labels,started:'平台已创建',submitting:'正在向供应商提交',accepted:'供应商已受理',generated:'待归档',querying:'核对中',manual:'需人工核对'};
@@ -25,7 +26,7 @@
         }
         return sourceRequests.get(providerId);
     }
-    root.CallSourceHint={async update(element, provider, silent=false){
+    root.CallSourceHint={preview:authorizedSource,async update(element, provider, silent=false){
         if(!element)return;
         element._sourceHintProvider=provider;sourceHints.add(element);
         const token=Symbol();element._sourceHintToken=token;
@@ -66,7 +67,7 @@
         logs.after(pane);
         const list=pane.querySelector('.generation-task-list'),notice=pane.querySelector('[role=status]'),more=pane.querySelector('.generation-task-more');
         const filters=pane.querySelectorAll('select'),details=new Map();
-        let rows=[],cursor=null,view='logs',epoch=0,timer=null,expanded='',loading=false,pending=false,openingView='logs';
+        let rows=[],cursor=null,view='logs',epoch=0,timer=null,expanded='',loading=false,pending=false,openingView='logs',linkedTask='';
         function stop(){clearTimeout(timer);timer=null;}
         function schedule(){
             stop();
@@ -84,7 +85,10 @@
             const token=epoch;
             try{
                 const data=await json('/enterprise/api/me/generation-tasks/'+encodeURIComponent(id));
-                if(token!==epoch)return;details.set(id,data);if(expanded===id)drawDetail(data);
+                if(token!==epoch)return;
+                details.set(id,data);
+                if(id===linkedTask && !rows.some(row=>row.id===id)){rows.unshift(data);draw();}
+                else if(expanded===id)drawDetail(data);
             }catch(error){if(token===epoch)notice.textContent=error.message;}
         }
         function drawDetail(data){
@@ -92,6 +96,7 @@
             const query=data.reconciliation;
             const automatic=data.auto_recovery;
             const autoLabels={querying:'自动续查中',waiting:'等待自动续查',manual:'自动续查已暂停，需要人工核对',complete:'自动续查已结束'};
+            const prepared=data.image_preparation;
             const attempts=(data.attempts || []).map(item=>{
                 const usage=item.reported_usage || {};
                 const counts=Object.entries(usage).filter(([key])=>!['reported_cost','currency'].includes(key));
@@ -107,6 +112,7 @@
             container.innerHTML=`<div class="generation-task-id">平台任务 ID：${esc(data.id)}</div>
                 ${data.queue_released?'<p class="generation-task-note">管理员已释放该任务占用名额，原任务记录仍保留。</p>':''}
                 <p class="generation-task-note">调用密钥：${data.call_source ? esc((data.call_source.scope === 'department' ? '部门专用' : '公司共享') + ' · ' + (data.call_source.source_name || '未命名来源')) : '未记录渠道密钥来源'}</p>
+                ${prepared?`<p class="generation-task-note">${esc(tr(`参考图 ${prepared.count} 张，原文件 ${(prepared.source_bytes/1048576).toFixed(2)} MiB → 提交副本 ${(prepared.prepared_bytes/1048576).toFixed(2)} MiB；原素材保留`,`References: ${prepared.count}; ${(prepared.source_bytes/1048576).toFixed(2)} MiB originals → ${(prepared.prepared_bytes/1048576).toFixed(2)} MiB submission copies; originals retained`))}</p>`:''}
                 ${data.error?`<p class="generation-task-error">${esc(data.error)}</p>`:''}
                 <div class="generation-task-attempts">${attempts}</div>
                 <p class="generation-task-note">${esc(data.cost_note || '')}</p>
@@ -191,7 +197,7 @@
                 if(token!==epoch)return;
                 rows=append?[...rows,...data.items]:data.items;cursor=data.next_cursor;
                 notice.textContent=data.scan_limited?'已检索本批记录，可继续查看更早任务':'任务记录保存在服务器；查询不会重新生成';draw();
-                if(expanded && rows.some(row=>row.id===expanded))await detail(expanded);
+                if(expanded && (expanded===linkedTask || rows.some(row=>row.id===expanded)))await detail(expanded);
             }catch(error){if(token===epoch)notice.textContent=error.message;}
             finally{
                 loading=false;more.disabled=false;
@@ -208,12 +214,14 @@
         tabs.querySelectorAll('button').forEach(button=>button.onclick=()=>select(button.dataset.view));
         filters.forEach(filter=>filter.onchange=()=>{epoch++;expanded='';load();});
         pane.querySelector('[data-refresh]').onclick=()=>load();more.onclick=()=>load(true);
-        root.GenerationTaskCenter.openTasks=({kind=''}={})=>{
-            filters[0].value='';filters[1].value=kind;expanded='';
+        root.GenerationTaskCenter.openTasks=({kind='',taskId=''}={})=>{
+            filters[0].value='';filters[1].value=kind;expanded=linkedTask=taskId;
             if(modal.classList.contains('open'))select('tasks');
             else {openingView='tasks';modal.classList.add('open');}
         };
         new MutationObserver(()=>{if(!modal.classList.contains('open')){epoch++;stop();}else {select(openingView);openingView='logs';}}).observe(modal,{attributes:true,attributeFilter:['class']});
+        const reuseTask=canvasContext && new URLSearchParams(root.location.search).get('reuse_task');
+        if(reuseTask)root.GenerationTaskCenter.openTasks({kind:'canvas_image',taskId:reuseTask});
     }
     root.GenerationTaskCenter={attach};
 })(window);

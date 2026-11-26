@@ -19,13 +19,13 @@
     <script src="/static/vendor/js/tailwindcss-cdn.js?v=2026.07.5.1782696751"></script>
     <script src="/static/vendor/js/lucide.js?v=2026.07.5.1782696749"></script>
     <script src="/static/js/theme.js?v=2026.07.5.1783117645"></script>
-    <script src="/static/js/i18n.js?v=20261025.1"></script>
+    <script src="/static/js/i18n.js?v=20261124.seedream-dual"></script>
     <script src="/static/js/image-preview.js?v=2026.07.5.1782696713"></script>
     <script src="/static/js/history-bulk-manager.js?v=20261105.2"></script>
     <script src="/static/js/media-grid-window.js?v=20261105.2"></script>
     <link rel="stylesheet" href="/static/css/generation-task-center.css?v=20261015.1">
     <script src="/static/js/canvas-task-query.js?v=20261113.2"></script>
-    <script src="/static/js/generation-task-center.js?v=20261112.1"></script>
+    <script src="/static/js/generation-task-center.js?v=20261125.4"></script>
     <style>
         #onlineTaskModal { --text:var(--accent); --muted:#64748b; --line:#94a3b866; width:min(680px, calc(100% - 24px)); max-height:90vh; margin:auto; border:1px solid var(--line); border-radius:20px; background:var(--card); color:var(--text); }
         #onlineTaskModal::backdrop { background:#11182788; }
@@ -277,6 +277,7 @@
         </div>
     </dialog>
 
+    <script src="/static/js/model-picker.js?v=20261124.seedream-dual"></script>
     <script>
         lucide.createIcons();
         function tr(key){ return window.StudioI18n ? StudioI18n.t(key) : key; }
@@ -296,6 +297,7 @@
             updateAdaptivePanel();
         });
         let refs = {1:null,2:null,3:null};
+        const refUploads = {1:null,2:null,3:null};
         let refDims = {1:null,2:null,3:null};
         let provider = 'comfly';
         let selectedModel = 'gpt-image-2';
@@ -461,7 +463,7 @@
                 badge.style.display = '';
             }
             const qf = document.getElementById('qualityField');
-            if(qf) qf.style.display = QUALITY_PROTOCOLS.has(proto) ? '' : 'none';
+            if(qf) qf.style.display = QUALITY_PROTOCOLS.has(proto) && CanvasModelPicker.profileFor(providerById(provider),selectedModel).supports_quality !== false ? '' : 'none';
             const qs = document.getElementById('qualitySelect');
             if(qs) qs.value = quality;
             // RunningHub 每次出图都是一次完整工作流运行，隐藏数量并固定为 1，避免误触发多次昂贵任务。
@@ -470,6 +472,7 @@
             if(cf) cf.style.display = (proto === 'runninghub') ? 'none' : '';
             const cs = document.getElementById('countSelect');
             if(cs) cs.value = String(outputCount);
+            updateSizeUI();
         }
         function setQuality(next){ quality = next || 'auto'; }
         function setCount(next){ outputCount = Math.max(1, Math.min(4, parseInt(next, 10) || 1)); }
@@ -516,6 +519,7 @@
         }
         function setModel(next){
             selectedModel = next;
+            updateAdaptivePanel();
         }
         function escapeHtml(str){ return String(str || '').replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s])); }
 
@@ -595,12 +599,24 @@
             const sizeCustomWidthInput = document.getElementById('sizeCustomWidth');
             const sizeCustomHeightInput = document.getElementById('sizeCustomHeight');
             const fitImageSizeBtn = document.getElementById('fitImageSizeBtn');
+            const profile = CanvasModelPicker.profileFor(providerById(provider),selectedModel);
+            const ratios = [['square','1:1'],['portrait','2:3'],['landscape','3:2'],['portrait43','3:4'],['landscape43','4:3'],['story','9:16'],['wide','16:9'],['ultrawide','21:9'],['ultratall','9:21'],['custom',tr('online.customRatio')]];
+            const resolutions = [...new Set(['auto','1k','2k','4k','custom',...(profile.resolutions || []).map(v => v.toLowerCase())])];
+            const state = {ratio,resolution,customRatio:customRatioValue() ? `${customRatioWidth}:${customRatioHeight}` : ''};
+            const choices = CanvasModelPicker.sizeChoices(profile,ratios,resolutions,state,(r,s) => currentSize(r,s));
+            CanvasModelPicker.syncSizeSelect(ratioSelect,choices.ratios,ratio);
+            const resChoices = profile.supports_image_size === false
+                ? [['model-default',profile.fixed_resolution ? `模型固定 ${profile.fixed_resolution}` : '模型默认']]
+                : choices.resolutions.map(v => [v,v === 'auto' ? '自动' : v === 'custom' ? '自定义' : v.toUpperCase()]);
+            CanvasModelPicker.syncSizeSelect(resolutionSelect,resChoices,profile.supports_image_size === false ? 'model-default' : resolution);
+            resolutionSelect.disabled = profile.supports_image_size === false;
+            if(fitImageSizeBtn) fitImageSizeBtn.hidden = profile.supports_custom_size === false;
             ratioSelect.value = ratio;
             ratioSelect.disabled = resolution === 'custom';
             ratioField.classList.toggle('custom', ratio === 'custom');
             ratioCustomWidthInput.value = customRatioWidth;
             ratioCustomHeightInput.value = customRatioHeight;
-            resolutionSelect.value = resolution;
+            if(profile.supports_image_size !== false) resolutionSelect.value = resolution;
             resolutionField.classList.toggle('custom', resolution === 'custom');
             sizeCustomWidthInput.value = customWidth;
             sizeCustomHeightInput.value = customHeight;
@@ -620,14 +636,16 @@
             updateSizeUI();
         }
 
-        function currentSize(){
-            if(resolution === 'custom') return customSizeValue();
-            const options = SIZE_OPTIONS[ratio] || SIZE_OPTIONS.square;
-            if(ratio === 'custom'){
-                const parsed = customRatioValue();
-                const longSide = RES_LONG_SIDE[resolution] || 1024;
+        function currentSize(ratioValue=ratio, resolutionValue=resolution){
+            if(resolutionValue === 'auto') return 'auto';
+            if(resolutionValue === 'custom') return customSizeValue();
+            const options = SIZE_OPTIONS[ratioValue] || SIZE_OPTIONS.square;
+            if(ratioValue === 'custom' || ratioValue.includes(':') || resolutionValue === '1.5k'){
+                const parts = CanvasModelPicker.imageParameters({ratio:ratioValue,customRatio:`${customRatioWidth}:${customRatioHeight}`}).aspect_ratio.split(':').map(Number);
+                const parsed = parts[0] > 0 && parts[1] > 0 ? parts[0]/parts[1] : 0;
+                const longSide = resolutionValue === '1.5k' ? 1536 : RES_LONG_SIDE[resolutionValue] || 1024;
                 if(parsed){
-                    const pixelLimit = RES_PIXEL_LIMIT[resolution] || (longSide * longSide);
+                    const pixelLimit = resolutionValue === '1.5k' ? 2359296 : RES_PIXEL_LIMIT[resolutionValue] || (longSide * longSide);
                     const rawWidth = parsed >= 1 ? longSide : Math.min(longSide * parsed, Math.sqrt(pixelLimit * parsed));
                     const rawHeight = parsed >= 1 ? Math.min(longSide / parsed, Math.sqrt(pixelLimit / parsed)) : longSide;
                     const width = Math.floor(rawWidth / 16) * 16;
@@ -635,7 +653,7 @@
                     return `${Math.max(64, width)}x${Math.max(64, height)}`;
                 }
             }
-            const match = options.find(([, label]) => label === resolution) || SIZE_OPTIONS.square.find(([, label]) => label === resolution) || SIZE_OPTIONS.square[0];
+            const match = options.find(([, label]) => label === resolutionValue) || SIZE_OPTIONS.square.find(([, label]) => label === resolutionValue) || SIZE_OPTIONS.square[0];
             return match[0];
         }
 
@@ -653,12 +671,18 @@
 
         async function handleFile(file, index){
             if(!file) return;
+            const upload = {};
+            refUploads[index] = upload;
+            refs[index] = null;
+            refDims[index] = null;
             const reader = new FileReader();
             reader.onload = e => {
+                if(refUploads[index] !== upload) return;
                 const prev = document.getElementById(`prev${index}`);
                 prev.src = e.target.result; prev.classList.remove('hidden');
                 document.getElementById(`del${index}`).classList.remove('hidden');
                 getImageDimensions(e.target.result).then(dim => {
+                    if(refUploads[index] !== upload) return;
                     refDims[index] = dim;
                     updateSizeUI();
                 }).catch(() => {});
@@ -666,12 +690,18 @@
             reader.readAsDataURL(file);
             const form = new FormData();
             form.append('files', file);
-            const data = await fetch('/api/ai/upload', {method:'POST', body:form}).then(r=>r.json());
-            refs[index] = data.files[0];
+            upload.promise = fetch('/api/ai/upload', {method:'POST', body:form}).then(async response => {
+                const data = await response.json();
+                if(!response.ok || !data.files?.[0]) throw new Error(data.detail || 'Upload failed');
+                if(refUploads[index] === upload) refs[index] = data.files[0];
+            }).catch(error => { upload.error = error; });
+            await upload.promise;
         }
         function clearSlot(index, ev){
             if(ev) ev.stopPropagation();
+            document.getElementById(`file${index}`).value = '';
             refs[index] = null;
+            refUploads[index] = null;
             refDims[index] = null;
             document.getElementById(`prev${index}`).src = '';
             document.getElementById(`prev${index}`).classList.add('hidden');
@@ -697,7 +727,15 @@
             let hasResult = false;
             let previewTaskId;
             try {
-                const payload = {prompt, provider_id:provider, model:selectedModel, size:currentSize(), reference_images:Object.values(refs).filter(Boolean)};
+                await Promise.all(Object.values(refUploads).filter(Boolean).map(upload => upload.promise));
+                if(Object.values(refUploads).some(upload => upload?.error)) throw new Error(
+                    window.StudioI18n?.lang?.() === 'en'
+                        ? 'Reference upload failed. Upload again or remove it before generating; nothing was submitted.'
+                        : '参考图上传失败，请重新上传或移除后再生成；未提交生成');
+                const payload = {prompt, provider_id:provider, model:selectedModel, size:currentSize(), reference_images:Object.values(refs).filter(Boolean),
+                    ...CanvasModelPicker.imageParameters({ratio,resolution,customRatio:`${customRatioWidth}:${customRatioHeight}`})};
+                const sizeError = CanvasModelPicker.sizeError(CanvasModelPicker.profileFor(providerById(provider),selectedModel),payload.size,payload);
+                if(sizeError) throw new Error(CanvasModelPicker.validationNotice(sizeError,true));
                 if(QUALITY_PROTOCOLS.has(providerProtocol(provider))) payload.quality = quality;
                 await Promise.all(Array.from({length:outputCount}, async (_, index) => {
                     const row = document.createElement('li');
@@ -736,6 +774,10 @@
                         show(`${label} · ${error.message}`);
                     }
                 }));
+            } catch(error) {
+                const row = document.createElement('li');
+                row.textContent = error.message;
+                statuses.append(row);
             } finally {
                 if(!hasResult) placeholder.classList.remove('hidden');
                 loader.classList.add('hidden'); btn.disabled = false;

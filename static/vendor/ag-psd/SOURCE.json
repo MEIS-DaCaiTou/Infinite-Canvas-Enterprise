@@ -1,0 +1,10 @@
+{
+  "package": "ag-psd",
+  "version": "34.2.3",
+  "license": "MIT",
+  "repository": "https://github.com/Agamnentzar/ag-psd",
+  "source": "https://unpkg.com/ag-psd@34.2.3/dist/bundle.js",
+  "license_source": "https://unpkg.com/ag-psd@34.2.3/LICENSE",
+  "retrieved_at": "2026-11-26",
+  "usage": "Lazy-loaded layered PSD export. Rasterized text and annotations; original layer assets are unchanged."
+}

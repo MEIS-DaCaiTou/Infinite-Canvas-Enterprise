@@ -1,0 +1,80 @@
+/* Geometry follows the source layer; controls remain in screen pixels. */
+.layer-smart-edit{position:fixed;inset:0;z-index:240;pointer-events:none;color:#ededed;font:14px/1.4 Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
+.layer-smart-edit[hidden],.layer-smart-edit [hidden]{display:none!important}
+.layer-smart-stage{position:fixed;pointer-events:auto;overflow:hidden;border-radius:6px;outline:1px solid #ffffff36;background:repeating-conic-gradient(#333 0 25%,#292929 0 50%) 0/16px 16px;touch-action:none}
+.layer-smart-stage>canvas{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none}
+.layer-smart-stage>canvas:focus{outline:0}
+.layer-smart-toolbar-shell{position:relative;pointer-events:auto}.layer-smart-tool-options{position:absolute;bottom:calc(100% + 8px);transform:translateX(-50%);z-index:5;pointer-events:auto}.layer-smart-text-selection{position:absolute;border:1px solid #3eadff;box-sizing:border-box;pointer-events:none;z-index:2}.layer-smart-text-selection button{position:absolute;width:8px;height:8px;padding:0;min-width:0;border:1px solid #3eadff;border-radius:50%;background:white;pointer-events:auto}.layer-smart-text-selection [data-text-corner*=n]{top:-5px}.layer-smart-text-selection [data-text-corner*=s]{bottom:-5px}.layer-smart-text-selection [data-text-corner*=w]{left:-5px}.layer-smart-text-selection [data-text-corner*=e]{right:-5px}.layer-smart-text-selection [data-text-corner=nw],.layer-smart-text-selection [data-text-corner=se]{cursor:nwse-resize}.layer-smart-text-selection [data-text-corner=ne],.layer-smart-text-selection [data-text-corner=sw]{cursor:nesw-resize}.layer-smart-edit.is-fullscreen .layer-smart-stage{border-radius:12px;outline:0}.layer-smart-edit.is-fullscreen .layer-smart-status{max-width:680px}.layer-smart-edit.is-fullscreen .layer-smart-submit{flex:none}
+.layer-smart-text{position:absolute;z-index:1;width:min(260px,80%);padding:4px 6px;border:1px solid #27a9ff;background:#242424;color:#ff4757;font:20px/1.4 sans-serif;outline:0}
+.layer-smart-controls{position:fixed;display:flex;flex-direction:column;align-items:center;gap:12px;pointer-events:none;box-sizing:border-box}
+.layer-smart-controls button,.layer-smart-controls select,.layer-smart-prompt-editor{font:inherit;color:inherit;box-sizing:border-box}
+.layer-smart-controls button{border:0;background:transparent;border-radius:6px;height:32px;min-width:32px;display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:0 8px;cursor:pointer}
+.layer-smart-controls button:hover,.layer-smart-controls button[aria-pressed=true]{background:#ffffff14}
+.layer-smart-controls button:disabled{opacity:.35;cursor:default}
+.layer-smart-controls button:focus-visible,.layer-smart-controls select:focus-visible{outline:2px solid #2caaff;outline-offset:1px}
+.layer-smart-controls svg{width:16px;height:16px;flex-shrink:0;pointer-events:none}
+.layer-smart-toolbar{display:flex;align-items:center;gap:2px;padding:4px;max-width:100%;overflow:auto;border-radius:10px;background:#242424;border:1px solid #ffffff14;box-shadow:0 6px 16px #0003;pointer-events:auto}
+.layer-smart-divider{height:16px;width:1px;margin:0 3px;background:#ffffff12;flex-shrink:0}
+.layer-smart-prompt{position:relative;display:flex;align-items:center;gap:8px;width:100%;min-height:56px;padding:12px calc(var(--smart-prompt-actions-width,0px) + 20px) 12px 16px;border-radius:16px;background:rgba(34,34,34,.72);border:0;box-shadow:inset 0 0 0 1px #ffffff14,0 8px 30px #0002;pointer-events:auto;box-sizing:border-box;backdrop-filter:blur(120px)}
+.layer-smart-prompt-editor{flex:1;min-width:0;min-height:24px;max-height:24px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;border:0;outline:0;padding:0;line-height:24px;font-size:13px;cursor:text;scrollbar-width:none;overscroll-behavior:contain}
+.layer-smart-prompt-editor::-webkit-scrollbar{display:none}
+.layer-smart-prompt[data-layout=multiline]{flex-direction:column;align-items:stretch;min-height:88px;padding-right:12px}
+.layer-smart-prompt[data-layout=multiline] .layer-smart-prompt-editor{flex:none;width:100%;max-height:66px;line-height:22px}
+.layer-smart-actions-spacer{display:none}
+.layer-smart-prompt[data-layout=multiline] .layer-smart-actions-spacer{display:block;height:32px;flex:none}
+.layer-smart-prompt-editor:empty::before{content:attr(data-placeholder);color:#8e8e8e;pointer-events:none}
+.layer-smart-prompt-editor[aria-disabled=true]{opacity:.6}
+.layer-smart-prompt footer{position:absolute;right:12px;bottom:12px;display:flex;align-items:center;gap:8px;height:32px;max-width:calc(100% - 28px)}
+.layer-smart-prompt select{border:0;border-radius:6px;background:transparent;cursor:pointer;padding:4px 22px 4px 0;max-width:330px;min-width:65px;font-size:13px;height:32px;text-overflow:ellipsis}
+.layer-smart-prompt select option{background:#2c2c2c;color:#eee}
+.layer-smart-prompt select:disabled{opacity:.5;cursor:default}
+.layer-smart-prompt [data-edit-model]{min-width:100px;max-width:min(230px,34vw)}
+.layer-smart-prompt [data-edit-resolution]{min-width:60px;max-width:100px}
+.layer-smart-prompt .layer-smart-submit{margin-left:auto;border-radius:50%;width:32px;padding:0;background:#f5f5f5;color:#181818;flex-shrink:0}
+.layer-smart-prompt .layer-smart-submit:hover{background:white}
+.layer-smart-prompt .layer-smart-submit:disabled{background:#777;color:#252525;opacity:1}
+.layer-smart-status{width:100%;font-size:12px;color:#aaa;white-space:normal;pointer-events:none;min-height:0}
+.layer-smart-status:empty{display:none}
+.layer-smart-markers{position:absolute;inset:0;pointer-events:none}
+.layer-smart-marker{position:absolute;box-sizing:border-box}
+.layer-smart-marker.box{border:1.5px dashed #009efa}
+.layer-smart-marker-pin{position:absolute;left:100%;top:100%;transform:translate(-50%,-96%);width:24px;height:24px}
+.layer-smart-marker.point .layer-smart-marker-pin{left:0;top:0}
+.layer-smart-pin{display:block;flex-shrink:0;overflow:visible}
+.layer-smart-pin path{fill:#009efa}
+.layer-smart-pin text{fill:#fff;font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-weight:600}
+.layer-smart-marker-pin .layer-smart-pin path,.layer-smart-reference-preview-pin .layer-smart-pin path{stroke:#fff;stroke-width:1.1px}
+.layer-smart-marker-corner{display:none;position:absolute;width:8px;height:8px;background:#fff;border:1px solid #009efa;border-radius:50%;box-sizing:border-box;transform:translate(-50%,-50%)}
+.layer-smart-marker.is-selected .layer-smart-marker-corner{display:block}
+.layer-smart-marker-corner.nw{left:0;top:0}.layer-smart-marker-corner.ne{left:100%;top:0}.layer-smart-marker-corner.se{left:100%;top:100%}.layer-smart-marker-corner.sw{left:0;top:100%}
+.layer-smart-reference{display:inline-flex;position:relative;align-items:center;gap:2px;height:16px;margin:0 4px;vertical-align:middle;user-select:none;cursor:grab;outline:none}
+.layer-smart-reference:focus-visible{outline:2px solid #009efa;outline-offset:2px;border-radius:4px}
+.layer-smart-reference-image{display:block;width:16px;height:16px;flex-shrink:0;overflow:hidden;border-radius:4px;background:#ffffff0a}
+.layer-smart-reference-image img{display:block;width:16px;height:16px;pointer-events:none}
+.layer-smart-reference-gap{position:absolute;width:8px;height:24px;top:50%;transform:translateY(-50%);cursor:text}
+.layer-smart-reference-gap.before{right:100%}.layer-smart-reference-gap.after{left:100%}
+.layer-smart-reference-preview{position:fixed;z-index:1;width:320px;height:180px;overflow:hidden;border-radius:12px;background:#1c1c1c;pointer-events:none}
+.layer-smart-reference-preview-window{position:absolute;overflow:hidden}
+.layer-smart-reference-preview-window>canvas{position:absolute;display:block;max-width:none}
+.layer-smart-reference-preview-box{position:absolute;border:2px dashed #009efa;box-sizing:border-box;pointer-events:none}
+.layer-smart-reference-preview-pin{position:absolute;transform:translate(-12px,-23px)}
+.layer-smart-reference-preview-window,.layer-smart-reference-preview-window>canvas,.layer-smart-reference-preview-box,.layer-smart-reference-preview-pin{transition-property:left,top,width,height;transition-duration:600ms;transition-timing-function:cubic-bezier(.4,0,.2,1)}
+.layer-smart-reference-preview.is-initial *{transition:none!important}
+@media(prefers-reduced-motion:reduce){.layer-smart-reference-preview *{transition:none!important}}
+.layer-smart-marker-guide{position:fixed;width:280px;height:227.55px;display:flex;flex-direction:column;gap:12px;padding:4px;border-radius:16px;background:#242424;color:#eee;box-shadow:0 8px 24px #0004;box-sizing:border-box;pointer-events:none;z-index:1}
+.layer-smart-marker-guide video{display:block;width:272px;height:153.55px;flex:none;object-fit:cover;border-radius:12px}
+.layer-smart-marker-guide>div{display:flex;flex-direction:column;gap:4px;height:54px;padding:0 8px 8px;box-sizing:border-box}
+.layer-smart-marker-guide strong{font-size:14px;font-weight:500;line-height:22px}
+.layer-smart-marker-guide p{margin:0;color:#aaa;font-size:12px;line-height:20px}
+.layer-inline-board.is-smart-editing .layer-selection,.layer-inline-board.is-smart-editing .layer-board-handle{display:none!important}
+.image-node:has(.layer-inline-board.is-smart-editing){outline:none!important;border-color:transparent!important;box-shadow:none!important}
+.layer-inline-board.is-smart-editing{outline:none!important;border-color:transparent!important;box-shadow:none!important}
+@media(max-width:600px){.layer-smart-prompt [data-edit-model]{max-width:65vw}}
+.theme-light .layer-smart-edit{color:#242424}
+.theme-light .layer-smart-toolbar,.theme-light .layer-smart-prompt{background:#fff;border-color:#dde2eb}
+.theme-light .layer-smart-prompt select option{background:#fff;color:#242424}
+.theme-light .layer-smart-controls button:hover,.theme-light .layer-smart-controls button[aria-pressed=true]{background:#eff3fa}
+.theme-light .layer-smart-divider{background:#ddd}
+.theme-light .layer-smart-prompt .layer-smart-submit{background:#151c2a;color:white}
+.theme-light .layer-smart-status{color:#68768b}
+.theme-light .layer-smart-marker-guide{background:#fff;color:#242424}.theme-light .layer-smart-marker-guide p{color:#68768b}

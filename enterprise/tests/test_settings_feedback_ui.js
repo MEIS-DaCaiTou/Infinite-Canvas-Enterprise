@@ -43,3 +43,49 @@ options.addDropdownOption('f');assert.equal(options.currentConfig.fields[0].opti
 options.removeDropdownOption('f',0);assert.equal(options.currentConfig.fields[0].options.length,0);assert.equal(renders,2);assert.equal(options.testSession.revision,2);
 options.updateDropdownOption('f',0,'new-model.safetensors');assert.equal(options.previewValues.f,'new-model.safetensors');assert.equal(options.currentConfig.fields[0].default,'new-model.safetensors');assert.equal(select.value,'new-model.safetensors');
 console.log('Cross-tab language, protected business labels, rendered port geometry and inline option editing passed');
+
+// A stale administrator tab must show the Gateway error, not blame the provider.
+(async()=>{
+    const providerSource=read('api-settings.js');
+    const denied='需要管理员权限才能访问企业高风险设置';
+    const draft={id:'department-images',name:'贞贞平台',base_url:'https://fixture.invalid/v1',
+        protocol:'openai',api_key:'fixture-only',image_models:['seedream-v5.5']};
+    let verification='',status='',renders=0;
+    const requests=[];
+    const settings=vm.createContext({
+        providers:[draft],provider:()=>draft,providerPresets:{},
+        baseInput:{value:draft.base_url},protocolInput:{value:'openai'},imageRequestModeInput:{value:'openai'},
+        API_PROTOCOLS:['openai'],CLI_PROTOCOLS:new Set(),
+        document:{getElementById:()=>({disabled:false,querySelector:()=>({textContent:''})})},
+        currentProviderApiKey:()=>draft.api_key,isRunningHubContext:()=>false,
+        tr:key=>key,refreshIcons(){},showVerifyResult:value=>verification=value,
+        syncEditor(){},normalizeId:value=>value,applyLockedRecommendedProtocol(){},
+        normalizeImageRequestMode:value=>value||'openai',normalizeImageEditRoute:value=>value||'general',
+        normalizeRhEntries:values=>values,unique:values=>[...new Set(values)],
+        setStatus:value=>status=value,renderEditor:()=>renders++,openRecommendApi(){},
+        fetch:async(url,options)=>{requests.push({url,method:options?.method||'GET'});
+            return {ok:false,status:403,json:async()=>({error:denied,code:403})};}
+    });
+    for(const name of ['readProviderResponse','testConnection','loadProviders','saveProviders','escapeHtml']){
+        const start=providerSource.indexOf('async function '+name+'(')>=0
+            ?providerSource.indexOf('async function '+name+'('):providerSource.indexOf('function '+name+'(');
+        assert(start>=0,name+' must use the actual settings implementation');
+        const end=providerSource.indexOf('\n}',start)+2;
+        vm.runInContext(providerSource.slice(start,end),settings);
+    }
+    await settings.testConnection();
+    assert(verification.includes(denied)&&verification.includes('HTTP 403'));
+    assert.equal(await settings.saveProviders(),false);
+    assert(status.includes(denied)&&status.includes('HTTP 403'));
+    assert.equal(draft.api_key,'fixture-only','failed save must preserve the unsaved local draft');
+    assert.equal(renders,0,'denial must not replace the editor');
+    await settings.loadProviders();
+    assert.equal(settings.providers[0],draft,'denied reload must not erase the draft list');
+    assert.deepEqual(requests.map(item=>item.method),['POST','PUT','GET']);
+    for(const [body,expected] of [[{detail:'upstream detail'},'upstream detail'],[{error:'gateway error'},'gateway error'],[{message:'provider message'},'provider message']]){
+        await assert.rejects(settings.readProviderResponse({ok:false,status:401,json:async()=>body},'fallback'),new RegExp(expected+'.*HTTP 401'));
+    }
+    const success={ok:true,model_count:17};
+    assert.equal(await settings.readProviderResponse({ok:true,status:200,json:async()=>success},'fallback'),success);
+    console.log('Provider validation/save/load preserve Gateway errors, HTTP status and unsaved drafts; zero real calls');
+})().catch(error=>{console.error(error);process.exitCode=1;});

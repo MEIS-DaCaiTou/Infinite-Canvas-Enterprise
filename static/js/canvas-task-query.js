@@ -85,9 +85,9 @@
         return result;
     }
 
-    function imageRequest(payload) {
+    function imageRequest(payload, {count=1}={}) {
         const nonce = requestId();
-        return {taskId:'canvas_img_' + nonce, payload:{...payload, n:1, request_id:nonce}};
+        return {taskId:'canvas_img_' + nonce, payload:{...payload, n:count, request_id:nonce}};
     }
     const imageUrl = taskId => '/api/canvas-image-tasks/' + encodeURIComponent(taskId);
     const delay = ms => new Promise(resolve => setTimeout(resolve, ms));

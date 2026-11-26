@@ -10,17 +10,25 @@ import pytest
 from fastapi import HTTPException
 from enterprise.provider_image_profiles import (
     IMAGE_PROFILE_TEMPLATES, ImageProfileError, build_aspect_parameters,
-    normalize_image_profile, image_profile_for,
+    normalize_image_profile, image_profile_for, validate_image_size,
 )
 from enterprise.providers.zhenzhen import (
+    configure_provider as configure_zhenzhen_provider,
     IMAGE_MODELS, image_profile as zhenzhen_image_profile,
     public_image_profiles as zhenzhen_public_image_profiles,
     submit_image as submit_zhenzhen_image,
     image_headers as zhenzhen_image_headers,
+    execute_image as execute_zhenzhen_image,
+    image_submission_task_id as zhenzhen_image_submission_task_id,
+    async_image_submit_url as zhenzhen_async_image_submit_url, is_zhenzhen,
 )
 from enterprise.providers.submission import (
     submission_json, image_api_explicitly_rejected, provider_submission_unknown,
 )
+from enterprise.providers.image_execution import complete_image_submission
+from enterprise.providers.suppliers import configure_provider as configure_builtin_supplier
+from enterprise.providers.openai_images import submit_image as submit_openai_image, submit_json_image
+from enterprise.image_reference_preparation import edit_reference_files
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -49,10 +57,16 @@ def builders():
         're':re, 'HTTPException':HTTPException,
         'IMAGE_PROFILE_TEMPLATES':IMAGE_PROFILE_TEMPLATES, 'ImageProfileError':ImageProfileError,
         'build_aspect_parameters':build_aspect_parameters, 'normalize_image_profile':normalize_image_profile, 'image_profile_for':image_profile_for,
+        'validate_image_size':validate_image_size,
         'zhenzhen_image_profile':zhenzhen_image_profile, 'submit_zhenzhen_image':submit_zhenzhen_image,
         'zhenzhen_image_headers':zhenzhen_image_headers,
         'submission_json':submission_json, 'image_api_explicitly_rejected':image_api_explicitly_rejected,
         'provider_submission_unknown':provider_submission_unknown,
+        'complete_image_submission':complete_image_submission, 'execute_zhenzhen_image':execute_zhenzhen_image,
+        'submit_openai_image':submit_openai_image, 'submit_json_image':submit_json_image,
+        'edit_reference_files':edit_reference_files,
+        'zhenzhen_image_submission_task_id':zhenzhen_image_submission_task_id,
+        'extract_task_id':lambda raw:None, 'wait_for_image_task':None,
         'httpx':SimpleNamespace(AsyncClient=lambda **kw: client_type(transport=httpx.MockTransport(transport), **kw), Timeout=httpx.Timeout, HTTPError=httpx.HTTPError),
         'get_api_provider':lambda _:provider,
         'selected_model':lambda model, fallback:model or fallback,
@@ -173,6 +187,8 @@ def test_older_provider_settings_do_not_erase_capability_profiles(explicit_clear
     env = {
         'load_api_providers':lambda:[existing],
         'normalize_provider':lambda value:{**value,'id':value['id'].strip().lower()},
+        'configure_zhenzhen_provider':configure_zhenzhen_provider,
+        'configure_builtin_supplier':configure_builtin_supplier,
         'save_api_providers':lambda values:saved.extend(values),
         'provider_key_env':lambda value:'FIXTURE_KEY', 'public_provider':lambda value:value,
         'HTTPException':HTTPException,
@@ -193,9 +209,15 @@ def test_zhenzhen_builtin_text_and_reference_requests_need_no_template(builders,
         asyncio.run(env['generate_ai_image']('fixture prompt', '1024x1024', 'high', model, references, 'fixture', {'aspect_ratio':'1:1', 'resolution':'2K'}))
     assert len(calls) == 2
     for index, request in enumerate(calls):
-        body = json.loads(request.content)
-        assert request.url.path == ('/v1/images/edits' if model == 'gpt-image-2-all' and index == 1 else '/v1/images/generations')
         profile = IMAGE_MODELS[model]
+        edit = index == 1 and profile.get('reference_endpoint') == 'edits'
+        assert request.url.path == ('/v1/images/edits' if edit else '/v1/images/generations')
+        if edit and profile.get('reference_encoding') == 'multipart':
+            assert request.headers['content-type'].startswith('multipart/form-data; boundary=')
+            assert b'name="model"' in request.content and model.encode() in request.content
+            assert b'name="image"; filename=' in request.content and b'fake' in request.content
+            continue
+        body = json.loads(request.content)
         if profile['mode'] == 'aspect-size':
             assert body['aspect_ratio'] == '1:1' and 'size' not in body
             assert ('image_size' in body) == profile['supports_image_size']
@@ -204,7 +226,51 @@ def test_zhenzhen_builtin_text_and_reference_requests_need_no_template(builders,
         else:
             assert body['size'] == '1024x1024' and 'image_size' not in body
         assert ('quality' in body) == profile['supports_quality']
-    assert json.loads(calls[1].content)['image'] == ['data:image/png;base64,ZmFrZQ==']
+    if IMAGE_MODELS[model].get('reference_encoding') != 'multipart':
+        assert json.loads(calls[1].content)['image'] == ['data:image/png;base64,ZmFrZQ==']
+
+
+@pytest.mark.parametrize('model', [
+    'gemini-nano-banana-2.1', 'gemini-nano-banana-2.1-2k', 'gemini-nano-banana-2.1-4k',
+    'gpt-image-2', 'gpt-image-2-all', 'gpt-image-2.5-flare', 'gpt-image-2.5-sunburst',
+    'gpt-image-2.6-flare', 'gpt-image-2.6-sunburst', 'nano-banana-2-2k', 'nano-banana-2-4k',
+    'nano-banana-pro', 'nano-banana-pro-2k', 'nano-banana-pro-4k', 'seedream-v5-pro', 'seedream-v5.5',
+])
+def test_production_model_has_authoritative_public_contract(model):
+    provider = {'id':'zhenzhen', 'image_models':[model], 'image_profile':{'mode':'pixel'}}
+    assert zhenzhen_public_image_profiles(provider)[model] == image_profile_for(provider,model)
+    assert IMAGE_MODELS[model]
+
+
+@pytest.mark.parametrize('model,size,parameters', [
+    ('nano-banana-2-2k','768x2048',{}),
+    ('gemini-nano-banana-2.1-4k','1024x1024',{'aspect_ratio':'6:17'}),
+    ('gpt-image-2','4096x4096',{}),
+    ('gpt-image-2.5-flare','1537x1024',{}),
+    ('gpt-image-2.5-flare','auto',{}),
+    ('gpt-image-2.5-sunburst','auto',{}),
+    ('gpt-image-2.6-sunburst','512x512',{}),
+    ('gpt-image-2-all','3840x512',{}),
+    ('seedream-v5-pro','720x2040',{}),
+    ('seedream-v5.5','1024x1024',{'resolution':'4K'}),
+])
+def test_illegal_production_parameters_make_zero_http_requests(builders,model,size,parameters):
+    env,calls,_ = builders
+    env['fixture_provider'].update(id='zhenzhen',image_profile={})
+    with pytest.raises(HTTPException) as failure:
+        asyncio.run(env['generate_ai_image']('fixture',size,'',model,provider_id='zhenzhen',image_parameters=parameters))
+    assert failure.value.status_code == 400
+    assert not calls
+
+
+@pytest.mark.parametrize('size,requested,expected', [
+    ('1280x544',{},'21:9'), # Legacy preset rounds to 16-pixel boundaries.
+    ('1024x1024',{'aspect_ratio':'2000:3000'},'2:3'),
+    ('1024x1024',{'aspect_ratio':'21:9'},'21:9'),
+])
+def test_old_preset_rounding_and_exact_source_ratio(builders,size,requested,expected):
+    env,_,_ = builders
+    assert env['aspect_image_parameters'](size,IMAGE_MODELS['nano-banana-pro'],requested)['aspect_ratio'] == expected
 
 
 def test_builtin_contract_overrides_stale_templates_only_on_verified_supplier(builders):
@@ -246,3 +312,109 @@ def test_builtin_generation_contract_is_independent_of_old_platform_protocol(bui
     asyncio.run(env['generate_ai_image']('fixture prompt', '16:9', '', 'nano-banana', provider_id='fixture'))
     assert calls[0].url.path == '/v1/images/generations'
     assert 'Authorization' in calls[0].headers and 'x-goog-api-key' not in calls[0].headers
+
+
+@pytest.mark.parametrize('background', ['auto', 'transparent'])
+def test_composer_background_reaches_native_generation(builders, background):
+    import json
+    env, calls, _ = builders
+    env['fixture_provider']['image_profile'] = {'mode':'pixel', 'supports_background':True}
+    asyncio.run(env['generate_ai_image']('fixture', '1024x1024', '', 'fixture-image',
+        provider_id='fixture', image_parameters={'background_mode':background}))
+    body = json.loads(calls[0].content)
+    assert len(calls) == 1
+    if background == 'transparent':
+        assert body['background'] == 'transparent' and body['output_format'] == 'png'
+    else:
+        assert 'background' not in body and 'output_format' not in body
+
+
+def test_composer_transparency_is_sent_in_multipart_edits(builders, tmp_path):
+    import os
+    env, calls, _ = builders
+    env['fixture_provider']['image_profile'] = {'mode':'pixel', 'supports_background':True}
+    image = tmp_path / 'reference.png'
+    image.write_bytes(b'fixture-image')
+    env.update(os=os, image_reference_file=lambda _:str(image), content_type_for_path=lambda _:'image/png')
+    asyncio.run(env['generate_ai_image']('fixture', '1024x1024', '', 'fixture-image',
+        [{'url':'/assets/input/reference.png'}], 'fixture', {'background_mode':'transparent'}))
+    assert len(calls) == 1 and calls[0].url.path == '/v1/images/edits'
+    assert b'name="background"\r\n\r\ntransparent' in calls[0].content
+    assert b'name="output_format"\r\n\r\npng' in calls[0].content
+
+
+@pytest.mark.parametrize('model', ['seedream-v5.5', 'seedream-v5.5/layer-decomposition'])
+@pytest.mark.parametrize('background', ['auto', 'opaque', 'transparent'])
+def test_seedream55_native_background_uses_one_json_generation(builders, model, background):
+    import json
+    env, calls, _ = builders
+    env['fixture_provider'].update(id='zhenzhen', image_profile={})
+    layers = model.endswith('/layer-decomposition')
+    if layers and background != 'auto':
+        with pytest.raises(HTTPException):
+            asyncio.run(env['generate_ai_image']('fixture', 'auto', '', model,
+                [{'url':'data:image/png;base64,ZmFrZQ=='}], 'zhenzhen', {'background_mode':background}))
+        assert not calls
+        return
+    size = 'auto' if layers else '1536x1536'
+    asyncio.run(env['generate_ai_image']('fixture', size, 'high', model,
+        [{'url':'data:image/png;base64,ZmFrZQ=='}], 'zhenzhen', {'background_mode':background}))
+    assert len(calls) == 1 and calls[0].url.path == '/v1/images/generations'
+    body = json.loads(calls[0].content)
+    assert body['model'] == model and body['size'] == size
+    assert body['output_format'] == 'png' and 'quality' not in body and 'n' not in body
+    if layers:
+        assert 'background' not in body
+    else:
+        assert body['background'] == background and body['watermark'] is False
+    expected = 'data:image/png;base64,ZmFrZQ=='
+    assert body['image'] == (expected if model.endswith('/layer-decomposition') else [expected])
+
+
+@pytest.mark.parametrize('model', ['gpt-image-2.5-flare','gpt-image-2.5-sunburst'])
+@pytest.mark.parametrize('with_references', [False,True])
+def test_gpt25_uses_workshop_sync_contract_even_with_durable_receipt(builders, model, with_references):
+    env,calls,_=builders
+    provider=env['fixture_provider'];provider.update(id='zhenzhen',image_profile={})
+    env.update(is_zhenzhen=is_zhenzhen,zhenzhen_async_image_submit_url=zhenzhen_async_image_submit_url,
+               image_task_url_for_provider=lambda p,key:p['base_url']+'/v1/images/tasks/'+key)
+    class Sink:
+        def identify(self,*args,**kwargs):pass
+        async def accepted(self,*args):raise AssertionError('inline result is not an async accepted task')
+    references=[{'url':'data:image/png;base64,ZmFrZQ=='}]*14 if with_references else []
+    asyncio.run(env['generate_ai_image']('fixture','1024x1024','high',model,references,'zhenzhen',receipt_sink=Sink()))
+    assert len(calls)==1 and not calls[0].url.query
+    assert calls[0].url.path.endswith('/edits' if with_references else '/generations')
+    assert calls[0].headers['content-type'].startswith('multipart/form-data' if with_references else 'application/json')
+    if with_references:assert calls[0].content.count(b'name="image"')==14
+    assert zhenzhen_async_image_submit_url(provider['base_url']+'/v1/images/generations',
+        provider['base_url']+'/v1/images/tasks/_',model='gpt-image-2.6-flare').endswith('?async=true')
+
+
+@pytest.mark.parametrize('model', ['gpt-image-2.5-flare','gpt-image-2.5-sunburst'])
+def test_gpt25_excess_references_stop_before_supplier(builders, model):
+    env,calls,_=builders;env['fixture_provider'].update(id='zhenzhen',image_profile={})
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(env['generate_ai_image']('fixture','1024x1024','',model,[{'url':'data:image/png;base64,ZmFrZQ=='}]*15,'zhenzhen'))
+    assert error.value.status_code==400 and not calls
+
+
+def test_seedream55_reference_limit_is_ten_before_submission(builders):
+    env, calls, _ = builders
+    env['fixture_provider'].update(id='zhenzhen', image_profile={})
+    with pytest.raises(HTTPException, match='参考图'):
+        asyncio.run(env['generate_ai_image']('fixture', '1024x1024', '', 'seedream-v5.5',
+            [{'url':'data:image/png;base64,ZmFrZQ=='}] * 11, 'zhenzhen'))
+    assert calls == []
+
+
+def test_shared_image_choices_in_original_frontend_module():
+    import subprocess
+    result = subprocess.run(['node',str(ROOT / 'enterprise/tests/test_provider_image_choices.js')],
+        capture_output=True,encoding='utf-8',timeout=15)
+    assert result.returncode == 0,result.stdout + result.stderr
+
+
+def test_seedream55_documented_resolution_tokens_and_unknown_provider_are_preserved():
+    validate_image_size('1.5K',IMAGE_MODELS['seedream-v5.5'])
+    validate_image_size('vendor-specific-size',{'mode':'pixel'})

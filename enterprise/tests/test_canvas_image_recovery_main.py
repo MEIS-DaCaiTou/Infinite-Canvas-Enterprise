@@ -38,6 +38,75 @@ id_path = roots.DATA_ROOT / 'fixture-local-task-id'
 '''
 
 
+def test_responses_hard_exit_keeps_original_endpoint_and_archives_all_outputs(tmp_path):
+    for directory in ('static','workflows'):
+        (tmp_path/'install/releases/fixture'/directory).mkdir(parents=True,exist_ok=True)
+    setup = BOOTSTRAP + r'''
+provider.update(id='responses-fixture',image_request_mode='openai-responses',
+    image_generation_endpoint='https://supplier.example/custom/responses',image_models=['responses-fixture-image'])
+main.save_api_providers([provider])
+main.RESPONSES_POLL_INTERVAL=0
+'''
+    writer = setup + r'''
+def interrupted(request):
+    calls.append((request.method,str(request.url)))
+    if request.method=='POST':
+        assert str(request.url)=='https://supplier.example/custom/responses'
+        assert json.loads(request.content)['background'] is True
+        return httpx.Response(200,json={'status':'queued','id':'resp-original'},headers={'x-request-id':'request-original'})
+    receipt=main.CANVAS_TASK_JOURNAL.get(id_path.read_text())['provider_receipts'][0]
+    assert receipt['state']=='accepted' and receipt['upstream_task_id']=='resp-original'
+    assert receipt['query_endpoint']=='https://supplier.example/custom/responses/resp-original'
+    assert receipt['provider_request_id']=='request-original'
+    assert [method for method,_ in calls]==['POST','GET']
+    os._exit(37)
+main.httpx.AsyncClient=lambda **kw:original_client(transport=httpx.MockTransport(interrupted),**kw)
+async def exercise():
+    result=await main.create_canvas_image_task(main.OnlineImageRequest(prompt='own synthetic fixture',provider_id=provider['id'],model='responses-fixture-image'))
+    id_path.write_text(result['task_id'])
+    await asyncio.gather(*main.CANVAS_TASK_RUNNERS)
+asyncio.run(exercise())
+'''
+    args=[str(ROOT),str(tmp_path/'install'),str(tmp_path/'local')]
+    environment=dict(os.environ,PYTHONDONTWRITEBYTECODE='1',PYTHONUTF8='1')
+    crashed=subprocess.run([sys.executable,'-c',writer,*args],cwd=ROOT,env=environment,capture_output=True,text=True,timeout=40)
+    assert crashed.returncode==37,crashed.stdout+crashed.stderr
+    reader = setup + r'''
+import base64
+from io import BytesIO
+from PIL import Image
+provider['image_generation_endpoint']='https://supplier.example/changed/responses'
+main.save_api_providers([provider])
+assert main.CANVAS_TASK_JOURNAL.recover()['interrupted']==1
+encoded=[]
+for color in ['red','blue']:
+    content=BytesIO();Image.new('RGBA',(20,16),color).save(content,'PNG');encoded.append(base64.b64encode(content.getvalue()).decode())
+finished=False
+def original_query(request):
+    assert request.method=='GET' and str(request.url)=='https://supplier.example/custom/responses/resp-original'
+    calls.append((request.method,str(request.url)))
+    return httpx.Response(200,json={'id':'resp-original','status':'completed' if finished else 'in_progress',
+        'output':[{'type':'image_generation_call','result':value} for value in encoded]})
+main.httpx.AsyncClient=lambda **kw:original_client(transport=httpx.MockTransport(original_query),**kw)
+async def exercise():
+    global finished
+    key=id_path.read_text()
+    assert (await main.reconcile_canvas_image_task(key))['status']=='running'
+    record=main.CANVAS_TASK_JOURNAL.get(key)
+    assert not (record.get('result') or {}).get('images') and record['provider_receipts'][0]['state']=='accepted'
+    finished=True
+    result=await main.reconcile_canvas_image_task(key)
+    assert result['status']=='succeeded' and len(result['images'])==2
+    for url in result['images']:
+        with Image.open(main.output_file_from_url(url)) as image:assert image.size==(20,16)
+    assert (await main.reconcile_canvas_image_task(key))==result
+    assert len(calls)==2 and all(method=='GET' for method,_ in calls)
+asyncio.run(exercise())
+'''
+    recovered=subprocess.run([sys.executable,'-c',reader,*args],cwd=ROOT,env=environment,capture_output=True,text=True,timeout=40)
+    assert recovered.returncode==0,recovered.stdout+recovered.stderr
+
+
 @pytest.mark.parametrize("mode", ["first-write", "until-finish", "finish-retry", "finish-after-save", "path-probe", "unwritable"])
 def test_accepted_image_id_survives_receipt_write_failure(tmp_path, mode):
     install = tmp_path / "install"
@@ -745,7 +814,7 @@ main.save_ai_image_to_output = save_image
 
 async def exercise():
     requests = [main.OnlineImageRequest(prompt=str(index), provider_id='zhenzhen', model='gpt-image-2-all',
-        size='4096x4096', request_id=f'{index + 1:032x}') for index in range(4)]
+        size='3840x2160', request_id=f'{index + 1:032x}') for index in range(4)]
     receipts = await asyncio.gather(*(main.create_canvas_image_task(body) for body in requests))
     duplicate = await main.create_canvas_image_task(requests[0])
     assert duplicate['task_id'] == receipts[0]['task_id']
@@ -884,3 +953,83 @@ asyncio.run(exercise())
                             env=dict(os.environ, PYTHONUTF8="1", PYTHONDONTWRITEBYTECODE="1"),
                             capture_output=True, encoding="utf-8", timeout=40)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_normal_image_requests_have_no_shared_or_per_user_admission_limit(tmp_path):
+    app = tmp_path / 'install/releases/fixture'
+    (app / 'static').mkdir(parents=True)
+    (app / 'main.py').write_text('# fixture', encoding='utf-8')
+    script = BOOTSTRAP + r'''
+import base64
+from io import BytesIO
+from PIL import Image
+from enterprise.generation_tasks import describe_task
+buffer=BytesIO();Image.new('RGBA',(16,16),(20,140,80,160)).save(buffer,'PNG')
+encoded=base64.b64encode(buffer.getvalue()).decode()
+posts=[]
+all_sent=asyncio.Event()
+release=asyncio.Event()
+async def concurrent(request):
+    if request.method=='POST':
+        posts.append(request)
+        index=len(posts)
+        if index==16:all_sent.set()
+        await release.wait()
+        return httpx.Response(200,json={'task_id':f'parallel-{index}'})
+    assert request.method=='GET' and '/v1/images/tasks/parallel-' in request.url.path
+    return httpx.Response(200,json={'status':'SUCCESS','data':[{'b64_json':encoded}]})
+main.httpx.AsyncClient=lambda **kw:original_client(transport=httpx.MockTransport(concurrent),**kw)
+async def run():
+    requests=[main.OnlineImageRequest(request_id=character*32,provider_id='zhenzhen',model='gpt-image-2-all',
+        prompt='parallel API production fixture',n=8) for character in ['a','b']]
+    receipts=[await main.create_canvas_image_task(payload,None) for payload in requests]
+    # All sixteen POSTs must reach the supplier before any receives a reply.
+    # A shared cap of two or a per-user cap of one would deadlock this barrier.
+    await asyncio.wait_for(all_sent.wait(),timeout=8)
+    assert len(posts)==16 and not hasattr(main,'CANVAS_IMAGE_QUEUE')
+    release.set()
+    await asyncio.gather(*main.CANVAS_TASK_RUNNERS)
+    for receipt,payload in zip(receipts,requests):
+        row=main.CANVAS_TASK_JOURNAL.get(receipt['task_id'])
+        assert row['status']=='succeeded' and 'image_queue' not in row
+        assert describe_task(row,detail=True)['output_count']==8
+        assert (await main.create_canvas_image_task(payload,None))['task_id']==receipt['task_id']
+    assert len(posts)==16
+asyncio.run(run())
+'''
+    result=subprocess.run([sys.executable,'-c',script,str(ROOT),str(tmp_path/'install'),str(tmp_path/'local')],
+        cwd=ROOT,env=dict(os.environ,PYTHONUTF8='1',PYTHONDONTWRITEBYTECODE='1'),
+        capture_output=True,encoding='utf-8',timeout=40)
+    assert result.returncode==0,result.stdout+result.stderr
+
+
+def test_expired_reference_url_keeps_supplier_error_without_automatic_resubmission(tmp_path):
+    app = tmp_path / 'install/releases/fixture'
+    (app / 'static').mkdir(parents=True)
+    (app / 'main.py').write_text('# fixture', encoding='utf-8')
+    script = BOOTSTRAP + r'''
+from enterprise.generation_tasks import describe_task
+provider['image_models']=['seedream-v5.5']
+main.save_api_providers([provider])
+url='https://media.example/temporary-image.png?expires=fixture'
+def expired(request):
+    calls.append((request.method,request.url.path))
+    assert request.method=='POST' and json.loads(request.content)['image']==[url]
+    return httpx.Response(400,json={'error':{'message':'reference image URL has expired'}})
+main.httpx.AsyncClient=lambda **kw:original_client(transport=httpx.MockTransport(expired),**kw)
+async def run():
+    payload=main.OnlineImageRequest(request_id='c'*32,provider_id='zhenzhen',model='seedream-v5.5',
+        prompt='expired reference fixture',size='1024x1024',n=1,reference_images=[{'url':url}])
+    created=await main.create_canvas_image_task(payload,None)
+    await asyncio.gather(*main.CANVAS_TASK_RUNNERS)
+    detail=describe_task(main.CANVAS_TASK_JOURNAL.get(created['task_id']),detail=True)
+    assert len(calls)==1 and detail['status']=='failed' and 'URL has expired' in detail['error']
+    assert not detail['items']
+    assert (await main.create_canvas_image_task(payload,None))['task_id']==created['task_id']
+    assert len(calls)==1
+asyncio.run(run())
+'''
+    result=subprocess.run([sys.executable,'-c',script,str(ROOT),str(tmp_path/'install'),str(tmp_path/'local')],
+        cwd=ROOT,env=dict(os.environ,PYTHONUTF8='1',PYTHONDONTWRITEBYTECODE='1'),
+        capture_output=True,encoding='utf-8',timeout=40)
+    assert result.returncode==0,result.stdout+result.stderr

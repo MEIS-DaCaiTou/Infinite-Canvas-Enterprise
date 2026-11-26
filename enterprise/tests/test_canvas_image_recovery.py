@@ -78,6 +78,25 @@ def test_restart_queries_original_identity_and_caches_result(tmp_path):
     asyncio.run(scenario())
 
 
+def test_response_query_endpoint_is_frozen_and_forwarded_after_restart(tmp_path):
+    async def scenario():
+        journal=new_journal(tmp_path)
+        provider={**PROVIDER,'image_request_mode':'openai-responses'}
+        query_url='https://supplier.example/custom/responses/resp-original'
+        await ImageReceiptSink(journal,'canvas_img_a',0).accepted('resp-original',provider,query_endpoint=query_url)
+        with pytest.raises(ValueError,match='identity'):
+            journal.record_image_request('canvas_img_a',0,{'query_endpoint':'https://supplier.example/changed/resp-original'})
+        restarted=CanvasTaskJournal(tmp_path);restarted.recover()
+        assert 'query_endpoint' not in str(public_receipt(restarted.get('canvas_img_a')))
+        calls=[]
+        async def query(selected,upstream_id,*,plan_archive,query_endpoint):
+            calls.append((upstream_id,query_endpoint));return {'status':'succeeded','images':['/output/response.png']}
+        service=CanvasImageRecovery(restarted,lambda _: {**provider,'image_generation_endpoint':'/changed/responses'},query,lambda _:None)
+        assert (await service.reconcile('canvas_img_a'))['status']=='succeeded'
+        assert calls==[('resp-original',query_url)]
+    asyncio.run(scenario())
+
+
 def test_concurrent_queries_are_single_flight_even_when_one_browser_disconnects(tmp_path):
     async def scenario():
         journal = new_journal(tmp_path)

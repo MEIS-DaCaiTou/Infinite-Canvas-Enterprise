@@ -1,5 +1,5 @@
 (function(){
-    const VERSION = '20261026.queue.1';
+    const VERSION = '20261124.marketing-01';
     const scripts = [
         '/static/js/i18n-core.js',
         '/static/js/i18n/common.js',

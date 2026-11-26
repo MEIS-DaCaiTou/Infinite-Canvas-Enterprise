@@ -117,12 +117,15 @@ class ImageReceiptSink:
     def request_identity(self):
         return {"provider_request_id": self.provider_request_id} if self.provider_request_id else {}
 
-    async def accepted(self, upstream_task_id, provider=None):
+    async def accepted(self, upstream_task_id, provider=None, *, query_endpoint=None):
         if not isinstance(upstream_task_id, str) or not 1 <= len(upstream_task_id) <= 240:
             raise ValueError("Invalid provider task identity")
         self.upstream_task_id = upstream_task_id
         self._acceptance = {**(provider_scope(provider) if provider else {}), **self.request_identity(),
                             "upstream_task_id": upstream_task_id, "accepted_at": time.time()}
+        if query_endpoint is not None:
+            self._acceptance['query_endpoint'] = provider_scope(
+                {'id': provider['id'], 'base_url': query_endpoint})['provider_base_url']
         try:
             await asyncio.to_thread(self.journal.record_image_request, self.task_id, self.index,
                                     {**self._acceptance, "state": "accepted"})
@@ -272,9 +275,11 @@ class CanvasImageRecovery:
             try:
                 from enterprise.task_credentials import credential_scope
                 with credential_scope(record):
+                    query_options = {'query_endpoint': receipt['query_endpoint']} if receipt.get('query_endpoint') else {}
                     result = await self.query(
                         providers[index], receipt["upstream_task_id"],
                         plan_archive=partial(self._plan_archive, task_id, receipt),
+                        **query_options,
                     )
                     from enterprise.task_credentials import task_error
                     result = {**result, **{key:task_error(result[key]) for key in ('message','error') if key in result}}

@@ -1,0 +1,4 @@
+# Optional local foreground inference; install explicitly alongside the model.
+# Normal application startup does not import these packages or download weights.
+numpy==2.5.5
+onnxruntime==1.32.0

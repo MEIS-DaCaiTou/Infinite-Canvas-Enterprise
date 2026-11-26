@@ -49,7 +49,7 @@ _EXACT_ROUTES: dict[str, frozenset[str]] = {
         "api/chat/agent", "api/chat/stream", "api/cloud-video/upload",
         "api/codex/help", "api/comfyui/upload-base64", "api/conversations",
         "api/gemini-cli/help", "api/generate", "api/history/delete",
-        "api/image-task-query", "api/jimeng/help", "api/jimeng/login/start",
+        "api/image-task-query", "api/image-segmentation", "api/jimeng/help", "api/jimeng/login/start",
         "api/jimeng/logout", "api/jimeng/query-media",
         "api/local-assets/caption", "api/local-assets/classify",
         "api/local-assets/delete", "api/local-assets/folders",

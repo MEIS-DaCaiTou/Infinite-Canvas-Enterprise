@@ -1,0 +1,16 @@
+const assert=require('node:assert/strict');global.StudioI18n={t:key=>key};
+const A=require('../../static/js/canvas-layer-annotations.js');
+assert.deepEqual(A.colors.map(x=>x[1]),['#ff3355','#ffc944','#66d675','#3eadff','#111111','#ffffff']);
+assert.equal((A.palette('#3eadff').match(/aria-pressed="true"/g)||[]).length,1);
+assert.deepEqual(A.textBox('秋冬\n新品',20,s=>s.length*20),{width:42,height:50});
+assert.equal(A.textBox('旧图层\n文字',20,s=>s.length*20,1.2).height,48,'legacy text keeps its existing line spacing');
+const initial={kind:'text',points:[{x:.2,y:.3}],text:'秋冬新品',fontSize:.05,box:{width:.3,height:.08}},mark=structuredClone(initial);
+A.moveText(mark,initial,.1,-.1);assert.ok(Math.abs(mark.points[0].x-.3)<.0001);assert.ok(Math.abs(mark.points[0].y-.2)<.0001);
+A.resizeText(mark,initial,'se',.3,0);assert.equal(mark.fontSize,.1);assert.deepEqual(mark.box,{width:.6,height:.16});assert.deepEqual(initial.points,[{x:.2,y:.3}]);
+A.resizeText(mark,initial,'nw',-.3,0);assert.ok(Math.abs(A.markBox(mark).x+.1)<.0001);assert.ok(Math.abs(A.markBox(mark).y-.22)<.0001);
+let finished=[],removed=0;
+const editor=new A.TextInput();editor.input={value:'服装\n细节',onblur(){},remove(){removed++;}};editor.bounds={width:.3,height:.1};editor.callbacks={commit:(text,box)=>finished.push({text,box}),cancel:()=>finished.push('cancel')};
+editor.commit();editor.commit();assert.equal(removed,1);assert.equal(finished[0].text,'服装\n细节');
+editor.input={value:'未确认',remove(){removed++;}};editor.callbacks={cancel:()=>finished.push('cancel')};editor.cancel();assert.equal(finished.at(-1),'cancel');
+editor.input={value:'失焦确认',remove(){removed++;}};editor.callbacks={commit:(_text,_box,reason)=>finished.push(reason)};editor.commit('blur');assert.equal(finished.at(-1),'blur','blur completion must not replace the clicked toolbar before its click event');
+console.log('Annotation tools: official colors, multiline geometry, immutable drag/resize and single commit/cancel lifecycle passed');

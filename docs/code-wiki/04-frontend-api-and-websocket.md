@@ -1,5 +1,25 @@
 # 前端、API 与 WebSocket
 
+MKT-01.B4 后续取消／显隐反馈为纯前端生命周期修复：显隐明确传行 ID，普通文字同一输入与原 LayerDocument 保存，SmartEdit 关闭销毁临时引用／输入／历史。已受理任务仍按原 ID、归档和回填继续，取消 UI 不删除任务或重新提交，没有新增 HTTP／WebSocket／Schema／凭据规则。三轮取消重进及普通所有者读取／他人拒绝见[原 B4 追加记录](../ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#mkt-01-b4)。
+
+2026-11-26 MKT-01.B4：普通／智能文字共用纯前端标注输入，全屏视口使用独立数学模块。Editor 注入 SmartEdit 的呈现上下文只管理全屏挂载与视口／历史，复用原图片任务与两张参考图路径；没有新增 HTTP 接口、Schema、供应商字段或凭据处理。可选新文字字重／行高保存在原 LayerDocument，旧缺省保持；临时标注仍仅是改图参考，不直接写原图片层。全屏成功回填、普通所有者读取和跨账号拒绝、旧任务归档及模拟／真实区别见[原 B4 记录](../ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#mkt-01-b4)。
+
+2026-11-26 MKT-01.B3：全屏融合按钮只打开提示词卡片，卡片生成复用 `POST /api/canvas-image-tasks` 与原回执查询／归档；合并图层不提交模型。`canvas-layer-export` 复用 `/api/ai/upload-base64` 保存文字／标注的栅格副本、原 `/api/canvas-assets/download` 导出 ZIP，PSD 在客户端按需加载固定本地编码库。没有新增产品路由或 Schema，权限仍由原接口执行；普通用户只可使用自己的上传参考图，复制画布不改变原任务归属。见[原 B3 记录](../ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#mkt-01-b3)。
+
+2026-11-26 MKT-01.D1：原图片能力的可选 `supports_transparent_background` 区分当前渠道透明与 opaque 支持；原能力接口投影和提交前校验共用同一规则。没有新增 HTTP 协议。SmartEdit 矩形框选的源快照／区域与可选 `preparedAsset` 仅存于画布回填绑定，不发给供应商；本地派生 PNG 使用原 upload-base64，权限、原任务和归档仍沿原接口。未框选的原生透明与保留原 Alpha 的框选合成在界面分开说明，详情见[同一 D1 记录](../ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#mkt-01-d1)。
+
+2026-11-26 同 MKT-01.B2：`canvas-layer-smart-prompt` 是原智能改图的纯前端行内引用／光标／缩略图组件，显示与原文字／坐标提交分开，不新增 HTTP 接口。选区预览与官网操作示例不进入参考图，原图片任务、权限、原任务续查及归档继续复用，见[原 B2 记录](../ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#mkt-01-b2)。
+
+2026-11-25 MKT-01.B2：`canvas-layer-smart-edit.js/css` 统一原位／全屏智能改图，使用源图层像素与临时标记文档；组件负责聚焦 UI、指示图、能力控件、源身份与实际 Alpha 校验，adapter 仅接现有视口、任务和保存。仍 POST `/api/canvas-image-tasks`、GET 原 ID 查询和原归档，没有新增 HTTP 协议。输出节点的可选 `layerEditTarget` 连接原任务与目标图层，完成和重开幂等回填，复制清除绑定；源改变或透明输出不合格只保留独立结果及提示。失选清除活动编辑器，主动重开才恢复本页草稿，不借共享 Session.popup 自动弹回。详情和实际未通过项见[原集成记录](../ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#mkt-01-b2)。
+
+2026-11-25 MKT-02：智能画布“营销 → 智能多尺寸”使用独立面板与共同模型能力，每项尺寸通过原图片任务生成；显式像素同时用于结果占位布局和连线，实际输出沿原查询／归档路径更新。个人预设使用 `GET/POST /enterprise/api/me/image-size-presets` 和 `PUT/DELETE /enterprise/api/me/image-size-presets/{id}`，字段为 name、width、height，服务端生成 id 并保持原顺序；读写身份来自 Gateway，不接受浏览器指定 owner。复用登录／同源保护及个人 DATA_ROOT JSON，普通账号可管理自己的尺寸，不能修改他人预设或供应商配置。CallSourceHint 公开原预览函数供面板核对授权，不返回密钥；未知状态仍由原服务端决定。中英文、明暗主题和自定义尺寸重开已从原页面验证；切换语言保留用户画布名称。[准确范围及模拟／真实差异](../ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#mkt-02)。
+
+2026-11-25 MKT-01：智能画布原图片工具条“营销 → 图层分离”使用独立 `canvas-layer-separation.js`／CSS，smart／selection／description、框选百分比、中英文与主题通过原 adapter 提交持久任务。模型选择读取原公开 profile 的层数、OCR 和空提示词能力；原全屏拆分入口复用同一选择／参数函数。贞贞当前只允许自动层数且关闭 OCR，旧冲突参数可由用户主动重置，后端同样拦截；方舟智能拆分可空提示词，普通生成不可。原任务与全部图片、Alpha、bbox、权限及画布保存接口不变。原页面／真实鼠标／复杂服装和质量缺口见[同一记录](../ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#mkt-01)。
+
+2026-11-24 SUP-04.S55：原 `GET /api/providers` 同时提供 `provider_presets.volcengine` 与贞贞预设，PUT 接受显式 `supplier: "volcengine"`，稳定实例 ID 与原密钥保留。普通用户仍从原配置投影读准确能力，不能管理平台。原生智能画布不再强制覆盖选择的实例 ID，图片参数用共享 model-picker；5.5 普通生成与分层有各自尺寸／背景规则。原任务接口和全部图层归档结构保持，官方 request_id 不是可轮询任务号。原 HTTP、旧画布、权限及真实失败证据见[本轮记录](../ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#sup-04-s55)，新增 UI 现场点击未由 Node 测试替代。
+
+2026-11-24 SUP-03.Z 配置接口增量：原 `GET /api/providers` 增加 `provider_presets.zhenzhen`，包含供应商标签、显示名、默认地址、原生协议／图片模式与已维护默认型号；来自 `providers/zhenzhen.py`，不含 Key。原 `PUT /api/providers` 的列表条目接受可选 `supplier: "zhenzhen"`，与 `id` 分离；显式保存该供应商时采用原生协议并清除冲突单模型协议覆盖，旧客户端省略标签时保留已存选择。旧 ID／主机识别和企业代理、原平台 ID／密钥／任务绑定兼容，无新路由或 Schema。API 设置继续原权限，普通用户生成侧通过原 `/api/config` 读取授权能力，不由新增选择框取得管理权限。原页面、分类、旧客户端及三 Key 重启验证见[SUP-03.Z](../ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#sup-03-z)。
+
 2026.11.1算力与队列对失败待核对任务增加“释放名额”，点击即提交管理员释放API，无额外确认向导；返回最新状态、移除占位行并提示结果。发送中防重复，失败可重试，刷新不丢设置草稿。原任务中心显示“管理员已释放名额”，回执事实仍可读；新增can_release/queue_released均由服务端投影，客户端不能代替权限检查。
 
 COMFY1103：原/enterprise/api/me/generation-tasks目录/详情增加Comfy专用can_cancel/cancellation_pending能力，TaskCenter共用原POST /enterprise/api/me/comfy-tasks/{id}/cancel；两类画布即使无输出DOM仍可从日志→生成任务→详情取消。经典节点“管理任务”用GenerationTaskCenter.openTasks({kind:canvas_comfy})打开同一中心，JS/CSS缓存版本20261103.1。失败保持按钮可重试，受理取消不当作已取消，确认前禁重复；不调用全局interrupt，不因删卡片自动发取消/生成。

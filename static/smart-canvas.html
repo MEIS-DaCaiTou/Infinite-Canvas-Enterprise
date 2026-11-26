@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" href="/static/images/logo.png" type="image/png">
-    <title data-i18n="smart.title">智能画布</title>
+    <title>智能画布</title>
     <script>
         (function(){
             try {
@@ -19,8 +19,12 @@
     <script src="/static/vendor/js/lucide.js?v=2026.07.5.1782696749"></script>
     <script src="/static/js/theme.js?v=2026.07.5.1783117645"></script>
     <script src="/static/js/touch-mouse.js?v=2026.07.5.1783079819"></script>
-    <script src="/static/js/i18n.js?v=20261025.2"></script>
+    <script src="/static/js/i18n.js?v=20261125.marketing-03"></script>
     <link rel="stylesheet" href="/static/css/smart-canvas.css?v=20261112.1">
+    <link rel="stylesheet" href="/static/css/canvas-layer-board.css?v=20261126.fullscreen-02">
+    <link rel="stylesheet" href="/static/css/canvas-layer-smart-edit.css?v=20261126.fullscreen-02">
+    <link rel="stylesheet" href="/static/css/canvas-layer-separation.css?v=20261125.marketing-03">
+    <link rel="stylesheet" href="/static/css/canvas-multi-size.css?v=20261125.multisize-04">
     <link rel="stylesheet" href="/static/css/comfy-outputs.css?v=20261015.2">
     <link rel="stylesheet" href="/static/css/comfy-input-images.css?v=20261103.8">
     <link rel="stylesheet" href="/static/css/model-picker.css?v=20261016.1">
@@ -30,7 +34,7 @@
     <link rel="stylesheet" href="/static/css/character-editor.css?v=20261030.8">
     <link rel="stylesheet" href="/static/css/canvas-dock.css?v=20261029.1">
   <link rel="stylesheet" href="/static/css/studio-select.css?v=20261103.8">
-  <script src="/static/js/studio-select.js?v=20261103.8" defer></script>
+  <script src="/static/js/studio-select.js?v=20261125.interaction-07" defer></script>
 </head>
 <body>
     <div id="shell" class="shell">
@@ -73,12 +77,13 @@
             </div>
         </div>
         <button class="smart-back" type="button" onclick="backToCanvasList()"><i data-lucide="arrow-left"></i><span data-i18n="canvas.backToList">返回画布列表</span></button>
-        <div id="smartTitle" class="smart-title" data-i18n="smart.title">智能画布</div>
+        <div id="smartTitle" class="smart-title">智能画布</div>
         <div id="canvasDock" class="canvas-dock" role="toolbar" aria-label="画布工具栏">
             <button class="dock-button dock-add" type="button" aria-label="添加节点" aria-expanded="false" aria-controls="canvasAddMenu"><i data-lucide="plus"></i></button>
             <div class="dock-actions">
                 <button class="dock-button" type="button" onclick="createSmartDockNode('image')" aria-label="上传素材"><i data-lucide="image-plus"></i></button>
                 <button class="dock-button" type="button" onclick="createSmartDockNode('prompt')" aria-label="提示词"><i data-lucide="text-cursor-input"></i></button>
+                <button class="dock-button" type="button" onclick="createSmartDockNode('layers')" data-i18n-title="layers.tool" data-i18n-aria-label="layers.tool" aria-label="图层编辑"><i data-lucide="layers"></i></button>
                 <button class="dock-button" type="button" onclick="focusSmartDockGeneration()" aria-label="生成设置"><i data-lucide="sparkles"></i></button>
                 <button class="dock-button" type="button" data-character-studio aria-label="角色造型室"><i data-lucide="smile"></i></button>
                 <span class="dock-divider" aria-hidden="true"></span>
@@ -472,13 +477,13 @@
         <div id="toast" class="toast"></div>
         <div id="mentionPreview" class="mention-preview"><img alt="preview"></div>
     </div>
-    <script src="/static/js/model-picker.js?v=20261024.2"></script>
+    <script src="/static/js/model-picker.js?v=20261124.seedream-dual"></script>
     <script src="/static/js/canvas-task-query.js?v=20261113.2"></script>
     <script src="/static/js/comfy-workflow-fields.js?v=20261104.1"></script>
     <script src="/static/js/comfy-outputs.js?v=20261015.2"></script>
     <script src="/static/js/canvas-llm-tasks.js?v=20261018.5"></script>
     <script src="/static/js/task-canvas-context.js?v=20261018.5"></script>
-    <script src="/static/js/generation-task-center.js?v=20261112.1"></script>
+    <script src="/static/js/generation-task-center.js?v=20261125.4"></script>
     <script src="/static/js/canvas-save-navigation.js?v=20261027.1"></script>
     <script src="/static/js/canvas-conflict-draft.js?v=20261031.12"></script>
     <script src="/static/js/character-carousel.js?v=20261028.2"></script>
@@ -496,11 +501,29 @@
     <script src="/static/js/character-image-action.js?v=20261030.8"></script>
     <script src="/static/js/character-editor-view.js?v=20261030.8"></script>
     <script src="/static/js/character-studio.js?v=20261030.11"></script>
-    <link rel="stylesheet" href="/static/css/canvas-asset-shelf.css?v=20261102.6">
-    <script src="/static/js/canvas-asset-shelf.js?v=20261102.6"></script>
+    <link rel="stylesheet" href="/static/css/canvas-asset-shelf.css?v=20261123.3">
+    <script src="/static/js/canvas-asset-shelf.js?v=20261123.3"></script>
     <script src="/static/js/image-edit-preferences.js?v=20261104.5"></script>
     <script src="/static/js/canvas-view-activity.js?v=20261105.3"></script>
-    <script src="/static/js/smart-canvas.js?v=20261113.2"></script>
+    <script src="/static/js/i18n/canvas-layers.js?v=20261126.fullscreen-02"></script>
+    <script src="/static/js/i18n/canvas-marketing.js?v=20261125.multisize-04"></script>
+    <script src="/static/js/canvas-layer-document.js?v=20261126.fullscreen-02"></script>
+    <script src="/static/js/canvas-layer-session.js?v=20261126.fullscreen-02"></script>
+    <script src="/static/js/canvas-layer-viewport.js?v=20261126.fullscreen-02"></script>
+    <script src="/static/js/canvas-layer-annotations.js?v=20261126.fullscreen-02"></script>
+    <script src="/static/js/canvas-layer-layout.js?v=20261125.interaction-07"></script>
+    <script src="/static/js/canvas-layer-bitmap.js?v=20261120.13"></script>
+    <script src="/static/js/canvas-layer-surface.js?v=20261126.fullscreen-02"></script>
+    <script src="/static/js/canvas-layer-smart-prompt.js?v=20261126.smart-marker-04"></script>
+    <script src="/static/js/canvas-layer-edit-result.js?v=20261126.quality-02"></script>
+    <script src="/static/js/canvas-layer-smart-edit.js?v=20261126.fullscreen-02"></script>
+    <script src="/static/js/canvas-layer-export.js?v=20261126.output-01"></script>
+    <script src="/static/js/canvas-layer-editor.js?v=20261126.fullscreen-02"></script>
+    <script src="/static/js/canvas-layer-assets.js?v=20261120.13"></script>
+    <script src="/static/js/canvas-layer-node.js?v=20261126.smart-marker-04"></script>
+    <script src="/static/js/canvas-layer-separation.js?v=20261125.interaction-07"></script>
+    <script src="/static/js/canvas-multi-size.js?v=20261125.interaction-07"></script>
+    <script src="/static/js/smart-canvas.js?v=20261126.quality-02"></script>
     <script src="/static/js/canvas-dock.js?v=20261029.2" defer></script>
 </body>
 </html>

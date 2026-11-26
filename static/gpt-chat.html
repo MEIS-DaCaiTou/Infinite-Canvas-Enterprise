@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-studio-scale="off">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" href="/static/images/logo.png" type="image/png">
-    <title>GPT 对话</title>
+    <title>Agent 对话</title>
     <script>
         (function(){
             try {
@@ -19,7 +19,7 @@
     <script src="/static/vendor/js/tailwindcss-cdn.js?v=2026.07.5.1782696751"></script>
     <script src="/static/vendor/js/lucide.js?v=2026.07.5.1782696749"></script>
     <script src="/static/js/theme.js?v=2026.07.5.1783117645"></script>
-    <script src="/static/js/i18n.js?v=20261025.1"></script>
+    <script src="/static/js/i18n.js?v=20261119.2"></script>
     <link rel="stylesheet" href="/static/css/theme.css?v=2026.07.5.1782696682">
     <style>
         @import url('/static/vendor/css/fonts.css?v=2026.07.5.1782696732');
@@ -156,9 +156,6 @@
         .assistant .thumb { border-color:var(--chat-line); }
         .composer-wrap { min-height:0; padding:10px 30px 18px; background:linear-gradient(to top,var(--chat-bg) 82%,rgba(238,242,246,0)); border-top:0; z-index:6; }
         .composer { width:min(var(--chat-width),calc(100% - 60px)); margin:0 auto; min-height:0; max-height:min(34vh,310px); background:rgba(248,250,252,.94); border:1px solid var(--chat-line); border-radius:18px; box-shadow:0 14px 36px var(--chat-shadow); padding:8px; display:flex; flex-direction:column; gap:8px; backdrop-filter:blur(14px); overflow:hidden; }
-        .mode-switch { display:none; }
-        .mode-switch button { height:30px; min-width:72px; border-radius:10px; display:flex; align-items:center; justify-content:center; gap:5px; color:var(--chat-muted); background:transparent; font-size:11px; font-weight:800; transition:background .16s var(--ease), color .16s var(--ease), box-shadow .16s var(--ease); }
-        .mode-switch button.active { background:var(--chat-panel); color:var(--chat-text); box-shadow:0 1px 3px rgba(15,23,42,.08); }
         .model-picker { position:relative; z-index:24; width:200px; min-width:190px; max-width:220px; flex:0 0 200px; }
         .model-picker.open { z-index:80; }
         .model-picker-button { width:100%; height:36px; border-radius:12px; border:1px solid var(--chat-line-2); background:rgba(248,250,252,.86); color:var(--chat-text); display:grid; grid-template-columns:18px minmax(0,1fr) 16px; align-items:center; gap:8px; padding:0 10px; box-shadow:0 7px 18px rgba(15,23,42,.08), inset 0 1px 0 rgba(255,255,255,.55); transition:background .16s var(--ease), border-color .16s var(--ease), box-shadow .16s var(--ease), transform .16s var(--ease); }
@@ -375,10 +372,6 @@
         body.studio-theme-dark .bubble.user,
         html.theme-dark body .bubble.user,
         body.theme-dark .bubble.user { background:var(--chat-user-bg) !important; color:var(--chat-user-text) !important; }
-        html.studio-theme-dark body .mode-switch,
-        body.studio-theme-dark .mode-switch,
-        html.theme-dark body .mode-switch,
-        body.theme-dark .mode-switch,
         html.studio-theme-dark body .resolution-picker-button,
         body.studio-theme-dark .resolution-picker-button,
         html.theme-dark body .resolution-picker-button,
@@ -395,10 +388,6 @@
         body.studio-theme-dark .resolution-custom-box,
         html.theme-dark body .resolution-custom-box,
         body.theme-dark .resolution-custom-box { border-color:var(--chat-line) !important; background:var(--chat-panel-2) !important; }
-        html.studio-theme-dark body .mode-switch button.active,
-        body.studio-theme-dark .mode-switch button.active,
-        html.theme-dark body .mode-switch button.active,
-        body.theme-dark .mode-switch button.active,
         html.studio-theme-dark body .send-btn,
         body.studio-theme-dark .send-btn,
         html.theme-dark body .send-btn,
@@ -460,19 +449,21 @@
         }
     </style>
   <link rel="stylesheet" href="/static/css/studio-select.css?v=20261103.8">
+  <link rel="stylesheet" href="/static/css/character-asset-picker.css?v=20261102.6">
+  <link rel="stylesheet" href="/static/css/creation-workspace.css?v=20261119.6">
   <script src="/static/js/studio-select.js?v=20261103.8" defer></script>
 </head>
 <body>
-    <div class="chat-shell">
+    <div class="chat-shell creation-workspace">
         <main class="chat-main">
             <header class="topbar">
                 <div class="topbar-inner">
                     <div class="title-block">
-                        <h1 id="chatTitle" data-i18n="chat.newConversation">新对话</h1>
+                        <div id="chatTitle" class="agent-conversation-title">新对话</div>
                     </div>
                     <div class="top-actions">
-                        <button onclick="event.stopPropagation();newConversation()" class="action-btn" title="新建对话" data-i18n-title="chat.newConversation"><i data-lucide="plus"></i><span data-i18n="chat.new">新建</span></button>
-                        <button onclick="event.stopPropagation();toggleSystemPrompt()" class="action-btn" title="系统提示词"><i data-lucide="sliders-horizontal"></i><span>系统</span></button>
+                        <button id="agentNewConversation" type="button" onclick="newConversation()" class="action-btn" title="新建对话"><i data-lucide="plus"></i><span data-i18n="chat.new">新建</span></button>
+                        <button id="workspaceSystemBtn" onclick="event.stopPropagation();toggleSystemPrompt()" class="action-btn" title="系统提示词"><i data-lucide="sliders-horizontal"></i><span>系统</span></button>
                         <aside id="systemPromptPopover" class="system-prompt-popover" onclick="event.stopPropagation()">
                             <div class="system-prompt-head">
                                 <div class="system-prompt-title">系统提示词</div>
@@ -484,45 +475,52 @@
                                 <button type="button" class="primary" onclick="saveSystemPromptFromUI()">保存</button>
                             </div>
                         </aside>
-                        <button onclick="event.stopPropagation();toggleHistory()" class="action-btn history-toggle" title="历史对话" data-i18n-title="chat.history"><i data-lucide="history"></i><span data-i18n="chat.history">历史</span></button>
-                        <aside id="historyPopover" class="chat-rail">
+                        <button id="agentHistoryToggle" type="button" onclick="event.stopPropagation();toggleHistory()" class="action-btn history-toggle" title="历史对话" aria-expanded="false" aria-controls="historyPopover" data-i18n-title="chat.history"><i data-lucide="history"></i><span data-i18n="chat.history">历史</span></button>
+                        <aside id="historyPopover" class="chat-rail" aria-label="历史对话">
                             <div class="rail-head">
-                                <div>
-                                    <div class="rail-kicker" data-i18n="chat.historyTitle">Conversations</div>
-                                    <div class="rail-title" data-i18n="chat.history">历史</div>
-                                </div>
-                                <button onclick="event.stopPropagation();toggleHistory(false)" class="rail-close" title="关闭" aria-label="关闭"><i data-lucide="x"></i></button>
+                                <div class="rail-title" data-i18n="chat.history">历史</div>
+                                <button type="button" onclick="event.stopPropagation();toggleHistory(false)" class="rail-close" title="关闭历史" aria-label="关闭历史"><i data-lucide="x"></i></button>
                             </div>
-                            <button onclick="event.stopPropagation();newConversation()" class="rail-new" title="新建对话" data-i18n-title="chat.newConversation"><i data-lucide="plus"></i><span data-i18n="chat.new">新建</span></button>
                             <div id="threadList" class="thread-list"></div>
                         </aside>
                     </div>
                 </div>
             </header>
 
-            <section id="messages" class="messages"></section>
+            <section id="messages" class="messages" aria-label="对话内容">
+                <div id="creationWelcome" class="creation-welcome">
+                    <h1>和 Agent 一起创作</h1>
+                    <p>描述你的需求，或从一个模板开始。</p>
+                    <div id="creationTemplates" class="creation-templates"></div>
+                </div>
+                <div id="threadMessages" class="agent-thread" hidden></div>
+            </section>
 
             <div class="composer-wrap">
                 <div class="composer">
                     <div id="composerBody" class="composer-body">
-                        <textarea id="messageInput" rows="4" placeholder="输入消息，Enter 发送..." data-i18n-placeholder="chat.inputPlaceholder" oninput="autoGrow(this)" onkeydown="handleKey(event)"></textarea>
-                        <div id="refStrip" class="ref-strip"></div>
+                        <div class="creation-input-row">
+                            <button id="creationUpload" type="button" class="creation-upload" onclick="document.getElementById('attachmentInput').click()" title="上传参考图或附件，也可拖放或粘贴图片" aria-label="上传参考"><i data-lucide="plus"></i></button>
+                            <div class="agent-draft">
+                                <div id="refStrip" class="ref-strip"></div>
+                                <textarea id="messageInput" rows="3" aria-label="给 Agent 发消息" placeholder="输入创作需求，添加参考图，和 Agent 一起完成作品…" oninput="autoGrow(this)" onkeydown="handleKey(event)"></textarea>
+                            </div>
+                        </div>
+                        <button id="agentTemplateSelection" type="button" class="agent-template-selection" hidden><span></span><i data-lucide="x"></i></button>
                         <div class="composer-inside-foot">
                             <div class="left-tools">
                                 <div class="inline-controls">
                                     <input id="attachmentInput" class="file-input" type="file" multiple onchange="uploadFiles(this.files); this.value='';">
-                                    <button type="button" class="upload-btn" onclick="document.getElementById('attachmentInput')?.click()" title="上传附件" aria-label="上传附件">
-                                        <i data-lucide="paperclip"></i>
-                                    </button>
+                                    <button id="creationTypeButton" type="button" class="creation-assets creation-type-trigger" aria-haspopup="true"><i data-lucide="sparkles"></i><span id="creationTypeLabel">Agent 模式</span><i data-lucide="chevron-down"></i></button>
                                     <div id="modelPicker" class="model-picker">
                                         <button id="modelPickerBtn" class="model-picker-button" onclick="event.stopPropagation();toggleModelPicker()" title="选择平台和模型">
-                                            <i data-lucide="boxes"></i>
+                                                <i data-lucide="box"></i>
                                             <span class="model-picker-labels">
                                                 <span id="modelPickerProvider" class="model-picker-provider">API</span>
                                                 <span class="model-picker-dot"></span>
                                                 <span id="modelPickerModel" class="model-picker-model">Model</span>
                                             </span>
-                                            <i data-lucide="chevron-up"></i>
+                                            <i data-lucide="chevron-down"></i>
                                         </button>
                                         <div id="modelPickerPopover" class="model-picker-popover" onclick="event.stopPropagation()">
                                             <div class="model-picker-head">
@@ -535,16 +533,16 @@
                                             </div>
                                         </div>
                                     </div>
-                                    <div id="imageControls" class="image-controls hidden">
+                                    <div id="imageControls" class="image-controls">
                                         <div id="resolutionPicker" class="resolution-picker" title="比例和分辨率">
                                             <button id="resolutionPickerBtn" class="resolution-picker-button" onclick="event.stopPropagation();toggleResolutionPicker()" title="比例和分辨率">
-                                                <i data-lucide="ruler"></i>
+                                                <i data-lucide="rectangle-horizontal"></i>
                                                 <span class="resolution-picker-labels">
                                                     <span id="resolutionPickerType" class="resolution-picker-type">尺寸</span>
                                                     <span class="resolution-picker-dot"></span>
                                                     <span id="resolutionPickerValue" class="resolution-picker-value">自动</span>
                                                 </span>
-                                                <i data-lucide="chevron-up"></i>
+                                                    <i data-lucide="chevron-down"></i>
                                             </button>
                                             <div id="resolutionPickerPopover" class="resolution-picker-popover" onclick="event.stopPropagation()">
                                                 <div class="resolution-picker-head">
@@ -592,39 +590,76 @@
                                             </div>
                                         </div>
                                     </div>
+                                    <input id="creationCount" type="hidden" value="4">
+                                    <button id="creationCountButton" type="button" class="creation-assets" aria-haspopup="true"><i data-lucide="layers"></i><span id="creationCountLabel">4张</span></button>
+                                    <button id="creationBackgroundButton" type="button" class="creation-assets" aria-haspopup="true"><i data-lucide="square-dashed"></i><span id="creationBackgroundLabel">自动背景</span></button>
+                                    <button id="agentTemplates" type="button" class="creation-assets creation-icon-tool" title="选择创作模板" aria-label="创作模板" aria-haspopup="dialog"><i data-lucide="wand-sparkles"></i></button>
+                                    <button id="creationAssets" type="button" class="creation-assets" title="从素材库添加参考图"><i data-lucide="at-sign"></i>素材库</button>
                                 </div>
                             </div>
-                            <button id="sendBtn" onclick="sendMessage()" class="send-btn" title="发送" data-i18n-title="chat.send"><i data-lucide="send"></i></button>
+                            <button id="sendBtn" type="button" onclick="sendMessage()" class="send-btn" title="发送给 Agent" aria-label="发送给 Agent" disabled><i data-lucide="arrow-up"></i></button>
                         </div>
+                        <p id="creationNotice" class="creation-notice" role="status" hidden></p>
                     </div>
                 </div>
             </div>
         </main>
     </div>
+    <dialog id="agentTemplatesDialog" class="creation-dialog creation-templates-dialog" aria-labelledby="agentTemplatesTitle">
+        <h2 id="agentTemplatesTitle">创作模板</h2>
+        <div id="agentTemplateChoices" class="agent-template-choices"></div>
+        <div class="creation-dialog-actions"><button type="button" onclick="this.closest('dialog').close()">关闭</button></div>
+    </dialog>
+    <dialog id="creationPlanDialog" class="creation-dialog" aria-labelledby="creationPlanTitle">
+        <form id="creationPlanForm">
+            <h2 id="creationPlanTitle">确认电商套图</h2>
+            <p id="creationPlanSummary"></p>
+            <div id="creationPlanItems" class="creation-plan-items"></div>
+            <div class="creation-dialog-actions">
+                <button type="button" onclick="this.closest('dialog').close()">返回</button>
+                <button type="submit" class="creation-primary">确认生成</button>
+            </div>
+        </form>
+    </dialog>
+    <dialog id="creationAssetDialog" class="creation-dialog creation-asset-dialog" aria-label="选择参考素材"></dialog>
+    <dialog id="creationCanvasDialog" class="creation-dialog creation-canvas-dialog" aria-labelledby="creationCanvasTitle">
+        <h2 id="creationCanvasTitle">加入画布</h2>
+        <p id="creationCanvasState" role="status">选择目标画布，打开后可以放入选中的图片。</p>
+        <select id="creationCanvasSelect" aria-label="目标画布"></select>
+        <div class="creation-dialog-actions">
+            <button type="button" onclick="this.closest('dialog').close()">返回</button>
+            <a id="creationCanvasOpen" class="creation-button creation-primary" target="_blank" rel="noopener" hidden>打开画布</a>
+        </div>
+    </dialog>
     <div id="imagePreviewModal" class="image-preview-modal" onclick="closeImagePreview()">
         <button class="image-preview-close" title="关闭" aria-label="关闭" onclick="event.stopPropagation();closeImagePreview()"><i data-lucide="x"></i></button>
         <img id="imagePreviewImg" src="" alt="preview" onclick="event.stopPropagation()">
     </div>
 
+    <script src="/static/js/canvas-task-query.js?v=20261119.1"></script>
+    <script src="/static/js/media-grid-window.js?v=20261102.6"></script>
+    <script src="/static/js/character-asset-picker.js?v=20261102.6"></script>
+    <script src="/static/js/creation-composer.js?v=20261119.6"></script>
+    <script src="/static/js/creation-workspace.js?v=20261119.6"></script>
     <script>
         lucide.createIcons();
+        document.body.classList.toggle('embedded-workbench', window.parent !== window);
         function tr(key){ return window.StudioI18n ? StudioI18n.t(key) : key; }
         function defaultTitle(){ return tr('chat.newConversation'); }
         function setChatTitle(title){
             document.getElementById('chatTitle').textContent = title || defaultTitle();
+            document.title = (title || defaultTitle()) + ' · Agent';
         }
         function applyLanguage(lang){
             if(lang && window.StudioI18n) StudioI18n.set(lang);
-            document.title = tr('chat.title');
-            if(!currentConversation?.title || currentConversation.title === '新对话' || currentConversation.title === 'New Chat') setChatTitle('');
+            setChatTitle(currentConversation?.title);
             renderThreads();
         }
         window.addEventListener('message', event => {
             if(event.data?.type === 'studio-lang') applyLanguage(event.data.lang);
         });
         window.addEventListener('studio-lang-change', () => {
-            document.title = tr('chat.title');
-            if(!currentConversation?.title || currentConversation.title === '新对话' || currentConversation.title === 'New Chat') setChatTitle('');
+            setChatTitle(currentConversation?.title);
             renderThreads();
         });
         window.addEventListener('resize', () => {
@@ -659,9 +694,10 @@
         }
 
         const savedChatSettings = readChatSettings();
+        let composerSettings = savedChatSettings.composerSettings || {};
         let conversations = [];
         let currentConversation = null;
-        let mode = 'agent';
+        let agentSending = false;
         let provider = savedChatSettings.provider || 'comfly';
         let msModel = savedChatSettings.msModel || '';
         let activeChatModel = savedChatSettings.activeChatModel || '';
@@ -707,7 +743,6 @@
         function saveChatSettings(){
             try {
                 localStorage.setItem(CHAT_SETTINGS_KEY, JSON.stringify({
-                    mode,
                     provider,
                     msModel,
                     activeChatModel,
@@ -720,6 +755,7 @@
                     chatPresetResolution,
                     chatCustomSize,
                     modelPickerScope,
+                    composerSettings,
                     chatSizeModeVersion: CHAT_SIZE_MODE_VERSION
                 }));
             } catch(e) {}
@@ -781,7 +817,7 @@
             return list.find(p => p.id === id) || list[0];
         }
         function activePickerKind(){
-            return mode === 'image' ? 'image' : (mode === 'agent' ? modelPickerScope : 'chat');
+            return modelPickerScope;
         }
         function currentProviderId(kind=activePickerKind()){
             return kind === 'image' ? activeImageProvider : provider;
@@ -798,7 +834,8 @@
             return item?.name || item?.id || 'API';
         }
         function shortModelName(value){
-            return String(value || '').split('/').pop().split(':')[0] || 'Model';
+            const model = String(value || '');
+            return model.endsWith('/layer-decomposition') ? model : (model.split('/').pop().split(':')[0] || 'Model');
         }
         function renderProviderControls(){
             const kind = activePickerKind();
@@ -813,6 +850,7 @@
             if(kind !== 'image' && !models.includes(activeChatModel)) activeChatModel = chatProviderModels[provider] && models.includes(chatProviderModels[provider]) ? chatProviderModels[provider] : (models[0] || config.chat_model);
             if(kind !== 'image' && provider === 'modelscope') msModel = activeChatModel;
             renderModelPicker();
+            creationWorkspace.composer.setLayerOutput(activeImageModel.endsWith('/layer-decomposition'));
         }
 
         function validateSavedProviderState(){
@@ -832,9 +870,6 @@
             activeImageProvider = imageProviderList.some(p => p.id === activeImageProvider) ? activeImageProvider : (imageProviderList[0]?.id || 'comfly');
             const imageModels = uniqueModels(providerById(activeImageProvider, 'image')?.image_models || []);
             activeImageModel = imageModels.includes(activeImageModel) ? activeImageModel : (imageModels[0] || config.image_model);
-            if(mode !== 'agent' && mode !== 'chat' && mode !== 'image') mode = 'chat';
-            if(mode === 'chat') modelPickerScope = 'chat';
-            if(mode === 'image') modelPickerScope = 'image';
         }
 
         async function loadConfig(){
@@ -845,8 +880,7 @@
                 config.chat_model = (config.chat_models || []).find(m => m === 'gpt-5.5') || config.chat_model || 'gpt-5.5';
                 config.image_model = config.image_model || ((config.image_models || [])[0]) || 'gpt-image-2';
                 validateSavedProviderState();
-                setMode(mode, false);
-                updateModelLabel();
+                renderProviderControls();
                 saveChatSettings();
             } catch(e) {}
         }
@@ -855,8 +889,6 @@
             apiChannel.onmessage = async (e) => {
                 if(e.data?.type === 'providers-changed'){
                     await loadConfig();
-                    renderProviderControls();
-                    updateModelLabel();
                 }
             };
         } catch(e) {}
@@ -871,7 +903,6 @@
                 if(provider === 'modelscope') msModel = activeChatModel;
             }
             renderProviderControls();
-            updateModelLabel();
             saveChatSettings();
         }
         function setActiveModel(model, kind=activePickerKind()){
@@ -882,7 +913,6 @@
                 if(provider === 'modelscope') msModel = model;
             }
             renderProviderControls();
-            updateModelLabel();
             saveChatSettings();
         }
 
@@ -898,8 +928,6 @@
                     modelPickerHome = picker;
                     document.body.appendChild(pop);
                 }
-                if(mode === 'image') modelPickerScope = 'image';
-                if(mode === 'chat') modelPickerScope = 'chat';
                 renderModelPicker();
                 positionModelPicker();
                 lucide.createIcons();
@@ -943,7 +971,6 @@
         function setModelPickerScope(kind){
             modelPickerScope = kind === 'image' ? 'image' : 'chat';
             renderProviderControls();
-            updateModelLabel();
             saveChatSettings();
         }
 
@@ -960,29 +987,28 @@
             const currentPid = currentProviderId(kind);
             const currentMdl = currentModel(kind);
             providerLabel.textContent = providerNameById(currentPid, kind);
-            if(mode === 'agent') {
-                modelLabel.textContent = `${shortModelName(activeChatModel)} + ${shortModelName(activeImageModel)}`;
-            } else {
-                modelLabel.textContent = shortModelName(currentMdl);
-            }
-            title.textContent = mode === 'agent' ? 'Agent 模型' : (kind === 'image' ? '生图模型' : '对话模型');
-            scope.innerHTML = mode === 'agent'
-                ? `<button class="${kind === 'chat' ? 'active' : ''}" onclick="setModelPickerScope('chat')">对话</button><button class="${kind === 'image' ? 'active' : ''}" onclick="setModelPickerScope('image')">图像</button>`
-                : '';
-            scope.style.display = mode === 'agent' ? 'flex' : 'none';
+            modelLabel.textContent = shortModelName(currentMdl);
+            title.textContent = 'Agent 模型';
+            scope.innerHTML = `<button type="button" class="${kind === 'chat' ? 'active' : ''}" onclick="setModelPickerScope('chat')">对话模型</button><button type="button" class="${kind === 'image' ? 'active' : ''}" onclick="setModelPickerScope('image')">图像模型</button>`;
             const providers = kind === 'image' ? imageProviders() : chatProviders();
             providerList.innerHTML = providers.length
-                ? providers.map(p => `<button class="model-picker-option ${p.id === currentPid ? 'active' : ''}" onclick="setProvider('${escapeHtml(p.id)}','${kind}')"><span>${escapeHtml(p.name || p.id)}</span>${p.id === currentPid ? '<i data-lucide="check"></i>' : ''}</button>`).join('')
+                ? providers.map(p => `<button type="button" class="model-picker-option ${p.id === currentPid ? 'active' : ''}" data-provider="${escapeHtml(p.id)}"><span>${escapeHtml(p.name || p.id)}</span>${p.id === currentPid ? '<i data-lucide="check"></i>' : ''}</button>`).join('')
                 : `<div class="model-picker-empty">暂无平台</div>`;
             const models = modelListForCurrent(kind);
             modelList.innerHTML = models.length
-                ? models.map(m => `<button class="model-picker-option ${m === currentMdl ? 'active' : ''}" onclick="setActiveModel('${escapeHtml(m)}','${kind}');toggleModelPicker(false)"><span>${escapeHtml(shortModelName(m))}</span>${m === currentMdl ? '<i data-lucide="check"></i>' : ''}</button>`).join('')
+                ? models.map(m => `<button type="button" class="model-picker-option ${m === currentMdl ? 'active' : ''}" data-model="${escapeHtml(m)}"><span>${escapeHtml(shortModelName(m))}</span>${m === currentMdl ? '<i data-lucide="check"></i>' : ''}</button>`).join('')
                 : `<div class="model-picker-empty">暂无模型</div>`;
+            providerList.querySelectorAll('[data-provider]').forEach(button => {
+                button.onclick = () => setProvider(button.dataset.provider, kind);
+            });
+            modelList.querySelectorAll('[data-model]').forEach(button => {
+                button.onclick = () => { setActiveModel(button.dataset.model, kind); toggleModelPicker(false); };
+            });
             lucide.createIcons();
         }
 
         async function loadConversations(){
-            const data = await fetch('/api/conversations', {headers:{'X-User-ID':userId}}).then(r=>r.json());
+            const data = await chatJson('/api/conversations');
             conversations = data.conversations || [];
             renderThreads();
             if(!currentConversation) {
@@ -1020,23 +1046,36 @@
         }
 
         async function newConversation(){
-            const data = await fetch('/api/conversations', {method:'POST', headers:headers(), body:JSON.stringify({title:'新对话'})}).then(r=>r.json());
-            currentConversation = data.conversation;
-            rememberConversation(currentConversation.id);
-            setChatTitle(currentConversation.title);
-            await loadConversations();
-            renderMessages([]);
-            toggleHistory(false);
+            if(agentSending) return;
+            try {
+                const {conversation} = await chatJson('/api/conversations', {method:'POST', body:JSON.stringify({title:defaultTitle()})});
+                clearAgentDraft();
+                showConversation(conversation);
+                await loadConversations();
+                toggleHistory(false);
+                document.getElementById('messageInput').focus();
+            } catch(error) {
+                creationWorkspace.notice(error.message);
+            }
         }
 
         async function openConversation(id, closePanel=false){
-            const data = await fetch(`/api/conversations/${id}`, {headers:{'X-User-ID':userId}}).then(r=>r.json());
-            currentConversation = data.conversation;
+            try {
+                const {conversation} = await chatJson('/api/conversations/' + encodeURIComponent(id));
+                if(closePanel && currentConversation?.id !== id) clearAgentDraft();
+                showConversation(conversation);
+                if(closePanel) toggleHistory(false);
+            } catch(error) {
+                creationWorkspace.notice(error.message);
+            }
+        }
+
+        function showConversation(conversation){
+            currentConversation = conversation;
             rememberConversation(currentConversation.id);
             setChatTitle(currentConversation.title);
             renderThreads();
             renderMessages(currentConversation.messages || []);
-            if(closePanel) toggleHistory(false);
         }
 
         async function deleteConversation(id, event){
@@ -1053,6 +1092,8 @@
             const pop = document.getElementById('historyPopover');
             const shouldOpen = typeof force === 'boolean' ? force : !pop.classList.contains('open');
             pop.classList.toggle('open', shouldOpen);
+            document.getElementById('agentHistoryToggle').setAttribute('aria-expanded', String(shouldOpen));
+            if(shouldOpen) toggleSystemPrompt(false);
             if(shouldOpen) lucide.createIcons();
         }
 
@@ -1063,47 +1104,13 @@
             const resolutionPicker = document.getElementById('resolutionPicker');
             const resolutionPopover = document.getElementById('resolutionPickerPopover');
             if(resolutionPicker?.classList.contains('open') && !resolutionPicker.contains(event.target) && !resolutionPopover?.contains(event.target)) toggleResolutionPicker(false);
-            if(window.innerWidth > 900) return;
             const rail = document.getElementById('historyPopover');
             const actions = document.querySelector('.top-actions');
-            if(rail?.classList.contains('open') && !rail.contains(event.target) && actions && !actions.contains(event.target)) toggleHistory(false);
+            if(rail?.classList.contains('open') && !rail.contains(event.target) && !actions?.contains(event.target)) toggleHistory(false);
         });
-
-        function setMode(next, persist = true){
-            mode = next;
-            if(next === 'chat') modelPickerScope = 'chat';
-            if(next === 'image') modelPickerScope = 'image';
-            toggleModelPicker(false);
-            toggleResolutionPicker(false);
-            document.getElementById('chatModeBtn')?.classList.toggle('active', next === 'chat');
-            document.getElementById('agentModeBtn')?.classList.toggle('active', next === 'agent');
-            document.getElementById('imageModeBtn')?.classList.toggle('active', next === 'image');
-            document.getElementById('imageControls')?.classList.toggle('hidden', next === 'chat');
-            renderProviderControls();
-            updateModelLabel();
-            if(persist) saveChatSettings();
-        }
-
-        function updateModelLabel(){
-            let label = '';
-            if (mode === 'image') {
-                label = activeImageModel || config.image_model || 'Image';
-            } else if (mode === 'agent') {
-                const chatLabel = provider === 'modelscope'
-                    ? (msModel || (config.ms_chat_models?.[0]) || 'ModelScope').split('/').pop().split(':')[0]
-                    : (activeChatModel || config.chat_model || 'Chat');
-                const imageLabel = (activeImageModel || config.image_model || 'Image').split('/').pop().split(':')[0];
-                label = `Agent · ${chatLabel} + ${imageLabel}`;
-            } else if (provider === 'modelscope') {
-                label = msModel || (config.ms_chat_models?.[0]) || 'ModelScope';
-                // Shorten the display label
-                label = label.split('/').pop().split(':')[0];
-            } else {
-                label = activeChatModel || config.chat_model || 'Chat';
-            }
-            const labelEl = document.getElementById('modelLabel');
-            if(labelEl) labelEl.textContent = label;
-        }
+        document.addEventListener('keydown', event => {
+            if(event.key === 'Escape') toggleHistory(false);
+        });
 
         function setChatRatio(next, preferredSize = ''){
             chatRatio = next;
@@ -1199,12 +1206,13 @@
             const currentSize = chatSizeForResolution();
             const ratioLabels = { square:'1:1', portrait:'2:3', portrait43:'3:4', landscape43:'4:3', landscape:'3:2', story:'9:16', wide:'16:9' };
             const ratioLabel = ratioLabels[chatRatio] || '1:1';
-            const builtInLabel = `${ratioLabel} · ${chatPresetResolution.toUpperCase()} · ${chatSizeForResolution(chatPresetResolution)}`;
+            const builtInLabel = `${ratioLabel} · ${chatPresetResolution.toUpperCase()}`;
             const isAuto = chatResolution === 'auto';
             const isCustom = chatResolution === 'custom';
             if(typeEl) typeEl.textContent = '尺寸';
             if(valueEl) valueEl.textContent = isAuto ? '自动' : (isCustom ? `自定义 · ${currentSize}` : builtInLabel);
             if(picker){
+                picker.title = isAuto ? '自动匹配尺寸' : currentSize;
                 picker.classList.toggle('auto-mode', isAuto);
                 picker.classList.toggle('custom-mode', isCustom);
             }
@@ -1240,47 +1248,24 @@
             return chatSizeForResolution();
         }
 
-        function chatSizeFromPrompt(message, fallbackSize = currentChatSize()){
-            const text = String(message || '');
-            const direct = text.match(/(^|[^\d])([1-9]\d{2,4})\s*[xX×*]\s*([1-9]\d{2,4})(?!\d)/);
-            if(direct) {
-                const w = Number(direct[2]);
-                const h = Number(direct[3]);
-                if(w >= 256 && h >= 256) return `${w}x${h}`;
-            }
-            const normalized = text.replace(/[：﹕∶]/g, ':').replace(/比/g, ':').replace(/[／/]/g, ':');
-            const match = normalized.match(/(^|[^\d])(1|2|3|4|9|16)\s*:\s*(1|2|3|4|9|16)(?!\d)/);
-            if(!match) return fallbackSize;
-            const ratio = `${Number(match[2])}:${Number(match[3])}`;
-            const ratioMap = { '1:1':'square', '2:3':'portrait', '3:2':'landscape', '3:4':'portrait43', '4:3':'landscape43', '9:16':'story', '16:9':'wide' };
-            const key = ratioMap[ratio];
-            if(!key) return fallbackSize;
-            const wants4k = /4\s*k|4K|超清|超高分辨率/i.test(text);
-            const wants2k = /2\s*k|2K|高清|高分辨率/i.test(text);
-            if(chatResolution === 'custom' && !wants4k && !wants2k) return fallbackSize;
-            const fallbackEdge = Math.max(...String(fallbackSize || '').split(/[xX×*]/).map(n => Number(n) || 0));
-            const targetLabel = wants4k ? '4k' : (wants2k ? '2k' : (chatResolution === 'auto' ? '1k' : (fallbackEdge >= 2400 ? '4k' : (fallbackEdge >= 1500 ? '2k' : '1k'))));
-            return (SIZE_OPTIONS[key] || SIZE_OPTIONS.square).find(([, label]) => label === targetLabel)?.[0] || fallbackSize;
-        }
 
         function renderMessages(messages){
-            const box = document.getElementById('messages');
-            box.innerHTML = '';
-            if(!messages.length){
-                box.innerHTML = `<div class="empty-state"><i data-lucide="messages-square"></i><div class="empty-state-text">${tr('chat.ready')}</div></div>`;
-                lucide.createIcons();
-                return;
-            }
+            const box = document.getElementById('threadMessages');
+            document.getElementById('creationWelcome').hidden = Boolean(messages.length);
+            box.hidden = !messages.length;
+            box.replaceChildren();
             messages.forEach(addMessageBubble);
-            scrollBottom();
+            if(messages.length) scrollBottom();
+            else document.getElementById('messages').scrollTop = 0;
         }
 
         function addMessageBubble(msg){
-            const box = document.getElementById('messages');
+            const box = document.getElementById('threadMessages');
             const row = document.createElement('div');
             row.className = `bubble-row ${msg.role === 'user' ? 'user' : 'assistant'}`;
             const bubble = document.createElement('div');
             bubble.className = `bubble ${msg.role === 'user' ? 'user' : 'assistant'}`;
+            if(msg.pending) bubble.classList.add('streaming');
             const imageUrls = Array.isArray(msg.image_urls) && msg.image_urls.length ? msg.image_urls : (msg.image_url ? [msg.image_url] : []);
             if(imageUrls.length) bubble.classList.add('image-bubble');
             const text = document.createElement('div');
@@ -1312,10 +1297,13 @@
             if(msg.role === 'assistant' && msg.model){
                 const badge = document.createElement('div');
                 const modelShort = msg.model.split('/').pop().split(':')[0];
-                const isMs = msg.model.includes('/') && !msg.model.includes('gpt');
                 badge.style.cssText = `margin-top:8px;font-size:9px;font-weight:700;opacity:.45;letter-spacing:.06em;`;
                 badge.textContent = modelShort;
                 bubble.appendChild(badge);
+            }
+            if(msg.type === 'image-task'){
+                bubble.classList.add('image-bubble', 'agent-task-bubble');
+                bubble.appendChild(creationWorkspace.taskCard(msg));
             }
             row.appendChild(bubble);
             box.appendChild(row);
@@ -1368,7 +1356,7 @@
 
         function renderRefChip(ref, i){
             if(isImageRef(ref)){
-                return `<div class="ref-chip"><img src="${escapeHtml(ref.url)}" title="${escapeHtml(attachmentName(ref))}"><button onclick="removeRef(${i})">×</button></div>`;
+                return `<div class="ref-chip"><button class="ref-preview" type="button" onclick="openImagePreview(refs[${i}].url)" aria-label="预览参考图 ${i + 1}"><img src="${escapeHtml(ref.url)}" title="${escapeHtml(attachmentName(ref))}"></button><span class="ref-index">${i + 1}</span><button class="ref-remove" type="button" onclick="removeRef(${i})" aria-label="移除参考图 ${i + 1}">×</button></div>`;
             }
             return `<div class="ref-chip file"><i data-lucide="file"></i><span class="ref-file-name" title="${escapeHtml(attachmentName(ref))}">${escapeHtml(attachmentName(ref))}</span><button onclick="removeRef(${i})">×</button></div>`;
         }
@@ -1376,21 +1364,30 @@
         async function uploadFiles(files){
             if(!files?.length) return;
             const available = Math.max(0, CHAT_ATTACHMENT_MAX - refs.length);
-            if(!available) return;
+            if(!available) { creationWorkspace.notice('参考附件已达上限，请先移除一项。'); return; }
+            const upload = document.getElementById('creationUpload');
+            upload.disabled = true;
+            upload.classList.add('uploading');
+            creationWorkspace.notice('正在上传参考图…');
             const form = new FormData();
             [...files].slice(0, available).forEach(file => form.append('files', file));
             try {
                 const data = await fetch('/api/ai/upload', {method:'POST', body:form}).then(async r => { if(!r.ok) throw new Error((await r.json()).detail || '上传失败'); return r.json(); });
                 refs.push(...(data.files || []));
                 renderRefs();
+                creationWorkspace.notice(files.length > available ? '已加入参考图，超出数量上限的附件未上传。' : '');
             } catch(e) {
-                alert(e.message || '上传失败');
+                creationWorkspace.notice(e.message || '上传失败，请重新选择文件。');
+            } finally {
+                upload.disabled = false;
+                upload.classList.remove('uploading');
             }
         }
 
         function renderRefs(){
             const strip = document.getElementById('refStrip');
             strip.innerHTML = refs.map((ref,i) => renderRefChip(ref, i)).join('');
+            creationWorkspace.composer.referencesChanged();
             lucide.createIcons();
             updateComposerOverflow();
         }
@@ -1425,171 +1422,140 @@
             if(!body) return;
             body.classList.toggle('has-overflow', body.scrollHeight > body.clientHeight + 2);
         }
-        function autoGrow(el){ el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 150) + 'px'; updateComposerOverflow(); }
-        function handleKey(e){ if(e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); sendMessage(); } }
+        function updateSendState(){
+            const input = document.getElementById('messageInput');
+            document.getElementById('sendBtn').disabled = agentSending || !input.value.trim();
+            document.getElementById('agentNewConversation').disabled = agentSending;
+        }
+        function autoGrow(el){
+            el.style.height = 'auto';
+            el.style.height = Math.min(el.scrollHeight, 150) + 'px';
+            updateComposerOverflow();
+            updateSendState();
+        }
+        function handleKey(e){ if(e.key === 'Enter' && !e.shiftKey && !e.isComposing){ e.preventDefault(); sendMessage(); } }
         window.addEventListener('keydown', e => {
             if(e.key === 'Escape') closeImagePreview();
         });
 
-        async function sendMessage(){
-            const input = document.getElementById('messageInput');
-            const message = input.value.trim();
-            if(!message) return;
-            const btn = document.getElementById('sendBtn');
-            btn.disabled = true;
-            const requestedSize = chatSizeFromPrompt(message);
-            const pendingRefs = refs.slice();
-            refs = [];
-            renderRefs();
-            input.value = '';
-            autoGrow(input);
-            if(!currentConversation){
-                currentConversation = {id:'', title:'新对话', messages:[]};
-                document.getElementById('messages').innerHTML = '';
+        async function chatJson(url, options){
+            const response = await fetch(url, {cache:'no-store', headers:headers(), ...options});
+            const data = await response.json().catch(() => null);
+            if(!response.ok || !data){
+                const detail = data?.detail;
+                throw new Error((typeof detail === 'string' ? detail : detail?.message) || data?.error || tr('chat.requestFailed'));
             }
-            addMessageBubble({role:'user', content:message, attachments:pendingRefs});
-            const useStreaming = mode !== 'image';
-            const pendingText = mode === 'image' ? tr('chat.generatingImage') : (useStreaming ? '' : (mode === 'agent' ? tr('chat.agentWorking') : ''));
-            const assistantBubble = addMessageBubble({role:'assistant', content: pendingText});
-            if(useStreaming || mode === 'agent') assistantBubble.bubble.classList.add('streaming');
-            scrollBottom();
-            try {
-                if(useStreaming) {
-                    await streamChatMessage(message, pendingRefs, assistantBubble);
-                } else if(mode === 'chat') {
-                    const data = await fetch('/api/chat', {
-                        method:'POST',
-                        headers:headers(),
-                        body:JSON.stringify({
-                            conversation_id: currentConversation.id || '',
-                            message,
-                            system_prompt: currentSystemPrompt(),
-                            mode:'chat',
-                            size: requestedSize,
-                            model: provider === 'modelscope' ? (msModel || activeChatModel) : (activeChatModel || config.chat_model),
-                            ms_model: provider === 'modelscope' ? (msModel || activeChatModel) : '',
-                            reference_images: pendingRefs,
-                            provider,
-                        })
-                    }).then(async r => { if(!r.ok) {const error=(await r.json()).detail;throw new Error(error?.message || error || tr('chat.requestFailed'));}; return r.json(); });
-                    currentConversation = data.conversation;
-                    rememberConversation(currentConversation.id);
-                    setChatTitle(currentConversation.title);
-                    renderMessages(currentConversation.messages || []);
-                    await loadConversations();
-                } else if(mode === 'agent') {
-                    const data = await fetch('/api/chat/agent', {
-                        method:'POST',
-                        headers:headers(),
-                        body:JSON.stringify({
-                            conversation_id: currentConversation.id || '',
-                            message,
-                            system_prompt: currentSystemPrompt(),
-                            mode:'agent',
-                            size: requestedSize,
-                            model: provider === 'modelscope' ? (msModel || activeChatModel) : (activeChatModel || config.chat_model),
-                            ms_model: provider === 'modelscope' ? (msModel || activeChatModel) : '',
-                            image_model: activeImageModel || config.image_model,
-                            reference_images: pendingRefs,
-                            provider,
-                            image_provider: activeImageProvider,
-                        })
-                    }).then(async r => { if(!r.ok) {const error=(await r.json()).detail;throw new Error(error?.message || error || tr('chat.requestFailed'));}; return r.json(); });
-                    currentConversation = data.conversation;
-                    rememberConversation(currentConversation.id);
-                    setChatTitle(currentConversation.title);
-                    renderMessages(currentConversation.messages || []);
-                    await loadConversations();
-                } else {
-                    const data = await fetch('/api/chat', {
-                        method:'POST',
-                        headers:headers(),
-                        body:JSON.stringify({
-                            conversation_id: currentConversation.id || '',
-                            message,
-                            system_prompt: currentSystemPrompt(),
-                            mode,
-                            size: requestedSize,
-                            model: activeChatModel || config.chat_model,
-                            image_model: activeImageModel || config.image_model,
-                            reference_images: pendingRefs,
-                            provider: activeImageProvider,
-                        })
-                    }).then(async r => { if(!r.ok) {const error=(await r.json()).detail;throw new Error(error?.message || error || tr('chat.requestFailed'));}; return r.json(); });
-                    currentConversation = data.conversation;
-                    rememberConversation(currentConversation.id);
-                    setChatTitle(currentConversation.title);
-                    renderMessages(currentConversation.messages || []);
-                    await loadConversations();
-                }
-            } catch(err) {
-                renderMessages([...(currentConversation.messages || []), {role:'assistant', content:err.message || tr('chat.requestFailed')}]);
-            } finally {
-                btn.disabled = false;
-                scrollBottom();
-            }
+            return data;
         }
 
-        async function streamChatMessage(message, pendingRefs, assistantBubble){
-            const currentProvider = provider;
-            const currentMsModel = provider === 'modelscope' ? (msModel || activeChatModel || (config.ms_chat_models?.[0] || '')) : '';
-            const currentChatModel = activeChatModel || config.chat_model;
+        function sendMessage(){
+            const message = document.getElementById('messageInput').value.trim();
+            if(message && !agentSending) void creationWorkspace.send(message);
+        }
 
-            const res = await fetch('/api/chat/stream', {
-                method:'POST',
-                headers:headers(),
-                body:JSON.stringify({
-                    conversation_id: currentConversation.id || '',
-                    message,
-                    system_prompt: currentSystemPrompt(),
-                    mode:'chat',
-                    model: currentProvider === 'modelscope' ? currentMsModel : currentChatModel,
-                    ms_model: currentProvider === 'modelscope' ? currentMsModel : '',
-                    provider: currentProvider,
-                    reference_images: pendingRefs
-                })
-            });
-            if(!res.ok) {const error=(await res.json()).detail;throw new Error(error?.message || error || tr('chat.requestFailed'));};
-            const reader = res.body.getReader();
-            const decoder = new TextDecoder();
-            let buffer = '';
-            let fullText = '';
-            while(true){
-                const {value, done} = await reader.read();
-                if(done) break;
-                buffer += decoder.decode(value, {stream:true});
-                const events = buffer.split('\n\n');
-                buffer = events.pop() || '';
-                for(const eventText of events){
-                    const line = eventText.split('\n').find(item => item.startsWith('data:'));
-                    if(!line) continue;
-                    const event = JSON.parse(line.slice(5).trim());
-                    if(event.type === 'meta'){
-                        currentConversation = event.conversation;
-                        rememberConversation(currentConversation.id);
-                        setChatTitle(currentConversation.title);
-                    }
-                    if(event.type === 'delta'){
-                        fullText += event.delta || '';
-                        assistantBubble.text.textContent = fullText;
-                        scrollBottom();
-                    }
-                    if(event.type === 'error') throw new Error(event.detail || tr('chat.requestFailed'));
-                    if(event.type === 'done'){
-                        assistantBubble.bubble.classList.remove('streaming');
-                        currentConversation = event.conversation;
-                        rememberConversation(currentConversation.id);
-                        setChatTitle(currentConversation.title);
-                        renderMessages(currentConversation.messages || []);
-                        await loadConversations();
+        async function sendAgentTurn(message, {template, count, variants, creationType, background}){
+            if(agentSending) return;
+            const input = document.getElementById('messageInput');
+            const pendingRefs = refs.slice();
+            const selectedTemplate = creationWorkspace.template;
+            const requestId = CanvasTaskQuery.requestId();
+            let conversationId = currentConversation?.id;
+            const payload = {
+                message,
+                system_prompt: currentSystemPrompt(),
+                mode: 'agent',
+                size: chatResolution === 'auto' ? '' : currentChatSize(),
+                model: provider === 'modelscope' ? (msModel || activeChatModel) : (activeChatModel || config.chat_model),
+                ms_model: provider === 'modelscope' ? (msModel || activeChatModel) : '',
+                provider,
+                image_model: activeImageModel || config.image_model,
+                image_provider: activeImageProvider,
+                reference_images: pendingRefs,
+                agent_request_id: requestId,
+                agent_image_count: count,
+                agent_image_template: template,
+                agent_creation_type: creationType,
+                agent_background: background,
+                ...(variants ? {agent_image_variants: variants} : {}),
+            };
+            agentSending = true;
+            updateSendState();
+            creationWorkspace.notice('');
+            try {
+                if(!conversationId) {
+                    const {conversation} = await chatJson('/api/conversations', {method:'POST', body:JSON.stringify({title:defaultTitle()})});
+                    showConversation(conversation);
+                    conversationId = conversation.id;
+                }
+                clearAgentDraft();
+                renderMessages([
+                    ...currentConversation.messages,
+                    {role:'user', content:message, attachments:pendingRefs},
+                    {role:'assistant', content:tr('chat.agentWorking'), pending:true},
+                ]);
+                const {conversation} = await chatJson('/api/chat/agent', {
+                    method:'POST',
+                    body:JSON.stringify({...payload, conversation_id:conversationId}),
+                });
+                if(currentConversation?.id === conversationId) showConversation(conversation);
+                await loadConversations();
+            } catch(error) {
+                if(conversationId && currentConversation?.id === conversationId){
+                    const saved = await chatJson('/api/conversations/' + encodeURIComponent(conversationId)).catch(() => null);
+                    if(currentConversation?.id === conversationId) {
+                        showConversation(saved?.conversation || currentConversation);
+                        if(saved && !saved.conversation.messages.some(item => item.id === requestId) && !input.value.trim()) {
+                            creationWorkspace.select(selectedTemplate);
+                            input.value = message;
+                            refs = pendingRefs;
+                            renderRefs();
+                            autoGrow(input);
+                        }
                     }
                 }
+                creationWorkspace.notice(error.message || tr('chat.requestFailed'));
+            } finally {
+                agentSending = false;
+                updateSendState();
             }
-            assistantBubble.bubble.classList.remove('streaming');
         }
 
         function scrollBottom(){ requestAnimationFrame(() => { const box = document.getElementById('messages'); box.scrollTop = box.scrollHeight; }); }
         function escapeHtml(str){ return String(str).replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s])); }
+
+        const creationWorkspace = new CreationWorkspace({
+            send: sendAgentTurn,
+            composerInitial: composerSettings,
+            composerChanged(settings) { composerSettings = settings; saveChatSettings(); },
+            hasReference: () => refs.some(isImageRef),
+            creationTypeChanged(type) { setModelPickerScope(type === 'image' ? 'image' : 'chat'); },
+            closePickers() { toggleModelPicker(false); toggleResolutionPicker(false); toggleHistory(false); },
+            async supportsTransparency() {
+                const query = new URLSearchParams({provider_id: activeImageProvider, model: activeImageModel || config.image_model});
+                const result = await chatJson('/api/image-params?' + query);
+                return result.background?.transparent === true;
+            },
+            imageSettings: () => [activeImageModel || config.image_model, chatResolution === 'auto' ? '自动尺寸' : currentChatSize()].join(' · '),
+            addReference(ref) {
+                if (refs.some(item => item.url === ref.url)) return '已在参考图中';
+                if (refs.length >= CHAT_ATTACHMENT_MAX) return '参考图数量已达上限';
+                refs.push(ref);
+                renderRefs();
+                return '已加入参考图';
+            },
+            resizeInput: autoGrow,
+            preview: openImagePreview,
+        });
+
+        function clearAgentDraft(){
+            refs = [];
+            renderRefs();
+            const input = document.getElementById('messageInput');
+            input.value = '';
+            creationWorkspace.select(null);
+            creationWorkspace.notice('');
+            autoGrow(input);
+        }
 
         window.onload = async () => {
             applyLanguage();
@@ -1597,8 +1563,13 @@
             setChatRatio(chatRatio);
             setChatResolution(chatResolution);
             await loadConfig();
-            await loadConversations();
+            try {
+                await loadConversations();
+            } catch(error) {
+                creationWorkspace.notice(error.message);
+            }
             updateComposerOverflow();
+            updateSendState();
         };
     </script>
 </body>

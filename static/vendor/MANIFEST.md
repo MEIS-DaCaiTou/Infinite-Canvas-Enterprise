@@ -4,6 +4,7 @@ This folder contains third-party assets mirrored locally so the app can load wit
 
 ## JavaScript
 
+- `ag-psd/`: ag-psd 34.2.3 (MIT), loaded only when exporting layered PSD. The pinned browser bundle, original license and source URLs are recorded in SOURCE.json. Text and annotations are rasterized; no remote runtime dependency.
 - `js/tailwindcss-cdn.js`: local mirror of `https://cdn.tailwindcss.com`
 - `js/lucide.js`: local mirror of `https://unpkg.com/lucide@latest`
 - `js/three-0.160.0.module.js`: local mirror of `https://unpkg.com/three@0.160.0/build/three.module.js`

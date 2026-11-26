@@ -102,6 +102,7 @@ html:not(.studio-theme-dark):not(.theme-dark) body.admin-shell { --panel:#fff; -
 .admin-shell .modal h3 { font-size:18px; font-weight:600; letter-spacing:-.4px; margin-bottom:20px; }
 .admin-shell .modal .label,.admin-shell .modal .field-frame input,.admin-shell .modal .field-frame select { font-weight:400; font-size:13px; }
 .admin-shell .modal .field-frame { border-radius:7px; }
+.admin-shell .modal .credential-keys { width:100%; min-height:74px; border:0; background:transparent; color:inherit; padding:10px 12px; font:13px/1.6 monospace; resize:vertical; -webkit-text-security:disc; }
 .admin-shell .modal .action-btn:disabled { opacity:.4; cursor:default; box-shadow:none; }
 .admin-shell .modal-backdrop { background:#00000026; }
 .create-advanced { margin:5px 0 20px; font-size:13px; }

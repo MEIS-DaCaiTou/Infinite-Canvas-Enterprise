@@ -39,7 +39,7 @@ window.DepartmentCredentials = {
                 const scope = source.scope === 'company' ? adminT('公司共享') :
                     (departments.find(d => d.id === source.department_id)?.name || adminT('原部门')) + adminT('专用');
                 const button = (action, text) => `<button class="row-btn" data-credential-action="${action}" data-id="${escapeHtml(source.id)}">${text}</button>`;
-                return `<tr><td><strong>${escapeHtml(source.name)}</strong><div class="sub">${escapeHtml(this.providerLabel(source.provider_id))}</div></td><td>${escapeHtml(scope)}</td><td>${source.enabled ? adminT('已启用') : adminT('已停用')}</td><td>${button('grants', adminT('授权员工'))} ${button('rotate', adminT('更换密钥'))} ${button('toggle', source.enabled ? adminT('停用') : adminT('启用'))}</td></tr>`;
+                return `<tr><td><strong>${escapeHtml(source.name)}</strong><div class="sub">${escapeHtml(this.providerLabel(source.provider_id))} · ${source.key_count || 1} ${adminT('个 Key')}</div></td><td>${escapeHtml(scope)}</td><td>${source.enabled ? adminT('已启用') : adminT('已停用')}</td><td>${button('grants', adminT('授权员工'))} ${button('rotate', adminT('更换密钥'))} ${button('toggle', source.enabled ? adminT('停用') : adminT('启用'))}</td></tr>`;
             }).join('') || '<tr><td colspan="4" style="text-align:center;padding:32px">尚未配置渠道密钥</td></tr>';
             status.textContent = this.providerError ? '平台信息暂不可用，可刷新重试；已有密钥仍可维护。' :
                 adminT('调用平台沿用 API 设置；公司共享和部门专用分别授权。');
@@ -50,14 +50,15 @@ window.DepartmentCredentials = {
         }
     },
     field(name, label, options = {}) {
-        const control = options.choices ? `<select name="${name}" aria-label="${escapeHtml(label)}" ${options.required ? 'required' : ''}>${options.choices.map(([id, text, disabled]) => `<option value="${escapeHtml(id)}" ${disabled ? 'disabled' : ''}>${escapeHtml(text)}</option>`).join('')}</select>` :
-            `<input name="${name}" aria-label="${escapeHtml(label)}" type="${options.secret ? 'password' : 'text'}" required maxlength="${options.secret ? 8192 : 160}" autocomplete="${options.secret ? 'new-password' : 'off'}" ${options.placeholder ? `placeholder="${escapeHtml(options.placeholder)}"` : ''}>`;
+        const control = options.choices ? `<select name="${name}" aria-label="${escapeHtml(label)}" ${options.required ? 'required' : ''}>${options.choices.map(([id, text, disabled]) => `<option value="${escapeHtml(id)}" ${disabled ? 'disabled' : ''}>${escapeHtml(text)}</option>`).join('')}</select>` : options.secret ?
+            `<textarea class="credential-keys" name="${name}" aria-label="${escapeHtml(label)}" rows="3" required maxlength="8192" autocomplete="off" spellcheck="false" placeholder="${adminT('每行填写一个 API Key')}"></textarea>` :
+            `<input name="${name}" aria-label="${escapeHtml(label)}" type="text" required maxlength="160" autocomplete="off" ${options.placeholder ? `placeholder="${escapeHtml(options.placeholder)}"` : ''}>`;
         return `<label class="field"><span class="label">${label}</span><div class="field-frame">${control}</div></label>`;
     },
     form(title, body, submit) {
         return DepartmentMembers.form(title, body, async values => {
             try { await submit(values); await this.load(); }
-            finally { document.querySelectorAll('.modal-backdrop input[type=password]').forEach(input => { input.value = ''; }); }
+            finally { document.querySelectorAll('.modal-backdrop [name=secret]').forEach(input => { input.value = ''; }); }
         });
     },
     async create() {
@@ -74,7 +75,8 @@ window.DepartmentCredentials = {
             this.field('scope', adminT('使用范围'), {choices: scopes}) +
             this.field('procurement', adminT('采购来源'), {choices: [['company', adminT('公司采购')], ['department', adminT('部门自购')]]}) +
             this.field('account_ref', adminT('供应商账号标识'), {placeholder: '英文、数字或短横线，例如 design-main'}) +
-            this.field('secret', 'API Key', {secret: true}) +
+            this.field('secret', adminT('API Key（每行一个）'), {secret: true}) +
+            '<p class="sub">' + adminT('同渠道多个 Key 按新任务轮换分配；已提交任务继续使用原 Key。多个 Key 是否独享额度，以供应商账号规则为准。') + '</p>' +
             '<p class="sub">新增会建立独立来源，不覆盖现有密钥；保存后请在列表中授权员工。已有来源换新 Key 请使用“更换密钥”。</p><p class="sub" data-duplicate-help role="status"></p>', values => apiFetch('/enterprise/api/business/sources', {
                 method: 'POST', body: JSON.stringify({...values, scope: values.scope === 'company' ? 'company' : 'department',
                     department_id: values.scope === 'company' ? null : values.scope})
@@ -91,7 +93,7 @@ window.DepartmentCredentials = {
         platform.onchange = () => {
             const selected = available.find(provider => provider.id === platform.value && provider.supported);
             save.disabled = !selected; key.disabled = !selected;
-            key.placeholder = selected ? `填写${selected.name}的 API Key` : adminT('先选择调用平台');
+            key.placeholder = selected ? `填写${selected.name}的 API Key，每行一个` : adminT('先选择调用平台');
             help.textContent = selected ? adminT('平台地址、协议和模型沿用 API 设置；这里只添加对应账户的密钥。') :
                 available.some(provider => provider.supported) ? adminT('选择系统管理员在 API 设置中维护的平台。') :
                 adminT('暂无已接通渠道密钥的平台，请先由系统管理员在 API 设置中配置贞贞 HTTP 平台。');
@@ -111,7 +113,7 @@ window.DepartmentCredentials = {
         const source = this.rows.find(row => row.id === id);
         if (!source) return;
         const path = '/enterprise/api/business/sources/' + encodeURIComponent(id);
-        if (action === 'rotate') this.form(adminT('更换渠道密钥'), '<p class="sub">来源：' + escapeHtml(source.name) + ' · ' + escapeHtml(this.providerLabel(source.provider_id)) + '</p>' + this.field('secret', adminT('新 API Key'), {secret: true}) +
+        if (action === 'rotate') this.form(adminT('更换渠道密钥'), '<p class="sub">来源：' + escapeHtml(source.name) + ' · ' + escapeHtml(this.providerLabel(source.provider_id)) + '</p>' + this.field('secret', adminT('新 API Key（每行一个）'), {secret: true}) +
             '<p class="sub">保留现有来源和授权，只影响后续新任务；已受理任务继续使用原身份查询。旧密钥若已被供应商停用，原任务可能需要人工核对。</p>', values => apiFetch(path + '/secret', {
                 method: 'PUT', body: JSON.stringify({expected_revision: source.current_revision, secret: values.secret})
             }));

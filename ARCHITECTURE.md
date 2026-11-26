@@ -1,6 +1,34 @@
 # Infinite Canvas Enterprise 当前架构
 
-更新时间：2026-11-03
+更新时间：2026-11-26
+
+2026-11-26 MKT-01.B2：独立 `canvas-layer-smart-prompt.js` 管理行内引用、光标及显示预览，通过回调维护描述、临时标记和共享撤销历史；提交仍使用原文字／坐标及图片 API，不向任务服务引入富文本或供应商依赖。原位／全屏共用，官网示例素材与生成输入分离，见[原 B2 记录](docs/ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#mkt-01-b2)。
+
+2026-11-25 MKT-01.B2：智能改图使用独立聚焦编辑组件，临时指示文档与实际画板分开；模型／尺寸读取共同能力，提交／查询／归档复用原图片任务。智能画布 adapter 只装配视口、选择和持久化，原位与全屏入口不再各自维护改图弹窗。可选节点字段 `layerEditTarget` 只关联原任务与目标图层，不形成供应商依赖或新 Schema；源变更、进行中裁剪／选区或透明输出不合格时保留独立结果，后台完成不抢走其他图层选择。详见[同一实施记录](docs/ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#mkt-01-b2)。
+
+2026-11-25 MKT-02：`canvas-multi-size.js` 只负责多尺寸 UI、个人预设操作及目标请求计划，通过原智能画布 adapter 复用任务、节点布局和归档；依赖共同模型能力，不导入供应商执行。原营销菜单接收可选 actions，不反向依赖该面板。`image_size_api.py` 只接 Gateway 已认证用户，`image_size_presets.py` 只管理个人 JSON，复用 DATA_ROOT、文件锁和原子替换；不持有密钥、画布或任务。调用来源提示复用 `CallSourceHint.preview`，授权仍由服务端决定。目标尺寸各自并行提交原任务，无 API 队列／限流；原同步／异步、原 ID 续查语义未改。没有 Schema 和运行依赖变化；JSON 路径可按既有数据根挂载，不能据此宣称整个容器部署已验收。实际双尺寸效果、未通过的遮挡与验收边界见[原记录](docs/ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#mkt-02)。
+
+2026-11-25 MKT-01：`canvas-layer-separation.js` 独立负责营销入口、三种拆分状态、区域坐标与提示词；通过原智能画布 adapter 取得素材矩形并提交，不直接管理保存、凭据和供应商 HTTP。原编辑器复用同一模型列表与拆分参数函数，后端能力分别声明层数、文字识别和空提示词。原节点布局／图层文档／任务及资源权限继续负责结果。贞贞适配器将观测到的 zindex／boundingBox／outputType 转为共同字段；其异步查询丢失位置，故新拆层用同步响应，既有异步回执续查不变。实测未落实的层数与 OCR 在该渠道关闭，官方原生保持；缺失的元数据不合成。无新队列、依赖或数据库结构。真实复杂样本质量与账号欠费边界见[原记录](docs/ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#mkt-01)。
+
+2026-11-24 SUP-04.S55：已将方舟图片请求构造、HTTP 提交与旧尺寸算法迁到 `providers/volcengine_images.py`，main 保留服务装配。`seedream_capabilities.py` 是方舟原生／贞贞 5.5 共用模型规则，`providers/suppliers.py` 只登记这两个来源的识别、预设与能力，前端读取相同公开投影。官方同步 request_id 与贞贞异步任务 ID 分开，不伪造查询或跨来源重投。原部门加密来源、任务身份、授权素材和全部结果归档复用；没有 API 限流、数据库迁移或新运行依赖。HTTP／Node／重启证据、真实账号上限拒绝和 UI 未验收边界见[原实施记录](docs/ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#sup-04-s55)。协议模块可复用于容器，现有 DPAPI 凭据与运行部署仍需单独适配验收。
+
+2026-11-24 SUP-03.Z 固定贞贞入口：原 `providers/zhenzhen.py` 维护 `provider_preset`／`configure_provider` 和已有能力／提交／查询；main 的原配置 API 暴露预设并保存可选 `supplier`。该标签代表供应商适配，与原配置 `id`、部门来源及凭据版本分离。旧 ID／主机自动识别，显式代理标签也能取得同一能力；读取旧配置不执行协议重写，显式保存贞贞时使用原生协议并清除冲突覆盖。原 API 设置从后端读取地址与 17 项默认型号，保留原 ID／模型列表／密钥，语言和公共下拉复用原组件。视频／图像／对话分类、任务恢复、存储和授权不移入预设模块。未引入新框架、依赖、Schema 或 API 限流；其他供应商待定，不是该阶段的依赖。准确实现和验收见[SUP-03.Z](docs/ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#sup-03-z)。
+
+2026-11-24 SUP-03.3.R：`providers/responses_images.py` 接收既有模型字段、已准备素材 URL、鉴权头和可选受理回调，负责 Responses 编码与后台／SSE／直接返回传输；不导入 main、文件存储、数据库或 Windows 凭据服务。main 保留分派、权限／能力／素材装配及原包装函数。后台取得 ID 后，原回执服务在首次 GET 前持久保存 ID 与原查询地址；可选私有字段 `query_endpoint` 复用原 JSON 回执，无 Schema 迁移，和原 ID 一样保持不可变。重启后的原任务中心手动续查沿用原凭据／访问权限并优先使用该地址，后台处理中预览不归档，完成后由原服务归档全部产物。旧回执缺字段时走原查询规则；通用自动查询名单、API 并行及既有 SSE 分片兼容未扩展。APIMart／图像视频代理未选迁移，准确依据和验证见[本轮记录](docs/ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#sup-03-3-responses)。
+
+2026-11-23 SUP-03.2 本地实现：标准 Images 和 Agnes 风格 `extra_body` 的请求构造／明确拒绝兼容逻辑进入 `providers/openai_images.py`，该模块只依赖 HTTP、标准库和提交错误规则。编辑 image／mask 文件的准备与作用域归原 `image_reference_preparation.py`，HTTP 编辑结束即释放句柄，素材 URL 转换保留惰性。main 保留分派、模型能力与业务服务装配，原共同结果／回执／归档继续复用。剩余 APIMart、Responses 图像工具和图像视频代理编码尚在 main，不能把本批当作全部执行链完成。当前验证与下一批只见 CURRENT／唯一路线图。
+
+2026-11-23 后续本地实现：同渠道多 Key 已获批准，`credential_pool.py` 仅编解码原凭据版本内容；`DepartmentGovernance` 在原任务事务内选择并冻结 slot，`task_credentials` 按原版本续查。无 Schema 迁移或 API 限流。SUP-03.1 将共同结果／轮询抽到 `providers/image_execution.py`，供应商请求入口仍在自身适配器，通用执行模块不依赖贞贞、业务数据库或 Windows 凭据。其余请求编码逐路迁出，服务器／容器的凭据替代、持久卷与单协调进程约束继续按原部署批次验证。本段更新下方同日撤限时“尚无多 Key”的历史状态。
+
+SUP-01.E 按供应商客户端固定源码核对两款工坊 GPT Image2.5，能力表明确同步提交、像素尺寸和 14 参考图上限；main 只传准确型号选择协议，前后端共用能力。源码、模拟、真实样本和生产验收见[原集成记录](docs/ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#asset-1123-and-supplier-followup)，当前编号与下一 SUP-03.2 只在[唯一路线图](docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md#provider-compatibility-batches)维护。
+
+2026-11-23 SUP-02 更正：负责人否决 API 限流，已撤除本轮新增的图片调度器、同主机／用户限额、后台面板及 API；正常图片请求保留原并行执行。`image_reference_preparation.py` 独立负责授权输入的提交副本、格式／尺寸／体积和 Alpha，摘要经原 journal／任务详情投影；原素材与归档服务不变。`main.py` 仅接线，完整协议抽离仍属 SUP-03。现有 ComfyUI 算力队列独立保留。
+
+后续容量方向为复用 `DepartmentGovernance` 与 `task_credentials` 的部门来源、凭据版本和任务冻结，在首跳前选择已批准来源。现状是一个授权来源选择，不是多 Key 负载分配；其他供应商绑定尚未完成。上游额度不足先核实账号／分组／模型限制，再与负责人选定扩容或新增来源，不按主机一刀切限制生产调用。服务器／容器仍先单一协调进程，持久卷、凭据、媒体及恢复另验，多 Worker 不由此次撤限自动实现。见 [CURRENT](docs/CURRENT_PROJECT_STATUS.md)。
+
+2026-11-21 SUP-01 本地实现：贞贞 16 个生产模型的比例、固定分辨率和像素组合约束集中在供应商能力表；`provider_image_profiles.py` 负责服务端尺寸验证，main 仅接入校验并投影能力。经典／智能画布和在线生图共用 `model-picker.js` 的选项与旧值校验，各自保留页面布局。已受理任务查询仍走原回执，不重新验证生成参数。本批没有抽离 `generate_ai_image` 的素材、HTTP 和恢复编排，也没有补上正常提交的共享来源队列；分别由 SUP-02／SUP-03 迁移。状态与证据见 [CURRENT](docs/CURRENT_PROJECT_STATUS.md)。
+
+2026-11-20 供应商边界复核。正式 11.3 和当前未提交候选已核对，同步／异步结果、提交／在途并发、素材准备和历史恢复的当前差距与目标契约见[ADR-PROVIDER-001](docs/decisions/ADR-PROVIDER-001-MODEL-COMPATIBILITY-AND-EXECUTION-BOUNDARIES-2026-11.md)。方案文档化与批次顺序已获负责人批准，详细契约为提议；完整执行链尚未统一。实现与设备状态回到 CURRENT，工作编号只在[路线图 4.2.1](docs/roadmap/DEVELOPMENT-ROADMAP-2026-2027.md#provider-compatibility-batches)维护。
 
 COMFY1103（本地候选）：任务事实仍由原Journal持有，输出卡片只是呈现。Provider识别“明确未连接”和“可能已受理”，原runner/Queue据事实更新终态/预算；任务中心按服务器本人能力经原逐笔取消API管理，两个画布共享，经典节点仅提供导航。生产副本已确认旧连接拒绝误留核对导致占位；本地修正不是生产回执已恢复，不扩大为通用任务重试或新调度系统。
 
@@ -80,12 +108,15 @@ Runtime Supervisor
 | Enterprise data | 用户、角色、归属、审计、版本化 migration/backup/restore | `enterprise/db.py`，`enterprise/migrations/` |
 | Canvas application | 画布、工作流、模型调用、静态前端和原有业务 API | `main.py`，`static/` |
 | Task journal | 两类画布任务持久回执基础 | `enterprise/canvas_task_journal.py` |
-| 部门与凭据 | 当前管理入口保留成员、部门及渠道密钥；Schema4与历史费用事实保留，项目和费用工作台路由不注册 | `enterprise/department_api.py`，`enterprise/department_governance.py`，`enterprise/task_credentials.py` |
+| 部门与凭据 | 当前管理入口保留成员、部门及渠道密钥；本地多 Key 编解码与新任务 slot 冻结；Schema4与历史费用事实保留，项目和费用工作台路由不注册 | `enterprise/department_api.py`，`enterprise/department_governance.py`，`enterprise/task_credentials.py`，`enterprise/credential_pool.py` |
 | 旧创作入口来源兼容 | 相关源码和历史身份事实保留；10.9撤下来源选择交互，新调用交互待重新设计 | `enterprise/legacy_call_sources.py`；具体可用路径以实际接线为准 |
 | 供应商图像适配（#156 已合并） | 内置 Zhenzhen 已确认模型协议与能力；新模型临时兼容配置；与存储/Windows 生命周期分离 | `enterprise/providers/zhenzhen.py`，`enterprise/provider_image_profiles.py` |
+| 图片共同结果执行（SUP-03.1 本地候选） | 同步结果确认、持久受理后原 ID 轮询；具体请求编码留在对应适配器，任务与归档通过原回调装配 | `enterprise/providers/image_execution.py` |
+| 标准图片请求（SUP-03.2 本地候选） | Images JSON／multipart、Agnes extra_body JSON 和原明确拒绝策略；接收已解析鉴权与素材作用域，无业务存储依赖 | `enterprise/providers/openai_images.py` |
 | 个人模型显示（#156 已合并） | 当前登录账号的模型选择列表及持久设置；不授予供应商管理权限 | `enterprise/user_model_api.py`，`enterprise/user_model_preferences.py`，`static/js/model-picker.js` |
 | 原任务续查 | 已受理 ID 的持久绑定、原任务查询与原回执结果，复用既有 journal/归属 | `enterprise/canvas_image_recovery.py`，`static/js/canvas-task-query.js` |
 | ComfyUI 队列及取消 | 单上游任务受理、用户轮转、工作流等待限额及按原任务取消；不代表全供应商统一调度 | `enterprise/comfy_queue.py`，`enterprise/comfy_queue_api.py`，`enterprise/canvas_comfy_control.py` |
+| 图片素材准备与编辑作用域（本地候选） | 在授权读取后准备引用副本和编码预算，保留原件、顺序及 Alpha；平台请求内复用，兼容旧调用的 image／mask 文件装配和及时关闭 | `enterprise/image_reference_preparation.py` |
 | 文件及代理传输 | 同目录临时文件原子替换；请求有界读取及媒体/SSE流式代理，授权和冲突规则由调用方维护 | `enterprise/local_json.py`，`enterprise/proxy_transport.py` |
 | Runtime | launcher、supervisor、health、ownership、state/log | `enterprise/runtime/` |
 | Release/update | Manifest v2、资产校验、prepare、pointer switch、rollback foundation | `enterprise/release/`，`enterprise/ops/update/`，`enterprise/update_api.py` |
@@ -95,13 +126,15 @@ Runtime Supervisor
 
 Code Wiki 提供更细的文件、类和函数导航：[docs/code-wiki/README.md](docs/code-wiki/README.md)。
 
-以下供应商/个人模型模块随 #156 合并并进入后续正式版本，准确状态回到 CURRENT。模型调用继续复用现有入口、结果归档和任务回执。长期接入供应商的参数差异由项目维护内置适配，普通用户只选择模型、画幅、参考图等创作参数，无需配置请求模板。Zhenzhen 图像模型的已确认协议分组与别名集中在 `enterprise/providers/zhenzhen.py`，按明确供应商身份及实际请求契约选路；文生图和参考图生成使用相应 JSON Generations，不探测多个付费提交入口。前端读取同一内置能力的公开投影，限制不支持的参数；已支持模型优先于历史临时模板。
+以下供应商/个人模型模块随 #156 合并并进入后续正式版本，准确状态回到 CURRENT。模型调用继续复用现有入口、结果归档和任务回执。长期接入供应商的参数差异由项目维护内置适配，普通用户只选择模型、画幅、参考图等创作参数，无需配置请求模板。Zhenzhen 图像模型的已确认协议分组与别名集中在 `enterprise/providers/zhenzhen.py`，按明确供应商身份及实际请求契约选路；Generations／Edits 及 JSON／multipart 依准确型号确定，同步与异步能力分别维护，不探测多个付费提交入口。前端读取同一内置能力的公开投影，限制不支持的参数；已支持模型优先于历史临时模板。
 
 临时模板默认折叠，仅供管理员在新上线模型尚未内置适配时配置兼容参数，不作为日常接入流程。该实现覆盖已确认的 Nano Banana、Gemini 3.1 图像、GPT Image 2 和 Seedream v5 Pro 图像契约；不等于供应商所有模型、视频协议、层分解输出或原生 Google 协议已经验收。新增同协议别名主要维护集中目录；新的提交/查询协议才增加适配代码。节点保留明确的画幅/分辨率选择，个人显示列表只影响选择体验。
 
 个人模型偏好存于 `DATA_ROOT/user-model-preferences/<user_id>.json`，身份来自认证会话，以同目录临时文件原子替换；只清理本次写入自己的临时文件。该写入边界登记为既有 APP_ROOT 写入审计的 W50，不写安装源码目录，也不改动企业业务数据库 Schema。
 
 `main.py` 中已有供应商调用、画布和工作流仍存在集中实现的技术债。本次将 Zhenzhen 新增图像请求构造与能力目录放在独立模块，主入口只连接现有 HTTP、资源转换和结果处理。其余供应商的模块化、统一持久任务/Attempt 和完整费用对账按唯一路线图阶段 4 落实；本次不构成自动最低价选路或不明状态跨供应商再次付费提交。
+
+2026-11-20 源码核对补充。上述能力公开投影目前仅覆盖已维护模型；经典／智能画布仍各自生成部分选项、保留旧值，自定义与原图比例处理没有完整贯通。正常生图多图仍并行，dispatch 的并发 2 仅用于 restored 分支。图片执行器同时处理平台选择、素材、HTTP 和回执，通用能力读取直接依赖贞贞。SUP-01／02 先修参数与负载问题，SUP-03／04 再按 ADR 逐路收缩职责，不能从模块已经存在推断新边界已实现。
 
 ### 画布首页目录候选（2026-10-22 历史记录，10.9已退出）
 

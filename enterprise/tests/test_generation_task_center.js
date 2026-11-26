@@ -33,6 +33,9 @@ context.fetch=async(url,options={})=>{
         if(fail)return {ok:false,status:503,json:async()=>({detail:'取消尚未确认'})};
         status=pending?'running':'cancelled';return {ok:true,json:async()=>({message:pending?'等待后端确认':'已取消平台等待任务'})};
     }
+    if(url.endsWith('/older-image'))return {ok:true,json:async()=>({
+        id:'older-image',type:'online-image',status:'succeeded',created_at:1,output_count:0,items:[],
+    })};
     const row={id:'original-without-output',type:'comfy',status,created_at:1,output_count:0,can_cancel:status==='queued',cancellation_pending:pending};
     return {ok:true,json:async()=>url.includes('/original-without-output')?{...row,items:[]}:({items:[row],next_cursor:null})};
 };
@@ -57,7 +60,13 @@ const flush=async()=>{for(let i=0;i<12;i++)await Promise.resolve();};
     button=list.querySelector('.generation-task-detail').querySelector('.generation-task-cancel');
     assert(button.disabled&&!button.onclick,'acknowledgement is not a confirmed cancellation');
     assert(!calls.some(([,url])=>/\/prompt|\/interrupt/.test(url)));
-    for(const path of ['static/canvas.html','static/smart-canvas.html','static/online.html'])assert(fs.readFileSync(path,'utf8').includes('generation-task-center.js?v=20261112.1'));
+    const beforeLink=calls.length;
+    context.GenerationTaskCenter.openTasks({kind:'canvas_image',taskId:'older-image'});await flush();
+    assert(calls.slice(beforeLink).some(([method,url])=>method==='GET'&&url.endsWith('/older-image')));
+    assert(list.innerHTML.includes('data-detail="older-image"'),'a linked image remains visible outside the recent page');
+    const versionedScripts=['static/canvas.html','static/smart-canvas.html','static/online.html']
+        .map(path=>fs.readFileSync(path,'utf8').match(/generation-task-center\.js\?v=\d{8}\.\d+/)?.[0]);
+    assert(versionedScripts.every(source=>source&&source===versionedScripts[0]),'all task centers use the same versioned script');
     assert(fs.readFileSync('static/js/canvas.js','utf8').includes("GenerationTaskCenter.openTasks({kind:'canvas_comfy'})"));
     console.log('task center: no-output cancel, retry, pending ack, both entrypoints; no provider POST');
 })().catch(error=>{console.error(error);process.exitCode=1;});

@@ -53,7 +53,11 @@
         anchor.setAttribute('aria-expanded', 'true');
         panelState = {panel, anchor, onClose};
     }
-    window.StudioDropdowns = {openPanel, closePanel};
+    // A select menu lives in the top layer, but belongs to its original panel.
+    function contains(container, target) {
+        return container.contains(target) || Boolean(current && container.contains(current.select) && current.menu.contains(target));
+    }
+    window.StudioDropdowns = {openPanel, closePanel, contains};
     function choices() {
         return current ? [...current.menu.querySelectorAll('[role=option]:not(:disabled)')] : [];
     }

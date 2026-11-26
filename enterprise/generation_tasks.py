@@ -95,6 +95,10 @@ def describe_task(record, *, detail=False):
             "model": record.get("model") or first.get("model") or "", "workflow": record.get("workflow_json") or "",
             "output_count": len(items), "can_query": can_query,
             "error": redact_text(record.get("error") or "")[:1200]}
+    if record.get("creation_title"):
+        data["creation_title"] = record["creation_title"]
+    if record.get("creation_settings"):
+        data["creation_settings"] = record["creation_settings"]
     if record.get('type') == 'comfy':
         from enterprise.canvas_comfy_recovery import public_comfy_task
         control = public_comfy_task(record)
@@ -108,6 +112,8 @@ def describe_task(record, *, detail=False):
         if state in {"succeeded", "failed", "partial", "cancelled"} and not recovery_candidate(record):
             data["auto_recovery"].update(status="complete", next_query_at=None, reason="")
     if detail:
+        if record.get('image_preparation'):
+            data['image_preparation'] = record['image_preparation']
         snapshot = (record.get('billing_context') or {}).get('snapshot')
         if snapshot:
             data['call_source'] = {key:snapshot.get(key) for key in (

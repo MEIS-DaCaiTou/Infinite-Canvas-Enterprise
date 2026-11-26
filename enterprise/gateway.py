@@ -70,6 +70,7 @@ from enterprise.route_policy import (
 from enterprise.admin_api import router as admin_router
 from enterprise.user_model_api import router as user_model_router
 from enterprise.character_api import create_router as create_character_router
+from enterprise.image_size_api import create_router as create_image_size_router
 from enterprise.generation_task_api import router as generation_task_router
 from enterprise.comfy_queue_api import router as comfy_queue_router
 from enterprise.department_api import create_router as create_department_router
@@ -287,6 +288,7 @@ app.add_middleware(InstallMaintenanceMiddleware, state_root=PATH_ROOTS.STATE_ROO
 app.include_router(admin_router, prefix="/enterprise")
 app.include_router(user_model_router, prefix="/enterprise")
 app.include_router(create_character_router(), prefix="/enterprise")
+app.include_router(create_image_size_router(), prefix="/enterprise")
 app.include_router(generation_task_router, prefix="/enterprise")
 app.include_router(comfy_queue_router, prefix="/enterprise")
 app.include_router(create_department_router(), prefix="/enterprise")

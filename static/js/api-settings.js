@@ -7,12 +7,36 @@ const nameInput = document.getElementById('nameInput');
 const idInput = document.getElementById('idInput');
 const baseInput = document.getElementById('baseInput');
 const protocolInput = document.getElementById('protocolInput');
+const supplierInput = document.getElementById('supplierInput');
+let providerPresets = {};
 const imageRequestModeInput = document.getElementById('imageRequestModeInput');
 let imageProfileTemplates = {};
 
+function isBuiltinSupplier(item){
+    return Boolean(item?.supplier && providerPresets[item.supplier]);
+}
+function changeSupplier(){
+    const item = provider();
+    if(!item) return;
+    syncEditor();
+    const preset = providerPresets[item.supplier];
+    if(preset){
+        item.base_url = preset.base_url;
+        item.protocol = preset.protocol;
+        item.image_request_mode = preset.image_request_mode;
+        item.model_protocols = {};
+        if(!item.name || item.name === 'API') item.name = preset.name;
+        if(!(item.image_models || []).length) item.image_models = [...preset.image_models];
+    }
+    const savedKey = keyInput.value;
+    renderEditor();
+    keyInput.value = savedKey;
+    setStatus(tr('api.supplierApplied'));
+}
+
 function renderImageProfileControls(item){
     const builtinCount = Object.keys(item.builtin_model_image_profiles || {}).length;
-    document.getElementById('imageAdapterSummary').textContent = builtinCount ? `已选图像模型中 ${builtinCount} 个使用内置供应商适配，无需配置参数模板。` : '';
+    document.getElementById('imageAdapterSummary').textContent = builtinCount ? trf('api.builtinAdapterSummary', {count:builtinCount}) : '';
     const controls = document.getElementById('imageProfileControls');
     if(!controls) return;
     controls.style.display = providerSupportsModelProtocol(item) && Object.keys(imageProfileTemplates).length ? '' : 'none';
@@ -777,8 +801,10 @@ function syncEditor(){
     item.id = nextId;
     if(oldId !== item.id) selectedId = item.id;
     item.name = nameInput.value.trim() || item.id;
+    item.supplier = supplierInput?.value || '';
+    const supplierPreset = providerPresets[item.supplier];
     const lockedApi = lockedRecommendedApi(item);
-    const selectedProtocol = lockedApi
+    const selectedProtocol = supplierPreset ? supplierPreset.protocol : lockedApi
         ? lockedApi.protocol
         : item.id === 'modelscope'
         ? 'openai'
@@ -793,7 +819,7 @@ function syncEditor(){
     item.image_request_mode = normalizeImageRequestMode(
         item.id === 'modelscope' || item.id === 'runninghub' || item.id === 'volcengine' || CLI_PROTOCOLS.has(selectedProtocol)
             ? 'openai'
-            : lockedApi
+            : supplierPreset ? supplierPreset.image_request_mode : lockedApi
             ? lockedApi.image_request_mode
             : (imageRequestModeInput?.value || item.image_request_mode)
     );
@@ -830,7 +856,7 @@ function ensureRunningHubLists(item){
 }
 function updateProtocolFromInput(){
     const item = provider();
-    if(!item || !protocolInput || item.id === 'modelscope' || item.id === 'runninghub' || item.id === 'volcengine') return;
+    if(!item || !protocolInput || isBuiltinSupplier(item) || item.id === 'modelscope' || item.id === 'runninghub' || item.id === 'volcengine') return;
     if(applyLockedRecommendedProtocol(item)){
         protocolInput.value = item.protocol;
         if(imageRequestModeInput) imageRequestModeInput.value = item.image_request_mode;
@@ -2457,14 +2483,22 @@ function renderEditor(){
     baseInput.value = item.base_url || '';
     const lockedApi = lockedRecommendedApi(item);
     if(lockedApi) applyLockedRecommendedProtocol(item);
+    const supplierPreset = providerPresets[item.supplier];
+    if(supplierInput){
+        supplierInput.value = item.supplier || '';
+        supplierInput.disabled = FIXED_PROTOCOL_PROVIDER_IDS.has(item.id) || Boolean(lockedApi) || CLI_PROTOCOLS.has(item.protocol);
+    }
+    const supplierHint = document.getElementById('supplierHint');
+    supplierHint.hidden = !isBuiltinSupplier(item);
+    supplierHint.textContent = isBuiltinSupplier(item) ? tr('api.' + item.supplier + 'Hint') : '';
     if(protocolInput){
-        protocolInput.value = item.id === 'runninghub' ? 'runninghub' : item.id === 'volcengine' ? 'volcengine' : (item.protocol || 'openai');
-        protocolInput.disabled = FIXED_PROTOCOL_PROVIDER_IDS.has(item.id) || Boolean(lockedApi);
+        protocolInput.value = supplierPreset ? supplierPreset.protocol : item.id === 'runninghub' ? 'runninghub' : item.id === 'volcengine' ? 'volcengine' : (item.protocol || 'openai');
+        protocolInput.disabled = Boolean(supplierPreset) || FIXED_PROTOCOL_PROVIDER_IDS.has(item.id) || Boolean(lockedApi);
         protocolInput.title = lockedApi ? '推荐平台使用固定协议' : (protocolInput.disabled ? '内置平台使用固定协议' : '');
     }
     if(imageRequestModeInput){
-        imageRequestModeInput.value = normalizeImageRequestMode(item.image_request_mode);
-        imageRequestModeInput.disabled = Boolean(lockedApi) || item.id === 'modelscope' || item.id === 'runninghub' || item.id === 'volcengine' || CLI_PROTOCOLS.has(String(protocolInput?.value || item.protocol || '').toLowerCase());
+        imageRequestModeInput.value = normalizeImageRequestMode(supplierPreset ? supplierPreset.image_request_mode : item.image_request_mode);
+        imageRequestModeInput.disabled = Boolean(supplierPreset) || Boolean(lockedApi) || item.id === 'modelscope' || item.id === 'runninghub' || item.id === 'volcengine' || CLI_PROTOCOLS.has(String(protocolInput?.value || item.protocol || '').toLowerCase());
         imageRequestModeInput.title = lockedApi ? '推荐平台使用固定图片协议' : '';
     }
     if(imageEditRouteInput){
@@ -2581,6 +2615,13 @@ function renderEditor(){
 }
 function showVerifyResult(html){ const el = document.getElementById('verifyResult'); if(el){ el.style.display = 'block'; el.innerHTML = html; } }
 function clearVerifyResult(){ const el = document.getElementById('verifyResult'); if(el){ el.style.display = 'none'; el.innerHTML = ''; } }
+async function readProviderResponse(response, fallback){
+    const data = await response.json();
+    if(!response.ok){
+        throw new Error(`${data.detail || data.error || data.message || fallback} (HTTP ${response.status})`);
+    }
+    return data;
+}
 function prettyJson(value){
     try { return JSON.stringify(value, null, 2); } catch(_) { return String(value || ''); }
 }
@@ -2866,6 +2907,7 @@ function isRunningHubContext(item, baseUrl=''){
 function applyDetectedImageRequestMode(mode){
     const item = provider();
     if(!item || !imageRequestModeInput) return false;
+    if(isBuiltinSupplier(item)) return false;
     if(applyLockedRecommendedProtocol(item)){
         if(protocolInput) protocolInput.value = item.protocol;
         imageRequestModeInput.value = item.image_request_mode;
@@ -2881,6 +2923,7 @@ function applyDetectedProtocol(protocol){
     const item = provider();
     const detected = String(protocol || '').toLowerCase();
     if(!item || !protocolInput || !API_PROTOCOLS.includes(detected)) return false;
+    if(isBuiltinSupplier(item)) return false;
     if(applyLockedRecommendedProtocol(item)){
         protocolInput.value = item.protocol;
         if(imageRequestModeInput) imageRequestModeInput.value = item.image_request_mode;
@@ -3045,8 +3088,7 @@ async function testConnection(){
                 image_request_mode: imageRequestModeInput?.value || item.image_request_mode || 'openai'
             })
         }).then(async r => {
-            if(!r.ok) throw new Error((await r.json()).detail || (tr('api.urlInvalid') || '验证失败'));
-            return r.json();
+            return readProviderResponse(r, tr('api.urlInvalid') || '验证失败');
         });
         if(data.ok){
             const detectedProtocol = String(data.protocol || '').toLowerCase();
@@ -3273,7 +3315,7 @@ async function clearKeyOnly(){
 }
 const FIXED_PROTOCOL_PROVIDER_IDS = new Set(['modelscope', 'volcengine', 'runninghub']);
 function providerSupportsModelProtocol(item){
-    return Boolean(item) && !FIXED_PROTOCOL_PROVIDER_IDS.has(item.id);
+    return Boolean(item) && !isBuiltinSupplier(item) && !FIXED_PROTOCOL_PROVIDER_IDS.has(item.id);
 }
 function modelProtocolSelectHtml(kind, index, model, item){
     if(kind === 'video' || !providerSupportsModelProtocol(item)) return '';
@@ -3573,15 +3615,16 @@ function removeModel(kind, index){
 async function loadProviders(){
     setStatus(tr('api.loading'));
     try {
-        const data = await fetch('/api/providers').then(r => r.json());
+        const data = await fetch('/api/providers').then(r => readProviderResponse(r, tr('api.loadFailed')));
         imageProfileTemplates = data.image_profile_templates || {};
+        providerPresets = data.provider_presets || {};
         providers = data.providers || [];
         selectedId = sortedProviders()[0]?.id || '';
         renderEditor();
         openRecommendApi();
         setStatus('');
     } catch(err) {
-        setStatus(tr('api.loadFailed'));
+        setStatus(err.message || tr('api.loadFailed'));
     }
 }
 async function saveProviders(){
@@ -3589,6 +3632,12 @@ async function saveProviders(){
     providers.forEach(item => {
         item.id = normalizeId(item.id);
         applyLockedRecommendedProtocol(item);
+        const preset = providerPresets[item.supplier];
+        if(preset){
+            item.protocol = preset.protocol;
+            item.image_request_mode = preset.image_request_mode;
+            item.model_protocols = {};
+        }
         item.protocol = item.id === 'runninghub'
             ? 'runninghub'
             : item.id === 'volcengine'
@@ -3639,6 +3688,7 @@ async function saveProviders(){
             headers:{'Content-Type':'application/json'},
             body:JSON.stringify(providers.map(item => ({
                 id:item.id,
+                supplier:item.supplier || '',
                 name:item.name,
                 base_url:item.base_url,
                 protocol:(item.id === 'modelscope') ? 'openai' : item.id === 'runninghub' ? 'runninghub' : item.id === 'volcengine' ? 'volcengine' : (item.protocol || 'openai'),
@@ -3670,8 +3720,7 @@ async function saveProviders(){
                 clear_volcengine_secret_access_key:item._clearVolcengineSecretKey === true
             })))
         });
-        if(!res.ok) throw new Error((await res.json()).detail || tr('api.saveFailed'));
-        const data = await res.json();
+        const data = await readProviderResponse(res, tr('api.saveFailed'));
         providers = data.providers || providers;
         providers.forEach(item => {
             delete item.api_key;
@@ -3736,6 +3785,7 @@ window.onload = () => {
     // 平台名输入时实时预览生成的 ID
     if(nameInput) nameInput.addEventListener('input', updateIdPreview);
     if(protocolInput) protocolInput.addEventListener('change', updateProtocolFromInput);
+    if(supplierInput) supplierInput.addEventListener('change', changeSupplier);
     if(baseInput) baseInput.addEventListener('input', () => updateApimartDomesticHint());
     if(imageRequestModeInput) imageRequestModeInput.addEventListener('change', () => {
         const item = provider();

@@ -1,25 +1,15 @@
 """Exercise actual Responses helpers with HTTP entirely confined to MockTransport."""
-import ast
 import asyncio
+from functools import partial
 import json
-from pathlib import Path
-import time
-import urllib.parse
 
 import httpx
 import pytest
 
 
 def helpers():
-    tree = ast.parse((Path(__file__).resolve().parents[2] / 'main.py').read_text(encoding='utf-8'))
-    selected = [node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in {
-        '_responses_wrap', 'post_openai_responses', 'post_openai_responses_stream'
-    }]
-    scope = {'httpx': httpx, 'asyncio': asyncio, 'json': json, 'time': time, 'urllib': urllib,
-             'RESPONSES_REJECT_STATUSES': {400, 404, 405, 415, 422},
-             'RESPONSES_POLL_INTERVAL': 0, 'RESPONSES_POLL_MAX_SECONDS': 1}
-    exec(compile(ast.Module(body=selected, type_ignores=[]), 'actual_responses_helpers', 'exec'), scope)
-    return scope
+    from enterprise.providers.responses_images import submit
+    return {'post_openai_responses': partial(submit, poll_interval=0, poll_max_seconds=1)}
 
 
 @pytest.mark.parametrize('explicit_rejections', [0, 1])

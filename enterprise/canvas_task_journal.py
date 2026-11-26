@@ -153,6 +153,12 @@ class CanvasTaskJournal:
                 }
             return deepcopy(list(self._comfy_queue_index.values()))
 
+    def record_image_preparation(self, task_id, summary):
+        with self._lock:
+            record = self.get(task_id)
+            if record and record.get('status') == 'running':
+                self._write({**record, 'image_preparation': summary, 'updated_at': time.time()})
+
     def claim_comfy_dispatch(self, task_id):
         with self._lock:
             record = self.get(task_id)
@@ -341,8 +347,9 @@ class CanvasTaskJournal:
             previous = receipts[index]
             if previous.get("state") in {"succeeded", "failed"}:
                 raise ValueError("Provider result is already terminal")
-            if previous.get("upstream_task_id") and changes.get("upstream_task_id", previous["upstream_task_id"]) != previous["upstream_task_id"]:
-                raise ValueError("Provider task identity cannot change")
+            for key in ("upstream_task_id", "query_endpoint"):
+                if previous.get(key) and changes.get(key, previous[key]) != previous[key]:
+                    raise ValueError("Provider task identity cannot change")
             receipts[index] = {**previous, **changes, "index": index}
             updates = {"provider_receipts": receipts}
             if changes.get("upstream_task_id") and not record.get("upstream_task_id"):
