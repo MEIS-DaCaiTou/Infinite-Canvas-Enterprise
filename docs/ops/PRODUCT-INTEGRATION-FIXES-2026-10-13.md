@@ -1,5 +1,30 @@
 # 产品集成修复：供应商图像适配、个人模型与企业入口
 
+<a id="pre-cleanup-backup-20261126"></a>
+
+## 2026-11-26 当前目录磁盘清理前备份
+
+范围为本聊天 f2ad 工作树 `C:/Users/22259/.codex/worktrees/f2ad/26-5-27-无限画布`。负责人明确要求确认已修改、已暂存、未跟踪代码和文件全部提交／推送。开工 detached d821098，与实时 fetch 后的 origin/main 相同；实际展开目录后是 58 个修改、72 个未跟踪文件，暂存为 0，共 130 项、7,617,830 原始字节。没有删除、重命名、冲突或 stash。公开仓库中真实凭据不得上传；内容扫描的三个 `sk-` 样式命中均来自历史 task 分支名，无真实 provider／GitHub token 或私钥。忽略项为 58 个 pyc 和 5 个 pytest 缓存，没有忽略开发源码、env 或数据库文件。
+
+创建独立 `codex/backup-20261126-precleanup` 并精确暂存 130 项，保留原业务内容。提交 [`e98731c9865a5952fa6ecb8c6cf230be852aa3f8`](https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise/commit/e98731c9865a5952fa6ecb8c6cf230be852aa3f8) 已 push 到 origin；`ls-remote` 与本地提交一致，随后调用 GitHub 递归 Git Tree，全部 926 个文件路径／blob ID 与本地树一致，130 项逐一在远端存在。原始行尾由本机 Git 既有 autocrlf 规则处理，不修改业务语义；外部另有提交前原始字节 ZIP 和补丁，不把同盘副本当成远端备份。
+
+每项文件的原状态、字节数、提交 ID、提交／推送状态、远端内容核对和固定提交文件链接保存在[CSV 清单](./backup-audits/2026-11-26-development-files.csv)。后续本轮只提交备份清单／恢复说明和原事实文档更新，源码快照仍可由该固定提交恢复；业务代码没有因备份整理而修订。`main`、正式版本、PR／合并与生产部署保持原状态，不因源码备份就标记营销功能或模型质量通过。
+
+补查同一 Git 仓库其他工作树，只读发现下列目录还有未提交内容（数量为默认 status 条目，目录未展开，不是当前 130 项）：
+
+| 其他工作树 | 状态条目 | 本轮结果 |
+| --- | ---: | --- |
+| `C:/Users/22259/.codex/worktrees/launcher-upgrade-maintenance/26-5-27-无限画布` | 46 | 当前目录范围外，未提交／推送 |
+| `C:/Users/22259/.codex/worktrees/manual-acceptance/26-5-27-无限画布` | 134 | 当前目录范围外，未提交／推送 |
+| `C:/Users/22259/.codex/worktrees/one-confirmation-upgrade/26-5-27-无限画布` | 1 | 当前目录范围外，未提交／推送 |
+| `D:/CodeProject/Infinite-Canvas-Enterprise-Artifacts/t/CHAR1011/source` | 36 | 当前目录范围外，未提交／推送 |
+
+另有 **27 个本地提交不在任何 origin 分支的可达历史内**，固定清单见[本地提交 CSV](./backup-audits/2026-11-26-other-local-commits.csv)。它们未由本次源码提交自动备份；本轮不自动推送其他历史分支，避免扩大当前源码范围。`D:/CodeProject/Infinite-Canvas-Enterprise-Artifacts/development/` 的运行副本、测试证据、模型样本、配置和辅助脚本也不属于本仓库源码快照，不能据此删除。没有执行磁盘清理、reset、clean、递归删除或生产操作。
+
+按[恢复说明](./backup-audits/2026-11-26-restore.txt)可从 GitHub 克隆备份分支，或锁定源提交；不需要依赖当前工作树和外部本机索引。恢复源码不等于恢复运行数据库、凭据或未上传实验资料。本轮源码核对、提交和推送结果与完整业务／设备现场验收分开，下一任务仍以原 CURRENT／唯一路线图为准。
+
+本机审计副本：`D:/CodeProject/Infinite-Canvas-Enterprise-Artifacts/backups/pre-cleanup-20261126-144534/`，含原始清单、源码 ZIP／补丁、远端树对照和其他工作树只读盘点；审计资料须以 GitHub 上的清单与本段为可跨设备恢复的事实，不依赖清理后本机副本存在。
+
 <a id="mkt-01-b4"></a>
 
 ## 2026-11-26 MKT-01.B4 全屏智能改图、文字与视口交互

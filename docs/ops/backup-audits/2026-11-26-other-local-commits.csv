@@ -1,0 +1,28 @@
+﻿提交ID,提交说明,所属本地分支,远端备份结果
+65d17e92cedb49b4d9b04e1321c548216e16b827,fix: allow matching Windows account names for boot registration,codex/windows-start-recovery,未被当前 origin 分支覆盖；本轮未推送
+0572d753c909c72075bf14113e01b0b46d4015d6,feat: manage Windows boot startup from the launcher,codex/windows-start-recovery,未被当前 origin 分支覆盖；本轮未推送
+ee91df4f88d3d37226596c29103aa1c886987929,ops: prepare Windows boot-start pilot with bounded retries,codex/windows-start-recovery,未被当前 origin 分支覆盖；本轮未推送
+7c79a1489a1834783b1f0d8e41fb8729f9b30f1c,Fix offline upgrade preparation and UNC installer source paths,codex/one-confirmation-upgrade,未被当前 origin 分支覆盖；本轮未推送
+8a1bd09cdd92e3e9562bced2104919611fade84d,test: freeze unpublished successor for 10.7 handoff drill,codex/verify-10-7-online-target-20261023,未被当前 origin 分支覆盖；本轮未推送
+d4a4b89304169d2d54b14ee12bc54a17fa36bd45,fix: retain video task bindings through canvas save merges,codex/task-candidate-integration-20261018,未被当前 origin 分支覆盖；本轮未推送
+c46ca821c4e0321faf632ac94791be06b9358e80,merge: preflight Zhenzhen adapter with durable task candidates,codex/task-candidate-integration-20261018,未被当前 origin 分支覆盖；本轮未推送
+7cb17a7399c942d7b2259974ef6c79c826b827bf,merge: preflight video canvas resume with LLM and source context,codex/task-candidate-integration-20261018,未被当前 origin 分支覆盖；本轮未推送
+f996b3e634052ac2634bf4eb5c132c9921feec2a,docs: record approved enterprise capacity target and boundaries,codex/capacity-target-note-20261011,未被当前 origin 分支覆盖；本轮未推送
+8ee392cfc42cee1352a4610d9eb2072a74fe03ac,test(fixtures): synthetic older source for final WPB4 gates,codex/offline-source-fixture-wpb4,未被当前 origin 分支覆盖；本轮未推送
+9f026652de46559ae38730cb507fc20a647b822f,test(fixtures): synthetic older source for WPB3 gates,codex/offline-source-fixture-wpb3,未被当前 origin 分支覆盖；本轮未推送
+815003cd2ef899ff075732f6d520b4f8f2c35f27,test fixture: older VERSION only for offline synthetic gates,codex/offline-source-fixture-20261010,未被当前 origin 分支覆盖；本轮未推送
+17f3662d92a1088d6185313b821e006dcbfa868a,test fixture: bind guard drill to an older synthetic source identity,codex/job-guard-source-fixture-20261009,未被当前 origin 分支覆盖；本轮未推送
+84eafac563ecff5cab921bd5a805044c0f79c423,runtime: record bounded Job context without changing process flags,codex/job-context-source-fixture-20261009,未被当前 origin 分支覆盖；本轮未推送
+df69184a3f0181669828f94199fd533f3832aa26,test fixture: distinguish local source version for real update drill,codex/fixed-exe-fixture-source-20261009 | codex/job-context-source-fixture-20261009,未被当前 origin 分支覆盖；本轮未推送
+b295a5772e5519097702a16e30a8b19e5d89afaf,docs: record verified onsite v4 production go-live evidence,codex/legacy-adoption-20261008,未被当前 origin 分支覆盖；本轮未推送
+c0b7b5b9d55716dc26831ca266ac22633d65638d,docs: authorize first super-admin bootstrap for Aidan02,codex/legacy-adoption-20261008,未被当前 origin 分支覆盖；本轮未推送
+2f5e1feb2b87f050c1a20d41ff6f814f3f41c293,docs: authorize bounded production go-live and data protection,codex/legacy-adoption-20261008,未被当前 origin 分支覆盖；本轮未推送
+6523e1088b8a021b924c123d79273994c5d4b40d,Add authorized onsite adoption support and 09.9 entry compatibility,codex/legacy-adoption-20261008,未被当前 origin 分支覆盖；本轮未推送
+3087d95bcdaf735cc841846e504693481194dc14,feat(delivery): retain and clean only qualified maintenance caches,codex/delivery-maintenance-cache-20261006 | codex/legacy-adoption-20261008,未被当前 origin 分支覆盖；本轮未推送
+42c7868d1e56b05922269cca54b6848b40a47417,docs: add source-grounded code wiki,codex/runtime-reliability-20260903,未被当前 origin 分支覆盖；本轮未推送
+9861ea6b52927d261eddd9f303f7df11952ff6ff,fix(legacy): respect runtime backoff and grace; offload gateway blocking work,codex/legacy-runtime-hotfix-v2-20260903,未被当前 origin 分支覆盖；本轮未推送
+19debc995732bda38243f7f16572a89b641d187d,chore(legacy): capture verified production three-file hotfix baseline,codex/legacy-runtime-hotfix-v2-20260903,未被当前 origin 分支覆盖；本轮未推送
+e832986211926a61ff8f2d4464ab341a4bfc8a2d,fix(release): prepare 2026.09.3 offline restart hotfix on 2026.08.4,codex/production-hotfix-20260903,未被当前 origin 分支覆盖；本轮未推送
+28ad93735e75a86891e1461e407dc62d0f7f03c9,fix(runtime): isolate health probes and persist canvas task receipts,codex/runtime-reliability-20260903,未被当前 origin 分支覆盖；本轮未推送
+28177bd41006bf19f59586228c7dff70afa6558c,chore: preserve local static changes before PR 79 sync,backup/static-local-before-pr79-sync-20260715,未被当前 origin 分支覆盖；本轮未推送
+48a12768206b8b74295ab1451415bda42334eee4,chore: preserve local workspace changes before main sync,backup/local-workspace-before-main-sync-20260715,未被当前 origin 分支覆盖；本轮未推送

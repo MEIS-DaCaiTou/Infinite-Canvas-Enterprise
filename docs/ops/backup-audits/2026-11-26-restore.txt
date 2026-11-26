@@ -1,0 +1,41 @@
+Infinite-Canvas-Enterprise 当前 f2ad 源码备份恢复说明
+日期：2026-11-26（Asia/Shanghai）
+
+远端仓库：https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise
+备份分支：codex/backup-20261126-precleanup
+源码快照：e98731c9865a5952fa6ecb8c6cf230be852aa3f8
+原始基线：d8210980d5c773ff91798cac20e8cfb5c14ee92b
+
+已完成：当前目录开工时 58 个已修改文件和 72 个未跟踪文件全部提交／推送。
+原暂存区：0。全提交树：926 个文件，GitHub 路径及 blob ID 逐项匹配。
+逐文件结果：同目录 2026-11-26-development-files.csv（130 行）。
+备份报告在后续独立文档提交中保存，分支包含源码快照和报告。
+本备份不代表已合并 main、功能审核通过、正式发行或生产部署。
+
+恢复到新的空目录（示例目标可自行选择）：
+git clone --single-branch --branch codex/backup-20261126-precleanup https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise.git Infinite-Canvas-Enterprise-restored
+cd Infinite-Canvas-Enterprise-restored
+git status --short
+git log -2 --oneline
+
+如只要固定的原始开发快照，可在新克隆目录执行：
+git checkout --detach e98731c9865a5952fa6ecb8c6cf230be852aa3f8
+
+源码恢复后按 README 和锁定运行时文档准备 CPython 3.14.6／依赖。
+Git 原有 autocrlf 规则可能转换文本行尾，不丢失源码内容。
+图片、MP4、PSD 库均已纳入源快照。58 个 pyc 与 5 个 pytest 缓存可重建，无需源码备份。
+
+这份源码备份没有包含数据库、API Key、用户资产、独立运行目录和外部实验记录。
+当前目录未发现上述敏感文件。D:/CodeProject/Infinite-Canvas-Enterprise-Artifacts/development/
+仍含其他运行副本、测试证据和辅助脚本，请不要根据当前源码备份直接清空该目录。
+
+以下其他工作树的未提交内容不在本次备份内：
+C:/Users/22259/.codex/worktrees/launcher-upgrade-maintenance/26-5-27-无限画布（46 个 status 条目）
+C:/Users/22259/.codex/worktrees/manual-acceptance/26-5-27-无限画布（134 个 status 条目）
+C:/Users/22259/.codex/worktrees/one-confirmation-upgrade/26-5-27-无限画布（1 个 status 条目）
+D:/CodeProject/Infinite-Canvas-Enterprise-Artifacts/t/CHAR1011/source（36 个 status 条目）
+数量按默认 status 统计，未跟踪目录没有全部展开。
+
+另有 27 个本地提交未被任何 origin 分支覆盖，详见同目录
+2026-11-26-other-local-commits.csv。本轮未推送这些其他本地历史。
+因此当前目录源码已保全，不等于 C、D 盘所有开发资料均已备份。
