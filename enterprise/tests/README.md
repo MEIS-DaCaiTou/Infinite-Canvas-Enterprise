@@ -2,6 +2,8 @@
 
 Reviewed: 2026-11-28
 
+SUP-04.VID／MKT-02.D（2026-11-28）：2 个真实视频及 5 个真实多尺寸图片任务完成。原 ID 续查、七项归档字节、实际时长／尺寸、两条浏览器播放与刷新及跨账号七任务／独立画布拒绝均按现有原入口验证；无新增业务代码，不重复执行全量协议回归。本批约 2.64 元／10 元，已经关闭；[准确覆盖与边界](../../docs/ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#video-multisize-live-20261128)不以模拟代替。MKT-03 本轮仅官网／目录及官方 OCR 契约调研，未列作已实现测试。
+
 SUP-03.Z 参考图清晰度：`test_image_reference_preparation.py` 覆盖限制内大图原字节直传、Alpha／EXIF／格式、总像素与单文件限额、同批缓存／重复顺序和 HTTP transport 前预算阻断；`test_seedream_dual_source_main.py` 验证实际 main 的原生提交／拆层／重开、无回执 JSON 路径不再走 1536 缩边，`test_seedream_dual_source.py` 分开输入／输出与渠道规则。旧尺寸迁移的 18 组结果固定取自原迁出前提交，移除对当前 HEAD 中旧函数的错误依赖。`node enterprise/tests/test_generation_task_center.js` 验证逐图尺寸、处理原因与旧记录／远程 URL 兼容。真实四张服装素材只离线核对当前请求字节，两类画布只用本地受控回执验收，无收费生成或全量回归；准确证据及边界见[原记录](../../docs/ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#reference-quality-20261128)。
 
 SUP-03.Z.O：`node enterprise/tests/test_canvas_output_presentation.js`（Python 入口 `test_canvas_output_presentation.py`）覆盖提交位置、倒序完成／部分产物无双卡、JSON 重开、冻结模型、原卡耗时／状态更新且媒体不重建、全部输入／去重／旧单图及预览切换不提交。11 月 28 日扩展实际智能布局／回执函数：正常受理不出节点状态行、首张保留固定三格／尺寸、部分最终去重及反序完成保存顺序、旧部分图不多占位、异常原 ID 查询保留、新节点单张／旧显式数量与模式切换。抽屉后续验证锚点缩略图／计数随切源更新、保持滑杆／缩放／模式、0／1 张隐藏和全部 7 张仍可选择；不为纯 CSS 写镜像测试，悬停／滚动、四类下拉／边界与新建节点默认数量在原页面核验。原 performance、image_timing 与 output_video_preview 检查分别复用提交前准备／原 ID 恢复／媒体交互，避免呈现修复改变并行或续查。页面证据见[原输出记录](../../docs/ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#output-review-20261127)及[智能反馈记录](../../docs/ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#smart-generation-feedback-20261128)；本地合成回执不代表新供应商真实生成。
