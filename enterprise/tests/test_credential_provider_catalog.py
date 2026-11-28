@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 from enterprise.providers.zhenzhen import is_zhenzhen
+from enterprise.providers.suppliers import supplier_id, supports_managed_source, public_image_profiles
 
 
 @pytest.mark.parametrize('provider,supported', [
@@ -15,10 +16,11 @@ from enterprise.providers.zhenzhen import is_zhenzhen
 def test_public_provider_reports_real_source_capability(provider, supported):
     tree = ast.parse((Path(__file__).resolve().parents[2] / 'main.py').read_text(encoding='utf8'))
     function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'public_provider')
-    namespace = {'is_zhenzhen':is_zhenzhen,
+    namespace = {'is_zhenzhen':is_zhenzhen, 'builtin_supplier_id': supplier_id,
         'provider_env_key_value':lambda _: '', 'mask_secret':lambda _: '',
         'provider_key_env':lambda _: 'TEST_ENV',
-        'zhenzhen_public_image_profiles':lambda _: {}, 'zhenzhen_public_video_profiles':lambda _: {}}
+        'supports_managed_source': supports_managed_source, 'builtin_public_image_profiles': public_image_profiles,
+        'zhenzhen_public_video_profiles':lambda _: {}}
     exec(compile(ast.Module(body=[function],type_ignores=[]), 'main.py', 'exec'),namespace)
     result = namespace['public_provider'](provider)
     assert result['managed_source_supported'] is supported

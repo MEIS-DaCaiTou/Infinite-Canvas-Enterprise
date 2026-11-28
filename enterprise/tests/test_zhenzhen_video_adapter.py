@@ -126,11 +126,11 @@ def reply(request):
     if request.method=='POST':
         assert request.url.path=='/v2/videos/generations'
         body=json.loads(request.content)
-        assert body['model']=='veo3-fast' and body['seed']==0
+        assert body['model']=='veo3-fast' and 'seed' not in body and 'duration' not in body
         return httpx.Response(200,json={'task_id':'accepted-video'})
     receipt=main.CANVAS_TASK_JOURNAL.get(id_path.read_text())['provider_receipts'][0]
     assert receipt['upstream_task_id']=='accepted-video' and receipt['video_v2']
-    assert receipt['video_query_mode']=='generic'
+    assert receipt['video_query_mode']=='zhenzhen-unified-v2'
     assert 'fixture-only-key' not in json.dumps(receipt)
     assert request.url.path=='/v2/videos/generations/accepted-video'
     step+=1
@@ -143,7 +143,7 @@ async def archive(url):
     return '/output/fixture.mp4'
 main.save_remote_video_to_output=archive
 async def run():
-    task=await main.create_canvas_video_task(main.CanvasVideoRequest(prompt='private-prompt',provider_id='zhenzhen',model='veo3-fast',seed=0),None)
+    task=await main.create_canvas_video_task(main.CanvasVideoRequest(prompt='private-prompt',provider_id='zhenzhen',model='veo3-fast',duration=8),None)
     id_path.write_text(task['task_id'])
     await asyncio.gather(*main.CANVAS_TASK_RUNNERS)
     record=main.CANVAS_TASK_JOURNAL.get(task['task_id'])

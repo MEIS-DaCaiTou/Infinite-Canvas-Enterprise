@@ -1,7 +1,7 @@
 """Video result URLs, excluding cover/last-frame images and reference metadata."""
 from urllib.parse import urlsplit
 
-CONTAINERS = ("videos", "outputs", "data", "result", "content")
+CONTAINERS = ("videos", "outputs", "data", "result", "content", "creations", "task_result")
 VIDEO_URL_KEYS = (
     "url", "video_url", "videoUrl", "mp4_url", "mp4Url", "output", "output_url", "outputUrl",
     "download_url", "downloadUrl", "video", "src", "uri", "path",

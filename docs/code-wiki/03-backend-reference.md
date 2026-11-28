@@ -1,5 +1,7 @@
 # 后端类与函数参考
 
+2026-11-27 SUP-03.Z.T：`canvas_image_recovery.image_task_timing` 从原创建／结果时间或完整子回执结束时间投影可选 timing；原 GET 与手动续查返回该展示事实，不按查看／续查 updated_at 结算，不写新表或旧结果。`ImageReceiptSink.identify` 补 x-oneapi-request-id，请求追踪 ID 不等于可异步查询的 upstream_task_id。两类画布由共享 CanvasTaskQuery 换算毫秒；本地验证与原生产回执核对的边界见[原反馈记录](../ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#image-overnight-timing-20261127)。
+
 2026.11.1新增POST /enterprise/api/admin/comfy-queue/{task_id}/release：系统管理员验证后转原内部队列服务，Journal在原锁内幂等写queue_release，Queue排除其本地占用并wake。404不存在、409运行/排队/已明确结束不适用；不重提、不调用后端取消，不改原失败事实。已释放且有prompt_id仍可查原任务，真实后端排队仍占算力容量；复用db.log_action，不新增业务表或记录备份。
 
 COMFY1103：providers.comfyui.ComfyNotSubmittedError只覆盖连接建立前的已知错误，main.run_canvas_comfy_task记503/COMFY_NOT_SUBMITTED、failed/not_submitted、recovery_required=false；原ComfyQueue据原终态释放预算。ReadTimeout、ProtocolError/重置、未分类ConnectionError继续未知受理，无新重试。generation_tasks.describe_task复用public_comfy_task输出can_cancel/cancellation_pending，归档阶段及已取消/明确失败不提供取消；原内部/公开逐笔取消接口与权限不变。生产旧记录仍原样，准确现场证据/本地测试/待交付边界见收敛记录。
@@ -237,6 +239,8 @@ Zhenzhen `image_query_status` 按维护的异步查询状态区分处理中/明�
 
 
 ### 视频持久任务候选（2026-10-16，依赖 #163）
+
+2026-11-26 SUP-04.VID 本地候选：贞贞精确视频能力定义在 `providers/zhenzhen_video_profiles.py`，验证／JSON 或 multipart 参数映射在 `providers/zhenzhen_video.py`；`providers/zhenzhen_video_execution.py` 注入原凭据、素材解析、受理及归档，main 不再重复构造贞贞请求。`video_reference_preparation.py` 对本地／公开素材解码和探测，不拥有素材授权或任务；视频／音频输入需要服务进程可用的 `ffprobe`。`CanvasVideoRequest.video_channel` 是 Sora 同名分组的可选请求字段，选 Sora 时必选，不迁移业务表。CanvasVideoTasks 新任务在绑定前执行注入校验，已有任务身份优先返回；原受理路由／凭据继续用于 GET 续查，不因新能力映射重投。前端通过原公开配置的 `builtin_model_video_profiles` 共用规则。型号和真实／模拟／现场边界见[原 VID 记录](../ops/PRODUCT-INTEGRATION-FIXES-2026-10-13.md#sup-04-vid)，未发行到正式 11.3。
 
 `enterprise/canvas_video_tasks.py` 在现有 v1 journal/owner 映射上登记视频任务，提交前写归属、轮询前写受理 ID 与查询绑定；`enterprise/providers/video_tasks.py` 只做单次 GET 状态识别。main 保留现有视频参数构造并接线 `/api/canvas-video-tasks`、`/{task_id}`、`/{task_id}/reconcile`。原任务续查复用 #163 调度器和输出归档，不能重新提交生成；无 ID/协议不明保留待核对。覆盖与验证限制见 [原任务记录](../ops/PAID-SUBMISSION-STOPLOSS-2026-10-13.md#2026-10-16-视频持久任务与原任务续查候选)，不属于正式 10.2。
 

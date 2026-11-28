@@ -79,6 +79,30 @@ def test_one_acceptance_for_repeated_request_and_unknown_response_never_replays(
     asyncio.run(run())
 
 
+def test_preflight_precedes_new_binding_but_never_revalidates_an_existing_task(tmp_path):
+    async def run():
+        async def generate(_): return {'videos':['/output/paid.mp4']}
+        app, tasks, _, _ = service(tmp_path, generate)
+        events=[]
+        app.prepare_binding=lambda *_: events.append('binding')
+        def validate(provider, request):
+            events.append('validate')
+            assert provider['id'] == request.provider_id
+            if request.model == 'invalid': raise HTTPException(400,'invalid model')
+        app.validate=validate
+        invalid=payload();invalid.model='invalid'
+        with pytest.raises(HTTPException): await app.create(invalid,'')
+        assert events == ['validate'] and not tasks
+        events.clear()
+        result=await app.create(payload(),'')
+        assert events == ['validate','binding']
+        await asyncio.gather(*tasks)
+        events.clear()
+        assert (await app.create(invalid,''))['task_id'] == result['task_id']
+        assert not events, 'idempotent read cannot turn an accepted task into a new validation or submission'
+    asyncio.run(run())
+
+
 def test_accepted_identity_survives_restart_archive_failure_and_single_flight(tmp_path):
     async def run():
         async def generate(_):

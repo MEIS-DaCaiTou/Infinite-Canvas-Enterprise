@@ -72,6 +72,11 @@ const pendingSandbox = {
   logged: [],
   addSmartGenerationLog: entry => pendingSandbox.logged.push(entry),
 };
+const queryContext = {window:{}};
+vm.runInNewContext(fs.readFileSync('static/js/canvas-task-query.js','utf8'), queryContext);
+vm.runInNewContext(fs.readFileSync('static/js/canvas-output-presentation.js','utf8'), queryContext);
+pendingSandbox.CanvasTaskQuery = queryContext.window.CanvasTaskQuery;
+pendingSandbox.CanvasOutputPresentation = queryContext.window.CanvasOutputPresentation;
 vm.createContext(pendingSandbox);
 vm.runInContext([
   extractFunction('startSmartPendingGenerationLog'),
@@ -105,6 +110,20 @@ assert.deepEqual(
   'completed multi-task recovery must retain every output URL',
 );
 assert.equal(pendingNode.pendingGenerationLog, undefined, 'completed recovery must clear its transient log state');
+
+pendingSandbox.nowMs = () => 56302000;
+const overnightNode = {id:'overnight', images:[], pending:2, pendingTasks:[{taskId:'a'}, {taskId:'b'}], runStartedAt:1000000};
+pendingSandbox.startSmartPendingGenerationLog(overnightNode, {}, 1000000);
+pendingSandbox.finalizeSmartPendingTask(overnightNode,'a',[{url:'/output/a.png'}],'image',
+  {timing:{started_at:1000,finished_at:1099}});
+assert.equal(overnightNode.runFinishedAt,undefined,'first completion must leave the batch pending');
+// Reload after the first result, with the stored log timing but no active browser state.
+const reloadedNode = JSON.parse(JSON.stringify(overnightNode));
+pendingSandbox.finalizeSmartPendingTask(reloadedNode,'b',[{url:'/output/b.png'}],'image',
+  {timing:{started_at:1001,finished_at:1106}});
+assert.equal(reloadedNode.runElapsedMs,106000);
+assert.equal(pendingSandbox.logged.at(-1).runMs,106000,'overnight time must not enter the history');
+assert.equal(pendingSandbox.logged.at(-1).outputs.length,2);
 
 for (const expected of [
   'canvas.logs = normalizeSmartGenerationLogs(canvas.logs);',

@@ -1,13 +1,14 @@
 """Prepare submission copies once per image batch; never replace source assets.
 
-1536px, 8MiB per prepared file and 32MiB encoded input are application policy,
-not claimed supplier hard limits. Existing authorization and URL import remain
-with the caller. Transparent images keep Alpha, including palette/LA sources.
+Keep original bytes unless a documented input limit or format/orientation
+conversion requires a copy. The 32MiB request budget is application policy,
+not a supplier image-size limit. Authorization and URL import stay with callers.
 """
 import asyncio
 import base64
 from contextlib import ExitStack, asynccontextmanager
 from io import BytesIO
+from math import floor, sqrt
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -36,10 +37,11 @@ async def edit_reference_files(images, masks, *, preparation, resolve_image, res
 
 
 class ImageReferencePreparation:
-    def __init__(self, references, resolve_file, *, observe=None, max_edge=1536,
-                 max_file_bytes=8 * 1024 * 1024, max_encoded_bytes=32 * 1024 * 1024):
+    def __init__(self, references, resolve_file, *, observe=None, limits=None,
+                 max_encoded_bytes=32 * 1024 * 1024):
         self.references, self.resolve_file, self.observe = references, resolve_file, observe
-        self.max_edge, self.max_file_bytes, self.max_encoded_bytes = max_edge, max_file_bytes, max_encoded_bytes
+        self.limits = dict(limits or {})
+        self.max_encoded_bytes = max_encoded_bytes
         self.lock = asyncio.Lock()
         self.prepared = None
 
@@ -77,32 +79,68 @@ class ImageReferencePreparation:
                 image.load()
                 source_size = image.size
                 has_alpha = 'A' in image.getbands() or 'transparency' in image.info
-                keep_original = (opened.format in {'PNG', 'JPEG', 'WEBP'} and opened.getexif().get(274, 1) == 1
-                                 and max(source_size) <= self.max_edge and len(source) <= self.max_file_bytes)
+                limits, reasons = self.limits, []
+                width, height = source_size
+                if (limits.get('min_edge') and min(source_size) < limits['min_edge']
+                        or limits.get('min_pixels') and width * height < limits['min_pixels']):
+                    raise HTTPException(400, '参考图分辨率低于当前模型输入要求，请选择清晰原图；未提交生成')
+                if limits.get('max_aspect') and max(source_size) > min(source_size) * limits['max_aspect']:
+                    raise HTTPException(400, '参考图宽高比超过当前模型输入要求，请调整素材；未裁剪或提交生成')
+                scale = 1.0
+                if limits.get('max_edge') and max(source_size) > limits['max_edge']:
+                    scale = min(scale, limits['max_edge'] / max(source_size))
+                    reasons.append('model_edge')
+                if limits.get('max_pixels') and width * height > limits['max_pixels']:
+                    scale = min(scale, sqrt(limits['max_pixels'] / (width * height)))
+                    reasons.append('model_pixels')
+                max_file_bytes = limits.get('max_file_bytes')
+                if max_file_bytes and len(source) > max_file_bytes:
+                    reasons.append('model_file_bytes')
+                formats = limits.get('formats') or ['PNG', 'JPEG', 'WEBP']
+                if opened.format not in formats:
+                    reasons.append('format')
+                if opened.getexif().get(274, 1) != 1:
+                    reasons.append('orientation')
+                keep_original = not reasons
                 if keep_original:
                     content = source
                     mime = {'PNG': 'image/png', 'JPEG': 'image/jpeg', 'WEBP': 'image/webp'}[opened.format]
                 else:
                     image = image.convert('RGBA' if has_alpha else 'RGB')
-                    image.thumbnail((self.max_edge, self.max_edge), Image.Resampling.LANCZOS)
+                    if scale < 1:
+                        image = image.resize((max(1, floor(width * scale)), max(1, floor(height * scale))), Image.Resampling.LANCZOS)
+                    # Normalize formats/EXIF without throwing away resolution or
+                    # adding JPEG loss. Only an actual file-byte cap permits a
+                    # high-quality re-encode, then proportional downscaling.
+                    output_format = 'PNG'
                     while True:
                         buffer = BytesIO()
-                        image.save(buffer, format='PNG' if has_alpha else 'JPEG', **({} if has_alpha else {'quality': 88, 'optimize': True}))
+                        options = {'quality': 95, 'subsampling': 0, 'optimize': True} if output_format == 'JPEG' else {}
+                        image.save(buffer, format=output_format, **options)
                         content = buffer.getvalue()
-                        if len(content) <= self.max_file_bytes:
+                        if not max_file_bytes or len(content) <= max_file_bytes:
                             break
-                        edge = int(max(image.size) * .85)
-                        if edge < 32:
-                            raise HTTPException(413, '参考图提交副本仍超过项目体积限制，请减少图片尺寸；未提交生成')
-                        image.thumbnail((edge, edge), Image.Resampling.LANCZOS)
-                    mime = 'image/png' if has_alpha else 'image/jpeg'
+                        if 'model_file_bytes' not in reasons:
+                            reasons.append('model_file_bytes')
+                        if not has_alpha and output_format == 'PNG':
+                            output_format = 'JPEG'
+                            continue
+                        ratio = min(.85, sqrt(max_file_bytes / len(content)) * .95)
+                        target = (max(1, floor(image.width * ratio)), max(1, floor(image.height * ratio)))
+                        if (target == image.size or min(target) < limits.get('min_edge', 1)
+                                or target[0] * target[1] < limits.get('min_pixels', 1)):
+                            raise HTTPException(413, '参考图无法同时满足当前模型的体积与分辨率要求，请调整素材；未提交生成')
+                        image = image.resize(target, Image.Resampling.LANCZOS)
+                    mime = 'image/png' if output_format == 'PNG' else 'image/jpeg'
         except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as exc:
             raise HTTPException(400, '参考图无法读取，请重新导入图片；未提交生成') from exc
         return {'content': content, 'mime': mime, 'name': 'reference.' + mime.split('/')[1],
                 'data_url': f'data:{mime};base64,' + base64.b64encode(content).decode('ascii'),
                 'meta': {'transport': 'file', 'source_bytes': len(source), 'prepared_bytes': len(content),
                          'source_width': source_size[0], 'source_height': source_size[1],
-                         'width': image.width, 'height': image.height, 'alpha': has_alpha, 'mime': mime}}
+                         'width': image.width, 'height': image.height, 'alpha': has_alpha, 'mime': mime,
+                         'processing': 'original' if keep_original else 'resized' if image.size != source_size else 'converted',
+                         'reasons': reasons}}
 
     def _prepare(self):
         cache, items, encoded_size = {}, [], 0
@@ -114,10 +152,10 @@ class ImageReferencePreparation:
             encoded_size += len(item['data_url'].encode('utf-8'))
             items.append({'index': index, **item['meta']})
         if encoded_size > self.max_encoded_bytes:
-            raise HTTPException(413, '参考图提交副本合计超过项目 32MiB 限制，请减少素材体积；未截断参考图或提交生成')
+            raise HTTPException(413, f'参考图编码后合计超过项目 {self.max_encoded_bytes / 1048576:g}MiB 请求预算，请减少素材数量或体积；未自动降低画质、截断参考图或提交生成')
         summary = {'count': len(items), 'source_bytes': sum(item['source_bytes'] for item in items),
                    'prepared_bytes': sum(item['prepared_bytes'] for item in items), 'encoded_bytes': encoded_size,
-                   'policy': {'max_edge': self.max_edge, 'max_file_bytes': self.max_file_bytes, 'max_encoded_bytes': self.max_encoded_bytes},
+                   'policy': {**self.limits, 'max_encoded_bytes': self.max_encoded_bytes},
                    'items': items}
         if self.observe:
             self.observe(summary)

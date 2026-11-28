@@ -97,6 +97,19 @@
         if (!response.ok || !data.status) throw Object.assign(new Error(typeof data.detail === 'string' ? data.detail : '平台任务暂不可读'), {status:response.status});
         return data;
     }
+    function imageResult(task) {
+        // Older servers already return these timestamps in the durable receipt.
+        return {...(task.result || {}), timing:task.timing || {
+            started_at:task.created_at,
+            finished_at:['succeeded','partial'].includes(task.status) ? task.result?.timestamp : undefined
+        }};
+    }
+    function runTiming(timing) {
+        const startedAt = Number(timing?.started_at) * 1000;
+        const finishedAt = Number(timing?.finished_at) * 1000;
+        return Number.isFinite(startedAt) && startedAt > 0 && Number.isFinite(finishedAt) && finishedAt >= startedAt
+            ? {startedAt, finishedAt, runMs:Math.round(finishedAt - startedAt)} : null;
+    }
     async function submitImage(request, {fetcher=fetch, wait=delay}={}) {
         try {
             const response = await fetcher('/api/canvas-image-tasks', {
@@ -144,5 +157,5 @@
         throw new Error('平台仍在跟踪原任务，请在“生成任务”中查看。');
     }
 
-    window.CanvasTaskQuery = {query, runVideo, waitVideo, queryVideo, requestId, imageRequest, readImage, submitImage, imageStatus, waitImage};
+    window.CanvasTaskQuery = {query, runVideo, waitVideo, queryVideo, requestId, imageRequest, readImage, imageResult, runTiming, submitImage, imageStatus, waitImage};
 })();

@@ -939,7 +939,9 @@ async def exercise():
     detail=describe_task(reopened.get(task_id),detail=True)
     assert detail['status']=='partial' and detail['output_count']==3
     projected=await main.get_canvas_image_task(task_id)
-    assert projected['status']=='partial' and projected['result']==result
+    assert projected['status']=='partial'
+    assert projected['result']=={key:value for key,value in result.items() if key != 'timing'}
+    assert projected['timing']==result['timing']
     assert sorted(attempt['upstream_task_id'] for attempt in detail['attempts'])==['','upstream-0','upstream-1','upstream-2']
     duplicate=await main.create_canvas_image_task(request,None)
     assert duplicate['task_id']==task_id and post_count==4

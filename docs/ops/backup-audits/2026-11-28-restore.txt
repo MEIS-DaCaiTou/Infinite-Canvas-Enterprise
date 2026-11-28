@@ -1,0 +1,19 @@
+Infinite-Canvas-Enterprise 2026-11-28 增量恢复说明
+状态：正在提交与推送，完成后补充实际源码提交。
+仓库：https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise
+分支：codex/zhenzhen-video-compat-20261126
+原基线：b5251ccc0a7b430318e1f0f96a1419556f8577ff
+
+本批覆盖开工 49 个修改和 10 个未跟踪文件，包含视频适配、任务恢复、画布输出与参考图清晰度。
+同目录 CSV 列出全部 59 项；本说明与 CSV 是额外的两份保全记录。
+既有 11 月 26 日备份分支保持不变。
+
+完成推送后，在新的空目录恢复：
+git clone --single-branch --branch codex/zhenzhen-video-compat-20261126 https://github.com/MEIS-DaCaiTou/Infinite-Canvas-Enterprise.git Infinite-Canvas-Enterprise-20261128
+cd Infinite-Canvas-Enterprise-20261128
+git status --short
+git log -2 --oneline
+
+不要对现有开发目录执行 reset 或 clean。需要固定本批版本时，在新克隆目录检出完成后登记的源码提交。
+运行时按项目文档准备 CPython 3.14.6 和锁定依赖；Git 的文本行尾归一化不等同源码丢失。
+本批是源码保全，不包含运行数据库、API Key、用户上传素材或外部实验产物，也不代表功能验收或生产交付。

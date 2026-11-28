@@ -45,13 +45,14 @@ def public_video_task(record):
 
 class CanvasVideoTasks:
     def __init__(self, journal, resolve_provider, generate, inspect, archive, archived, publish, schedule, notify,
-                 query_mode=lambda provider, model: "generic", enqueue=None, prepare_binding=None):
+                 query_mode=lambda provider, model: "generic", enqueue=None, prepare_binding=None, validate=None):
         self.journal, self.resolve_provider, self.generate, self.inspect = journal, resolve_provider, generate, inspect
         self.archive, self.archived, self.publish = archive, archived, publish
         self.schedule, self.notify = schedule, notify
         self.query_mode = query_mode
         self.enqueue = enqueue
         self.prepare_binding = prepare_binding
+        self.validate = validate
         self.accept_lock = asyncio.Lock()
         self.active = {}
 
@@ -68,6 +69,8 @@ class CanvasVideoTasks:
                 if existing.get("type") != "video" or existing.get("enterprise_user_id", "") != owner:
                     raise HTTPException(403, "Task owner mismatch")
                 return {"task_id": task_id, "status": existing["status"]}
+            if self.validate:
+                self.validate(self.resolve_provider(payload.provider_id), payload)
             binding = await asyncio.to_thread(self.prepare_binding, task_id, payload, owner) if self.prepare_binding else None
             await asyncio.to_thread(create_task_receipt, self.journal, {
                 **({'billing_context':binding} if binding else {}),

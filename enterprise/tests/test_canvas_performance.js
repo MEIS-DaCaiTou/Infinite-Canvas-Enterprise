@@ -10,7 +10,8 @@ function load(ctx,name){
 function fixture({size=async()=>'1024x1024',save=async()=>true,result=async()=>({images:['/output/synthetic.png']})}={}){
     const node={id:'gen',type:'generator',count:4,model:'gpt-image-2'},calls=[],timers=[],errors=[];
     const ctx=vm.createContext({console,URLSearchParams,WeakSet,performance,crypto:require('node:crypto').webcrypto,
-        canvas:{id:'canvas'},nodes:[node],savingCanvasNow:false,
+        canvas:{id:'canvas'},nodes:[node],savingCanvasNow:false,apiProviders:[{id:'zhenzhen'}],
+        CanvasModelPicker:{imageParameters:()=>({}),profileFor:()=>null,sizeError:()=>'',validationNotice:value=>value},
         saveCanvas:async()=>{calls.push('save');return save();},sleep:async()=>{},
         checkTextSelection:()=>true,cascadeTargetIdFromOptions:()=>'',generatorSources:()=>[{prompt:'synthetic',refs:[]}],
         orderedSources:(_n,s)=>s,imageRefsOnly:()=>[],outputForNode:()=>null,runSnapshot:(_node,prompt)=>({prompt}),
@@ -27,6 +28,7 @@ function fixture({size=async()=>'1024x1024',save=async()=>true,result=async()=>(
         }
     });
     ctx.window=ctx;vm.runInContext(fs.readFileSync(path.join(root,'canvas-media-retention.js'),'utf8'),ctx);
+    vm.runInContext(fs.readFileSync(path.join(root,'canvas-output-presentation.js'),'utf8'),ctx);
     vm.runInContext(fs.readFileSync(path.join(root,'task-canvas-context.js'),'utf8'),ctx);
     vm.runInContext(fs.readFileSync(path.join(root,'canvas-task-query.js'),'utf8'),ctx);
     for(const name of ['taskCanvasSource','runCanvasImageBatch','runGenerator','updateCanvasImageStatus','failCanvasImageTask'])load(ctx,name);
@@ -82,9 +84,9 @@ async function run(){
     const dims=vm.createContext({getImageDimensions:async url=>url==='portrait'?{width:800,height:1200}:{width:1600,height:900},
         pendingPreviewSizeFromRefs:()=>{throw new Error('approximate or stale preview sizes cannot construct a paid request');},
         ratioPartsFromDimensions:(width,height)=>({width,height}),apiImageSize:(_ratio,_resolution,custom)=>custom});
-    load(dims,'generatorSizeForRun');
-    assert.equal(await dims.generatorSizeForRun({ratio:'source',resolution:'1k'},[{url:'portrait'}]),'800:1200');
-    assert.equal(await dims.generatorSizeForRun({ratio:'source',resolution:'1k'},[{url:'landscape'}]),'1600:900');
+    load(dims,'gcdInt');load(dims,'generatorSizeForRun');
+    assert.equal(await dims.generatorSizeForRun({ratio:'source',resolution:'1k'},[{url:'portrait'}]),'2:3');
+    assert.equal(await dims.generatorSizeForRun({ratio:'source',resolution:'1k'},[{url:'landscape'}]),'16:9');
     load(dims,'outputDomKeyForItem');dims.outputUrlValue=item=>typeof item==='string'?item:item.url;
     const beforeKeys=['image','video'].map(item=>dims.outputDomKeyForItem(item,new Map()));
     assert.equal(beforeKeys[1],dims.outputDomKeyForItem('video',new Map()),'a different preceding result cannot change video identity');

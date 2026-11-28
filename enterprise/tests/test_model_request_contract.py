@@ -345,12 +345,12 @@ def test_composer_transparency_is_sent_in_multipart_edits(builders, tmp_path):
 
 @pytest.mark.parametrize('model', ['seedream-v5.5', 'seedream-v5.5/layer-decomposition'])
 @pytest.mark.parametrize('background', ['auto', 'opaque', 'transparent'])
-def test_seedream55_native_background_uses_one_json_generation(builders, model, background):
+def test_seedream55_background_contract_respects_channel_capability(builders, model, background):
     import json
     env, calls, _ = builders
     env['fixture_provider'].update(id='zhenzhen', image_profile={})
     layers = model.endswith('/layer-decomposition')
-    if layers and background != 'auto':
+    if (layers and background != 'auto') or (not layers and background == 'transparent'):
         with pytest.raises(HTTPException):
             asyncio.run(env['generate_ai_image']('fixture', 'auto', '', model,
                 [{'url':'data:image/png;base64,ZmFrZQ=='}], 'zhenzhen', {'background_mode':background}))

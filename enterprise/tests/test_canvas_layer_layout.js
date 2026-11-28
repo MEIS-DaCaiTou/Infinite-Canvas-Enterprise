@@ -18,6 +18,7 @@ function finish(layerResult){
     const node={layerParentNodeId:layerResult?'parent':undefined,w:340,h:258,images:[],pending:1,pendingTasks:[{taskId:'one'}]};
     vm.runInNewContext(complete+'\nfinalizeSmartPendingTask(node,"one",[],"image",{recordLog:false});',{
         node,smartPendingTasks:n=>n.pendingTasks || [],appendSmartPendingResults:()=>true,nowMs:()=>100,
+        CanvasTaskQuery:{runTiming:()=>null},pendingSmartGenerationLog:()=>({}),
         mediaNodeDefaultScale:()=>1,MEDIA_NODE_DEFAULT_SCALE:1,MEDIA_GROUP_PREVIOUS_DEFAULT_SCALE:.5,MEDIA_GROUP_DEFAULT_SCALE:.5
     });return node;
 }

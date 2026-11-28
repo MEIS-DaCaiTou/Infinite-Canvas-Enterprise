@@ -47,10 +47,16 @@ def json_video_body(payload, model, image_payload):
     return body
 
 
-async def generate_json_video(client, urls, headers, body, *, extract_task_id, output_urls, accepted, poll):
+async def generate_json_video(client, urls, headers, body, *, extract_task_id, output_urls, accepted, poll, multipart_files=None):
     raw = None
     for index, submit_url in enumerate(urls):
-        response = await client.post(submit_url, headers=headers, json=body)
+        if multipart_files is None:
+            response = await client.post(submit_url, headers=headers, json=body)
+        else:
+            file_headers = {key: value for key, value in headers.items() if key.lower() != 'content-type'}
+            # A text-only multipart request still needs a multipart boundary.
+            fields = [(key, (None, str(value))) for key, value in body.items()]
+            response = await client.post(submit_url, headers=file_headers, files=fields + multipart_files)
         if response.status_code >= 400:
             if response.status_code in (404, 405) and index < len(urls) - 1:
                 continue

@@ -27,7 +27,7 @@
         "api.baseUrl": { zh: "请求地址", en: "Base URL" },
         "api.protocol": { zh: "协议", en: "Protocol" },
         "api.protocolOpenAI": { zh: "OpenAI 直连", en: "OpenAI Direct" },
-        "api.protocolApimart": { zh: "异步协议", en: "Async Protocol" },
+        "api.protocolApimart": { zh: "APIMart 专用协议", en: "APIMart Protocol" },
         "api.protocolGemini": { zh: "Gemini 协议", en: "Gemini Protocol" },
         "api.protocolVolcengine": { zh: "火山引擎协议", en: "Volcengine Protocol" },
         "api.key": { zh: "API Key", en: "API Key" },

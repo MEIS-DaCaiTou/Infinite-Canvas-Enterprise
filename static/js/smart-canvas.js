@@ -327,6 +327,7 @@ let settings = {
     videoProvider:'',
     videoModel:'',
     videoDuration:5,
+    videoChannel:'',
     videoAspect:'16:9',
     videoResolution:'',
     videoEnhancePrompt:false,
@@ -663,7 +664,11 @@ function settingsForStorage(source=settings){
 function normalizeSmartVideoModeSettings(target, preferMultimodal=false){
     if(!target || typeof target !== 'object') return target;
     target.videoUseFrameRoles = Boolean(target.videoUseFrameRoles);
-    if(preferMultimodal && !target.videoUseFrameRoles && target._videoMultimodalUserSet !== true) target.videoMultimodal = true;
+    const profile = target.engine === 'api'
+        ? window.CanvasModelPicker?.videoProfileFor(apiProviderById(target.videoProvider), target.videoModel, target.videoChannel) || {} : {};
+    const supported = window.CanvasModelPicker?.videoToggleSupported(profile, 'videoMultimodal') !== false;
+    if(!supported && target._videoMultimodalUserSet !== true) target.videoMultimodal = false;
+    else if(supported && preferMultimodal && !target.videoUseFrameRoles && target._videoMultimodalUserSet !== true) target.videoMultimodal = true;
     else target.videoMultimodal = Boolean(target.videoMultimodal);
     if(target.videoUseFrameRoles) target.videoMultimodal = false;
     return target;
@@ -1026,7 +1031,7 @@ function applyRecentSmartSettingsForCurrentMode(){
         sanitizeSmartApiSelection(settings);
         return;
     }
-    settings = {...settings, ...saved, engine:requestedEngine};
+    settings = {...settings, ...saved, count:settings.count ?? 1, engine:requestedEngine};
     if(isApiLikeEngine(requestedEngine)) settings.apiKind = requestedApiKind;
     clearVolcengineSelectionOutsideVolcengine(settings);
     sanitizeSmartApiSelection(settings);
@@ -1178,6 +1183,7 @@ function smartSettingsForNode(node){
     const base = {
         ...cloneSmartSettings(canvasDefaultSmartSettings || initialSmartSettings),
         ...recentSettings,
+        count:1,
         ...nodeSettings
     };
     normalizeSmartVideoModeSettings(base, true);
@@ -1938,7 +1944,7 @@ function imageLayout(images, scale=1, node=null){
         }
         return {cols:1, rows:1, width:Math.round(Number(node.w) || smartLoopWidth(node)), height:Math.round(Math.max(Number(node.h) || 0, smartLoopHeight(node))), thumb:96, single:true};
     }
-    const count = (images || []).length;
+    const count = CanvasOutputPresentation.smartEntries({...node,images:images || []}).length;
     const s = node?.type === 'smart-image' || !node?.type ? mediaNodeDefaultScale(node) : (Number.isFinite(scale) && scale > 0 ? scale : 1);
     if(count === 0){
         const explicitW = Number(node?.w);
@@ -2579,19 +2585,28 @@ function renderVideoModelControl(models){
         <div class="smart-popover compact-popover">
             <div class="smart-popover-title">${escapeHtml(tr('smart.videoModel'))}</div>
             <div class="model-list">
-                ${models.map(m => `<button type="button" class="direct-option ${m === settings.videoModel ? 'active' : ''}" data-smart-param="videoModel" data-smart-value="${escapeHtml(m)}"><span>${escapeHtml(m)}</span></button>`).join('') || `<div class="muted-note">${escapeHtml(tr('smart.noVideoModel'))}</div>`}
+                ${models.map(m => {
+                    const supported = window.CanvasModelPicker?.videoProfileFor(apiProviderById(settings.videoProvider), m)?.supported !== false;
+                    return `<button type="button" ${supported ? '' : 'disabled'} class="direct-option ${m === settings.videoModel ? 'active' : ''}" data-smart-param="videoModel" data-smart-value="${escapeHtml(m)}"><span>${escapeHtml(m)}${supported ? '' : '（尚未适配）'}</span></button>`;
+                }).join('') || `<div class="muted-note">${escapeHtml(tr('smart.noVideoModel'))}</div>`}
             </div>
         </div>
     </div>`;
 }
 function currentVideoProfile(){
     return settings.engine === 'api' && settings.apiKind === 'video'
-        ? window.CanvasModelPicker?.videoProfileFor(apiProviderById(settings.videoProvider), settings.videoModel) || {} : {};
+        ? window.CanvasModelPicker?.videoProfileFor(apiProviderById(settings.videoProvider), settings.videoModel, settings.videoChannel) || {} : {};
+}
+function renderVideoChannelControl(){
+    const profile = window.CanvasModelPicker?.videoProfileFor(apiProviderById(settings.videoProvider), settings.videoModel) || {};
+    if(!profile.variants) return '';
+    return `<div class="smart-control"><button class="smart-pill" type="button"><span>${escapeHtml(profile.channel_labels?.[settings.videoChannel] || '选择通道')}</span></button><div class="smart-popover compact-popover"><div class="muted-note">${escapeHtml(profile.channel_note || '')}</div>${Object.keys(profile.variants).map(value=>`<button type="button" class="direct-option ${settings.videoChannel === value ? 'active' : ''}" data-smart-param="videoChannel" data-smart-value="${escapeHtml(value)}">${escapeHtml(profile.channel_labels?.[value] || value)}</button>`).join('')}</div></div>`;
 }
 function renderVideoDurationControl(){
     const profile = currentVideoProfile(), min = profile.duration_min || 1, max = profile.duration_max || 60;
-    const v = Number(settings.videoDuration) || 5;
-    const quick = [3, 4, 5, 6, 8, 10, 12, 15].filter(value => value >= min && value <= max);
+    const v = Number(settings.videoDuration ?? 5);
+    const discrete = profile.durations && (profile.durations.length === 1 || profile.durations.some((n,i)=>i > 0 && n !== profile.durations[i-1] + 1));
+    const quick = discrete ? profile.durations : [3, 4, 5, 6, 8, 10, 12, 15, 20, 30].filter(value => value >= min && value <= max);
     return `<div class="smart-control duration-control" title="${escapeHtml(tr('smart.videoDurationTip'))}">
         <button class="smart-pill" type="button"><i data-lucide="timer"></i><span>${v}s</span></button>
         <div class="smart-popover compact-popover">
@@ -2599,10 +2614,10 @@ function renderVideoDurationControl(){
             <div class="duration-grid">
                 ${quick.map(n => `<button type="button" class="duration-option ${n === v ? 'active' : ''}" data-smart-param="videoDuration" data-smart-value="${n}">${n}s</button>`).join('')}
             </div>
-            <label class="duration-custom">
+            ${discrete ? '' : `<label class="duration-custom">
                 <span>${escapeHtml(tr('smart.custom'))}</span>
                 <input type="number" min="${min}" max="${max}" step="1" data-param="videoDuration" value="${v}">
-            </label>
+            </label>`}
         </div>
     </div>`;
 }
@@ -2619,14 +2634,14 @@ function renderVideoAspectControl(){
         <div class="smart-popover">
             <div class="smart-popover-title">${escapeHtml(tr('smart.videoAspect'))}</div>
             <div class="ratio-grid">
-                ${options.map(([v,l]) => `<button type="button" class="ratio-option ${v === value ? 'active' : ''}" data-smart-param="videoAspect" data-smart-value="${escapeHtml(v)}"><span class="ratio-icon ${videoAspectIconClass(v)}"></span><span>${escapeHtml(l)}</span></button>`).join('')}
+                ${options.map(([v,l]) => `<button type="button" ${profile.ratios && !profile.ratios.includes(v) ? 'disabled' : ''} class="ratio-option ${v === value ? 'active' : ''}" data-smart-param="videoAspect" data-smart-value="${escapeHtml(v)}"><span class="ratio-icon ${videoAspectIconClass(v)}"></span><span>${escapeHtml(l)}</span></button>`).join('')}
             </div>
         </div>
     </div>`;
 }
 function renderVideoResolutionControl(){
     const profile = currentVideoProfile();
-    const options = profile.resolutions ? [['', '默认 ' + profile.resolutions[0]], ...(window.CanvasModelPicker?.videoChoices(profile.resolutions, settings.videoResolution) || profile.resolutions).map(value => [value, value + (profile.resolutions.includes(value) ? '' : '（不支持）')])] : [['', tr('smart.videoResAuto')], ['480p','480P'], ['720p','720P'], ['1080p','1080P']];
+    const options = profile.resolutions ? [['', profile.resolution_note || '默认 ' + (profile.resolutions[0] || tr('smart.videoResAuto'))], ...(window.CanvasModelPicker?.videoChoices(profile.resolutions, settings.videoResolution, true) || profile.resolutions).map(value => [value, value + (profile.resolutions.some(r=>r.toLowerCase() === value.toLowerCase()) ? '' : '（不支持）')])] : [['', tr('smart.videoResAuto')], ['480p','480P'], ['720p','720P'], ['1080p','1080P']];
     const value = settings.videoResolution || '';
     const labelMap = Object.fromEntries(options);
     return `<div class="smart-control resolution-control">
@@ -2634,7 +2649,7 @@ function renderVideoResolutionControl(){
         <div class="smart-popover compact-popover">
             <div class="smart-popover-title">${escapeHtml(tr('smart.videoResolution'))}</div>
             <div class="model-list">
-                ${options.map(([v,l]) => `<button type="button" class="direct-option ${v === value ? 'active' : ''}" data-smart-param="videoResolution" data-smart-value="${escapeHtml(v)}"><span>${escapeHtml(l)}</span></button>`).join('')}
+                ${options.map(([v,l]) => `<button type="button" ${v && profile.resolutions && !profile.resolutions.some(r=>r.toLowerCase() === v.toLowerCase()) ? 'disabled' : ''} class="direct-option ${v === value ? 'active' : ''}" data-smart-param="videoResolution" data-smart-value="${escapeHtml(v)}"><span>${escapeHtml(l)}</span></button>`).join('')}
             </div>
         </div>
     </div>`;
@@ -2642,7 +2657,8 @@ function renderVideoResolutionControl(){
 function renderVideoToggleControl(key, label){
     const on = !!settings[key];
     const supported = window.CanvasModelPicker?.videoToggleSupported(currentVideoProfile(), key) !== false;
-    return `<button type="button" ${!supported && !on ? 'disabled' : ''} title="${supported ? '' : '此模型不支持该选项；已开启时可点击取消'}" class="setting-check ${on ? 'active' : ''}" data-toggle-param="${escapeHtml(key)}"><span class="check-box"></span><span>${escapeHtml(label)}</span></button>`;
+    if(!supported) return '';
+    return `<button type="button" class="setting-check ${on ? 'active' : ''}" data-toggle-param="${escapeHtml(key)}"><span class="check-box"></span><span>${escapeHtml(label)}</span></button>`;
 }
 function renderTempShUploadControl(){
     return `<button type="button" class="smart-pill cloud-upload-pill" data-temp-sh-upload-video title="上传当前输入图片或视频到云端直链"><i data-lucide="upload-cloud"></i><span>上传云端</span></button>`;
@@ -2652,6 +2668,7 @@ function renderManualVideoUrlControl(){
 }
 // 可信素材模式：打开后可选择素材来源——素材库认证链接 / 自行上传云端 / 自行输入网址。
 function renderVideoTrustedAssetControl(){
+    if(window.CanvasModelPicker?.videoToggleSupported(currentVideoProfile(), 'videoTrustedAsset') === false) return '';
     const on = !!settings.videoTrustedAsset;
     let html = renderVideoToggleControl('videoTrustedAsset', tr('smart.videoTrustedAsset'));
     if(!on) return html;
@@ -2865,6 +2882,7 @@ function renderApiVideoParams(){
     dynamicParams.innerHTML = `
         ${renderVideoProviderControl(providers)}
         ${renderVideoModelControl(models)}
+        ${renderVideoChannelControl()}
         ${renderVideoResolutionControl()}
         ${renderVideoAspectControl()}
         ${renderVideoDurationControl()}
@@ -2876,7 +2894,9 @@ function renderApiVideoParams(){
         ${renderVideoToggleControl('videoMultimodal', tr('smart.videoMultimodal'))}
         ${renderVideoToggleControl('videoUseFrameRoles', tr('smart.videoUseFrameRoles'))}
         ${settings.videoProvider === 'jimeng' ? '' : renderVideoTrustedAssetControl()}
+        <div class="muted-note">${escapeHtml(window.CanvasModelPicker?.videoError(currentVideoProfile(), window.CanvasModelPicker.videoParameters(settings, currentVideoProfile())) || window.CanvasModelPicker?.videoInputNote(currentVideoProfile(), window.CanvasModelPicker.videoParameters(settings, currentVideoProfile())) || '')}</div>
     `;
+    syncRunButtonState();
 }
 function renderVolcengineParams(){
     const providers = volcengineImageProviders();
@@ -3194,7 +3214,7 @@ function renderProviderControl(providers){
 }
 function renderModelControl(models){
     return `<div class="smart-control model-control">
-        <button class="smart-pill" type="button"><i data-lucide="sparkles"></i><span class="sub">${escapeHtml(settings.model || tr('smart.model'))}</span></button>
+        <button class="smart-pill" type="button" title="${escapeAttr(settings.model || tr('smart.model'))}"><i data-lucide="sparkles"></i><span class="sub">${escapeHtml(settings.model || tr('smart.model'))}</span></button>
         <div class="smart-popover compact-popover">
             <div class="smart-popover-title">${escapeHtml(tr('smart.imageModel'))}</div>
             <div class="model-list">
@@ -3960,7 +3980,7 @@ function smartComfyRandomValue(field){
 }
 function setDynamicSetting(key, value){
     const numericKeys = new Set(['count','width','height','videoDuration','enhanceStrength','enhanceUpscaleRes','editUpscaleRes','customRatioWidth','customRatioHeight','customWidth','customHeight','msCustomRatioWidth','msCustomRatioHeight','msCustomWidth','msCustomHeight']);
-    const layoutKeys = new Set(['provider_id','model','resolution','ratio','msgenModel','msCustomModel','msResolution','msRatio','videoProvider','videoModel','videoAspect','videoResolution','comfyMode','comfyWorkflow','quality','count','enhanceUpscaleRes','editUpscaleRes','rhConfigKey','rhPayment','rhInstanceType','comfyImageMode','comfyFrameMode']);
+    const layoutKeys = new Set(['provider_id','model','resolution','ratio','msgenModel','msCustomModel','msResolution','msRatio','videoProvider','videoModel','videoChannel','videoAspect','videoResolution','comfyMode','comfyWorkflow','quality','count','enhanceUpscaleRes','editUpscaleRes','rhConfigKey','rhPayment','rhInstanceType','comfyImageMode','comfyFrameMode']);
     settings[key] = numericKeys.has(key) && value !== '' ? Number(value) : value;
     if(key==='comfyImageMode' || key==='comfyImageMaxEdge')delete settings._comfyImageInfo;
     if(key === 'provider_id') settings.model = '';
@@ -5252,7 +5272,10 @@ function syncRunButtonState(node=selectedNode()){
     if(!runBtn) return;
     // 只在“当前选中节点自己”忙时禁用运行：节点正在生成/排队，或它本身是正在跑的循环。
     // 不再因为“画布上有任意循环/级联在跑”就全局禁用——跑循环时仍可对其他节点点生成。
-    runBtn.disabled = !isSmartRunnableNode(node) || smartNodeInFlight(node) || smartCascadeIsLoopRunning(node?.id);
+    const videoError = settings.engine === 'api' && settings.apiKind === 'video'
+        ? window.CanvasModelPicker?.videoError(currentVideoProfile(), window.CanvasModelPicker.videoParameters(settings, currentVideoProfile())) || '' : '';
+    runBtn.disabled = !isSmartRunnableNode(node) || smartNodeInFlight(node) || smartCascadeIsLoopRunning(node?.id) || !!videoError;
+    runBtn.title = videoError;
 }
 function mergeSmartNode(local, remote){
     const images = mergeSmartImageLists(local.images, remote.images);
@@ -6695,7 +6718,7 @@ function singleMediaHtml(img, w, h){
     return smartPreviewImgHtml(img, 768, `class="node-img" draggable="false" style="width:${w}px;height:${h}px"`);
 }
 function smartNodeHasLiveMedia(node){
-    return Boolean(!node?.pending && (node?.images || []).some(img => img?.url));
+    return Boolean((node?.images || []).some(img => img?.url));
 }
 function mediaSignaturePartFromElement(itemEl){
     if(itemEl?.dataset?.mediaSignature) return itemEl.dataset.mediaSignature;
@@ -7396,17 +7419,22 @@ function nodeBodyHtml(node, layout){
     if(node.queued && imgs.length === 0 && !node.pending){
         return `<div class="loading-cell single queued" style="width:${layout.width}px;height:${layout.height}px"></div>`;
     }
+    const entries = CanvasOutputPresentation.smartEntries(node);
+    if(entries.length > 1){
+        const visibleRows = Math.max(1, Math.min(MEDIA_GROUP_MAX_VISIBLE_ROWS, Number(layout.visibleRows || layout.rows || 1)));
+        const maxHeight = visibleRows * Number(layout.thumb || 96) + Math.max(0, visibleRows - 1) * 8;
+        return `<div class="thumb-grid" data-thumb-scroll="1" style="--thumb-cols:${layout.cols}; --thumb-size:${layout.thumb}px; --thumb-max-height:${maxHeight}px">${entries.map(entry => {
+            if(!entry.item) return '<div class="thumb-item loading-cell smart-output-placeholder" aria-label="正在生成"></div>';
+            const img = imageForDisplay(entry.item), i = entry.index;
+            return `<div class="thumb-item has-outside-image-name ${selectedImage.nodeId === node.id && selectedImage.index === i ? 'image-selected' : ''}" data-image-index="${i}" data-media-signature="${escapeAttr(`${mediaKindForItem(img)}:${img?.url || ''}`)}">${thumbMediaHtml(img)}${imageNameBadgeHtml(img, {outside:true})}${imageResolutionBadgeHtml(img)}<button class="mini-x image-delete" type="button" data-image-index="${i}" title="${escapeHtml(tr('smart.deleteImage'))}"><i data-lucide="trash-2"></i></button></div>`;
+        }).join('')}</div>`;
+    }
     if(node.pending && imgs.length === 0){
         const count = Math.max(1, Number(node.pending) || 1);
         if(count <= 1) return `<div class="loading-cell single" style="width:${layout.width}px;height:${layout.height}px"></div>`;
         const cols = Math.min(4, Math.max(2, Math.ceil(Math.sqrt(count))));
         const rows = Math.ceil(count / cols);
         return `<div class="loading-skeleton" style="grid-template-columns:repeat(${cols}, 1fr);grid-template-rows:repeat(${rows}, 1fr);width:${layout.width}px;height:${layout.height}px;padding:8px;box-sizing:border-box">${Array.from({length:count}).map(() => `<div class="loading-cell"></div>`).join('')}</div>`;
-    }
-    if(imgs.length > 1){
-        const visibleRows = Math.max(1, Math.min(MEDIA_GROUP_MAX_VISIBLE_ROWS, Number(layout.visibleRows || layout.rows || 1)));
-        const maxHeight = visibleRows * Number(layout.thumb || 96) + Math.max(0, visibleRows - 1) * 8;
-        return `<div class="thumb-grid" data-thumb-scroll="1" style="--thumb-cols:${layout.cols}; --thumb-size:${layout.thumb}px; --thumb-max-height:${maxHeight}px">${imgs.map((img, i) => `<div class="thumb-item has-outside-image-name ${selectedImage.nodeId === node.id && selectedImage.index === i ? 'image-selected' : ''}" data-image-index="${i}" data-media-signature="${escapeAttr(`${mediaKindForItem(img)}:${img?.url || ''}`)}">${thumbMediaHtml(img)}${imageNameBadgeHtml(img, {outside:true})}${imageResolutionBadgeHtml(img)}<button class="mini-x image-delete" type="button" data-image-index="${i}" title="${escapeHtml(tr('smart.deleteImage'))}"><i data-lucide="trash-2"></i></button></div>`).join('')}</div>`;
     }
     if(imgs[0]) return `<div class="image-wrap has-outside-image-name ${selectedImage.nodeId === node.id && selectedImage.index === 0 ? 'image-selected' : ''}" data-image-index="0" data-media-signature="${escapeAttr(`${mediaKindForItem(imgs[0])}:${imgs[0]?.url || ''}`)}" style="--node-img-w:${layout.width}px;--node-img-h:${layout.height}px">${singleMediaHtml(imgs[0], layout.width, layout.height)}${imageNameBadgeHtml(imgs[0], {outside:true})}${imageResolutionBadgeHtml(imgs[0])}<button class="mini-x image-delete" type="button" data-image-index="0" title="${escapeHtml(tr('smart.deleteImage'))}"><i data-lucide="trash-2"></i></button></div>`;
     return `<div class="node-drop" data-upload-action="files">
@@ -7430,7 +7458,7 @@ function jimengPendingBodyHtml(node, layout){
 }
 function smartImageTaskStatusHtml(node){
     const editNotice=node.layerEditTarget?CanvasLayerSmartEdit.outputNotice(node):'';
-    const tasks = [...smartPendingTasks(node).filter(task => task.imageStatus), ...(node.imageTaskIssues || [])];
+    const tasks = [...smartPendingTasks(node).filter(task => task.failed || task.retryReceipt), ...(node.imageTaskIssues || [])];
     if(!tasks.length) return editNotice;
     return editNotice+`<div class="smart-image-task-status">${tasks.sort((a,b) => a.imageIndex - b.imageIndex).map(task =>
         `<div title="${escapeHtml(task.error || '')}">图片 ${task.imageIndex + 1} · ${escapeHtml(task.imageStatus)}
@@ -7649,11 +7677,7 @@ function render(){
     if(smartWorkflowTransferModal?.classList.contains('open')) updateSmartWorkflowTransferMeta();
     rememberInlineVideoActivations();
     world.classList.toggle('smart-multi-selected', selectedNodeIds().length > 1);
-    const composerEl = composer;
     const mediaStates = captureMediaPlaybackStates();
-    // 用户正在提示词框(contenteditable)输入时,本次重渲染不要移动 composer:
-    // 移动 DOM 节点会打断输入法合成会话,导致输入中断(即使保留焦点描边也接不上)。
-    const promptHadFocus = document.activeElement === promptInput;
     const reusableNodes = new Map();
     world.querySelectorAll('.image-node').forEach(el => {
         const node = nodes.find(n => n.id === el.dataset.id);
@@ -7679,7 +7703,7 @@ function render(){
         const isQueued = Boolean(node.queued && imgs.length === 0 && !node.pending && !isJimengPending);
         const isEmpty = isImageNode && imgs.length === 0 && !node.pending && !isQueued && !isJimengPending && !node.layerDocument && !node.layerDraft;
         const isHistory = isHistoryGroupNode(node);
-        const isGroup = isImageNode && imgs.length > 1;
+        const isGroup = isImageNode && !layout.single;
         const isPending = ((node.pending || isQueued || isJimengPending) && imgs.length === 0);
         const body = nodeBodyHtml(node, layout) + smartImageTaskStatusHtml(node);
         const deleteBtn = isGroup ? '' : `<button class="mini-x node-delete" type="button" title="${escapeHtml(tr('smart.deleteNode'))}"><i data-lucide="trash-2"></i></button>`;
@@ -7707,13 +7731,11 @@ function render(){
     });
     const keepEls = new Set();
     reusableNodes.forEach(el => keepEls.add(el));
-    if(composerEl) keepEls.add(composerEl);
     [...world.childNodes].forEach(child => {
         if(!keepEls.has(child)) child.remove();
     });
-    // 用户正在提示词框输入时不要移动 composer:移动 DOM 会打断输入法合成、中断输入。
-    // composer 已在 keepEls 中(未被移除),不重排也不影响显示(z-index 固定)。
-    if(composerEl && !promptHadFocus) world.appendChild(composerEl);
+    // The screen-space composer stays mounted while world nodes are rebuilt,
+    // preserving contenteditable focus and IME composition.
     world.insertAdjacentHTML('beforeend', renderConnections());
     nodeHtmlEntries.forEach(entry => {
         const fresh = renderedNodeEls.get(entry.node.id);
@@ -7739,7 +7761,6 @@ function render(){
     refreshRunTimerPills();
     return;
     world.innerHTML = '';
-    if(composerEl) world.appendChild(composerEl);
     world.insertAdjacentHTML('beforeend', renderConnections());
     const nodesHtml = nodes.map(node => {
         const imgs = node.images || [];
@@ -7751,7 +7772,7 @@ function render(){
         const isImageNode = node.type === 'smart-image' || !node.type;
         const isQueued = Boolean(node.queued && imgs.length === 0 && !node.pending);
         const isEmpty = isImageNode && imgs.length === 0 && !node.pending && !isQueued;
-        const isGroup = isImageNode && imgs.length > 1;
+        const isGroup = isImageNode && !layout.single;
         const isPending = (node.pending || isQueued) && imgs.length === 0;
         const body = nodeBodyHtml(node, layout) + smartImageTaskStatusHtml(node);
         const deleteBtn = isGroup ? '' : `<button class="mini-x node-delete" type="button" title="${escapeHtml(tr('smart.deleteNode'))}"><i data-lucide="trash-2"></i></button>`;
@@ -11522,20 +11543,10 @@ function loadPromptDraft(subject){
 }
 function positionComposerForNode(node){
     if(!node) return;
-    const rect = nodeRect(node);
-    const gap = 14;
-    const scale = viewport.scale;
-    const cardW = Math.min(540, (shell.clientWidth - 32) / scale);
-    composer.style.width = `${cardW}px`;
-    const margin = 16 / scale;
-    const minX = -viewport.x / scale + margin;
-    const minY = (84 - viewport.y) / scale;
-    const dock = document.getElementById('canvasDock').getBoundingClientRect();
-    const bottom = dock.top - shell.getBoundingClientRect().top - 12;
-    const maxX = (shell.clientWidth - viewport.x) / scale - cardW - margin;
-    const maxY = (bottom - viewport.y) / scale - composer.offsetHeight;
-    composer.style.left = `${Math.max(minX, Math.min(rect.x + rect.width / 2 - cardW / 2, maxX))}px`;
-    composer.style.top = `${Math.max(minY, Math.min(rect.y + rect.height + gap, maxY))}px`;
+    const layout = CanvasComposerLayout.position(nodeRect(node),viewport,shell.clientWidth);
+    composer.style.width = `${layout.width}px`;
+    composer.style.left = `${layout.x}px`;
+    composer.style.top = `${layout.y}px`;
 }
 new ResizeObserver(() => {
     if(composer.classList.contains('open')) positionComposerForNode(selectedNode());
@@ -13059,15 +13070,12 @@ function positionMentionPickerAtCaret(){
     const rowRect = row.getBoundingClientRect();
     if(mentionAnchorEl){
         const anchorRect = mentionAnchorEl.getBoundingClientRect();
-        const scale = (typeof viewport !== 'undefined' && Number(viewport?.scale)) || 1;
-        const safeScale = scale > 0 ? scale : 1;
         const pickerWidth = mentionPicker.offsetWidth || 340;
         const base = mentionPicker.offsetParent || mentionPicker.parentElement || row;
         const baseRect = base.getBoundingClientRect();
-        const baseLogicalWidth = baseRect.width / safeScale;
-        const rawLeft = (anchorRect.right - baseRect.left) / safeScale - pickerWidth;
-        const rawTop = (anchorRect.bottom - baseRect.top) / safeScale + 2;
-        const left = Math.max(4, Math.min(rawLeft, Math.max(4, baseLogicalWidth - pickerWidth - 4)));
+        const rawLeft = anchorRect.right - baseRect.left - pickerWidth;
+        const rawTop = anchorRect.bottom - baseRect.top + 2;
+        const left = Math.max(4, Math.min(rawLeft, Math.max(4, baseRect.width - pickerWidth - 4)));
         mentionPicker.style.left = `${left}px`;
         mentionPicker.style.top = `${Math.max(2, rawTop)}px`;
         return;
@@ -13079,15 +13087,11 @@ function positionMentionPickerAtCaret(){
         caretRect = range.getClientRects()[0] || range.getBoundingClientRect();
     }
     const inputRect = promptInput.getBoundingClientRect();
-    // composer 在 world 里被 viewport.scale 缩放过，getBoundingClientRect 返回的是缩放后的屏幕像素，
-    // 而 style.left/top 是逻辑像素 → 需要除以 scale 才能正确还原 caret 的逻辑坐标
-    const scale = (typeof viewport !== 'undefined' && Number(viewport?.scale)) || 1;
-    const safeScale = scale > 0 ? scale : 1;
-    const rowLogicalWidth = rowRect.width / safeScale;
+    // Composer and caret are both in screen space, independent of canvas zoom.
     const pickerWidth = mentionPicker.offsetWidth || 340;
-    const maxLeft = Math.max(4, rowLogicalWidth - pickerWidth - 4);
-    const rawLeft = ((caretRect?.left || inputRect.left) - rowRect.left) / safeScale - 6;
-    const rawTop = ((caretRect?.bottom || inputRect.top + 24) - rowRect.top) / safeScale + 2;
+    const maxLeft = Math.max(4, rowRect.width - pickerWidth - 4);
+    const rawLeft = (caretRect?.left || inputRect.left) - rowRect.left - 6;
+    const rawTop = (caretRect?.bottom || inputRect.top + 24) - rowRect.top + 2;
     const left = Math.max(4, Math.min(rawLeft, maxLeft));
     const top = Math.max(2, rawTop);
     mentionPicker.style.left = `${left}px`;
@@ -14702,7 +14706,7 @@ async function runGeneration(){
         if(settings.engine === 'comfy'){
             await runComfyGeneration(pendingNode, prompt, refs, pendingNode, pendingMeta);
             if(sourceVisualState) restoreSourceVisualState(node, sourceVisualState);
-            addSmartGenerationLog({run:runLog, outputs:pendingNode.images || [], runMs:nowMs() - runLogStart});
+            addSmartGenerationLog({run:runLog, outputs:pendingNode.images || [], runMs:pendingNode.runElapsedMs ?? nowMs() - runLogStart});
             settings = previousSettings;
             return;
         }
@@ -14877,6 +14881,8 @@ async function runApiGeneration(prompt, refs, runSettings=settings, {node, targe
         providerId:payload.provider_id, model:payload.model, imageStatus:'正在提交平台任务'}));
     target.pending = count;
     target.runStartedAt = nowMs();
+    delete target.runFinishedAt;
+    delete target.runElapsedMs;
     target.runTimerHidden = false;
     startSmartPendingGenerationLog(target, run, runLogStart);
     scheduleSave();
@@ -14926,6 +14932,8 @@ async function runRunningHubGeneration(prompt, refs, runSettings=settings){
 }
 async function runApiVideoGeneration(prompt, refs, runSettings=settings, {node}={}){
     if(!runSettings.videoModel) throw new Error(tr('smart.errNoVideoModel'));
+    const capability = window.CanvasModelPicker?.videoProfileFor(apiProviderById(runSettings.videoProvider), runSettings.videoModel, runSettings.videoChannel) || {};
+    const parameters = window.CanvasModelPicker.videoParameters(runSettings, capability);
     const sourceCanvasId=canvas?.id,nodeId=node?.id;
     const isActive = () => {
         if(canvas?.id !== sourceCanvasId) return false;
@@ -14937,7 +14945,7 @@ async function runApiVideoGeneration(prompt, refs, runSettings=settings, {node}=
     let acceptedTaskId = '';
     try {
         const uploadedRefs = applyUploadedUrlsToSmartRefs(refs, runSettings);
-        const trustedMode = Boolean(runSettings.videoTrustedAsset);
+        const trustedMode = parameters.trusted_asset;
         const trustedSource = trustedMode ? (['library','cloud','manual'].includes(runSettings.videoTrustedSource) ? runSettings.videoTrustedSource : 'library') : 'none';
         // 仅「素材库链接」来源才走 asset:// 认证地址 + 后端可信素材路由；上传云端/手动网址走普通直链。
         const useAssetUris = trustedSource === 'library';
@@ -14954,7 +14962,7 @@ async function runApiVideoGeneration(prompt, refs, runSettings=settings, {node}=
         };
         const refImages = imageRefsOnly(uploadedRefs).map((ref, i) => {
             const item = {url:effUrl(ref), name:ref.name || `图${i + 1}`};
-            if(runSettings.videoUseFrameRoles){
+            if(parameters.frame_roles){
                 if(i === 0) item.role = 'first_frame';
                 else if(i === 1) item.role = 'last_frame';
             }
@@ -14962,27 +14970,30 @@ async function runApiVideoGeneration(prompt, refs, runSettings=settings, {node}=
         });
         const manualVideo = manualSmartVideoLink(runSettings)?.url || '';
         const refVideos = manualVideo ? manualSmartMediaLinks(runSettings).map(item => item.url).filter(Boolean) : videoRefsOnly(uploadedRefs).map(ref => effUrl(ref)).filter(Boolean);
-        const refAudios = audioRefsOnly(uploadedRefs).map(ref => effUrl(ref)).filter(Boolean).slice(0, 3);
+        const refAudios = audioRefsOnly(uploadedRefs).map(ref => effUrl(ref)).filter(Boolean);
         if(mismatchedAsset) toast('部分认证素材属于其它平台，已回退为普通素材。切换到对应平台的视频接口才能用 asset:// 认证地址。');
         const payload = {
             source:await taskCanvasSource(node),
             prompt,
             provider_id: runSettings.videoProvider || 'comfly',
             model: runSettings.videoModel || 'veo3-fast',
-            duration: Math.max(1, Math.min(60, Number(runSettings.videoDuration) || 5)),
+            video_channel:runSettings.videoChannel || '',
+            duration: Number(runSettings.videoDuration ?? 5),
             aspect_ratio: runSettings.videoAspect || '16:9',
             resolution: runSettings.videoResolution || '',
             images: refImages,
             videos: refVideos,
             audios: refAudios,
-            enhance_prompt: Boolean(runSettings.videoEnhancePrompt),
-            enable_upsample: Boolean(runSettings.videoEnableUpsample),
-            watermark: Boolean(runSettings.videoWatermark),
-            camerafixed: Boolean(runSettings.videoCameraFixed),
-            generate_audio: Boolean(runSettings.videoGenerateAudio),
-            multimodal: Boolean(runSettings.videoMultimodal),
+            enhance_prompt: parameters.enhance_prompt,
+            enable_upsample: parameters.enable_upsample,
+            watermark: parameters.watermark,
+            camerafixed: parameters.camerafixed,
+            generate_audio: parameters.generate_audio,
+            multimodal: parameters.multimodal,
             trusted_asset: useAssetUris
         };
+        const capabilityError = window.CanvasModelPicker?.videoError(capability, payload);
+        if(capabilityError) throw new Error(capabilityError);
         const result = await CanvasTaskQuery.runVideo(payload, {isActive, onAccepted:async taskId => {
             acceptedTaskId=taskId;
             if(!node) return;
@@ -15356,7 +15367,7 @@ async function querySmartImageTaskNow(nodeId, localTaskId){
         if(data.status === 'succeeded' || data.status === 'partial'){
             task.failed = false;
             task.querying = false;
-            finalizeSmartPendingTask(node, task.taskId, resultMediaUrls(data.image_items?.length ? data.image_items : (data.images?.length ? data.images : data)), task.kind || 'image');
+            finalizeSmartPendingTask(node, task.taskId, resultMediaUrls(data.image_items?.length ? data.image_items : (data.images?.length ? data.images : data)), task.kind || 'image', {timing:data.timing});
             render();
             scheduleSave();
             if(data.status === 'partial'){
@@ -15431,7 +15442,7 @@ async function pollSmartCanvasTask(taskId, onStatus=()=>{}){
             if(i) await new Promise(resolve => setTimeout(resolve, 1800));
             const task = await CanvasTaskQuery.readImage(taskId);
             onStatus(task);
-            if(['succeeded','partial'].includes(task.status)) return task.result || {};
+            if(['succeeded','partial'].includes(task.status)) return CanvasTaskQuery.imageResult(task);
             if(task.status === 'jimeng_pending') throw new JimengPendingSignal({submitId:task.submit_id, kind:task.kind, queueInfo:task.queue_info, message:task.message});
             if(task.status === 'failed'){
                 const recoverTaskId = task.upstream_task_id || extractUpstreamTaskId(task.error || '') || (task.can_reconcile ? taskId : '');
@@ -15489,27 +15500,33 @@ function recordSmartPendingGenerationLog(node, additions, kind='image'){
     addSmartGenerationLog({
         run:{...state.run, kind:kind || state.run?.kind || 'image'},
         outputs:state.outputs,
-        runMs:Math.max(0, nowMs() - Number(state.startedAt || nowMs()))
+        runMs:node.runElapsedMs ?? Math.max(0, nowMs() - Number(state.startedAt || nowMs()))
     });
     clearSmartPendingGenerationLog(node);
     return true;
 }
-function appendSmartPendingResults(node, images, kind){
+function appendSmartPendingResults(node, images, kind, task=null){
     const ext = kind === 'video' ? 'mp4' : kind === 'audio' ? 'mp3' : kind === 'text' ? 'txt' : 'png';
     const mediaItems = resultMediaUrls(images);
     const existing = cleanHistoryImages(node.images || []);
+    const outputMeta = Number.isInteger(task?.imageIndex) ? {canvasTaskId:task.taskId,outputOrder:task.imageIndex} : {};
     const seen = new Set(existing.map(img => `${img.kind || ''}|${img.url || ''}`));
     const additions = cleanHistoryImages((mediaItems || []).map((item, i) => {
         const url = typeof item === 'string' ? item : item?.url || '';
         const itemKind = (typeof item === 'object' && item.kind) || kind;
-        return stripImageGenerationMeta(copyMediaSizeFields(item, {...(typeof item==='object'?item:{}), url, name:(typeof item === 'object' && item.name) || `output-${i + 1}.${ext}`, kind:itemKind, generatedResult:true}));
+        return stripImageGenerationMeta(copyMediaSizeFields(item, {...(typeof item==='object'?item:{}), ...outputMeta, url, name:(typeof item === 'object' && item.name) || `output-${i + 1}.${ext}`, kind:itemKind, generatedResult:true}));
     }).filter(item => item.url)).filter(item => {
         const key = `${item.kind || ''}|${item.url || ''}`;
-        if(seen.has(key)) return false;
+        if(seen.has(key)){
+            const previous = existing.find(img=>`${img.kind || ''}|${img.url || ''}` === key);
+            if(previous && !previous.canvasTaskId) Object.assign(previous,outputMeta);
+            return false;
+        }
         seen.add(key);
         return true;
     });
-    node.images = [...existing, ...additions];
+    node.images = CanvasOutputPresentation.smartEntries({...node,images:[...existing,...additions]})
+        .filter(entry=>entry.item).map(entry=>entry.item);
     if(additions.length) node.outputKind = kind;
     const logState = pendingSmartGenerationLog(node, kind);
     if(logState){
@@ -15520,20 +15537,29 @@ function appendSmartPendingResults(node, images, kind){
 }
 function finalizeSmartPendingTask(node, taskId, images, kind='image', options={}){
     if(!node || !smartPendingTasks(node).some(task => task.taskId === taskId)) return false;
+    const task = smartPendingTasks(node).find(item=>item.taskId === taskId);
+    const timing = CanvasTaskQuery.runTiming(options.timing);
+    const logState = pendingSmartGenerationLog(node, kind);
+    if(timing){
+        logState.timing = logState.timing ? {
+            startedAt:Math.min(logState.timing.startedAt, timing.startedAt),
+            finishedAt:Math.max(logState.timing.finishedAt, timing.finishedAt)
+        } : timing;
+    }
     node.pendingTasks = smartPendingTasks(node).filter(task => task.taskId !== taskId);
     node.pending = Math.max(0, Number(node.pending || 0) - 1);
-    const added = appendSmartPendingResults(node, images, kind);
+    const added = appendSmartPendingResults(node, images, kind, task);
     if(!node.pending && smartPendingTasks(node).length === 0){
         delete node.pendingTasks;
-        node.runFinishedAt = nowMs();
-        if(!node.runStartedAt) node.runStartedAt = node.runFinishedAt;
+        node.runFinishedAt = logState.timing?.finishedAt || nowMs();
+        node.runStartedAt = logState.timing?.startedAt || node.runStartedAt || node.runFinishedAt;
         node.runElapsedMs = Math.max(0, node.runFinishedAt - Number(node.runStartedAt || node.runFinishedAt));
         node.runTimerHidden = false;
         node.running = false;
         node.title = node.images.length > 1 ? (kind === 'video' ? 'Videos' : kind === 'audio' ? 'Audios' : kind === 'text' ? 'Texts' : 'Group') : (kind === 'video' ? 'Video' : kind === 'audio' ? 'Audio' : kind === 'text' ? 'Text' : 'Image');
         if(node.images.length > 1 && (!Number.isFinite(Number(node.scale)) || Number(node.scale) === MEDIA_NODE_DEFAULT_SCALE || Number(node.scale) === MEDIA_GROUP_PREVIOUS_DEFAULT_SCALE)) node.scale = MEDIA_GROUP_DEFAULT_SCALE;
         else node.scale = mediaNodeDefaultScale(node);
-        if(!node.layerParentNodeId){delete node.w;delete node.h;}
+        if(!node.layerParentNodeId && node.images.length <= 1){delete node.w;delete node.h;}
         if(options.recordLog !== false) recordSmartPendingGenerationLog(node, [], kind);
     }
     if(node.layerTaskId===taskId){
@@ -15579,7 +15605,7 @@ async function resumeSmartPendingNode(node, logContext={}){
                 if(!isActive()) return;
                 const partial = receipt.status === 'running' && receipt.result?.status === 'partial' ? receipt.result : null;
                 const added = partial && appendSmartPendingResults(node,
-                    partial.image_items?.length ? partial.image_items : partial.images, task.kind || 'image');
+                    partial.image_items?.length ? partial.image_items : partial.images, task.kind || 'image', task);
                 if(added) scheduleSave();
                 if(task.imageIndex === undefined){
                     if(added) render();
@@ -15603,7 +15629,7 @@ async function resumeSmartPendingNode(node, logContext={}){
                     provider_id:result.provider_id, model:result.model}}, outputs:result.images || [], error:warning});
                 toast(warning);
             }
-            finalizeSmartPendingTask(node, task.taskId, resultMediaUrls(result?.image_items?.length ? result.image_items : (result?.images?.length ? result.images : result)), task.kind || 'image', logContext);
+            finalizeSmartPendingTask(node, task.taskId, resultMediaUrls(result?.image_items?.length ? result.image_items : (result?.images?.length ? result.images : result)), task.kind || 'image', {...logContext, timing:result.timing});
             render();
             scheduleSave();
         } catch(e) {
@@ -15938,8 +15964,8 @@ function focusSmartDockGeneration(){
     if(zoomPreviewState) exitZoomPreview();
     if(!isSmartRunnableNode(selectedNode())) createSmartDockNode('image');
     updateComposer();
-    const x = parseFloat(composer.style.left) + composer.offsetWidth / 2;
-    const y = parseFloat(composer.style.top) + composer.offsetHeight / 2;
+    const x = (parseFloat(composer.style.left) - viewport.x) / viewport.scale;
+    const y = (parseFloat(composer.style.top) + composer.offsetHeight / 2 - viewport.y) / viewport.scale;
     centerViewportOnWorldPoint({x,y});
     promptInput.focus({preventScroll:true});
 }

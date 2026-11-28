@@ -1,11 +1,59 @@
 import asyncio
+from pathlib import Path
+import shutil
+import subprocess
 
 import httpx
 
-from enterprise.canvas_image_recovery import CanvasImageRecovery, ImageReceiptSink
+from enterprise.canvas_image_recovery import CanvasImageRecovery, ImageReceiptSink, image_task_timing, public_receipt
 from enterprise.providers.submission import httpx_request_with_transient_retries, reported_usage
 from enterprise.providers.zhenzhen import image_headers, image_task_endpoint, query_image, image_query_status
 from enterprise.tests.test_canvas_image_recovery import PROVIDER, new_journal
+
+
+def test_canvas_image_recovery_elapsed_time_scripts():
+    if not shutil.which('node'):
+        import pytest
+        pytest.skip('Node is required for canvas timing checks')
+    root = Path(__file__).resolve().parents[2]
+    for script in ('test_canvas_image_timing.js', 'test_smart_canvas_logs.js'):
+        subprocess.run(['node', str(root / 'enterprise/tests' / script)], cwd=root, check=True)
+
+
+def test_completed_image_timing_ignores_next_day_view_and_reconciliation():
+    record = {"id":"original", "type":"online-image", "status":"succeeded", "created_at":1000,
+              "updated_at":1000 + 921*60 + 42, "result":{"timestamp":1106, "images":["/output/original.png"]},
+              "provider_receipts":[{"state":"succeeded", "finished_at":1106}]}
+    assert public_receipt(record)["timing"] == {"started_at":1000, "finished_at":1106, "elapsed_ms":106000}
+    record["updated_at"] += 86400
+    assert image_task_timing(record)["elapsed_ms"] == 106000
+    assert record["result"] == {"timestamp":1106, "images":["/output/original.png"]}
+
+
+def test_image_timing_preserves_running_and_unknown_legacy_end():
+    assert image_task_timing({"created_at":1000, "status":"running", "result":{"timestamp":1005}}) == {"started_at":1000}
+    assert image_task_timing({"created_at":1000, "status":"succeeded", "updated_at":90000}) == {"started_at":1000}
+    assert image_task_timing({"created_at":1000, "status":"succeeded", "result":{"timestamp":999}}) == {"started_at":1000}
+    assert image_task_timing({"status":"succeeded"}) == {}
+
+
+def test_image_timing_uses_last_saved_child_finish_for_legacy_batch():
+    assert image_task_timing({"created_at":1000, "status":"succeeded", "provider_receipts":[
+        {"finished_at":1050}, {"finished_at":1106}]}) == {"started_at":1000, "finished_at":1106, "elapsed_ms":106000}
+
+
+def test_sync_image_retains_oneapi_trace_without_inventing_async_id(tmp_path):
+    async def scenario():
+        journal = new_journal(tmp_path)
+        sink = ImageReceiptSink(journal, 'canvas_img_a', 0)
+        sink.identify(httpx.Headers({'X-Oneapi-Request-Id':'EMaster-trace-only'}))
+        await sink.generated({'data':[{'url':'https://supplier.example/original.png'}]})
+        await sink.completed(['/output/original.png'], [])
+        receipt = journal.get('canvas_img_a')['provider_receipts'][0]
+        assert receipt['provider_request_id'] == 'EMaster-trace-only'
+        assert not receipt.get('upstream_task_id')
+        assert receipt['state'] == 'succeeded'
+    asyncio.run(scenario())
 
 
 def test_usage_is_reported_fact_not_estimated_settlement():

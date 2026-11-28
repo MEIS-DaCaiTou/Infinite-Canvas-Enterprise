@@ -7,7 +7,7 @@ from urllib.parse import quote
 from enterprise.providers.submission import reported_usage
 
 FAILED = {"FAILURE", "FAILED", "FAIL", "ERROR", "ERRORED", "CANCELED", "CANCELLED", "TIMEOUT", "TIMEDOUT", "REJECTED", "EXPIRED"}
-QUEUED = {"NOT_START", "QUEUED", "QUEUE", "PENDING", "IN_QUEUE", "WAITING"}
+QUEUED = {"NOT_START", "QUEUED", "QUEUE", "QUEUEING", "PENDING", "IN_QUEUE", "WAITING"}
 PENDING = QUEUED | {"SUBMITTED", "ACCEPTED", "PROCESSING", "RUNNING", "IN_PROGRESS", "CREATED"}
 
 
@@ -27,9 +27,9 @@ def video_task_result(raw, output_urls, failure_message):
     data = data if isinstance(data, dict) else raw
     if not isinstance(data, dict):
         return {"status": "manual", "message": "视频原任务回包无法识别，请核对供应商记录"}
-    state = str(data.get("status") or data.get("task_status") or raw.get("status") or raw.get("task_status") or "").upper()
+    state = str(data.get("status") or data.get("task_status") or data.get('state') or raw.get("status") or raw.get("task_status") or raw.get('state') or "").upper()
     if state in FAILED:
-        return {"status": "failed", "message": failure_message(data.get("error") or data.get("message") or data.get("fail_reason") or "视频原任务失败")}
+        return {"status": "failed", "message": failure_message(data.get("error") or data.get("message") or data.get("fail_reason") or data.get('task_status_msg') or data.get('err_msg') or "视频原任务失败")}
     if state in PENDING:
         return {"status": "queued" if state in QUEUED else "running"}
     urls = output_urls(raw)

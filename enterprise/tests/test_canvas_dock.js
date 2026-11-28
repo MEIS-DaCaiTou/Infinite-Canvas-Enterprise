@@ -117,13 +117,50 @@ const smartContext={canvas:{id:'fixture'},createMenuPoint:{x:-100,y:-100},create
     closeCreateMenu(){smartContext.createMenuGroupId='';},clearSelection(){},viewportCenter:()=>({x:200,y:300}),
     createNodeFromMenu(type){created.push(type);assert.equal(smartContext.createMenuPoint.x,200);assert.equal(smartContext.createMenuGroupId,'');},
     selectedNode:()=>({type:'smart-image'}),isSmartRunnableNode:node=>Boolean(node),zoomPreviewState:null,
-    updateComposer(){},composer:{style:{left:'100px',top:'200px'},offsetWidth:540,offsetHeight:300},
+    updateComposer(){},composer:{style:{left:'100px',top:'200px'},offsetWidth:680,offsetHeight:300},viewport:{x:10,y:20,scale:2},
     centerViewportOnWorldPoint:point=>centers.push(point),promptInput:{focus:options=>assert.equal(options.preventScroll,true)}};
 vm.createContext(smartContext);vm.runInContext(adapters,smartContext);
 for(const type of ['image','prompt','loop','group'])smartContext.createSmartDockNode(type);
 assert.deepEqual(created,['image','prompt','loop','group']);
 smartContext.focusSmartDockGeneration();assert.equal(created.length,4,'selected runnable node is reused');
-assert.equal(centers[0].x,370);assert.equal(centers[0].y,350);
+assert.equal(centers[0].x,45);assert.equal(centers[0].y,165,'screen-space panel focus converts back to world coordinates');
 smartContext.selectedNode=()=>null;smartContext.focusSmartDockGeneration();assert.equal(created.at(-1),'image');
 assert(!adapters.includes('fetch(') && !adapters.includes('runGeneration('),'dock only opens settings and never submits paid work');
 console.log('Smart dock reuses original top panels, creation placement and composer without submitting generation.');
+
+const composerLayout=require(path.join(root,'static/js/canvas-composer-layout.js'));
+const nodeBounds={x:20,y:30,width:300,height:200};
+const overlayContext={CanvasComposerLayout:composerLayout,nodeRect:()=>nodeBounds,viewport:{x:-500,y:-400,scale:0.5},shell:{clientWidth:1200},composer:{style:{}}};
+vm.createContext(overlayContext);
+vm.runInContext(smartScript.slice(smartScript.indexOf('function positionComposerForNode('),smartScript.indexOf('new ResizeObserver(',smartScript.indexOf('function positionComposerForNode('))),overlayContext);
+for(const scale of [0.2,0.5,1,2,4]){
+    overlayContext.viewport.scale=scale;
+    overlayContext.positionComposerForNode({id:'node'});
+    assert.equal(overlayContext.composer.style.width,'680px','canvas zoom does not scale the panel width');
+    assert.equal(Number.parseFloat(overlayContext.composer.style.left),-500+170*scale,'panel stays centered on the selected node, including outside the viewport');
+    assert.equal(Number.parseFloat(overlayContext.composer.style.top)-(-400+230*scale),20,'node-to-panel gap is fixed in screen pixels');
+}
+overlayContext.shell.clientWidth=640;
+overlayContext.positionComposerForNode({id:'node'});
+assert.equal(overlayContext.composer.style.width,'592px','narrow windows retain the official 24px side allowance');
+overlayContext.viewport.y=2000;
+overlayContext.positionComposerForNode({id:'node'});
+assert(Number.parseFloat(overlayContext.composer.style.top)>2000,'panning beyond the bottom does not detach the panel and pin it to the dock');
+
+const promptRow={getBoundingClientRect:()=>({left:100,top:200,width:680})};
+const caret={left:180,bottom:240};
+const pickerContext={viewport:{scale:0.25},mentionAnchorEl:null,promptInput:{closest:()=>promptRow,getBoundingClientRect:()=>({left:110,top:210})},mentionPicker:{offsetWidth:340,style:{}},window:{getSelection:()=>({rangeCount:1,getRangeAt:()=>({cloneRange:()=>({getClientRects:()=>[caret]})})})}};
+vm.createContext(pickerContext);
+vm.runInContext(smartScript.slice(smartScript.indexOf('function positionMentionPickerAtCaret('),smartScript.indexOf('function maybeOpenMentionPicker(',smartScript.indexOf('function positionMentionPickerAtCaret('))),pickerContext);
+for(const scale of [0.25,4]){
+    pickerContext.viewport.scale=scale;
+    pickerContext.positionMentionPickerAtCaret();
+    assert.equal(pickerContext.mentionPicker.style.left,'74px');
+    assert.equal(pickerContext.mentionPicker.style.top,'42px','reference picker stays beside the caret at every canvas zoom');
+}
+pickerContext.mentionAnchorEl={getBoundingClientRect:()=>({right:500,bottom:400})};
+pickerContext.mentionPicker.offsetParent=promptRow;
+pickerContext.positionMentionPickerAtCaret();
+assert.equal(pickerContext.mentionPicker.style.left,'60px');
+assert.equal(pickerContext.mentionPicker.style.top,'202px');
+console.log('Composer screen anchoring, zoom invariance, viewport edges, dock focus and reference-picker positioning passed.');

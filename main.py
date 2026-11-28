@@ -77,6 +77,8 @@ from enterprise.canvas_video_tasks import CanvasVideoTasks, public_video_task, r
 from enterprise.providers.video_tasks import inspect_video, encoded_task_id
 from enterprise.providers.video_outputs import video_output_urls
 from enterprise.providers.video_generation import json_video_body, generate_json_video, poll_video, video_error_detail
+from enterprise.providers.zhenzhen_video_execution import execute as execute_zhenzhen_video
+from enterprise.providers.zhenzhen_video import validate_request as validate_zhenzhen_video_request
 from enterprise.canvas_comfy_recovery import CanvasComfyRecovery
 from enterprise.accepted_task_recovery import AcceptedTaskRecovery, validate_owned_task
 from enterprise.runtime.install_maintenance import maintenance_active
@@ -126,7 +128,6 @@ from enterprise.providers.model_catalog import classify_model, correct_known_gro
 from enterprise.providers.zhenzhen_video import (
     video_profile as zhenzhen_video_profile, public_video_profiles as zhenzhen_public_video_profiles,
     submit_endpoints as zhenzhen_model_video_endpoints, query_endpoints as zhenzhen_video_query_endpoints,
-    video_body as zhenzhen_video_body, request_id as zhenzhen_video_request_id,
     QUERY_MODES as ZHENZHEN_VIDEO_QUERY_MODES,
 )
 from enterprise.providers.image_task_protocol import (
@@ -2629,6 +2630,7 @@ class CanvasVideoRequest(CallSourceSelection):
     prompt: str = Field(min_length=1, max_length=VIDEO_PROMPT_MAX_LENGTH)
     provider_id: str = "comfly"
     model: str = "veo3-fast"
+    video_channel: str = ""
     duration: int = 5
     aspect_ratio: str = "16:9"
     resolution: str = ""
@@ -4200,7 +4202,9 @@ def effective_protocol(provider, model=""):
 
 def is_apimart_provider(provider):
     base_url = str((provider or {}).get("base_url") or "").lower()
-    return provider_protocol(provider) == "apimart" or "apimart.ai" in base_url
+    # Legacy settings called APIMart's protocol "async". An explicit supplier
+    # or maintained Zhenzhen host must not be routed into APIMart's uploads.
+    return not is_zhenzhen(provider) and (provider_protocol(provider) == "apimart" or "apimart.ai" in base_url)
 
 def detect_image_request_mode(base_url="", models=None):
     base = str(base_url or "").strip().lower()
@@ -10164,7 +10168,7 @@ async def generate_ai_image(prompt, size, quality, model, reference_images=None,
         elif image_request_mode == "openai-json":
             response = await submit_json_image(client, gen_url, api_headers(provider=provider, model=model),
                 model=model, prompt=prompt, size=size,
-                references=[reference_to_data_url(ref, max_size=1536) for ref in image_refs[:ONLINE_IMAGE_REFERENCE_MAX]])
+                references=await prepared_inputs.urls(image_refs) if prepared_inputs else [reference_to_data_url(ref, max_size=1536) for ref in image_refs[:ONLINE_IMAGE_REFERENCE_MAX]])
         elif is_apimart:
             apimart_size, resolution = apimart_size_resolution(size)
             # APIMart 的 GPT-Image-2 图生图仍走 /images/generations，
@@ -12696,10 +12700,14 @@ async def build_online_image_result(payload: OnlineImageRequest, *, receipt_task
     count = max(1, min(8, int(payload.n or 1)))
     prompts = payload.variant_prompts or [payload.prompt] * count
     prepared_inputs = None
-    if receipt_task_id and (is_zhenzhen(provider) or ark_image_profile(provider, model)):
+    if is_zhenzhen(provider) or ark_image_profile(provider, model):
         from enterprise.image_reference_preparation import ImageReferencePreparation
+        profile = image_profile_for(provider, model)
+        if payload.layer_options is not None:
+            profile = profile.get('layer_profile') or profile
         prepared_inputs = ImageReferencePreparation(image_refs, image_reference_file,
-            observe=lambda summary: CANVAS_TASK_JOURNAL.record_image_preparation(receipt_task_id, summary))
+            limits=profile.get('reference_input'),
+            observe=(lambda summary: CANVAS_TASK_JOURNAL.record_image_preparation(receipt_task_id, summary)) if receipt_task_id else None)
     async def generate_one(index):
         sink = ImageReceiptSink(CANVAS_TASK_JOURNAL, receipt_task_id, index) if receipt_task_id else None
         try:
@@ -13411,7 +13419,8 @@ def video_submit_url_candidates(provider, base_url, model=""):
 
 def video_task_url_candidates(provider, base_url, task_id, submit_url=""):
     if is_zhenzhen(provider):
-        urls = zhenzhen_video_query_endpoints(base_url, encoded_task_id(task_id), submit_url=submit_url)
+        task_id = encoded_task_id(task_id)
+        urls = zhenzhen_video_query_endpoints(base_url, task_id, submit_url=submit_url)
         if urls:
             return urls
     if is_agnes_provider(provider):
@@ -13791,7 +13800,6 @@ async def canvas_video(payload: CanvasVideoRequest):
     requested_model = selected_model(payload.model, "agnes-video-v2.0" if is_agnes else "veo3-fast")
     submit_urls = video_submit_url_candidates(provider, base_url, requested_model)
     submit_url = submit_urls[0]
-    zhenzhen_profile = zhenzhen_video_profile(provider, requested_model)
     is_veo31 = is_apimart and is_apimart_veo31_model(requested_model)
     if is_agnes:
         try:
@@ -13818,6 +13826,13 @@ async def canvas_video(payload: CanvasVideoRequest):
     try:
         async with httpx.AsyncClient(timeout=VIDEO_POLL_TIMEOUT) as client:
             # --- 构造图片载荷 ---
+            if is_zhenzhen(provider):
+                return await execute_zhenzhen_video(client, provider, payload,
+                    base=base_url, headers=video_api_headers(provider),
+                    resolve_file=lambda ref, kind: image_reference_file(ref) if kind == 'image' else output_file_from_url(ref['url']),
+                    accepted=lambda task_id, url, mode: record_video_acceptance(task_id, provider, url, mode),
+                    poll=lambda task_id, url: wait_for_video_task(client, provider, task_id, url),
+                    archive=save_remote_video_to_output)
             if is_apimart:
                 # APIMart 只接受 http/https 或 asset:// URL，先上传本地图片取回网络 URL
                 image_with_roles = []
@@ -14065,19 +14080,13 @@ async def canvas_video(payload: CanvasVideoRequest):
                         body["enable_upsample"] = True
                 else:
                     image_payload = []
-                    for ref in (payload.images if zhenzhen_profile else payload.images[:4]):
+                    for ref in payload.images[:4]:
                         if ref.url:
-                            image_payload.append(ref.url if zhenzhen_profile and ref.url.startswith(("https://", "http://", "data:"))
-                                                 else reference_to_data_url(ref.dict(), max_size=1536))
-                    if zhenzhen_profile:
-                        body = zhenzhen_video_body(payload, requested_model, image_payload,
-                            [media_reference_to_url(value) for value in payload.videos],
-                            [media_reference_to_url(value) for value in payload.audios])
-                    else:
-                        body = json_video_body(payload, requested_model, image_payload)
+                            image_payload.append(reference_to_data_url(ref.dict(), max_size=1536))
+                    body = json_video_body(payload, requested_model, image_payload)
             task_id, result, urls = await generate_json_video(
                 client, submit_urls, video_api_headers(provider), body,
-                extract_task_id=zhenzhen_video_request_id if zhenzhen_profile else extract_task_id, output_urls=video_output_urls,
+                extract_task_id=extract_task_id, output_urls=video_output_urls,
                 accepted=lambda task_id, url: record_video_acceptance(task_id, provider, url, video_query_mode(provider, payload.model)),
                 poll=lambda task_id, url: wait_for_video_task(client, provider, task_id, url),
             )
@@ -14115,15 +14124,20 @@ async def inspect_saved_video_task(provider, receipt):
     mode = video_query_mode(provider, receipt.get("model", ""))
     # Old accepted receipts retain their original unified route. New model
     # mappings must never redirect an already accepted supplier task.
-    if is_zhenzhen(provider) and receipt.get("video_query_mode") in ZHENZHEN_VIDEO_QUERY_MODES | {"generic"}:
+    if is_zhenzhen(provider) and receipt.get("video_query_mode") in ZHENZHEN_VIDEO_QUERY_MODES | {"generic", "apimart"}:
         mode = receipt["video_query_mode"]
     if not mode or mode != receipt.get("video_query_mode"):
         raise HTTPException(409, "原视频查询协议无法匹配，请核对供应商记录")
     base = video_api_root(provider)
     task_id = encoded_task_id(receipt["upstream_task_id"])
-    urls = video_task_url_candidates(provider, base, task_id, "/v2/videos/generations" if receipt.get("video_v2") else "")
+    candidate_id = receipt['upstream_task_id'] if is_zhenzhen(provider) else task_id
+    urls = video_task_url_candidates(provider, base, candidate_id, "/v2/videos/generations" if receipt.get("video_v2") else "")
     if mode in ZHENZHEN_VIDEO_QUERY_MODES:
         urls = zhenzhen_video_query_endpoints(base, task_id, mode=mode)
+    elif mode == 'apimart' and is_zhenzhen(provider):
+        # A legacy accepted task keeps its recorded query contract even though
+        # new workshop submissions no longer use the APIMart upload branch.
+        urls = [f'{base}/v1/tasks/{task_id}?language=zh']
     headers = video_api_headers(provider)
     if mode == "agnes":
         # Agnes query has additional model headers and query parameters.
@@ -14137,7 +14151,8 @@ async def inspect_saved_video_task(provider, receipt):
 CANVAS_VIDEO_TASKS = CanvasVideoTasks(CANVAS_TASK_JOURNAL, get_api_provider_exact, canvas_video,
     inspect_saved_video_task, save_remote_video_to_output, image_outputs_are_archived, save_to_history,
     schedule_canvas_task, lambda task_id: CANVAS_ACCEPTED_RECOVERY.notify(task_id), query_mode=video_query_mode,
-    enqueue=lambda task_id, payload: CANVAS_TASK_DISPATCH.enqueue(task_id, payload), prepare_binding=prepare_canvas_call_binding)
+    enqueue=lambda task_id, payload: CANVAS_TASK_DISPATCH.enqueue(task_id, payload), prepare_binding=prepare_canvas_call_binding,
+    validate=lambda provider, payload: validate_zhenzhen_video_request(payload, payload.model) if is_zhenzhen(provider) else None)
 
 
 @app.post("/api/canvas-video-tasks")

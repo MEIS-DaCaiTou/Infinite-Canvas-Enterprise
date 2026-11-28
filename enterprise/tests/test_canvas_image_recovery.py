@@ -185,7 +185,8 @@ def test_batch_recovers_local_archive_while_only_querying_pending_original(tmp_p
         assert result["status"] == "partial"
         assert result["images"] == ["/output/ready.png", archive["url"], "/output/third.png"]
         assert await recovery.reconcile(task_id) == result
-        assert queried == ["pending-id", "pending-id"] and published == [result]
+        assert queried == ["pending-id", "pending-id"]
+        assert published == [{key:value for key,value in result.items() if key != "timing"}]
         assert journal.get(task_id)["provider_receipts"][3]["state"] == "unknown"
     asyncio.run(scenario())
 

@@ -39,6 +39,15 @@ vm.runInNewContext(fs.readFileSync('static/js/canvas-task-query.js', 'utf8'), co
         {fetcher,wait:async()=>{},maxPolls:2}), /生成任务.*local-video/);
 
     const image = context.window.CanvasTaskQuery;
+    const savedReceipt = {status:'succeeded', created_at:1000, updated_at:56302,
+        result:{timestamp:1106, images:['/output/overnight.png']}};
+    const recovered = image.imageResult(savedReceipt);
+    assert.deepEqual(JSON.parse(JSON.stringify(image.runTiming(recovered.timing))),
+        {startedAt:1000000, finishedAt:1106000, runMs:106000});
+    assert.equal(savedReceipt.result.timing, undefined, 'presentation must not mutate the saved result');
+    assert.equal(image.runTiming(image.imageResult({status:'running',created_at:1000,result:{timestamp:1005}}).timing),null);
+    assert.equal(image.runTiming({started_at:1000,finished_at:999}),null);
+    assert.equal(image.runTiming({started_at:1000}),null);
     const requests = Array.from({length:4}, () => image.imageRequest({prompt:'fixture', n:4}));
     const ids = requests.map(request => request.taskId);
     assert.equal(new Set(ids).size, 4);

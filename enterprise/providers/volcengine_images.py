@@ -75,7 +75,15 @@ def configure_provider(provider):
 
 
 def image_profile(provider, model):
-    return {**seedream_profile(), "supports_async": False} if is_provider(provider) and model == NATIVE_MODEL else {}
+    if not is_provider(provider) or model != NATIVE_MODEL:
+        return {}
+    # Reference inputs have their own limits; size_rules describes OUTPUTS.
+    # https://docs.volcengine.com/docs/ark/image-generation-api?lang=zh
+    inputs = {"formats": ["PNG", "JPEG", "WEBP"], "max_file_bytes": 30_000_000,
+              "max_pixels": 36_000_000, "min_edge": 15, "max_aspect": 16}
+    profile = {**seedream_profile(), "supports_async": False, "reference_input": inputs}
+    profile["layer_profile"]["reference_input"] = {**inputs, "formats": ["PNG", "JPEG"], "min_pixels": 262144}
+    return profile
 
 
 def image_body(model, prompt, size, references, *, layer_options=None, background_options=None):

@@ -1,5 +1,5 @@
 (function(){
-    const VERSION = '20261124.marketing-01';
+    const VERSION = '20261126.video-compat';
     const scripts = [
         '/static/js/i18n-core.js',
         '/static/js/i18n/common.js',

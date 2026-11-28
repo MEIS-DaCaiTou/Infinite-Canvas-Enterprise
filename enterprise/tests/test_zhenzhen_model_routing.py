@@ -53,7 +53,7 @@ def test_model_contract_uses_its_own_media_duration_and_resolution(model, extra)
 
 
 def test_legacy_contract_and_native_request_identity_are_kept():
-    assert adapter.submit_endpoints("https://supplier.invalid", "veo3-fast") == [
+    assert adapter.submit_endpoints("https://supplier.invalid", "legacy-video-id") == [
         "https://supplier.invalid/v2/videos/generations", "https://supplier.invalid/v1/videos/generations"]
     assert adapter.request_id({"request_id": "original"}) == "original"
     assert adapter.request_id({"data": {"id": "opaque"}}) == "opaque"
@@ -110,7 +110,8 @@ def test_selected_new_protocol_never_falls_back_to_another_paid_endpoint(reply):
 
 @pytest.mark.parametrize("model,path,mode", [("grok-imagine-video-1.5", "/v1/videos", adapter.V1),
     ("MiniMax-H3", "/v1/videos", adapter.V1), ("wan3.0-video", "/v1/videos", adapter.V1),
-    ("grok-imagine-video", "/xai/v1/videos/generations", adapter.XAI)])
+    ("grok-imagine-video", "/xai/v1/videos/generations", adapter.XAI),
+    ("doubao-seedance-2.0-mini", "/seedance/v3/contents/generations/tasks", adapter.SEEDANCE)])
 def test_actual_main_acceptance_survives_exit_and_only_queries_original_protocol(tmp_path, model, path, mode):
     install = tmp_path / "install"; app = install / "releases/fixture"
     (app / "static").mkdir(parents=True); (app / "main.py").write_text("# owned fixture", encoding="utf8")
@@ -138,7 +139,7 @@ async def exit_before_poll(*_):
     os._exit(27)
 main.wait_for_video_task=exit_before_poll
 async def run():
-    result=await main.create_canvas_video_task(main.CanvasVideoRequest(provider_id='zhenzhen',model=model,prompt='owned fixture'),None)
+    result=await main.create_canvas_video_task(main.CanvasVideoRequest(provider_id='zhenzhen',model=model,prompt='owned fixture',duration=4 if model.endswith('mini') else 5),None)
     id_path.write_text(result['task_id'])
     await asyncio.gather(*main.CANVAS_TASK_RUNNERS)
 asyncio.run(run())
@@ -149,7 +150,7 @@ asyncio.run(run())
     reader = BOOTSTRAP + setup + r'''
 def reply(request):
     calls.append((request.method,request.url.path))
-    expected='/xai/v1/videos/original-video' if mode.endswith('xai-v1') else '/v1/videos/original-video'
+    expected=('/seedance/v3/contents/generations/tasks/original-video' if mode.endswith('seedance-v3') else '/xai/v1/videos/original-video' if mode.endswith('xai-v1') else '/v1/videos/original-video')
     assert request.method=='GET' and request.url.path==expected
     return httpx.Response(200,json={'status':'done','video':{'url':'https://supplier.example/result.mp4'}})
 main.httpx.AsyncClient=lambda **kw:original_client(transport=httpx.MockTransport(reply),**kw)

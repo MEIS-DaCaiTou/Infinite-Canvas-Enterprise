@@ -97,14 +97,29 @@
             const automatic=data.auto_recovery;
             const autoLabels={querying:'自动续查中',waiting:'等待自动续查',manual:'自动续查已暂停，需要人工核对',complete:'自动续查已结束'};
             const prepared=data.image_preparation;
+            const referenceDetails=(prepared?.items || []).map(item=>{
+                const dimensions=item.source_width && item.source_height && item.width && item.height;
+                const action=item.transport==='url' ? tr('远程 URL 直传，未读取尺寸','Remote URL; dimensions not inspected')
+                    : item.processing==='original' ? tr('原图直传','Original file')
+                    : item.processing==='resized' ? tr('超限缩小','Resized to input limits')
+                    : item.processing==='converted' ? tr('重新编码／方向校正，分辨率保持','Re-encoded/oriented; resolution retained')
+                    : dimensions && (item.source_width!==item.width || item.source_height!==item.height) ? tr('已缩小（历史记录）','Resized (historical record)')
+                    : dimensions ? tr('尺寸保持','Resolution retained') : tr('历史记录未提供尺寸','Dimensions not recorded');
+                const reasons={model_pixels:tr('模型输入总像素限制','Model input pixel limit'),model_edge:tr('模型输入边长限制','Model input edge limit'),model_file_bytes:tr('模型输入文件体积限制','Model input file limit'),format:tr('输入格式转换','Input format conversion'),orientation:tr('EXIF 方向校正','EXIF orientation correction')};
+                return `<div><span>${esc(tr('输入图','Input')+' '+(item.index+1)+' · '+action)}</span>
+                    ${dimensions?`<small>${esc(tr('原始','Original')+' '+item.source_width+' × '+item.source_height+' → '+tr('提交','Submitted')+' '+item.width+' × '+item.height)}${item.mime?' · '+esc(item.mime.replace('image/','').toUpperCase()):''}${item.alpha?' · Alpha':''}</small>`:''}
+                    ${item.reasons?.length?`<small>${item.reasons.map(reason=>esc(reasons[reason] || reason)).join(' · ')}</small>`:''}</div>`;
+            }).join('');
             const attempts=(data.attempts || []).map(item=>{
                 const usage=item.reported_usage || {};
                 const counts=Object.entries(usage).filter(([key])=>!['reported_cost','currency'].includes(key));
                 return `<div><span>子请求 ${item.index+1} · ${esc(label(item.status))}</span>
                     <small>${esc(item.provider || '')} · ${esc(item.model || '')}</small>
-                    <code>${esc(item.upstream_task_id || '未取得供应商任务 ID')}</code>
+                    <code>${esc(item.upstream_task_id ? '供应商任务 ID：'+item.upstream_task_id :
+                        data.type === 'online-image' && item.status === 'succeeded'
+                            ? '已返回图片；此回执未记录供应商异步任务 ID' : '未取得供应商任务 ID')}</code>
                     ${item.started_at?`<small>提交 ${esc(date(item.started_at))}${item.accepted_at?' · 受理 '+esc(date(item.accepted_at)):''}${item.finished_at?' · 结束 '+esc(date(item.finished_at)):''}</small>`:''}
-                    ${item.provider_request_id?`<code>供应商请求 ID：${esc(item.provider_request_id)}</code>`:''}
+                    ${item.provider_request_id?`<code>供应商请求追踪 ID：${esc(item.provider_request_id)}</code>`:''}
                     ${item.error?`<small>${esc(item.error)}</small>`:''}
                     ${counts.length?`<small>供应商报告用量：${counts.map(([key,value])=>`${esc(key)} ${esc(value)}`).join(' · ')}</small>`:''}
                     ${usage.reported_cost!==undefined?`<small>供应商报告费用 ${esc(usage.reported_cost)} ${esc(usage.currency || '（币种未提供）')}，尚非平台结算</small>`:''}</div>`;
@@ -113,6 +128,7 @@
                 ${data.queue_released?'<p class="generation-task-note">管理员已释放该任务占用名额，原任务记录仍保留。</p>':''}
                 <p class="generation-task-note">调用密钥：${data.call_source ? esc((data.call_source.scope === 'department' ? '部门专用' : '公司共享') + ' · ' + (data.call_source.source_name || '未命名来源')) : '未记录渠道密钥来源'}</p>
                 ${prepared?`<p class="generation-task-note">${esc(tr(`参考图 ${prepared.count} 张，原文件 ${(prepared.source_bytes/1048576).toFixed(2)} MiB → 提交副本 ${(prepared.prepared_bytes/1048576).toFixed(2)} MiB；原素材保留`,`References: ${prepared.count}; ${(prepared.source_bytes/1048576).toFixed(2)} MiB originals → ${(prepared.prepared_bytes/1048576).toFixed(2)} MiB submission copies; originals retained`))}</p>`:''}
+                ${referenceDetails?`<div class="generation-task-attempts generation-task-references">${referenceDetails}</div>`:''}
                 ${data.error?`<p class="generation-task-error">${esc(data.error)}</p>`:''}
                 <div class="generation-task-attempts">${attempts}</div>
                 <p class="generation-task-note">${esc(data.cost_note || '')}</p>

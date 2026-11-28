@@ -7,6 +7,35 @@ import sys
 from enterprise.tests.test_canvas_image_recovery_main import BOOTSTRAP, ROOT
 
 
+def test_workshop_json_without_receipt_keeps_original_reference_bytes(tmp_path):
+    for name in ('static','workflows'):
+        (tmp_path/'install/releases/fixture'/name).mkdir(parents=True,exist_ok=True)
+    script=BOOTSTRAP+r'''
+import base64
+from PIL import Image
+provider.update(image_request_mode='openai-json',image_models=['owned-custom-image'])
+Path(main.OUTPUT_DIR).mkdir(parents=True,exist_ok=True)
+source=Path(main.OUTPUT_DIR)/'large-source.png'
+Image.new('RGB',(2400,1800),(10,20,30)).save(source)
+def response(request):
+    calls.append(request)
+    body=json.loads(request.content)
+    reference=body['extra_body']['image'][0]
+    assert base64.b64decode(reference.split(',',1)[1])==source.read_bytes()
+    return httpx.Response(200,json={'data':[{'b64_json':base64.b64encode(source.read_bytes()).decode()}]})
+main.httpx.AsyncClient=lambda **kw:original_client(transport=httpx.MockTransport(response),**kw)
+async def exercise():
+    payload=main.OnlineImageRequest(provider_id=provider['id'],model='owned-custom-image',prompt='own fixture',
+        reference_images=[{'url':'/output/large-source.png'}])
+    result=await main.build_online_image_result(payload)
+    assert len(result['images'])==1 and len(calls)==1
+asyncio.run(exercise())
+'''
+    result=subprocess.run([sys.executable,'-X','utf8','-B','-c',script,str(ROOT),str(tmp_path/'install'),str(tmp_path/'local')],
+        cwd=ROOT,env={**os.environ,'ICE_ENTERPRISE_ENABLED':'0','ICE_PORTABLE_ROOT':''},capture_output=True,text=True,encoding='utf8',timeout=50)
+    assert result.returncode==0,result.stdout+result.stderr
+
+
 def test_native_original_task_route_archives_all_layers_and_reopens_without_resubmission(tmp_path):
     for name in ('static', 'workflows'):
         (tmp_path/'install/releases/fixture'/name).mkdir(parents=True, exist_ok=True)
@@ -19,7 +48,8 @@ provider.update(id='official-images',supplier='volcengine',protocol='volcengine'
     base_url='https://official.example/api/v3',image_models=[NATIVE_MODEL])
 main.save_api_providers([provider])
 Path(main.OUTPUT_DIR).mkdir(parents=True,exist_ok=True)
-Image.new('RGBA',(32,24),(10,20,30,100)).save(Path(main.OUTPUT_DIR)/'native-source.png')
+Image.new('RGBA',(2400,1800),(10,20,30,100)).save(Path(main.OUTPUT_DIR)/'native-source.png')
+Image.new('RGB',(100,2000)).save(Path(main.OUTPUT_DIR)/'invalid-aspect.png')
 result_ids=roots.DATA_ROOT/'native-result-ids.json'
 '''
     writer = setup + r'''
@@ -34,6 +64,8 @@ def native_response(request):
     calls.append((request.method,str(request.url)))
     assert request.method=='POST' and str(request.url)=='https://official.example/api/v3/images/generations'
     body=json.loads(request.content)
+    reference=body['image'] if isinstance(body.get('image'),str) else body['image'][0]
+    assert base64.b64decode(reference.split(',',1)[1])==(Path(main.OUTPUT_DIR)/'native-source.png').read_bytes()
     if body.get('layer_decomposition'):
         assert 'prompt' not in body
         assert 'background' not in body and body['size']=='auto'
@@ -59,6 +91,12 @@ async def exercise():
         old_client['protocol']='openai'
         restored=(await client.put('/api/providers',json=[old_client])).json()['providers'][0]
         assert restored['supplier']=='volcengine' and restored['protocol']=='volcengine'
+        rejected=await client.post('/api/canvas-image-tasks',json={'provider_id':provider['id'],'model':NATIVE_MODEL,
+            'prompt':'own synthetic fixture','size':'1K','reference_images':[{'url':'/output/invalid-aspect.png'}]})
+        rejected.raise_for_status()
+        await asyncio.gather(*main.CANVAS_TASK_RUNNERS)
+        rejected_record=main.CANVAS_TASK_JOURNAL.get(rejected.json()['task_id'])
+        assert rejected_record['status']=='failed' and '宽高比' in rejected_record['error'] and not calls
         for layers in (False,True):
             payload={'prompt':'' if layers else 'own synthetic fixture','provider_id':provider['id'],'model':NATIVE_MODEL,
                 'size':'auto' if layers else '2880x1440','background_mode':'auto' if layers else 'transparent',
@@ -77,6 +115,10 @@ async def exercise():
                     assert png.mode=='RGBA' and png.getextrema()[-1]==(0,200)
             record=main.CANVAS_TASK_JOURNAL.get(key)
             assert record.get('image_preparation') or record.get('reference_preparation') or 'prepared_bytes' in json.dumps(record)
+            preparation=record['image_preparation']
+            assert preparation['policy']['max_pixels']==36000000
+            assert preparation['items'][0]['processing']=='original'
+            assert preparation['items'][0]['width']==2400
             assert all(not receipt.get('upstream_task_id') for receipt in record['provider_receipts'])
     assert len(calls)==2 and all(method=='POST' for method,_ in calls)
     result_ids.write_text(json.dumps(ids))

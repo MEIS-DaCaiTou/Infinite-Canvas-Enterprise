@@ -35,6 +35,14 @@ context.fetch=async(url,options={})=>{
     }
     if(url.endsWith('/older-image'))return {ok:true,json:async()=>({
         id:'older-image',type:'online-image',status:'succeeded',created_at:1,output_count:0,items:[],
+        attempts:[{index:0,status:'succeeded',provider_request_id:'supplier-trace-only'}],
+        image_preparation:{count:5,source_bytes:2000000,prepared_bytes:1500000,items:[
+            {index:0,source_width:4500,source_height:6000,width:4500,height:6000,processing:'original',mime:'image/jpeg'},
+            {index:1,source_width:8000,source_height:6000,width:6928,height:5196,processing:'resized',reasons:['model_pixels'],alpha:true,mime:'image/png'},
+            {index:2,source_width:4500,source_height:6000,width:1152,height:1536},
+            {index:3,transport:'url'},
+            {index:4,source_width:2400,source_height:1800,width:2400,height:1800,processing:'converted',reasons:['orientation'],mime:'image/png'},
+        ]},
     })};
     const row={id:'original-without-output',type:'comfy',status,created_at:1,output_count:0,can_cancel:status==='queued',cancellation_pending:pending};
     return {ok:true,json:async()=>url.includes('/original-without-output')?{...row,items:[]}:({items:[row],next_cursor:null})};
@@ -64,6 +72,15 @@ const flush=async()=>{for(let i=0;i<12;i++)await Promise.resolve();};
     context.GenerationTaskCenter.openTasks({kind:'canvas_image',taskId:'older-image'});await flush();
     assert(calls.slice(beforeLink).some(([method,url])=>method==='GET'&&url.endsWith('/older-image')));
     assert(list.innerHTML.includes('data-detail="older-image"'),'a linked image remains visible outside the recent page');
+    const completedDetail=list.querySelector('.generation-task-detail').innerHTML;
+    assert(completedDetail.includes('已返回图片；此回执未记录供应商异步任务 ID'));
+    assert(completedDetail.includes('供应商请求追踪 ID：supplier-trace-only'));
+    assert(!completedDetail.includes('未取得供应商任务 ID'),'a completed image is not a missing-receipt failure');
+    assert(completedDetail.includes('输入图 1 · 原图直传') && completedDetail.includes('4500 × 6000 → 提交 4500 × 6000'));
+    assert(completedDetail.includes('输入图 2 · 超限缩小') && completedDetail.includes('模型输入总像素限制'));
+    assert(completedDetail.includes('PNG · Alpha') && completedDetail.includes('已缩小（历史记录）'));
+    assert(completedDetail.includes('远程 URL 直传，未读取尺寸'));
+    assert(completedDetail.includes('输入图 5 · 重新编码／方向校正，分辨率保持') && completedDetail.includes('EXIF 方向校正'));
     const versionedScripts=['static/canvas.html','static/smart-canvas.html','static/online.html']
         .map(path=>fs.readFileSync(path,'utf8').match(/generation-task-center\.js\?v=\d{8}\.\d+/)?.[0]);
     assert(versionedScripts.every(source=>source&&source===versionedScripts[0]),'all task centers use the same versioned script');

@@ -26,13 +26,13 @@ async def exit_after_acceptance(client, selected, upstream_id, submit_url=''):
     record = main.CANVAS_TASK_JOURNAL.get(id_path.read_text())
     receipt = record['provider_receipts'][0]
     assert upstream_id == receipt['upstream_task_id'] == 'accepted-before-process-exit'
-    assert receipt['video_v2'] and receipt['video_query_mode'] == 'generic' and receipt['provider_base_url'] == provider['base_url']
+    assert receipt['video_v2'] and receipt['video_query_mode'] == 'zhenzhen-unified-v2' and receipt['provider_base_url'] == provider['base_url']
     assert 'private-prompt' not in json.dumps(record) and 'fixture-only-key' not in json.dumps(record)
     assert calls == [('POST','/v2/videos/generations')], calls
     os._exit(17)
 main.wait_for_video_task = exit_after_acceptance
 async def create():
-    task = await main.create_canvas_video_task(main.CanvasVideoRequest(prompt='private-prompt',provider_id='zhenzhen',model='veo3-fast'), 'fixture-alice')
+    task = await main.create_canvas_video_task(main.CanvasVideoRequest(prompt='private-prompt',provider_id='zhenzhen',model='veo3-fast',duration=8), 'fixture-alice')
     id_path.write_text(task['task_id'])
     await asyncio.gather(*main.CANVAS_TASK_RUNNERS)
 asyncio.run(create())
@@ -72,9 +72,9 @@ print('video hard-exit recovered: 2 GET, 0 submit POST after restart')
 '''
     args = [str(ROOT), str(install), str(tmp_path / "local")]
     env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", PYTHONUTF8="1")
-    first = subprocess.run([sys.executable, "-c", writer, *args], cwd=ROOT, env=env, capture_output=True, text=True, timeout=40)
+    first = subprocess.run([sys.executable, "-c", writer, *args], cwd=ROOT, env=env, capture_output=True, text=True, encoding='utf-8', timeout=40)
     assert first.returncode == 17, first.stdout + first.stderr
-    second = subprocess.run([sys.executable, "-c", reader, *args], cwd=ROOT, env=env, capture_output=True, text=True, timeout=40)
+    second = subprocess.run([sys.executable, "-c", reader, *args], cwd=ROOT, env=env, capture_output=True, text=True, encoding='utf-8', timeout=40)
     assert second.returncode == 0, second.stdout + second.stderr
     assert "2 GET, 0 submit POST" in second.stdout
 
@@ -103,6 +103,7 @@ async def check():
     cases=[
       ({'id':'zhenzhen','base_url':'https://supplier.example/v1','protocol':'gemini'},'generic',False,'/v1/videos/generations/original'),
       ({'id':'zhenzhen','base_url':'https://supplier.example/v1','protocol':'gemini'},'generic',True,'/v2/videos/generations/original'),
+      ({'id':'zhenzhen','base_url':'https://supplier.example','protocol':'apimart'},'apimart',False,'/v1/tasks/original'),
       ({'id':'fixture','base_url':'https://supplier.example/v1','protocol':'openai'},'generic',True,'/v2/videos/generations/original'),
       ({'id':'fixture','base_url':'https://apihub.agnes-ai.com','protocol':'openai'},'agnes',False,'/agnesapi'),
       ({'id':'fixture','base_url':'https://supplier.example','protocol':'apimart'},'apimart',False,'/v1/tasks/original'),
@@ -118,8 +119,16 @@ async def check():
         # A newly mapped model must keep the route in its old accepted receipt.
         result=await main.inspect_saved_video_task(selected,{'upstream_task_id':'original','model':'MiniMax-H3','video_query_mode':mode,'video_v2':v2})
         assert result['status']=='succeeded' and seen==[('GET',path)]
+    def opaque_reply(request):
+        assert request.method == 'GET'
+        assert request.url.raw_path == b'/v2/videos/generations/opaque%2FID%3F%25%23%3A'
+        return httpx.Response(200,json={'status':'SUCCESS','videos':['https://supplier.example/paid.mp4']})
+    main.httpx.AsyncClient=lambda **kwargs: original_client(transport=httpx.MockTransport(opaque_reply),**kwargs)
+    result=await main.inspect_saved_video_task({'id':'zhenzhen','base_url':'https://supplier.example/v1','protocol':'openai'},
+        {'upstream_task_id':'opaque/ID?%#:','model':'MiniMax-H3','video_query_mode':'generic','video_v2':True})
+    assert result['status']=='succeeded'
 asyncio.run(check())
 '''
     result=subprocess.run([sys.executable,'-c',script,str(ROOT),str(install),str(tmp_path/'local')],cwd=ROOT,
-        env=dict(os.environ,PYTHONDONTWRITEBYTECODE='1',PYTHONUTF8='1'),capture_output=True,text=True,timeout=40)
+        env=dict(os.environ,PYTHONDONTWRITEBYTECODE='1',PYTHONUTF8='1'),capture_output=True,text=True,encoding='utf-8',timeout=40)
     assert result.returncode==0,result.stdout+result.stderr

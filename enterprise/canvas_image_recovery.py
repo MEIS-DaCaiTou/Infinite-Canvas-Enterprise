@@ -70,6 +70,24 @@ def provisional_image_result(record):
     return None
 
 
+def image_task_timing(record):
+    """Platform elapsed time comes from saved server facts, never a viewer's return."""
+    started = record.get("created_at")
+    if not isinstance(started, (int, float)) or started <= 0:
+        return {}
+    timing = {"started_at": started}
+    if record.get("status") not in {"succeeded", "failed", "partial", "cancelled"}:
+        return timing
+    finished = (record.get("result") or {}).get("timestamp")
+    if not finished:
+        receipts = record.get("provider_receipts") or []
+        if receipts and all(item.get("finished_at") for item in receipts):
+            finished = max(item["finished_at"] for item in receipts)
+    if isinstance(finished, (int, float)) and finished >= started:
+        timing.update(finished_at=finished, elapsed_ms=round((finished - started) * 1000))
+    return timing
+
+
 def public_receipt(record):
     # Internal query binding is not frontend configuration or a credential.
     public = {**{key: value for key, value in record.items() if key != "provider_receipts"},
@@ -93,6 +111,8 @@ def public_receipt(record):
     elif partial:
         message = record["error"] if record.get("tracking_write_failed") else partial["message"]
         public.update(status="partial", result={**partial, "message":message}, message=message)
+    if record.get("type") == "online-image":
+        public["timing"] = image_task_timing({**record, "status": public["status"]})
     return public
 
 
@@ -110,7 +130,7 @@ class ImageReceiptSink:
     def identify(self, headers=None, raw=None):
         headers = headers or {}
         raw = raw if isinstance(raw, dict) else {}
-        value = raw.get("request_id") or headers.get("x-request-id") or headers.get("request-id")
+        value = raw.get("request_id") or headers.get("x-request-id") or headers.get("x-oneapi-request-id") or headers.get("request-id")
         if not self.provider_request_id and isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_.:-]{1,240}", value):
             self.provider_request_id = value
 
@@ -212,7 +232,8 @@ class CanvasImageRecovery:
             await asyncio.to_thread(self.journal.record_reconciliation, task_id, "unknown", getattr(exc, "detail", None) or str(exc))
             raise
         await asyncio.to_thread(self.journal.record_reconciliation, task_id, result.get("status", "unknown"), result.get("message", ""))
-        return result
+        record = await asyncio.to_thread(self.journal.get, task_id)
+        return {**result, "timing": image_task_timing(record)}
 
     async def _plan_archive(self, task_id, receipt, meta, *, raw):
         await asyncio.to_thread(

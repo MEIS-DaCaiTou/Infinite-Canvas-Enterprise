@@ -6,6 +6,9 @@ const vm = require('node:vm');
 const root = require('node:path').resolve(__dirname, '../..');
 const read = name => fs.readFileSync(root + '/static/js/' + name, 'utf8');
 const plain = value => JSON.parse(JSON.stringify(value));
+const pickerContext = vm.createContext({window:{},document:{querySelectorAll:()=>[]},
+    fetch:async()=>({ok:true,json:async()=>({favorites:[]})})});
+vm.runInContext(read('model-picker.js'),pickerContext);
 function functions(ctx, file, names) {
     const source = read(file);
     for (const name of names) {
@@ -32,6 +35,7 @@ function setup(kind, nodes) {
     });
     ctx.saveCount=0;ctx.scheduleSave=()=>ctx.saveCount++;
     ctx.window=ctx;
+    vm.runInContext(read('canvas-output-presentation.js'),ctx);
     ctx.JimengPendingSignal=class extends Error {constructor(data){super(data.message);Object.assign(this,data,{jimengPending:true});}};
     ctx.setNodeJimengPending=(node,signal)=>{node.jimengPending={submitId:signal.submitId};};
     ctx.addGenerationLog=ctx.addSmartGenerationLog=value=>ctx.logs.push(plain(value));
@@ -63,12 +67,19 @@ async function resume(ctx,kind) {
     if(kind==='classic')await ctx.resumeCanvasVideoTask(ctx.nodes[1],ctx.nodes[1]._pending[0]);
     else await ctx.resumeSmartPendingNode(ctx.nodes[0]);
 }
-async function submitAfterSourceSave(kind, conflictAt) {
+async function submitAfterSourceSave(kind, conflictAt, filterOptions=false) {
     const originalNodes=kind==='classic'
         ? [{id:'generator',type:'video'}, {id:'output',type:'output',images:[]}]
         : [{id:'output',type:'smart-image',images:[],running:true,pending:1}];
     const ctx=setup(kind,originalNodes),file=kind==='classic'?'canvas.js':'smart-canvas.js';
+    const provider={id:'fixture',builtin_model_video_profiles:filterOptions ? {fixture:{route:'fixture',toggles:['generate_audio']}} : {}};
+    const refs=filterOptions ? [{url:'/assets/input/garment.png',name:'garment',role:'first_frame',asset_uris:{fixture:'asset://fixture'}}] : [];
+    const runSettings={videoModel:'fixture',videoProvider:'fixture',videoCameraFixed:true,videoWatermark:true,
+        videoUseFrameRoles:true,videoTrustedAsset:true,videoGenerateAudio:true};
+    if(filterOptions && kind==='classic') Object.assign(ctx.nodes[0],{model:'fixture',apiProvider:'fixture',
+        cameraFixed:true,watermark:true,useFrameRoles:true,generateAudio:true});
     Object.assign(ctx,{
+        CanvasModelPicker:pickerContext.window.CanvasModelPicker,apiProviders:[provider],apiProviderById:()=>provider,
         crypto:require('node:crypto').webcrypto,URLSearchParams,
         savingCanvasNow:false,canvasSyncInFlight:false,canvasId:'original-canvas',
         canvasSaveConflict:false,smartSaveConflict:false,smartSavePromise:null,smartSaveAgain:false,smartSavedContent:'',
@@ -87,7 +98,7 @@ async function submitAfterSourceSave(kind, conflictAt) {
         mergeSmartConnections:()=>[],mergeSmartGenerationLogs:()=>[],clearCompletedNodeBusyStates:()=>false,
         recoverStuckLoopOutputsFromLogs:()=>false,resumeSmartPendingTasks:()=>{},resumeJimengPendingNodes:()=>{},
         checkTextSelection:()=>true,cascadeTargetIdFromOptions:()=>'',
-        generatorSources:()=>[{prompt:'Synthetic geometry',refs:[]}],orderedSources:(_n,s)=>s,
+        generatorSources:()=>[{prompt:'Synthetic geometry',refs}],orderedSources:(_n,s)=>s,
         mediaKindForRef:()=> 'image',applyUploadedUrlToRefs:x=>x,applyUploadedUrlsToSmartRefs:x=>x,
         imageRefsOnly:x=>x,videoRefsOnly:()=>[],audioRefsOnly:()=>[],manualVideoUrlForNode:()=>'',
         manualSmartVideoLink:()=>null,resolveVideoProviderId:x=>x,videoProviderPlatform:()=>'',
@@ -112,6 +123,14 @@ async function submitAfterSourceSave(kind, conflictAt) {
         if(options.method==='POST'){
             assert.equal(url,'/api/canvas-video-tasks');posts++;
             const body=JSON.parse(options.body);
+            if(filterOptions){
+                assert.equal(body.camerafixed,false,'hidden camera option must not reach generation');
+                assert.equal(body.watermark,false,'hidden watermark option must not reach generation');
+                assert.equal(body.generate_audio,true,'supported options remain effective');
+                assert(!body.images.some(ref=>ref.role),'hidden first/last-frame option must not set image roles');
+                assert.equal(body.images[0].url,refs[0].url,'hidden trusted mode must not switch to asset://');
+                assert.equal(refs[0].role,'first_frame','input references remain unchanged');
+            }
             assert.equal(body.source.canvas_id,'original-canvas');
             assert.equal(body.source.node_id,kind==='classic'?'generator':'output');
             return {ok:true,json:async()=>({task_id:'video-new'})};
@@ -145,7 +164,7 @@ async function submitAfterSourceSave(kind, conflictAt) {
             assert(ctx.conflictShown,'local draft conflict remains actionable');
             return;
         }
-        const result=await ctx.runApiVideoGeneration('Synthetic geometry',[],{videoModel:'fixture'}, {node:original});
+        const result=await ctx.runApiVideoGeneration('Synthetic geometry',refs,filterOptions ? runSettings : {videoModel:'fixture'}, {node:original});
         assert.equal(result[0],'/output/new.mp4');
         assert(ctx.nodes[0].pendingTasks.some(t=>t.taskId==='video-new'),'accepted ID belongs to the live node');
         ctx.completeSmartVideoTracking(original,'video-new');
@@ -158,6 +177,7 @@ async function submitAfterSourceSave(kind, conflictAt) {
     for(const kind of ['classic','smart']){
         await submitAfterSourceSave(kind,0);
         await submitAfterSourceSave(kind,1);
+        await submitAfterSourceSave(kind,0,true);
     }
     for(const kind of ['classic','smart']){
         let ctx=setup(kind,fixture(kind));

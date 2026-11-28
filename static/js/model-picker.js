@@ -1,5 +1,6 @@
 /* Personal model shortcuts. Enterprise provider configuration stays unchanged. */
 (function () {
+    const VIDEO_TOGGLE_FIELDS = ['enhance_prompt','enable_upsample','camerafixed','return_last_frame','watermark','generate_audio','multimodal','frame_roles','trusted_asset'];
     let favorites = new Set();
     let view = 'all';
     let loaded = false;
@@ -151,6 +152,10 @@
                 const option = document.createElement('option');
                 option.value = model;
                 option.textContent = `${isFavorite(config, model) ? '★ ' : ''}${model}`;
+                if(config.getProfile?.(model)?.supported === false){
+                    option.disabled = true;
+                    option.textContent += parameterText('（尚未适配）',' (not adapted)');
+                }
                 select.append(option);
             }
             if(!filtered.length) {
@@ -189,8 +194,9 @@
     function profileFor(provider, model) {
         return provider?.builtin_model_image_profiles?.[model] || provider?.model_image_profiles?.[model] || provider?.image_profile || {};
     }
-    function videoProfileFor(provider, model) {
-        return provider?.builtin_model_video_profiles?.[model] || {};
+    function videoProfileFor(provider, model, channel='') {
+        const profile = provider?.builtin_model_video_profiles?.[model] || {};
+        return profile.variants?.[channel] ? {...profile,...profile.variants[channel]} : profile;
     }
     function videoToggleSupported(profile, key) {
         const field = {
@@ -198,14 +204,84 @@
             watermark:'watermark', generateAudio:'generate_audio', multimodal:'multimodal',
             useFrameRoles:'frame_roles', returnLastFrame:'return_last_frame',
             videoEnhancePrompt:'enhance_prompt', videoEnableUpsample:'enable_upsample', videoCameraFixed:'camerafixed',
-            videoWatermark:'watermark', videoGenerateAudio:'generate_audio', videoMultimodal:'multimodal', videoUseFrameRoles:'frame_roles',
-        }[key];
-        return !profile?.route || !field || (profile.toggles || []).includes(field);
+            videoWatermark:'watermark', videoGenerateAudio:'generate_audio', videoMultimodal:'multimodal', videoUseFrameRoles:'frame_roles', videoTrustedAsset:'trusted_asset',
+        }[key] || key;
+        return profile?.supported !== false && (!profile?.route || (profile.toggles || []).includes(field));
     }
-    function videoChoices(values, current) {
+    function videoChoices(values, current, ignoreCase=false) {
         const options = [...values];
-        if(current && !options.includes(current)) options.unshift(current);
+        if(current && !options.includes(current)){
+            const alias = ignoreCase ? options.findIndex(value=>value.toLowerCase() === current.toLowerCase()) : -1;
+            if(alias >= 0) options[alias] = current;
+            else options.unshift(current);
+        }
         return options;
+    }
+    function videoParameters(source, profile={}) {
+        const parameters = {
+            duration:Number(source.videoDuration ?? source.duration ?? 5),
+            aspect_ratio:source.videoAspect ?? source.aspectRatio ?? source.aspect_ratio ?? '16:9',
+            resolution:source.videoResolution ?? source.resolution ?? '',
+            video_channel:source.videoChannel ?? source.video_channel ?? '',
+            enhance_prompt:!!(source.videoEnhancePrompt ?? source.enhancePrompt ?? source.enhance_prompt),
+            enable_upsample:!!(source.videoEnableUpsample ?? source.enableUpsample ?? source.enable_upsample),
+            camerafixed:!!(source.videoCameraFixed ?? source.cameraFixed ?? source.camerafixed),
+            watermark:!!(source.videoWatermark ?? source.watermark),
+            generate_audio:!!(source.videoGenerateAudio ?? source.generateAudio ?? source.generate_audio),
+            multimodal:!!(source.videoMultimodal ?? source.multimodal),
+            frame_roles:!!(source.videoUseFrameRoles ?? source.useFrameRoles),
+            return_last_frame:!!(source.returnLastFrame ?? source.return_last_frame),
+            trusted_asset:!!(source.videoTrustedAsset ?? source.trusted_asset),
+        };
+        // Stored options belong to the canvas. Only effective options for the
+        // current model enter validation and new requests.
+        for(const field of VIDEO_TOGGLE_FIELDS){
+            if(!videoToggleSupported(profile, field)) parameters[field] = false;
+        }
+        return parameters;
+    }
+    function videoError(profile, value) {
+        const text = (zh,en) => parameterText(zh,en);
+        if(profile.supported === false) return text(profile.message || '该视频型号尚未适配，请选择已适配型号','This video model is not adapted; choose a supported model');
+        if(!profile.route) return '';
+        if(profile.channel_required && !profile.variants?.[value.video_channel]) return text('请按密钥分组选择 Sora 官方或兼容通道','Choose the Sora channel that matches your key group');
+        if(profile.durations && !profile.durations.includes(value.duration)) return text('支持的时长：','Supported durations: ') + profile.durations.join(' / ') + 's';
+        if(profile.ratios && !profile.ratios.includes(value.aspect_ratio)) return text('该模型不支持当前比例，请重新选择','Choose a supported aspect ratio');
+        if(profile.resolutions && value.resolution && !profile.resolutions.some(r=>r.toLowerCase() === value.resolution.toLowerCase())) return text('该模型不支持当前清晰度，请重新选择','Choose a supported resolution');
+        for(const field of VIDEO_TOGGLE_FIELDS) {
+            if(value[field] && !profile.toggles?.includes(field)) return text('请取消该模型不支持的选项：','Disable the unsupported option: ') + field;
+        }
+        for(const [kind, label] of [['images','图片'],['videos','视频'],['audios','音频']]) {
+            if(!Array.isArray(value[kind])) continue;
+            const key = kind === 'images' ? 'images' : kind;
+            if(value[kind].length > (profile['max_' + key] ?? Infinity)) return text(label + '数量超过当前模型范围','Too many input ' + kind);
+        }
+        if(profile.max_media && ['images','videos','audios'].reduce((total,key)=>total + (value[key]?.length || 0),0) > profile.max_media) return text('参考素材总数超过当前模型范围','Too many total input references');
+        if(value.seed != null && !profile.toggles?.includes('seed')) return text('该模型不支持 seed','This model does not accept seed');
+        if(Array.isArray(value.images) && value.images.length < (profile.min_images || 0)) return text('该模型需要参考图，请先添加图片','This model requires a reference image');
+        if(value.images?.some(ref=>ref.role) && !profile.toggles?.includes('frame_roles')) return text('该模型不支持首尾帧，请取消该选项','Disable frame roles for this model');
+        if(profile.family === 'seedance' && value.images){
+            const roles = value.images.map(ref=>ref.role || '');
+            if(roles.some(role=>!['','first_frame','last_frame','reference_image'].includes(role))) return text('图片角色不受当前模型支持','Unsupported image role');
+            if(roles.filter(role=>role === 'first_frame').length > 1 || roles.filter(role=>role === 'last_frame').length > 1) return text('首帧与尾帧各只能选择一张','Select at most one first and last frame');
+            if(roles.includes('last_frame') && !roles.includes('first_frame')) return text('尾帧需要同时提供首帧','A last frame requires a first frame');
+            if(value.multimodal && roles.some(role=>['first_frame','last_frame'].includes(role))) return text('全部参考与首尾帧不能同时使用','Reference mode and first/last frames cannot be combined');
+            if(value.images.length > 1 && !value.multimodal && !roles.some(Boolean)) return text('多张图片请选择首尾帧或全部参考','Choose frame roles or reference mode for multiple images');
+        }
+        if(profile.family === 'vidu' && value.images?.length > 1 && !value.multimodal) return text('Vidu 多图输入请选择全部参考','Choose reference mode for multiple Vidu images');
+        if(profile.family === 'xai' && (value.images?.length > 1 || value.multimodal) && value.duration > 10) return text('参考图模式最多 10 秒','Reference mode allows at most 10 seconds');
+        if(['grok','xai'].includes(profile.family) && value.images?.length > 1 && value.resolution?.toLowerCase() === '1080p') return text('多参考图模式最高支持 720p','Multiple image references allow up to 720p');
+        return '';
+    }
+    function videoInputNote(profile, parameters={}) {
+        if(!profile.route) return '';
+        const parts = [parameterText('参考图 ','Images ') + (profile.min_images || 0) + '–' + profile.max_images,
+            parameterText('视频 ','Videos ') + profile.max_videos,
+            parameterText('音频 ','Audio ') + profile.max_audios];
+        if(profile.media_duration_total) parts.push(parameterText('音视频总长 ≤ ','Total media duration ≤ ') + profile.media_duration_total + 's');
+        const resolutionNote = profile.resolution_notes?.[String(parameters.resolution || '').toLowerCase()];
+        if(resolutionNote) parts.push(resolutionNote);
+        return parts.join(' · ');
     }
     function imageParameters(source) {
         const ratios = {square:'1:1', portrait:'2:3', landscape:'3:2', portrait43:'3:4', landscape43:'4:3', story:'9:16', wide:'16:9', ultrawide:'21:9', ultratall:'9:21'};
@@ -275,5 +351,5 @@
     function preferredModel(kind, providerId, models) {
         return models.find(model => favorites.has(JSON.stringify([kind,providerId,model]))) || models[0] || '';
     }
-    window.CanvasModelPicker = {mountSelect, mountList, profileFor, videoProfileFor, videoToggleSupported, videoChoices, imageParameters, sizeError, sizeChoices, syncSizeSelect, validationNotice, preferredModel};
+    window.CanvasModelPicker = {mountSelect, mountList, profileFor, videoProfileFor, videoToggleSupported, videoChoices, videoParameters, videoError, videoInputNote, imageParameters, sizeError, sizeChoices, syncSizeSelect, validationNotice, preferredModel};
 })();

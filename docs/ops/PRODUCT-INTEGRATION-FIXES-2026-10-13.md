@@ -1,5 +1,312 @@
 # 产品集成修复：供应商图像适配、个人模型与企业入口
 
+<a id="increment-preservation-20261128"></a>
+
+## 2026-11-28 当前 59 项增量保全与后续顺序
+
+负责人明确授权先保全并整理当前增量，随后少量视频真实验收、图层／多尺寸效果收口，再按 MKT-03～07 顺序实施。开工分支 `codex/zhenzhen-video-compat-20261126`，HEAD `b5251ccc0a7b430318e1f0f96a1419556f8577ff`；暂存 0，49 个修改加 10 个未跟踪文件。原 GitHub main 仍为正式 11.3 基线 `d821098`，11 月 26 日独立备份不包含本次后续修改。
+
+59 项按原职责整理为：文档／状态 7、原任务恢复与耗时 2、视频协议与参数素材 11、参考图清晰度 2、定向测试 25、原入口装配 1、画布输出／交互 11。整体保存一个开发检查点，不通过拆提交、重写历史或清理文件改变本地成果。逐文件结果见[本批源码清单](./backup-audits/2026-11-28-development-files.csv)，恢复方式见[本批恢复说明](./backup-audits/2026-11-28-restore.txt)。
+
+本地外部 `development/increments-backup-20261128/` 已保留开工原始 59 文件 ZIP、完整状态／大小／分类清单及扫描结果。读取所有本批文本，未发现真实 API Key／GitHub Token／私钥特征，Python 源码语法和 19 个 JavaScript 文件语法通过；65 个被忽略项均为缓存，没有被忽略的开发代码。不读取运行凭据，不把数据库、用户素材或外部实验产物提交到公开源码仓库。
+
+当前处于提交／推送前准备，后续以实际 GitHub 回读填写源码提交与逐项结果。此保全只证明源码可恢复，不代表视频真实出片、MKT 效果审核、合并／发行或生产部署通过。后续工作依然使用旧工坊优先、原任务／来源绑定和原归档边界；旧付费批次不滚用余额，新验收在明确额度内提交且不自动重试未知结果。
+
+<a id="reference-quality-20261128"></a>
+
+## 2026-11-28 SUP-03.Z 参考图清晰度与逐张尺寸
+
+负责人发现任务中心的四张原文件 21.53 MiB 被准备为 2.11 MiB，批准在模型真实限制内保留原分辨率、超限才缩小并逐张展示提交尺寸。原任务 `canvas_img_4ef43325ff264d14ac1f7fa7f74fa115` 的实际提交分别为 1152×1536、1333×1536、1097×1536、1229×1536；原素材仍在。1536／8 MiB 是项目旧策略，并非已核实的贞贞模型限制。
+
+本轮查阅[旧工坊 GPT Image 2](https://gpt-best.apifox.cn/api-447258891)、[2.6 编辑](https://gpt-best.apifox.cn/api-534982355)、[Nano Banana Pro](https://gpt-best.apifox.cn/api-420361512)、[Seedream V5 Pro](https://gpt-best.apifox.cn/api-485030908)及[方舟图片 API](https://docs.volcengine.com/docs/ark/image-generation-api?lang=zh)。旧工坊页面没有完整声明参考输入边长／像素／字节边界；其中 size 的约束属于输出，不可用于压缩输入。新站未加入长期供应商，也未借用其限制。方舟原生 5.5 的输入契约单列：单图 30 MB（本实现按 30,000,000 bytes）、总像素最多 36,000,000、长短边比最多 16、普通输入每边至少 15px；拆层输入至少 262,144 像素且仅 PNG／JPEG。本轮仍以项目已维护的 PNG／JPEG／WebP 直传集合装配，其他可解码格式转 PNG，不声称已新增 HEIC 等格式解码能力。
+
+原 `ImageReferencePreparation` 不再默认缩边或压至 8 MiB；限制内文件原字节复用，方向校正／格式转换先保持分辨率并无损编码；真实单文件限制超限先重编码，仍超限再等比缩小，透明图保留 Alpha。不通过拉伸、裁剪或放大规避宽高比／最小像素要求。批内一次准备／重复引用顺序和 JSON／multipart 的共用副本继续保留。main 沿原模型能力装配，非回执同步入口与既有 JSON 分支也使用同一准备结果；其他供应商路径没有批量迁移。编码总量与实际请求体 32 MiB 仍是项目预算，超限在付费 POST 前阻止，不截断素材或自动低画质重试。
+
+| 原输入尺寸 | 旧提交尺寸 | 本轮离线提交尺寸 | 字节与 Alpha |
+| --- | --- | --- | --- |
+| 4500×6000 | 1152×1536 | 4500×6000 | JPEG 原字节相同 |
+| 3828×4411 | 1333×1536 | 3828×4411 | JPEG 原字节相同 |
+| 2926×4096 | 1097×1536 | 2926×4096 | PNG 原字节／Alpha 相同 |
+| 3793×4741 | 1229×1536 | 3793×4741 | PNG 原字节／Alpha 相同 |
+
+四图准备总量 22,570,852 bytes（21.53 MiB），当前编码请求模拟 30,094,707 bytes（约 28.70 MiB），在 32 MiB 内；MockTransport 验证实际请求中四个 Base64 内容均还原为原文件字节，外网生成 POST 为 0。这证明项目提交侧未再缩图，不等于供应商内部处理或模型最终服装细节效果已实测。
+
+任务中心复用原 `image_preparation.items`，逐张显示原始／提交尺寸、原图直传／转换／超限缩小、原因及格式／Alpha；旧数据没有新处理字段时根据当时尺寸标为历史缩小，不改写原任务。经典 1280×720 与智能 1311×1013 原页面分别打开“日志 → 生成任务 → 详情”，同一独立本地 QA 回执显示四张原图直传，原反馈任务保留 2.11 MiB／历史缩边。无空白、框架覆盖或新增 JS 错误；经典页仅有既存 Tailwind CDN 使用建议。未移动原画布节点、换提示词或点击生成。
+
+定向验证覆盖原字节保持、总像素／文件限额缩小、Alpha、EXIF／格式处理、批内并发与顺序、请求预算在 transport 前拦截、原生提交／拆层／重启回读、无回执 JSON 路径及任务中心历史兼容。原旧尺寸迁移测试错误地从 HEAD 取已经迁出的旧函数，本轮改用 `d8210980d5c773ff91798cac20e8cfb5c14ee92b` 实际运行捕获的 18 组固定结果，避免随 HEAD 和浅克隆漂移；旧尺寸业务算法未改。外部证据位于 `development/reference-quality-20261128/`，含改前源码／运行副本、离线请求核对、逐图记录、两类页面截图和定向结果。所有素材原件、原任务、凭据与归档保持；本地代码与预览已更新，无新增收费调用、Git 交付、正式发行或生产操作。旧工坊未声明的输入限制和新策略真实生成质量仍需后续独立证据。
+
+<a id="smart-generation-feedback-20261128"></a>
+
+## 2026-11-28 SUP-03.Z.O 智能画布生成节点四项反馈
+
+负责人反馈正常生成出现逐张“供应商已受理”行、首张返回时多图节点布局不合理、新建节点继承 3 张以及底栏弹层和滚动条干扰。本批沿原 `codex/zhenzhen-video-compat-20261126` 本地候选追加，不覆盖既有视频、恢复、图层或预览修改，不操作原用户画布的生成任务。
+
+| 反馈 | 原因与本地修复 |
+| --- | --- |
+| 正常受理明细干扰 | 原 smartImageTaskStatusHtml 输出所有 imageStatus；现在正常过程行不渲染，异常说明及原任务查询入口保留，回执数据和轮询不删除 |
+| 首张导致放大／跳动 | 原 imageLayout／nodeBodyHtml 只按已返回张数选单图或网格，待完成位置随首张消失，pending 时还不复用媒体元素；现在原呈现模块 smartEntries 按 taskId／imageIndex 计算固定格，图片就地替代自己的占位，回执补可选 canvasTaskId／outputOrder 并排序，完整多图保留预留尺寸，部分结果也复用原媒体 DOM |
+| 新节点默认多张 | 原 smartSettingsForNode 继承近期设置和画布默认 count；新节点 count 覆盖为 1，旧 runSettings.count 明确值保留，切换模式不从近期值覆盖当前数量 |
+| 下拉与底栏 | 数量面板 overflow visible；点击式 top-layer 面板移除旧 ::after 悬停桥，其 8px 高度原本造成额外溢出和双滚动条。四面板共用 rgba(24,28,38,.94)／blur 14px／12px 圆角，长列表 5px 暗色滚动条；搜索框与个人模型按钮深色化，模型按钮 max-width 110→240px。上下／左右边界仍用现有 StudioDropdowns，未另加定位逻辑 |
+
+实现只涉及原纯呈现模块、SmartCanvas 原显示／回执函数、样式与缓存键。正常状态字段仍保存，查询不中断，没有重投任务、替换供应商、限流或迁移。旧部分产物缺少图片任务映射时兼容显示，不能反推缺失的历史任务身份。经典呈现入口不改其业务方法；它只更新同一共享模块的缓存键。
+
+本地受控回执使用原服装画布的四张输入和三张已归档结果，在独立 QA 画布 `a551e0310d894e109e5e90adbaf26848` 中按 B 部分返回、B 完成、C 完成、A 完成推进；夹具只写本地 journal 和原画布 API，没有调用生成提交接口。0／1／2／3 图均保留三格，位置与节点 420×420 尺寸不变，部分和最终 B 不重复。最终存为 A／B／C，原任务 ID 与序号保存在原图片 JSON，GET 回读／页面重开通过。之后为底栏验收主动使用原“生成设置”居中视口，重开后的屏幕坐标随保存的视口变化，节点自身位置和尺寸不变。
+
+实际页面先把当前 QA 节点选为 3 张，再通过底栏添加节点创建上传节点，新节点显示 1 张。旧源节点仍为 3 张。四面板背景／边框／阴影／blur 与要求一致，count 的 scrollHeight=clientHeight=95 且 overflow visible；平台／模型／尺寸面板没有原 8px 多余溢出。长列表滚动条实测 5px／rgba 白色 .16，搜索框 6px 10px padding，模型 gemini-nano-banana-2.1 完整显示，搜索 gemini 仅显示三项匹配。模型／尺寸面板下方空间不足时出现在触发器上方，所有面板位于 1280×720 视口边界内。关闭菜单、选择模型和数量均继续原入口，没有点生成。
+
+原页面和独立页均为同一本地 QA 身份。独立验收页无空白、框架覆盖层或 console error／warn。定向检查复用原输出、智能日志、视频续查、图层尺寸、下拉定位与工具栏入口；测试夹具补齐新共用模块及既有时间投影依赖，不为 CSS 写镜像断言。完整结果保存在外部 `development/smart-generation-feedback-20261127/`，目录名沿用开工日，收口日期为 11 月 28 日；含源码基线、回执脚本／身份、布局阶段数据、四面板截图和 browser-verification.json。没有新增收费生成、生产修改或源码提交，模拟证据不代表新一轮真实模型质量验证。
+
+<a id="output-review-20261127"></a>
+
+## 2026-11-27 SUP-03.Z.O 图片结果重复占位、顺序与多输入审核
+
+负责人提供生产 11.3 录屏及四张截图：结果返回后短暂增加“部分完成，其余仍在跟踪”卡片，多个模型输出按完成先后出现，预览只能与第一张输入比较。本轮在 `codex/zhenzhen-video-compat-20261126@b5251ccc` 加既有未提交候选上实施，未覆盖此前视频／隔夜恢复修改，不新增收费调用或操作生产。录屏文件 71.07 秒，截图直接展示同一任务图片与占位并存；代码定位不以供应商生成速度解释客户端显示问题。
+
+| 问题 | 已定位原因 | 当前行为 |
+| --- | --- | --- |
+| 短暂多卡 | renderOutputGrid 与局部刷新分别列出图片和全部 pending；部分结果已加入 images，pending 等最终状态才移除 | 同一平台任务有图片即用图片占原位置；跟踪状态附在原卡，失败待核对仍可查原任务，不增加一张活动占位 |
+| 顺序及模型难辨 | 结果完成时追加 images；输出没有模型名 | API 图片新任务生成提交前给原 pending 分配 outputOrder，回包将序号／请求模型放原 run；显示和保存数组同序，卡片及预览显示冻结模型 |
+| 只有第一张输入 | appendOutputImages 的旧比较映射只存 refs[0]，预览只读取该映射 | 优先读取该结果的 run.refs，识别全部图片引用，去重并过滤非图片；左下胶囊任选输入，原双击切换和滑杆继续有效，旧单图映射作为回退。初版额外按钮已由下述 UI 反馈移除 |
+
+`canvas-output-presentation.js` 只计算条目／位置／模型／输入，调用、任务、存储和凭据继续原边界。HTML 加载该模块并更新缓存键，CSS 只增原卡标签和预览素材条。返回部分图片后仍通过原任务 ID 继续查询；没有取消后端任务、自动换源、重试生成或新调度。局部刷新保留媒体 DOM，只更新模型／状态／耗时徽标，修复本轮验收发现的“最终服务端耗时已正确、原卡尚显示部分结果时耗时”的滞后。旧输出没有提交序号或模型元数据时保留兼容，不从当前生成器编造历史身份。
+
+本地受控任务 A/B/C 的模型为 Seedream 5.5、GPT Image 2、Seedream v5-pro，复用既有复杂服装原图／图层及已归档宽／方图作为返回素材；这些是呈现夹具，不冒称三次新真实模型生成。任务按 B 部分返回、B 完成、C 完成、A 完成推进：初始三占位；B 部分返回后三卡／两个占位；最终三图／零占位，位置始终 A→B→C。保存刷新后原本人接口回读的 URL／模型顺序一致，refs 分别为 3／2／3；没有在换模型或换输入时串用当前配置。
+
+首次恢复与部分返回在 core `127.0.0.1:13001/static/canvas.html` 原页面验证；随后用原本地 QA 身份在 `127.0.0.1:18000/` 首页登录，经无限画布列表打开同一画布，实际点击第一张输出、任选第二／第三张输入、切换只看结果、打开第二张结果的两张输入及滑杆拖动通过。1280×720 内置浏览器无空白、框架错误页和页面 error；仅 core 页面有既有 Tailwind CDN 构建方式警告。未在本轮重做其他浏览器、普通账号鼠标及手机现场验收。
+
+定向验证包括 `test_canvas_output_presentation.js`、`test_canvas_performance.js`、`test_canvas_image_timing.js`、`test_output_video_preview.js`、两份业务 JS 语法，以及原 Python 入口运行。performance 夹具补齐既有 ModelPicker 环境与实际 gcd 比例规范化，未为本次呈现修改尺寸业务规则。文档检查与合同结果记在外部 verification；未跑无关全量回归。证据目录 `D:/CodeProject/Infinite-Canvas-Enterprise-Artifacts/development/output-review-fixes-20261127/` 保存改前源码、受控回执脚本／画布身份、browser-verification.json、部分返回／顺序／多输入截图和源码候选副本，不包含环境凭据或数据库。
+
+本批新增供应商生成 POST／费用 **0**。源码待负责人审核，未提交／推送、合并、发行或更新生产 11.3。历史结果的缺失输入快照不能凭空补齐；仅保存一张旧比较引用的历史条目继续能比较该张。新结果的模型标识来自请求快照，不根据供应商实际内部路由推断模型真实性。
+
+### 后续反馈：只改输入切换器 UI
+
+本编号最新深色反馈按两类画布分别处理：复用 `theme.js` 已有的 html／body `theme-dark` 标记，经典 `.output-compare-source*` 和智能 `.compare-thumbs`／`#compareToggleBtn` 增加深色覆盖，背景 rgba(24,28,38,.85)、blur 12px、白色 .12 边框与 .45 阴影；文字／箭头白色 .85，缩略图底色 #262b36、白色选中框及深色 .65 角标。智能画布保持原横向输入选择和原开关，没有改成经典抽屉，也未改变其白天布局。经典 theme.css 对预览 img 强制 background／border-color，因此仅在 `#outputCompareSources` 内以限定重要性覆盖这两项；全局主题和主图样式不改。
+
+本轮 CSS 仅新增 `.theme-dark` 作用域行，两份业务 JavaScript 与改前副本逐字节相同，两份 HTML 只有 CSS 缓存键变化。原首页进入经典预览，白天样式／主图／提示词几何与改前采样完全相同；深色展开及点击第二张更新 2/7，白色 2px outline 和实际缩略图 #262b36／.12 边框确认。智能画布原预览／对比开关启用、缩略图取消／重新选中、明暗切换实测，主图几何不变，原滑杆保持 50%。独立 1280×720 经典与智能页面均无脚本 error，经典保留既有 Tailwind CDN 构建提示；未扩为移动端或全浏览器验收。
+
+证据追加外部 `development/output-compare-dark-20261127/`：六份源码基线、protected-source.json、browser-verification.json 和两类明暗／局部截图。复用现有相关检查，不为纯配色新增实现镜像测试，不触发模型生成或生产操作；源码仍为本地候选。
+
+最新反馈将横向胶囊升级为悬停向上抽屉：左下 16px／z-index 20 保持原定位，收起时为 28px 当前缩略图、1/N 计数与上箭头，玻璃背景 0.88／blur 12px／padding 5px 8px。上方抽屉以 opacity／translateY(8px) 的 200ms ease 过渡展开，箭头旋转 180°；8px 透明区域连接触发器与面板，无鼠标盲区。列表竖排 40px 缩略图、6px 间隔，浅灰底／细边／角标及黑色选中框保留，最多五张高度 230px，超出可纵向滚动且滚动条隐藏。
+
+本轮仍只改原渲染函数、胶囊事件部分和 `.output-compare-source*`，HTML 仅更新缓存键。点击就地更新原输入 src、aria-pressed 和锚点缩略图／计数，不重建列表或重置其滚动位置。其余 JavaScript、CSS 与本轮改前副本逐段一致；原滑杆／对比模式、主图／缩放及底部提示词栏均在保护范围内。
+
+本地首页同一 QA 身份实测：初始 1/6 收起，悬停 opacity 1／translateY 0／箭头 180°；指针位于触发器上方 4px 的透明桥接仍保持展开，移出后隐藏。真实鼠标滚动到第六张再点击，原输入与锚点同步切换、计数 6/6，滑杆 5.60074%、clipPath、1.1 倍 transform、模式、主图与提示词前后一致。横图七张列表高 230／scrollHeight 322／scrollTop 92，末张选中 7/7 且主预览 scrollTop 0；零／单张隐藏且内容为空。原预览、主图和提示词栏几何与改前一致。
+
+证据保存在外部 `development/output-compare-drawer-20261127/`，含保护区域核对、桥接／切源记录、边界数据、收起／展开截图及源码副本。工具对被裁切缩略图的定位点击曾自动滚动隐藏祖先，未计作通过；改用真实鼠标滚动到可见项再点击完成验收。日志保留一条无源码位置的 MutationObserver observe 错误，未扩大修改原功能或据此声称页面无错误。相关原 Python 入口、JS 语法及文档检查通过，未新增模型提交、费用、生产操作或 Git 提交。以下为此前横向胶囊阶段的历史记录。
+
+缩略图边界的再次微调仅在原 img 规则加入 `background:#f3f4f6`、`border:1px solid rgba(0,0,0,.08)` 和 border-box，外部尺寸仍为 36×36，CSS 缓存键更新。JavaScript 与改前逐字节一致；原首页回读三张缩略图样式、选中第二张及原 2.70913% 滑杆恢复核验。其余 CSS 与 HTML 控件不改，无新增测试或收费调用；局部截图与范围核验追加原外部目录 thumbnail-border 文件。
+
+负责人明确禁止改动原滑杆、对比逻辑、主图展示和底部提示词栏。此前移除白底通栏、计数和额外对比按钮，仅留预览容器左下 bottom／left 16px、z-index 20 的毛玻璃胶囊；外层 padding 6px、圆角 12px、0.85／hover 1 透明度，缩略图 36×36、8px 圆角、左上 10px 小角标，选中为黑色 outline，非选中 0.6／hover 1 并 scale(1.05)。超过五张时列表最大 210px，全部输入可横向访问；原 theme.css 全局 thin!important 会显示滚动条，只在胶囊选择器中覆盖为 none，未改全局样式。
+
+运行时代码只改 `renderOutputCompareSources`、`initOutputCompareEvents` 的胶囊事件部分及对应 CSS；HTML 只更新 JS／CSS 缓存键。点击只换当前输入 src 和 aria-pressed，不重建缩略图列表、不重置滚动位置、模式或缩放；胶囊内双击不传给原预览切换。预览其他区域的原双击、滑杆事件、主图样式和提示词栏均与本轮改前源码保持逐段一致。
+
+原首页、同一 QA 身份和原画布在 1056×1013 内置浏览器复验：切源前后 slider=71.3256%、clipPath、主图 URL／transform 和 compare-mode 完全相同；预览、主图、结果图、提示词栏的尺寸／位置相同。横图 1920×1080 和竖图 1024×1536 均左下定位。独立本地边界画布验证 0／1 张时胶囊内容为空且 hidden，单图原双击比较仍有效；7 张列表 clientWidth 210／scrollWidth 294，末张可选择、scrollLeft 约 81.33，原生与 WebKit 滚动条均隐藏。悬停实测父容器 0.85→1，未选中缩略图 opacity 1／scale 1.05，原生 title 为“切换对比输入图 N”。
+
+证据在外部 `development/output-compare-capsule-20261127/`：四份改前源码、前后布局／滑杆数据、边界画布、横／竖图截图及 protected-regions.json。一次跨页工具验收日志出现无源码位置的 MutationObserver observe 错误；未据此改动原功能，独立新开首页沿相同入口进入七图预览后未复现，console error 为 0，分别保留原记录与 fresh-page-health.json。1 项相关 Python 入口、JS 语法和本批文档契约验证通过；未扩成全量回归、收费生成、生产操作或源码提交。
+
+<a id="official-fallback-proposal-20261127"></a>
+
+## 2026-11-27 透明能力分类与火山方舟官方兜底提案
+
+负责人明确旧工坊 `ai.t8star.org` 优先，新站 `api.seedance.nz` 后续单独决定是否长期接入；本轮先给方案，不安装依赖、不接新站、不做新付费验证。直接生成透明图片与拆出透明图层按不同业务合同维护：
+
+| 平台／路径 | 已有依据 | 当前边界 |
+| --- | --- | --- |
+| 旧工坊普通 seedream-v5.5 | 已测复杂服装根层 background 及 metadata 请求原图均为 RGB | 该场景直接透明未通过；不能扩大成该平台全部型号不支持透明，参数透传／上游原因未明 |
+| 旧工坊 seedream-v5.5/layer-decomposition | 原项目任务返回有效 Alpha 图层，位置／层序保留 | 属于拆层成功；复杂独立人物遮挡／重建和规整文字质量不是全部通过 |
+| 旧工坊 gpt-image-2.6-flare／sunburst 官转组 | [生成请求](https://gpt-best.apifox.cn/api-534896365)、[编辑请求](https://gpt-best.apifox.cn/api-534982355)与[背景定义](https://gpt-best.apifox.cn/schema-327743737)声明 transparent、PNG／WebP | 直接透明候选，尚未完成本项目复杂服装实测；需要准确 Key 分组，不能只换模型名就认定可用 |
+| 旧工坊 gpt-image-2 | [分组说明](https://gpt-best.apifox.cn/api-447258891)：逆向组只列 model／prompt／size／image／quality，官转组声明参数透传 | 逆向组不以 background 当作可用；官转声明仍需真实产物验收 |
+| 新站 zhenzhen-image-g-v2.5-flare／sunburst | [新站公开文档](https://api.seedance.nz/docs/llms.txt)列背景参数，透明需 PNG／WebP；lowprice 无透明背景选项 | 文档支持且未实测，当前不接入；新站型号／单数路径／metadata 与旧站严格分开 |
+
+### 官方 SDK 事实
+
+[方舟安装及升级 SDK](https://docs.volcengine.com/docs/ark/install-and-upgrade-sdk?lang=zh)推荐 Python `arkruntime`，导入 `from arkruntime import Ark`；旧 `volcengine-python-sdk[ark]` 仅在新版暂不覆盖所需 API 时考虑，不默认并装两套。[快速入门](https://docs.volcengine.com/docs/ark/quick-start?lang=zh)统一官方基础地址 `https://ark.cn-beijing.volces.com/api/v3`，分别提供文本／理解、`images.generate` 和 `content_generation.tasks.create`。账号仍需开通相应模型服务、可用凭据及余额；SDK 不代办这些条件。
+
+[官方 SDK 源码说明](https://github.com/volcengine/ark-runtime-python)提供同步／异步客户端、类型和超时／重试设置；默认存在自动重试。若后续用于收费创建任务，建议在该提交路径显式关闭 SDK 自动重试，继续原项目的受理未知／原 ID 查询策略。发行只锁定已验证版本，不在员工启动时自动升级。项目固定 CPython 3.14.6 及离线锁文件，实际依赖、打包和重启恢复须独立验收；本轮未宣称兼容性已验证。
+
+SDK 更新可以减少新 API 字段与 HTTP 封装维护，但不等于更新后所有模型可直接出现在产品。相同 API 族的新模型通常只需新增准确模型 ID、能力／素材规则及验收；新 API 或字段再评估升级包与最小映射，不能绕过前后端一致的参数校验。
+
+### 建议的最小接入方案（待负责人决定）
+
+保持现有节点 → 能力规则 → 原素材／凭据／任务服务 → 供应商适配 → 原归档。已有 `enterprise/providers/volcengine_images.py` 就是方舟图片边界，先复用其真实能力和服务；如选择 SDK，只在供应商内部替换传输，不把 SDK 对象带进节点、main 大入口或任务数据库。不新增任务库、调度器、通用路由 DSL、并发门槛或第二套凭据系统。
+
+| 业务族 | 官方备用候选 | 实施和验收边界 |
+| --- | --- | --- |
+| 生图、智能改图、多图融合、智能多尺寸、分层／透明 | Seedream 家族；5.5 文档列原生 RGBA 与拆层 | 复用已有图片适配；逐功能映射尺寸／图片上限／背景及分层合同，用复杂服装验收框外像素、Alpha、中文和遮挡，不能只看 HTTP 成功 |
+| 视频、动态海报 | Seedance 家族 | 在原 CanvasVideoTasks 和媒体预检边界补官方适配，前后端按精确型号显示参数；受理／重启／归档先模拟，再另批少量真实生成 |
+| 对话、提示词与图像理解 | 豆包 Seed 系列 | 原文本／Agent 调用边界增加官方配置与必要参数映射，验证视觉输入、工具调用及中断语义，不从图片 SDK 接线推断 Agent 全流程可用 |
+| 精确点击抠图、发丝轮廓、严格像素重建 | 现有本地分割或另行核实的官方图像工具 | 方舟生成模型不自动等同确定性分割；[图片 API](https://docs.volcengine.com/docs/ark/image-generation-api?lang=zh)的 RGBA／图层能力不保证每个复杂样本都保真。此项单独列未覆盖，不以“全部业务保底”掩盖 |
+
+建议分三步：①先确认上述覆盖矩阵和旧站／官方主备关系；②只补已选业务族的最小适配，离线／模拟、原页面、普通身份、原任务重启恢复通过；③在另行批准预算且官方账号恢复可调用后，少量复杂服装真实验收、固定版本与正式发行／部署。先让用户明确选择官方备用；自动故障转投另行评估，供应商可能已受理的任务不得换来源重复生成。官方解决稳定的供应路径，并不保证与第三方各型号同价或逐像素同效。本轮没有把提案写成已获实施授权或当前交付完成。
+
+<a id="image-overnight-timing-20261127"></a>
+
+## 2026-11-27 SUP-03.Z.T 员工关机后次日恢复的图片耗时与 ID 提示
+
+负责人报告正式 11.3 的局域网员工客户端生成期间关机，次日显示图片耗时 921m42s、供应商任务 ID 未取得。截图任务为 `canvas_img_752d8fed2f8e4acf91ac8fac50e58f3a`／custom-api／seedream-v5-pro：提交 2026-11-26 18:01:24，平台子请求结束 18:03:10（106 秒），供应商控制台 18:01:25–18:03:04（99 秒），画布日志 2026-11-27 09:23:06。921m42s 精确等于从提交到次日页面取得结果的间隔，不是截图中供应商的实际生成时间。平台时间还包含请求与归档；相差的 7 秒未单独拆分测量。
+
+以 `v2026.11.3@a5613da` 对照当前候选：经典 `appendPendingImageResults` 和智能 `finalizeSmartPendingTask`／恢复日志用本机 now−started 结算，原轮询仅把 result 交给呈现、未采用 journal 的创建及完成时间。故客户端隔夜后才恢复输出时误把离线间隔写入卡片和日志；主机已在前夜完成，与“因客户端关机而上游一直生成”不同。生产 IAB 确认为 11.3／Aidan02；该账号本人任务里没有反馈员工这笔任务，未绕过权限、重试生成或写生产。负责人最后的 nano-banana-pro-2k／image-sync JSON 为另一笔示例，未据此认定 Seedream 原回包类型。
+
+实现保持原任务服务：`canvas_image_recovery.image_task_timing` 只从原记录投影时间，GET 与手动续查携带可选 timing，不用可因续查改变的 updated_at；未知结束时间不补造。`canvas-task-query` 换算毫秒并兼容旧服务端的 created_at／result.timestamp，两类画布继续原 ID GET，经典卡片及日志一致，智能多子任务按最早开始／最晚完成累计且中途保存可恢复。任务中心只把成功图像无异步 ID 改成说明，未知受理仍保留核对提示；`ImageReceiptSink` 增加 x-oneapi-request-id 追踪头兼容，仍与 upstream_task_id 分开，不以追踪 ID 发异步查询。未取得这笔生产原始头，不能声称新增头兼容就是其已证实根因，也不能恢复原来没有保存的 ID。模型、素材、Key 绑定、并发、付费提交与权限无变更。
+
+验证使用同一既有复杂服装海报，创建两份本地 QA 的“已完成服务端记录＋隔夜仍 pending 的画布”夹具；没有供应商生成 POST。原经典／智能页面在 `127.0.0.1:13001` 实测恢复后 1m46s／1:46，图片和日志 106000ms、各一条，保存重开日志不变；控制台错误 0，无框架错误页。经 `127.0.0.1:18000` 原本人接口回读任务与归档；这与生产登录及普通身份端到端验收分开。Node 五组检查覆盖经典原 ID 只读、智能多图中途保存／重开、共享协议、任务中心与既有视频恢复；CP314 定向回执、图像执行及恢复集成验证按本批结果登记，不跑全量回归。证据在外部 `development/image-overnight-timing-20261127`：改前副本、两份 fixture 身份、verification.json、服务日志和源码候选快照。
+
+本批为本地待审核修复：未重新生成这笔任务、未新增付费调用、未改生产配置／文件、未修改历史错误耗时或强行补供应商 ID，未提交／推送或发行。待办为读取原生产回执／响应头核对 ID 来源，负责人审阅后固定正式候选与升级验收；不能将本地页面验证写成已修复生产。
+
+<a id="seedream55-parameter-audit-20261127"></a>
+
+## 2026-11-27 SUP-04.S55 旧工坊参数与新站封装交叉复核
+
+负责人指出此前未测试新站 metadata 在旧站的实际效果，明确批准本批新增 **不超过 3 元、最多 3 次生成提交**。此前各图片批次余额不滚用。本批外部诊断直接请求 `ai.t8star.org`，只使用原 DPAPI 保存的第一个新增工坊 Key，未回显、改写或发送给新站。源码仍为 `codex/zhenzhen-video-compat-20261126@b5251ccc` 加原本地候选，没有将新试验协议接入业务代码、开启正式来源或改生产配置。
+
+### 当前参数依据
+
+旧站鉴权模型列表仅找到 `seedream-v5.5` 与 `seedream-v5.5/layer-decomposition`，未列新站 t2i／i2i／Dola 别名；目录可见不是所有参数可用的证明。旧站 `/api/pricing` 当前说明普通图生图最多 10 张参考、输入不必带透明通道、1K／1.5K／2K 或宽高像素、背景 auto／transparent／opaque，透明需 PNG，默认关闭水印，提示词优化只有 standard，不支持组图／联网搜索。它把相同普通生成描述用于拆层型号，不能据此推断拆层支持多参考图或普通背景控制。
+
+[旧统一格式](https://gpt-best.apifox.cn/api-514194485)与[旧普通接口](https://gpt-best.apifox.cn/api-485030908)仍用 `POST /v1/images/generations`、`model`／`prompt`／`size`／`response_format`／`output_format`／`image[]`；其 5.5 目录关联的[旧拆层页](https://gpt-best.apifox.cn/api-522995149)没有普通 5.5 专用字段说明。[新站文档](https://api.seedance.nz/docs/)和供应商 `Comfyui-zhenzhen@ea1ace13f6a89ca587186e2bedd8e8141364eab9` 的 `seedream55_contracts.py` 则明确使用单数 `/v1/image/generations`、`seedream-v5.5-i2i`／`images`、metadata 背景／格式／分辨率。新站的文档及源码不能直接当作旧站字段已透传的证据。
+
+| 字段／范围 | 已取得的旧站证据 | 尚未证明 |
+| --- | --- | --- |
+| `model` | `seedream-v5.5` 真实生成；拆层后缀已有原批次证据 | 新站 t2i／i2i／Dola 别名在旧普通接口的可用性 |
+| `prompt` | 当前复杂服装改酒红色生效，返回 revised_prompt | 旧站完整长度边界、优化器内部规则 |
+| `image` | 一张原始 RGBA PNG data URL 成功；既有请求也使用此字段 | 本批没有另做 10 张上限或全部编码组合 |
+| `size` | 根层 `1024x1536` 返回同尺寸；原批次保留其他指定尺寸证据 | 所有档位与自定义宽高边界；新 metadata.resolution 是否生效 |
+| `response_format` | `url` 成功并下载供应商原文件 | b64_json 只在本批失败的 volcv 路径请求，未得到图片验证 |
+| `output_format` | 原请求和当前结果均有 PNG，目录声明 jpeg／png | 新 metadata.output_format 是否被读取，不能因默认同为 PNG 就认定生效；JPEG 切换未在本批实测 |
+| `background` | 此前根层 transparent 与本批 metadata.transparent 都未取得有效透明图 | 参数是否完整透传、上游路由及模型遵循原因 |
+| `watermark` | 目录声明默认 false，原请求可携带 false | 开／关对照和新 metadata.watermark 的实际影响 |
+| `metadata` | 普通接口接受该对象、请求成功 | 其中 resolution／output_format／background／watermark 是否被透传或使用；200 不证明各子字段生效 |
+| 层数／OCR | 旧批次 max_images 没有限住输出数量，text_recognition 未返回 OCR，全部产物仍保留 | 新站 metadata.max_images／text_recognition 在旧工坊未测试；不解除现有能力限制 |
+| 其他候选 | 目录提到优化 standard；新站有 safety_identifier 等规则 | seed、quality、mask、组图数量、联网和新站特有字段均未因此认定旧站支持 |
+
+### 三次实际提交与结果
+
+全部使用同一复杂服装透明人物原图，不新增简单自制样本。输入 1024×1536 PNG、RGBA，1,455,153 字节；Alpha 0–255，其中全透明 925,641、半透明 29,054、全不透明 618,169 像素。按新封装、完整新合同和错误回包发现的原生转发逐次推进，各一次 POST，响应不明时不重投；没有绕过三次上限执行更多收费参数扫描。
+
+| 次序 | 实际路径及改动 | 结果 |
+| --- | --- | --- |
+| 1 | `/v1/images/generations`；`seedream-v5.5`，原 `image[]`／根层 size／url，移除根层背景／格式，将 resolution=1k、output_format=png、background=transparent、watermark=false 放入 metadata | HTTP 200；1 张 1024×1536 PNG，RGB，Alpha 转换后全部 255，透明像素 0。保留女性和复杂服装，开衫改为酒红，背景变成实色白底。不能据此认定 metadata 子字段已生效 |
+| 2 | `/v1/image/generations`；完整新站 `seedream-v5.5-i2i`、`images[]`、metadata，域名仍为旧工坊 | HTTP 404 Invalid URL；新站单数入口在旧站本次不可用，未执行模型，不能单独据此判定别名解析行为 |
+| 3 | 第 2 次错误回包明确提示存在 `/volcv/v1/images/generations`；用旧 `seedream-v5.5`、原 image／size、根层 transparent／PNG，response_format=b64_json | HTTP 500，供应商返回上游 DNS lookup / no such host；没有图片。它只证明该备用转发本次上游不可达，不能归因于本机 DNS 或据此判断透明／b64_json 参数效果 |
+
+供应商 Request ID、脱敏后的完整请求、原响应、原图与像素统计保留在外部 `D:/CodeProject/Infinite-Canvas-Enterprise-Artifacts/development/seedream55-parameter-audit-20261127/`。`verification.json` 记录本批顺序、次数与费用；`parameter-contract.json` 是分证据等级的字段清单，`public-source-evidence.json` 保存准确源码版本。请求记录用本地素材身份代替 Base64，不包含 Key；原响应可能含限时下载地址，不进入公开仓库。
+
+### 费用、收口与剩余边界
+
+共 **3 次生成端点 POST、1 次成功出图、2 次错误回包**。第一笔用量先按预扣观察到增量 1.1475 元，之后回落；最终同 Key 时段聚合增量 **0.2245644 元**，低于批准的 3 元。记录使用供应商既有 total_usage 与公开换算系数 1.35；这是聚合读数，不是逐任务发票，不能外推任何失败均会退款。批次已设 closed，不继续滚用余额。
+
+新 metadata 在旧站没取得透明成功，完整新路径已 404，备用原生路由遇到供应商 DNS 错误；不能声称已还原旧工坊全部服务端参数，也不能仅凭这些失败断言模型本身不支持透明。后续准确缺项是供应商确认普通接口字段透传／有效透明样例及 volcv 路由故障，再决定是否需要另一批有界验证；不对现有业务加入自动切换端点、Key、型号或收费重试。没有改业务源码、原任务／归档、生产或新增凭据，没有提交／推送／发行。与本批前候选副本逐字节比较的 28 份业务文件无变化；155 文档／745 本地链接检查、17 项文档契约及 `git diff --check` 通过，不用这些检查替代本批真实结果。
+
+<a id="sup-04-vid"></a>
+
+## 2026-11-26 SUP-04.VID 视频适配与生成前检查（本地候选）
+
+负责人要求继续实施，最新生产截图确认 `https://ai.t8star.org` 使用“异步协议”且标签 APIMART。本轮在 `codex/zhenzhen-video-compat-20261126`、Base `b5251ccc0a7b430318e1f0f96a1419556f8577ff` 上继续，未提交／推送新修订、建 PR、发行或操作生产。下方只读调查及正式 11.3 表保留其阶段含义，不能作为本候选或生产的最新通过清单。
+
+### 2026-11-27 原页面反馈：仅呈现支持的开关
+
+负责人指出 Grok 下仍显示大量无效开关。旧呈现会保留显式开启的不支持项供用户取消；这虽保留旧设置，但增加了无效内容。现按负责人要求替代该呈现约定：智能和经典画布仅显示当前型号／通道支持的开关，没有支持项时收起整行；隐藏可信素材模式时，其来源入口一并隐藏。
+
+`model-picker.js` 继续读取同一能力规则，同时计算当前有效参数，隐藏项按关闭值参与新请求和本地校验，原画布保存值不变。两类实际生成函数使用该参数构造普通开关、首尾帧角色及可信素材引用，避免隐藏的旧开启状态继续生效或阻止生成。切回支持的型号仍显示原开启状态。时长／比例／清晰度等可见参数的非法旧值保持提示，后端严格校验及已受理任务恢复不变；没有另建能力表、协议或任务分支。
+
+验证：`test_zhenzhen_video_compatibility.py` 与 `test_canvas_video_tasks.py` 共 **30 项通过**；既有 `test_video_canvas_resume.js` 扩展两类实际提交函数，验证隐藏项不发送为开启、参考图不遗留不支持的帧角色／可信地址、原值不被修改，原受理／保存冲突场景继续通过。三份 JavaScript 语法检查、17 项文档契约及 155 文档／742 本地链接检查通过，`git diff --check` 无错误。未重跑全仓回归。
+
+原首页交互：经典画布 Mini 开启水印／固定镜头后切 Grok 1.5，无开关且合法参数下可生成；切回 Mini 水印仍开启。负责人智能画布的 Grok 1.5 开关数量为 0，原非法 adaptive 比例仍提示；主动选择 16:9 后运行可用，切 Mini 显示生成音频、镜头固定、水印、全能参考、首尾帧 5 项，切回 Grok 无残留开关。固定预览 5 份前端文件已同步，原画布和登录保持。此轮未点击生成，真实供应商请求与新增费用为 **0**，未新增提交／推送、发行或生产操作。真实出片、计费／退费、Kling 合同及媒体工具部署仍按原缺项。
+
+### 2026-11-27 原页面反馈：生成面板跟随
+
+负责人指出节点下方生成框的跟随效果不一致，要求先分析官网代码。当前官网登录画布 `23234777-3d5f-45a1-b7e2-6b382bd619e4` 保留 19 节点、未提交生成；公开前端当前主入口 `main.806cae0e14.js`。从本次页面实际加载的脚本定位：`6841.88a21e4f35.js` 的模块 `84904` 通过节点几何和 viewport 计算屏幕位置，浮层 portal 到 renderer、默认不启用视口边缘避让；`7244.f3d117ca75.js` 的 node-toolbar 接线为 Bottom／offset 20，交互时隐藏；`4194.af8a6875e6.js` 给出 680px 宽、窄屏最大宽 `100vw - 48px`。原始公开文件及脚本索引位于外部 `composer-follow-20261127/`，未将竞品整包或登录信息纳入项目。这是公开客户端证据，不是私有后端源码。
+
+官网实测：约 21% 下选中空视频节点，面板宽 680px、高 206px，居中且底部相距 20px；抓手平移 700px 后面板左边为 -163.37px，没有吸附回屏幕；缩放到 50% 后宽高仍 680×206，继续跟随节点。官网只操作选择／视口，未改节点内容或触发生成，结束使用“适配画布”恢复可浏览视图。
+
+原项目 `positionComposerForNode` 在 world 内用世界坐标放置面板，宽度随画布缩放；另外按视口左右、顶部与底部 dock 夹取坐标，节点越界后面板单独停在边缘。现在 `canvas-composer-layout.js` 只负责屏幕投影和宽度，composer 在 shell 内固定挂载。节点底部中心投影后增加 20px，不做独立夹取，保持 680px／两侧 24px 的响应宽度；节点拖动／调整尺寸用原交互 class 隐藏，结束后恢复。节点重绘不再移动输入 DOM，保留原草稿和输入法上下文；引用菜单不再重复除以画布 scale，dock 显式聚焦按当前视口转换回世界坐标。图片／视频共用这套布局，现有控件内容、协议、凭据、任务及归档没有迁移。
+
+定向验证：原 `test_canvas_dock.js` 扩展实际定位与引用菜单函数，覆盖 0.2／0.5／1／2／4 倍缩放的固定面板尺寸和间隔、负坐标／底部越界不吸附、640px 宽窗口、dock 屏幕到世界聚焦、caret／引用按钮定位；既有顶部工具、原面板路由、Escape／键盘和不提交生成检查继续通过。两份 JavaScript 语法、原返回保存检查、17 项文档契约及 155 文档／743 本地链接检查通过，`git diff --check` 无错误。原首页进入 `577c89660c7c4d5b879845ce918e83a6`：82% 时节点宽约 259.12px，30% 时约 94.06px，面板均 680px；缩放、平移与拖动结束后的底部间隔约 20px、中心偏差小于 0.02px。取消选中隐藏、重进恢复、临时输入及引用菜单、图片／视频切换通过，临时测试文字已清空；控制台新增错误 0。此窄屏场景为定向代码检查，未写成实际设备验收。
+
+预览同步当前 4 份前端文件并保留原登录和数据；列表中遮住入口的两张旧测试卡片仅通过界面移开，未改列表源码。源码及交互前副本在本批外部目录保存。本次没有生成 POST 或费用，没有后端／模型协议改动、源码提交／推送、发行或生产操作。负责人本轮效果审核和 VID 原真实出片／计费／Kling／部署缺项分别保留。
+
+### 原因与实现
+
+正式 11.3 将异步语义与 APIMart 专用协议混淆，使贞贞地址进入 `/v1/uploads/images`，上传 404 后没有进入视频生成。现在贞贞身份与 APIMart 互斥，设置页明确显示“APIMart 专用协议”；贞贞本地素材使用供应商画布实际采用的 `/v1/files`。新模型的参数错配独立修复，不能仅把生产协议改为 OpenAI 就宣称全部模型已兼容。
+
+`zhenzhen_video_profiles.py` 只定义精确型号、通道及参数／素材能力；`zhenzhen_video.py` 负责验证与协议转换；`zhenzhen_video_execution.py` 编排已有 HTTP、上传、受理与归档注入；`video_reference_preparation.py` 只读当前授权可解析的素材、解码图片并探测音视频。main 只装配原凭据、素材解析、任务受理和归档，移除原重复构造分支。没有新队列、凭据表、任务表或并发限制。
+
+所有输入先检查，再开始素材上传和生成：文件存在／非空、应用单文件 50MiB 范围、PNG/JPEG/WebP 解码与实际 MIME、音视频容器／真实流和有限时长、当前型号数量与时长上限。原图字节及 Alpha 不重编码；不会截取前几张参考图或前几段音频。官方 Sora 首帧另检查与请求画幅对应的 1280×720／720×1280 像素。此预检减少已知错误，不承诺供应商服务可用、内容审查通过或失败一定不计费。
+
+CanvasVideoTasks 在识别已有请求后、绑定新调用来源前执行参数检查；同请求重复读取不重新校验或提交。已受理任务在查询前保存原 ID、实际路由与原凭据版本；旧 generic 和曾误配 APIMart 的冻结回执按原协议 GET，不能因新映射改成另一个生成入口。未知受理不自动换端点、Key 或型号重交。原权限／Owner／归档仍走现有边界。
+
+两类画布共同读取服务端能力：时长离散集合／范围、比例、分辨率、选项、参考数量及通道联动。时长、比例、清晰度等旧无效值保留可见并禁用生成；功能开关按上方 2026-11-27 反馈隐藏不支持项并从当前有效参数过滤，不改原保存值。新经典节点按模型采用合法初始值。Sora 相同 ID 的两类 Key 分组必须显式选择；分组和时长不能静默推断。1080p 放大另计费用按贞贞 2.5 说明提示。未落实协议的目录型号显示“尚未适配”，不允许收费试错；既有回执续查不受此新提交限制。
+
+### 当前精确型号清单
+
+以下为 **27 个型号的本地协议适配**，不是 27 个当前真实出片通过，也不是对 Key 分组／余额／当前供给的保证。
+
+| 系列 | 本地已适配的精确 ID | 本批接入范围 |
+| --- | --- | --- |
+| Seedance | `doubao-seedance-2.5`、`doubao-seedance-2.0-mini`、`doubao-seedance-2-0-260128`、`doubao-seedance-2-0-fast-260128` | 原生 `/seedance/v3/contents/generations/tasks`；Mini 4／10／15 秒、480p／720p；参考图／视频／音频和首尾帧，2.5 的 1080p 放大额外费用提示 |
+| Grok | `grok-imagine-video-1.5`、`grok-imagine-video`、`grok-1.5-video-6s`、`grok-1.5-video-10s`、`grok-1.5-video-15s` | 前两种保持各自 JSON／XAI 协议；后三种单张图 `input_reference` multipart、固定时长及 720p，不把名称相近当作同一接口 |
+| Veo | `veo3`、`veo3-fast`、`veo3-pro`、`veo3-pro-frames`、`veo3-fast-frames`、`veo3.1`、`veo3.1-fast`、`veo3.1-pro`、`veo3.1-components`、`veo3.1-fast-components` | 统一 v2；当前接入 8 秒档，输出分辨率由型号决定；不传接口未支持的通用 duration／resolution／seed，帧／参考数量按型号收敛 |
+| Sora | `sora-2`、`sora-2-pro` | 显式 Key 分组：官方 multipart 当前接入 4／8／12 秒、720p；兼容 v2 为 10／15 秒，Pro 15／25 秒和 HD；这是当前维护子集，不宣称覆盖供应商全部档位 |
+| MiniMax | `MiniMax-H3` | 既有 `/v1/videos`，5–15 秒、768P／2K，三类素材及专用字段 |
+| Wan | `wan3.0-video`、`wan3.0-video-prime` | 既有 `/v1/videos`，1–30 秒、480P／720P／1080P；专用参考字段和选项 |
+| Vidu | `viduq2-pro`、`viduq2-turbo`、`viduq4-preview` | 原生 Vidu v2；Q2 Pro 可多图，Turbo 保留已维护 720p；Q4 只启用当前示例明确的单图 5 秒／720p，原任务 `/creations` 查询 |
+
+Kling 尚未开放新提交：当前工坊文档 3.0 图生路径含双斜线 `/kling//image-to-video/kling-3.0`，查询文档则分别使用旧 `/kling/v1/videos/text2video/{id}` 与 `/kling/v1/images/image2video/{id}`；未取得新生成与查询的同一可靠契约。供应商开源画布的 Kling 4 接入又属于另一 `api.seedance.nz` 通道，不能将工坊 Key 发给该站点，也不能凭 `kling-video-4.0` 目录名称拼接接口。相关文档已留在外部证据中，后续先澄清再实施，不能以收费试错补文档。
+
+原始依据为贞贞 [Seedance 原生接口](https://gpt-best.apifox.cn/api-440251336)、[Mini](https://gpt-best.apifox.cn/api-513301405)、[2.5](https://gpt-best.apifox.cn/api-515548387)、[旧 Grok 1.5](https://gpt-best.apifox.cn/api-472416532)、[Veo](https://gpt-best.apifox.cn/api-343590061)、[Sora 原生](https://gpt-best.apifox.cn/api-362481361)／[兼容](https://gpt-best.apifox.cn/api-358024351)、[Vidu](https://gpt-best.apifox.cn/api-374481658)与开源画布固定 `c3292f0f` 的实际请求。参数解释优先相同渠道，目录和示例不足以证明所有组合。
+
+### 验证、预览和未完成项
+
+固定预览仍为 `http://127.0.0.1:18000/`，原开发数据和登录身份保留。本机模拟平台新增六个视频型号供交互检查，仍指向 `127.0.0.1:13002`，没有改真实平台或部门来源。内置浏览器从原首页建立并操作两份独立画布：智能 `577c89660c7c4d5b879845ce918e83a6`、经典 `e570c4a3e19a4076ae3de4fc91aa602f`。Mini 旧 5 秒禁用，选 4 秒恢复；经典新节点默认 4 秒；Veo 只选 8 秒且不再自动开启不支持的全能参考；Sora 未选通道禁用、官方 8 秒合法、切兼容保留 8 秒并提示、只提供 10／15 秒。未适配 Kling 禁用，页面控制台未观察到错误。未点击任何生成按钮，普通用户真实鼠标本轮未另复验。
+
+真实贞贞只补素材上传：使用新增第一个 Key、已存复杂服装海报 PNG 1024×1536／2,632,640 字节，当前执行模块的 `/v1/files` 返回 **HTTP 200**，取得 `webstatic.aiproxy.vip` 地址。没有提交图像或视频模型生成，没有重投原失败；此结果只证明鉴权和素材上传，不证明出片。证据 `video-reference-upload-live.json`，带签名的 URL 只留在私有外部文件。
+
+开发环境以隔离的 `@ffprobe-installer/win32-x64@5.1.0` 为本批参考音视频检查提供工具，未改全局 Python／Node 或项目应用依赖；当前预览进程 PATH 已配置。真实文件使用复杂海报制成 3 秒 512×768 MP4 及 3 秒 WAV，探测通过；音频误放视频槽、33 秒超限音频和不存在文件均生成前拒绝，HTTP 调用 0。外部 `media-preflight-real-files.json` 保留结果。正式部署仍需在实际服务进程 PATH 配置 `ffprobe`，并完成包内依赖／重启验收；未随本轮源码自动发行该二进制。
+
+定向测试覆盖误路由、新旧 Grok、Seedance 全参考、Sora 分组、素材错误不提交、上传失败不生成、原始 RGBA 字节、实际 Python 能力驱动的两类前端规则，以及主进程中断后的原 ID GET 续查。191 项相关定向检查通过；特殊字符原 ID 查询补验所在 56 项通过；JavaScript 语法、17 项文档契约及 155 文档／741 本地链接检查通过。没有重跑全仓企业回归，不以这些结果替代真实视频质量、计费／退费或容量验收。
+
+下一阶段按同一路线图：负责人审阅本地交互；单独明确视频预算与 Key 分组后，以已准备的少量 Seedance／Grok 请求验证真实图生视频、回执与归档；确认 Kling 同渠道生成／查询契约；在候选正式固定后纳入媒体工具、升级包及 11.3 部署验证。普通 5.5 原生透明与双 Key 真实容量仍按下方原结论，不能借本轮视频修复关闭。
+
+<a id="zhenzhen-provider-audit-20261126"></a>
+
+## 2026-11-26 贞贞渠道与正式 11.3 视频只读复核
+
+该只读阶段为负责人要求的兼容与失败原因调查，不是新增收费验收或生产修复。正式源码基准 `v2026.11.3@a5613dabb6307ceeae4d3bdfc67979b78363ccd7`；供应商仓库当前 main 固定为 `T8mars/T8-penguin-canvas@c3292f0fcf92d620490acc62042882387354a976`。本地图片／视频执行纯函数与正式视频模块对照，不把 main 或备份分支当成已部署内容。外部证据目录 `D:/CodeProject/Infinite-Canvas-Enterprise-Artifacts/development/provider-audit-20261126/` 保留公共文档、源码片段、只读结果、路由对照；私有凭据只在其 private 子目录中以现有 DPAPI 密文保存，不进入仓库或本记录。
+
+### 多 Key 凭据与容量
+
+按负责人本轮提供顺序，新增第一个 Key 的工坊 `/v1/models` 为 HTTP 200，模型目录 914 项，包含本轮两种 Seedance 与 Grok；订阅查询成功，用量只读查询为 0。新增第二个 Key 的模型与订阅查询为 HTTP 401 Invalid token，不能因此判断其他站点也无效，更不能投入当前容量对比。既有 Key 从原加密版本只读取出，重新鉴权和订阅查询均为 200，模型目录同为 914 项。未将目录可见当作真实生成成功，未将订阅额度单位擅自换算为人民币。
+
+两个新增 Key 已使用原 `WindowsCredentialVault` 加密并回读核对；未改产品配置、部门来源或既有凭据。现有 Key 加新增第一个 Key 可作为后续双 Key 比较材料，仍须确认供应商 Key／分组／账号的限额口径、目标业务并发和单独预算。余额独立不证明运行容量独立。该只读阶段只有 GET；新图片／视频生成 POST 为 0，无视频压测或旧任务重投。
+
+### Seedream 5.5 透明协议
+
+方舟[图片 API](https://docs.volcengine.com/docs/ark/image-generation-api?lang=zh)的普通 5.5 使用根层 `background=transparent` 与 PNG。工坊当前公共定价目录及负责人截图也声明这些选项，但其 `seedream-v5.5` 和拆层型号仍链接 [api-522995149](https://gpt-best.apifox.cn/api-522995149)，正文为旧 `seedream-v5-flash/layer-decomposition`，未提供普通 5.5 的专用透明编码证明。不能把目录声明写成实测通过，或以旧 Flash 的单图拆层参数替代普通编辑。
+
+供应商[工坊通用 Seedream 请求](https://github.com/T8mars/T8-penguin-canvas/blob/c3292f0fcf92d620490acc62042882387354a976/backend/src/routes/proxy.js#L3215)发送根层 model／prompt／size／image／output_format，却没有透传 background，不能作为工坊普通 5.5 透明成功样例。新 [5.5 合同](https://github.com/T8mars/T8-penguin-canvas/blob/c3292f0fcf92d620490acc62042882387354a976/backend/src/shared/seedream55DraftContract.mjs#L12)属于平价 AI 小屋：`api.seedance.nz`、`/v1/image/generations`（image 单数）、`seedream-v5.5-i2i` 等精确型号，透明字段为 `metadata.background`／`metadata.output_format`，素材用 `images`；需该渠道自己的密钥。与现用 `ai.t8star.org/v1/images/generations`、`seedream-v5.5` 不是同一调用合同。本轮未向新域名发送凭据或收费请求。
+
+因此 D1 的“上游原图 RGB、与归档一致”仍有效，不能只改成 metadata 就宣称解决。工坊参数透传、实际路由和原请求的具体生成原因仍需供应商核查；既有框选保留源 Alpha 不变。没有撤销能力限制或重新调用试错。
+
+### 正式 11.3 视频故障与支持范围
+
+负责人最新截图明确显示 `grok-imagine-video-1.5` 与 `doubao-seedance-2.0-mini` 使用本地 `/assets/input/ai_ref_4ab355da6205.png`，分别报 APIMart 上传 404／上传异常；用户另确认 `grok-imagine-video` 也失败。前两项的直接失败点在图片转换阶段，不是上游视频模型的生成拒绝。截图 Mini 还选了 3 秒，另不符合其公开文档列出的 4／10／15 秒。
+
+正式 `is_apimart_provider()` 只检查 `protocol=apimart` 或地址含 `apimart.ai`；`canvas_video()` 优先进入该分支。精确函数离线对照证明，`https://ai.t8star.org/v1` 加 APIMart 协议会同时被识别为贞贞和 APIMart，进而选择 `/v1/uploads/images` 和错误的通用提交；同一地址加 OpenAI 协议则不走 APIMart，Grok 1.5 选择 `/v1/videos`。报错字符串硬编码 APIMart，上传主机跟随当前 Base URL，不能据此断言图片发给了 APIMart 公司。对生产 `http://11.0.0.37:8000/api/config` 仅发一次未认证 GET，返回 401；该只读请求没有取回生产配置；随后负责人设置截图已确认贞贞地址与 APIMart 协议混用，见上方 SUP-04.VID。本机仍未直接核验生产运行包。未登录／更改生产、重投失败任务或设置公网素材地址。
+
+| 精确型号 | 正式 11.3 已有适配 | 实际证明及当前边界 |
+| --- | --- | --- |
+| grok-imagine-video-1.5 | `/v1/videos` JSON、seconds 字符串及原 ID 查询 | 历史 1 秒文生视频成功；本轮生产图生视频失败，上传路径问题未消除，不列为当前生产通过 |
+| grok-imagine-video | `/xai/v1/videos/generations`、专用素材和查询 | 已有协议适配；负责人本轮报告失败，缺原错误，不列为真实可用 |
+| MiniMax-H3 | `/v1/videos`、imageUrls／videoUrls／audioUrls | 历史 5 秒 768P 文生视频成功；未复验本次生产主机与多模态全部组合 |
+| wan3.0-video | `/v1/videos`、image_urls／video_urls／audio_urls | 历史 5 秒 480P 文生视频成功；未复验本次生产主机 |
+| wan3.0-video-prime | 同类专用适配 | 协议检查通过，无对应真实出片证据 |
+| doubao-seedance-2.5、doubao-seedance-2.0-mini | 仅走通用 `/v2/videos/generations`，缺专用能力规则 | 本轮报告失败；Mini 时长、camera_fixed、多模态角色／音频及选项存在独立缺项 |
+| grok-1.5-video-6s／10s／15s | 无专用适配，回落通用 JSON | 供应商画布要求 `/v1/videos` multipart、size 和单张 input_reference，合同不匹配；不是本轮截图的旧 Grok 型号 |
+
+Seedance 参考[2.5 统一接口](https://gpt-best.apifox.cn/api-515403085)、[Mini 统一接口](https://gpt-best.apifox.cn/api-510506694)、[2.5 原生接口](https://gpt-best.apifox.cn/api-515548387)及供应商 [Seedance 实际请求](https://github.com/T8mars/T8-penguin-canvas/blob/c3292f0fcf92d620490acc62042882387354a976/backend/src/routes/proxy.js#L8134)。当前文档本身有矛盾：2.5 的 schema 型号枚举遗留 2.0，部分 required 与文生示例不一致；不机械照搬错误的枚举／必选项。[新版 Grok 表单路径](https://github.com/T8mars/T8-penguin-canvas/blob/c3292f0fcf92d620490acc62042882387354a976/backend/src/routes/proxy.js#L7806)与[旧 Grok JSON 文档](https://gpt-best.apifox.cn/api-472416532)也不能混用。Veo、Sora、Kling 等目录名称不构成本项目逐型号支持或当前上游可用证明。
+
+建议先核实并校正生产平台协议／地址，再修复供应商识别优先级与缺失的精确视频合同，沿原素材、任务凭据、查询和归档实现。离线／本机模拟先覆盖各输入路径，确认后再按单独预算选最小真实样本；不通过切换型号反复付费排查。本轮未实施业务修复、提交／推送、发行或生产操作，既有营销路线保留。
+
 <a id="pre-cleanup-backup-20261126"></a>
 
 ## 2026-11-26 当前目录磁盘清理前备份
@@ -90,6 +397,8 @@ CPython 3.14.6 图层及文档契约定向检查 **36 项通过**，8 个受影�
 <a id="mkt-01-b3"></a>
 
 ## 2026-11-26 MKT-01.B3 全屏融合与下载对齐
+
+**后续负责人现场确认（2026-11-26）**：负责人反馈“我下载 psd 到能正常打开”，该样本的 PSD 下载及正常打开记为现场通过，替代下文原时点的这两项待验状态。未取得应用名称／版本或全部逐层操作说明，不扩大为所有 Photoshop 版本的人工兼容验收；文字与标注仍为栅格图层。此确认无需重新生成或再次要求负责人下载，同步 CURRENT 和唯一路线图，本轮新增付费调用为 0。
 
 ### 官网依据、原因与改动
 
@@ -430,7 +739,7 @@ Gateway 实际由 PID 62760 重启为 61664，上游应用 PID 34988 保持。�
 | `providers/volcengine_images.py` | 原生请求构造、执行及旧尺寸算法从 main 迁出；正常模型用 native ID，分层用 layer_decomposition 开关；SetLimitExceeded／AccountQuotaExceeded 提示账号处理，不误称稍后重试的流量限制 |
 | `providers/zhenzhen.py` | 仍用两个准确渠道名；拆层别名不添加官方专属开关，删除分层 background，保留 PNG／watermark=False；普通 5.5 与官方共享模型规则 |
 | `providers/suppliers.py`／能力公开层 | 仅两个已批准供应商的目录、配置预设和能力转接；无插件框架、业务数据库或凭据执行 |
-| main 与原素材服务 | 原 facade 只装配端点／鉴权／授权参考图／HTTP client 和结果回调；普通与分层都准备提交副本。当前项目素材策略仍是最长边 1536、单文件 8 MiB、编码总量 32 MiB，不能称为官方硬限额；大图／长详情页效果需后续样本验证 |
+| main 与原素材服务 | 原 facade 只装配端点／鉴权／授权参考图／HTTP client 和结果回调；普通与分层都准备提交副本。当时策略为最长边 1536、单文件 8 MiB、编码总量 32 MiB，不是官方硬限额；缩边／单文件默认值已由 [11 月 28 日原清晰度策略](#reference-quality-20261128)替代，32 MiB 请求预算保留 |
 | 原凭据与任务服务 | 方舟复用原公司／部门加密来源和原版本绑定；不新增表、队列、限流或自动换来源重投。同步 request_id 仅诊断，不作可查询任务号；完成结果回读与中断待核对分开 |
 | 原设置与共享前端 | 原平台类型增加方舟，复用后端预设、中英文和已有样式。智能画布原生引擎保留实际配置 ID，不再强制回固定 ID；原生 5.5 读取相同参数规则，不提供 4K／无效 quality 选择。分层模型选择读取能力而非只认贞贞名称 |
 

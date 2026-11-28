@@ -1,5 +1,4 @@
 """Real request encoders and receipts on local transports; no paid calls."""
-import ast
 import asyncio
 import json
 from pathlib import Path
@@ -19,6 +18,18 @@ ARK = {"id": "official-images", "supplier": "volcengine", "protocol": "volcengin
        "base_url": "https://ark.example/api/v3", "image_models": [NATIVE_MODEL]}
 ZZ = {"id": "department-images", "supplier": "zhenzhen", "protocol": "openai",
       "base_url": "https://t8.example/v1", "image_models": ["seedream-v5.5", "seedream-v5.5/layer-decomposition"]}
+
+
+def test_reference_limits_are_separate_from_output_sizes_and_supplier_contracts():
+    profile=image_profile_for(ARK,NATIVE_MODEL)
+    assert profile['reference_input']=={'formats':['PNG','JPEG','WEBP'],'max_file_bytes':30000000,
+        'max_pixels':36000000,'min_edge':15,'max_aspect':16}
+    assert profile['layer_profile']['reference_input']['min_pixels']==262144
+    assert profile['layer_profile']['reference_input']['formats']==['PNG','JPEG']
+    # Workshop pages do not state the native Ark input limits; don't silently
+    # borrow either those limits or the much smaller generated-image limits.
+    assert 'reference_input' not in image_profile_for(ZZ,'seedream-v5.5')
+    assert 'reference_input' not in image_profile_for(ZZ,'gpt-image-2')
 
 
 @pytest.mark.parametrize("size", ["1K", "1.5K", "2K", "1024x1024", "2880x1440"])
@@ -130,20 +141,17 @@ def test_native_request_id_never_becomes_an_async_query_or_second_submission(pay
 
 
 def test_legacy_native_size_migration_matches_frozen_function():
-    """Compare the actual pre-extraction algorithm, not a second rewritten oracle."""
-    import subprocess
-    root = Path(__file__).resolve().parents[2]
-    old = subprocess.check_output(["git", "show", "HEAD:main.py"], cwd=root).decode("utf-8")
-    tree = ast.parse(old)
-    functions = {"parse_size_pair", "is_volcengine_seedream_model", "normalize_volcengine_size"}
-    nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in functions
-             or isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id.startswith("VOLCENGINE_") for t in n.targets)]
-    import re
-    namespace = {"re": re}
-    exec(compile(ast.Module(body=nodes, type_ignores=[]), "old-main.py", "exec"), namespace)
-    for model in ("doubao-seedream-4-5-251128", "legacy-image-model"):
-        for size in ("auto", "1K", "2K", "4K", "512x512", "1024x1536", "1200X1600", "1200*800", "2880x1440"):
-            assert ark.normalize_legacy_size(size, model) == namespace["normalize_volcengine_size"](size, model)
+    """Actual pre-extraction results, independent of HEAD and shallow Git history."""
+    # Captured from main.py at d8210980d5c773ff91798cac20e8cfb5c14ee92b.
+    # HEAD already contains the extraction after the owner's backup commit.
+    sizes=("auto","1K","2K","4K","512x512","1024x1536","1200X1600","1200*800","2880x1440")
+    expected={
+        "doubao-seedream-4-5-251128": ("2048x2048","2048x2048","2048x2048","4096x4096","1920x1920","1584x2336","1680x2208","2336x1584","2720x1536"),
+        "legacy-image-model": ("auto","1K","2048x2048","4096x4096","512x512","1024x1536","1200x1600","1200x800","2880x1440"),
+    }
+    for model,results in expected.items():
+        for size,result in zip(sizes,results):
+            assert ark.normalize_legacy_size(size,model)==result
 
 
 @pytest.mark.parametrize("code,status,message", [("SetLimitExceeded",429,"Account model paused"),
